@@ -21,6 +21,7 @@ import { dataDirRefusal, mayWriteDataDir, requireDataDir } from "./serverLock";
 import { childCredentials, chownForChild } from "./privsep";
 import { currentSandbox, sandboxRefusal } from "./sandbox";
 import { ensureSandboxMountPoints } from "./sandboxMountPoints";
+import { baselineFrom, taskSignature, type CostBaseline } from "./costBaseline";
 import { db } from "./db";
 import {
   getSettings,
@@ -194,6 +195,8 @@ export interface RunRow {
   max_iterations: number;
   iterations: number;
   created_at: number;
+  /** Higher goes first; `created_at` breaks every tie. Default 0. */
+  priority: number;
   started_at: number | null;
   finished_at: number | null;
   stop_reason: string | null;
@@ -385,6 +388,9 @@ export interface RunEvent {
     | "result"
     | "handoff"
     | "land"
+    // The other exit. `land` is work entering the operator's own
+    // checkout; `deliver` is it leaving the machine for a remote.
+    | "deliver"
     | "review"
     | "error";
   payload: Record<string, unknown>;
@@ -3713,8 +3719,8 @@ export function createRun(input: CreateRunInput): RunRow {
         `INSERT INTO runs
            (id, folder, prompt, model, status, budget, max_iterations, iterations, created_at, spent_usd, spent_tokens,
             work_dir, isolation, repo_root, worktree_path, worktree_branch, worktree_base, worktree_base_branch,
-            continues_run, agent, file_cost_notice, origin, origin_ref)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            continues_run, agent, file_cost_notice, origin, origin_ref, task_signature)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -3743,6 +3749,7 @@ export function createRun(input: CreateRunInput): RunRow {
         costNotice || null,
         input.origin,
         input.originRef ?? null,
+        taskSignature(folder, prompt),
       );
 
     const addLink = db().prepare(
@@ -3849,6 +3856,32 @@ export function createRun(input: CreateRunInput): RunRow {
  * money. Counting parked runs against a cap of 1 would starve everything else
  * for hours.
  */
+/**
+ * The order the queue is considered in: priority first, then age.
+ *
+ * Every selection over `runs` used to be ordered by `created_at` alone, which
+ * made the `queuePosition` the UI shows a report of a position nothing could
+ * change — an operator who needed one run before another could only cancel and
+ * recreate it, losing that run's history and its spend.
+ *
+ * Age is still the tie-break and the default priority is 0, so an install that
+ * never sets one queues in exactly the order it does today. That is the
+ * property worth having: this is not a new scheduler, it is the old one with a
+ * lever, and with the lever untouched the behaviour is unchanged.
+ *
+ * Pure, and separated from `selectPromotable` because it is the half that
+ * decides whose work runs first when an allowance is nearly spent, and it
+ * fails silently: a comparator that quietly ignored `priority` would look
+ * exactly like one that worked, on every install where nobody had set one.
+ */
+export function queueOrder<T extends { priority?: number | null; created_at: number }>(
+  runs: readonly T[],
+): T[] {
+  return [...runs].sort(
+    (a, b) => (b.priority ?? 0) - (a.priority ?? 0) || a.created_at - b.created_at,
+  );
+}
+
 export function selectPromotable(
   runs: readonly RunRow[],
   cap: number | null,
@@ -3870,7 +3903,12 @@ export function selectPromotable(
   const promote: string[] = [];
   let live = reserved.length;
 
-  for (const run of runs) {
+  // Priority order, not arrival order. `reserved` above is computed from the
+  // RUNNING runs and does not depend on this, but the loop below claims folders
+  // as it goes — so ordering here is also what decides which of two runs
+  // wanting the same folder gets it, which is exactly what an operator setting
+  // a priority is asking for.
+  for (const run of queueOrder(runs)) {
     if (run.status !== "queued") continue;
     if (cap !== null && live >= cap) break;
 
@@ -7393,6 +7431,9 @@ export async function startRun(id: string): Promise<void> {
           spentGuardUSD: spentUSD + spentGuardEstUSD,
           spentGuardTokens: spentTokens + spentEstTokens,
           startedAt,
+          // What this task has cost before. Read here rather than inside the
+          // guard so `evaluateBudget` stays a pure function of numbers.
+          costBaseline: costBaselineFor(run),
         },
         Date.now(),
       );
@@ -10394,6 +10435,99 @@ export type SetAsideOutcome = { ok: true } | { ok: false; reason: string };
  * line, and folding it in here would make one function that both marks and
  * kills depending on a status it read itself.
  */
+/** The band a priority is clamped into, so one run cannot be unreachable. */
+export const PRIORITY_MIN = -100;
+export const PRIORITY_MAX = 100;
+
+/**
+ * Move a queued run up or down the queue without losing it.
+ *
+ * Clamped rather than free: an unbounded integer invites `Number.MAX_SAFE_INTEGER`
+ * as a way of saying "definitely first", and the row after it is then
+ * unreachable by any value a person would type. A hundred each way is more
+ * ordering than an install with a concurrency cap of four can express.
+ *
+ * Only the ORDER changes. Nothing here starts, stops or skips a run, and a
+ * priority on a run that is already running means nothing until it is queued
+ * again — which is why this refuses nothing based on status: there is no state
+ * in which recording an operator's preference is wrong, only states where it
+ * has no effect yet.
+ */
+export function setRunPriority(
+  id: string,
+  priority: number,
+): { ok: true; priority: number } | { ok: false; reason: string } {
+  const run = getRun(id);
+  if (!run) return { ok: false, reason: "No such run." };
+  if (!Number.isFinite(priority)) {
+    return { ok: false, reason: "A priority has to be a number." };
+  }
+  const clamped = Math.max(PRIORITY_MIN, Math.min(PRIORITY_MAX, Math.trunc(priority)));
+  db().prepare("UPDATE runs SET priority = ? WHERE id = ?").run(clamped, id);
+  log(
+    id,
+    `Priority set to ${clamped}. Higher runs are promoted first; runs of equal ` +
+      `priority keep their arrival order.`,
+  );
+  return { ok: true, priority: clamped };
+}
+
+/**
+ * What this run's own task has cost before.
+ *
+ * COMPLETED runs only, and never this run. A failed run's spend is real money
+ * but it is not what the task costs to do - including them would drag the
+ * median toward the price of giving up, and the guard would then admit the
+ * expensive run it exists to catch.
+ *
+ * Keyed on `taskSignature`, which normalises whitespace and case, so an
+ * operator who reflowed the prompt keeps their baseline. Bounded to the most
+ * recent `BASELINE_WINDOW` because a task's cost moves as the repository does,
+ * and a median over a year of history is a fact about last year.
+ */
+export const BASELINE_WINDOW = 20;
+
+/**
+ * Give every run written before the column a signature, once.
+ *
+ * Without this the relative guard is silent on an existing install until three
+ * new runs of a task have completed - which is exactly the install that has
+ * the history to speak from, and exactly the operator who would conclude the
+ * feature does nothing. The hash is over columns the row already carries, so
+ * this invents nothing; it only computes what would have been written had the
+ * column existed.
+ *
+ * Bounded and idempotent: only rows where it is null, and a second boot finds
+ * none. Runs at open rather than lazily so the cost is one startup rather than
+ * a stall on whichever cycle happened to ask first.
+ */
+export function backfillTaskSignatures(limit = 5000): number {
+  const rows = db()
+    .prepare(
+      "SELECT id, folder, prompt FROM runs WHERE task_signature IS NULL LIMIT ?",
+    )
+    .all(limit) as { id: string; folder: string; prompt: string }[];
+  if (!rows.length) return 0;
+  const write = db().prepare("UPDATE runs SET task_signature = ? WHERE id = ?");
+  const all = db().transaction((batch: typeof rows) => {
+    for (const r of batch) write.run(taskSignature(r.folder ?? "", r.prompt ?? ""), r.id);
+  });
+  all(rows);
+  return rows.length;
+}
+
+export function costBaselineFor(run: RunRow): CostBaseline | null {
+  const signature = taskSignature(run.folder, run.prompt);
+  const rows = db()
+    .prepare(
+      "SELECT spent_usd FROM runs WHERE task_signature = ? AND id != ? " +
+        "AND status IN ('completed','done') AND spent_usd > 0 " +
+        "ORDER BY created_at DESC LIMIT ?",
+    )
+    .all(signature, run.id, BASELINE_WINDOW) as { spent_usd: number }[];
+  return baselineFrom(rows.map((r) => r.spent_usd));
+}
+
 export function setRunAside(id: string, aside: boolean): SetAsideOutcome {
   const run = getRun(id);
   if (!run) return { ok: false, reason: "No such run." };
