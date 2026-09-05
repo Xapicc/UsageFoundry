@@ -51,6 +51,13 @@ process.env.CLAUDE_CONFIG_DIR = path.join(tmp, "claude");
 // `claude` that does not exist makes a regression that gets as far as a spawn a
 // failed test rather than a billed one.
 process.env.CLAUDE_BIN = path.join(tmp, "no-such-claude");
+// The same two locks one provider over. `CODEX_BIN` for `CLAUDE_BIN`'s reason,
+// and `CODEX_HOME` because the module that reads it writes an execpolicy rules
+// file into it: unpinned, a test would install a process-kill denial into the
+// home directory of whoever ran it, which is a side effect on a machine rather
+// than on a fixture.
+process.env.CODEX_BIN = path.join(tmp, "no-such-codex");
+process.env.CODEX_HOME = path.join(tmp, "codex");
 // `BUILD_CACHE_DIRS` reads GOPATH once, at import, and falls back to `$HOME/go`.
 // The image sets the two equal; a developer's shell need not, and a test that
 // asserted the fallback while the code read the variable would pass or fail on
@@ -65,6 +72,8 @@ fs.mkdirSync(process.env.TMPDIR, { recursive: true });
 // above, and the module reads WORKSPACE_ROOTS once at load.
 const {
   buildArgs,
+  buildCodexArgs,
+  codexPromptPreamble,
   clampRunOffset,
   compactionNotice,
   conflictKey,
@@ -108,6 +117,7 @@ const {
   refusalResumeAt,
   reopenPrompt,
   reopenRun,
+  runEvents,
   sandboxArgs,
   sandboxSettings,
   selectCycleAdapter,
@@ -123,12 +133,15 @@ const {
   MAX_RATE_LIMIT_RETRIES,
   MAX_RESUMES_PER_SWEEP,
   MAX_TRANSIENT_RETRIES,
+  CODEX_PERMISSIONS,
   NEEDS_REVIEW_NOTICE,
   SURVIVAL_TABLE_CLI_VERSION,
 } = require("./orchestrator") as typeof import("./orchestrator");
 
-const { CLAUDE_BIN, CLAUDE_CONFIG_DIR } =
+const { CLAUDE_BIN, CLAUDE_CONFIG_DIR, CODEX_BIN } =
   require("./config") as typeof import("./config");
+const { CODEX_FORBIDDEN_COMMANDS, codexRulesText } =
+  require("./codexRules") as typeof import("./codexRules");
 const { normalizePolicy } = require("./budget") as typeof import("./budget");
 const { revokeIngestTokens, runForIngestToken } =
   require("./otlp") as typeof import("./otlp");
@@ -2885,6 +2898,462 @@ describe("the cycle adapter", () => {
     // run in flight would change what the rest of that cycle's output means.
     assert.equal(selectCycleAdapter("claude"), adapter);
     assert.equal(Object.isFrozen(adapter), true);
+  });
+});
+
+/**
+ * The whole Codex argv, pinned per permission mode.
+ *
+ * `buildArgs`' grounds one provider over, plus one this file's Claude half does
+ * not have: nothing in this repository has ever executed `codex exec`. Every
+ * flag here was read off `--help` and off a rollout file, and a typo in one is
+ * a run that fails at the spawn at best. The cases that carry the file are the
+ * two where a wrong answer is *not* a failed spawn.
+ *
+ * **The permission map may never widen.** A row that answered
+ * `--dangerously-bypass-approvals-and-sandbox` where the run asked for
+ * `acceptEdits` would spawn cleanly, do the work, and hand an unattended agent
+ * the machine; nothing throws and nothing typechecks differently. So all four
+ * rows are pinned as whole arrays rather than probed for a flag, and the
+ * dangerous string is separately asserted to appear under exactly one mode.
+ *
+ * **Flags must precede the `resume` subcommand.** Measured against
+ * codex-cli 0.153.4, `resume` accepts none of `-s`, `-C` or `--add-dir`; placed
+ * before it they are the parent command's and take effect on the resumed
+ * session. A future edit that appends a flag after `resume` is rejected by the
+ * CLI, which is loud, but one that moves `resume` earlier silently drops the
+ * sandbox from cycle 2 onward of every run — the first cycle would be confined
+ * and every one after it would not.
+ */
+describe("buildCodexArgs", () => {
+  const base = {
+    prompt: "do the thing",
+    model: null,
+    permissionMode: "acceptEdits" as const,
+    resumeSessionId: null,
+    maxRunCostUSD: null,
+    spentGuardUSD: 0,
+    // Deliberately unread by this builder and set anyway, because that is the
+    // fact worth pinning: isolation is a Claude-side git grant, and Codex is
+    // given the same run's checkout through `-C` and the sandbox instead.
+    isolated: true,
+  };
+
+  /** The argv without the trailing prompt, which every case ends with. */
+  const flagsOf = (args: string[]): string[] => args.slice(0, -1);
+
+  it("pins the whole argv of a stock cycle", () => {
+    const args = buildCodexArgs({ ...base, workDir: "/w/repo" });
+    assert.deepEqual(flagsOf(args), [
+      "exec",
+      "--json",
+      "--skip-git-repo-check",
+      "--ignore-user-config",
+      "-C",
+      "/w/repo",
+      "-s",
+      "workspace-write",
+      "-c",
+      'approval_policy="never"',
+    ]);
+    // The prompt is last so nothing after it can be read as a flag, and the
+    // notices are in front of it because Codex has no system prompt to append
+    // to. Both halves are asserted: a preamble that stopped being prepended
+    // would leave a cycle that never heard it is running inside the server it
+    // could restart, and that reads as an ordinary cycle.
+    const prompt = args[args.length - 1];
+    assert.equal(prompt.endsWith("\n\ndo the thing"), true);
+    assert.equal(prompt.startsWith(codexPromptPreamble(null)), true);
+  });
+
+  it("maps every permission mode onto a sandbox, and never widens", () => {
+    const argvFor = (permissionMode: keyof typeof CODEX_PERMISSIONS) =>
+      flagsOf(buildCodexArgs({ ...base, permissionMode }));
+
+    // Spelled out rather than read from `CODEX_PERMISSIONS`, for the reason
+    // `buildArgs`' allowed-tools list is: the mapping is the thing under test,
+    // and a test that imported it would agree with any edit to it.
+    assert.deepEqual(argvFor("plan").slice(4), [
+      "-s",
+      "read-only",
+      "-c",
+      'approval_policy="never"',
+    ]);
+    // The narrowing this run chose, and the one row a reader is most likely to
+    // think is a mistake: `default` is the mode that asks a person before each
+    // action, no work cycle has one, and answering "read-only" is the only
+    // reading of it that does not invent consent.
+    assert.deepEqual(argvFor("default").slice(4), [
+      "-s",
+      "read-only",
+      "-c",
+      'approval_policy="never"',
+    ]);
+    assert.deepEqual(argvFor("acceptEdits").slice(4), [
+      "-s",
+      "workspace-write",
+      "-c",
+      'approval_policy="never"',
+    ]);
+    assert.deepEqual(argvFor("bypassPermissions").slice(4), [
+      "--dangerously-bypass-approvals-and-sandbox",
+    ]);
+
+    // The control, and the case this describe exists for. Exactly one mode may
+    // reach the flag that turns the sandbox off, and no mode may ask a second
+    // model to approve on the operator's behalf.
+    const bypassing = (
+      ["plan", "default", "acceptEdits", "bypassPermissions"] as const
+    ).filter((m) =>
+      argvFor(m).includes("--dangerously-bypass-approvals-and-sandbox"),
+    );
+    assert.deepEqual(bypassing, ["bypassPermissions"]);
+    for (const mode of [
+      "plan",
+      "default",
+      "acceptEdits",
+      "bypassPermissions",
+    ] as const) {
+      assert.equal(
+        argvFor(mode).includes("--approve-for-me"),
+        false,
+        `${mode} must not hand approval to a second model`,
+      );
+      // `--ignore-rules` would unload the execpolicy file carrying the
+      // `pkill`/`killall` denial, which is the one thing on this argv that
+      // stands between an unattended agent and the supervisor.
+      assert.equal(argvFor(mode).includes("--ignore-rules"), false);
+    }
+  });
+
+  it("puts every flag before the resume subcommand", () => {
+    const args = buildCodexArgs({
+      ...base,
+      workDir: "/w/repo",
+      model: "gpt-5",
+      resumeSessionId: "0199-thread",
+      writableRoots: ["/w/repo", "/tmp/x"],
+      lastMessageFile: "/state/last.txt",
+    });
+    const resumeAt = args.indexOf("resume");
+    assert.notEqual(resumeAt, -1);
+    assert.deepEqual(args.slice(resumeAt, resumeAt + 2), [
+      "resume",
+      "0199-thread",
+    ]);
+    // Nothing that looks like a flag may follow the subcommand except the
+    // prompt, which is positional and last.
+    assert.equal(args.length, resumeAt + 3);
+    for (const flag of [
+      "-C",
+      "-m",
+      "-s",
+      "--add-dir",
+      "--output-last-message",
+    ]) {
+      const at = args.indexOf(flag);
+      assert.notEqual(at, -1, `${flag} is missing`);
+      assert.equal(at < resumeAt, true, `${flag} must precede resume`);
+    }
+  });
+
+  it("names every writable directory, working root included, one per flag", () => {
+    const args = buildCodexArgs({
+      ...base,
+      workDir: "/w/repo",
+      vaultSkill: { vaultPath: "/vault", pluginDir: "/p" },
+      writableRoots: ["/w/repo", "/w/repo/.git"],
+    });
+    // `--add-dir` takes one directory each time; a version that joined them
+    // would grant a single directory whose name is two paths and a comma, which
+    // does not exist and therefore silently grants nothing.
+    const dirs = args.flatMap((a, i) => (a === "--add-dir" ? [args[i + 1]] : []));
+    assert.deepEqual(dirs, ["/vault", "/w/repo", "/w/repo/.git"]);
+    // `-C` is what `workspace-write` grants, so it must be the directory the
+    // run loop re-proved contained rather than wherever the process started.
+    assert.deepEqual(args.slice(args.indexOf("-C"), args.indexOf("-C") + 2), [
+      "-C",
+      "/w/repo",
+    ]);
+  });
+
+  it("omits the write set and the last-message file when there is none", () => {
+    // Null is "nothing confines this cycle", which is not the same as a
+    // confinement permitting no writes. The control for the case above: an
+    // install with no managed sandbox must not emit an empty `--add-dir`, whose
+    // next argv entry the CLI would eat as the directory.
+    const args = buildCodexArgs({
+      ...base,
+      workDir: "/w/repo",
+      writableRoots: null,
+      lastMessageFile: null,
+    });
+    assert.equal(args.includes("--add-dir"), false);
+    assert.equal(args.includes("--output-last-message"), false);
+  });
+
+  it("denies the same two commands the Claude argv denies", () => {
+    // The cross-provider parity this app's safety rests on, and the reason it
+    // is asserted from both sides in one place. Claude gets the denial as a
+    // per-spawn flag; Codex cannot, so it gets an execpolicy file. A third
+    // process-killer added to `PROCESS_KILLERS` and not to
+    // `CODEX_FORBIDDEN_COMMANDS` is otherwise invisible: both providers keep
+    // working, and only one of them is still refusing the command.
+    const claudeArgs = buildArgs({ ...base, isolated: true });
+    const at = claudeArgs.indexOf("--disallowedTools");
+    assert.notEqual(at, -1, "the Claude deny list is unconditional");
+    const rest = claudeArgs.slice(at + 1);
+    const end = rest.findIndex((a) => a.startsWith("--"));
+    const denied = end === -1 ? rest : rest.slice(0, end);
+    const commands = denied.map((v) => /^Bash\((\w+):/.exec(v)?.[1] ?? v);
+    assert.deepEqual(commands, [...CODEX_FORBIDDEN_COMMANDS]);
+    const rules = codexRulesText();
+    for (const command of commands) {
+      assert.equal(
+        rules.includes(`prefix_rule(pattern=["${command}"], decision="forbidden")`),
+        true,
+        `${command} is denied on the Claude path and not on the Codex one`,
+      );
+    }
+  });
+
+  it("routes a Codex run to the Codex adapter and nothing else to it", () => {
+    const codex = selectCycleAdapter("codex");
+    assert.equal(codex.buildArgs, buildCodexArgs);
+    assert.equal(codex.bin, CODEX_BIN);
+    assert.equal(Object.isFrozen(codex), true);
+    // A run never changes provider, which is what lets one `session_id` column
+    // carry whichever id the run's own provider issued. Selection is per cycle,
+    // so it must answer the same object every time it is asked.
+    assert.equal(selectCycleAdapter("codex"), codex);
+    // And the two adapters are never each other: reading one CLI's stdout with
+    // the other's parser reports nothing, which every page renders as a cycle
+    // that had nothing to say.
+    assert.notEqual(selectCycleAdapter(null).parseLine, codex.parseLine);
+  });
+});
+
+/**
+ * The Codex stream parser, against the event shapes the CLI was measured to
+ * emit.
+ *
+ * A parser over a foreign JSONL format, where every way of being wrong is
+ * silent in the same direction: an event that is not read is a cycle with no
+ * session id, no token count and no last word, which every page in this app
+ * renders as a cycle that simply had nothing to say. `transcriptCompaction`'s
+ * rule is followed here too — the fixtures are the CLI's own field names, so a
+ * rename cannot be "fixed" in the parser and the test at once.
+ *
+ * The three cases that carry the file:
+ *
+ * **A retry notice must not become the failure.** Codex reports transport
+ * reconnections as `error` events, and a run that spent five minutes
+ * reconnecting before failing for a different reason would otherwise be filed,
+ * and possibly parked, under "Reconnecting… 1/5".
+ *
+ * **The token sum must not double-count.** `cached_input_tokens` and
+ * `reasoning_output_tokens` arrive beside the two figures that are read and are
+ * breakdowns of them; adding them inflates `runs.spent_tokens`, which is a
+ * number an operator plans against.
+ *
+ * **An unrecognised event must reach a person.** `orchestrator.ts:6604` is
+ * where a Claude line that does not parse goes silently, and that silence is
+ * exactly what makes a moved CLI pin look like an idle agent. The Codex parser
+ * logs instead, once per distinct type per cycle.
+ */
+describe("handleCodexStreamLine", () => {
+  const { parseLine } = selectCycleAdapter("codex");
+
+  const fresh = () =>
+    ({
+      costUSD: 0,
+      tokens: 0,
+      contextTokens: 0,
+      sessionId: null,
+      finalText: "",
+      isError: false,
+      subagentNames: new Map(),
+      toolCalls: new Map(),
+      unknownEventTypes: new Set(),
+      sawResult: false,
+      subtype: null,
+      apiError: null,
+      stderrTail: "",
+    }) as Parameters<typeof parseLine>[2];
+
+  let seq = 0;
+
+  /**
+   * A row for the log lines to hang off. `run_events.run_id` is a foreign key,
+   * so a parser that logs against an id nothing owns throws rather than
+   * reporting — which is worth knowing here, because logging is half of what
+   * this parser does that the Claude one does not.
+   */
+  const insertRun = (): string => {
+    const id = `codex-parse-${++seq}`;
+    db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations,
+                           iterations, created_at, provider)
+         VALUES (?, ?, 'do the thing', 'running', '{}', 1, 0, ?, 'codex')`,
+      )
+      .run(id, `${ws}/Other`, Date.now() + seq);
+    return id;
+  };
+
+  /** Feed a cycle's stdout, and answer what it accumulated and what it said. */
+  const run = (lines: unknown[]) => {
+    const runId = insertRun();
+    const acc = fresh();
+    const sessions: string[] = [];
+    for (const line of lines) {
+      parseLine(runId, JSON.stringify(line), acc, (id) => sessions.push(id));
+    }
+    return {
+      acc,
+      sessions,
+      logs: runEvents(runId).events.flatMap((e) =>
+        e.kind === "log" ? [String((e.payload as { message: string }).message)] : [],
+      ),
+    };
+  };
+
+  it("takes the thread id as the session id, once", () => {
+    const { acc, sessions } = run([
+      { type: "thread.started", thread_id: "0199abcd" },
+      { type: "turn.started" },
+      // The same id again is not a second session. `onSession` writes
+      // `runs.session_id` and is what a later `resume` reads.
+      { type: "thread.started", thread_id: "0199abcd" },
+    ]);
+    assert.equal(acc.sessionId, "0199abcd");
+    assert.deepEqual(sessions, ["0199abcd"]);
+  });
+
+  it("sums the two token figures and none of their breakdowns", () => {
+    const { acc } = run([
+      { type: "thread.started", thread_id: "t" },
+      {
+        type: "turn.completed",
+        usage: {
+          input_tokens: 12_000,
+          cached_input_tokens: 9_000,
+          cache_write_input_tokens: 1_000,
+          output_tokens: 400,
+          reasoning_output_tokens: 300,
+        },
+      },
+    ]);
+    assert.equal(acc.tokens, 12_400);
+    assert.equal(acc.sawResult, true);
+    assert.equal(acc.subtype, "success");
+    // **Zero, and not a measurement.** `turn.completed` carries no money, so a
+    // figure invented here would be summed into `runs.spent_usd` beside
+    // Claude's measured dollars. `providerRecordsSpend` is what keeps this zero
+    // from reading as a measured $0, and it is tested at the run loop.
+    assert.equal(acc.costUSD, 0);
+    // Left at zero deliberately: `startsFresh` reads it as "no reading" rather
+    // than as "small", and the only candidate figure grows with work done
+    // rather than with conversation length.
+    assert.equal(acc.contextTokens, 0);
+  });
+
+  it("assigns the token count rather than accumulating it", () => {
+    // One `codex exec` invocation is one turn, so a second `turn.completed` is
+    // a shape this build has not seen. Assigning is stale where summing would
+    // be double-counting, and the run's token total is planned against.
+    const { acc } = run([
+      { type: "turn.completed", usage: { input_tokens: 100, output_tokens: 1 } },
+      { type: "turn.completed", usage: { input_tokens: 200, output_tokens: 2 } },
+    ]);
+    assert.equal(acc.tokens, 202);
+  });
+
+  it("lets the failure overwrite the retry notices that preceded it", () => {
+    const { acc, logs } = run([
+      { type: "thread.started", thread_id: "t" },
+      { type: "error", message: "Reconnecting… 1/5" },
+      { type: "error", message: "Reconnecting… 2/5" },
+      {
+        type: "turn.failed",
+        error: { message: "stream error: exceeded retry limit" },
+      },
+    ]);
+    assert.equal(acc.apiError, "stream error: exceeded retry limit");
+    assert.equal(acc.isError, true);
+    assert.equal(acc.subtype, "error");
+    // The notices are still logged, both of them: a run that spent its cycle
+    // reconnecting should say so even though it is not why it ended.
+    assert.deepEqual(logs, ["Reconnecting… 1/5", "Reconnecting… 2/5"]);
+  });
+
+  it("keeps the first notice when nothing better is ever said", () => {
+    // The control for the case above. Without a `turn.failed` verdict the
+    // earliest notice is all there is, and `??=` is what stops the last retry
+    // line replacing the reason the retries started.
+    const { acc } = run([
+      { type: "error", message: "401 Unauthorized" },
+      { type: "error", message: "Reconnecting… 1/5" },
+    ]);
+    assert.equal(acc.apiError, "401 Unauthorized");
+    assert.equal(acc.subtype, null);
+    // `sawResult` stays false, which is what tells the run loop this cycle
+    // never reported: it is the same meaning it has on the Claude path.
+    assert.equal(acc.sawResult, false);
+  });
+
+  it("takes the last agent message as the cycle's last word", () => {
+    const { acc } = run([
+      { type: "item.completed", item: { type: "agent_message", text: "thinking" } },
+      { type: "item.completed", item: { type: "reasoning", text: "ignored" } },
+      { type: "item.completed", item: { type: "agent_message", text: "DONE" } },
+      { type: "item.completed", item: { type: "error", message: "a tool failed" } },
+    ]);
+    // Last write wins: the `DONE` contract is read against the last thing the
+    // agent said, and an earlier message winning would end a run mid-thought.
+    assert.equal(acc.finalText, "DONE");
+    // An item-level error is a notice, not a verdict, so it latches only where
+    // nothing has been said and never sets `isError`.
+    assert.equal(acc.apiError, "a tool failed");
+    assert.equal(acc.isError, false);
+  });
+
+  it("reports an unrecognised event once per type, not once per line", () => {
+    const { acc, logs } = run([
+      { type: "turn.started" },
+      { type: "item.updated" },
+      { type: "thread.compacted", detail: 1 },
+      { type: "thread.compacted", detail: 2 },
+      { type: "thread.compacted", detail: 3 },
+      { type: "turn.interrupted" },
+    ]);
+    // The known-and-ignored types are named in the parser rather than left to
+    // the default, so they do not drown the log the moment one arrives.
+    assert.deepEqual([...acc.unknownEventTypes].sort(), [
+      "thread.compacted",
+      "turn.interrupted",
+    ]);
+    assert.equal(logs.length, 2);
+    assert.equal(logs.every((l) => l.includes("does not recognise")), true);
+    assert.equal(
+      logs.some((l) => l.includes('"thread.compacted"')),
+      true,
+    );
+  });
+
+  it("logs a line that is not JSON as itself", () => {
+    // Stdout under `--json` was measured to be pure JSONL, so this branch means
+    // the format changed rather than that a log line got mixed in. The bytes
+    // are the only evidence there is, which is why they are logged verbatim
+    // rather than summarised.
+    const runId = insertRun();
+    const acc = fresh();
+    parseLine(runId, "Reading additional input from stdin", acc, () => {});
+    const logs = runEvents(runId).events.map(
+      (e) => (e.payload as { message: string }).message,
+    );
+    assert.deepEqual(logs, ["Reading additional input from stdin"]);
+    assert.equal(acc.sawResult, false);
   });
 });
 
