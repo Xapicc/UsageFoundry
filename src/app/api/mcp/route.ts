@@ -48,6 +48,7 @@ import {
   describeFolder,
   getRun,
   listRuns,
+  providerRecordsSpend,
   resolveWorkspaceFolder,
   runEvents,
   type DependencyEdge,
@@ -1069,7 +1070,11 @@ async function callTool(
               folder: relPath,
               branch: r.worktree_branch,
               iterations: r.iterations,
-              spent: fmtUSD(r.spent_usd),
+              // `null`, not `"$0.00"`, for a provider that reports no cost:
+              // this answer is read by a model, which will reason from a
+              // number far more readily than a person skims one. JSON null is
+              // the shape this file already uses for a field with no reading.
+              spent: providerRecordsSpend(r.provider) ? fmtUSD(r.spent_usd) : null,
               stopReason: r.stop_reason,
               task: r.prompt.slice(0, 200),
             };
@@ -1195,7 +1200,8 @@ async function getRunDetail(args: Record<string, unknown>) {
         baseBranch: run.worktree_base_branch,
         createdAt: new Date(run.created_at).toISOString(),
         iterations: run.iterations,
-        spent: fmtUSD(run.spent_usd),
+        // See `list_runs`: unknown is null here rather than a formatted zero.
+        spent: providerRecordsSpend(run.provider) ? fmtUSD(run.spent_usd) : null,
         stopReason: run.stop_reason,
         landedAt: run.landed_at ? new Date(run.landed_at).toISOString() : null,
         task: run.prompt,

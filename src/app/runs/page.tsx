@@ -7,6 +7,7 @@ import type {
   RunListDTO,
   RunListItemDTO,
 } from "@/lib/apiTypes";
+import { providerReportsSpend } from "@/lib/apiTypes";
 import {
   fmtCycleInFlight,
   fmtCycles,
@@ -480,8 +481,15 @@ function RunList({
                       {fmtTokens(r.spent_tokens)}
                     </Td>
                   )}
+                  {/* A dash for a provider that reports no money, on the same
+                      reading the Pruning column below spells out: the column is
+                      `0` for a Codex run because nothing ever added to it, and
+                      `$0.00` down a list of runs is a measurement claim nobody
+                      made. The run's own page says which provider and why; here
+                      there is no room for that, so it says only "not a figure".
+                      Tokens are real for both providers and stay printed. */}
                   <Td num label="Spent" className="whitespace-nowrap align-top">
-                    {fmtUSD(r.spent_usd)}
+                    {providerReportsSpend(r.provider) ? fmtUSD(r.spent_usd) : "—"}
                   </Td>
                   {/* Signed, via the helper that prints a U+2212 rather than a
                       hyphen: an early end's invalidation can outrun what it

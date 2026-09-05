@@ -1092,6 +1092,26 @@ export const RUN_PROVIDER_LABEL: Record<RunProviderDTO, string> = {
   codex: "Codex",
 };
 
+/**
+ * Whether a run spawned as this provider puts money in `runs.spent_usd`.
+ *
+ * Here rather than beside the loop that reads it, because the loop is only one
+ * of the two places that must agree. Codex's `turn.completed` carries token
+ * counts and no money, so the loop withholds the `+=` and the column stays at
+ * zero — and a page that then formats that zero as `$0.00` has published a
+ * measurement nobody made. `metering.md`'s first rule is that unknown must not
+ * render as zero, and the two halves of obeying it are a server module and a
+ * client one, which is exactly what this file is for.
+ *
+ * `null` is a row that predates the column, not a claim, and those rows are all
+ * Claude runs by construction: nothing else could have produced them.
+ */
+export function providerReportsSpend(
+  provider: RunProviderDTO | null,
+): boolean {
+  return provider !== "codex";
+}
+
 export interface RunDTO {
   id: string;
   /** Absolute, canonicalised folder the operator picked. */

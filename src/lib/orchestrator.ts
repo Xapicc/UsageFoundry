@@ -129,6 +129,7 @@ import { clipToolInput, MAX_LOG_CHARS, toolArgs } from "./logLine";
 import { fmtDuration, fmtTokens, shortId } from "./format";
 import {
   RUN_PROVIDER_LABEL,
+  providerReportsSpend,
   type RunDependencyDTO,
   type RunProviderDTO,
   type SandboxStateDTO,
@@ -5850,9 +5851,16 @@ export function selectCycleAdapter(provider: RunProviderDTO | null): CycleAdapte
  * recovers an estimate by reading Claude's own transcripts and would answer for
  * a Codex run by finding nothing while looking exactly like a run that spent
  * nothing.
+ *
+ * Delegates rather than repeating the comparison, because the run page has to
+ * agree with it: the loop withholding the `+=` and the page formatting the
+ * resulting zero as `$0.00` would publish a measurement nobody made, and
+ * `metering.md`'s first rule is that unknown must not render as zero. The page
+ * is a `"use client"` file and cannot import this module, so the list itself
+ * lives in `apiTypes.ts`, which both sides may read.
  */
 export function providerRecordsSpend(provider: RunProviderDTO | null): boolean {
-  return provider !== "codex";
+  return providerReportsSpend(provider);
 }
 
 /**

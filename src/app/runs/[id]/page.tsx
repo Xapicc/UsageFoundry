@@ -3,7 +3,7 @@
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { RUN_PROVIDER_LABEL } from "@/lib/apiTypes";
+import { RUN_PROVIDER_LABEL, providerReportsSpend } from "@/lib/apiTypes";
 import type {
   ContextOccupancyDTO,
   ContextPrunerDTO,
@@ -389,7 +389,15 @@ function guardBars(run: RunDTO, now: number) {
     });
   }
 
-  const costCap = run.budget.maxRunCostUSD;
+  // A meter needs a numerator, and a provider that reports no cost supplies
+  // none. Drawing this bar for such a run would fill it from a `spent_usd` the
+  // loop deliberately never adds to, so a cap nothing can enforce would render
+  // as a cap with all of its room left. The row below the meters says so in
+  // words instead, which is where this page already puts a limit that is not in
+  // force.
+  const costCap = providerReportsSpend(run.provider)
+    ? run.budget.maxRunCostUSD
+    : null;
   if (costCap !== null && costCap > 0) {
     const estimated = run.spent_usd_est ?? 0;
     bars.push({
@@ -985,6 +993,10 @@ export default function RunDetail({
     stoppedByGuard,
   });
   const isolated = run.isolation === "worktree" && Boolean(run.worktree_branch);
+  // Read in three places below, all of them money: the figure, its footnote and
+  // the guard meter. One local so a provider added to the list cannot leave one
+  // of them formatting a zero as a measurement.
+  const reportsSpend = providerReportsSpend(run.provider);
   const bars = guardBars(run, nowTick);
 
   // Review and Land exist only for a run with a branch, and Report only once
@@ -1250,10 +1262,24 @@ export default function RunDetail({
                     onChange={(e) => setReopenCost(e.target.value)}
                   />
                 </div>
-                <Hint>
-                  Counts the {fmtUSD(run.spent_usd + (run.spent_usd_est ?? 0))}{" "}
-                  already spent. Blank means no limit
-                </Hint>
+                {/* The field stays offered for a provider that reports no
+                    cost, because a run never changes provider and a reopen is
+                    the same run: hiding it would leave an operator wondering
+                    where it went. What changes is the promise under it, which
+                    would otherwise count a $0.00 nobody measured and imply a
+                    ceiling this run's loop will never test. */}
+                {reportsSpend ? (
+                  <Hint>
+                    Counts the {fmtUSD(run.spent_usd + (run.spent_usd_est ?? 0))}{" "}
+                    already spent. Blank means no limit
+                  </Hint>
+                ) : (
+                  <Hint tone="warn">
+                    Not enforced:{" "}
+                    {RUN_PROVIDER_LABEL[run.provider ?? "claude"]} reports no
+                    cost, so nothing measures against it
+                  </Hint>
+                )}
               </Field>
 
               <Field label="Time limit" htmlFor="re-minutes">
@@ -1333,6 +1359,13 @@ export default function RunDetail({
                       : fmtPct(run.budget.maxWeeklyFraction)}
                   </GuardValue>
                 </ListRow>
+                {!reportsSpend && (run.budget.maxRunCostUSD ?? 0) > 0 && (
+                  <ListRow label="Spending limit">
+                    <GuardValue>
+                      {fmtUSD(run.budget.maxRunCostUSD ?? 0)}, not enforced
+                    </GuardValue>
+                  </ListRow>
+                )}
                 <ListRow label="When a limit is acted on">
                   <GuardValue>{ENFORCEMENT[run.budget.enforcement]}</GuardValue>
                 </ListRow>
@@ -1381,16 +1414,35 @@ export default function RunDetail({
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <div className="text-xs font-semibold text-ink">Spent</div>
-                <Stat>{fmtUSD(run.spent_usd)}</Stat>
+                {/* **A provider that reports no cost gets no figure at all.**
+                    `metering.md`'s first rule is that unknown must not render
+                    as zero, and this is the one place in the app where the two
+                    are indistinguishable in the data: the loop withholds the
+                    `+=` for such a run, so the column really does hold 0, and
+                    formatting it would publish a measurement nobody made. The
+                    dash is the mark this page already uses for a reading it
+                    does not have — see `exit —` one column over. Tokens are
+                    measured on both providers and are shown on both. */}
+                {reportsSpend ? (
+                  <Stat>{fmtUSD(run.spent_usd)}</Stat>
+                ) : (
+                  <Stat>&mdash;</Stat>
+                )}
                 <div className={SUB}>
-                  {fmtTokens(run.spent_tokens)} tokens, as Claude Code reported
-                  them
+                  {fmtTokens(run.spent_tokens)} tokens, as{" "}
+                  {RUN_PROVIDER_LABEL[run.provider ?? "claude"]} reported them
                 </div>
+                {!reportsSpend && (
+                  <div className={SUB}>
+                    {RUN_PROVIDER_LABEL[run.provider ?? "claude"]} reports no
+                    cost, so this is unknown rather than $0
+                  </div>
+                )}
                 {/* $0.00 on a run eight minutes into its first cycle is
                     documented behaviour rather than a broken counter — Claude
                     Code reports what a cycle cost in its terminal `result`
                     event and nowhere earlier. */}
-                {cycleInFlight && (
+                {cycleInFlight && reportsSpend && (
                   <div className={SUB}>
                     excludes the cycle in flight, which is reported when it ends
                   </div>
@@ -1611,6 +1663,34 @@ export default function RunDetail({
                   </GuardValue>
                 </ListRow>
               </ListGroup>
+              {/* Here rather than beside the spend figure, and the reason is
+                  which question a reader is asking in each place. Beside the
+                  figure they are asking what this run cost; the honest answer
+                  is a blank, and a blank with a paragraph attached reads as an
+                  error. Here they are asking what kind of run this is, and
+                  "its costs were never reported" is an answer to that. The
+                  Costs region is where the figure is missing; this is where it
+                  says why.
+
+                  Drawn off `run.provider` rather than off a zero spend so it
+                  is never confused with a run that genuinely cost nothing, and
+                  never shown for `null`, which is a row that predates the
+                  column rather than a row that was asked. */}
+              {run.provider === "codex" && (
+                <Hint tone="warn" className="mt-2.5">
+                  <strong>This run reports no cost.</strong> Codex sends token
+                  counts and no money, so nothing was added to this run&rsquo;s
+                  spend and nothing reached the usage windows. Its dollar
+                  figures are unknown rather than zero, and its token count is
+                  measured. Two other guarantees are weaker here than on a
+                  Claude run: the denial that stops an agent killing the server
+                  supervising it is a rules file rather than a flag, so it is
+                  install-wide and does not cover a command written with
+                  substitution or a wildcard; and the notices about what this
+                  agent is running inside rode the prompt rather than a system
+                  prompt.
+                </Hint>
+              )}
             </Section>
 
             {run.agent && (
