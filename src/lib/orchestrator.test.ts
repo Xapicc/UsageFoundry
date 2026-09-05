@@ -110,6 +110,7 @@ const {
   reopenRun,
   sandboxArgs,
   sandboxSettings,
+  selectCycleAdapter,
   contextAfterPrune,
   startsFresh,
   SEARCH_TOOLS,
@@ -126,7 +127,8 @@ const {
   SURVIVAL_TABLE_CLI_VERSION,
 } = require("./orchestrator") as typeof import("./orchestrator");
 
-const { CLAUDE_CONFIG_DIR } = require("./config") as typeof import("./config");
+const { CLAUDE_BIN, CLAUDE_CONFIG_DIR } =
+  require("./config") as typeof import("./config");
 const { normalizePolicy } = require("./budget") as typeof import("./budget");
 const { revokeIngestTokens, runForIngestToken } =
   require("./otlp") as typeof import("./otlp");
@@ -2747,6 +2749,142 @@ describe("buildArgs", () => {
     assert.equal(args[args.indexOf("--model") + 1], "claude-opus-5");
     assert.equal(args[args.indexOf("--permission-mode") + 1], "acceptEdits");
     assert.equal(args[args.indexOf("--resume") + 1], "sess-1");
+  });
+});
+
+/**
+ * The seam between the run loop and the CLI it drives, and the one thing it
+ * must not have changed.
+ *
+ * `runIteration` used to name `CLAUDE_BIN` and `handleStreamLine` itself; both
+ * now arrive as an adapter, and the argv is built through the same object.
+ * **Every way that refactor can be wrong is silent.** A flag dropped from the
+ * argv is not an error: the CLI spawns, the cycle runs, and what is missing is a
+ * deny list, a plugin the run needed, a system-prompt notice or the only ceiling
+ * that bounds what one cycle may spend. A binary or a parser reached through the
+ * wrong half of the pair is worse and quieter still — a cycle whose cost,
+ * session id and stop reason are all absent reads exactly like a cycle that
+ * finished with nothing to say.
+ *
+ * So this pins the whole argv rather than a flag at a time: the ordered census
+ * of every flag on a maximal cycle, including the repeats, and the values of the
+ * three that no other case here reads together. The cases above cover what each
+ * flag *means*; what this one covers is that the seam still emits all of them.
+ *
+ * `--autocompact` is asserted absent in the same breath, because a reinstated
+ * flag fails nothing and looks like an ordinary cycle — `contextPruning.ts` owns
+ * that ceiling now, and `run-lifecycle.md` records what the swap gave up.
+ */
+describe("the cycle adapter", () => {
+  const adapter = selectCycleAdapter();
+
+  /**
+   * A cycle asking for everything `buildArgs` can emit.
+   *
+   * Maximal on purpose: a census taken over an argv that opted out of half the
+   * features would pass while the seam dropped exactly the flags it did not ask
+   * for. The three plugin directories are separate entries because the CLI takes
+   * one per flag and repeats it, so their *count* is part of what is pinned.
+   */
+  const everything = {
+    prompt: "do the thing",
+    model: "claude-opus-5",
+    permissionMode: "acceptEdits" as const,
+    resumeSessionId: "sess-1",
+    isolated: true,
+    maxRunCostUSD: 20,
+    spentGuardUSD: 5,
+    agent: {
+      name: "reviewer",
+      description: "reads diffs",
+      prompt: "You review.",
+      model: null,
+    },
+    forwardSubAgentText: true,
+    pluginDirs: ["/workspace/orient"],
+    vaultSkill: { pluginDir: "/data/skills/vault", vaultPath: "/vault" },
+    readGuardDir: "/data/skills/read-guard",
+    fileCostNotice: "Reading src/lib/orchestrator.ts costs 133k tokens.",
+  };
+
+  /** Every flag, in the order the CLI receives them, repeats included. */
+  const flagsIn = (args: string[]): string[] =>
+    args.filter((a) => a === "-p" || a.startsWith("--"));
+
+  it("builds the argv the run loop used to build directly", () => {
+    const args = adapter.buildArgs(everything);
+
+    assert.deepEqual(flagsIn(args), [
+      "-p",
+      "--output-format",
+      "--verbose",
+      "--model",
+      "--permission-mode",
+      "--forward-subagent-text",
+      "--agents",
+      "--agent",
+      "--allowedTools",
+      "--disallowedTools",
+      "--append-system-prompt",
+      "--plugin-dir",
+      "--plugin-dir",
+      "--plugin-dir",
+      "--add-dir",
+      "--resume",
+      "--max-budget-usd",
+    ]);
+
+    // The two the loop cannot recover from losing, spelled out rather than
+    // counted. `PROCESS_KILLERS` is the one grant withheld from every agent
+    // whatever its mode, and the ceiling is the only thing that bounds the
+    // cycle that crosses the threshold rather than the one after it.
+    const denied = args.indexOf("--disallowedTools");
+    assert.deepEqual(args.slice(denied + 1, denied + 3), [
+      "Bash(pkill:*)",
+      "Bash(killall:*)",
+    ]);
+    assert.equal(args[args.indexOf("--max-budget-usd") + 1], "15");
+
+    // One flag carrying every notice, never two: a second
+    // `--append-system-prompt` is a replacement rather than an addition.
+    assert.equal(args.filter((a) => a === "--append-system-prompt").length, 1);
+    // One marker per notice, chosen because it names the subject rather than
+    // the wording: the notices are deliberately not reworded — every edit costs
+    // every run in flight a cold prefix — so what this has to survive is a
+    // notice dropped from the join, not a sentence rephrased.
+    const appended = args[args.indexOf("--append-system-prompt") + 1]!;
+    for (const notice of [
+      /pkill/, // self-hosting
+      /sub-agent/, // delegation
+      /Playwright/, // rendering
+      /author email/, // commit identity
+      /costs 133k/, // this run's own frozen price list
+    ]) {
+      assert.match(appended, notice);
+    }
+
+    assert.equal(
+      args.includes("--autocompact"),
+      false,
+      "contextPruning.ts owns the context ceiling; a reinstated flag fails nothing",
+    );
+  });
+
+  it("routes to the builder and the binary the loop used to name itself", () => {
+    // Identity rather than a second comparison of outputs: what the seam can get
+    // wrong is *which* function it reaches, and an adapter wired to a lookalike
+    // would agree on every argv this file happens to try.
+    assert.equal(adapter.buildArgs, buildArgs);
+    assert.equal(adapter.bin, CLAUDE_BIN);
+  });
+
+  it("is the same adapter on every cycle of a run", () => {
+    // The selection is per cycle, so a resumed cycle hours later — or one a
+    // restart picks up — must reach the same three fields. Frozen, because
+    // `parseLine` is read once per line of stdout and a field replaced under a
+    // run in flight would change what the rest of that cycle's output means.
+    assert.equal(selectCycleAdapter(), adapter);
+    assert.equal(Object.isFrozen(adapter), true);
   });
 });
 
