@@ -15,6 +15,7 @@ import {
   normalizeInstanceBudget,
   normalizePolicy,
   planReadingAgeMs,
+  providerTerminusRefusal,
   readWindowGuard,
   windowGuardRefusal,
 } from "./budget";
@@ -512,6 +513,59 @@ describe("evaluateBudget", () => {
     );
     // And a policy with no fraction guard has nothing to say either way.
     assert.equal(windowGuardRefusal(base, snapshot(null, null)), null);
+  });
+
+  /**
+   * The other refusal at that door, and the one whose value is entirely in what
+   * it says rather than in what it catches.
+   *
+   * Its condition is `no_terminus`' condition — the two monotone termini are the
+   * same two whatever spawns the cycle — so what a test has to hold is that it
+   * fires only for a provider this app cannot meter, that it fires *before* the
+   * generic refusal so its sentence is the one shown, and that it never fires on
+   * a Claude run or on a row whose provider was never recorded. Getting any of
+   * those wrong is silent: the run still starts or still refuses, and only the
+   * sentence an operator reads is different.
+   */
+  it("refuses an unmeterable provider with the reason its policy is empty", () => {
+    const unbounded: BudgetPolicy = {
+      ...base,
+      maxIterations: null,
+      // The three that look like limits and are not, for a provider whose usage
+      // this app cannot read. Present on purpose: the refusal must fire *with*
+      // them set, or it is not saying anything the generic one does not.
+      maxSessionFraction: 0.5,
+      maxWeeklyFraction: 0.5,
+      maxRunCostUSD: 20,
+    };
+
+    const refusal = providerTerminusRefusal("codex", unbounded);
+    assert.match(refusal ?? "", /work-cycle limit or a time limit/);
+    // Names why the three it was given are not limits, because that is the
+    // whole of what this refusal adds over `no_terminus`.
+    assert.match(refusal ?? "", /window guard/);
+    assert.match(refusal ?? "", /spending limit reaches no cycle/);
+
+    // Either terminus is enough, and each on its own.
+    assert.equal(
+      providerTerminusRefusal("codex", { ...unbounded, maxIterations: 1 }),
+      null,
+    );
+    assert.equal(
+      providerTerminusRefusal("codex", {
+        ...unbounded,
+        maxDurationMinutes: 30,
+      }),
+      null,
+    );
+
+    // Claude has the three the sentence above discounts, so the generic
+    // `no_terminus` refusal is the one that must speak for it — this one saying
+    // anything at all would be telling an operator their window guards do not
+    // count when they do.
+    assert.equal(providerTerminusRefusal("claude", unbounded), null);
+    // And a row with no provider recorded is not a claim that it was Codex.
+    assert.equal(providerTerminusRefusal(null, unbounded), null);
   });
 
   /**

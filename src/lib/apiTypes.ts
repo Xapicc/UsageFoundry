@@ -1071,6 +1071,27 @@ export interface BootReconcileDTO {
   kept: number;
 }
 
+/**
+ * Which agent CLI a run's work cycles are spawned as.
+ *
+ * Defined here rather than mirrored, against this file's usual direction, and
+ * `budget.ts` and `POST /api/runs` import it: the form has to render the list
+ * and the door has to refuse everything outside it, and two hand-kept copies of
+ * a closed vocabulary is how a value the form offers becomes a value the door
+ * rejects. Nothing in here is a server import, so the rule this file exists for
+ * still holds.
+ */
+export type RunProviderDTO = "claude" | "codex";
+
+/** Every provider the run form offers, in the order it offers them. */
+export const RUN_PROVIDERS: readonly RunProviderDTO[] = ["claude", "codex"];
+
+/** What each one is called in the interface. */
+export const RUN_PROVIDER_LABEL: Record<RunProviderDTO, string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+};
+
 export interface RunDTO {
   id: string;
   /** Absolute, canonicalised folder the operator picked. */
@@ -1082,6 +1103,12 @@ export interface RunDTO {
   relPath?: string;
   prompt: string;
   model: string | null;
+  /**
+   * `null` is "not recorded", never "Claude". The column landed after this row
+   * did, and a row that predates it cannot be asked what it ran as; rendering
+   * the two the same puts a claim on history that nobody made.
+   */
+  provider: RunProviderDTO | null;
   /**
    * Duplicated from `RunStatus` in `orchestrator.ts` rather than imported, for
    * this file's stated rule: it is the client-safe mirror and must not pull a

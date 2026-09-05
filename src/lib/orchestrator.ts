@@ -120,7 +120,12 @@ import { clipToolInput, MAX_LOG_CHARS, toolArgs } from "./logLine";
 // Same direction, same reason: the cycle deadline says how long it waited in
 // the words the run page already uses for every other span.
 import { fmtDuration, fmtTokens, shortId } from "./format";
-import type { RunDependencyDTO, SandboxStateDTO } from "./apiTypes";
+import {
+  RUN_PROVIDER_LABEL,
+  type RunDependencyDTO,
+  type RunProviderDTO,
+  type SandboxStateDTO,
+} from "./apiTypes";
 import {
   STDERR_TAIL_LIMIT,
   clipReason,
@@ -189,6 +194,12 @@ export interface RunRow {
   folder: string;
   prompt: string;
   model: string | null;
+  /**
+   * Which agent CLI this run's cycles are spawned as. `null` is "not recorded"
+   * — the row predates the column — and is never read as "claude"; the only
+   * place that reads it is the run page, which says so.
+   */
+  provider: RunProviderDTO | null;
   status: RunStatus;
   budget: string;
   baseline: string | null;
@@ -3061,6 +3072,16 @@ export interface CreateRunInput {
   mountId?: string | null;
   prompt: string;
   model?: string | null;
+  /**
+   * Which agent CLI this run's cycles are spawned as.
+   *
+   * Absent means "not recorded", and it is what every caller other than
+   * `POST /api/runs` passes: a workflow node, a chat proposal and a reopened run
+   * all deliberately have no provider to name, and writing `'claude'` for them
+   * would be this app answering a question nobody asked it. Only the form's own
+   * door, where a person picked, may write a value here.
+   */
+  provider?: RunProviderDTO | null;
   permissionMode?: PermissionMode;
   /** Give this run its own checkout. Defaults on for a git repository. */
   isolate?: boolean;
@@ -3712,16 +3733,21 @@ export function createRun(input: CreateRunInput): RunRow {
     db()
       .prepare(
         `INSERT INTO runs
-           (id, folder, prompt, model, status, budget, max_iterations, iterations, created_at, spent_usd, spent_tokens,
+           (id, folder, prompt, model, provider, status, budget, max_iterations, iterations, created_at, spent_usd, spent_tokens,
             work_dir, isolation, repo_root, worktree_path, worktree_branch, worktree_base, worktree_base_branch,
             continues_run, agent, file_cost_notice, origin, origin_ref)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
         folder,
         prompt,
         input.model ?? settings.defaultModel,
+        // No `?? "claude"`, unlike the model above: the model has a settings
+        // default to fall back to, and a provider nobody named is a question
+        // that was never put to anybody. Null here is what the run page renders
+        // as "not recorded".
+        input.provider ?? null,
         waiting ? "waiting" : "queued",
         budgetBlob,
         // 0 is the stored sentinel for "no cap" — see the schema comment in
@@ -5678,6 +5704,32 @@ const CLAUDE_ADAPTER: CycleAdapter = Object.freeze({
  */
 export function selectCycleAdapter(): CycleAdapter {
   return CLAUDE_ADAPTER;
+}
+
+/**
+ * Why a run cannot be spawned as this provider, or null when it can.
+ *
+ * Beside `selectCycleAdapter` because it is the same fact read the other way
+ * round, and keeping them apart is how the form comes to offer a provider the
+ * loop would quietly run as Claude: `selectCycleAdapter` takes no argument, so
+ * a `codex` row reaching the loop would spawn Claude Code and record the run as
+ * something it was not. The door is where that is caught, and this is the
+ * sentence it says.
+ *
+ * Honest rather than hopeful: there is no Codex adapter in this build, so
+ * `codex` is refused outright. The form still offers it, and that is deliberate
+ * — being told at the door what a build cannot do is the disclosure this whole
+ * option was chosen for, and a silently missing option teaches nobody anything.
+ * Implementing the adapter is what deletes this function, not what edits it.
+ */
+export function unsupportedProviderRefusal(
+  provider: RunProviderDTO | null,
+): string | null {
+  if (provider === null || provider === "claude") return null;
+  return (
+    `This build has no ${RUN_PROVIDER_LABEL[provider]} adapter, so a run cannot ` +
+    "be spawned as one yet. Start it as Claude Code, or wait for the adapter."
+  );
 }
 
 /**

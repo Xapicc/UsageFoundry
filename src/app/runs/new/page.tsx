@@ -4,7 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { MAX_TEMPLATE_NAME } from "@/lib/apiTypes";
+import {
+  MAX_TEMPLATE_NAME,
+  RUN_PROVIDER_LABEL,
+  RUN_PROVIDERS,
+} from "@/lib/apiTypes";
 import type {
   AgentDTO,
   AmbientAgentDTO,
@@ -12,6 +16,7 @@ import type {
   EnforcementModeDTO,
   FoldersResponse,
   RunDTO,
+  RunProviderDTO,
   RunTemplateDTO,
   SettingsDTO,
   UsageResponse,
@@ -220,6 +225,13 @@ const DEFAULT_VALUES: FormValues = {
   enforcement: "between-cycles",
   continueAfterDone: false,
 };
+
+/**
+ * Claude Code, and stated rather than left blank. Blank would be a second way
+ * of writing "not recorded", and that reading belongs to rows written before
+ * the column — never to a field a person was shown and left alone.
+ */
+const DEFAULT_PROVIDER: RunProviderDTO = "claude";
 
 /** A positive number, or null — the same reading `normalizePolicy` gives a field. */
 function positive(raw: string): number | null {
@@ -470,6 +482,14 @@ export default function NewRunPage() {
   );
   const [agentId, setAgentId] = useState(DEFAULT_VALUES.agentId);
   const [model, setModel] = useState(DEFAULT_VALUES.model);
+  // Deliberately outside `FormValues`, so it is outside the baseline and the
+  // per-row reset with it. Those answer "is this still what the template
+  // asked for", and a template can never ask: per-template opt-in is option D
+  // and was not the one chosen. Copying a run does not seed it either, because
+  // a run's own value may be `null` — "not recorded" — which has no seat on a
+  // control whose every option is a claim. A reset offering to put back a
+  // provider nothing ever named would be inventing provenance.
+  const [provider, setProvider] = useState(DEFAULT_PROVIDER);
   const [iterationsCapped, setIterationsCapped] = useState(
     DEFAULT_VALUES.iterationsCapped,
   );
@@ -1233,6 +1253,7 @@ export default function NewRunPage() {
           // `createRun` reaches its `?? settings.defaultModel` — which is the
           // whole of what "blank means whatever Settings says" is made of.
           ...modelFromForm(model),
+          provider,
           budget: budgetFromForm(current),
         }),
       });
@@ -1588,7 +1609,66 @@ export default function NewRunPage() {
                 />
               </div>
             </ListRow>
+
+            {/* Beside the model and never among the guards, on that row's own
+                grounds: which CLI runs the cycles moves what a run may do and
+                what this app can read about it, and neither of those is a
+                bound. A picker rather than free text, unlike the model above,
+                and that is the difference between the two fields: a model this
+                build has never heard of is resolved by the CLI at the spawn,
+                where a provider this build has never heard of is a run with no
+                adapter to spawn it through at all. So the set is closed, it is
+                the same `RUN_PROVIDERS` the door narrows against, and what is
+                offered here is exactly what could be accepted there. */}
+            <ListRow
+              htmlFor="provider"
+              label="Provider"
+              description="Which agent CLI runs the work cycles"
+            >
+              <div className="w-64">
+                <Select
+                  id="provider"
+                  value={provider}
+                  onChange={(e) =>
+                    setProvider(e.target.value as RunProviderDTO)
+                  }
+                >
+                  {RUN_PROVIDERS.map((p) => (
+                    <option key={p} value={p}>
+                      {RUN_PROVIDER_LABEL[p]}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </ListRow>
           </ListGroup>
+
+          {/* The disclosure this whole choice was made for, and the reason the
+              provider is picked here rather than swapped at a wall: an option
+              that merely appears in a list is an option nobody was told the
+              price of, and a form is the only surface in this app with a person
+              on it at the moment of the decision. Shown on selection rather
+              than always, because it is about a run that is not the ordinary
+              one; the refusal comes first because it is what happens today. */}
+          {provider !== "claude" && (
+            <Hint tone="warn" className="mb-3.5">
+              <strong>
+                {RUN_PROVIDER_LABEL[provider]} is refused at the moment
+              </strong>{" "}
+              — this build has no adapter for it, so Start will say so. When one
+              lands, four things a work cycle has today come from Claude
+              Code&rsquo;s own flags and none of them crosses: the deny list
+              that stops an agent running <span className="mono">pkill</span> or{" "}
+              <span className="mono">killall</span> against the server
+              supervising it, the notice telling it what it is running inside,
+              the sandbox and the directory grants argued at the spawn, and the
+              credential in the mounted <span className="mono">~/.claude</span>.
+              This app cannot read such a run&rsquo;s usage either, so neither
+              window percentage below constrains it and its spending limit
+              reaches no work cycle — which is why it needs a work-cycle limit
+              or a time limit.
+            </Hint>
+          )}
 
           {/* A stated fallback rather than a silent one: the form starts as no
               agent, and says which setting to fix. */}

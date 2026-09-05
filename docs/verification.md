@@ -1807,6 +1807,31 @@ Built and exercised against real transcripts:
   after the next `docker compose up --build`: it should go to zero for project
   trees and keep the handful in the config directory and the one `.idea`.
 
+- **`runs.provider`, its admission refusals and its two labels exercised end to
+  end in the container**, 2026-09-05, against a scratch `DATA_DIR` and a built
+  server (`npm start`, not `npm run dev`). `PRAGMA table_info(runs)` reports
+  `provider TEXT`, nullable, no default, at cid 47; the exact `INSERT` statement
+  `createRun` uses was prepared and run against the migrated schema with
+  `'codex'` and with `null`, which is what confirms its column list, placeholder
+  arity and bound-parameter count still agree — a mismatch there typechecks
+  clean and throws only at the first real run. Four `POST /api/runs` requests,
+  each answered 400 with its own sentence: `provider: "gpt"` → *Unknown
+  provider: gpt*; `codex` with `maxIterations: null`, `maxDurationMinutes: null`
+  and a 5-hour fraction and a cost cap set → the C2 refusal naming the window
+  guards and the spending limit; the **same** policy under `claude` → the
+  generic `no_terminus` sentence, which is what shows the ordering keeps both
+  reachable; and `codex` with `maxIterations: 1` → *This build has no Codex
+  adapter*. The run form was driven with Playwright: selecting Codex reveals the
+  disclosure, and the run page was rendered for two seeded `needs-review` rows —
+  `provider = 'claude'` draws `Spawned as / Claude Code` and *Claude Code
+  produced what is here.*, `provider = null` draws `Spawned as / not recorded`
+  and *Which agent CLI produced what is here was not recorded.* **What is not
+  verified: no cycle has been spawned with a provider on its row at all.** No
+  Codex adapter exists, so the only run that could reach the loop is a Claude
+  one, and none was started here — the seeded rows were written directly. The
+  refusal at the door is what stands between a `codex` row and a loop that would
+  spawn Claude Code for it, and it is the refusal, not the loop, that was tested.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the

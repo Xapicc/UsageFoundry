@@ -3,6 +3,7 @@
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { RUN_PROVIDER_LABEL } from "@/lib/apiTypes";
 import type {
   ContextOccupancyDTO,
   ContextPrunerDTO,
@@ -242,11 +243,28 @@ function describeRun(
       // Says what the state means and what to do about it, never what the agent
       // said — that is rendered verbatim underneath, which is the contract on
       // `RunState.detail` above.
+      //
+      // And which CLI produced it, because this is the one card in the app read
+      // at the moment somebody decides whether to act on a diff, and that is
+      // the fact the diff itself does not carry. Once, here and in `How it was
+      // set up`, and nowhere between — a provider on every card would be noise
+      // on the states where nobody is being asked to judge anything.
+      //
+      // Not recorded is said as not recorded. A row that predates the column
+      // was never asked, and answering "Claude Code" on its behalf is exactly
+      // the false assurance this sentence exists to avoid.
       return {
         tone: "warn",
         headline: "Needs review",
-        detail:
-          "Nothing failed. It reached something it could not get past on its own, and said so rather than spending more work cycles against it.",
+        detail: (
+          <>
+            Nothing failed. It reached something it could not get past on its
+            own, and said so rather than spending more work cycles against it.{" "}
+            {run.provider
+              ? `${RUN_PROVIDER_LABEL[run.provider]} produced what is here.`
+              : "Which agent CLI produced what is here was not recorded."}
+          </>
+        ),
       };
 
     case "completed":
@@ -1565,6 +1583,33 @@ export default function RunDetail({
                     </GuardValue>
                   </ListRow>
                 )}
+              </ListGroup>
+            </Section>
+
+            {/* Which CLI ran it — its own section rather than a third row under
+                `Model`, because a provider is not one: the two rows above are a
+                model and a fallback model, and a third headed by a word that
+                names neither would read as one.
+
+                In this region for the model's own reason, though. A provider
+                bounds nothing, so the same argument that keeps `Model` out of
+                the guard group keeps this out of it.
+
+                `null` is "not recorded" and is never drawn as "Claude Code":
+                the column landed after this row did, so a row that predates it
+                was never asked. That is `git-and-review.md`'s distinction
+                between a question answered "none" and a question nobody put,
+                and collapsing the second into the first would put a claim on
+                history that nothing in this app can support. */}
+            <Section title="Provider">
+              <ListGroup>
+                <ListRow label="Spawned as">
+                  <GuardValue>
+                    {run.provider
+                      ? RUN_PROVIDER_LABEL[run.provider]
+                      : "not recorded"}
+                  </GuardValue>
+                </ListRow>
               </ListGroup>
             </Section>
 

@@ -1,4 +1,7 @@
 import type { UsageSnapshot, WindowState } from "./windows";
+// The provider vocabulary, from the one module both the form and this door may
+// import. Client-safe and pure; the dependency runs the permitted way round.
+import { RUN_PROVIDER_LABEL, type RunProviderDTO } from "./apiTypes";
 
 /**
  * Budget policy: the rules that decide whether a run may keep working.
@@ -395,6 +398,47 @@ export function windowGuardRefusal(
     return NO_READING_REASON.session;
   }
   return null;
+}
+
+/**
+ * The refusal a run under a provider this app cannot meter earns **at a door**,
+ * when nothing in its policy would bound it.
+ *
+ * The condition is the same one `no_terminus` tests, and that is not an
+ * oversight: `maxIterations` and `maxDurationMinutes` are the only two monotone
+ * termini either way, so "one of them must be present" is already the rule for
+ * every run. What changes with the provider is *why*, and the why is the whole
+ * of what this adds. A Claude run refused for no terminus still had three other
+ * limits doing real work — the window fractions read this account's own
+ * utilisation, and `maxRunCostUSD` reaches the cycle as `--max-budget-usd`. For
+ * a provider whose usage this app cannot read, all three are decoration: the
+ * fractions measure a population this run is not in, and no in-cycle ceiling is
+ * handed to a CLI there is no adapter for. Telling that operator only "nothing
+ * would ever end it" would leave them believing the fractions they set were the
+ * safety net they are not.
+ *
+ * So it is checked *before* the generic refusal, both refusals stay reachable,
+ * and the more specific sentence is the one a person sees. Constraint C2 in
+ * `proposals/ProviderFallback/01-constraints.md`.
+ *
+ * A `null` provider is a row with no answer recorded rather than a claim of
+ * anything, and this build only ever writes one at the same door that would
+ * have refused it — so it is treated as Claude here and nowhere that renders.
+ */
+export function providerTerminusRefusal(
+  provider: RunProviderDTO | null,
+  policy: BudgetPolicy,
+): string | null {
+  if (provider === null || provider === "claude") return null;
+  if (policy.maxIterations !== null || policy.maxDurationMinutes !== null) {
+    return null;
+  }
+  return (
+    `A ${RUN_PROVIDER_LABEL[provider]} run needs a work-cycle limit or a time ` +
+    "limit. Neither window guard constrains it — those percentages measure " +
+    "Claude usage, which this run does not add to — and its spending limit " +
+    "reaches no cycle, so those three would leave nothing to end it."
+  );
 }
 
 export function evaluateBudget(

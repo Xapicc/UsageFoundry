@@ -1852,6 +1852,19 @@ function migrate(db: Database.Database) {
   // next reader greping for it finds the live one and not a fossil.
   db.prepare("DELETE FROM settings WHERE key = 'dreaming.cursor'").run();
 
+  // Which agent CLI this run's work cycles are spawned as, chosen once at
+  // admission and never per cycle. `POST /api/runs` is the only writer.
+  //
+  // Nullable with no default, and that is the whole point of the column: NULL
+  // means the row predates it and cannot be asked what it ran as. Defaulting to
+  // 'claude' would backfill a claim onto every historical row that nothing ever
+  // recorded, and the run page is required to keep the two apart — the reason
+  // `provider IS NULL` renders as "not recorded" there and never as "Claude".
+  //
+  // Additive, so no version bump: `addColumn` reads the live schema and
+  // destroys nothing, and `SCHEMA_VERSION` records that a *rebuild* finished.
+  addColumn(db, "runs", "provider", "TEXT");
+
   // Anything still wearing the rebuild suffix after the one rebuild above has
   // run. Last, so a leftover this boot has just completed is not reported as
   // one it left behind.

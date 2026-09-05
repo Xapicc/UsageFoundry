@@ -11,6 +11,7 @@ import {
   isRunStatus,
   listRunsPage,
   queuePosition,
+  unsupportedProviderRefusal,
   type DependencyEdge,
   type RunDependencyInput,
 } from "../../../lib/orchestrator";
@@ -19,15 +20,18 @@ import { recentOpsEvents } from "../../../lib/ops";
 import { jsonMaybeGzipped } from "../../../lib/http";
 import {
   MAX_LIST_PROMPT,
+  RUN_PROVIDERS,
   type BootReconcileDTO,
   type RunListDTO,
   type RunListItemDTO,
+  type RunProviderDTO,
 } from "../../../lib/apiTypes";
 import { PERMISSION_MODES, type PermissionMode } from "../../../lib/settings";
 import { resolveAgentForRun, runAgentDTO } from "../../../lib/agents";
 import {
   ENFORCEMENT_MODES,
   normalizePolicy,
+  providerTerminusRefusal,
   windowGuardRefusal,
 } from "../../../lib/budget";
 import { auditMutation, SUBJECT_HEADER } from "../../../lib/requestLog";
@@ -249,6 +253,24 @@ async function postHandler(req: Request) {
     permissionMode = candidate as PermissionMode;
   }
 
+  // Which agent CLI to spawn as, narrowed against the closed set for the same
+  // reason the mode above is: this decides which binary runs unattended over the
+  // operator's files, and a value nothing recognises must not become a run that
+  // quietly spawned Claude Code instead. Absent is "not recorded" and stays
+  // null on the row — every caller of `createRun` other than this one has no
+  // provider to name, and only a person who picked may write one.
+  let provider: RunProviderDTO | undefined;
+  if (body.provider !== undefined && body.provider !== null) {
+    const candidate = String(body.provider);
+    if (!(RUN_PROVIDERS as readonly string[]).includes(candidate)) {
+      return NextResponse.json(
+        { error: `Unknown provider: ${candidate}` },
+        { status: 400 },
+      );
+    }
+    provider = candidate as RunProviderDTO;
+  }
+
   // Narrowed against the registry the way the mode above is narrowed against
   // its four literals, and refused rather than dropped when it names nothing:
   // the operator started the run that said "and hand the review to the reviewer
@@ -280,6 +302,15 @@ async function postHandler(req: Request) {
   // normalises again, which is a no-op by construction.
   const policy = normalizePolicy(rawBudget);
 
+  // Before the generic refusal below and testing the same condition, because
+  // for a provider this app cannot meter the *reason* is a different and
+  // stronger one — the fractions and the spending limit are not weaker limits
+  // there, they are no limits at all. `providerTerminusRefusal` says why.
+  const terminus = providerTerminusRefusal(provider ?? null, policy);
+  if (terminus) {
+    return NextResponse.json({ error: terminus }, { status: 400 });
+  }
+
   if (policy.maxIterations === null && policy.maxDurationMinutes === null) {
     return NextResponse.json(
       {
@@ -290,6 +321,14 @@ async function postHandler(req: Request) {
       },
       { status: 400 },
     );
+  }
+
+  // Last of the provider's own refusals, so an operator who asked for something
+  // this build cannot spawn hears about the policy they wrote as well — that
+  // one outlives the missing adapter, and this one is deleted by it.
+  const unsupported = unsupportedProviderRefusal(provider ?? null);
+  if (unsupported) {
+    return NextResponse.json({ error: unsupported }, { status: 400 });
   }
 
   const deps = readDependencies(body.dependsOn);
@@ -328,6 +367,7 @@ async function postHandler(req: Request) {
       mountId: body.mountId ? String(body.mountId) : null,
       prompt: String(body.prompt ?? ""),
       model: body.model ? String(body.model) : null,
+      provider: provider ?? null,
       permissionMode,
       isolate: body.isolate === undefined ? undefined : body.isolate !== false,
       agent: agent.agent,
