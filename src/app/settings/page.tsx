@@ -13,6 +13,8 @@ import type {
   BudgetPolicyDTO,
   ClaudeAuthDTO,
   ClaudeAuthStateDTO,
+  CodexAuthDTO,
+  CodexAuthStateDTO,
   KnowledgeStatusDTO,
   PluginsReportDTO,
   PruneTier,
@@ -1435,6 +1437,282 @@ function ClaudeAccount() {
 }
 
 /**
+ * The container's Codex login, beside the Claude one and deliberately not
+ * folded into it.
+ *
+ * Two credentials, two providers, two rows — the same argument that keeps
+ * "Sign-in" separate from "Claude account" one line up. What makes this row a
+ * different *shape* rather than a copy is that a Codex device sign-in is
+ * finished somewhere this app cannot see: the CLI prints a link and a one-time
+ * code, then polls OpenAI on its own, and the operator approves it in a browser.
+ * **That approval is the manual step and nothing here can take it.** So there is
+ * no code field to paste back into — the field next door — and instead a poll,
+ * because the only way this page learns the sign-in worked is by asking again.
+ *
+ * The poll stands down the moment `pending` is null, which is the general rule
+ * for one here: with no device login in flight nothing about this row moves
+ * without a button being pressed. It re-arms off the reload that follows a
+ * press, not off a flag, so a flow started in another tab is picked up too.
+ *
+ * The Sign in button is offered only when signed out, and that is a safety
+ * property rather than tidiness: starting a device flow **deletes the stored
+ * credential immediately**, before anybody has approved anything, so a press
+ * beside a healthy login is a sign-out that might not be followed by a sign-in.
+ */
+function CodexAccount() {
+  const [state, setState] = useState<CodexAuthStateDTO | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  /** Whether the device sheet is on screen. The flow itself is server state. */
+  const [showDevice, setShowDevice] = useState(false);
+  const [keyOpen, setKeyOpen] = useState(false);
+  const [apiKey, setApiKey] = useState("");
+  const [confirmOut, setConfirmOut] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [flowError, setFlowError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    const res = await jsonRequest<CodexAuthStateDTO>("/api/codex-auth");
+    if (!res.ok) {
+      setLoadError(
+        actionFailureMessage(res, "Could not read the Codex sign-in."),
+      );
+      return;
+    }
+    setLoadError(null);
+    setState(res.data);
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const auth = state?.auth ?? null;
+  const pending = state?.pending ?? null;
+  // The instant the flow began, which is stable across reloads in a way the
+  // object around it is not: keying the effect on `pending` itself would tear
+  // the interval down and build a new one on every tick.
+  const pendingSince = pending?.startedAt ?? null;
+
+  useEffect(() => {
+    if (pendingSince === null) return;
+    const timer = setInterval(() => void load(), 4000);
+    return () => clearInterval(timer);
+  }, [pendingSince, load]);
+
+  async function begin() {
+    setBusy(true);
+    setFlowError(null);
+    const res = await jsonRequest<{ url: string; code: string }>(
+      "/api/codex-auth/login",
+      { method: "POST", body: {} },
+    );
+    setBusy(false);
+    if (!res.ok) {
+      setLoadError(actionFailureMessage(res, "Could not start the sign-in."));
+      return;
+    }
+    // The link and the code are read back off the server rather than out of
+    // this answer, so the sheet and the row are one copy of the flow and a
+    // reload finds the same thing this press did.
+    setShowDevice(true);
+    await load();
+  }
+
+  /** Closing with Cancel abandons the child too, or it polls for a quarter hour. */
+  async function abandon() {
+    setShowDevice(false);
+    await jsonRequest("/api/codex-auth/login", { method: "DELETE" });
+    void load();
+  }
+
+  async function submitKey() {
+    setBusy(true);
+    setFlowError(null);
+    const res = await jsonRequest<{ auth: CodexAuthDTO }>(
+      "/api/codex-auth/api-key",
+      { method: "POST", body: { apiKey } },
+    );
+    setBusy(false);
+    if (!res.ok) {
+      setFlowError(actionFailureMessage(res, "That key was not accepted."));
+      return;
+    }
+    // Cleared on the way out as well as on the way in: the value is a
+    // credential and there is no reason for it to outlive the request.
+    setApiKey("");
+    setKeyOpen(false);
+    setState({ auth: res.data.auth, error: null, pending: null, loginError: null });
+  }
+
+  async function out() {
+    setBusy(true);
+    const res = await jsonRequest<{ auth: CodexAuthDTO }>(
+      "/api/codex-auth/logout",
+      { method: "POST", body: {} },
+    );
+    setBusy(false);
+    setConfirmOut(false);
+    if (!res.ok) {
+      setLoadError(actionFailureMessage(res, "Could not sign out."));
+      return;
+    }
+    setState({ auth: res.data.auth, error: null, pending: null, loginError: null });
+  }
+
+  const identity =
+    auth?.method === "chatgpt"
+      ? "ChatGPT subscription"
+      : auth?.method === "apikey"
+        ? ["API key", auth.apiKeyHint].filter(Boolean).join(" · ")
+        : "no method reported";
+
+  return (
+    <EnvRow label="Codex account">
+      {state === null && loadError === null ? (
+        <span>reading…</span>
+      ) : loadError ? (
+        <>
+          <Badge tone="danger">unavailable</Badge> <span>{loadError}</span>{" "}
+          <Button variant="secondary" onClick={() => void load()}>
+            Retry
+          </Button>
+        </>
+      ) : auth === null ? (
+        // The CLI answered something we cannot read — which for this CLI
+        // includes a credential file it could not parse. Not fixed by signing
+        // in, and signing in would delete what is there, so no button.
+        <>
+          <Badge tone="danger">unreadable</Badge>{" "}
+          <span>{state?.error ?? "the CLI did not answer"}</span>
+        </>
+      ) : (
+        <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1.5">
+          {pending ? (
+            <>
+              <Badge tone="warn">waiting for approval</Badge>
+              <span>enter the code at OpenAI to finish</span>
+              <Button variant="secondary" onClick={() => setShowDevice(true)}>
+                Show code
+              </Button>
+            </>
+          ) : auth.loggedIn ? (
+            <>
+              <Badge tone="ok">signed in</Badge>
+              <span>{identity}</span>
+              <Button variant="secondary" onClick={() => setConfirmOut(true)}>
+                Sign out
+              </Button>
+            </>
+          ) : (
+            <>
+              {/* Not `danger`: nothing in this app spawns Codex yet, so a
+                  container with no Codex credential is an ordinary state
+                  rather than a fault, and a red badge here would send an
+                  operator looking for a problem they do not have. */}
+              <Badge tone="neutral">signed out</Badge>
+              {state?.loginError && <span>{state.loginError}</span>}
+              <Button variant="secondary" busy={busy} onClick={() => void begin()}>
+                Sign in
+              </Button>
+              <Button variant="secondary" onClick={() => setKeyOpen(true)}>
+                Use API key
+              </Button>
+            </>
+          )}
+        </span>
+      )}
+
+      {/* Inside the row for `ClaudeAccount`'s reason: `EnvRow` renders a `<dd>`,
+          which takes a `<dialog>`, where a sibling would be an illegal child of
+          the `<dl>`. */}
+      <Sheet
+        open={showDevice && pending !== null}
+        onDismiss={() => void abandon()}
+        title="Sign in to Codex"
+        cancelLabel="Cancel sign-in"
+        confirmLabel="Done"
+        busy={busy}
+        onConfirm={() => setShowDevice(false)}
+      >
+        <p>
+          Open this page, sign in to your OpenAI account, then enter the code
+          below. It expires in 15 minutes and the link works from any device.
+        </p>
+        <p className="mt-3">
+          <a
+            href={pending?.url ?? "#"}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Open the OpenAI device page
+          </a>
+        </p>
+        {/* The URL as text as well as a link, for the reason next door: the
+            browser showing this page is often not the one signed in to OpenAI,
+            and on a remote container it may not reach the page at all. */}
+        <p className="mono mt-2 break-all text-xs text-ink-faint">
+          {pending?.url}
+        </p>
+        <p className="mono mt-4 text-lg">{pending?.code}</p>
+        <p className="mt-3 text-ink-faint">
+          Waiting for approval. This page notices on its own; Done just puts it
+          away.
+        </p>
+      </Sheet>
+
+      <Sheet
+        open={keyOpen}
+        onDismiss={() => {
+          setKeyOpen(false);
+          setApiKey("");
+          setFlowError(null);
+        }}
+        title="Sign in with an API key"
+        confirmLabel="Save"
+        confirmDisabled={apiKey.trim() === ""}
+        busy={busy}
+        onConfirm={() => void submitKey()}
+      >
+        <p>
+          The fallback for an install with no ChatGPT subscription. It is billed
+          per token rather than against a plan.
+        </p>
+        <Field
+          className="mt-4"
+          label="API key"
+          htmlFor="codex-api-key"
+          error={flowError}
+        >
+          <Input
+            id="codex-api-key"
+            type="password"
+            value={apiKey}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(e) => setApiKey(e.target.value)}
+          />
+        </Field>
+      </Sheet>
+
+      <Sheet
+        open={confirmOut}
+        onDismiss={() => setConfirmOut(false)}
+        title="Sign out of Codex?"
+        confirmLabel="Sign out"
+        confirmVariant="danger"
+        busy={busy}
+        onConfirm={() => void out()}
+      >
+        <p>
+          The stored credential is removed from this container. This does not
+          end your session on this page.
+        </p>
+      </Sheet>
+    </EnvRow>
+  );
+}
+
+/**
  * What confines a tool call, in the manner of the two rows above it: presence
  * rather than content, and the one fact that changes what an agent can reach.
  *
@@ -2065,6 +2343,7 @@ export default function SettingsPage() {
           )}
         </EnvRow>
         <ClaudeAccount />
+        <CodexAccount />
         <FailedSignIns summary={env.signIn} />
       </dl>
 

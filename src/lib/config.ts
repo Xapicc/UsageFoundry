@@ -507,6 +507,28 @@ export const NOTIFY_ON_SUCCESS = optionalEnv("UF_NOTIFY_ON_SUCCESS");
 /** Path to the Claude Code executable inside the container. */
 export const CLAUDE_BIN = env("CLAUDE_BIN", "claude");
 
+/** Path to the Codex executable, for the sign-in panel beside Claude's. */
+export const CODEX_BIN = env("CODEX_BIN", "codex");
+
+/**
+ * Where Codex keeps its credential, named explicitly rather than left to the
+ * child's `HOME`.
+ *
+ * The CLI's own variable, and the default is the CLI's own default, so that
+ * `codex login status` typed into a shell in this container answers about the
+ * same file the Settings panel does. That agreement is the whole point of
+ * reading it out of `env()`: an install that points the agents at one
+ * `CODEX_HOME` and this app at another gets a page reporting a sign-in no run
+ * can use, which is the failure `claudeAuth.ts` drops its login child's uid to
+ * avoid.
+ *
+ * Not a mounted path on a stock install — `docker-compose.yml` binds
+ * `~/.claude` and nothing else — so a credential written here lives in the
+ * container's writable layer. That is a deployment fact rather than a decision
+ * this module can make, and it is recorded in `docs/verification.md`.
+ */
+export const CODEX_HOME = env("CODEX_HOME", path.join(os.homedir(), ".codex"));
+
 /** Path to git, used to give concurrent runs their own checkout. */
 export const GIT_BIN = env("GIT_BIN", "git");
 

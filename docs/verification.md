@@ -1807,12 +1807,70 @@ Built and exercised against real transcripts:
   after the next `docker compose up --build`: it should go to zero for project
   trees and keep the handful in the config directory and the one `.idea`.
 
+- **The Codex sign-in panel, driven end to end against `codex-cli 0.153.4`** on
+  2026-09-05, on a built server (`npm start`) with a scratch `DATA_DIR` and a
+  scratch `CODEX_HOME`, and separately in a browser through Playwright. Every
+  reading in `codexAuth.ts` comes from this run rather than from `--help`.
+  `codex login status` has **four** answers and the exit code splits them wrong:
+  `Not logged in` exits 1 and so does `Error checking login status: <detail>` on
+  a credential file it cannot parse, which is why `parseCodexStatus` reads the
+  text and reports the second as unreadable rather than as signed out. The
+  device flow prints its URL *and* a one-time code — `https://auth.openai.com/codex/device`
+  and e.g. `W0YZ-APHI9` — wrapped in SGR colour **that survives `NO_COLOR=1` and
+  `FORCE_COLOR=0` and a pipe**, then polls silently; nothing comes back through
+  this app, and starting one **deletes the stored credential immediately**,
+  before anyone approves anything (measured: an API-key install answered `Not
+  logged in` seconds after a device flow began). `codex login --with-api-key`
+  reads stdin and **exits 0 having read nothing**, printing "No API key provided
+  via stdin." — so the exit code is not a success signal and `submitApiKey`
+  re-reads the status and requires it to say `apikey`. What the routes did:
+  `GET /api/codex-auth` on an empty home answered signed out; a blank key was
+  refused 400; a key posted to `/api/codex-auth/api-key` came back
+  `{"loggedIn":true,"method":"apikey","apiKeyHint":"sk-proj-***56789"}` and
+  `codex login status` on the same `CODEX_HOME` printed the identical mask;
+  `/api/codex-auth/logout` returned it to `Not logged in`, the CLI agreeing;
+  `/api/codex-auth/login` returned a live URL and code, `GET` reported it
+  `pending`, and `DELETE` cleared it. **The key reached no log**: grepping the
+  server's stdout and the whole of `DATA_DIR` for a posted key found nothing,
+  and the only copy on disk was `$CODEX_HOME/auth.json`, mode 0600, which is
+  where the CLI puts it. In the browser the Settings row read `SIGNED OUT ·
+  Sign in · Use API key`, the sheet rendered the link, the URL as text and the
+  code, and after `Done` the row read `WAITING FOR APPROVAL · Show code`.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the
 standalone bundle), and are covered by the unit tests above, but the following
 have **not** been exercised against a real CLI. They are the list to work
 through before trusting this unattended:
+
+> **No Codex device sign-in has ever been completed, because there is no OpenAI
+> account in this container to complete one with.** Everything up to the
+> approval was driven against the real CLI and is recorded above; the step that
+> was not taken is the manual one — open `https://auth.openai.com/codex/device`,
+> sign in, type the code — and it is the one nothing in this app can take on the
+> operator's behalf. So four things are untested. That the child exits 0 and
+> writes `auth.json` on approval, which is what `pendingLogin()` clearing is
+> supposed to mean. That `codex login status` then prints `Logged in using
+> ChatGPT` for a *real* subscription: the panel's reading of that line was
+> exercised against a **hand-written** `auth.json` carrying an unsigned JWT, so
+> the string is confirmed and the credential behind it is not. That
+> `CodexAuthStateDTO.loginError` ever carries anything, since it is written only
+> from a non-zero exit of the device child and no such exit has been observed —
+> an expired code, a declined approval and a network failure are all unmeasured.
+> And that the Settings row's poll converges: it was watched arming and standing
+> down around a *cancelled* flow, never around one that succeeded. Nothing here
+> degrades loudly — a device flow that succeeded and was not noticed leaves a row
+> saying `waiting for approval` over a container that is signed in.
+>
+> Two deployment facts belong beside it. `codex` is **not in the `Dockerfile`**
+> — it is present in the agent container this was built in and nowhere else — so
+> on a stock image every one of these routes answers `Could not run \`codex\``.
+> And `~/.codex` is **not a mounted volume**: `docker-compose.yml` binds
+> `~/.claude` and nothing else, so a credential written by this panel lives in
+> the container's writable layer and does not survive `docker compose up
+> --build`. `CODEX_HOME` is read through `env()` so an install can point it at a
+> mount, but no default here does.
 
 > **The pin moved to 2.1.260 on 2026-09-04, and nothing on this page has been
 > re-measured against it.** Every figure above that names a CLI names 2.1.226,

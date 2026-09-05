@@ -965,6 +965,56 @@ export interface ClaudeAuthStateDTO {
   pending: { url: string; startedAt: number } | null;
 }
 
+/**
+ * Whether the container's Codex has a credential, and of which kind.
+ *
+ * Deliberately thinner than `ClaudeAuthDTO` rather than padded out to match it.
+ * `codex login status` answers with the *method* and nothing else — a
+ * subscription login reports no email, no organisation and no plan — and the
+ * only way to put those on the page would be to decode the id token out of
+ * `auth.json` here, which is a second reader of a credential file for a sentence
+ * nobody acts on.
+ *
+ * There is no `apiKeySource` twin either, and its absence is a measurement
+ * rather than an omission: `OPENAI_API_KEY` and `CODEX_API_KEY` in the
+ * environment do not change what the CLI reports, so no environment credential
+ * outranks the stored one the way `ANTHROPIC_API_KEY` outranks Claude's.
+ */
+export interface CodexAuthDTO {
+  loggedIn: boolean;
+  /** `chatgpt` for a subscription, `apikey` for the fallback, null when out. */
+  method: "chatgpt" | "apikey" | null;
+  /** The CLI's own mask of a stored key — `sk-proj-***67890`. Never the key. */
+  apiKeyHint: string | null;
+}
+
+/** `GET /api/codex-auth`. */
+export interface CodexAuthStateDTO {
+  /** Null exactly when the CLI could not be asked; `error` then says why. */
+  auth: CodexAuthDTO | null;
+  error: string | null;
+  /**
+   * A device login that has printed its link and code and is polling OpenAI.
+   *
+   * Carries the **code** as well as the link, which its Claude twin has no
+   * counterpart for: a Codex device flow is approved entirely in the browser, so
+   * the code is something the operator has to read off this page rather than
+   * something they bring back to it. Reported for the same reason as next door
+   * on top of that — the child outlives the tab, and a reload must not offer a
+   * fresh Sign in button that would kill a flow already half done.
+   */
+  pending: { url: string; code: string; startedAt: number } | null;
+  /**
+   * Why the last device login ended without signing in, if one did.
+   *
+   * Its own field because nothing else can carry it. No request comes back
+   * through this app when a device flow finishes, so a failure is otherwise
+   * indistinguishable from still waiting: `pending` goes null and the status
+   * does not change, which is exactly what a cancelled flow looks like too.
+   */
+  loginError: string | null;
+}
+
 /** Names a plan. Carries no ceiling, no email, no account UUID. */
 export interface AccountProfileDTO {
   subscriptionType: string | null;
