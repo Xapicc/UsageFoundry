@@ -1118,3 +1118,39 @@ export function buildArgs(opts: {
   }
   return args;
 }
+
+/**
+ * Everything the run loop knows about the agent CLI it spawns.
+ *
+ * Three things and no more: which executable a cycle is, what argv it is given,
+ * and how one line of its stdout is read back. They are named together rather
+ * than reached for separately because they are only correct as a set — an argv
+ * built for one CLI and parsed as another's produces a cycle with no cost, no
+ * session id and no stop reason, which is not an error anywhere: the run page,
+ * the log and the exit code are those of a cycle that finished with nothing to
+ * say. Selecting the three in one place is what makes that combination
+ * impossible to reach by forgetting one.
+ *
+ * `bin` is a field rather than a call so that it is fixed at the same moment
+ * the other two are. Reading it at the spawn instead would let a cycle's argv
+ * and its executable be chosen by different code at different times, which is
+ * the same failure one step further down.
+ *
+ * **There is exactly one implementation and adding a second is a separate
+ * change.** `proposals/ProviderFallback/05-option-c-provider-at-spawn.md` sets
+ * out what a second one owes — a column, a form field, an admission refusal for
+ * a policy whose only limits this app cannot enforce — and none of it is here.
+ */
+export interface CycleAdapter {
+  /** The executable a work cycle spawns. */
+  readonly bin: string;
+  /** This cycle's argv, rebuilt per cycle because `--resume` restores little. */
+  readonly buildArgs: typeof buildArgs;
+  /** One line of its `stream-json` stdout, folded into the cycle's totals. */
+  readonly parseLine: (
+    runId: string,
+    line: string,
+    acc: IterationResult,
+    onSession: (sessionId: string) => void,
+  ) => void;
+}

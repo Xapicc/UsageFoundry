@@ -128,6 +128,7 @@ import {
   cycleEnding,
   nextPrompt,
   startsFresh,
+  type CycleAdapter,
   type IterationResult,
 } from "./cycleInvocation";
 
@@ -4701,7 +4702,7 @@ export {
   nextPrompt,
   startsFresh,
 } from "./cycleInvocation";
-export type { CycleEnding } from "./cycleInvocation";
+export type { CycleAdapter, CycleEnding } from "./cycleInvocation";
 
 /* ------------------------------------------------------------------ */
 /* What a compaction took, read off the argv that put it there          */
@@ -5637,6 +5638,48 @@ function addDirsIn(args: readonly string[]): string[] {
   return dirs;
 }
 
+/* ------------------------------------------------------------------ */
+/* Which agent CLI a work cycle is                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Claude Code, and the only adapter there is.
+ *
+ * Frozen because it is read on the hottest path in the loop and nothing may
+ * write to it: `parseLine` is called once per line of every cycle's stdout, and
+ * a field replaced under a run in flight would change what the *rest* of that
+ * cycle's output means without changing anything already recorded.
+ *
+ * A module constant rather than a `globalThis` key on purpose. `CLAUDE.md`'s
+ * rule is about long-lived *mutable* state, which silently stops accumulating
+ * when dev re-evaluates the module; this holds nothing that accumulates, so a
+ * fresh evaluation produces a value indistinguishable from the one it replaced.
+ * That stops being true the moment anything here is cached rather than
+ * constructed — see the trap at `orchestrator.ts:373`, and take a new key.
+ */
+const CLAUDE_ADAPTER: CycleAdapter = Object.freeze({
+  bin: CLAUDE_BIN,
+  buildArgs,
+  parseLine: handleStreamLine,
+});
+
+/**
+ * The adapter this work cycle is spawned through.
+ *
+ * Called once per cycle, immediately above the argv it decides, because that is
+ * the one place a run could ever be spawned as something other than Claude Code
+ * — and the three fields have to be chosen together for `CycleAdapter`'s reason.
+ * Every cycle of every run reaches this, including a resumed one: an adapter
+ * chosen once per *run* would be a choice a restart could not reproduce.
+ *
+ * It takes nothing and answers with the same value every time, which is the
+ * whole of what "Claude is the only implementation" means. Adding a second
+ * provider is what gives it a parameter.
+ */
+export function selectCycleAdapter(): CycleAdapter {
+  return CLAUDE_ADAPTER;
+}
+
 /**
  * Spawn one work cycle.
  *
@@ -5656,6 +5699,12 @@ export function runIteration(
   runId: string,
   cwd: string,
   args: string[],
+  // The adapter that built `args`, and the only thing here that knows what CLI
+  // this is. Required and positioned beside the argv rather than defaulted for
+  // `silenceMs`' reason two arguments down: a caller that could omit it would
+  // read one provider's stdout with another's parser, and every symptom of that
+  // is a cycle that reported nothing.
+  adapter: CycleAdapter,
   telemetryRequired: boolean,
   silenceMs: number,
   onSession: (sessionId: string) => void,
@@ -5694,7 +5743,7 @@ export function runIteration(
 
     // No shell: arguments are passed as an array, so a prompt containing
     // quotes, backticks, or semicolons is inert rather than interpreted.
-    const child: AgentProcess = spawn(CLAUDE_BIN, args, {
+    const child: AgentProcess = spawn(adapter.bin, args, {
       cwd,
       env: childEnv({ ...telemetryEnv(runId, telemetryRequired), ...githubEnv(githubToken) }),
       // The uid `childEnv`'s strip only means something against: same process,
@@ -5747,7 +5796,7 @@ export function runIteration(
       while ((nl = stdoutBuf.indexOf("\n")) !== -1) {
         const line = stdoutBuf.slice(0, nl).trim();
         stdoutBuf = stdoutBuf.slice(nl + 1);
-        if (line) handleStreamLine(runId, line, result, onSession);
+        if (line) adapter.parseLine(runId, line, result, onSession);
       }
     });
 
@@ -5773,7 +5822,7 @@ export function runIteration(
         ts: Date.now(),
         kind: "error",
         payload: {
-          message: `Failed to launch ${CLAUDE_BIN}: ${err.message}`,
+          message: `Failed to launch ${adapter.bin}: ${err.message}`,
         },
       });
     });
@@ -5789,7 +5838,7 @@ export function runIteration(
       if (silenceTimer) clearTimeout(silenceTimer);
       procs.delete(runId);
       if (stdoutBuf.trim())
-        handleStreamLine(runId, stdoutBuf.trim(), result, onSession);
+        adapter.parseLine(runId, stdoutBuf.trim(), result, onSession);
       result.exitCode = code ?? -1;
       resolve(result);
     };
@@ -7715,7 +7764,13 @@ export async function startRun(id: string): Promise<void> {
         );
       }
 
-      const args = buildArgs({
+      // Once per cycle, and directly above the argv it decides. The executable,
+      // the flags and the parser of what comes back are one choice; splitting
+      // them across the loop is how a cycle ends up spawned as one CLI and read
+      // as another, which reports as a cycle that said nothing.
+      const adapter = selectCycleAdapter();
+
+      const args = adapter.buildArgs({
         prompt,
         model: run.model,
         permissionMode: budget.permissionMode ?? "acceptEdits",
@@ -7841,6 +7896,7 @@ export async function startRun(id: string): Promise<void> {
           id,
           workDir,
           args,
+          adapter,
           liveSpendTelemetry,
           // Off the same `settings` read the prompts come from, so it is fixed
           // for this stretch of work rather than moving under a cycle already
