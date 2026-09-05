@@ -5510,10 +5510,87 @@ through before trusting this unattended:
   everything below them. A human should open `/` at 1920 and at about 390 with a
   run in flight.
 
+- **A second provider's work cycle, built whole and never once run,
+  2026-09-05.** `runs.provider` now selects between two `CycleAdapter`s and the
+  Codex one was written against the binary rather than against a document:
+  `codex --version` says **`codex-cli 0.153.4`**, and every flag the adapter
+  emits (`exec --json`, `--skip-git-repo-check`, `--ignore-user-config`, `-m`,
+  `-C`, `-s read-only|workspace-write`, `-c approval_policy="never"`,
+  `--dangerously-bypass-approvals-and-sandbox`, `--add-dir`,
+  `--output-last-message`, `resume`) was confirmed present in that version's
+  `codex exec --help` before it was emitted. The `pkill`/`killall` denial was
+  the one thing measured rather than read: Codex has no `--disallowedTools`, so
+  the denial is a Starlark rules file, and `codex execpolicy check -r <file>
+  pkill node` answers `{"decision":"forbidden"}` for the `prefix_rule` spelling
+  the app writes, while `rule(...)` and `define_program(...)`, which read like
+  the same thing, do not parse in 0.153.4 at all. Rules are discovered only from
+  `$CODEX_HOME/rules/*.rules`; there is no flag naming a file, which is why
+  `prepareCodexRules` writes into the agent uid's own home and why a cycle whose
+  rules file could not be written is refused rather than started. The sandbox
+  mapping never widens: `plan` and `default` both take `read-only`,
+  `acceptEdits` takes `workspace-write`, and only `bypassPermissions` reaches
+  the dangerous flag, pinned as whole argv arrays in `orchestrator.test.ts` so a
+  mode cannot drift up a row. Spend is withheld rather than guessed:
+  `turn.completed.usage` carries token counts and no money, so the `+=` is
+  skipped, `providerReportsSpend` gates every rendering of the column, and the
+  runs list, the run page, the reopen form's spending limit and the two MCP run
+  answers all say unknown instead of `$0.00`. Those four renderings were seen:
+  the app was built (`env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build`,
+  exit 0), served by `next start` against a scratch `DATA_DIR` holding one
+  seeded Codex run beside one seeded Claude run, and screenshotted in headless
+  Chromium; the Codex row shows `148.2k` tokens against a dash where the Claude
+  row shows `92.1k` against `$1.37`, with no console or page errors. `npm run
+  typecheck` is clean and `npm test` is 2185 passing, 0 failing.
+
+  **Not yet verified by hand:** **the entire live path.** `codex login status`
+  says **"Not logged in"** on this machine, so not one Codex work cycle was ever
+  spawned, and everything below was written from `--help` output, from
+  `execpolicy check`, and from rollout files, never from a cycle that ran.
+
+  - **That a cycle spawns at all, and that its argv is accepted.** Nothing has
+    ever executed `CODEX_ADAPTER.bin` with `buildCodexArgs`' output. Sign in as
+    the agent uid (`CODEX_HOME=<the app's> codex login`), start a run with
+    Provider set to Codex, and read the argv the spawn logged.
+  - **Every event name the stream parser branches on.** `thread.started`,
+    `turn.started`, `turn.completed`, `turn.failed`, `item.started`,
+    `item.updated`, `item.completed` and `error` were taken from the schema and
+    from event shapes, not from a stream this app read. Run
+    `codex exec --json -s read-only -C /some/repo "say hello"` and compare the
+    line types against the `switch` in `handleCodexStreamLine`.
+  - **That the session id `thread.started` carries is the one `resume` takes.**
+    `runs.session_id` holds it and a second cycle passes it back. Run a cycle,
+    note the id, then `codex exec resume <id> "continue"` by hand.
+  - **That `--output-last-message` is written, and is the final assistant
+    message.** The `DONE` contract reads that file. Run a cycle with
+    `-o /tmp/last.txt` and read it.
+  - **That the sandbox mapping binds what it claims.** `workspace-write` with
+    `-C <root>` and `--add-dir <vault>` should permit a write inside both and
+    refuse one outside. Run a cycle asking for a write to `/etc/uf-probe` under
+    `acceptEdits` and confirm it is refused; the rollout file under
+    `$CODEX_HOME/sessions/YYYY/MM/DD/` records the `sandbox_policy` and
+    `writable_roots` that were actually applied.
+  - **That the rules file is loaded by a spawned cycle rather than only by
+    `execpolicy check`.** Ask a cycle to run `pkill -f something` and confirm it
+    is refused. This is the one that matters most: a rules file in a dialect
+    Codex does not know loads as **zero rules**, silently.
+  - **That `--ignore-user-config` does not also discard the rules file.** The
+    two were confirmed to be different mechanisms from `--help` and from the
+    execpolicy source layout, never together in one run.
+  - **That the notices survive as prompt text.** `codex exec` has no
+    `--append-system-prompt`, so `SELF_HOSTING_NOTICE` and the commit-identity
+    notice ride the first turn's prompt. Ask a cycle "what were you told about
+    restarting containers" and see whether it can answer.
+  - **What a Codex run's own wall looks like.** No refusal classifier was
+    written for it (constraints C3 and C4 stay Claude-only), so a rate limit or
+    an exhausted credit on a Codex run is still filed under Claude's sentences.
+    Exhaust a Codex account and read `stop_reason`.
+
 There is no linter run in this repo, and `npm test` covers a deliberately short
 list: the folder-collision predicate, which queued runs may start, the budget
 policy, how a provider refusal is classified and backed off from, which prompt a
-work cycle spawns with, the GitHub credentials handed to a work cycle, that a
+work cycle spawns with, which argv a Codex work cycle spawns with and what its
+stream parser makes of each event, the process-kill denial written for the
+provider that cannot carry one on a flag, the GitHub credentials handed to a work cycle, that a
 work cycle started as a saved agent both defines and selects it and moves none of
 what bounds the run, how a
 run's diff is parsed and budgeted, whether a saved graph of run blocks can run at
