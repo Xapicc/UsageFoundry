@@ -91,6 +91,19 @@ export interface IterationResult {
    */
   toolCalls: Map<string, ToolCall>;
   /**
+   * Stream event types this build has no branch for, one entry per distinct one.
+   *
+   * Parser state rather than a result, with the two maps above's lifetime and
+   * for a related reason: it exists so that an unrecognised event is reported
+   * *once* per cycle instead of once per line. An event type this app has never
+   * heard of is the shape a CLI pin moving takes, and the symptom of missing one
+   * is a cycle that reports no cost, no session id and no stop reason — which
+   * every page in this app renders as a cycle that had nothing to say. Only
+   * `handleCodexStreamLine` writes to it today; the Claude parser's own silence
+   * on an unknown type predates this and is a separate change.
+   */
+  unknownEventTypes: Set<string>;
+  /**
    * Whether the CLI's terminal `result` event arrived. Cost and tokens come
    * only from that event, so when it is missing — operator stop, crash, OOM —
    * this iteration contributes $0 to the run's totals despite having burned
@@ -1019,6 +1032,32 @@ export function buildArgs(opts: {
    * the column gets, and what a run whose folder could not be walked gets.
    */
   fileCostNotice?: string | null;
+  /**
+   * Directories this cycle may write to beyond its own working one, or null.
+   *
+   * Null is "nothing confines this cycle" — an install with no managed sandbox,
+   * or a run whose paths resolved to a set this app could not spell — and it is
+   * *not* the same as an empty list, which would be a confinement that permits
+   * no writes at all. `sandboxWritableRoots` in `orchestrator.ts` owns which
+   * readings produce which, and its doc carries why an install without a
+   * sandbox must keep an argv byte-identical to the one it had before.
+   *
+   * It arrives here rather than being appended to the finished argv by the run
+   * loop, which is where it used to be, because the flag that carries it is not
+   * the same flag for every provider: Claude Code takes a `--settings` overlay
+   * naming `sandbox.filesystem.allowWrite`, Codex takes a repeated `--add-dir`.
+   * Appended outside the adapter, a Codex cycle would have been handed a
+   * Claude-only flag — which `codex exec` rejects, so every such run would have
+   * failed at the spawn with an argv error and no write set at all.
+   */
+  writableRoots?: readonly string[] | null;
+  /**
+   * Where the CLI should write this cycle's last message, for a CLI that offers
+   * it. Ignored by `buildArgs`; `buildCodexArgs` turns it into
+   * `--output-last-message`, and `runIteration` reads the file back off the
+   * argv. See `buildCodexArgs` for why the file outranks the stream.
+   */
+  lastMessageFile?: string | null;
 }): string[] {
   const args = ["-p", opts.prompt, "--output-format", "stream-json", "--verbose"];
   if (opts.model) args.push("--model", opts.model);
@@ -1116,6 +1155,225 @@ export function buildArgs(opts: {
     const remaining = Math.max(0, opts.maxRunCostUSD - opts.spentGuardUSD);
     args.push("--max-budget-usd", String(remaining));
   }
+  // Last, and that position is asserted rather than incidental: this used to be
+  // appended by the run loop after `buildArgs` returned, so an install with a
+  // managed sandbox has an argv on record ending in these two entries and a
+  // stock install has one that never contained them. Both stay byte-identical.
+  if (opts.writableRoots && opts.writableRoots.length > 0) {
+    args.push(
+      "--settings",
+      JSON.stringify({ sandbox: { filesystem: { allowWrite: opts.writableRoots } } }),
+    );
+  }
+  return args;
+}
+
+/* ------------------------------------------------------------------ */
+/* Codex                                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A permission mode as a Codex sandbox and approval pair.
+ *
+ * The two axes are separate flags and both have to be named, because the
+ * defaults are not the narrow reading: `codex exec` with neither flag takes its
+ * sandbox and its approval policy from `$CODEX_HOME/config.toml`, which is a
+ * file this app does not write and an operator may have widened. `buildCodexArgs`
+ * also passes `--ignore-user-config` for that reason, so what is here is what
+ * the cycle runs under and nothing else can raise it.
+ *
+ * **The rule this table exists to keep is that no row may widen.** A run whose
+ * Claude equivalent cannot write files must not become one that can, and the
+ * safe direction when the two CLIs do not line up exactly is *narrower*, which
+ * is what two of the four rows take. Reading each:
+ *
+ * - **`plan`** → `read-only`. Claude's plan mode reads and proposes and writes
+ *   nothing; `read-only` is the same statement in Codex's vocabulary, and it is
+ *   the only pair that makes the prohibition the sandbox's rather than the
+ *   model's to honour.
+ *
+ * - **`default`** → `read-only`, and this is the row to read before editing.
+ *   `default` is the mode that *asks a person*, and no work cycle has one: it
+ *   runs unattended, with no terminal and no approval channel. There are two
+ *   readings of what that should become and only one of them is safe. If
+ *   Claude's `default` denies unattended edits, `read-only` is the exact
+ *   translation; if it permits them, `read-only` is a narrowing — and a
+ *   narrowing is allowed where a widening is not. `workspace-write` would only
+ *   be correct under the second reading, which has not been measured here, so
+ *   it is not what this emits. The cost is real and is disclosed rather than
+ *   hidden: a `default` Codex run cannot edit files, and an operator who wants
+ *   one that can picks `acceptEdits`, which is what the run form already
+ *   defaults to.
+ *
+ * - **`acceptEdits`** → `workspace-write`. The one exact correspondence in the
+ *   table: edits inside the workspace proceed without asking, everything
+ *   outside it does not. `--add-dir` extends that write set, which is why the
+ *   vault and the confinement roots are emitted as `--add-dir` below rather
+ *   than as anything of this app's own devising.
+ *
+ * - **`bypassPermissions`** → `--dangerously-bypass-approvals-and-sandbox`, and
+ *   no `-s` beside it. It is the mode whose whole content is "no sandbox, no
+ *   approvals", so the flag is the translation rather than an escalation. The
+ *   `-s` is withheld because the two were measured to be accepted together and
+ *   *nothing says which wins* — an argv whose write set depends on an
+ *   undocumented precedence is one nobody can read.
+ *
+ * `approval_policy` is `never` on every row that has one, and that is the narrow
+ * choice rather than the permissive-sounding one. It means the model may not
+ * escalate out of its sandbox: a command the sandbox refuses fails, instead of
+ * raising a request that — with no operator anywhere near it — would hang the
+ * cycle until its silence deadline or be granted by something that is not a
+ * person. **`--approve-for-me` is deliberately never emitted for exactly that
+ * reason**: it routes approvals "through automatic review", which is a second
+ * model deciding to widen a run past the mode its operator chose.
+ */
+export const CODEX_PERMISSIONS: Readonly<
+  Record<PermissionMode, readonly string[]>
+> = Object.freeze({
+  plan: Object.freeze(["-s", "read-only", "-c", 'approval_policy="never"']),
+  default: Object.freeze(["-s", "read-only", "-c", 'approval_policy="never"']),
+  acceptEdits: Object.freeze([
+    "-s",
+    "workspace-write",
+    "-c",
+    'approval_policy="never"',
+  ]),
+  bypassPermissions: Object.freeze(["--dangerously-bypass-approvals-and-sandbox"]),
+});
+
+/**
+ * The notices that ride the prompt because Codex has no system prompt to append.
+ *
+ * `buildArgs` puts four of these on `--append-system-prompt`, where they are out
+ * of the conversation and repeated on every cycle including a resumed one.
+ * `codex exec` has no equivalent, and the search for one is on the record so it
+ * is not repeated: there is no `--append-system-prompt`, no `--system-prompt`,
+ * `-p/--profile` cannot reach a resumed or forked session at all, and
+ * `experimental_instructions_file` — the config key such a thing would use —
+ * **does not exist in this build**, with zero occurrences in the binary. The
+ * remaining mechanism is `AGENTS.md` discovery, which means writing a file into
+ * the operator's own working root, and this app does not write into a repository
+ * it was pointed at.
+ *
+ * So they go in-band, at the head of the prompt, and that is weaker in two ways
+ * an editor should not have to rediscover. In-band text is *conversation*: the
+ * model may weigh it against later instructions, and a long turn may push it out
+ * of attention in a way a system prompt is not pushed. And it is repeated into
+ * the transcript on every cycle rather than sitting outside it.
+ *
+ * Two of the four notices are carried and two are not, which is a judgement
+ * rather than an oversight. `SELF_HOSTING_NOTICE` is the recipe that stops an
+ * agent routing around the `pkill` denial, and `codexRules.ts` makes that denial
+ * weaker here than it is for Claude, so it matters *more* on this provider, not
+ * less. `COMMIT_IDENTITY_NOTICE` is about a git identity, which is the same git.
+ * The delegation and rendering notices are dropped: both name a mechanism by
+ * which Claude Code in particular does something — a sub-agent's own context
+ * window, and reading a rendered PNG back as an image — and neither is known to
+ * be true of `codex exec`. Telling an agent to use a capability it may not have
+ * is how it learns to reach for an absent tool, which is the argument
+ * `SELF_HOSTING_NOTICE` already makes about naming `docker`, `fuser` and `ss`.
+ */
+export function codexPromptPreamble(fileCostNotice?: string | null): string {
+  return [SELF_HOSTING_NOTICE, COMMIT_IDENTITY_NOTICE, fileCostNotice?.trim()]
+    .filter((notice): notice is string => Boolean(notice))
+    .join("\n\n");
+}
+
+/**
+ * The argv for one Codex work cycle.
+ *
+ * Takes the same options object as `buildArgs` — spelled as its parameter type
+ * rather than as a second interface, so that a field added for one provider is
+ * a field the other has to decide about rather than one it never sees. Several
+ * are deliberately unused here and each absence is a real difference an operator
+ * can be shown, not a gap to fill later:
+ *
+ * - **`maxRunCostUSD` reaches nothing.** `codex exec --help` has no counterpart
+ *   to `--max-budget-usd`, so nothing bounds what a single Codex cycle spends.
+ *   That is the whole reason `providerTerminusRefusal` exists in `budget.ts`:
+ *   such a run is refused at the door unless a work-cycle or time limit bounds
+ *   it, because its spending limit reaches no cycle.
+ * - **`agent`, `pluginDirs`, `forwardSubAgentText`.** Claude Code mechanisms
+ *   with no Codex equivalent on this CLI surface. A run started as an agent and
+ *   spawned as Codex opens on its prompt through the ordinary prompt path and
+ *   gets none of the rest, which is why the run form discloses it.
+ * - **`isolated`.** `ISOLATED_GIT_TOOLS` is an `--allowedTools` entry, and
+ *   Codex's tool permissions are the sandbox rather than a list. An isolated
+ *   Codex run under `acceptEdits` can commit because `workspace-write` covers
+ *   its checkout, not because anything here granted it.
+ *
+ * What it does emit, and why each is load-bearing:
+ *
+ * `--json` is the stream `handleCodexStreamLine` reads, and stdout under it was
+ * measured to be pure JSONL — every warning and trace line goes to stderr, so
+ * an unparseable stdout line means the format changed rather than that a log
+ * line got mixed in.
+ *
+ * `-C` pins the working root explicitly even though the child is already
+ * spawned with that `cwd`. Codex resolves its workspace from the flag when one
+ * is given, and stating it is what makes the write set `workspace-write` grants
+ * the same directory the run loop re-proved contained a moment earlier.
+ *
+ * `--skip-git-repo-check` is required rather than chosen: Codex refuses to run
+ * outside a git repository, and this app's runs are pointed at arbitrary mounted
+ * folders. Its purpose there is to make a model's changes recoverable, and what
+ * replaces it here is the isolation the run already has — a worktree run has its
+ * own branch, and a non-isolated run is in the operator's own checkout either
+ * way, which is exactly the case Claude Code has never guarded against.
+ *
+ * `--ignore-user-config` keeps `$CODEX_HOME/config.toml` out of the cycle. It is
+ * the file the *operator* edits, it can raise `sandbox_mode`, `approval_policy`
+ * and network access, and a run whose permissions came half from this argv and
+ * half from a file nobody diffed is one whose mode means nothing. It does not
+ * touch authentication (`--help`: "auth still uses `CODEX_HOME`") and it does
+ * not touch `.rules` — only `--ignore-rules` does that, and this never emits it,
+ * because those rules are the `pkill` denial.
+ */
+export function buildCodexArgs(opts: Parameters<typeof buildArgs>[0]): string[] {
+  const args = [
+    "exec",
+    "--json",
+    "--skip-git-repo-check",
+    "--ignore-user-config",
+  ];
+  if (opts.model) args.push("-m", opts.model);
+  args.push(...CODEX_PERMISSIONS[opts.permissionMode]);
+  // Every directory beyond the working root, in one list rather than two
+  // mechanisms: the vault this run was granted and whatever the install's
+  // sandbox confines it to are the same kind of fact here, where for Claude Code
+  // they are `--add-dir` and a `--settings` overlay respectively. `--add-dir` is
+  // repeatable and takes one directory each time.
+  for (const dir of [
+    ...(opts.vaultSkill ? [opts.vaultSkill.vaultPath] : []),
+    ...(opts.writableRoots ?? []),
+  ]) {
+    args.push("--add-dir", dir);
+  }
+  if (opts.lastMessageFile) {
+    args.push("--output-last-message", opts.lastMessageFile);
+  }
+  // Resume last, because it is a *subcommand* and not a flag: `codex exec resume
+  // <id>` takes the prompt after the id, so everything above has to precede it.
+  //
+  // That ordering is the whole of why this works, and it was measured rather
+  // than assumed. `resume` itself accepts none of `-s`, `-C`, `--add-dir` or
+  // `--approve-for-me`, which reads at first like a second cycle silently losing
+  // its sandbox. It does not: placed *before* the subcommand they are the parent
+  // command's flags and they take effect on the resumed session. Read back out
+  // of `$CODEX_HOME/sessions/…/rollout-*.jsonl`, one session opened under
+  // `-s workspace-write --add-dir X` records `{"sandbox_policy":
+  // {"type":"workspace-write","writable_roots":["X"],"network_access":false}}`,
+  // and the same session resumed under `-s read-only` records a second
+  // `sandbox_policy` of `read-only`. A version of this that put the flags after
+  // the id would be rejected outright, which is the good failure; a version that
+  // dropped them would confine nothing, which is not.
+  if (opts.resumeSessionId) {
+    args.push("resume", opts.resumeSessionId);
+  }
+  // The prompt is the positional argument, and the notices are in front of it
+  // because there is nowhere else for them to go. Last on the argv so that
+  // nothing after it can be read as a flag.
+  args.push(`${codexPromptPreamble(opts.fileCostNotice)}\n\n${opts.prompt}`);
   return args;
 }
 

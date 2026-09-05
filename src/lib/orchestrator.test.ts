@@ -2776,7 +2776,7 @@ describe("buildArgs", () => {
  * that ceiling now, and `run-lifecycle.md` records what the swap gave up.
  */
 describe("the cycle adapter", () => {
-  const adapter = selectCycleAdapter();
+  const adapter = selectCycleAdapter("claude");
 
   /**
    * A cycle asking for everything `buildArgs` can emit.
@@ -2883,7 +2883,7 @@ describe("the cycle adapter", () => {
     // restart picks up — must reach the same three fields. Frozen, because
     // `parseLine` is read once per line of stdout and a field replaced under a
     // run in flight would change what the rest of that cycle's output means.
-    assert.equal(selectCycleAdapter(), adapter);
+    assert.equal(selectCycleAdapter("claude"), adapter);
     assert.equal(Object.isFrozen(adapter), true);
   });
 });

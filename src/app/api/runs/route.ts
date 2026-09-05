@@ -11,7 +11,6 @@ import {
   isRunStatus,
   listRunsPage,
   queuePosition,
-  unsupportedProviderRefusal,
   type DependencyEdge,
   type RunDependencyInput,
 } from "../../../lib/orchestrator";
@@ -321,14 +320,6 @@ async function postHandler(req: Request) {
       },
       { status: 400 },
     );
-  }
-
-  // Last of the provider's own refusals, so an operator who asked for something
-  // this build cannot spawn hears about the policy they wrote as well — that
-  // one outlives the missing adapter, and this one is deleted by it.
-  const unsupported = unsupportedProviderRefusal(provider ?? null);
-  if (unsupported) {
-    return NextResponse.json({ error: unsupported }, { status: 400 });
   }
 
   const deps = readDependencies(body.dependsOn);

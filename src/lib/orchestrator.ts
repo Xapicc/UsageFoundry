@@ -7,6 +7,8 @@ import os from "node:os";
 import fs from "node:fs";
 import {
   CLAUDE_BIN,
+  CODEX_BIN,
+  CODEX_HOME,
   CLAUDE_CONFIG_DIR,
   GITHUB_TOKEN,
   OTLP_SELF_URL,
@@ -99,6 +101,11 @@ import {
 } from "./contextPruning";
 import { BYTES_PER_TOKEN, fileCostNotice } from "./fileCostNotice";
 import { prepareReadGuard } from "./readGuard";
+// The `pkill`/`killall` denial for the provider that cannot carry one on an
+// argv. Beside the read guard because it is the same kind of thing — something
+// generated on disk for a cycle to pick up — and unlike it in the one way that
+// matters: an unavailable read guard logs, an unavailable denial refuses.
+import { prepareCodexRules } from "./codexRules";
 import { prepareVaultSkill } from "./vaultSkill";
 import {
   noteLiveTick,
@@ -130,6 +137,7 @@ import {
   STDERR_TAIL_LIMIT,
   clipReason,
   buildArgs,
+  buildCodexArgs,
   cycleEnding,
   nextPrompt,
   startsFresh,
@@ -4716,14 +4724,17 @@ function admitWaiting(run: RunRow): boolean {
 }
 
 /* ------------------------------------------------------------------ */
-/* Claude Code invocation — moved to ./cycleInvocation                 */
+/* Agent CLI invocation — moved to ./cycleInvocation                   */
 /* ------------------------------------------------------------------ */
 
 export {
+  CODEX_PERMISSIONS,
   MAX_NEEDS_REVIEW_REASON,
   NEEDS_REVIEW_NOTICE,
   SEARCH_TOOLS,
   buildArgs,
+  buildCodexArgs,
+  codexPromptPreamble,
   cycleEnding,
   nextPrompt,
   startsFresh,
@@ -5317,12 +5328,39 @@ function writeSet(paths: readonly (string | null)[], empty: string): SandboxPoli
  * that carries no secret, and nothing here goes through a shell.
  */
 export function sandboxArgs(policy: SandboxPolicy, arrangement: SandboxStateDTO): string[] {
-  if (arrangement === "none") return [];
-  if (policy.kind !== "confined") return [];
+  const allowWrite = sandboxWritableRoots(policy, arrangement);
+  if (!allowWrite) return [];
   return [
     "--settings",
-    JSON.stringify({ sandbox: { filesystem: { allowWrite: policy.allowWrite } } }),
+    JSON.stringify({ sandbox: { filesystem: { allowWrite } } }),
   ];
+}
+
+/**
+ * The same two readings as the paths themselves, for a caller that has to spell
+ * them in some other CLI's vocabulary.
+ *
+ * Split out of `sandboxArgs` when a second provider arrived, and the split is
+ * where the boundary belongs: *which* paths a cycle may write is this app's
+ * decision and is identical for every provider, while the flag that carries them
+ * is the provider's. A work cycle's write set now goes through `buildArgs` and
+ * `buildCodexArgs` — one emits a `--settings` overlay, the other a repeated
+ * `--add-dir` — rather than being appended to a finished argv by the run loop,
+ * which is what used to put a Claude-only flag on every Codex spawn.
+ *
+ * `null` rather than an empty array for "nothing confines this", because the two
+ * are opposite instructions: an empty write set is a confinement permitting no
+ * writes at all, and every reading withheld above is the *absence* of a
+ * confinement. The doc on `sandboxArgs` carries which readings those are and
+ * why each is withheld.
+ */
+export function sandboxWritableRoots(
+  policy: SandboxPolicy,
+  arrangement: SandboxStateDTO,
+): readonly string[] | null {
+  if (arrangement === "none") return null;
+  if (policy.kind !== "confined") return null;
+  return policy.allowWrite;
 }
 
 /** The overlay for a child spawned right now, against this install's policy. */
@@ -5664,6 +5702,67 @@ function addDirsIn(args: readonly string[]): string[] {
   return dirs;
 }
 
+/**
+ * Where a cycle is told to write its last message.
+ *
+ * Under `CODEX_HOME` rather than under `DATA_DIR`, and that is forced rather
+ * than chosen: the child writes it, the child runs under a **dropped** uid, and
+ * the file modes that keep an agent out of `/data` would make this an
+ * `-o` the CLI could not open. `CODEX_HOME` is the agent uid's own tree — it has
+ * to be, since that is where the credential it authenticates with lives.
+ *
+ * Per run rather than per cycle, so a run leaves one file rather than one per
+ * cycle behind it, and it is emptied before every spawn instead of after every
+ * read — see `clearLastMessageFile` for why the difference matters.
+ */
+function lastMessageFileFor(runId: string): string {
+  return path.join(CODEX_HOME, "last-message", `${runId}.txt`);
+}
+
+/** The `--output-last-message` path on this argv, if it carries one. */
+function lastMessageFileIn(args: readonly string[]): string | null {
+  for (let i = 0; i < args.length - 1; i++) {
+    if (args[i] === "--output-last-message") return args[i + 1]!;
+  }
+  return null;
+}
+
+/**
+ * Empty the last-message file, and make sure the directory holding it exists.
+ *
+ * Read off the argv rather than passed in, `addDirsIn`' reason: the flag is the
+ * adapter's decision, and a call site that had to remember to pass the path
+ * separately is one that can forget. A CLI that was never asked for the file
+ * reaches neither branch, so a Claude cycle touches no disk here.
+ *
+ * Failures are swallowed on purpose and this is the one place in this file where
+ * that is right: everything downstream treats an absent file as "the CLI did not
+ * write one", which is a real and expected state, and the stream still carries
+ * the same text. A cycle refused for a temp file it did not need would be the
+ * larger failure.
+ */
+function clearLastMessageFile(args: readonly string[]): void {
+  const file = lastMessageFileIn(args);
+  if (!file) return;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o755 });
+    fs.rmSync(file, { force: true });
+  } catch {
+    // See above: an unwritable path costs the file, never the cycle.
+  }
+}
+
+/** What the CLI wrote there, or empty when it wrote nothing. */
+function readLastMessageFile(args: readonly string[]): string {
+  const file = lastMessageFileIn(args);
+  if (!file) return "";
+  try {
+    return fs.readFileSync(file, "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Which agent CLI a work cycle is                                     */
 /* ------------------------------------------------------------------ */
@@ -5690,6 +5789,22 @@ const CLAUDE_ADAPTER: CycleAdapter = Object.freeze({
 });
 
 /**
+ * Codex, the second adapter, and everything about it that is not Claude Code.
+ *
+ * Frozen and a module constant for `CLAUDE_ADAPTER`'s reasons, which apply
+ * unchanged. What is worth saying here is what the three fields buy: they are
+ * the *whole* of the difference between the two providers inside the run loop.
+ * The loop below spawns, watches, guards, prunes, parks and reconciles without
+ * knowing which of these it is holding — with one exception, `providerRecordsSpend`,
+ * which exists because one of the two cannot say what a cycle cost.
+ */
+const CODEX_ADAPTER: CycleAdapter = Object.freeze({
+  bin: CODEX_BIN,
+  buildArgs: buildCodexArgs,
+  parseLine: handleCodexStreamLine,
+});
+
+/**
  * The adapter this work cycle is spawned through.
  *
  * Called once per cycle, immediately above the argv it decides, because that is
@@ -5698,38 +5813,46 @@ const CLAUDE_ADAPTER: CycleAdapter = Object.freeze({
  * Every cycle of every run reaches this, including a resumed one: an adapter
  * chosen once per *run* would be a choice a restart could not reproduce.
  *
- * It takes nothing and answers with the same value every time, which is the
- * whole of what "Claude is the only implementation" means. Adding a second
- * provider is what gives it a parameter.
+ * Read off `runs.provider` and nothing else. A null is a row written before the
+ * column existed, and it is Claude — the same reading `budget.ts` and the run
+ * page take, and the one that keeps every run created before this change
+ * spawning exactly what it spawned then.
+ *
+ * There is no fallback here and there must not be one. A run never changes
+ * provider, which is the single assumption that lets `runs.session_id` hold
+ * whichever id the run's own CLI issued without a second column and without any
+ * cycle having to ask which kind of id it is looking at. A switch on a wall — an
+ * exhausted allowance, a refusal — would break that in the one place nothing
+ * checks it: the next cycle would hand a Claude session id to `codex exec
+ * resume`, which would refuse it, and the run would restart its conversation
+ * from nothing while reporting that it had resumed.
  */
-export function selectCycleAdapter(): CycleAdapter {
-  return CLAUDE_ADAPTER;
+export function selectCycleAdapter(provider: RunProviderDTO | null): CycleAdapter {
+  return provider === "codex" ? CODEX_ADAPTER : CLAUDE_ADAPTER;
 }
 
 /**
- * Why a run cannot be spawned as this provider, or null when it can.
+ * Whether this provider's cycles report what they cost.
  *
- * Beside `selectCycleAdapter` because it is the same fact read the other way
- * round, and keeping them apart is how the form comes to offer a provider the
- * loop would quietly run as Claude: `selectCycleAdapter` takes no argument, so
- * a `codex` row reaching the loop would spawn Claude Code and record the run as
- * something it was not. The door is where that is caught, and this is the
- * sentence it says.
+ * Claude Code's `result` event carries `total_cost_usd`, which is money this app
+ * did not compute and may therefore record as measured fact. `codex exec`'s
+ * `turn.completed` carries token counts and nothing else: no price, no model
+ * rate card this app holds, and `docs/agent/architecture.md` forbids summing
+ * figures from different populations into one total. So a Codex cycle's spend is
+ * **genuinely unknown**, and every place the loop would otherwise treat
+ * `costUSD: 0` as a reading has to be told that.
  *
- * Honest rather than hopeful: there is no Codex adapter in this build, so
- * `codex` is refused outright. The form still offers it, and that is deliberate
- * — being told at the door what a build cannot do is the disclosure this whole
- * option was chosen for, and a silently missing option teaches nobody anything.
- * Implementing the adapter is what deletes this function, not what edits it.
+ * A predicate rather than a fourth `CycleAdapter` field, deliberately. The
+ * adapter is the three things the *spawn* needs — an executable, an argv, a
+ * parser — and cost is not one of them; it is what the accounting after the
+ * cycle may believe. Keeping it here also keeps the two readers of it beside
+ * each other: the `+=` into `runs.spent_usd`, and `reconcileKilledCycle`, which
+ * recovers an estimate by reading Claude's own transcripts and would answer for
+ * a Codex run by finding nothing while looking exactly like a run that spent
+ * nothing.
  */
-export function unsupportedProviderRefusal(
-  provider: RunProviderDTO | null,
-): string | null {
-  if (provider === null || provider === "claude") return null;
-  return (
-    `This build has no ${RUN_PROVIDER_LABEL[provider]} adapter, so a run cannot ` +
-    "be spawned as one yet. Start it as Claude Code, or wait for the adapter."
-  );
+export function providerRecordsSpend(provider: RunProviderDTO | null): boolean {
+  return provider !== "codex";
 }
 
 /**
@@ -5793,6 +5916,12 @@ export function runIteration(
       log(runId, `Could not create a sandbox mount point: ${problem}`);
     }
 
+    // Before the spawn, never after the read, and that order is the whole point:
+    // the CLI does not write this file when its turn fails, so a stale one left
+    // by the previous cycle of the same run would be read as this cycle's last
+    // word — and this cycle's last word is what ends the run.
+    clearLastMessageFile(args);
+
     // No shell: arguments are passed as an array, so a prompt containing
     // quotes, backticks, or semicolons is inert rather than interpreted.
     const child: AgentProcess = spawn(adapter.bin, args, {
@@ -5836,6 +5965,7 @@ export function runIteration(
       stderrTail: "",
       subagentNames: new Map(),
       toolCalls: new Map(),
+      unknownEventTypes: new Set(),
     };
 
     let stdoutBuf = "";
@@ -5892,6 +6022,16 @@ export function runIteration(
       if (stdoutBuf.trim())
         adapter.parseLine(runId, stdoutBuf.trim(), result, onSession);
       result.exitCode = code ?? -1;
+      // The last message the CLI wrote, for a CLI that was asked to write one.
+      // It outranks whatever the stream reported for the same reason `buildArgs`
+      // prefers a flag to a heuristic: this is the CLI's own answer to "what did
+      // the agent finish by saying", and `finalText` is what the `DONE` contract
+      // and the run's report are read from. Silently ignored when the file is
+      // not there, which is the measured shape of a failed turn — Codex does not
+      // write it when `turn.failed` — and the stream's last agent message is
+      // then what stands.
+      const written = readLastMessageFile(args);
+      if (written) result.finalText = written;
       resolve(result);
     };
 
@@ -7126,6 +7266,171 @@ function handleStreamLine(
   }
 }
 
+/**
+ * Interpret one line of `codex exec --json` output.
+ *
+ * A different vocabulary from `handleStreamLine`'s and not a translation of it.
+ * The events are `thread.started`, `turn.started`, `turn.completed`,
+ * `turn.failed`, `item.started`, `item.updated`, `item.completed` and `error`,
+ * measured off the pinned binary; the item kinds under them are
+ * `agent_message`, `reasoning`, `command_execution`, `file_change`,
+ * `mcp_tool_call`, `web_search`, `todo_list` and `error`.
+ *
+ * **Nothing here goes silently.** `orchestrator.ts`'s Claude parser drops an
+ * event type it does not know without a word, which was survivable while there
+ * was one format to keep up with and is not now: a second format doubles the
+ * ways a pin can move under this app, and the symptom of a missed rename is a
+ * cycle that reports no cost, no session and no stop reason — indistinguishable
+ * on every page from a cycle that simply had nothing to say. So an unrecognised
+ * `type` is written to the run's own log, where an operator reading the run that
+ * behaved oddly will actually find it. Once per distinct type per cycle, via
+ * `acc.unknownEventTypes`: a rename of `item.updated` would otherwise be one log
+ * row per token of a long turn.
+ */
+function handleCodexStreamLine(
+  runId: string,
+  line: string,
+  acc: IterationResult,
+  onSession: (sessionId: string) => void,
+) {
+  let ev: Record<string, unknown>;
+  try {
+    ev = JSON.parse(line);
+  } catch {
+    // Stdout under `--json` was measured to be pure JSONL — tracing, warnings
+    // and the "Reading additional input from stdin" notice all go to stderr — so
+    // unlike the Claude path, where the CLI genuinely interleaves plain text,
+    // this branch means the format changed. It is logged as the line itself for
+    // the same reason either way: the bytes are the only evidence there is.
+    log(runId, line, { stream: "stdout" });
+    return;
+  }
+
+  const type = String(ev.type ?? "");
+
+  switch (type) {
+    case "thread.started": {
+      // The id `runs.session_id` holds for a Codex run, and the id
+      // `codex exec resume` takes. It is the run's *own* provider's id and it
+      // never crosses providers, which is what lets one column carry both.
+      const threadId = ev.thread_id;
+      if (typeof threadId === "string" && threadId && threadId !== acc.sessionId) {
+        acc.sessionId = threadId;
+        onSession(threadId);
+      }
+      return;
+    }
+
+    // Nothing to record. Named rather than left to the default so that they are
+    // known-and-ignored instead of unrecognised, which is the distinction the
+    // log line below exists to make.
+    case "turn.started":
+    case "item.started":
+    case "item.updated":
+      return;
+
+    case "turn.completed": {
+      // The cycle's terminal event, and the counterpart of Claude's `result`.
+      acc.sawResult = true;
+      acc.subtype = "success";
+
+      // **Assigned, never accumulated.** One `codex exec` invocation is one
+      // turn, so at most one of these arrives per cycle and the two shapes agree
+      // today. They stop agreeing the moment `usage` turns out to be the
+      // thread's running total rather than this turn's, which is the reading
+      // that has not been measured here — and of the two, assigning is the one
+      // that is merely stale where summing would be double-counting.
+      const usage = (ev.usage ?? {}) as Record<string, unknown>;
+      const n = (v: unknown) => (typeof v === "number" ? v : 0);
+      // `cached_input_tokens`, `cache_write_input_tokens` and
+      // `reasoning_output_tokens` are all reported beside these two and none is
+      // added: in OpenAI's accounting they are *breakdowns* of the input and
+      // output figures, so adding them would count the same tokens twice.
+      acc.tokens = n(usage.input_tokens) + n(usage.output_tokens);
+
+      // `contextTokens` is deliberately left at zero, which `startsFresh` reads
+      // as "no reading" rather than as "small". There is no reading to give it:
+      // it wants the resident window the *last* turn was billed against, and
+      // `usage.input_tokens` here is the whole turn's input summed over every
+      // request in it. Handing that over would inflate with the amount of work
+      // done rather than with the amount said, which is the exact confusion
+      // `IterationResult.contextTokens` is documented against — and it feeds a
+      // decision that throws conversations away.
+
+      // **`costUSD` stays zero, and it is not a measurement of anything.**
+      // `turn.completed` carries token counts and no money, this app has no
+      // price list for these models, and `docs/agent/architecture.md` forbids
+      // mixing cost populations — so a figure derived here would be summed into
+      // `runs.spent_usd` beside Claude's measured dollars and into the window
+      // meters that read them. The run loop is what keeps that zero from
+      // reading as a measured $0; see `providerRecordsSpend`.
+      return;
+    }
+
+    case "turn.failed": {
+      acc.isError = true;
+      const error = (ev.error ?? {}) as Record<string, unknown>;
+      const message = typeof error.message === "string" ? error.message : "";
+      // **Last write wins, which is the opposite of the Claude path's `??=`.**
+      // Codex reports transport retries as `error` events too — five
+      // "Reconnecting… n/5" lines were measured before the real failure — so a
+      // first-sight latch would park a run on a retry notice that was followed
+      // by a successful connection. `turn.failed` is the CLI's own verdict and
+      // arrives once, so letting it overwrite whatever an `error` line latched
+      // is what puts the real reason in front of the operator.
+      if (message) acc.apiError = message;
+      acc.subtype = "error";
+      return;
+    }
+
+    case "error": {
+      // A notice, not a verdict: the retry lines above arrive here, and so does
+      // the message of a failure that never reaches `turn.failed`. Latched only
+      // when nothing better has been said, so `turn.failed` can still replace
+      // it, and logged either way because a run that spent five minutes
+      // reconnecting should say so.
+      const message = typeof ev.message === "string" ? ev.message : "";
+      if (message) {
+        acc.apiError ??= message;
+        log(runId, message, { stream: "stdout" });
+      }
+      return;
+    }
+
+    case "item.completed": {
+      const item = (ev.item ?? {}) as Record<string, unknown>;
+      const itemType = String(item.type ?? "");
+      if (itemType === "agent_message") {
+        // Last write wins, the same shape as the Claude parser's `finalText`:
+        // the last thing the agent said is what the `DONE` contract is read
+        // against and what the run reports. `--output-last-message` names the
+        // same string in a file, and `runIteration` prefers that file when the
+        // CLI wrote one — see there for why a turn that fails does not.
+        const text = item.text;
+        if (typeof text === "string" && text) acc.finalText = text;
+      } else if (itemType === "error") {
+        const message = item.message;
+        if (typeof message === "string" && message) acc.apiError ??= message;
+      }
+      return;
+    }
+
+    default: {
+      if (!acc.unknownEventTypes.has(type)) {
+        acc.unknownEventTypes.add(type);
+        log(
+          runId,
+          `This work cycle's CLI sent an event this app does not recognise: ` +
+            `"${type}". Codex's event vocabulary has moved, and whatever that ` +
+            `event carried — a session id, a cost, a stop reason — is not being ` +
+            `read. Reported once per event type per cycle.`,
+          { stream: "stdout", raw: ev },
+        );
+      }
+    }
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* The loop                                                            */
 /* ------------------------------------------------------------------ */
@@ -7816,11 +8121,62 @@ export async function startRun(id: string): Promise<void> {
         );
       }
 
+      // A run can last hours, and the working directory was validated once when
+      // it was created. Re-checking before every spawn means a folder that has
+      // since been replaced by a symlink out of the mount cannot be handed to a
+      // process that writes files.
+      const stillContained = resolveWorkspaceFolder(
+        workDir,
+        describeFolder(workDir).mountId,
+      );
+      if (stillContained !== workDir) {
+        throw new Error(`Working directory changed underneath the run: ${workDir}`);
+      }
+
+      // What this cycle may write, if anything confines it at all. Read per
+      // cycle rather than per run for the reason the containment check above is:
+      // a run outlives the policy it started under, and an operator who has
+      // just switched one on gets it at the next cycle rather than at the next
+      // restart. `workDir` is the local the check above re-proved, not the row,
+      // because an isolated run's checkout is assigned after the row is read.
+      const sandbox = sandboxSettings({ kind: "run", workDir, repoRoot: run.repo_root });
+      const confinement = currentSandbox().state;
+      if (sandbox.kind === "unconfined" && confinement !== "none") {
+        // The one shape this can take on an install that asked for a sandbox: a
+        // path the CLI would drop from a write set, so there is no per-run set
+        // at all. Said on the run's own log rather than left to be inferred —
+        // the install-wide policy still applies and the cycle still works, which
+        // is exactly why nothing else here would ever mention it.
+        log(
+          id,
+          `No per-run write set for this cycle: ${sandbox.reason}. The install's managed sandbox policy still applies; this run is not confined to its own checkout.`,
+        );
+      }
+
       // Once per cycle, and directly above the argv it decides. The executable,
       // the flags and the parser of what comes back are one choice; splitting
       // them across the loop is how a cycle ends up spawned as one CLI and read
       // as another, which reports as a cycle that said nothing.
-      const adapter = selectCycleAdapter();
+      //
+      // Read off the row rather than off anything in this segment's own state,
+      // so a run picked up after a restart is spawned as what it was created as.
+      const adapter = selectCycleAdapter(run.provider);
+
+      // The `pkill`/`killall` denial, for the provider that cannot carry it on
+      // an argv. **The cycle is refused rather than degraded when it is not
+      // there**, which is the one place this differs from the read guard and the
+      // vault skill above: those degrade to a cycle that reads more or knows
+      // less, and this would degrade to a cycle that can kill the server
+      // supervising every run in flight. `codexRules.ts` carries what the file
+      // is, why it is a file rather than a flag, and what it does not cover.
+      if (run.provider === "codex") {
+        const rules = prepareCodexRules();
+        if (rules.kind === "unavailable") {
+          throw new Error(
+            `Refusing to spawn a Codex work cycle with no process-kill denial: ${rules.reason}`,
+          );
+        }
+      }
 
       const args = adapter.buildArgs({
         prompt,
@@ -7858,40 +8214,17 @@ export async function startRun(id: string): Promise<void> {
         // what reaches the log — it is not a capability, nothing acts on it,
         // and the guards are unaffected either way.
         forwardSubAgentText: settings.forwardSubAgentText,
+        // Inside the argv the adapter builds rather than appended to it after
+        // the fact, which is where it used to be. The paths are the same for
+        // every provider and the flag that carries them is not — a `--settings`
+        // overlay for Claude Code, a repeated `--add-dir` for Codex — so a push
+        // out here put a flag `codex exec` rejects on every Codex spawn.
+        writableRoots: sandboxWritableRoots(sandbox, confinement),
+        // Ignored by Claude Code, which has no such flag. See `runIteration`
+        // for why the file is preferred over the stream where it exists, and
+        // why it is removed before the spawn rather than after the read.
+        lastMessageFile: lastMessageFileFor(id),
       });
-
-      // A run can last hours, and the working directory was validated once when
-      // it was created. Re-checking before every spawn means a folder that has
-      // since been replaced by a symlink out of the mount cannot be handed to a
-      // process that writes files.
-      const stillContained = resolveWorkspaceFolder(
-        workDir,
-        describeFolder(workDir).mountId,
-      );
-      if (stillContained !== workDir) {
-        throw new Error(`Working directory changed underneath the run: ${workDir}`);
-      }
-
-      // What this cycle may write, if anything confines it at all. Read per
-      // cycle rather than per run for the reason the containment check above is:
-      // a run outlives the policy it started under, and an operator who has
-      // just switched one on gets it at the next cycle rather than at the next
-      // restart. `workDir` is the local the check above re-proved, not the row,
-      // because an isolated run's checkout is assigned after the row is read.
-      const sandbox = sandboxSettings({ kind: "run", workDir, repoRoot: run.repo_root });
-      const confinement = currentSandbox().state;
-      if (sandbox.kind === "unconfined" && confinement !== "none") {
-        // The one shape this can take on an install that asked for a sandbox: a
-        // path the CLI would drop from a write set, so there is no per-run set
-        // at all. Said on the run's own log rather than left to be inferred —
-        // the install-wide policy still applies and the cycle still works, which
-        // is exactly why nothing else here would ever mention it.
-        log(
-          id,
-          `No per-run write set for this cycle: ${sandbox.reason}. The install's managed sandbox policy still applies; this run is not confined to its own checkout.`,
-        );
-      }
-      args.push(...sandboxArgs(sandbox, confinement));
 
       // Captured before the spawn, because `adoptSession` may move `sessionId`
       // while the child is still running.
@@ -8022,7 +8355,25 @@ export async function startRun(id: string): Promise<void> {
         }
       }
 
-      spentUSD += res.costUSD;
+      // **Whether this cycle's spend is a measurement at all.** Claude Code
+      // reports `total_cost_usd` and this app records it as fact; `codex exec`
+      // reports token counts and no money, so `res.costUSD` is a zero that means
+      // "not known" rather than "nothing". The two must not be added together —
+      // `docs/agent/architecture.md` forbids summing populations — and the
+      // difference between them is invisible in the number itself, which is why
+      // it is asked here rather than inferred anywhere downstream.
+      const spendIsMeasured = providerRecordsSpend(run.provider);
+
+      // The `+=` is unchanged for a provider that measures, and skipped for one
+      // that does not. Adding a zero would be arithmetically identical and is
+      // still not what happens: `runs.spent_usd` is a figure the run page and
+      // the repository rollups present as measured, and a run whose every cycle
+      // added an unmeasured zero would read as one that has been watched and
+      // found to cost nothing. `stopReason` below says so in words instead.
+      if (spendIsMeasured) spentUSD += res.costUSD;
+      // Tokens *are* measured on both — `turn.completed.usage` is counts and
+      // nothing else — so this is unconditional and is the only figure a Codex
+      // run reports about its own consumption.
       spentTokens += res.tokens;
       // Assigned rather than latched, unlike `incompleteIteration` below: what
       // the next cycle would inherit is what *this* cycle ended on, and a cycle
@@ -8048,7 +8399,13 @@ export async function startRun(id: string): Promise<void> {
       // the next pre-cycle check and the next `--max-budget-usd` remainder are
       // computed from. They differ only for an unpriced model, which is the
       // case where taking the first for both leaves the guard at zero.
-      if (!res.sawResult) {
+      //
+      // Gated on the provider too, and not only for tidiness: it reads Claude
+      // Code's own transcripts under `CLAUDE_HOME`, keyed by session id. A Codex
+      // run's session id names a thread in `$CODEX_HOME/sessions`, which this
+      // scan does not look at, so it would answer "no transcripts, therefore no
+      // spend" — a nothing that is indistinguishable from a measurement.
+      if (!res.sawResult && spendIsMeasured) {
         const recovered = await reconcileKilledCycle(sessionId, cycleStartedAt);
         if (recovered) {
           spentEstUSD += recovered.costUSD;
@@ -8586,6 +8943,20 @@ export async function startRun(id: string): Promise<void> {
       stopReason = [
         stopReason,
         `A work cycle ended before Claude Code reported its cost; $${spentEstUSD.toFixed(2)} of this run's spend is reconciled from transcripts rather than measured.`,
+      ]
+        .filter(Boolean)
+        .join(" ");
+    } else if (!providerRecordsSpend(run.provider)) {
+      // Not "understated" and not a zero: unknown. Codex reports what a turn
+      // consumed in tokens and never what it cost, this app holds no price list
+      // for those models, and deriving one would put a guess into the same
+      // column as Claude's measured dollars. Said here, on the run's own
+      // ending, because that is where an operator looks for what the run did —
+      // the run page says the same thing beside the provider, and neither is a
+      // substitute for the other.
+      stopReason = [
+        stopReason,
+        `This run was spawned as ${RUN_PROVIDER_LABEL[run.provider ?? "claude"]}, which reports no cost, so its spend is unknown rather than $0. Its token count is measured.`,
       ]
         .filter(Boolean)
         .join(" ");

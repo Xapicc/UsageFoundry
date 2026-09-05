@@ -507,6 +507,30 @@ export const NOTIFY_ON_SUCCESS = optionalEnv("UF_NOTIFY_ON_SUCCESS");
 /** Path to the Claude Code executable inside the container. */
 export const CLAUDE_BIN = env("CLAUDE_BIN", "claude");
 
+/** Path to the Codex executable, for a run whose `provider` is `codex`. */
+export const CODEX_BIN = env("CODEX_BIN", "codex");
+
+/**
+ * Codex's own state directory — its config, its credential and its `.rules`.
+ *
+ * The sibling of `CLAUDE_HOME` rather than something under `DATA_DIR`, and that
+ * is forced rather than chosen. A work cycle is spawned with a **dropped** uid
+ * (`privsep.ts`), and the file modes that keep an agent out of `/data` would
+ * keep it out of a credential written there too — the exact failure
+ * `claudeAuth.ts` records for `~/.claude/.credentials.json`, where a login
+ * performed with the server's authority left every cycle reporting "Not logged
+ * in". Codex authenticates from `$CODEX_HOME/auth.json` in the same way, so the
+ * directory has to be one the agent uid can read, which means the agent's home.
+ *
+ * What that costs is on the record rather than hidden: this app writes an
+ * execpolicy rules file into that directory (`codexRules.ts`), so the denial it
+ * installs is visible to an operator's own interactive `codex` too. Set
+ * `CODEX_HOME` to give this app a home of its own — the sign-in then has to be
+ * performed against that same value, `CODEX_HOME=… codex login`, or no cycle
+ * has a credential.
+ */
+export const CODEX_HOME = env("CODEX_HOME", path.join(os.homedir(), ".codex"));
+
 /** Path to git, used to give concurrent runs their own checkout. */
 export const GIT_BIN = env("GIT_BIN", "git");
 
