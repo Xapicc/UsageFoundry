@@ -8224,6 +8224,10 @@ export async function startRun(id: string): Promise<void> {
         // for why the file is preferred over the stream where it exists, and
         // why it is removed before the spawn rather than after the read.
         lastMessageFile: lastMessageFileFor(id),
+        // The same path `runIteration` spawns in, below. Claude Code takes it
+        // from `cwd` and needs no flag; `codex exec` resolves its workspace —
+        // and therefore what `workspace-write` grants — from `-C`.
+        workDir,
       });
 
       // Captured before the spawn, because `adoptSession` may move `sessionId`

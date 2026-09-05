@@ -1058,6 +1058,19 @@ export function buildArgs(opts: {
    * argv. See `buildCodexArgs` for why the file outranks the stream.
    */
   lastMessageFile?: string | null;
+  /**
+   * The directory the cycle is spawned in, for a CLI that resolves its
+   * workspace from a flag rather than from `cwd`.
+   *
+   * Ignored by `buildArgs`, which needs no flag for it: `runIteration` passes
+   * the same path to `spawn` and Claude Code takes its workspace from there.
+   * `buildCodexArgs` emits it as `-C`, and the reason it must is that `-C` is
+   * also what `workspace-write` grants — a Codex cycle that stated no working
+   * root would take one from wherever the process happened to start, and the
+   * directory the run loop re-proved contained a moment earlier would not be
+   * the directory the sandbox opened.
+   */
+  workDir?: string | null;
 }): string[] {
   const args = ["-p", opts.prompt, "--output-format", "stream-json", "--verbose"];
   if (opts.model) args.push("--model", opts.model);
@@ -1337,6 +1350,7 @@ export function buildCodexArgs(opts: Parameters<typeof buildArgs>[0]): string[] 
     "--ignore-user-config",
   ];
   if (opts.model) args.push("-m", opts.model);
+  if (opts.workDir) args.push("-C", opts.workDir);
   args.push(...CODEX_PERMISSIONS[opts.permissionMode]);
   // Every directory beyond the working root, in one list rather than two
   // mechanisms: the vault this run was granted and whatever the install's
