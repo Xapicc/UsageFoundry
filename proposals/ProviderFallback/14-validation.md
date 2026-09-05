@@ -5,13 +5,17 @@ Three sections: **verified** (re-checked, with the command), **corrected**
 verified** (claims standing on reasoning or on source-reading rather than on
 observation, each flagged where it is used).
 
-Everything below was run in this container at `db10377`.
+Everything in §1a–§1d was run in this container at `db10377`. **§1e and §1f are
+a second pass at `879c8ab`, after `codex-cli 0.153.4` was installed** — the
+first pass had no binary, and eight of the ten Codex unknowns moved — four
+answered outright, four in part. Where the two passes disagree the second one
+wins, and §2f and §2g say so by name.
 
 ## 0. Every citation resolved mechanically
 
 ```sh
 node proposals/ProviderFallback/scripts/check-citations.mjs
-→ files 16  links 35  repo paths 282  foreign names 58  named lines 197  bare :N 309
+→ files 16  links 51  repo paths 301  foreign names 74  named lines 202  bare :N 311
   no problems
 ```
 
@@ -90,8 +94,27 @@ one is *reported* rather than silently chained to something older.
 
 ### 1e. The Codex CLI, read from source
 
-Every one of these is **`openai/codex@main` as fetched on 2026-09-02**, not a
-pinned release, and **no binary was run**.
+Every one of these was **`openai/codex@main` as fetched on 2026-09-02** on the
+first pass, with **no binary run**. The second pass re-fetched the two files the
+whole reading rests on at both release tags and found them **byte-identical**,
+so the table below now stands at the installed version rather than at a moving
+branch:
+
+```sh
+for t in rust-v0.152.1 rust-v0.153.4; do
+  curl -sS -o "ev-$t.rs"  "https://raw.githubusercontent.com/openai/codex/$t/codex-rs/exec/src/exec_events.rs"
+  curl -sS -o "cli-$t.rs" "https://raw.githubusercontent.com/openai/codex/$t/codex-rs/exec/src/cli.rs"
+done
+diff ev-rust-v0.152.1.rs  ev-rust-v0.153.4.rs   → exit 0, no output   (320 lines each)
+diff cli-rust-v0.152.1.rs cli-rust-v0.153.4.rs  → exit 0, no output   (318 lines each)
+```
+
+`codex-rs/exec/src/lib.rs` went 2,163 → 2,167 lines over the same bump, and the
+whole diff is one rollout-file reader swapped for a seekable reverse scanner.
+The one citation in this folder that names a Codex source **by line** —
+`codex-rs/login/src/lib.rs:38-47`, in
+[`10-permission-and-credentials.md`](10-permission-and-credentials.md) — was
+read at both tags and is identical, so no line number here has drifted.
 
 | claim | file |
 |---|---|
@@ -109,8 +132,10 @@ pinned release, and **no binary was run**.
 | auth reads `OPENAI_API_KEY`, `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN` | `codex-rs/login/src/lib.rs:38-47`; `codex-rs/login/src/auth_env_telemetry.rs` |
 | ChatGPT-plan auth persists a `chatgpt_plan_type` under `CODEX_HOME` | `codex-rs/login/src/token_data.rs` |
 | `shell_environment_policy` has `inherit`, `exclude`, `include_only`, `set`, `ignore_default_excludes` | `codex-rs/config/src/shell_environment_policy.rs` |
-| **no rate-limit or quota handling by name in the exec crate** | `grep -in 'rate_limit\|usage_limit\|quota'` over `codex-rs/exec/src/lib.rs` (2,167 lines) → 0 |
-| **no per-invocation spend ceiling anywhere in the flag surface** | `cli.rs` + `shared_options.rs`, both read in full |
+| **no rate-limit or quota handling by name in the exec crate** | `grep -inE 'rate_limit\|usage_limit\|quota'` over `codex-rs/exec/src/lib.rs` at `rust-v0.153.4` (2,167 lines) → 0 |
+| **no per-invocation spend ceiling anywhere in the flag surface** | `cli.rs` + `shared_options.rs`, both read in full; re-confirmed against `codex exec --help` on the binary, §1f |
+| the item union still has nine members incl. `collab_tool_call`; `CommandExecutionStatus` is `{in_progress, completed, failed, declined}`; `CommandExecutionItem` carries `{command, aggregated_output, exit_code, status}` on one item | `exec_events.rs` at `rust-v0.153.4` |
+| every `Usage` field's docblock says "during the turn"; `cache_write_input_tokens` carries `#[serde(default)]` | `exec_events.rs` at `rust-v0.153.4` |
 
 Reproduce the whole Codex-side reading with:
 
@@ -123,16 +148,73 @@ for f in exec/src/cli.rs exec/src/exec_events.rs exec/src/lib.rs \
          login/src/lib.rs login/src/auth_env_telemetry.rs login/src/token_data.rs \
          config/src/shell_environment_policy.rs; do
   curl -sS -o "$D/$(echo "$f" | tr / _)" \
-    "https://raw.githubusercontent.com/openai/codex/main/codex-rs/$f"
+    "https://raw.githubusercontent.com/openai/codex/rust-v0.153.4/codex-rs/$f"
 done
 ```
+
+(The first pass used `main` in place of the tag. Use the tag — a survey that
+cannot say which build it read is the thing `Dockerfile:373`–`:377` argues
+against.)
+
+### 1f. The Codex CLI, run
+
+`codex-cli 0.153.4` at `/usr/local/bin/codex`, **no OpenAI credential**
+(`codex login status` → `Not logged in`, exit 1). Every row below is the
+binary's own output. The full reasoning, and what each one changes, is in
+`01-constraints.md` Part 2; this table is the audit trail.
+
+| claim | command | result |
+|---|---|---|
+| the version | `codex --version` | `codex-cli 0.153.4` |
+| **no dollar or token ceiling on `codex exec`** | `codex exec --help`; then `codex exec --strict-config -c '<k>=1'` for `max_budget_usd`, `budget.max_usd`, `max_cost_usd`, `spend_limit_usd`, `max_tokens`, `token_limit`, `max_total_tokens`, `budget` | 26 flags, none denominated in money or tokens; all eight keys → `unknown configuration field` |
+| the `--strict-config` probe is not vacuously failing | same, with `model`, `project_doc_max_bytes`, `sandbox_mode`, `approval_policy` | all recognised |
+| a **token** budget exists one protocol down | `codex app-server generate-json-schema --out $D` | `ThreadGoalSetParams.tokenBudget: int64`; `ThreadGoalStatus` includes `usageLimited`, `budgetLimited` |
+| **an `--append-system-prompt` equivalent exists, on argv** | `codex debug prompt-input -c 'developer_instructions="UF_A"' 'hello'` | lands as `generic.developer_instructions`, first content item of the first **developer** message |
+| …and via the config file, and via `-p` | `$CODEX_HOME/config.toml`; `codex exec --strict-config -p ufp` | same slot; `-p` reads `$CODEX_HOME/ufp.config.toml` (proved by a bogus key rejected with its line:col) |
+| …and `$CODEX_HOME/AGENTS.md` | `codex debug prompt-input 'hello'` | lands as `agents_md.instructions`, **user** role |
+| the prompt-input probe is complete | a repository `AGENTS.md` with a sentinel | 5 items; sentinel at item 3 beside `environments.environment_context` |
+| `experimental_instructions_file` **does not exist** in 0.153.4 | `--strict-config`; `grep -c -a` over the platform binary | rejected; `0` |
+| **a key can pass `--strict-config` and do nothing** | `-c 'instructions="…"'` then `codex debug prompt-input` | recognised, and reaches no message |
+| what `-s workspace-write` resolves to | `codex debug prompt-input -c 'sandbox_mode="workspace-write"' 'hi'` | read `:root`; write `cwd`, `:slash_tmp`, `:tmpdir`; **read-only `.git`, `.agents`, `.codex`** |
+| a writable root brings its own read-only `.git` | `-c 'sandbox_workspace_write.writable_roots=["/opt/uf"]'` | `/opt/uf` write, `/opt/uf/.git` read |
+| network is off under `workspace-write` and is one key away | `-c 'sandbox_workspace_write.network_access=true'` | "Network access is enabled" |
+| enforcement **could not be exercised** | `RUST_LOG=debug timeout 25 codex sandbox --sandbox-state-json …` | hangs; exit 124; both streams empty. Codex vendors its own `bwrap` (529,168 bytes, `…/codex-resources/bwrap`) and these probes ran inside one |
+| `codex exec --json` stdout is pure JSONL; tracing is on stderr | `codex exec --json 'hi' >out 2>err` | 14 stdout lines, `grep -cv '^{'` → `0` |
+| **`{"type":"error"}` is usually not fatal** | same run | 10 of the 14 lines are top-level `error`; **nine** say `Reconnecting... N/5`; `ErrorItem`'s docblock says "non-fatal" |
+| Codex has its own retry ladder | same run, timed twice | WebSocket attempts → HTTPS transport fallback (as an `item.completed`) → five more; 18 s and 19 s wall |
+| `turn.failed.error` is `{message}` and carries no code | same run | `{"type":"turn.failed","error":{"message":"unexpected status 401 …"}}`; exit 1 |
+| a machine-readable code exists **only** on the app-server protocol | `generate-json-schema` | `CodexErrorInfo` = `usageLimitExceeded`, `rateLimitExceeded`, `sessionBudgetExceeded`, `contextWindowExceeded`, … ; `ErrorNotification.willRetry: boolean` |
+| **`-o <FILE>` is not written when the turn fails** | `codex exec --json -o last.txt 'hi'; ls last.txt` | `No such file or directory` |
+| the argv prompt ceiling is 128 KiB, not `ARG_MAX` | prompts of 100,000 and 200,000 bytes, then bisected | `OK` / `Argument list too long`; the cliff is between 131,070 and 131,080 — `MAX_ARG_STRLEN`, while `getconf ARG_MAX` → `2097152` |
+| `codex exec` announces a stdin read even from `/dev/null` | `codex exec --json 'hi' </dev/null` | `Reading additional input from stdin...` on **stderr** |
+| `resume`/`fork` drop **nine** of `exec`'s flags | `comm` over the three `--help` flag lists (26 / 19 / 17) | `--add-dir`, `--approve-for-me`, `--cd`, `--color`, `--local-provider`, `--oss`, `--profile`, `--sandbox`, `--version`; `resume` adds `--all` and `--last` |
+| `--ephemeral` writes no session file | `rm -rf $CODEX_HOME/sessions` then one run each way | nothing vs `sessions/2026/09/05/rollout-<ts>-<thread_id>.jsonl` |
+| the model catalog is readable with no credential and **carries no prices** | `codex debug models` | 11 slugs; a `price\|cost\|rate\|usd` regex over the whole document → `(none)` |
+| **Codex has an OTel exporter and it emits a per-turn cost** | `codex exec --strict-config -c 'otel.exporter="bogus"'`; metric names in the platform binary | `expected one of none, statsig, otlp-http, otlp-grpc`; `codex.turn.cost_microusd`, `codex.turn.token_usage` |
+| `--with-api-key` **does not validate** | `printf 'sk-uf-not-a-real-key\n' \| codex login --with-api-key` | `Successfully logged in`, exit 0; `$CODEX_HOME/auth.json` mode 0600, `{"auth_mode":"apikey","OPENAI_API_KEY":"…"}` |
+| `--with-access-token` does | `printf 'not-a-real-access-token\n' \| codex login --with-access-token` | `Error logging in with access token: invalid agent identity JWT format`, exit 1 |
+| `login status` **echoes a masked key** | `codex login status` | `Logged in using an API key - sk-uf-no***l-key` |
+| `--device-auth` works headless, prints to stdout, and blocks | `codex login --device-auth` | `https://auth.openai.com/codex/device` + a one-time code, ANSI-coloured, expiring in 15 minutes; no exit inside that window |
+| the credential env vars are all three | `grep -aoE 'CODEX_[A-Z0-9_]+'` over the platform binary; `codex-rs/login/src/lib.rs:38-47` | `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN`, `OPENAI_API_KEY` — **none of which `childEnv` strips**, §4 |
+
+Two things this pass could **not** do, and neither is a matter of effort:
+
+- **No live model turn.** There is no OpenAI credential on this machine and
+  `~/.codex` holds no credential file. Everything downstream of a completed turn —
+  U1's quota text, U2's one-`turn.completed`-per-invocation, U3's restore
+  semantics, U10's number — is still open and is marked so in
+  `01-constraints.md` Part 2.
+- **No sandbox enforcement test.** `codex sandbox` hangs here, and the
+  environment it hangs in is this agent's own bubblewrap sandbox rather than a
+  UsageFoundry container, so the result would not transfer even if it had one.
 
 ---
 
 ## 2. Corrected
 
-Four things this survey found wrong, three of them in the brief that
-commissioned it. Whether each made the recommendation easier or harder:
+Six things this survey found wrong — three in the brief that commissioned it,
+three in its own first pass. Whether each made the recommendation easier or
+harder:
 
 ### 2a. **A parked run does not hold its folder.** *Easier.*
 
@@ -172,35 +254,93 @@ listed here only because the brief invited the check.
 
 It has 20. Counted rather than eyeballed, and the count is in §1c.
 
+### 2f. The appended system prompt is **not** absent as an argv. *Harder.*
+
+[`02-the-handover-contract.md`](02-the-handover-contract.md)'s "In" table records
+`--append-system-prompt` against "**no flag** — `-c` overrides, `AGENTS.md`" and
+files it **absent as an argv**. It is not.
+`-c developer_instructions="<text>"` puts the text at the **front of the first
+developer message**, ahead of Codex's own skills, permissions and
+collaboration-mode blocks, and `-c` is one of the five flags `codex exec resume`
+and `codex exec fork` still accept. Measured in §1f; reasoned in
+`01-constraints.md` Part 2, U6.
+
+Harder, because it removes the cleanest safety objection to every option that
+spawns Codex: `SELF_HOSTING_NOTICE` and `COMMIT_IDENTITY_NOTICE` **can** ride a
+Codex cycle. What is still absent is the other half of that pair — the
+unconditional `--disallowedTools Bash(pkill:*) Bash(killall:*)`, which is a
+denial rather than a notice, and nothing found on the binary does it per
+invocation.
+
+### 2g. A Codex cycle does not have zero of the three cost sources. *Harder.*
+
+`README.md` §"The finding that shapes everything" says a Codex cycle has "zero
+of the three". It has one. Codex ships an OTel exporter —
+`otel.exporter` ∈ `{none, statsig, otlp-http, otlp-grpc}`, probed in §1f — and
+its metric names include **`codex.turn.cost_microusd`** beside
+`codex.turn.token_usage`. OTLP is one of this app's three sources
+(`src/lib/otlp.ts`), so the figure would arrive over a transport that already
+exists.
+
+`02-the-handover-contract.md`'s narrower sentence — "There is no cost field
+anywhere in the union" — is still exactly right, and re-verified at
+`rust-v0.153.4`. The union is not Codex.
+
+**This does not touch C1.** C1 forbids *summing*, not sourcing: a Codex figure
+would still be a fourth population over a fourth time base and may never be
+added into `runs.spent_usd`, a meter, or a window fraction. And three things
+about the figure are unverified — whether it is populated on a subscription
+account at all, whether `estimatedUsageUsdMicros` means dollars or plan credits
+(the schema carries both, and the credits field is the required one), and
+whether standing up a second OTLP path is proportionate. Recorded as U10 in
+`01-constraints.md` Part 2, still open.
+
 ---
 
 ## 3. Not verified
 
 Each of these is used somewhere in this proposal and is flagged where it is used.
 
-### 3a. Everything about a running Codex process
+### 3a. What a running Codex process does, where it needs a credential
 
-**Nothing in `01-constraints.md` Part 2's ten unknowns was settled.** No binary
-was installed, no account was held, no `codex exec` was run. In particular:
+The first pass settled none of the ten unknowns — no binary, no account, no
+`codex exec` run. The second pass installed `codex-cli 0.153.4` and settled
+what does not need a credential. **Five are still open or half-open, and every
+one of them is open for the same reason: there is no OpenAI credential on this
+machine.**
 
-- **U1** — what Codex emits when its own quota is exhausted. Used in
-  `04-option-b`, `12-comparison.md` §2. **This blocks every building option.**
-- **U2** — whether `turn.completed.usage` is per-turn or cumulative. Used in
-  `02-` item 11.
-- **U3** — whether `codex exec resume` restores the sandbox mode and the model.
-  Used in `08-continuity.md`.
-- **U4** — whether a per-invocation spend ceiling exists. Used in
-  `09-guards-and-metering.md`, and it is the largest single input to the
-  recommendation.
-- **U5** — what `--sandbox workspace-write` permits on Linux under this
-  container's seccomp. Used in `10-permission-and-credentials.md`.
-- **U6** — whether an `--append-system-prompt` equivalent exists. Used
-  throughout; it is what decides whether the self-hosting and commit-identity
-  notices can be delivered at all.
-- **U7**–**U10** — MCP attachment, argv prompt size, `--json` stability across
-  releases, and what a Codex cycle costs.
+| | question | status | still needed |
+|---|---|---|---|
+| **U1** | what Codex emits at its own wall | **open** | an account at a wall |
+| **U2** | per-turn or cumulative `usage` | **half** — the docblocks say per-turn | a turn that completes, to count `turn.completed` per invocation |
+| **U3** | what `resume` restores | **half** — `resume` will not *accept* `-s`, `-C`, `-p` | two live turns, to see whether the session restores what argv cannot |
+| **U4** | a dollar or token ceiling | **answered: no** on `codex exec` | — (the `tokenBudget` one protocol down is schema-read, not exercised) |
+| **U5** | what `workspace-write` permits, and whether it holds | **half** — the resolved profile is measured | the real image; `codex sandbox` hangs in *this* agent's own sandbox |
+| **U6** | an `--append-system-prompt` equivalent | **answered: yes** | — (the managed `/etc/codex` carrier is schema-read only) |
+| **U7** | per-invocation MCP | **deferred** | nothing in scope depends on it |
+| **U8** | argv prompt size | **answered** — ~128 KiB | — |
+| **U9** | `--json` stability | **answered** for 0.152.1 → 0.153.4 | a second bump, each time |
+| **U10** | what a cycle costs | **open on the number** | an account, and an OTLP collector |
 
-The probe for each is in `01-constraints.md` Part 2 beside the question.
+**U1 still blocks every building option**, unchanged: `04-option-b`'s premise is
+that a Claude wall is survivable by switching, and nothing here says what
+happens at the OpenAI one. Used in `04-option-b`, `12-comparison.md` §2.
+
+Three second-pass findings are used elsewhere and are **schema-read rather than
+exercised**, which is a weaker standing than §1f's measured rows and is flagged
+here rather than there:
+
+- `CodexErrorInfo`'s member list and `ErrorNotification.willRetry` (U1) come
+  from `codex app-server generate-json-schema`. **No app-server session was
+  run**, and nothing proves those codes are populated in practice.
+- `ThreadGoalSetParams.tokenBudget` (U4) is from the same dump and was never
+  set.
+- `ConfigRequirements.additionalDeveloperInstructions` (U6) is from the same
+  dump; `/etc` is not writable from this sandbox, so the managed
+  standing-instruction carrier was never proved to land.
+
+The probe for each unknown, and what its answer changes, is in
+`01-constraints.md` Part 2 beside the question.
 
 ### 3b. Every frequency about walls
 
@@ -255,12 +395,18 @@ production. `SELECT COUNT(*) FROM workflows` on a live install is the check.
 
 `06-option-d` depends on it. `run_templates` has 0 rows here.
 
-### 3f. The Codex reading is of `main`, not of a release
+### 3f. The Codex reading was of `main`; it has since been anchored, once
 
-Everything in §1e was fetched from the default branch. `Dockerfile:373`–`:377`
-explains why this repository pins an agent CLI and reads its contract off one
-build; the Codex facts here have had no such treatment. Re-fetching against a
-tag before acting on any of them is one command, and **U9** is the reason to.
+The first pass fetched everything in §1e from the default branch. The second
+re-fetched `exec_events.rs` and `codex-rs/exec/src/cli.rs` at both
+`rust-v0.152.1` and `rust-v0.153.4` and found them byte-identical, so the
+reading now stands at the installed build rather than at a moving branch.
+
+**That is one bump, not a stability guarantee.** The `--json` flag still carries
+the `experimental-json` alias, `Dockerfile:373`–`:377`'s argument for pinning an
+agent CLI is unweakened, and the check is two `curl`s and a `diff` — cheap
+enough to be a condition of every version bump rather than a one-off. **U9** is
+the reason to.
 
 ---
 
@@ -292,4 +438,10 @@ first — this is a change to what a child process can read.
   row rather than of the files.)
 - **Ran no browser and started no container.** Nothing here is a judgement about
   how anything looks.
-- **Ran `codex` zero times.**
+- **Ran `codex` — on the second pass, and only where no credential was needed.**
+  `--help` on every relevant subcommand, `debug prompt-input`, `debug models`,
+  `app-server generate-json-schema`, `exec --strict-config`, `login`/`logout`
+  against a throwaway `CODEX_HOME` outside the repository, and one
+  `codex exec --json` that failed at auth. **No model turn completed, so no
+  token was spent and nothing was billed.** The throwaway `CODEX_HOME` was
+  logged out and holds no credential.

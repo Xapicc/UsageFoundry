@@ -41,9 +41,14 @@ about what that fixed:
 > had no upper bound this app enforced.
 > — `src/lib/cycleInvocation.ts:897`–`:902`
 
-**No `--max-budget-usd` equivalent was found anywhere in `codex exec`'s flag
+**No `--max-budget-usd` equivalent exists anywhere in `codex exec`'s flag
 surface** (`codex-rs/exec/src/cli.rs` and `codex-rs/utils/cli/src/shared_options.rs`,
-both read in full — U4).
+both read in full — U4). **Confirmed on `codex-cli 0.153.4`**: 26 flags, none
+denominated in money or tokens, and eight candidate config keys all rejected by
+`--strict-config`. The nearest thing that exists anywhere in Codex is an `int64`
+`tokenBudget` on `codex app-server`'s `thread/goal/set`, which `codex exec`
+cannot reach — so an implementer who wants a ceiling has to drive a different
+protocol from the one this file costed. `14-validation.md` §1f.
 
 So the honest statement is: **a Codex cycle, as far as this session could
 establish, cannot be given a hard spending ceiling by this app.** The bound is
@@ -72,9 +77,25 @@ here would reach a Codex process.
 
 The transcript source does not exist: `scanUsage()` walks `~/.claude`.
 
-**So a Codex cycle has zero of this app's three cost sources**, and the only
-material available is `turn.completed.usage` in the stream the app is already
-parsing.
+~~So a Codex cycle has zero of this app's three cost sources.~~ **Corrected: it
+has one.** Codex ships its own OTel exporter — `otel.exporter` ∈ `{none,
+statsig, otlp-http, otlp-grpc}`, and its metric names include
+**`codex.turn.cost_microusd`** beside `codex.turn.token_usage`. `childEnv`
+stripping inherited `OTEL_*` is a fact about what this app *hands* a child, not
+about what a Codex child can be *told* to do: the exporter is configured through
+`-c otel.exporter=…`, which is argv this app would be writing.
+
+So the material available is `turn.completed.usage` in the stream the app is
+already parsing, **and** a money figure over a transport the app already ingests
+(`src/lib/otlp.ts`). Three things about that figure are unverified and each
+could make it useless — whether it is populated on a subscription account at
+all, whether `estimatedUsageUsdMicros` means dollars or plan credits, and
+whether a second OTLP path is proportionate to a number C1 forbids summing
+anyway. U10 in `01-constraints.md` Part 2; `14-validation.md` §2g.
+
+**None of this weakens the paragraph above it.** A cost that can be *observed*
+after the fact is not a ceiling that can be *enforced* during the cycle, and it
+is the ceiling that C2 is about.
 
 ### Three answers, and the one the codebase already has
 

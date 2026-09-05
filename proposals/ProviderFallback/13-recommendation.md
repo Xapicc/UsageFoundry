@@ -153,14 +153,34 @@ Any one of the following, and each is a measurement rather than an opinion:
    the one with a cheaper fix than a second provider: `maxDurationMinutes`
    currently includes parked time by design (`budget.ts:99`–`:101`), and whether
    it should is a question this survey did not ask.
-3. **U4 comes back with a real per-invocation spending ceiling.** That removes
-   the single largest objection and moves C's "money stays bounded" from 2 to 4,
-   which is +10 — still not enough alone, and necessary for anything else to
-   matter.
-4. **U6 comes back with an `--append-system-prompt` equivalent**, restoring the
-   self-hosting and commit-identity notices. Combined with 3 — "money stays
-   bounded" 2→4 and "containment parity" 2→4, ten points each — C reaches **140**
-   against A's 194: closer, still losing, and for the first time defensible.
+3. ~~**U4 comes back with a real per-invocation spending ceiling.**~~
+   **Settled, and the answer is no.** `codex-cli 0.153.4` was installed and
+   probed: 26 flags on `codex exec`, none denominated in money or tokens, and
+   eight candidate config keys all rejected by `--strict-config`
+   (`14-validation.md` §1f). The one ceiling that exists anywhere in Codex is an
+   `int64` `tokenBudget` on `codex app-server`'s `thread/goal/set` — a token
+   count, not money, on a protocol `codex exec` cannot reach. **C's "money stays
+   bounded" stays at 2**, and the single largest objection to it is now measured
+   rather than assumed.
+4. **U6 came back with an `--append-system-prompt` equivalent, and it is
+   better placed than Claude's.** `-c developer_instructions="<text>"` puts text
+   at the *front* of Codex's first developer message, and `-c` is one of the few
+   flags `resume` and `fork` still accept, so `SELF_HOSTING_NOTICE` and
+   `COMMIT_IDENTITY_NOTICE` can ride every Codex cycle including a resumed one
+   (`14-validation.md` §2f).
+
+   **This does not move "containment parity" 2→4.** That criterion is about
+   containment, and the notice is only half of the pair: the other half is the
+   unconditional `--disallowedTools Bash(pkill:*) Bash(killall:*)`, and nothing
+   on the binary denies a tool per invocation. U5 makes it worse rather than
+   better — `-s workspace-write` resolves `.git` to **read-only**, so a Codex
+   cycle under it cannot commit, and the escape from that is an approval policy
+   or `danger-full-access`. **Containment parity stays at 2.**
+
+   The score is unchanged, and the sensitivity table already covers the case
+   where it were not: the "every Codex unknown resolved favourably" run gives
+   A 194 against E 143 and C 132. **A wins even when every unknown breaks the
+   other way.**
 5. **Somebody wants Codex runs for their own sake.** This is not a measurement
    and it is the only overturning fact that does not need an experiment. It
    changes the question from "is a fallback worth it" to "is multi-provider
@@ -169,6 +189,14 @@ Any one of the following, and each is a measurement rather than an opinion:
 
 **Nothing here overturns it on reasoning alone**, which is the point: the
 argument against building is not that a fallback is a bad idea, it is that
-every input to the decision that could be measured on this machine says wait,
-and every input that could not be measured is on the other side of a binary
-nobody here can run.
+every input to the decision that could be measured says wait.
+
+The second pass narrowed what "could not be measured" means. The binary is now
+installed and four of the ten Codex unknowns are answered outright, four more
+in part. What is left open is open for one reason — **there is no OpenAI
+credential on this machine** — and the biggest of them, U1, is still what it
+was: *nobody has seen what Codex
+does at its own wall.* The measurements that would actually move this
+recommendation are now the two at the top of this list, and both of them are
+about **this app's own `runs` table**, not about Codex. That table has zero rows
+here.

@@ -39,17 +39,30 @@ Three more findings narrow it further:
 - **`codex exec --json` reports tokens and never a cost.** The whole JSONL union
   is eight events and nine item types; `turn.completed.usage` is five integers
   with no money in it (`codex-rs/exec/src/exec_events.rs`). Claude's
-  `result.total_cost_usd` (`orchestrator.ts:6819`) has no counterpart, and
-  neither do the other two of this app's three cost sources — so **a Codex cycle
-  has zero of the three.**
-- **No per-invocation spending ceiling was found anywhere in `codex exec`'s flag
+  `result.total_cost_usd` (`orchestrator.ts:6819`) has no counterpart.
+  ~~So a Codex cycle has zero of the three.~~ **Corrected on the second pass: it
+  has one.** Codex ships an OTel exporter (`otel.exporter` ∈ `{none, statsig,
+  otlp-http, otlp-grpc}`) whose metrics include `codex.turn.cost_microusd`, and
+  OTLP is one of this app's three sources. The union still carries no cost;
+  Codex does. [`14-validation.md`](14-validation.md) §2g, and U10 in
+  `01-constraints.md` Part 2 for what is still unverified about the figure.
+- **No per-invocation spending ceiling exists anywhere in `codex exec`'s flag
   surface.** `--max-budget-usd` is the only thing that bounds what one Claude
   cycle spends (`cycleInvocation.ts:1115`–`:1118`); its absence means a fallback
   cycle runs under a cycle cap and a clock and nothing denominated in money.
-- **Two safety mechanisms have no Codex equivalent**: the unconditional
-  `--disallowedTools Bash(pkill:*) Bash(killall:*)` (`cycleInvocation.ts:650`,
-  `:1050`) and `SELF_HOSTING_NOTICE` (`:652`–`:663`), which together are what
-  stands between an unattended agent and the supervisor process it runs inside.
+  **Confirmed against the installed binary** — 26 flags, none denominated in
+  money or tokens, and eight candidate config keys all rejected by
+  `--strict-config` (U4). The nearest thing that exists is an `int64`
+  `tokenBudget` on `codex app-server`'s `thread/goal/set`, which `codex exec`
+  cannot reach.
+- **One of the two safety mechanisms has no Codex equivalent**: the
+  unconditional `--disallowedTools Bash(pkill:*) Bash(killall:*)`
+  (`cycleInvocation.ts:650`, `:1050`). The other, `SELF_HOSTING_NOTICE`
+  (`:652`–`:663`), ~~has none either~~ **does** — `-c developer_instructions=…`
+  puts text at the front of Codex's first developer message, and `-c` survives
+  `resume` and `fork`. The denial is what is missing, not the notice.
+  [`14-validation.md`](14-validation.md) §2f, and U6 in `01-constraints.md`
+  Part 2.
 
 And one thing that is true today, with nothing built:
 **`childEnv` does not strip `OPENAI_API_KEY` or `CODEX_API_KEY`**
@@ -84,7 +97,8 @@ order to build in if somebody does.
 | [`11-review-landing-and-blast-radius.md`](11-review-landing-and-blast-radius.md) | The merge queue does not change and must not; the run and the card disclose, the diff does not; and why a wall's realised blast radius is the whole fleet. |
 | [`12-comparison.md`](12-comparison.md) | The facts table, constraint compliance, the weighted score, five sensitivity runs, and what composes with what. |
 | [`13-recommendation.md`](13-recommendation.md) | The case, the one change to make, six refusals by name, the build order if overruled, and the five overturning facts. |
-| [`14-validation.md`](14-validation.md) | Every claim re-checked with its command. **Verified**, **corrected** (five, three of them in the brief), and **not verified** (six, including all ten Codex unknowns) — plus the four SQL statements that would settle the frequency question. |
+| [`14-validation.md`](14-validation.md) | Every claim re-checked with its command. **Verified** — including §1f, the installed `codex-cli 0.153.4` run row by row — **corrected** (six, three in the brief and three in this proposal's own first pass), and **not verified** (six, now including only five of the ten Codex unknowns —
+four answered outright, one deferred) — plus the four SQL statements that would settle the frequency question. |
 | [`scripts/score.mjs`](scripts/score.mjs) | The comparison's arithmetic, dependency-free. Every number in §4 of `12-` comes out of it. |
 | [`scripts/check-citations.mjs`](scripts/check-citations.mjs) | Resolves every link, path and line number in this directory. It found **53** mis-anchored bare `:NNNN` references on the first pass — the defect class ContextControl's validation found fifty of — and all 53 were qualified in place. |
 
@@ -113,18 +127,30 @@ That is the honest state of the question and it is why the recommendation is
 
 ## Reproducing
 
-The Codex side, read from source (no binary, no account):
+The Codex side. A binary is now installed — `codex-cli 0.153.4` at
+`/usr/local/bin/codex` — and [`14-validation.md`](14-validation.md) §1f is what
+it said, command by command, with no OpenAI credential. Three probes carry most
+of it and none needs an account:
+
+```sh
+codex debug prompt-input '<prompt>'          # every message the model will see
+codex exec --strict-config -c '<key>=<value>'  # is this a real config key?
+codex app-server generate-json-schema --out "$D"   # the protocol, as JSON Schema
+```
+
+The source reading behind `02-the-handover-contract.md`, now anchored to the
+installed release rather than to `main`:
 
 ```sh
 D=$(mktemp -d)
-curl -sS -o "$D/pkg.json" https://registry.npmjs.org/@openai/codex/0.152.1
+curl -sS -o "$D/pkg.json" https://registry.npmjs.org/@openai/codex/0.153.4
 for f in exec/src/cli.rs exec/src/exec_events.rs exec/src/lib.rs \
          utils/cli/src/shared_options.rs utils/cli/src/sandbox_mode_cli_arg.rs \
          utils/cli/src/approval_mode_cli_arg.rs utils/cli/src/config_override.rs \
          login/src/lib.rs login/src/auth_env_telemetry.rs login/src/token_data.rs \
          config/src/shell_environment_policy.rs; do
   curl -sS -o "$D/$(echo "$f" | tr / _)" \
-    "https://raw.githubusercontent.com/openai/codex/main/codex-rs/$f"
+    "https://raw.githubusercontent.com/openai/codex/rust-v0.153.4/codex-rs/$f"
 done
 ```
 
