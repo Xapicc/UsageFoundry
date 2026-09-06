@@ -9,6 +9,15 @@ product has a documented position that covers most of it, and [M6](#m6-a-credent
 the alternative is worse than it first looks. They stay in the file because the
 honest form of "we do not need this" is the argument, not the omission.
 
+> **Re-checked against `main` at `66fdbab`.** Three of the six moved.
+> [M3](#m3-nothing-this-app-runs-can-reach-a-human-and-most-of-that-is-on-purpose) is **closed whole** — `src/lib/notify.ts` posts a signed
+> JSON body to an operator-named URL when a run ends needing somebody — and it is
+> the one row on this axis whose absence claim is now simply false.
+> [M1](#m1-the-app-can-push-nothing-and-open-no-pull-request) and [M5](#m5-nothing-can-be-prioritised-the-queue-is-strictly-oldest-first) are still half, and their missing halves are
+> the same missing half: no control on any page.
+> [M4](#m4-nothing-verifies-a-branch-before-it-is-merged) is still half for the same reason.
+> [M2](#m2-one-credential-no-identity-no-authorisation) and [M6](#m6-a-credential-cannot-be-rotated-without-a-restart-and-a-restart-ends-live-runs) are untouched.
+
 ---
 
 ## M1 — The app can push nothing and open no pull request
@@ -38,6 +47,22 @@ honest form of "we do not need this" is the argument, not the omission.
 > covered by unit tests and by their refusal paths, never end to end against
 > GitHub. The row's demand was marked **assumed** when it was written, and
 > shipping a mechanism nobody has yet pressed does not settle that.
+>
+> **Re-checked at `66fdbab`, still half.** `deliverRun` is
+> `src/lib/land.ts:2901`, `planDelivery` and `openPullRequest` are
+> `src/lib/delivery.ts:79` and `:140`, the endpoint is
+> `src/app/api/runs/[id]/deliver/route.ts`, and the credential fix is on the line:
+> the push takes `githubEnv(github.token)` explicitly at `:2958-2962` because
+> `gitEnv()` strips the `UF_` namespace. `grep -rn "deliver" src/app --include=*.tsx
+> src/components --include=*.tsx` returns **nothing**, so there is still no
+> button. Whether a real pull request has been opened since is **assumed
+> unchanged and unverifiable from here**: `DATA_DIR` is unreadable by this uid, so
+> no `deliver` event on any run's timeline can be read.
+>
+> **One thing the merge left behind.** `src/lib/delivery.ts:11-12` opens by
+> stating that "`grep` over `src/` for `git push`, `gh pr create` and
+> `createPullRequest` returns prose only" — which was this row's evidence, and
+> which the file it is written in falsifies.
 
 An agent finishes. Its branch is a local `uf/*` ref. The operator's route to
 getting that work anywhere is **Land**, which is a merge into their own checkout
@@ -51,9 +76,15 @@ prose:
 
 - `src/lib/config.ts:322` — a docblock describing what the *agent's* token is
   for: *"it is the agent's `git push`, `gh pr create` and `gh issue view`"*.
-- `src/lib/orchestrator.ts:6014` — the same, in the argv reasoning.
+  Unmoved at `66fdbab`.
+- `src/lib/orchestrator.ts:6014` — the same, in the argv reasoning. At `66fdbab`
+  it is `:5670`.
 - `src/lib/chat.ts:2092` — the chat's system text telling the model it may read
-  *"pull requests and CI logs with `gh`"*.
+  *"pull requests and CI logs with `gh`"*. At `66fdbab` it is `:2779`.
+
+At `66fdbab` the same grep also returns `src/lib/delivery.ts` and
+`src/lib/land.ts:2958-2962`, which are the mechanism rather than prose. The
+count of three was true when it was taken.
 
 So the capability exists **inside** a run, as something the agent might do with
 a shell if the task text asks it to and `UF_GITHUB_TOKEN` is present. It does
@@ -85,6 +116,14 @@ is the reason this row is ranked on cost rather than on demand.
 ---
 
 ## M2 — One credential, no identity, no authorisation
+
+> **Open at `66fdbab`, unchanged, and at the same lines.** `AUTH_TOKEN` is still
+> a module-level `optionalEnv` at `src/lib/config.ts:286`, `request_log.actor`
+> still records only how a caller authenticated (`src/lib/requestLog.ts:28-31,
+> :53`), and no role, scope or second credential was added. What did arrive since
+> the survey is more surface behind the one token, not less: `/api/codex-auth`
+> and `/api/claude-auth` now sign the container's CLIs in, and both are reachable
+> with the same `UF_AUTH_TOKEN` as everything else.
 
 `src/lib/config.ts:286`:
 
@@ -135,6 +174,40 @@ whether that matters, which no evidence here can settle.
 
 ## M3 — Nothing this app runs can reach a human, and most of that is on purpose
 
+> **CLOSED WHOLE at `66fdbab`.** This row's central claim is now false, and the
+> grep below is the claim: `src/lib/notify.ts` is an outbound channel. One signed
+> JSON body is POSTed to one operator-named URL when a run reaches an ending that
+> needs a person — `needs-review`, `blocked`, `failed`
+> (`NOTIFY_STATUSES` at `:107-111`) — attached as a second sink beside
+> `logLifecycle` in `emit()` (`notifyLifecycle` at `:422`), with an HMAC
+> `X-UF-Signature` (`signBody` at `:296`), a 5-second timeout (`:301`) and a
+> per-attempt row in `webhook_deliveries` (`:322`). A run that simply worked is
+> off by default and opt-in through `UF_NOTIFY_ON_SUCCESS`
+> (`src/lib/config.ts:505`). Commits `1891ad7` and `0d6af15`; the proposal behind
+> it is `proposals/implemented - UnattendedOperation`.
+>
+> **Two things about it are worth carrying forward rather than filing as new
+> rows.** It is **vendor-neutral by argument, not by omission** — the docblock at
+> `src/lib/notify.ts:26-36` refuses a format switch and records the consequence,
+> that a bare Discord or Slack incoming-webhook URL answers 400 and needs a
+> shaping layer in front. And it is **environment-only**: `UF_WEBHOOK_URL`,
+> `UF_WEBHOOK_SECRET`, `UF_PUBLIC_URL`, `UF_INSTALL_LABEL` and
+> `UF_NOTIFY_ON_SUCCESS` (`src/lib/config.ts:467, :475, :485, :488, :505`) have
+> no Settings field on purpose, and the reason is written out at `:450-466`:
+> `/api/settings` is reachable with the master key, so a webhook target held in
+> `settings.json` would turn one credential into an exfiltration channel aimed
+> anywhere the container can reach. That is the opposite of
+> [M1](#m1-the-app-can-push-nothing-and-open-no-pull-request), [M4](#m4-nothing-verifies-a-branch-before-it-is-merged) and [M5](#m5-nothing-can-be-prioritised-the-queue-is-strictly-oldest-first), which have no
+> field because nobody has built one; here the absence is the design.
+>
+> **What survives is smaller than a row and is already answered.** A stock
+> install still has no channel, because blank is the shipped value — but blank is
+> now a decision the operator makes at a shell rather than a capability the
+> product lacks. `README.md`'s alert table is fifteen conditions now rather than
+> twelve (`:236-253`) and the fifteenth is
+> `webhook.consecutiveFailures > 3 while webhook.configured`, which is the
+> channel watching itself.
+
 `grep -rniE "webhook|smtp|nodemailer|slack|pushover|ntfy|web-?push|notificat"`
 over `src/`, excluding tests, returns nine hits and **not one is an outbound
 channel** — three are MCP transport comments in
@@ -143,7 +216,8 @@ width, and the rest are unrelated prose. There is no email, no webhook, no
 browser push, no anything.
 
 **The strongest case against calling this a gap** is `README.md:229-255`, which
-is not a shrug but a designed position: a table of twelve alertable conditions,
+is not a shrug but a designed position: a table of twelve alertable conditions
+(fifteen at `66fdbab`, `:236-253`),
 each named as a field on `/api/status`, each with a suggested threshold and a
 note that *"the conditions are the ones that have gone wrong here"* — queue
 depth, oldest queued age, sweeper tick age, sweeper and live-guard failure
@@ -214,6 +288,21 @@ it".
 > second half is untouched: `resolveVerifyTools` still has one reader and it is
 > still the conflict assist, so the setting that sounds like a verify gate still
 > is not one.
+>
+> **Re-checked at `66fdbab`, still half, and still at the same two lines.**
+> `landVerifyCommand` is declared at `src/lib/settings.ts:391` and ships `""` at
+> `:891`; it is read at `src/lib/land.ts:999` (Land) and `:2941` (Deliver), both
+> through `verifyTree` (`:1736`) and its pure half `verifyTreeVerdict` (`:1703`), and
+> `runVerify` (`src/lib/landGate.ts`).
+> `grep -an "landVerifyCommand" src/app/settings/page.tsx` returns nothing —
+> **there is still no field.** The API accepts it at
+> `src/app/api/settings/route.ts:157-158`, which is the whole of the reachable
+> surface.
+>
+> **And the one setting that does have a field is the wrong one.**
+> `resolveVerifyTools` has an editor at `src/app/settings/page.tsx:3221-3243`.
+> So the page shows the operator the setting that is not a verify gate, and hides
+> the one that is.
 
 The mechanism is [B2](02-backend-logic.md#b2-nothing-builds-or-tests-a-branch-before-it-is-merged-and-the-setting-that-looks-like-it-does-has-one-reader) and is not repeated. The
 capability framing is:
@@ -222,7 +311,9 @@ capability framing is:
 no field for it, no per-repository setting, no gate in `landRun`, and the one
 setting whose name suggests otherwise — `resolveVerifyTools` — has a single
 reader that is the conflict-resolution assist and ships as `[]`
-(`src/lib/settings.ts:713`, read at `src/lib/land.ts:1275`).
+(`src/lib/settings.ts:713`, read at `src/lib/land.ts:1275`; at `66fdbab` those
+are `settings.ts:890` and `land.ts:1362`, and the second clause of that sentence
+is the half still standing).
 
 What makes this the sharpest capability gap in the file is the comparison with
 what the project does for itself. `.github/workflows/ci.yml` gates every change
@@ -265,16 +356,30 @@ rather than in UsageFoundry.
 > **Half.** No page has a control: priority is settable only by
 > `PUT /api/runs/:id/priority`. The row's confidence line already marked its
 > queue depth **assumed**, and nothing here measures it.
+>
+> **Re-checked at `66fdbab`, still half.** `queueOrder` is
+> `src/lib/orchestrator.ts:3913`, `queueCompare` `:3938`, `selectPromotable`
+> `:3942` (promoting through `queueOrder` at `:3968`), `queuePosition` `:4018`
+> — counting over `queueCompare` at `:4034`, which is the correction — and
+> `setRunPriority` `:10994`. The endpoint is
+> `src/app/api/runs/[id]/priority/route.ts`.
+> `grep -rn "priority" src/app --include=*.tsx` returns **nothing**: there is
+> still no control on any page.
 
 Every selection over `runs` in the orchestrator is ordered by creation time:
 
-| Line | Query |
-|---|---|
-| `src/lib/orchestrator.ts:626` | `SELECT * FROM runs ORDER BY created_at DESC LIMIT ?` |
-| `:2631` | `SELECT * FROM runs WHERE status IN ('queued','running','paused') ORDER BY created_at` |
-| `:3950` | `SELECT * FROM runs WHERE status = 'waiting' ORDER BY created_at` |
-| `:8665` | `SELECT * FROM runs WHERE status = 'paused' ORDER BY created_at` |
-| `:9471` | `… ORDER BY created_at` |
+| Line at `175ba57` | Line at `66fdbab` | Query |
+|---|---|---|
+| `src/lib/orchestrator.ts:626` | `:838` | `SELECT * FROM runs ORDER BY created_at DESC LIMIT ?` |
+| `:2631` | `:3152` | `SELECT * FROM runs WHERE status IN ('queued','running','paused') ORDER BY created_at` |
+| `:3950` | `:4528` | `SELECT * FROM runs WHERE status = 'waiting' ORDER BY created_at` |
+| `:8665` | `:10112` | `SELECT * FROM runs WHERE status = 'paused' ORDER BY created_at` |
+| `:9471` | `:10944` | `… ORDER BY created_at` |
+
+Every one of those SQL statements still reads `ORDER BY created_at` at
+`66fdbab`. What changed is that the rows they return are re-sorted through
+`queueOrder`/`queueCompare` before anything is promoted, so the SQL is no longer
+the order — which is why the table is left standing rather than struck.
 
 There is no priority column, no reorder endpoint, no "run this next". The
 `queuePosition` the UI shows is a report of a position **nothing can change**,
@@ -300,9 +405,17 @@ alert at `queue.depth > 10` is the closest thing to evidence that they do.
 
 ## M6 — A credential cannot be rotated without a restart, and a restart ends live runs
 
+> **Open at `66fdbab`, unchanged, and now with five more values on the same
+> footing.** `AUTH_TOKEN` is still a module-level `const` at
+> `src/lib/config.ts:286`, the `UF_GITHUB_TOKENS` map is still built at `:366`
+> and consumed by `selectGithubToken` at `:422-447`, and there is still no reload
+> endpoint. The five notification variables added since
+> ([M3](#m3-nothing-this-app-runs-can-reach-a-human-and-most-of-that-is-on-purpose)) are read the same way and for the same stated reason,
+> so the number of values that need a restart to change went up rather than down.
+
 Secrets are read at module load and never again. `src/lib/config.ts:286` is a
 module-level `const`, as is the `UF_GITHUB_TOKENS` map built at `:366` and
-consumed by `selectGithubToken` at `:424-430`. Changing `UF_AUTH_TOKEN`,
+consumed by `selectGithubToken` at `:424-430` (`:422-447` at `66fdbab`). Changing `UF_AUTH_TOKEN`,
 `UF_GITHUB_TOKEN`, `UF_GITHUB_TOKENS` or `UF_STATUS_TOKEN` means editing `.env`
 and restarting the container. There is no reload endpoint and no re-read.
 
@@ -343,7 +456,8 @@ anything.
 
 **Per-repository configuration.** Guards, model, permission mode and plugin set
 are install-wide. The one dimension that *is* per repository is the GitHub
-token — `UF_GITHUB_TOKENS` and the `perRepo` map at `src/lib/config.ts:424-430`,
+token — `UF_GITHUB_TOKENS` and the `perRepo` map at `src/lib/config.ts:424-430`
+(`:422-447` at `66fdbab`),
 which resolves a folder to a key via `matchFolderKey`. So the mechanism for
 per-repository settings exists and was built for the value that most needed it.
 Extending it is a feature request with a clear shape and no evidence behind it

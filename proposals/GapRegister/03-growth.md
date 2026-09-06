@@ -2,6 +2,13 @@
 
 Four gaps, and the first is the shape of the other two.
 
+> **Re-checked against `main` at `66fdbab`.** All four are open. [G1](#g1-nine-list-routes-read-parameters-the-one-for-runs-does-not-and-the-pattern-repeats-three-times)'s
+> lead example was closed and the pattern it claims survives at two of its three
+> instances; [G2](#g2-chat-threads-past-the-newest-30-cannot-be-reached-at-all), [G3](#g3-one-process-is-the-hard-ceiling-and-the-usual-escape-route-is-not-the-one-that-applies) and [G4](#g4-the-audit-trail-is-20000-rows-deep-evicted-on-every-insert-and-identifies-no-person) are untouched.
+> One of the two refutations at the bottom of this file is now stale in its
+> facts and unchanged in its conclusion: the three npm advisories were cleared by
+> `102050d` and `npm audit` reports `found 0 vulnerabilities`.
+
 Two candidates that look like growth limits are documented deliberate ceilings.
 They are refuted at the bottom of this file rather than registered, on the same
 grounds as the four in
@@ -14,6 +21,17 @@ repository, in more detail than a flag would have added.
 
 ## G1 — Nine list routes read parameters; the one for runs does not, and the pattern repeats three times
 
+> **Open at `66fdbab` with its lead example struck, and the row is stronger for
+> it.** `/api/runs` is no longer the route that reads nothing: it reads five
+> parameters (`src/app/api/runs/route.ts:77-97`). The survey re-run at `66fdbab`
+> is 68 `route.ts` files under `src/app/api`, **eleven** of which read
+> `searchParams` — the ten this row counted plus `/api/runs`. **The route that
+> now returns a capped list and reads none is `/api/chat`**
+> (`src/app/api/chat/route.ts:15-27`), whose list is `listChats()`'s 30. So the
+> title's arithmetic is out of date and its claim — that this is a pattern, fixed
+> one instance at a time, months apart — is exactly what happened: one of the
+> three was closed on its own and the other two were not touched.
+
 Not one cap. A class of them.
 
 Every `route.ts` under `src/app/api` was checked for whether it reads
@@ -24,11 +42,11 @@ tree that returns a capped list and reads none** — its whole body is
 The same shape appears three times, in three modules, with three different
 numbers:
 
-| Surface | Cap | Where | Parameter to move it |
-|---|---|---|---|
-| Runs list | 100 | `src/app/api/runs/route.ts:49` | none |
-| Chat threads | 30 | `src/lib/chat.ts:289` (`listChats(limit = 30)`), called with no argument at `src/app/api/chat/dto.ts:89` | none |
-| GitHub repositories the chat can name | 25 | `src/lib/workspace.ts:168, :188` | none |
+| Surface | Cap | Where at `175ba57` | Where at `66fdbab` | Parameter to move it |
+|---|---|---|---|---|
+| Runs list | 100 | `src/app/api/runs/route.ts:49` | **closed** — `offset`, `limit`, `status`, `q`, `settledBefore` at `:77-97` | five |
+| Chat threads | 30 | `src/lib/chat.ts:289` (`listChats(limit = 30)`), called with no argument at `src/app/api/chat/dto.ts:89` | `src/lib/chat.ts:387`, called with no argument at `src/app/api/chat/dto.ts:132` | none |
+| GitHub repositories the chat can name | 25 | `src/lib/workspace.ts:168, :188` | `src/lib/workspace.ts:168, :188` | none |
 
 And the counter-example is in the same tree. `/api/branches` takes `repo`,
 `offset` and `limit` (`src/app/api/branches/route.ts:25-40`) with a docstring
@@ -67,12 +85,18 @@ route.ts` grepping for `searchParams`; the three caps are read from source.
 
 ## G2 — Chat threads past the newest 30 cannot be reached at all
 
+> **Open at `66fdbab`, unchanged, and now the register's clearest single
+> demonstration.** [G1](#g1-nine-list-routes-read-parameters-the-one-for-runs-does-not-and-the-pattern-repeats-three-times)'s runs half was closed with five
+> parameters on one route; this one, which needs one parameter and the same
+> shape, was not touched. `/api/chat` inherits `/api/runs`' old description
+> exactly: the capped list route that reads no `searchParams`.
+
 Broken out from [G1](#g1-nine-list-routes-read-parameters-the-one-for-runs-does-not-and-the-pattern-repeats-three-times) because its ceiling is the lowest and its content is
 the least replaceable.
 
-`src/lib/chat.ts:289` is `export function listChats(limit = 30): ChatRow[]`.
-`src/app/api/chat/dto.ts:89` calls `listChats()` — no argument, so 30. The route
-at `src/app/api/chat/route.ts:16-27` reads nothing from the request and returns
+`src/lib/chat.ts:387` is `export function listChats(limit = 30): ChatRow[]`.
+`src/app/api/chat/dto.ts:132` calls `listChats()` — no argument, so 30. The route
+at `src/app/api/chat/route.ts:15-27` reads nothing from the request and returns
 `{ chats: chatListDTO(), chat: chatDTO(chat) }`.
 
 There is no chat search, no date filter, and Quick open does not index chats
@@ -98,6 +122,17 @@ default for a list, not a decision about how much history to keep.
 
 ## G3 — One process is the hard ceiling, and the usual escape route is not the one that applies
 
+> **Open at `66fdbab`, unchanged in mechanism and in cost.** `serverLock.ts:214`
+> and `:394` still say what is quoted below, `MAX_MERGE_WORKERS` is still 4 and
+> `MAX_WORKTREE_SLOTS` still 64 (its line moved from `:2675` to `:3196`), and
+> the operator-facing half is still missing: `docs/install.md` states no capacity
+> position, and the nearest thing to one is a note that four merge workers is "a
+> real ceiling" living in `docker-compose.yml` (`docs/install.md:794`). What the
+> tree *does* now document is the read-only second process
+> (`docs/agent/concurrency-and-ownership.md:14`), which is the mechanism and not
+> the product position this row asks for. Nothing here has a cost today, which is
+> why it stays last.
+
 The single-writer design is real and deliberate. `serverLock.ts:214` types
 ownership as `"unclaimed" | "owned" | "held" | "lost"`; `:394` records that
 *"`unclaimed` is deliberately not a refusal"*; `docs/agent/concurrency-and-ownership.md`
@@ -107,7 +142,7 @@ it is right.
 
 It also means the install's ceiling is **the process**, and every concurrency
 constant — `maxConcurrentRuns`, `maxConcurrentAssists`, `MAX_WORKTREE_SLOTS = 64`
-(`src/lib/orchestrator.ts:2675`), `MAX_MERGE_WORKERS = 4`
+(`src/lib/orchestrator.ts:3196`), `MAX_MERGE_WORKERS = 4`
 (`src/lib/mergeQueue.ts:613`) — is a ceiling on one machine's one Node process,
 several of whose paths are synchronous because better-sqlite3 is.
 
@@ -141,6 +176,22 @@ unreadable.
 ---
 
 ## G4 — The audit trail is 20,000 rows deep, evicted on every insert, and identifies no person
+
+> **Open at `66fdbab`, unchanged, and at the same lines.** `RETENTION_ROWS` is
+> still 20,000 at `src/lib/requestLog.ts:68`, the unconditional per-insert
+> `DELETE` is still at `:119-121`, `actor` is still the only thing recorded about
+> a caller (`:28-31, :53`), and `retention.ts` still does not touch
+> `request_log`. The verification entry moved: the audit trail on a real database
+> is `docs/verification.md:3201`, under the "Not yet verified by hand" heading at
+> `:1865`.
+>
+> **One thing arrived beside it and is not a second instance of this row.**
+> `webhook_deliveries` (`src/lib/notify.ts:322-353`) bounds itself the same way —
+> `DELIVERY_RETENTION_ROWS = 2_000` at `:312`, deleted on every insert at
+> `:345-350` — but its docblock at `:303-311` states the arithmetic that makes
+> 2,000 enough and says why the
+> bound is here rather than in `retention.ts`. Accepted on the record, on this
+> file's own standard, and not a gap.
 
 `src/lib/requestLog.ts:68` sets `const RETENTION_ROWS = 20_000;` and every
 `recordRequest` runs, immediately after its `INSERT`:
@@ -194,7 +245,9 @@ should be read alongside.
 ## Refuted on this axis
 
 **The workflow caps are too low.** `MAX_WORKFLOW_NODES = 25`, `MAX_FAN_OUT = 10`,
-`MAX_LOOP_PASSES = 20` (`src/lib/apiTypes.ts:980, :991, :1000`). Each carries a
+`MAX_LOOP_PASSES = 20` (`src/lib/apiTypes.ts:1595, :1606, :1615` at `66fdbab`;
+`:980, :991, :1000` when surveyed — the constants and their docblocks are
+unchanged). Each carries a
 docblock giving the reason, and the reasons are about *safety*, not about
 capacity — `MAX_FAN_OUT` is deliberately tighter than `MAX_WORKFLOW_NODES`
 because those runs *"are chosen by a model and start with no approval between
@@ -203,9 +256,26 @@ Run can put on the machine over the life of a block whose repetitions nobody
 watches."* Raising them is a request for a different risk position, not a fix.
 Not a gap.
 
-**The three high-severity npm advisories.** `npm audit` on this tree today
-reports `3 high severity vulnerabilities`, all inside `next`'s subtree, fixable
-only by `next@16.3.2` — a semver-major move. The CI gate is set at `critical`,
+**The three high-severity npm advisories — since cleared, and the refutation
+outlived them.**
+
+> **Corrected at `66fdbab`.** `npm audit` on this tree now reports
+> `found 0 vulnerabilities`, and `npm audit --audit-level=high` exits 0. The fix
+> was not the semver-major move this section reasoned about: commit `102050d`,
+> *"Clear the three high-severity advisories under `next`"*, added an `overrides`
+> block pinning `postcss` to `^8.5.26` inside `next` (`package.json:23-27`).
+> `next` is still `^15.5.4` (`package.json:19`, resolving to 15.5.24), and the
+> CI gate is still `critical` at `.github/workflows/ci.yml:163` with its
+> thirty-seven-line argument intact at `:126-163`, and it still opens by naming
+> the three advisories "as of 2026-08-14" (`:130`), which is now a description of
+> a tree that no longer exists. **The conclusion this section
+> reached is unchanged and the reasoning under it is now historical**, which is
+> the outcome an accepted-on-the-record decision should have: it was accepted,
+> and then it was fixed anyway by a narrower move than the one it declined.
+
+As surveyed at `175ba57`: `npm audit` reported `3 high severity
+vulnerabilities`, all inside `next`'s subtree, fixable only by `next@16.3.2` — a
+semver-major move. The CI gate is set at `critical`,
 not `high`, and `.github/workflows/ci.yml:126-163` is thirty-seven lines
 explaining that decision advisory by advisory: which four postcss GHSAs, why
 postcss here only ever sees `src/app/globals.css` and Tailwind's output under an
@@ -216,8 +286,8 @@ for three advisories a human has already read, which is how a gate stops being
 read at all."* The unconditional `npm audit || true` at `:124` keeps `critical`
 from being a silent pass.
 
-The only thing today's run changes is the version number — the comment says
-`next@16.3.1` as of 2026-08-14 and `npm audit` now says `next@16.3.2`. The
-advisory set is unchanged. **Accepted on the record is not a gap**, and this is
+The only thing that survey's run changed was the version number — the comment
+says `next@16.3.1` as of 2026-08-14 and `npm audit` then said `next@16.3.2`. The
+advisory set was unchanged. **Accepted on the record is not a gap**, and this is
 the clearest example in the repository of the standard the rest of this register
-is trying to meet.
+is trying to meet. At `66fdbab` there is no advisory set left to accept.
