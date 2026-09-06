@@ -7,9 +7,9 @@ them are worth a survey of their own?
 
 > **Thirteen more rows moved on 2026-09-06, after everything below was
 > written** — ten closed whole (O1, O4, G2, M5, S2, B1, B3, F3, B4, and G1's
-> second instance of three) and three in half (B2/M4, S1, M1). **F5, rank 1, is
-> the one deliberately left**, on 06-recommendation.md's own argument that it is
-> a survey rather than a patch. What each half closed, what still stands,
+> second instance of three) and three in half (B2/M4, S1, M1). **F5, rank 1, was surveyed rather than
+> patched**, which is what 06-recommendation.md asked for — the survey is
+> [`../UIChecks/`](../UIChecks/README.md), and no code changed for it. What each half closed, what still stands,
 > and the three rows that were deliberately left alone are in
 > [05-register.md](05-register.md#what-was-implemented-on-2026-09-06-after-this-register-was-written).
 > **The counts and ranks in the rest of this directory are as at `66fdbab` and

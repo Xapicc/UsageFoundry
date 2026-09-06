@@ -145,12 +145,16 @@ stopped by a ceiling it crossed while running.
 **What was deliberately not done, and why**, so the next pass does not read the
 absence as an oversight:
 
-- **[F5](01-frontend.md#f5-nothing-that-renders-is-checked-by-anything)**, rank 1 — [06-recommendation.md](06-recommendation.md#survey-3-what-should-check-the-ui-and-what-would-it-actually-catch) argues at length that this is a
-  survey with five real answers and that "add Playwright" is the one to be
-  suspicious of. Picking one of the five in passing is what that section exists
-  to stop. It is untouched, and the controls above are on its list of things
-  nothing checks — see `docs/verification.md`'s note that none of them has been
-  rendered in a browser.
+- **[F5](01-frontend.md#f5-nothing-that-renders-is-checked-by-anything)**, rank 1 — **surveyed rather than patched**, which is what
+  [06-recommendation.md](06-recommendation.md#survey-3-what-should-check-the-ui-and-what-would-it-actually-catch) asked for: it argues at length that
+  this is a question with five real answers and that "add Playwright" is the one
+  to be suspicious of. `proposals/UIChecks/` is that survey. Its recommendation
+  is a **floor rather than a strategy** — a written pass, then a smoke pass over
+  all 19 pages at two widths asserting 200, no console error and no horizontal
+  body scroll, then more `renderToStaticMarkup` at whatever rate is convenient —
+  and it refuses jsdom, a Playwright suite and visual diffing by name. **No code
+  changed for it**, and the controls above are still on its list of things
+  nothing checks.
 - **[M2](04-missing-features.md#m2-one-credential-no-identity-no-authorisation)**, rank 6 — refused by name, on a trigger that has not fired.
 - **[F5](01-frontend.md#f5-nothing-that-renders-is-checked-by-anything)**, rank 1 — see above; still the one row deliberately left.
 
