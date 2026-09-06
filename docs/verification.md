@@ -1837,6 +1837,31 @@ Built and exercised against real transcripts:
   Sign in · Use API key`, the sheet rendered the link, the URL as text and the
   code, and after `Done` the row read `WAITING FOR APPROVAL · Show code`.
 
+- **`runs.provider`, its admission refusals and its two labels exercised end to
+  end in the container**, 2026-09-05, against a scratch `DATA_DIR` and a built
+  server (`npm start`, not `npm run dev`). `PRAGMA table_info(runs)` reports
+  `provider TEXT`, nullable, no default, at cid 47; the exact `INSERT` statement
+  `createRun` uses was prepared and run against the migrated schema with
+  `'codex'` and with `null`, which is what confirms its column list, placeholder
+  arity and bound-parameter count still agree — a mismatch there typechecks
+  clean and throws only at the first real run. Four `POST /api/runs` requests,
+  each answered 400 with its own sentence: `provider: "gpt"` → *Unknown
+  provider: gpt*; `codex` with `maxIterations: null`, `maxDurationMinutes: null`
+  and a 5-hour fraction and a cost cap set → the C2 refusal naming the window
+  guards and the spending limit; the **same** policy under `claude` → the
+  generic `no_terminus` sentence, which is what shows the ordering keeps both
+  reachable; and `codex` with `maxIterations: 1` → *This build has no Codex
+  adapter*. The run form was driven with Playwright: selecting Codex reveals the
+  disclosure, and the run page was rendered for two seeded `needs-review` rows —
+  `provider = 'claude'` draws `Spawned as / Claude Code` and *Claude Code
+  produced what is here.*, `provider = null` draws `Spawned as / not recorded`
+  and *Which agent CLI produced what is here was not recorded.* **What is not
+  verified: no cycle has been spawned with a provider on its row at all.** No
+  Codex adapter exists, so the only run that could reach the loop is a Claude
+  one, and none was started here — the seeded rows were written directly. The
+  refusal at the door is what stands between a `codex` row and a loop that would
+  spawn Claude Code for it, and it is the refusal, not the loop, that was tested.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the
@@ -5543,10 +5568,105 @@ through before trusting this unattended:
   everything below them. A human should open `/` at 1920 and at about 390 with a
   run in flight.
 
+- **The Codex CLI installs and runs on this image's base, measured on arm64
+  only.** 2026-09-05, `docker run --rm node:22-bookworm-slim`: `npm install -g
+  @openai/codex@0.153.4` then `codex --version` prints `codex-cli 0.153.4`, and
+  `/usr/local/lib/node_modules/@openai` is 279 MiB on disk. The platform binary
+  arrives through `optionalDependencies` gated on `os`/`cpu` — the wrapper alone
+  has nothing to run — which is why the Dockerfile block ends in a version check
+  rather than in the install.
+
+  **Not yet verified by hand:** the image itself has not been rebuilt. Nothing
+  here is `docker compose up --build`, the amd64 figures (~335 MB unpacked, a
+  123 MB download) are the registry's own metadata rather than a build, and no
+  agent has run `codex` from a work cycle. That it arrives signed out is
+  reasoned from `childEnv`'s strip rather than observed, and `codex` under
+  `UF_SANDBOX=1` has not been tried at all — bubblewrap binds everything outside
+  the working directory read-only, and whether a tool that wants `$HOME/.codex`
+  survives that is exactly the shape of question `playwright install` answered
+  badly.
+
+- **A second provider's work cycle, built whole and never once run,
+  2026-09-05.** `runs.provider` now selects between two `CycleAdapter`s and the
+  Codex one was written against the binary rather than against a document:
+  `codex --version` says **`codex-cli 0.153.4`**, and every flag the adapter
+  emits (`exec --json`, `--skip-git-repo-check`, `--ignore-user-config`, `-m`,
+  `-C`, `-s read-only|workspace-write`, `-c approval_policy="never"`,
+  `--dangerously-bypass-approvals-and-sandbox`, `--add-dir`,
+  `--output-last-message`, `resume`) was confirmed present in that version's
+  `codex exec --help` before it was emitted. The `pkill`/`killall` denial was
+  the one thing measured rather than read: Codex has no `--disallowedTools`, so
+  the denial is a Starlark rules file, and `codex execpolicy check -r <file>
+  pkill node` answers `{"decision":"forbidden"}` for the `prefix_rule` spelling
+  the app writes, while `rule(...)` and `define_program(...)`, which read like
+  the same thing, do not parse in 0.153.4 at all. Rules are discovered only from
+  `$CODEX_HOME/rules/*.rules`; there is no flag naming a file, which is why
+  `prepareCodexRules` writes into the agent uid's own home and why a cycle whose
+  rules file could not be written is refused rather than started. The sandbox
+  mapping never widens: `plan` and `default` both take `read-only`,
+  `acceptEdits` takes `workspace-write`, and only `bypassPermissions` reaches
+  the dangerous flag, pinned as whole argv arrays in `orchestrator.test.ts` so a
+  mode cannot drift up a row. Spend is withheld rather than guessed:
+  `turn.completed.usage` carries token counts and no money, so the `+=` is
+  skipped, `providerReportsSpend` gates every rendering of the column, and the
+  runs list, the run page, the reopen form's spending limit and the two MCP run
+  answers all say unknown instead of `$0.00`. Those four renderings were seen:
+  the app was built (`env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build`,
+  exit 0), served by `next start` against a scratch `DATA_DIR` holding one
+  seeded Codex run beside one seeded Claude run, and screenshotted in headless
+  Chromium; the Codex row shows `148.2k` tokens against a dash where the Claude
+  row shows `92.1k` against `$1.37`, with no console or page errors. `npm run
+  typecheck` is clean and `npm test` is 2185 passing, 0 failing.
+
+  **Not yet verified by hand:** **the entire live path.** `codex login status`
+  says **"Not logged in"** on this machine, so not one Codex work cycle was ever
+  spawned, and everything below was written from `--help` output, from
+  `execpolicy check`, and from rollout files, never from a cycle that ran.
+
+  - **That a cycle spawns at all, and that its argv is accepted.** Nothing has
+    ever executed `CODEX_ADAPTER.bin` with `buildCodexArgs`' output. Sign in as
+    the agent uid (`CODEX_HOME=<the app's> codex login`), start a run with
+    Provider set to Codex, and read the argv the spawn logged.
+  - **Every event name the stream parser branches on.** `thread.started`,
+    `turn.started`, `turn.completed`, `turn.failed`, `item.started`,
+    `item.updated`, `item.completed` and `error` were taken from the schema and
+    from event shapes, not from a stream this app read. Run
+    `codex exec --json -s read-only -C /some/repo "say hello"` and compare the
+    line types against the `switch` in `handleCodexStreamLine`.
+  - **That the session id `thread.started` carries is the one `resume` takes.**
+    `runs.session_id` holds it and a second cycle passes it back. Run a cycle,
+    note the id, then `codex exec resume <id> "continue"` by hand.
+  - **That `--output-last-message` is written, and is the final assistant
+    message.** The `DONE` contract reads that file. Run a cycle with
+    `-o /tmp/last.txt` and read it.
+  - **That the sandbox mapping binds what it claims.** `workspace-write` with
+    `-C <root>` and `--add-dir <vault>` should permit a write inside both and
+    refuse one outside. Run a cycle asking for a write to `/etc/uf-probe` under
+    `acceptEdits` and confirm it is refused; the rollout file under
+    `$CODEX_HOME/sessions/YYYY/MM/DD/` records the `sandbox_policy` and
+    `writable_roots` that were actually applied.
+  - **That the rules file is loaded by a spawned cycle rather than only by
+    `execpolicy check`.** Ask a cycle to run `pkill -f something` and confirm it
+    is refused. This is the one that matters most: a rules file in a dialect
+    Codex does not know loads as **zero rules**, silently.
+  - **That `--ignore-user-config` does not also discard the rules file.** The
+    two were confirmed to be different mechanisms from `--help` and from the
+    execpolicy source layout, never together in one run.
+  - **That the notices survive as prompt text.** `codex exec` has no
+    `--append-system-prompt`, so `SELF_HOSTING_NOTICE` and the commit-identity
+    notice ride the first turn's prompt. Ask a cycle "what were you told about
+    restarting containers" and see whether it can answer.
+  - **What a Codex run's own wall looks like.** No refusal classifier was
+    written for it (constraints C3 and C4 stay Claude-only), so a rate limit or
+    an exhausted credit on a Codex run is still filed under Claude's sentences.
+    Exhaust a Codex account and read `stop_reason`.
+
 There is no linter run in this repo, and `npm test` covers a deliberately short
 list: the folder-collision predicate, which queued runs may start, the budget
 policy, how a provider refusal is classified and backed off from, which prompt a
-work cycle spawns with, the GitHub credentials handed to a work cycle, that a
+work cycle spawns with, which argv a Codex work cycle spawns with and what its
+stream parser makes of each event, the process-kill denial written for the
+provider that cannot carry one on a flag, the GitHub credentials handed to a work cycle, that a
 work cycle started as a saved agent both defines and selects it and moves none of
 what bounds the run, how a
 run's diff is parsed and budgeted, whether a saved graph of run blocks can run at

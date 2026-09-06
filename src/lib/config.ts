@@ -507,25 +507,41 @@ export const NOTIFY_ON_SUCCESS = optionalEnv("UF_NOTIFY_ON_SUCCESS");
 /** Path to the Claude Code executable inside the container. */
 export const CLAUDE_BIN = env("CLAUDE_BIN", "claude");
 
-/** Path to the Codex executable, for the sign-in panel beside Claude's. */
+/**
+ * Path to the Codex executable — the sign-in panel beside Claude's, and a run
+ * whose `provider` is `codex`.
+ */
 export const CODEX_BIN = env("CODEX_BIN", "codex");
 
 /**
- * Where Codex keeps its credential, named explicitly rather than left to the
- * child's `HOME`.
+ * Codex's own state directory — its config, its credential and its `.rules` —
+ * named explicitly rather than left to the child's `HOME`.
  *
- * The CLI's own variable, and the default is the CLI's own default, so that
- * `codex login status` typed into a shell in this container answers about the
- * same file the Settings panel does. That agreement is the whole point of
- * reading it out of `env()`: an install that points the agents at one
- * `CODEX_HOME` and this app at another gets a page reporting a sign-in no run
- * can use, which is the failure `claudeAuth.ts` drops its login child's uid to
- * avoid.
+ * The sibling of `CLAUDE_HOME` rather than something under `DATA_DIR`, and that
+ * is forced rather than chosen. A work cycle is spawned with a **dropped** uid
+ * (`privsep.ts`), and the file modes that keep an agent out of `/data` would
+ * keep it out of a credential written there too — the exact failure
+ * `claudeAuth.ts` records for `~/.claude/.credentials.json`, where a login
+ * performed with the server's authority left every cycle reporting "Not logged
+ * in". Codex authenticates from `$CODEX_HOME/auth.json` in the same way, so the
+ * directory has to be one the agent uid can read, which means the agent's home.
  *
- * Not a mounted path on a stock install — `docker-compose.yml` binds
+ * It is also the CLI's own variable, and the default is the CLI's own default,
+ * so that `codex login status` typed into a shell in this container answers
+ * about the same file the Settings panel does. That agreement is the whole point
+ * of reading it out of `env()`: an install that points the agents at one
+ * `CODEX_HOME` and this app at another gets a page reporting a sign-in no cycle
+ * can use. So setting `CODEX_HOME` to give this app a home of its own means the
+ * sign-in has to be performed against that same value,
+ * `CODEX_HOME=… codex login`, or no cycle has a credential.
+ *
+ * What that costs is on the record rather than hidden, in two places. This app
+ * writes an execpolicy rules file into that directory (`codexRules.ts`), so the
+ * denial it installs is visible to an operator's own interactive `codex` too.
+ * And it is not a mounted path on a stock install — `docker-compose.yml` binds
  * `~/.claude` and nothing else — so a credential written here lives in the
- * container's writable layer. That is a deployment fact rather than a decision
- * this module can make, and it is recorded in `docs/verification.md`.
+ * container's writable layer. That second one is a deployment fact rather than a
+ * decision this module can make, and it is recorded in `docs/verification.md`.
  */
 export const CODEX_HOME = env("CODEX_HOME", path.join(os.homedir(), ".codex"));
 

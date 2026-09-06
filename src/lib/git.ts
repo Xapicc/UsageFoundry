@@ -55,6 +55,8 @@ export function gitEnv(): NodeJS.ProcessEnv {
       k.startsWith("ANTHROPIC_") ||
       k.startsWith("UF_") ||
       k.startsWith("OTEL_") ||
+      k === "OPENAI_API_KEY" ||
+      k === "CODEX_API_KEY" ||
       k === "CLAUDE_CODE_ENABLE_TELEMETRY" ||
       k === "DATA_DIR" ||
       k === "NODE_OPTIONS"

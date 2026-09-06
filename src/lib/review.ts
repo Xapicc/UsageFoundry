@@ -764,6 +764,8 @@ function reviewEnv(): NodeJS.ProcessEnv {
       key.startsWith("UF_") ||
       key.startsWith("OTEL_") ||
       key === "ANTHROPIC_ADMIN_KEY" ||
+      key === "OPENAI_API_KEY" ||
+      key === "CODEX_API_KEY" ||
       key === "CLAUDE_CODE_ENABLE_TELEMETRY" ||
       key === "DATA_DIR" ||
       key === "NODE_OPTIONS"

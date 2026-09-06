@@ -4,7 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { MAX_TEMPLATE_NAME } from "@/lib/apiTypes";
+import {
+  MAX_TEMPLATE_NAME,
+  RUN_PROVIDER_LABEL,
+  RUN_PROVIDERS,
+} from "@/lib/apiTypes";
 import type {
   AgentDTO,
   AmbientAgentDTO,
@@ -12,6 +16,7 @@ import type {
   EnforcementModeDTO,
   FoldersResponse,
   RunDTO,
+  RunProviderDTO,
   RunTemplateDTO,
   SettingsDTO,
   UsageResponse,
@@ -220,6 +225,13 @@ const DEFAULT_VALUES: FormValues = {
   enforcement: "between-cycles",
   continueAfterDone: false,
 };
+
+/**
+ * Claude Code, and stated rather than left blank. Blank would be a second way
+ * of writing "not recorded", and that reading belongs to rows written before
+ * the column — never to a field a person was shown and left alone.
+ */
+const DEFAULT_PROVIDER: RunProviderDTO = "claude";
 
 /** A positive number, or null — the same reading `normalizePolicy` gives a field. */
 function positive(raw: string): number | null {
@@ -470,6 +482,14 @@ export default function NewRunPage() {
   );
   const [agentId, setAgentId] = useState(DEFAULT_VALUES.agentId);
   const [model, setModel] = useState(DEFAULT_VALUES.model);
+  // Deliberately outside `FormValues`, so it is outside the baseline and the
+  // per-row reset with it. Those answer "is this still what the template
+  // asked for", and a template can never ask: per-template opt-in is option D
+  // and was not the one chosen. Copying a run does not seed it either, because
+  // a run's own value may be `null` — "not recorded" — which has no seat on a
+  // control whose every option is a claim. A reset offering to put back a
+  // provider nothing ever named would be inventing provenance.
+  const [provider, setProvider] = useState(DEFAULT_PROVIDER);
   const [iterationsCapped, setIterationsCapped] = useState(
     DEFAULT_VALUES.iterationsCapped,
   );
@@ -1233,6 +1253,7 @@ export default function NewRunPage() {
           // `createRun` reaches its `?? settings.defaultModel` — which is the
           // whole of what "blank means whatever Settings says" is made of.
           ...modelFromForm(model),
+          provider,
           budget: budgetFromForm(current),
         }),
       });
@@ -1588,7 +1609,101 @@ export default function NewRunPage() {
                 />
               </div>
             </ListRow>
+
+            {/* Beside the model and never among the guards, on that row's own
+                grounds: which CLI runs the cycles moves what a run may do and
+                what this app can read about it, and neither of those is a
+                bound. A picker rather than free text, unlike the model above,
+                and that is the difference between the two fields: a model this
+                build has never heard of is resolved by the CLI at the spawn,
+                where a provider this build has never heard of is a run with no
+                adapter to spawn it through at all. So the set is closed, it is
+                the same `RUN_PROVIDERS` the door narrows against, and what is
+                offered here is exactly what could be accepted there. */}
+            <ListRow
+              htmlFor="provider"
+              label="Provider"
+              description="Which agent CLI runs the work cycles"
+            >
+              <div className="w-64">
+                <Select
+                  id="provider"
+                  value={provider}
+                  onChange={(e) =>
+                    setProvider(e.target.value as RunProviderDTO)
+                  }
+                >
+                  {RUN_PROVIDERS.map((p) => (
+                    <option key={p} value={p}>
+                      {RUN_PROVIDER_LABEL[p]}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </ListRow>
           </ListGroup>
+
+          {/* The disclosure this whole choice was made for, and the reason the
+              provider is picked here rather than swapped at a wall: an option
+              that merely appears in a list is an option nobody was told the
+              price of, and a form is the only surface in this app with a person
+              on it at the moment of the decision. Shown on selection rather
+              than always, because it is about a run that is not the ordinary
+              one.
+
+              Every sentence below names a guarantee this app makes on the
+              Claude path and cannot make here, ordered by what it costs the
+              person reading it: the process-kill denial first because it is the
+              one protecting the server they are standing in, spend second
+              because it is the one they will look for and not find, and the
+              sign-in last because it is the one that merely fails loudly. What
+              is deliberately not here is anything a Codex run does *better*;
+              this is a price list, and a balanced one would bury the price. */}
+          {provider !== "claude" && (
+            <Hint tone="warn" className="mb-3.5 space-y-2">
+              <p>
+                <strong>
+                  {RUN_PROVIDER_LABEL[provider]} runs with weaker guarantees
+                  than Claude.
+                </strong>{" "}
+                Four of them are worth knowing before you start it.
+              </p>
+              <p>
+                <strong>The process-kill denial is weaker.</strong> Claude
+                refuses <span className="mono">pkill</span> and{" "}
+                <span className="mono">killall</span> per spawn, by a flag.
+                Codex has no such flag, so this app writes the denial as a rules
+                file in the agent&rsquo;s <span className="mono">~/.codex</span>
+                : it is install-wide, so it also binds your own{" "}
+                <span className="mono">codex</span> in that home, and Codex
+                skips its rules for any command using substitution, a variable
+                prefix or a wildcard. A cycle whose rules file cannot be written
+                is refused rather than started without it.
+              </p>
+              <p>
+                <strong>Spend reads as unknown, not $0.</strong> Codex reports
+                tokens and no money, so nothing reaches this run&rsquo;s spend
+                or the usage windows below. There is no per-cycle cost ceiling
+                either, which is why this run needs a work-cycle limit or a time
+                limit.
+              </p>
+              <p>
+                <strong>The notices go in the prompt.</strong> Codex has no
+                system prompt to append to, so the notice about not restarting
+                the container it lives in arrives as ordinary prompt text the
+                model could be argued out of. Agent roles, plugins and sub-agent
+                forwarding do not cross at all.
+              </p>
+              <p>
+                <strong>The sign-in is separate.</strong> The mounted{" "}
+                <span className="mono">~/.claude</span> credential is not one
+                Codex can use; someone must have run{" "}
+                <span className="mono">codex login</span> as the agent user,
+                with <span className="mono">CODEX_HOME</span> pointed at the
+                directory this app reads.
+              </p>
+            </Hint>
+          )}
 
           {/* A stated fallback rather than a silent one: the form starts as no
               agent, and says which setting to fix. */}
