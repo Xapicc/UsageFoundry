@@ -7,10 +7,11 @@ one gap with two framings.
 
 Every row points at a file and line, a command whose output is quoted in
 [00-method.md](00-method.md) or in its own axis file, or a documented invariant
-it contradicts. Twenty-three candidates were dropped for lack of evidence and
-twenty-one were refuted outright; five of the refutations are in
-[00-method.md](00-method.md#refuted-or-already-decided), two in
-[03-growth.md](03-growth.md#refuted-on-this-axis), six in
+it contradicts. Twenty-six candidates were dropped for lack of evidence and
+twenty-eight were refuted outright; five of the refutations are in
+[00-method.md](00-method.md#refuted-or-already-decided) and seven more in
+[the fourth pass's own list](00-method.md#refuted-or-already-decided-on-this-pass),
+two in [03-growth.md](03-growth.md#refuted-on-this-axis), six in
 [07-security.md](07-security.md#refuted-or-already-decided-on-this-axis) and
 eight in
 [08-operations.md](08-operations.md#refuted-or-already-decided-on-this-axis).
@@ -606,7 +607,7 @@ Four of the five are one issue by
 what it needs is a decision about what a chat is for rather than a mechanism
 copied across.
 
-**Two rows of thirty-three violate a documented invariant, and both took adding
+**Two rows of thirty-seven violate a documented invariant, and both took adding
 an axis where `docs/agent/` has opinions to find.** The original
 observation read *"nothing on the register is a violation of a documented
 invariant"*, and it was true of the four axes it was written against: every row

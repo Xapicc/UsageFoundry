@@ -990,8 +990,12 @@ summary is that item 2 is where a fifth pass should start**, and that
 
 ### Refuted or already decided on this pass
 
-Seven candidates that looked like gaps and are not. Five were killed by a
-measurement rather than by a paragraph, which is what running a database bought.
+Seven candidates that looked like gaps and are not. **Three were killed by a
+database probe and not one by a `docs/agent/` paragraph**, which is the sharpest
+difference between this pass and the three before it: fourteen candidates died
+against a documented paragraph across those, and none did here, because none of
+the four regions this pass read has a `docs/agent/` file with a position on it.
+What killed these instead was the code and the schema.
 
 **The per-run `globalThis` maps in `orchestrator.ts` leak.** They do not. Every
 one — `interrupts`, `liveGuards`, `contextWatches`, `earlyEndDeclined`,

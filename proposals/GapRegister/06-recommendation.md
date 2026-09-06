@@ -7,6 +7,15 @@
 > ids beside them — F1, B2, M4 and the rest — are stable and are what to read.
 > This file was not otherwise rewritten by that refresh: it is the argument as it
 > was made, and the status notes inside it say what has since been built.
+>
+> **Nor by the three passes after it.** The security axis (S1–S5), the operations
+> axis (O1–O8) and the fourth pass's B6, F7, G5 and M7 are ranked into
+> [05-register.md](05-register.md#ranked) and are deliberately **not** sorted into
+> the three groups below. Each of those passes was scoped to finding and ranking
+> rows; deciding what to *do* about seventeen further gaps is a judgement this
+> file's own argument would have to be reopened to make, and none of the three
+> was asked to reopen it. So the twenty below are twenty of thirty-seven, and the
+> other seventeen carry their recommendation only in their own axis sections.
 
 Twenty rows sort into three groups: **three questions worth a survey of their
 own**, **eight things somebody should just file**, and **four groups refused by

@@ -158,7 +158,7 @@ with remains unestablished, before the work, after it, and now.
 ## The recommendation
 
 **Survey reachability first** — [06-recommendation.md](06-recommendation.md#survey-1-reachability-what-should-an-operator-be-able-to-find-and-how).
-Eight of the thirty-three rows are one sentence: *the app cannot find what it has
+Eight of the thirty-seven rows are one sentence: *the app cannot find what it has
 already done.* A hundred-row runs list with no parameters, a search that indexes
 two lists, thirty reachable chat threads, a log with no filter, twenty-five
 nameable repositories, a settings page with no field search. They share a fix
@@ -211,7 +211,7 @@ same tree on the same day.
 | Open rows with a claim since contradicted | 2 — G1's lead example, B4's second clause |
 | Open rows that got wider | 2 — B1, now five unguarded doors rather than four; and G1, now four capped lists rather than three |
 | Dropped for lack of evidence | 26 (6 as surveyed, none re-adjudicated, plus 6 on the security axis, 11 on the operations axis and 3 on the fourth pass) |
-| Refuted as documented decisions, or by probe | 28: 7 as surveyed, one of them the three npm advisories, since fixed by `102050d` so that `npm audit` now reports `found 0 vulnerabilities`, plus 6 on the security axis, 8 on the operations axis and 7 on the fourth pass — the highest count of any pass, and five of the seven were killed by a measurement rather than by a paragraph |
+| Refuted as documented decisions, or by probe | 28: 7 as surveyed, one of them the three npm advisories, since fixed by `102050d` so that `npm audit` now reports `found 0 vulnerabilities`, plus 6 on the security axis, 8 on the operations axis and 7 on the fourth pass, three of those seven killed by a database probe and **none** by a documented paragraph — the first pass of which that is true |
 | Rows whose failure lands in the operator's product, not this app | **1** (B2/M4) |
 | Rows that violate a documented invariant | **2**: S1 against `docs/agent/security.md:26`, and O8 against `docs/agent/concurrency-and-ownership.md:18`. It was 0 for the four axes `docs/agent/` has no opinion about, and both were found by adding an axis where it does |
 | Rows resting on an explicitly assumed premise | 16 (F3, B3, B5, M1, M5, S5, S2, B6, and all eight of O1–O8, where the assumption is the same one every time: no container was run) |
@@ -320,8 +320,12 @@ which costs something standing, and
 which costs nothing at all. Both are a sentence written about one path of a
 function that has several. Fourteen candidates died against a paragraph that had
 already reasoned the thing through, which is the same finding pointing the other
-way, and the fourth pass added seven more without adding a third violation — six
-of its seven refutations are a docblock or a measurement, not a paragraph.
+way, and the fourth pass added seven more without adding a third violation — and
+**not one of its seven is a paragraph**: three are a database probe and four are
+the code itself, because none of the four regions it read has a `docs/agent/`
+file with a position on it. Where the documentation has an opinion the code holds
+it; where it has none, this pass had to go to the source for both the rows and
+the refutations.
 
 **What that pass did find is the same shape one level down.**
 [B6](02-backend-logic.md#b6--the-claude-stream-parser-drops-an-event-type-it-does-not-recognise-without-a-word-and-the-codex-parser-twelve-lines-below-it-says-why-that-is-not-survivable)
