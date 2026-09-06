@@ -280,10 +280,12 @@ where that is recorded and it is the list to work through.
 
 ### The `66fdbab` refresh, 2026-09-06
 
-This refresh changed no code — only the seven files in this directory — so a
-failure here would be a finding about `main` rather than about the refresh.
-There was none. Run from `/workspace/.uf-worktrees/usagefoundry-721638d11c0b-1`,
-a linked worktree level with `origin/main` at `66fdbab`.
+This refresh changed no code — only the seven files in this directory and the
+[proposals index](../README.md) line that summarises them — so a failure here
+would be a finding about `main` rather than about the refresh. There was none.
+Run from `/workspace/.uf-worktrees/usagefoundry-721638d11c0b-1`, a linked
+worktree level with `origin/main` at `66fdbab`. Every exit code below was read
+from `$?` on the command itself, not through a pipe.
 
 | Command | Exit | Output |
 |---|---|---|
@@ -304,9 +306,12 @@ for a reason that is not the code.
 lines of page code. That is [F5](01-frontend.md#f5-nothing-that-renders-is-checked-by-anything) for the third time in this file,
 and it is why that row is now ranked first.
 
-**Two of the survey's four commands could not be re-run and one deliberately was
-not.** `SELECT COUNT(*) FROM runs` on the live install is still impossible here —
+**All four of the survey's commands were re-run and all four pass. Everything
+the survey could not do, this refresh could not do either.**
+`SELECT COUNT(*) FROM runs` on the live install is still impossible here —
 `DATA_DIR` is unreadable by the agent uid — so the recommendation's own falsifier
-is **unrun**, before the work and after it. No container was started and no
-browser was opened, at any viewport. And no GitHub issue was read, which is why
-every issue number in the register is marked assumed.
+is **unrun**, before the work and after it. No container was started, because
+Docker is unavailable, so no landing collision was reproduced and
+[B1](02-backend-logic.md#b1-the-landing-guard-covers-landrun-and-none-of-the-other-four-doors) stays medium. No browser was opened, at any viewport.
+And no GitHub issue was read, deliberately, which is why every issue number in
+the register is marked assumed.
