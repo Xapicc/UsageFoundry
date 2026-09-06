@@ -1,18 +1,28 @@
 # Where the gaps are
 
 **The question:** where are this app's gaps — across frontend design, backend
-logic, growth limits, and features it is missing — and which of them are worth a
-survey of their own?
+logic, growth limits, features it is missing, and the app's own security and
+trust boundary — and which of them are worth a survey of their own?
 
-**The state, at `main` `66fdbab`:** **eight of the twenty rows have moved — four
-closed whole, four closed in half — and twelve are open exactly as surveyed.**
-Twenty verified gaps registered, six candidates dropped for lack of evidence and
-seven refuted as documented decisions or by probe. Three questions recommended
+**The state, at `main` `66fdbab`:** **eight of the original twenty rows have
+moved — four closed whole, four closed in half — and twelve are open exactly as
+surveyed. A fifth axis was then added and carries five more.** Twenty-five
+verified gaps registered, twelve candidates dropped for lack of evidence and
+thirteen refuted as documented decisions or by probe. Three questions recommended
 for a survey, eight things recommended as issues, five refused by name.
 
+**Security is the fifth axis and it is the app's doors rather than a run's
+reach**: what gets in, what credentials it holds, what it accepts as input, which
+is deliberately the reverse direction from
+`proposals/implemented - Sandboxing/`. It is also the one axis where
+`docs/agent/` has stated positions to test a row against, and it produced the
+register's **first violation of a documented invariant** along with its highest
+refutation rate.
+
 Every count, confidence and rank in this directory was re-read against the tree
-on 2026-09-06 and is current. [05-register.md](05-register.md) carries the
-row-by-row account of what moved.
+on 2026-09-06 and is current; the security rows were surveyed against the same
+tree on the same day. [05-register.md](05-register.md) carries the row-by-row
+account of what moved and where the five new rows were ranked in.
 
 **Four rows were implemented**, on branch
 `uf/usagefoundry-721638d11c0b-1-41e5e190`, by two runs after this register was
@@ -125,7 +135,7 @@ with remains unestablished, before the work, after it, and now.
 ## The recommendation
 
 **Survey reachability first** — [06-recommendation.md](06-recommendation.md#survey-1-reachability-what-should-an-operator-be-able-to-find-and-how).
-Eight of the twenty rows are one sentence: *the app cannot find what it has
+Eight of the twenty-five rows are one sentence: *the app cannot find what it has
 already done.* A hundred-row runs list with no parameters, a search that indexes
 two lists, thirty reachable chat threads, a log with no filter, twenty-five
 nameable repositories, a settings page with no field search. They share a fix
@@ -150,32 +160,43 @@ falsifier here and the largest hole in the register.
 only group whose failure lands in the operator's product rather than in
 UsageFoundry.
 
+**[06-recommendation.md](06-recommendation.md) was not re-derived against the
+five security rows and does not mention them.** That pass was scoped to
+surveying and registering an axis, so the three surveys, eight issues and five
+refusals are still the four-axis answer. Whether
+[S1](07-security.md#s1-the-all-sessions-branch-of-the-logout-route-takes-no-credential-and-revoking-a-session-does-not-end-it)
+at rank four displaces any of them is an open question and is stated as one
+rather than answered here. S1 is also the row on this register most likely to
+want an operator's attention before anything else is decided about it.
+
 ## The register at a glance
 
-Every figure below describes the register at `main` `66fdbab`, re-read row by
-row on 2026-09-06.
+Every figure below describes the register at `main` `66fdbab`: the first four
+axes re-read row by row on 2026-09-06, the fifth surveyed against the same tree
+on the same day.
 
 | | |
 |---|---|
-| Rows | **20** (21 gap ids; one carried once under two framings) |
-| Frontend / backend / growth / missing features | 6 / 5 / 4 / 6 |
+| Rows | **25** (26 gap ids; one carried once under two framings) |
+| Frontend / backend / growth / missing features / security | 6 / 5 / 4 / 6 / 5 |
 | **Rows closed whole** | **4** — F1, F4, F6, M3 |
 | **Rows closed in half** | **4** — F2, B2/M4, M1, M5 |
-| **Rows open exactly as surveyed** | **12** |
+| **Rows open exactly as surveyed** | **17** (the original twelve, plus S1–S5) |
 | Open rows with a claim since contradicted | 2 — G1's lead example, B4's second clause |
 | Open rows that got wider | 1 — B1, now five unguarded doors rather than four |
-| Dropped for lack of evidence | 6 — as surveyed; none was re-adjudicated on this pass |
-| Refuted as documented decisions, or by probe | 7 — as surveyed; one of them, the three npm advisories, has since been fixed by `102050d` and `npm audit` now reports `found 0 vulnerabilities` |
+| Dropped for lack of evidence | 12 (6 as surveyed, none re-adjudicated, plus 6 on the security axis) |
+| Refuted as documented decisions, or by probe | 13: 7 as surveyed, one of them the three npm advisories, since fixed by `102050d` so that `npm audit` now reports `found 0 vulnerabilities`, plus 6 on the security axis |
 | Rows whose failure lands in the operator's product, not this app | **1** (B2/M4) |
-| Rows that violate a documented invariant | **0** — re-checked; the refresh found no new one |
-| Rows resting on an explicitly assumed premise | 5 — F3, B3, B5, M1, M5 (`grep -n "Assumed" proposals/GapRegister/0[1-4]*.md`) |
-| Rows already owned by an open issue, squarely | 1 (#78) — **assumed unchanged**; no issue was read or written on this pass |
+| Rows that violate a documented invariant | **1**: S1, against `docs/agent/security.md:26`. It was 0 for the four axes `docs/agent/` has no opinion about, and finding it took adding the axis where it does |
+| Rows resting on an explicitly assumed premise | 7 (F3, B3, B5, M1, M5, S5, S2) |
+| Rows already owned by an open issue, squarely | 1 (#78) — **assumed unchanged**; no issue was read or written on this pass or the one before it |
 
 **Two figures in that table cannot be checked from this container and are
-carried forward as assumed.** Every issue number, because this refresh opened,
-closed, commented on and fetched nothing on GitHub. And whether M1 has opened a
-real pull request since, because `DATA_DIR` is unreadable by the agent uid, so no
-run's `deliver` event can be read. Everything else was read out of the tree.
+carried forward as assumed.** Every issue number, because neither this pass nor
+the refresh before it opened, closed, commented on or fetched anything on GitHub.
+And whether M1 has opened a real pull request since, because `DATA_DIR` is
+unreadable by the agent uid, so no run's `deliver` event can be read. Everything
+else was read out of the tree.
 
 Full table, ranked, with evidence and confidence per row:
 [05-register.md](05-register.md).
@@ -261,7 +282,8 @@ deliberately left unread, and every dropped candidate:
 | [03-growth.md](03-growth.md) | G1–G4, and two candidates refuted as deliberate ceilings |
 | [04-missing-features.md](04-missing-features.md) | M1–M6, judged on capability rather than polish |
 | [05-register.md](05-register.md) | The ranked table, how it was ranked, and what its shape says |
-| [06-recommendation.md](06-recommendation.md) | Three surveys, eight issues, five refusals by name |
+| [06-recommendation.md](06-recommendation.md) | Three surveys, eight issues, five refusals by name: the four-axis answer, not re-derived against S1–S5 |
+| [07-security.md](07-security.md) | S1–S5, what this axis got right, and its own refuted and dropped lists |
 
 Verification loop on the tree this was written against (`175ba57`):
 `npm run typecheck` exit 0; `npm test` 1,578 tests / 230 suites / 0 failures;
@@ -315,3 +337,45 @@ Docker is unavailable, so no landing collision was reproduced and
 [B1](02-backend-logic.md#b1-the-landing-guard-covers-landrun-and-none-of-the-other-four-doors) stays medium. No browser was opened, at any viewport.
 And no GitHub issue was read, deliberately, which is why every issue number in
 the register is marked assumed.
+
+### The security pass, 2026-09-06
+
+**This pass changed no code either.** `src/` is untouched, no GitHub issue was
+opened, closed or commented on, and nothing outside `proposals/GapRegister/` was
+edited except the [proposals index](../README.md) line that summarises this
+directory. So, as with the refresh, a failure below would be a finding about
+`main` rather than about the pass. There was none. Same worktree, same tree
+(`origin/main` at `66fdbab`), exit codes read from `$?` on the command itself.
+
+| Command | Exit | Output |
+|---|---|---|
+| `NODE_ENV=development npm ci --include=dev` | 0 | `found 0 vulnerabilities` |
+| `npm run typecheck` | 0 | nothing beyond the banner |
+| `npm test` | 0 | `# tests 2259`, `# suites 351`, `# pass 2259`, `# fail 0`, `# cancelled 0`, `# skipped 0`, `# todo 0`, `# duration_ms 16401.747132` |
+
+**Identical to the refresh's figures, and that is the expected result rather than
+a reassuring one**: nothing under `src/` changed, so the same suite ran over the
+same code. `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` and `npm
+audit` were **not** re-run on this pass, because neither can say anything about a
+tree that is byte-identical to the one the refresh ran them against four commits
+of prose ago. That is a deliberate omission and it is named here rather than left
+to be inferred from the table's length.
+
+**Two of the five rows are precisely about a green suite not telling you
+anything.**
+[S2](07-security.md#s2-the-status-route-authenticates-a-browser-against-the-master-token-which-the-session-cookie-stopped-being)
+is an assertion that passes on a cookie value the login route can no longer
+issue, and
+[S4](07-security.md#s4-the-no-literal-rule-is-pinned-by-an-assertion-whose-fixture-omits-the-one-notice-that-carries-figures)
+is an assertion whose fixture omits the one thing its own failure message claims
+to be about. Both are inside the 2,259 above.
+
+**What this pass could not reach**, beyond everything the refresh could not: no
+request was made against a running server, so
+[S1](07-security.md#s1-the-all-sessions-branch-of-the-logout-route-takes-no-credential-and-revoking-a-session-does-not-end-it)'s
+unauthenticated `POST` and
+[S5](07-security.md#s5-the-one-write-path-the-edge-gate-exempts-buffers-an-unbounded-body)'s
+unbounded body are read out of the tree rather than demonstrated against a
+listener; and who can reach the port at all is
+`proposals/implemented - Sandboxing/`'s question, deliberately left there.
+Full accounting in [00-method.md](00-method.md#the-security-pass-2026-09-06).
