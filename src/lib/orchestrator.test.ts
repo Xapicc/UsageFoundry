@@ -2213,6 +2213,7 @@ describe("buildArgs", () => {
     permissionMode: "acceptEdits" as const,
     resumeSessionId: null,
     maxRunCostUSD: null,
+    maxRunCostFactor: null,
     spentGuardUSD: 0,
   };
 
@@ -3428,6 +3429,7 @@ describe("injectionFates", () => {
     permissionMode: "acceptEdits" as const,
     resumeSessionId: null,
     maxRunCostUSD: null,
+    maxRunCostFactor: null,
     spentGuardUSD: 0,
   };
 
@@ -3962,6 +3964,7 @@ describe("needsLiveSpendTelemetry", () => {
     maxWeeklyFraction: null,
     maxSessionFraction: null,
     maxRunCostUSD: null,
+    maxRunCostFactor: null,
     maxRunTokens: null,
     maxIterations: 5,
     maxDurationMinutes: null,
@@ -4020,6 +4023,7 @@ describe("needsLiveSpendTelemetry", () => {
         normalizePolicy({
           enforcement: "live",
           maxRunCostUSD: 0,
+          maxRunCostFactor: null,
           maxIterations: 5,
         }),
       ),
@@ -4030,6 +4034,7 @@ describe("needsLiveSpendTelemetry", () => {
         normalizePolicy({
           enforcement: "live",
           maxRunCostUSD: 5,
+          maxRunCostFactor: null,
           maxIterations: 5,
         }),
       ),
