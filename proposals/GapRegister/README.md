@@ -7,11 +7,20 @@ them are worth a survey of their own?
 
 **The state, at `main` `66fdbab`:** **eight of the original twenty rows have
 moved — four closed whole, four closed in half — and twelve are open exactly as
-surveyed. Two further axes were then added and carry thirteen more.**
-Thirty-three verified gaps registered, twenty-three candidates dropped for lack
-of evidence and twenty-one refuted as documented decisions or by probe. Three
-questions recommended for a survey, eight things recommended as issues, five
-refused by name.
+surveyed. Two further axes were then added and carry thirteen more, and a fourth
+pass over the ground the survey left unread added four to the axes that already
+existed.** Thirty-seven verified gaps registered, twenty-six candidates dropped
+for lack of evidence and twenty-eight refuted as documented decisions or by
+probe. Three questions recommended for a survey, eight things recommended as
+issues, five refused by name.
+
+**The fourth pass added no axis**, which is its own result: the two thirds of
+`orchestrator.ts`, the four fifths of `workflows.ts`, the three canvas files and
+the 181 closed issues that
+[00-method.md](00-method.md#what-was-deliberately-left-unread) named as unread
+between them yielded four rows and seven refutations, and none of the four needed
+a heading of its own. It is also the first pass to read GitHub — titles of closed
+issues only, writing nothing — and the first to argue a row from a query plan.
 
 **Security is the fifth axis and it is the app's doors rather than a run's
 reach**: what gets in, what credentials it holds, what it accepts as input, which
@@ -194,26 +203,33 @@ same tree on the same day.
 
 | | |
 |---|---|
-| Rows | **33** (34 gap ids; one carried once under two framings) |
-| Frontend / backend / growth / missing features / security / operations | 6 / 5 / 4 / 6 / 5 / 8 |
+| Rows | **37** (38 gap ids; one carried once under two framings) |
+| Frontend / backend / growth / missing features / security / operations | 7 / 6 / 5 / 7 / 5 / 8 |
 | **Rows closed whole** | **4** — F1, F4, F6, M3 |
 | **Rows closed in half** | **4** — F2, B2/M4, M1, M5 |
-| **Rows open exactly as surveyed** | **25** (the original twelve, plus S1–S5 and O1–O8) |
+| **Rows open exactly as surveyed** | **29** (the original twelve, plus S1–S5, O1–O8 and the fourth pass's B6, F7, G5 and M7) |
 | Open rows with a claim since contradicted | 2 — G1's lead example, B4's second clause |
-| Open rows that got wider | 1 — B1, now five unguarded doors rather than four |
-| Dropped for lack of evidence | 23 (6 as surveyed, none re-adjudicated, plus 6 on the security axis and 11 on the operations axis) |
-| Refuted as documented decisions, or by probe | 21: 7 as surveyed, one of them the three npm advisories, since fixed by `102050d` so that `npm audit` now reports `found 0 vulnerabilities`, plus 6 on the security axis and 8 on the operations axis |
+| Open rows that got wider | 2 — B1, now five unguarded doors rather than four; and G1, now four capped lists rather than three |
+| Dropped for lack of evidence | 26 (6 as surveyed, none re-adjudicated, plus 6 on the security axis, 11 on the operations axis and 3 on the fourth pass) |
+| Refuted as documented decisions, or by probe | 28: 7 as surveyed, one of them the three npm advisories, since fixed by `102050d` so that `npm audit` now reports `found 0 vulnerabilities`, plus 6 on the security axis, 8 on the operations axis and 7 on the fourth pass — the highest count of any pass, and five of the seven were killed by a measurement rather than by a paragraph |
 | Rows whose failure lands in the operator's product, not this app | **1** (B2/M4) |
 | Rows that violate a documented invariant | **2**: S1 against `docs/agent/security.md:26`, and O8 against `docs/agent/concurrency-and-ownership.md:18`. It was 0 for the four axes `docs/agent/` has no opinion about, and both were found by adding an axis where it does |
-| Rows resting on an explicitly assumed premise | 15 (F3, B3, B5, M1, M5, S5, S2, and all eight of O1–O8, where the assumption is the same one every time: no container was run) |
-| Rows already owned by an open issue, squarely | 1 (#78) — **assumed unchanged**; no issue was read or written on this pass or either of the two before it |
+| Rows resting on an explicitly assumed premise | 16 (F3, B3, B5, M1, M5, S5, S2, B6, and all eight of O1–O8, where the assumption is the same one every time: no container was run) |
+| Rows already owned by an open issue, squarely | 1 (#78) — **confirmed still open** by the fourth pass, along with the other eight numbers the register cites: none of #68, #78, #87, #89, #91, #99, #114, #125 or #155 appears among the 181 closed issues. No issue body was fetched, so what any of them still says is unchecked, and nothing was opened, closed or commented on |
 
-**Two figures in that table cannot be checked from this container and are
-carried forward as assumed.** Every issue number, because none of the three
-passes since the survey opened, closed, commented on or fetched anything on
-GitHub. And whether M1 has opened a real pull request since, because `DATA_DIR`
-is unreadable by the agent uid, so no run's `deliver` event can be read.
-Everything else was read out of the tree.
+**One figure in that table still cannot be checked from this container**:
+whether M1 has opened a real pull request since, because `DATA_DIR` is unreadable
+by the agent uid, so no run's `deliver` event can be read. Everything else was
+read out of the tree.
+
+**The other one is now half-checked.** Every issue number was carried as assumed
+through the `66fdbab` refresh and the security and operations passes, none of
+which touched GitHub. The fourth pass fetched one thing —
+`gh issue list --repo Xapicc/UsageFoundry --state closed --limit 300`, titles and
+numbers, writing nothing — and none of the nine numbers the register cites
+appears among the 181 closed issues, so all nine are **still open**. What is
+still assumed is what each of them *says*: no body was fetched, so whether an
+open issue still describes the gap the register hands it is unchecked.
 
 **The operations axis adds a third kind of unchecked figure**, wider than either
 and named here rather than left inside its rows: **nothing on that axis was
@@ -257,7 +273,7 @@ Full table, ranked, with evidence and confidence per row:
 
 ## The four biggest things the register says that no single row does
 
-**Nine of thirty-three rows are reachability.** They would be filed as nine unrelated
+**Nine of thirty-seven rows are reachability.** They would be filed as nine unrelated
 tickets and fixed nine times. **Four of them then were** — three whole and one in
 half, as four separate changes on one branch — and the five still open include
 [G2](03-growth.md#g2-chat-threads-past-the-newest-30-cannot-be-reached-at-all), chat threads past the newest 30, which has the same
@@ -266,18 +282,33 @@ observation being demonstrated rather than refuted, and `66fdbab` demonstrates i
 twice: `/api/chat` now matches, word for word, the description
 [G1](03-growth.md#g1-nine-list-routes-read-parameters-the-one-for-runs-does-not-and-the-pattern-repeats-three-times) wrote for `/api/runs`.
 
-**The chat surface carries five rows and the run surface carries none of the
+**The fourth pass moved this theme both ways and neither move is a row.** It
+filed nothing on this theme, so the count holds at nine while the denominator
+goes to thirty-seven: **27% of the register down to 24%**. And it found a fourth
+cap of G1's shape in a file nobody had read for the survey — a workflow's own
+history is the newest twenty presses of Run, permanently, on a route that reads
+no parameters (`src/lib/workflows.ts:2103`,
+`src/app/api/workflows/[id]/route.ts:29`). So the theme is a smaller share of a
+larger register and better supported inside it, and those two are not in tension:
+what dilutes a share is adding rows on axes it does not touch.
+
+**The chat surface carries six rows and the run surface carries none of the
 equivalents.** Incremental persistence, publish-after-persist, a mid-flight
-budget check, a paged list, **and now retention** — every one exists in this
-repository, built for runs, documented in `docs/agent/`. Chat is the newest
-surface and inherited none of them. That is why the recommendation for four of
+budget check, a paged list, retention, **and now an incremental read** — every
+one exists in this repository, built for runs, documented in `docs/agent/`. Chat
+is the newest surface and inherited none of them. The sixth is the fourth pass's
+[G5](03-growth.md#g5--the-chat-page-re-reads-and-re-serialises-every-message-in-the-thread-every-three-seconds-and-nothing-bounds-the-thread):
+the run log's stream takes an `after` cursor and ships only what is past it
+(`src/app/api/runs/[id]/stream/route.ts:135-141`), because somebody reasoned
+about how large `run_events` gets; the chat route re-reads the whole thread every
+three seconds, because nobody did. That is why the recommendation for four of
 them is *one issue*, not a survey: the answer is already written down, one module
 over. The fifth,
 [O5](08-operations.md#o5--a-chat-thread-and-every-message-in-it-is-permanent-no-horizon-no-delete-and-the-cascade-has-nothing-to-cascade-from),
 is not, because a chat with no horizon and no delete path needs a decision about
 what a chat is for before a mechanism can be copied into it.
 
-**Two of the thirty-three rows violate a documented invariant, and finding
+**Two of the thirty-seven rows violate a documented invariant, and finding
 either took adding an axis `docs/agent/` has opinions about.** For the four
 original axes it was zero — every row there is something the documentation never
 had a position on. `docs/agent/security.md` and
@@ -289,12 +320,34 @@ which costs something standing, and
 which costs nothing at all. Both are a sentence written about one path of a
 function that has several. Fourteen candidates died against a paragraph that had
 already reasoned the thing through, which is the same finding pointing the other
-way.
+way, and the fourth pass added seven more without adding a third violation — six
+of its seven refutations are a docblock or a measurement, not a paragraph.
 
-**Almost nothing on the register is a missing mechanism.** Seven of the eight
-operations rows are a mechanism that exists and cannot be seen; three of the four
-half-closed rows are a mechanism with no interface; the reachability nine are
-mechanisms reachable up to a number nobody chose. The register's dominant failure
+**What that pass did find is the same shape one level down.**
+[B6](02-backend-logic.md#b6--the-claude-stream-parser-drops-an-event-type-it-does-not-recognise-without-a-word-and-the-codex-parser-twelve-lines-below-it-says-why-that-is-not-survivable)
+is not a violation of `docs/agent/`, which has no position on it. It is a
+*docblock* at `src/lib/orchestrator.ts:7372-7381` that names the function twelve
+lines above it, states in as many words why silence there is not survivable, and
+then builds the remedy for the other provider only. Both documented violations
+are a sentence written about one path of a function that has several; this is
+that, with the sentence and the untaken path in the same file.
+
+**Almost nothing on the register is a missing mechanism, and the fourth pass
+sharpened that rather than testing it.** Seven of the eight operations rows are a
+mechanism that exists and cannot be seen; three of the four half-closed rows are a
+mechanism with no interface; the reachability nine are mechanisms reachable up to
+a number nobody chose. Three of the four new rows are a fourth form of it —
+**a mechanism that exists on one side of a seam and was not carried across**:
+[B6](02-backend-logic.md#b6--the-claude-stream-parser-drops-an-event-type-it-does-not-recognise-without-a-word-and-the-codex-parser-twelve-lines-below-it-says-why-that-is-not-survivable)
+across the two providers,
+[F7](01-frontend.md#f7--the-workflow-editor-is-the-apps-one-drawing-surface-and-it-discards-a-graph-without-asking)
+across two pages, and
+[G5](03-growth.md#g5--the-chat-page-re-reads-and-re-serialises-every-message-in-the-thread-every-three-seconds-and-nothing-bounds-the-thread)
+across runs and chat.
+[M7](04-missing-features.md#m7--nothing-checks-a-completeness-claim-and-docsagent-is-built-out-of-them)
+is the one that genuinely undercuts the claim: nothing anywhere in this
+repository reads a doc, so there is no side of that seam to carry anything from —
+one row in thirty-seven that is a mechanism missing outright. The register's dominant failure
 mode is not *this app cannot do X* but *this app does X, correctly and with the
 reasoning written down, and nothing says so* — which is why so many of the fixes
 are a readout, a field or a pin rather than a build, and why a green tree is
@@ -315,9 +368,13 @@ after it, which is why the falsifier above is still unrun and why [B1](02-backen
   log inspected, and `/backups` never listed, so O1–O8 are absences read out of
   the tree with their consequences argued rather than observed.
 - **Open a browser.** At any viewport. Which is [F5](01-frontend.md#f5-nothing-that-renders-is-checked-by-anything)'s point.
-- **Read a GitHub issue.** Deliberately, on all three later passes: each was
-  scoped to the tree, so every issue number in the register is assumed unchanged
-  rather than confirmed.
+- **Read a GitHub issue's body.** The `66fdbab` refresh and the security and
+  operations passes touched GitHub not at all, deliberately, each being scoped to
+  the tree. The fourth pass read the closed list — numbers and titles, 181 of
+  them — which is what confirmed the nine cited numbers are still open and what
+  [M7](04-missing-features.md#m7--nothing-checks-a-completeness-claim-and-docsagent-is-built-out-of-them)
+  is argued from. No issue body was fetched and nothing was opened, closed,
+  commented on or edited, on any pass.
 
 Full accounting, including every command run and its output, what was
 deliberately left unread, and every dropped candidate:
@@ -469,3 +526,49 @@ table counted — which means the half of backup and restore this pass checked i
 did not is the packaging, which `docs/verification.md:4100-4113` already names
 and lists the four commands for.
 Full accounting in [00-method.md](00-method.md#the-operations-pass-2026-09-06).
+
+### The fourth pass, 2026-09-06
+
+**This pass changed no code either.** `src/` is untouched, nothing under
+`docs/` was edited, no GitHub issue was opened, closed or commented on, and
+nothing outside `proposals/GapRegister/` was edited at all. Same worktree, same
+tree (`origin/main` at `66fdbab` as the fork point), exit codes read from `$?` on
+the command itself and not through a pipe.
+
+| Command | Exit | Output |
+|---|---|---|
+| `NODE_ENV=development npm ci --include=dev` | 0 | `found 0 vulnerabilities` |
+| `npm run typecheck` | 0 | nothing beyond the banner |
+| `npm test` | 0 | `# tests 2259`, `# suites 351`, `# pass 2259`, `# fail 0`, `# cancelled 0`, `# skipped 0`, `# todo 0` |
+| `gh issue list --repo Xapicc/UsageFoundry --state closed --limit 300 --json number,title,state` | 0 | 181 issues, persisted and read in sections |
+
+**The same 2,259 for the fourth time**, over the same unchanged code — and on
+this pass one of the four new rows is about what a suite that size does not
+cover.
+[M7](04-missing-features.md#m7--nothing-checks-a-completeness-claim-and-docsagent-is-built-out-of-them)
+is that: 351 suites, four CI steps, no linter, and not one of them reads a file
+under `docs/`. Five test files mention `docs/agent/` and every mention is a prose
+citation in a docblock explaining why that test earned its place.
+
+**It is the first pass to run a database.** `DATA_DIR` is still unreadable, so
+the schema was materialised instead — `migrate()` pointed at a writable scratch
+directory, then `EXPLAIN QUERY PLAN` and `PRAGMA foreign_key_list` against what
+it built. That produced
+[G5](03-growth.md#g5--the-chat-page-re-reads-and-re-serialises-every-message-in-the-thread-every-three-seconds-and-nothing-bounds-the-thread)
+and killed three candidates outright, including one this register has carried as
+a suspicion since it opened: every hot query on the `runs` table uses an index,
+so dropped candidate 3's *runs* half is answered and only its "how slow is it
+really" half survives.
+
+**What it could not reach.** No browser, at any viewport, so
+[F7](01-frontend.md#f7--the-workflow-editor-is-the-apps-one-drawing-surface-and-it-discards-a-graph-without-asking)
+and everything else about the three canvas files is a reading of source. No
+container. No run history, so
+[G5](03-growth.md#g5--the-chat-page-re-reads-and-re-serialises-every-message-in-the-thread-every-three-seconds-and-nothing-bounds-the-thread)
+carries a plan and not a timing. No issue body, so
+[M7](04-missing-features.md#m7--nothing-checks-a-completeness-claim-and-docsagent-is-built-out-of-them)
+rests on titles plus three subjects re-checked against the tree. And it stopped
+partway: `workflows.ts` was mapped and read in the four regions the rows and the
+refutations name, not swept, and the three canvas files were read for one
+question each. Where it stopped, exactly, is in
+[00-method.md](00-method.md#the-fourth-pass-2026-09-06).
