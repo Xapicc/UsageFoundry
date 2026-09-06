@@ -267,3 +267,138 @@ The last three are one shape — a comment that states a fact about the reposito
 which the repository has since changed — and are the kind of thing
 `docs/agent/` has no invariant about, which is what the register's third
 observation predicts.
+
+## The security pass, 2026-09-06
+
+A fifth axis, [07-security.md](07-security.md): the app's own security and trust
+boundary. Same worktree, same tree, same day as the `66fdbab` refresh above.
+Everything the refresh could not reach, this could not reach either, and it adds
+two holes of its own.
+
+**The boundary this pass held itself to**, stated first because it decided what
+was not surveyed: `proposals/implemented - Sandboxing/` owns what a run can
+reach (filesystem, network, one run against another), and this axis is the
+reverse direction, what reaches the app. Two candidates died on that line rather
+than on the evidence line and are recorded as such, one of them a real and
+documented residue (every child sharing a uid, `docs/agent/security.md:10`).
+
+### Commands run, and their output
+
+Exit codes read from `$?` on the command itself, never through a pipe.
+
+| Command | Exit | Result |
+|---|---|---|
+| `NODE_ENV=development npm ci --include=dev` | 0 | `found 0 vulnerabilities` |
+| `npm run typecheck` | 0 | nothing beyond the banner |
+| `npm test` | 0 | `# tests 2259`, `# suites 351`, `# pass 2259`, `# fail 0`, `# cancelled 0`, `# skipped 0`, `# todo 0`, `# duration_ms 16401.747132` |
+
+Byte-identical figures to the refresh, because `src/` is byte-identical: this
+pass edited only this directory. `npm run build` and `npm audit` were **not**
+re-run, for that reason, and the omission is deliberate.
+
+**The one survey command whose output a row rests on**, quoted in full in
+[S3](07-security.md#s3-nine-mutating-route-files-write-no-audit-line-and-six-of-them-are-the-credential-routes):
+
+```
+$ for f in $(grep -rl "export async function \(POST\|PUT\|PATCH\|DELETE\)" \
+      src/app/api --include=route.ts | sort); do
+    grep -q auditMutation "$f" || echo "$f"; done
+src/app/api/claude-auth/login/code/route.ts
+src/app/api/claude-auth/login/route.ts
+src/app/api/claude-auth/logout/route.ts
+src/app/api/codex-auth/api-key/route.ts
+src/app/api/codex-auth/login/route.ts
+src/app/api/codex-auth/logout/route.ts
+src/app/api/fleet/route.ts
+src/app/api/logout/route.ts
+src/app/api/runs/restarted/route.ts
+```
+
+and the one that decided
+[S1](07-security.md#s1-the-all-sessions-branch-of-the-logout-route-takes-no-credential-and-revoking-a-session-does-not-end-it)'s
+second half, which is a search returning *less* than expected and is therefore
+the kind that has to be quoted rather than described:
+
+```
+$ grep -rn "revoked_at\|revokedAt" src/ --include=*.ts --include=*.tsx \
+    | grep -v "\.test\."
+src/lib/sessions.ts:29,36,43       the column and its DTO
+src/lib/sessions.ts:63,72          the two writers
+src/lib/sessions.ts:87,91          activeSessionCount
+src/app/api/settings/route.ts:134  activeSessions, for the Settings page
+```
+
+Nothing on a request path is in that list. `getSession`, the one function that
+returns a row's `revokedAt` to a caller, is called from
+`src/app/api/login/route.test.ts:110` and `:133` and from nowhere else in `src/`.
+
+### What was read
+
+- `docs/agent/security.md` **in full**, all thirty paragraphs, first and before
+  any code. It is the axis's own specification and six of the seventeen
+  candidates judged died against it.
+- The code it routes to: `src/middleware.ts` whole; `src/app/api/status/route.ts`
+  and its test; `src/app/api/logout/route.ts`; `src/app/api/health/route.ts`'s
+  test names; `src/app/api/login/route.ts`'s export line;
+  `src/app/api/otlp/v1/logs/route.ts`; `src/lib/requestLog.ts` whole;
+  `src/lib/sessions.ts`, `src/lib/sessionToken.ts` and `src/lib/loginAttempts.ts`
+  in the regions cited; `src/lib/plugins.ts`'s containment and enable/spawn
+  paths; `src/lib/vaultSkill.ts` and `src/lib/readGuard.ts` docblocks;
+  `src/lib/chat.ts`'s capability block (`:1715-1795`) and its revocation sites;
+  `src/lib/git.ts:180-240` and `githubEnv` at `src/lib/orchestrator.ts:5660-5740`;
+  `resolveInMount` at `src/lib/orchestrator.ts:1165-1208`;
+  `src/lib/cycleInvocation.ts`'s notice join; the two notice tests;
+  `src/app/api/mcp/route.ts`'s `save_template` schema and its guard-stating
+  handler; `docker-entrypoint.sh:806-854` and `scripts/discord-relay.mjs`.
+- `proposals/implemented - Sandboxing/README.md`, to stay off it.
+- `proposals/GapRegister/` itself: `00-method.md`, `05-register.md`,
+  `02-backend-logic.md` for the row shape, and `06-recommendation.md:196-256` for
+  the refuted list this pass was told not to rediscover.
+
+### What could not be reached, beyond the refresh's four
+
+- **A listener.** No request was made against a running server, so every claim
+  about what a route accepts or refuses is read out of the handler rather than
+  observed. That is stated in the confidence line of
+  [S1](07-security.md#s1-the-all-sessions-branch-of-the-logout-route-takes-no-credential-and-revoking-a-session-does-not-end-it),
+  [S2](07-security.md#s2-the-status-route-authenticates-a-browser-against-the-master-token-which-the-session-cookie-stopped-being)
+  and [S5](07-security.md#s5-the-one-write-path-the-edge-gate-exempts-buffers-an-unbounded-body)
+  rather than left to the reader.
+- **The framework's own limits.** Whether a `output: "standalone"` Next build
+  caps `Request.json()` on its own was not measured; nothing configures a cap in
+  `next.config.ts`, and S5 marks the rest as assumed.
+
+### What was deliberately left unread
+
+- **`privsep.ts` and the uid/gid arrangement**, beyond
+  `docs/agent/security.md:10`'s account of it. It is the one part of this area
+  whose failure mode is *between children*, which is the Sandboxing boundary.
+- **`docs/security.md`**, the human-facing companion, except where
+  `docs/agent/security.md` names it as holding the residue.
+- **Every route handler's authorisation logic individually.** That is the
+  per-endpoint audit `06-recommendation.md`'s M2 refusal prices, and doing it
+  here would have been that survey rather than this one.
+- **The transcript, metering and workflow surfaces**, which carry no credential
+  and no door of their own.
+
+### Refuted, and dropped
+
+Both lists live in the axis file rather than here, because both are longer than
+the four-axis survey's and both are specific to this boundary:
+[§ Refuted or already decided](07-security.md#refuted-or-already-decided-on-this-axis)
+(six candidates, all killed by a paragraph that had already reasoned the thing
+through) and
+[§ Dropped for lack of evidence](07-security.md#dropped-for-lack-of-evidence-on-this-axis)
+(six more, each with the missing evidence named).
+
+### The vault
+
+Not consulted on this pass. The notes the four-axis survey used on
+authentication and secrets
+(`3 Resources/Software Security/Authentication versus Authorisation.md`,
+`3 Resources/Software Security/Secrets Management.md`) are already cited by
+[M2](04-missing-features.md#m2-one-credential-no-identity-no-authorisation) and
+[M6](04-missing-features.md#m6-a-credential-cannot-be-rotated-without-a-restart-and-a-restart-ends-live-runs),
+which this pass was told not to refile, and none of the five rows here needed an
+external claim: every one of them is a line in this repository or a sentence in
+its own documentation.
