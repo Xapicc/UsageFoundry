@@ -1900,6 +1900,39 @@ Built and exercised against real transcripts:
   `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` produces the standalone
   bundle with every new string in the client chunks.
 
+- **The chat turn's streaming and durability, driven end to end against a fake
+  CLI on 2026-09-06.** No real turn was billed for any of this: `CLAUDE_BIN`
+  pointed at a shell script emitting the event shape
+  `--output-format stream-json --verbose` produces, on the same isolated
+  `DATA_DIR` as above. That the flag pair itself is accepted by the pinned CLI
+  is **not** established here — it is the same pair `cycleInvocation.ts:1075`
+  has passed for every work cycle since it was written, which is why it was
+  chosen, and no chat turn has been through a real one.
+
+  - **The partial arrives and grows.** `partialText` read
+    `"Reading the repository. "` two seconds in, the full two sentences at four,
+    and `null` at nine with `costUSD` at the CLI's own `0.0731` — so the settled
+    answer replaces the live one rather than being drawn beside it.
+  - **A `SIGKILL` half-way leaves the turn behind.** With the server killed
+    outright — no shutdown handler, which is what a crash, an OOM or
+    `docker kill` is — the row still held `partial_text`, `turn_tokens = 31240`
+    and `turn_cost_est = 0.022`. Every one of those was lost before.
+  - **The boot pass turns them into a record.** On restart the thread reads
+    `user` → `assistant: "Reading the repository."` → `system: the server
+    restarted…`, in that order; `tokens` folded to 31,240, `cost_usd` stayed 0,
+    `cost_usd_est` took the 0.022, and `chat_turn_spend` carried one row marked
+    `estimated = 1` beside the earlier turn's unmarked 0.0731. The mark is what
+    keeps a figure this app derived out of the measured half of the install's
+    reading.
+  - **The ceiling stops a turn that crosses it while running.** With
+    `installDailyCostLimitUSD` at $0.025 and no prior spend, the turn was
+    admitted, produced both sentences, and was then stopped part-way — the
+    thread holds the half-answer as an assistant message followed by the
+    refusal naming the ceiling, `cost_usd_est` took the $0.0275, and the CLI
+    reported no cost because it never finished. The same turn under a $0.03
+    ceiling ran to completion, which is the control: the stop is the estimate
+    crossing the limit and not the check firing on every turn.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the
@@ -1907,7 +1940,13 @@ standalone bundle), and are covered by the unit tests above, but the following
 have **not** been exercised against a real CLI. They are the list to work
 through before trusting this unattended:
 
-> **Five controls added on 2026-09-06 have never been rendered in a browser.**
+> **The chat turn's live view has never been rendered in a browser either**, and
+> it is the one addition whose whole point is what it looks like while it moves.
+> What is verified is that the text is on the row and on the DTO at the moments
+> above; what is not is the panel drawing it, or how a partial that grows under
+> a reader behaves in a region that also polls. The same session had no browser.
+>
+> **Six controls added on 2026-09-06 have never been rendered in a browser.**
 > No browser was available in the session that wrote them, so what is verified
 > is that they compile, that every string is in the production client chunk, and
 > that the route each one calls behaves as above — which is not the same as

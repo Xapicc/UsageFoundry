@@ -1086,6 +1086,33 @@ function migrate(db: Database.Database) {
   // process that spawned them and no settle is coming for them.
   addColumn(db, "chat_sessions", "turn_seq", "INTEGER NOT NULL DEFAULT 0");
 
+  // What the turn in flight has produced so far.
+  //
+  // The chat child used to print one JSON object when it exited, so all three
+  // of these existed only in one process's memory until it did: a restart in
+  // the middle lost the assistant's text entirely, lost the row that tells the
+  // install-wide ceiling the money was spent, and lost the thread's running
+  // total — while the money stayed spent. The child streams now, and these are
+  // where each event lands before anything publishes it, which is `emit()`'s
+  // persist-then-publish order arriving at the one path that never had it.
+  //
+  // All four are **per turn** and are cleared by `claimTurn` and by
+  // `finishTurn`. `partial_text` is a live view and is never the stored
+  // message: the settled thread still takes the CLI's own `result` string, so
+  // what a finished turn looks like is unchanged.
+  addColumn(db, "chat_sessions", "partial_text", "TEXT");
+  addColumn(db, "chat_sessions", "partial_at", "INTEGER");
+  addColumn(db, "chat_sessions", "turn_tokens", "INTEGER NOT NULL DEFAULT 0");
+  // Priced by this app from the tokens above, so it is a **guard** figure and
+  // is kept apart from `cost_usd` everywhere, exactly as `runs.spent_usd_est`
+  // is kept out of `runs.spent_usd`. The CLI's own `total_cost_usd` is the
+  // shown figure and only arrives with the final event.
+  addColumn(db, "chat_sessions", "turn_cost_est", "REAL NOT NULL DEFAULT 0");
+  // And what those estimates came to for turns that never settled at all —
+  // accumulated across the thread's life, shown *beside* the total and never
+  // folded into it, because no measured figure is ever coming for them.
+  addColumn(db, "chat_sessions", "cost_usd_est", "REAL NOT NULL DEFAULT 0");
+
   // That this instance was halted, by what, and when.
   //
   // `stopped_at` is the moment the door was closed rather than the moment the
@@ -1342,6 +1369,16 @@ function migrate(db: Database.Database) {
       );
       CREATE INDEX IF NOT EXISTS idx_chat_turn_spend_ts ON chat_turn_spend(ts);
     `);
+    // A row the CLI never reported a cost for, priced by this app instead.
+    //
+    // Before the chat child streamed, a turn lost to a restart wrote no row
+    // here at all, so the install's rolling ceiling never learned that the
+    // money had been spent — the one direction a ceiling must never move by
+    // accident. `reconcileChatsOnBoot` writes the estimate it was left with
+    // instead, and marks it, so `installSpend` can put it in the guard figure
+    // and keep it out of the shown one. Both readings stay honest and neither
+    // has to guess which rows are which.
+    addColumn(db, "chat_turn_spend", "estimated", "INTEGER NOT NULL DEFAULT 0");
     if (!chatTurnSpendExisted) {
       db.prepare(
         `INSERT INTO chat_turn_spend (chat_id, ts, cost_usd)

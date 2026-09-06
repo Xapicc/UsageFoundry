@@ -55,6 +55,14 @@ export function chatDTO(chat: ChatRow): ChatDTO {
     error: chat.error,
     turnStartedAt: chat.turn_started_at,
     turnTimeoutMs: CHAT_TIMEOUT_MS,
+    // What the turn in flight has said so far, and only while one is. The row
+    // is cleared at the settle, so a value surviving a status change would be
+    // the last turn's half-answer drawn under the finished one.
+    partialText: chat.status === "thinking" ? (chat.partial_text ?? null) : null,
+    // Beside the total and never inside it: this is what turns that were cut
+    // off are believed to have cost, priced by this app rather than reported by
+    // the CLI. Zero on every thread that has never lost one.
+    costEstUSD: chat.cost_usd_est ?? 0,
     messages: listMessages(chat.id).map((m) => ({
       id: m.id,
       ts: m.ts,

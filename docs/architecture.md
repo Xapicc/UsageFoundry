@@ -91,6 +91,10 @@ src/lib/
                    node:child_process into a client bundle
   chat.ts          the orchestrator chat (a fourth, deliberate child process),
                    and the shared spawn a workflow's deciding block reuses
+  chatStream.ts    what a turn's output says while it is still being produced —
+                   pure, so the durable half can be tested without a child, and
+                   it counts an event type it has no branch for rather than
+                   dropping it
   workflows.ts     saved graphs of run blocks — form input, never a run; and
                    the blocks that decide what to run, which are not
   workflowGraph.ts what a graph is on the wire, and every refusal decidable

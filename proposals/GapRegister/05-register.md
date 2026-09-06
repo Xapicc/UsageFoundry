@@ -34,8 +34,8 @@ is *safer* than the sentence describing it.
 
 ## What was implemented on 2026-09-06, after this register was written
 
-**Ten rows moved: seven closed whole, three in half** (B1 closed on a
-second pass; see its entry). Done on `main` in one pass,
+**Thirteen rows moved: ten closed whole, three in half.** B1, B3, F3 and B4
+closed on a second pass; see their entries. Done on `main` in one pass,
 against the tree this file describes — `git diff --stat 66fdbab..` over `src/`
 was empty when it started, so every line number above was still current.
 
@@ -119,6 +119,25 @@ Closed in half, and each half is named because the other one stands:
   nothing in the container had a GitHub remote, a credential and an isolated
   branch at once.
 
+**[B3](02-backend-logic.md#b3-a-chat-turn-exists-nowhere-durable-until-the-child-exits), [F3](01-frontend.md#f3-a-chat-turn-renders-nothing-until-it-finishes-the-run-path-streams) and [B4](02-backend-logic.md#b4-the-install-ceiling-is-checked-once-per-chat-turn-before-it-and-a-turn-has-no-cap) closed together, which is
+what [06-recommendation.md](06-recommendation.md#file-an-issue-do-not-survey-it) said they were: one mechanism, three
+symptoms.** The chat child runs `--output-format stream-json --verbose` — the
+run loop's format, and the whole of why it had none of `emit()`'s properties —
+and `chatStream.ts` folds its events into a row every half-second. B3: a turn's
+text, its measured tokens and its priced cost now survive the process, and
+`keepPartialTurn` promotes them at each of the four endings that get no `result`
+event. F3: the page draws the half-answer as it arrives, above the spinner it
+does not replace. B4: `recordProgress` re-asks the install's rolling ceiling
+every ten seconds against the estimate it has just written, where it used to be
+read once at admission. **The two figures are kept apart everywhere** — the
+tokens are the CLI's and are measured, the cost is ours and is a guard figure,
+so it lands in `cost_usd_est` beside the total and its `chat_turn_spend` row
+carries `estimated = 1`. **Driven end to end** against a fake CLI emitting the
+real event shape: the partial appearing and growing mid-turn, a `SIGKILL`
+half-way leaving the text and 31,240 measured tokens on the row, the boot pass
+turning them into a message and a marked spend row, and a live turn being
+stopped by a ceiling it crossed while running.
+
 **[G1](03-growth.md#g1-nine-list-routes-read-parameters-the-one-for-runs-does-not-and-the-pattern-repeats-three-times) lost its second instance of three.** The 30 at
 `src/lib/chat.ts:387` is now reachable past its cap; the 25 at
 `src/lib/workspace.ts:168, :188` is not, and is still #78's.
@@ -129,13 +148,11 @@ absence as an oversight:
 - **[F5](01-frontend.md#f5-nothing-that-renders-is-checked-by-anything)**, rank 1 — [06-recommendation.md](06-recommendation.md#survey-3-what-should-check-the-ui-and-what-would-it-actually-catch) argues at length that this is a
   survey with five real answers and that "add Playwright" is the one to be
   suspicious of. Picking one of the five in passing is what that section exists
-  to stop. It is untouched, and five of the controls above are on its list of
-  things nothing checks — see `docs/verification.md`'s note that none of them
-  has been rendered in a browser.
+  to stop. It is untouched, and the controls above are on its list of things
+  nothing checks — see `docs/verification.md`'s note that none of them has been
+  rendered in a browser.
 - **[M2](04-missing-features.md#m2-one-credential-no-identity-no-authorisation)**, rank 6 — refused by name, on a trigger that has not fired.
-- **[B3](02-backend-logic.md#b3-a-chat-turn-exists-nowhere-durable-until-the-child-exits)**, rank 8, and the [F3](01-frontend.md#f3-a-chat-turn-renders-nothing-until-it-finishes-the-run-path-streams)/[B4](02-backend-logic.md#b4-the-install-ceiling-is-checked-once-per-chat-turn-before-it-and-a-turn-has-no-cap) issue
-  beside it — one mechanism, three symptoms, and the recommendation files it as
-  a single piece of implementation work rather than three patches. Not started.
+- **[F5](01-frontend.md#f5-nothing-that-renders-is-checked-by-anything)**, rank 1 — see above; still the one row deliberately left.
 
 ## The state of it, at `66fdbab`
 

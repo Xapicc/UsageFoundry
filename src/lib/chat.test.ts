@@ -153,6 +153,7 @@ const {
   planApprovalBatch,
   planProposal,
   questionChoices,
+  reconcileChatsOnBoot,
   removeMcpConfig,
   sendChatMessage,
   settleOnExit,
@@ -1815,5 +1816,102 @@ describe("findChats", () => {
     const all = findChats({ q: "", limit: 5 });
     assert.ok(all.chats.length > 0);
     assert.ok(all.total >= seeded.length);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* What survives a turn that never settled                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The one ending nobody is present for, and the only one whose whole record is
+ * what the boot pass leaves behind.
+ *
+ * A chat turn used to exist nowhere durable until its child exited: the text
+ * was a string in one process's memory, the `chat_turn_spend` row was written
+ * after the latch, and the thread's total was moved in the same statement. A
+ * restart in the middle lost all three together and the money stayed spent —
+ * so the install's rolling ceiling went on believing it had not been, which is
+ * the one direction a ceiling must never move by accident.
+ *
+ * Every assertion here is about a *kind* of number as much as a value. The
+ * tokens are what the CLI itself reported and go into the thread's count; the
+ * cost is this app's own price for them and must not, or a derived figure ends
+ * up inside the one the page presents as measured.
+ */
+describe("reconcileChatsOnBoot keeps what a stranded turn produced", () => {
+  it("promotes the half-answer, folds the tokens and marks the estimate", () => {
+    const chat = createChat();
+    db()
+      .prepare(
+        `UPDATE chat_sessions
+            SET status='thinking', turn_started_at=?, cost_usd=2, tokens=10,
+                partial_text=?, partial_at=?, turn_tokens=500, turn_cost_est=0.25
+          WHERE id=?`,
+      )
+      .run(Date.now(), "I had got as far as", Date.now(), chat.id);
+
+    reconcileChatsOnBoot();
+
+    const after = getChat(chat.id)!;
+    assert.equal(after.status, "failed");
+    // Measured by the CLI, so it joins the count the page shows.
+    assert.equal(after.tokens, 10 + 500);
+    // Priced by us, so it does not join the total the page shows as settled.
+    assert.equal(after.cost_usd, 2);
+    assert.equal(after.cost_usd_est, 0.25);
+    // Cleared, or the next turn on this row inherits the last one's text.
+    assert.equal(after.partial_text, null);
+    assert.equal(after.turn_cost_est, 0);
+
+    const texts = listMessages(chat.id).map((m) => `${m.role}:${m.text}`);
+    // The half-answer is an ordinary assistant message, and the note about the
+    // restart comes after it — the note is a footnote to the text above it, and
+    // the other order reads as an answer that arrived after the failure.
+    const answer = texts.findIndex((t) => t === "assistant:I had got as far as");
+    const note = texts.findIndex((t) => t.startsWith("system:"));
+    assert.ok(answer >= 0, `the half-answer was lost: ${texts.join(" | ")}`);
+    assert.ok(note > answer, "the restart note must come after what was said");
+
+    const spend = db()
+      .prepare(
+        "SELECT cost_usd AS cost, estimated FROM chat_turn_spend WHERE chat_id=?",
+      )
+      .all(chat.id) as Array<{ cost: number; estimated: number }>;
+    // The row is what tells the install's ceiling the money went; `estimated`
+    // is what keeps it out of the measured half of that reading.
+    assert.deepEqual(spend, [{ cost: 0.25, estimated: 1 }]);
+  });
+
+  it("writes nothing for a turn that had not produced anything yet", () => {
+    const chat = createChat();
+    db()
+      .prepare(
+        "UPDATE chat_sessions SET status='thinking', turn_started_at=? WHERE id=?",
+      )
+      .run(Date.now(), chat.id);
+
+    reconcileChatsOnBoot();
+
+    // A turn killed before its first event owes nothing and said nothing. A
+    // zero-cost row here would be a spend record for money nobody spent, and an
+    // empty assistant message would be an answer that was never given.
+    assert.equal(
+      (
+        db()
+          .prepare("SELECT COUNT(*) AS n FROM chat_turn_spend WHERE chat_id=?")
+          .get(chat.id) as { n: number }
+      ).n,
+      0,
+    );
+    assert.equal(
+      listMessages(chat.id).filter((m) => m.role === "assistant").length,
+      0,
+    );
+    // The restart is still recorded, because that is the ending itself.
+    assert.equal(
+      listMessages(chat.id).filter((m) => m.role === "system").length,
+      1,
+    );
   });
 });

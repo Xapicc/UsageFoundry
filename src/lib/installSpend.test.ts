@@ -244,6 +244,65 @@ describe("what the install-wide ceiling is measured from", () => {
     assert.equal(installBudget.installSpend(NOW).spentUSD, 0.04);
   });
 
+  it("counts a cut-off turn's estimate against the guard and never the floor", () => {
+    clearAll();
+
+    // A turn the CLI never reported a cost for — a cancel, a timeout, a
+    // restart, this ceiling itself closing on it. Before the child streamed
+    // there was no row at all, so money the app had watched being spent was
+    // invisible to the window that is supposed to bound it: the one direction
+    // a ceiling must never move by accident.
+    dbMod
+      .db()
+      .prepare(
+        "INSERT INTO chat_sessions (id, created_at, updated_at, cost_usd) VALUES (?, ?, ?, 0)",
+      )
+      .run("cut-off", NOW - HOUR, NOW - HOUR);
+    dbMod
+      .db()
+      .prepare(
+        "INSERT INTO chat_turn_spend (chat_id, ts, cost_usd, estimated)" +
+          " VALUES (?, ?, 3, 1)",
+      )
+      .run("cut-off", NOW - 10 * 60_000);
+
+    const spend = installBudget.installSpend(NOW);
+    // Priced by this app rather than reported by the CLI, so it belongs on the
+    // same side of the split as a killed cycle's `spent_usd_est`.
+    assert.equal(spend.spentUSD, 0);
+    assert.equal(spend.spentGuardUSD, 3);
+  });
+
+  it("sees the turn that is spending right now", () => {
+    clearAll();
+
+    // The whole of what the ceiling could not see before: it was read once, at
+    // admission, so a turn admitted at 99% ran for ten minutes past it and a
+    // turn admitted before three runs finished ran against a figure that had
+    // moved. `chatTurnBudgetUSD` bounds *this* turn inside the CLI; nothing
+    // bounded the install while it was going.
+    dbMod
+      .db()
+      .prepare(
+        "INSERT INTO chat_sessions (id, created_at, updated_at, cost_usd, status," +
+          " turn_cost_est) VALUES (?, ?, ?, 0, 'thinking', 1.5)",
+      )
+      .run("live", NOW - HOUR, NOW);
+
+    const spend = installBudget.installSpend(NOW);
+    assert.equal(spend.spentUSD, 0, "a live estimate is not measured money");
+    assert.equal(spend.spentGuardUSD, 1.5);
+
+    // Settled, the same row must stop contributing here — the figure it lands
+    // in `chat_turn_spend` is what counts from then on, and counting both would
+    // charge the turn twice for as long as it stayed in the window.
+    dbMod
+      .db()
+      .prepare("UPDATE chat_sessions SET status='idle', turn_cost_est=0 WHERE id=?")
+      .run("live");
+    assert.equal(installBudget.installSpend(NOW).spentGuardUSD, 0);
+  });
+
   it("splits the measured floor from what the guard acts on", () => {
     clearAll();
 

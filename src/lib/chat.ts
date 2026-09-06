@@ -24,6 +24,13 @@ import {
 import { assistRefusal } from "./review";
 import { dataDirRefusal } from "./serverLock";
 import { installBudgetRefusal } from "./installBudget";
+import { opsLog } from "./ops";
+import {
+  newChatTurnAccumulator,
+  readChatEvent,
+  type ChatTurnAccumulator,
+} from "./chatStream";
+import { totalTokens } from "./pricing";
 import {
   chatChildCredentials,
   chownForChild,
@@ -154,6 +161,30 @@ export interface ChatRow {
   cost_usd: number;
   tokens: number;
   error: string | null;
+  /**
+   * What the turn in flight has said so far, or null when none is.
+   *
+   * A live view and never the stored message: a settled turn still appends the
+   * CLI's own `result` string, so what a finished thread looks like is
+   * unchanged. Cleared by the claim and by the settle, so a value here always
+   * belongs to the turn the row is on.
+   */
+  partial_text: string | null;
+  partial_at: number | null;
+  /** Usage the CLI reported this turn — measured, and summed across requests. */
+  turn_tokens: number;
+  /**
+   * This app's own price for those tokens: a **guard** figure, never shown
+   * beside `cost_usd` as though it were the same kind of number. It exists so
+   * the install's rolling ceiling can see a turn that is spending right now,
+   * exactly as `runs.spent_usd_est` lets it see a cycle in flight.
+   */
+  turn_cost_est: number;
+  /**
+   * Estimates for turns that never settled, accumulated. Shown beside
+   * `cost_usd` and never folded into it, because no measured figure is coming.
+   */
+  cost_usd_est: number;
   /**
    * When the turn in flight began, and null when none is. Deliberately not
    * `updated_at`: the chat's own `save_template` tool writes a system message
@@ -1890,9 +1921,15 @@ function claimTurn(chatId: string): ChatRow | null {
   const now = Date.now();
   const claim = db()
     .prepare(
+      // The four per-turn columns are cleared in the same statement that takes
+      // the turn, for `error`'s reason: they describe the turn the row is on,
+      // and a value surviving into the next one is the previous turn's text
+      // and the previous turn's money attributed to this one.
       `UPDATE chat_sessions
           SET status='thinking', error=NULL, updated_at=?, turn_started_at=?,
-              turn_seq = turn_seq + 1
+              turn_seq = turn_seq + 1,
+              partial_text=NULL, partial_at=NULL,
+              turn_tokens=0, turn_cost_est=0
         WHERE id=? AND status<>'thinking'`,
     )
     .run(now, now, chatId);
@@ -1979,6 +2016,59 @@ export function staleTurn(
  * still working through the ladder. Not `child.killed`, which records only that
  * a signal was sent and is already true by the second step.
  */
+/**
+ * Keep what a turn had produced when it is ending without a verdict.
+ *
+ * Three endings reach this and none of them gets a `result` event: a cancel, a
+ * timeout, and the install ceiling closing on a turn that is still going. A
+ * fourth — a restart — reaches it from `reconcileChatsOnBoot`. Before the child
+ * streamed there was nothing to keep: the text existed in the dead process's
+ * memory and the money existed nowhere at all, so the install's rolling ceiling
+ * never learned it had been spent, which is the one direction a ceiling must
+ * never move by accident.
+ *
+ * Two figures and they are deliberately different kinds of number.
+ * `turn_tokens` is what the CLI itself reported and is **measured**, so it goes
+ * straight into the thread's count. `turn_cost_est` is this app's own price for
+ * those tokens and is a **guard** figure, so it lands in `cost_usd_est` beside
+ * the total and never inside it, and the `chat_turn_spend` row it writes is
+ * marked `estimated` so `installSpend` can put it in the guard reading and keep
+ * it out of the shown one. That is `runs.spent_usd_est`'s rule, one table over.
+ *
+ * The text becomes an ordinary assistant message, because a half-answer that
+ * the operator can read is worth more than a note saying one existed — and
+ * because the sentence the caller appends afterwards refers to it.
+ */
+function keepPartialTurn(chatId: string): void {
+  const row = getChat(chatId);
+  if (!row) return;
+
+  const text = (row.partial_text ?? "").trim();
+  const tokens = row.turn_tokens ?? 0;
+  const estimate = row.turn_cost_est ?? 0;
+  if (!text && tokens === 0 && estimate === 0) return;
+
+  db()
+    .prepare(
+      `UPDATE chat_sessions
+          SET partial_text=NULL, partial_at=NULL, turn_tokens=0, turn_cost_est=0,
+              tokens = tokens + ?, cost_usd_est = cost_usd_est + ?
+        WHERE id=?`,
+    )
+    .run(tokens, estimate, chatId);
+
+  if (estimate > 0) {
+    db()
+      .prepare(
+        "INSERT INTO chat_turn_spend (chat_id, ts, cost_usd, estimated)" +
+          " VALUES (?, ?, ?, 1)",
+      )
+      .run(chatId, Date.now(), estimate);
+  }
+
+  if (text) appendMessage(chatId, "assistant", text);
+}
+
 function endTurn(chatId: string, error: string): boolean {
   const changed =
     db()
@@ -1987,6 +2077,11 @@ function endTurn(chatId: string, error: string): boolean {
           " turn_started_at=NULL WHERE id=? AND status='thinking'",
       )
       .run(error, Date.now(), chatId).changes > 0;
+  // Whatever the turn had said, before the sentence about how it ended — in
+  // that order, because the note reads as a footnote to the half-answer above
+  // it and the other way round it reads as a note followed by an answer that
+  // arrived afterwards.
+  if (changed) keepPartialTurn(chatId);
   // In the thread as well as on the row: the conversation should read as what
   // happened to it, and a turn that stops without a word looks like an answer
   // that never came.
@@ -2262,6 +2357,21 @@ export interface OrchestratorChildOptions {
   timedOutMessage: string;
   /** Called with the child the moment it exists, so a caller can signal it. */
   onSpawn?: (child: ChatProcess) => void;
+  /**
+   * Called as the turn produces output, with what has arrived so far.
+   *
+   * Optional, and only the chat passes one: a workflow's orchestrator block has
+   * no surface anybody watches while it runs and nothing to recover from a
+   * crash — its runs are what it produces, and they are created after it
+   * settles. The flags say what moved, so a caller can persist on the events
+   * that changed something rather than on every line: a turn reading a large
+   * file produces hundreds of `user` events carrying tool output and the
+   * operator is waiting on none of them.
+   */
+  onProgress?: (
+    acc: ChatTurnAccumulator,
+    moved: { textGrew: boolean; spendGrew: boolean },
+  ) => void;
   /** Called exactly once, whatever happened. */
   onSettle: (result: TurnResult) => void;
 }
@@ -2300,8 +2410,21 @@ export function runOrchestratorChild(o: OrchestratorChildOptions): void {
   const args = [
     "-p",
     o.prompt,
+    // Line-delimited events rather than one object at exit, and the reason is
+    // durability rather than presentation. Under `json` the whole turn — the
+    // assistant's text, the cost, the session id — existed only in this
+    // process's memory until the child was done, so a restart in the middle
+    // lost all of it together while the money stayed spent, and the page had a
+    // spinner and nothing else for as long as the turn ran. The run loop has
+    // used this format since it was written, for `emit()`'s reason: persist,
+    // then publish, and reconnect is lossless because of the order.
+    //
+    // `--verbose` is not optional beside it — the CLI gates streaming output on
+    // the pair, and without it this prints nothing until the end exactly as
+    // before, which would be the same defect with a different flag on it.
     "--output-format",
-    "json",
+    "stream-json",
+    "--verbose",
     // Every tool the CLI has, with the system prompt above as the boundary
     // rather than a list of names.
     //
@@ -2406,11 +2529,26 @@ export function runOrchestratorChild(o: OrchestratorChildOptions): void {
   // Stop reaches the child rather than orphaning it.
   o.onSpawn?.(child);
 
-  let stdout = "";
+  // Folded line by line rather than buffered whole: the accumulator *is* the
+  // turn's state now, and the caller's `onProgress` is what makes it durable.
+  // The raw buffer is kept only for the failure path, where the useful thing
+  // is whatever the CLI actually printed.
+  const acc = newChatTurnAccumulator();
+  let stdoutBuf = "";
   let stderr = "";
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
-  child.stdout.on("data", (c: string) => (stdout += c));
+  child.stdout.on("data", (chunk: string) => {
+    stdoutBuf += chunk;
+    let nl: number;
+    while ((nl = stdoutBuf.indexOf("\n")) !== -1) {
+      const line = stdoutBuf.slice(0, nl).trim();
+      stdoutBuf = stdoutBuf.slice(nl + 1);
+      if (!line) continue;
+      const moved = readChatEvent(acc, line);
+      if (moved.textGrew || moved.spendGrew) o.onProgress?.(acc, moved);
+    }
+  });
   child.stderr.on("data", (c: string) => (stderr += c.slice(0, 4_096)));
 
   let timedOut = false;
@@ -2438,11 +2576,28 @@ export function runOrchestratorChild(o: OrchestratorChildOptions): void {
   });
 
   settleOnExit(child, (code) => {
+    // A last line with no newline after it. The CLI terminates the `result`
+    // event, but a child killed mid-write does not, and a turn's whole answer
+    // sitting unparsed in a buffer is exactly what this file is being changed
+    // to stop happening.
+    const tail = stdoutBuf.trim();
+    if (tail) readChatEvent(acc, tail);
+
+    // Counted, never dropped: a CLI that renames an event goes on producing
+    // turns that look thinner rather than turns that fail, which is the
+    // asymmetry `chatStream.ts` refuses to add a third parser to.
+    if (acc.unknownTypes.size > 0 || acc.unreadable > 0) {
+      opsLog("warn", "chat.stream_unread", {
+        unknown_types: [...acc.unknownTypes].join(",") || null,
+        unreadable_lines: acc.unreadable,
+      });
+    }
+
     if (timedOut) {
       land({ status: "failed", error: o.timedOutMessage });
       return;
     }
-    land(parseTurnOutput(stdout, stderr, code));
+    land(turnResultOf(acc, stderr, code));
   });
 }
 
@@ -2502,6 +2657,7 @@ function runTurn(chat: ChatRow, prompt: string): void {
       spawned = child;
       turns.set(chat.id, child);
     },
+    onProgress: (acc, moved) => recordProgress(chat, acc, moved),
     onSettle: (result) => {
       // Only this child's own entry, and only this child's own turn: a turn
       // cancelled and re-sent while the old child was still dying would
@@ -2513,6 +2669,100 @@ function runTurn(chat: ChatRow, prompt: string): void {
       finishTurn(chat.id, chat.turn_seq, result);
     },
   });
+}
+
+/**
+ * How often a turn in flight may write what it has produced so far.
+ *
+ * A turn writing prose emits an `assistant` event every few hundred
+ * milliseconds and the page polls every three seconds, so writing on every one
+ * of them would be a row update nobody reads for every update somebody does.
+ * Half a second is under the poll and over the event rate, which is the whole
+ * of the choice.
+ */
+const PROGRESS_WRITE_MS = 500;
+
+/**
+ * How often a turn in flight re-asks whether the install's ceiling still lets
+ * it run.
+ *
+ * The ceiling is a rolling 24 hours and the query behind it is a scan of three
+ * tables, so it is not something to ask per event. Ten seconds bounds the
+ * overshoot at ten seconds of one turn's spend, which is the same shape the
+ * live run guard's own interval takes and for the same reason: the answer moves
+ * slowly and the question is not free.
+ */
+const CEILING_CHECK_MS = 10_000;
+
+/** Per-turn pacing, keyed on the chat. Cleared when the turn settles. */
+const progress = ((globalThis as unknown as {
+  __ufChatProgress?: Map<string, { wroteAt: number; checkedAt: number }>;
+}).__ufChatProgress ??= new Map<string, { wroteAt: number; checkedAt: number }>());
+
+/**
+ * Persist what the turn has said so far, and stop it if the install's ceiling
+ * has since been reached.
+ *
+ * **Persist, then publish** — `emit()`'s order, arriving at the one path that
+ * never had it. There is nothing to publish to here beyond the row, because the
+ * page polls it, so the whole of "publish" is that the row has changed; what
+ * matters is that the write happens *before* anything reads, which for a poll
+ * is automatic and for the crash case is the entire point. A turn killed
+ * half-way now leaves its text and its measured tokens behind instead of
+ * leaving nothing but the bill.
+ *
+ * **The ceiling check is the second half and it is B4's actual subject.** The
+ * install's rolling 24 hours was read once, at admission, and never again — so
+ * a turn admitted at 99% of the ceiling could run for ten minutes past it, and
+ * a turn admitted before three runs finished ran against a figure that had
+ * moved. `chatTurnBudgetUSD` bounds *this* turn inside the CLI and always did;
+ * what nothing bounded was the install while this turn was going. The estimate
+ * this function has just written is what `installSpend` reads for it, so the
+ * check includes the turn asking it.
+ */
+function recordProgress(
+  chat: ChatRow,
+  acc: ChatTurnAccumulator,
+  moved: { textGrew: boolean; spendGrew: boolean },
+): void {
+  const now = Date.now();
+  const pace = progress.get(chat.id) ?? { wroteAt: 0, checkedAt: now };
+  progress.set(chat.id, pace);
+
+  if (now - pace.wroteAt >= PROGRESS_WRITE_MS) {
+    pace.wroteAt = now;
+    // Guarded on `turn_seq` for `finishTurn`'s reason: a turn cancelled and
+    // re-sent while the old child is still dying must not write the corpse's
+    // text into the live turn's row.
+    db()
+      .prepare(
+        `UPDATE chat_sessions
+            SET partial_text=?, partial_at=?, turn_tokens=?, turn_cost_est=?
+          WHERE id=? AND status='thinking' AND turn_seq=?`,
+      )
+      .run(
+        acc.text || null,
+        now,
+        totalTokens(acc.tokens),
+        acc.costGuardUSD,
+        chat.id,
+        chat.turn_seq,
+      );
+  }
+
+  if (!moved.spendGrew || now - pace.checkedAt < CEILING_CHECK_MS) return;
+  pace.checkedAt = now;
+  const refusal = installBudgetRefusal();
+  if (refusal) {
+    // The same ending a timeout gets, and deliberately not a silent stop: the
+    // operator has to be able to tell a turn that was cut off from one that
+    // answered briefly, and the sentence names the ceiling rather than the
+    // symptom.
+    endTurn(
+      chat.id,
+      `${refusal} This turn was stopped part-way; what it had said is above.`,
+    );
+  }
 }
 
 /**
@@ -2565,12 +2815,29 @@ export function parseTurnOutput(
   stderr: string,
   code: number | null,
 ): TurnResult {
-  let parsed: Record<string, unknown> | null = null;
-  try {
-    parsed = JSON.parse(stdout.trim()) as Record<string, unknown>;
-  } catch {
-    parsed = null;
+  const acc = newChatTurnAccumulator();
+  for (const line of stdout.split("\n")) {
+    const text = line.trim();
+    if (text) readChatEvent(acc, text);
   }
+  return turnResultOf(acc, stderr, code);
+}
+
+/**
+ * The turn's verdict, from whatever the stream produced.
+ *
+ * Split from the parsing above so the live path and the settle path shape the
+ * result the same way — the child folds events as they arrive and this is what
+ * it lands with, while `parseTurnOutput` exists for a caller holding a whole
+ * buffer. Two functions reading the same object differently is how a turn ends
+ * up saying one thing on the page and another in the row.
+ */
+export function turnResultOf(
+  acc: ChatTurnAccumulator,
+  stderr: string,
+  code: number | null,
+): TurnResult {
+  const parsed = acc.result;
 
   if (!parsed) {
     return {
@@ -2578,6 +2845,11 @@ export function parseTurnOutput(
       error:
         stderr.trim().split("\n").slice(-3).join(" ") ||
         `The chat produced no readable output (exit ${code ?? "?"}).`,
+      // Even with no verdict the tokens are real and were billed. Carried so a
+      // caller can record what the turn cost rather than losing it with the
+      // answer, which is the whole of what the old shape did.
+      tokens: totalTokens(acc.tokens),
+      sessionId: acc.sessionId,
     };
   }
 
@@ -2593,7 +2865,9 @@ export function parseTurnOutput(
   const sessionId =
     typeof parsed.session_id === "string" && parsed.session_id
       ? parsed.session_id
-      : null;
+      // The `system` init event carries it too, and arrives first. Falling back
+      // to that is what lets a turn whose `result` was truncated still resume.
+      : acc.sessionId;
 
   const denials = Array.isArray(parsed.permission_denials)
     ? (parsed.permission_denials as Array<Record<string, unknown>>)
@@ -2647,13 +2921,19 @@ function finishTurn(chatId: string, turnSeq: number, r: TurnResult): void {
   const now = Date.now();
   const prior = getChat(chatId)?.session_id ?? null;
 
+  // Read before the UPDATE clears it: this is the turn's own running estimate,
+  // and it is the only figure there is if the CLI never reported a cost.
+  const estimate = getChat(chatId)?.turn_cost_est ?? 0;
+
   const changed =
     db()
       .prepare(
         `UPDATE chat_sessions
             SET status=?, error=?, updated_at=?, turn_started_at=NULL,
                 cost_usd = cost_usd + ?, tokens = tokens + ?,
-                session_id = COALESCE(?, session_id)
+                session_id = COALESCE(?, session_id),
+                partial_text=NULL, partial_at=NULL,
+                turn_tokens=0, turn_cost_est=0
           WHERE id=? AND status='thinking' AND turn_seq=?`,
       )
       .run(
@@ -2683,6 +2963,23 @@ function finishTurn(chatId: string, turnSeq: number, r: TurnResult): void {
         "INSERT INTO chat_turn_spend (chat_id, ts, cost_usd) VALUES (?, ?, ?)",
       )
       .run(chatId, now, r.costUSD ?? 0);
+  } else if (estimate > 0) {
+    // A turn that settled without the CLI reporting a cost — a child killed
+    // after it had worked, a `result` that never arrived. The money was spent
+    // either way, so the estimate is recorded rather than the turn reading as
+    // free; marked, and kept out of the thread's own total, for the reason
+    // `keepPartialTurn` gives.
+    db()
+      .prepare(
+        "UPDATE chat_sessions SET cost_usd_est = cost_usd_est + ? WHERE id=?",
+      )
+      .run(estimate, chatId);
+    db()
+      .prepare(
+        "INSERT INTO chat_turn_spend (chat_id, ts, cost_usd, estimated)" +
+          " VALUES (?, ?, ?, 1)",
+      )
+      .run(chatId, now, estimate);
   }
 
   // Session id is adopted rather than compared, and a change is recorded rather
@@ -2763,6 +3060,13 @@ export function reconcileChatsOnBoot(): void {
   const stranded = db()
     .prepare("SELECT id FROM chat_sessions WHERE status='thinking'")
     .all() as Array<Pick<ChatRow, "id">>;
+  // Before the status moves, because `keepPartialTurn` is what turns the four
+  // per-turn columns into a message, a token count and a dated row the
+  // install's ceiling can read — and this is the ending that most needs it.
+  // The other three have somebody present; this one is what the operator finds
+  // when they come back, and before the child streamed the whole turn was gone
+  // by then with only the bill left behind.
+  for (const { id } of stranded) keepPartialTurn(id);
   db()
     .prepare(
       "UPDATE chat_sessions SET status='failed', turn_started_at=NULL," +

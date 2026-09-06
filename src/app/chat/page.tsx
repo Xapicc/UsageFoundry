@@ -944,14 +944,25 @@ export default function ChatPage() {
           </p>
           <div className="ml-auto flex items-center gap-3">
             {/* What the figure counts is said, because what it leaves out is
-                the turn the operator is most likely watching: `--output-format
-                json` puts no cost on the wire until the child exits, so a turn
-                in flight has spent money this number cannot yet see. Unsaid, a
-                total that does not move for ten minutes reads as a turn that is
-                not costing anything. */}
+                the turn the operator is most likely watching: the CLI reports a
+                cost only with its final event, so a turn in flight has spent
+                money this number cannot yet see. Unsaid, a total that does not
+                move for ten minutes reads as a turn that is not costing
+                anything. */}
             {chat && chat.costUSD > 0 && (
               <span className="text-xs tabular-nums text-ink-muted">
                 {fmtUSD(chat.costUSD)} this chat, settled turns only
+              </span>
+            )}
+            {/* Beside it and never added to it. A turn that was cut off — a
+                cancel, a timeout, a restart, the install's ceiling — never gets
+                a cost from the CLI, so this is what the app priced the tokens
+                the CLI *did* report at. Two kinds of number in one figure would
+                be a total nobody could act on; separate, "settled" above still
+                means settled. */}
+            {chat && chat.costEstUSD > 0 && (
+              <span className="text-xs tabular-nums text-ink-faint">
+                + {fmtUSD(chat.costEstUSD)} estimated, turns that were cut off
               </span>
             )}
             <Button variant="secondary" onClick={() => void newChat()}>
@@ -1086,6 +1097,21 @@ export default function ChatPage() {
                         />
                       );
                     })
+                  )}
+
+                  {/* What the turn has said so far, drawn above the spinner
+                      rather than instead of it: the wait is still a wait, and
+                      the elapsed clock beside it is still the only honest
+                      progress there is. The text is persisted by the server, so
+                      what is on screen here is what would survive the process
+                      producing it — which is the whole reason it is a column
+                      and not a stream. It becomes an ordinary message when the
+                      turn settles, and the DTO nulls this at the same moment so
+                      the answer is never drawn twice. */}
+                  {thinking && chat?.partialText && (
+                    <div className="mt-5 max-w-[70ch] text-sm leading-normal text-ink-muted">
+                      <Markdown text={chat.partialText} />
+                    </div>
                   )}
 
                   {thinking && (

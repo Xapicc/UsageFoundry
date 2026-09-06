@@ -125,14 +125,43 @@ export function installSpend(now = Date.now()): InstallProgress {
   // And the orchestrator chat, which passes through no `evaluateBudget` at all
   // and is bounded only by `chatTurnBudgetUSD` and the clock. Per turn rather
   // than per thread: a thread is open for weeks and the window is a day.
+  //
+  // Split by `estimated`, because the two are different kinds of number and the
+  // reading has to keep them apart exactly as it does for a run. A settled turn
+  // carries the CLI's own `total_cost_usd` and is money this app measured; a
+  // row a turn left behind when it was cut off — a cancel, a timeout, a restart
+  // — carries this app's own price for the tokens the CLI reported, which is a
+  // guard figure. Folding the second into `spentUSD` would put a derived number
+  // into the shown one, and dropping it would leave the ceiling believing money
+  // it watched being spent was never spent at all.
   const chats = db()
     .prepare(
-      "SELECT COALESCE(SUM(cost_usd), 0) AS spent FROM chat_turn_spend WHERE ts >= ?",
+      "SELECT COALESCE(SUM(CASE WHEN estimated = 0 THEN cost_usd END), 0) AS measured," +
+        " COALESCE(SUM(CASE WHEN estimated = 1 THEN cost_usd END), 0) AS est" +
+        " FROM chat_turn_spend WHERE ts >= ?",
     )
-    .get(since) as { spent: number };
+    .get(since) as { measured: number; est: number };
 
-  const other = blocks.spent + chats.spent;
-  return { spentUSD: spentUSD + other, spentGuardUSD: spentGuardUSD + other };
+  // The turn happening *right now*, which no row records until it settles.
+  // This is B4's actual subject: the ceiling used to be read once, at
+  // admission, so a turn admitted at 99% could run for ten minutes past it and
+  // a turn admitted before three runs finished ran against a figure that had
+  // moved. `chat.ts` writes this every half-second while a turn produces
+  // output; it is a guard figure and is bounded on `status` rather than on a
+  // clock, because a `thinking` row with an estimate on it is by definition a
+  // turn that has not settled.
+  const live = db()
+    .prepare(
+      "SELECT COALESCE(SUM(turn_cost_est), 0) AS est FROM chat_sessions" +
+        " WHERE status = 'thinking'",
+    )
+    .get() as { est: number };
+
+  const other = blocks.spent + chats.measured;
+  return {
+    spentUSD: spentUSD + other,
+    spentGuardUSD: spentGuardUSD + other + chats.est + live.est,
+  };
 }
 
 /** The ceiling as configured, `null` meaning off. */

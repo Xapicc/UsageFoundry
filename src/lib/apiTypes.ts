@@ -3006,8 +3006,27 @@ export interface ChatDTO {
   status: "idle" | "thinking" | "failed";
   /** This chat's own spend. Never added to any run's, or to the meters. */
   costUSD: number;
+  /**
+   * What turns that never settled are believed to have cost.
+   *
+   * Beside `costUSD` and never folded into it, which is `runs.spent_usd_est`'s
+   * rule: this is priced by the app from the tokens the CLI reported, where the
+   * figure above is the CLI's own. Zero on every thread that has never had a
+   * turn cut off by a cancel, a timeout, a restart or the install's ceiling.
+   */
+  costEstUSD: number;
   tokens: number;
   error: string | null;
+  /**
+   * What the turn in flight has said so far, or null.
+   *
+   * Persisted by the server every half-second while the turn produces output,
+   * so it survives the process that produced it — which is the whole of why it
+   * is a column rather than a stream. Null the moment the turn settles, because
+   * the settled answer is an ordinary message in `messages` and drawing both
+   * would say it twice.
+   */
+  partialText: string | null;
   /**
    * When the turn in flight was claimed, null when there is none.
    *
