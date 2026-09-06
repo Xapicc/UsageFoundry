@@ -1,28 +1,42 @@
 # Where the gaps are
 
 **The question:** where are this app's gaps — across frontend design, backend
-logic, growth limits, features it is missing, and the app's own security and
-trust boundary — and which of them are worth a survey of their own?
+logic, growth limits, features it is missing, the app's own security and trust
+boundary, and what an operator can do when a live install breaks — and which of
+them are worth a survey of their own?
 
 **The state, at `main` `66fdbab`:** **eight of the original twenty rows have
 moved — four closed whole, four closed in half — and twelve are open exactly as
-surveyed. A fifth axis was then added and carries five more.** Twenty-five
-verified gaps registered, twelve candidates dropped for lack of evidence and
-thirteen refuted as documented decisions or by probe. Three questions recommended
-for a survey, eight things recommended as issues, five refused by name.
+surveyed. Two further axes were then added and carry thirteen more.**
+Thirty-three verified gaps registered, twenty-three candidates dropped for lack
+of evidence and twenty-one refuted as documented decisions or by probe. Three
+questions recommended for a survey, eight things recommended as issues, five
+refused by name.
 
 **Security is the fifth axis and it is the app's doors rather than a run's
 reach**: what gets in, what credentials it holds, what it accepts as input, which
 is deliberately the reverse direction from
-`proposals/implemented - Sandboxing/`. It is also the one axis where
-`docs/agent/` has stated positions to test a row against, and it produced the
-register's **first violation of a documented invariant** along with its highest
-refutation rate.
+`proposals/implemented - Sandboxing/`.
+
+**Operations and recovery is the sixth**, and it asks what an operator can find
+out when something goes wrong, what they can get back, and what is silently
+unrecoverable — restart and boot, the server lock, backup and restore, schema and
+upgrade, growth on disk, the container, and diagnosis after a bad ending at
+03:00. It found that the recovery *mechanisms* here are the best-argued code in
+the repository and that seven of its eight rows are a mechanism that exists and
+cannot be seen. It is also the axis surveyed with the least access: no Docker, no
+readable `DATA_DIR` or `/backups`, no server started, so every claim about a
+running container is a reading of the file that configures it, and its drop list
+is the only one in this directory longer than its row list.
+
+**Those two are the axes where `docs/agent/` has stated positions to test a row
+against**, and between them they produced both of the register's violations of a
+documented invariant along with its two highest refutation counts.
 
 Every count, confidence and rank in this directory was re-read against the tree
-on 2026-09-06 and is current; the security rows were surveyed against the same
-tree on the same day. [05-register.md](05-register.md) carries the row-by-row
-account of what moved and where the five new rows were ranked in.
+on 2026-09-06 and is current; the security and operations rows were surveyed
+against the same tree on the same day. [05-register.md](05-register.md) carries
+the row-by-row account of what moved and where each pass's rows were ranked in.
 
 **Four rows were implemented**, on branch
 `uf/usagefoundry-721638d11c0b-1-41e5e190`, by two runs after this register was
@@ -135,7 +149,7 @@ with remains unestablished, before the work, after it, and now.
 ## The recommendation
 
 **Survey reachability first** — [06-recommendation.md](06-recommendation.md#survey-1-reachability-what-should-an-operator-be-able-to-find-and-how).
-Eight of the twenty-five rows are one sentence: *the app cannot find what it has
+Eight of the thirty-three rows are one sentence: *the app cannot find what it has
 already done.* A hundred-row runs list with no parameters, a search that indexes
 two lists, thirty reachable chat threads, a log with no filter, twenty-five
 nameable repositories, a settings page with no field search. They share a fix
@@ -161,42 +175,53 @@ only group whose failure lands in the operator's product rather than in
 UsageFoundry.
 
 **[06-recommendation.md](06-recommendation.md) was not re-derived against the
-five security rows and does not mention them.** That pass was scoped to
-surveying and registering an axis, so the three surveys, eight issues and five
-refusals are still the four-axis answer. Whether
+five security rows or the eight operations rows and does not mention either
+set.** Both passes were scoped to surveying and registering an axis, so the three
+surveys, eight issues and five refusals are still the four-axis answer. Whether
 [S1](07-security.md#s1-the-all-sessions-branch-of-the-logout-route-takes-no-credential-and-revoking-a-session-does-not-end-it)
-at rank four displaces any of them is an open question and is stated as one
-rather than answered here. S1 is also the row on this register most likely to
-want an operator's attention before anything else is decided about it.
+at rank four or
+[O1](08-operations.md#o1--the-one-restart-condition-the-runbook-alerts-on-never-clears-and-the-count-that-does-is-on-a-route-the-status-token-cannot-reach)
+at rank five displaces any of them is an open question and is stated as one
+rather than answered here. S1 is still the row on this register most likely to
+want an operator's attention before anything else is decided about it; O1 is the
+cheapest thing on it to act on, being a README line and a field.
 
 ## The register at a glance
 
 Every figure below describes the register at `main` `66fdbab`: the first four
-axes re-read row by row on 2026-09-06, the fifth surveyed against the same tree
-on the same day.
+axes re-read row by row on 2026-09-06, the fifth and sixth surveyed against the
+same tree on the same day.
 
 | | |
 |---|---|
-| Rows | **25** (26 gap ids; one carried once under two framings) |
-| Frontend / backend / growth / missing features / security | 6 / 5 / 4 / 6 / 5 |
+| Rows | **33** (34 gap ids; one carried once under two framings) |
+| Frontend / backend / growth / missing features / security / operations | 6 / 5 / 4 / 6 / 5 / 8 |
 | **Rows closed whole** | **4** — F1, F4, F6, M3 |
 | **Rows closed in half** | **4** — F2, B2/M4, M1, M5 |
-| **Rows open exactly as surveyed** | **17** (the original twelve, plus S1–S5) |
+| **Rows open exactly as surveyed** | **25** (the original twelve, plus S1–S5 and O1–O8) |
 | Open rows with a claim since contradicted | 2 — G1's lead example, B4's second clause |
 | Open rows that got wider | 1 — B1, now five unguarded doors rather than four |
-| Dropped for lack of evidence | 12 (6 as surveyed, none re-adjudicated, plus 6 on the security axis) |
-| Refuted as documented decisions, or by probe | 13: 7 as surveyed, one of them the three npm advisories, since fixed by `102050d` so that `npm audit` now reports `found 0 vulnerabilities`, plus 6 on the security axis |
+| Dropped for lack of evidence | 23 (6 as surveyed, none re-adjudicated, plus 6 on the security axis and 11 on the operations axis) |
+| Refuted as documented decisions, or by probe | 21: 7 as surveyed, one of them the three npm advisories, since fixed by `102050d` so that `npm audit` now reports `found 0 vulnerabilities`, plus 6 on the security axis and 8 on the operations axis |
 | Rows whose failure lands in the operator's product, not this app | **1** (B2/M4) |
-| Rows that violate a documented invariant | **1**: S1, against `docs/agent/security.md:26`. It was 0 for the four axes `docs/agent/` has no opinion about, and finding it took adding the axis where it does |
-| Rows resting on an explicitly assumed premise | 7 (F3, B3, B5, M1, M5, S5, S2) |
-| Rows already owned by an open issue, squarely | 1 (#78) — **assumed unchanged**; no issue was read or written on this pass or the one before it |
+| Rows that violate a documented invariant | **2**: S1 against `docs/agent/security.md:26`, and O8 against `docs/agent/concurrency-and-ownership.md:18`. It was 0 for the four axes `docs/agent/` has no opinion about, and both were found by adding an axis where it does |
+| Rows resting on an explicitly assumed premise | 15 (F3, B3, B5, M1, M5, S5, S2, and all eight of O1–O8, where the assumption is the same one every time: no container was run) |
+| Rows already owned by an open issue, squarely | 1 (#78) — **assumed unchanged**; no issue was read or written on this pass or either of the two before it |
 
 **Two figures in that table cannot be checked from this container and are
-carried forward as assumed.** Every issue number, because neither this pass nor
-the refresh before it opened, closed, commented on or fetched anything on GitHub.
-And whether M1 has opened a real pull request since, because `DATA_DIR` is
-unreadable by the agent uid, so no run's `deliver` event can be read. Everything
-else was read out of the tree.
+carried forward as assumed.** Every issue number, because none of the three
+passes since the survey opened, closed, commented on or fetched anything on
+GitHub. And whether M1 has opened a real pull request since, because `DATA_DIR`
+is unreadable by the agent uid, so no run's `deliver` event can be read.
+Everything else was read out of the tree.
+
+**The operations axis adds a third kind of unchecked figure**, wider than either
+and named here rather than left inside its rows: **nothing on that axis was
+observed against a running container.** No restart was performed, no lock was
+raced, no backup was taken or restored, no log file was inspected, and
+`/backups` was never listed. Every operations row is an absence read out of the
+tree — which is a claim this container *can* make — plus a consequence argued
+from it, which it cannot.
 
 Full table, ranked, with evidence and confidence per row:
 [05-register.md](05-register.md).
@@ -230,9 +255,9 @@ Full table, ranked, with evidence and confidence per row:
    nothing was done about it and the number it turns on grew 24%.
    [→](06-recommendation.md#survey-3-what-should-check-the-ui-and-what-would-it-actually-catch)
 
-## The three biggest things the register says that no single row does
+## The four biggest things the register says that no single row does
 
-**Nine of twenty rows are reachability.** They would be filed as nine unrelated
+**Nine of thirty-three rows are reachability.** They would be filed as nine unrelated
 tickets and fixed nine times. **Four of them then were** — three whole and one in
 half, as four separate changes on one branch — and the five still open include
 [G2](03-growth.md#g2-chat-threads-past-the-newest-30-cannot-be-reached-at-all), chat threads past the newest 30, which has the same
@@ -241,32 +266,58 @@ observation being demonstrated rather than refuted, and `66fdbab` demonstrates i
 twice: `/api/chat` now matches, word for word, the description
 [G1](03-growth.md#g1-nine-list-routes-read-parameters-the-one-for-runs-does-not-and-the-pattern-repeats-three-times) wrote for `/api/runs`.
 
-**The chat surface carries four rows and the run surface carries none of the
+**The chat surface carries five rows and the run surface carries none of the
 equivalents.** Incremental persistence, publish-after-persist, a mid-flight
-budget check, a paged list — every one exists in this repository, built for
-runs, documented in `docs/agent/`. Chat is the newest surface and inherited none
-of them. That is why the recommendation for those four is *one issue*, not a
-survey: the answer is already written down, one module over.
+budget check, a paged list, **and now retention** — every one exists in this
+repository, built for runs, documented in `docs/agent/`. Chat is the newest
+surface and inherited none of them. That is why the recommendation for four of
+them is *one issue*, not a survey: the answer is already written down, one module
+over. The fifth,
+[O5](08-operations.md#o5--a-chat-thread-and-every-message-in-it-is-permanent-no-horizon-no-delete-and-the-cascade-has-nothing-to-cascade-from),
+is not, because a chat with no horizon and no delete path needs a decision about
+what a chat is for before a mechanism can be copied into it.
 
-**Nothing on the register violates a documented invariant.** Every row is
-something `docs/agent/` never had an opinion about, and six candidates died
-because it did. The invariants hold, and re-reading all twenty rows against
-`66fdbab` found no new violation.
+**Two of the thirty-three rows violate a documented invariant, and finding
+either took adding an axis `docs/agent/` has opinions about.** For the four
+original axes it was zero — every row there is something the documentation never
+had a position on. `docs/agent/security.md` and
+`docs/agent/concurrency-and-ownership.md` are stated positions that a row can
+contradict rather than merely omit, and each yielded exactly one:
+[S1](07-security.md#s1-the-all-sessions-branch-of-the-logout-route-takes-no-credential-and-revoking-a-session-does-not-end-it),
+which costs something standing, and
+[O8](08-operations.md#o8--lockverdict-asks-staleness-second-docsagentconcurrency-and-ownershipmd-says-it-asks-it-last),
+which costs nothing at all. Both are a sentence written about one path of a
+function that has several. Fourteen candidates died against a paragraph that had
+already reasoned the thing through, which is the same finding pointing the other
+way.
+
+**Almost nothing on the register is a missing mechanism.** Seven of the eight
+operations rows are a mechanism that exists and cannot be seen; three of the four
+half-closed rows are a mechanism with no interface; the reachability nine are
+mechanisms reachable up to a number nobody chose. The register's dominant failure
+mode is not *this app cannot do X* but *this app does X, correctly and with the
+reasoning written down, and nothing says so* — which is why so many of the fixes
+are a readout, a field or a pin rather than a build, and why a green tree is
+consistent with every row here.
 
 ## What this survey could not do
 
-All three were still true of the `66fdbab` refresh, which is why the falsifier
-above is still unrun and why [B1](02-backend-logic.md#b1-the-landing-guard-covers-landrun-and-none-of-the-other-four-doors)'s confidence is still medium.
+All four were still true of the `66fdbab` refresh and of the two axis passes
+after it, which is why the falsifier above is still unrun and why [B1](02-backend-logic.md#b1-the-landing-guard-covers-landrun-and-none-of-the-other-four-doors)'s confidence is still medium.
 
 - **Read any run history.** `DATA_DIR` is not readable by the agent uid;
   `.data/usagefoundry.db` in the checkout is stale (last written 2026-08-19) and
   was used only for one schema probe. No row rests on a count of real runs.
 - **Run a container.** Docker is unavailable here, so nothing was checked
   against a live fleet, the image `HEALTHCHECK`, or a reproduced collision.
+  **This is the binding constraint on the sixth axis rather than a caveat on
+  it**: no restart was performed, no lock raced, no backup taken or restored, no
+  log inspected, and `/backups` never listed, so O1–O8 are absences read out of
+  the tree with their consequences argued rather than observed.
 - **Open a browser.** At any viewport. Which is [F5](01-frontend.md#f5-nothing-that-renders-is-checked-by-anything)'s point.
-- **Read a GitHub issue.** Deliberately, on the refresh: the pass was scoped to
-  the tree, so every issue number in the register is assumed unchanged rather
-  than confirmed.
+- **Read a GitHub issue.** Deliberately, on all three later passes: each was
+  scoped to the tree, so every issue number in the register is assumed unchanged
+  rather than confirmed.
 
 Full accounting, including every command run and its output, what was
 deliberately left unread, and every dropped candidate:
@@ -282,8 +333,9 @@ deliberately left unread, and every dropped candidate:
 | [03-growth.md](03-growth.md) | G1–G4, and two candidates refuted as deliberate ceilings |
 | [04-missing-features.md](04-missing-features.md) | M1–M6, judged on capability rather than polish |
 | [05-register.md](05-register.md) | The ranked table, how it was ranked, and what its shape says |
-| [06-recommendation.md](06-recommendation.md) | Three surveys, eight issues, five refusals by name: the four-axis answer, not re-derived against S1–S5 |
+| [06-recommendation.md](06-recommendation.md) | Three surveys, eight issues, five refusals by name: the four-axis answer, not re-derived against S1–S5 or O1–O8 |
 | [07-security.md](07-security.md) | S1–S5, what this axis got right, and its own refuted and dropped lists |
+| [08-operations.md](08-operations.md) | O1–O8, what this axis got right at greater length than either other, eight refutations and the directory's longest drop list |
 
 Verification loop on the tree this was written against (`175ba57`):
 `npm run typecheck` exit 0; `npm test` 1,578 tests / 230 suites / 0 failures;
@@ -379,3 +431,41 @@ unbounded body are read out of the tree rather than demonstrated against a
 listener; and who can reach the port at all is
 `proposals/implemented - Sandboxing/`'s question, deliberately left there.
 Full accounting in [00-method.md](00-method.md#the-security-pass-2026-09-06).
+
+### The operations pass, 2026-09-06
+
+**This pass changed no code either.** `src/` is untouched, no GitHub issue was
+opened, closed or commented on, and nothing outside `proposals/GapRegister/` was
+edited except the [proposals index](../README.md) line. Same worktree, same tree
+(`origin/main` at `66fdbab`), exit codes read from `$?` on the command itself and
+not through a pipe.
+
+| Command | Exit | Output |
+|---|---|---|
+| `NODE_ENV=development npm ci --include=dev` | 0 | `found 0 vulnerabilities` |
+| `npm run typecheck` | 0 | nothing beyond the banner |
+| `npm test` | 0 | `# tests 2259`, `# suites 351`, `# pass 2259`, `# fail 0`, `# cancelled 0`, `# skipped 0`, `# todo 0`, `# duration_ms 16384.263133` |
+
+**The same 2,259 as the refresh and the security pass, over the same unchanged
+code, and on this axis that number is the point rather than the reassurance.**
+Not one of O1–O8 is something a test could fail on. `deployment.test.ts` alone
+carries sixty-odd assertions pinning the image against the compose file and is
+green, and
+[O2](08-operations.md#o2--the-containers-stop-grace-and-the-servers-shutdown-grace-are-one-edit-apart-and-the-file-that-pins-every-other-such-pair-does-not-pin-this-one)
+is the pin it does not carry.
+`env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` and `npm audit` were
+**not** re-run, for the reason the security pass gives: the tree is
+byte-identical under `src/` to the one the refresh ran them against. Deliberate,
+and named here rather than left to be inferred.
+
+**What this pass could not reach is larger than what it could**, and it is the
+whole of why the drop list is eleven long. **No container was started**, so the
+image `HEALTHCHECK`, `docker-entrypoint.sh`, `stop_grace_period` and the log
+driver are readings of files rather than observations of a running thing, and
+every row says so in its own text. `/backups` and `DATA_DIR` are both outside
+what this uid may read, so no snapshot was listed, no restore rehearsed and no
+table counted — which means the half of backup and restore this pass checked is
+**the code and the record in `docs/verification.md:409-437`**, and the half it
+did not is the packaging, which `docs/verification.md:4100-4113` already names
+and lists the four commands for.
+Full accounting in [00-method.md](00-method.md#the-operations-pass-2026-09-06).
