@@ -72,17 +72,44 @@ returns `passed: false` for a malformed command precisely because the operator
 asked for a gate, and handing them an open door because their string was wrong
 is the failure the field exists to prevent. It is argv and never a shell line:
 `parseVerifyCommand` refuses shell metacharacters rather than escaping them,
-for the reason `security.md` gives about spawn argv generally. It runs on the
-run's own tree, as the child uid, before anything merges — a failing check on
-an already-merged branch is a report, and what was asked for was a refusal.
+for the reason `security.md` gives about spawn argv generally. It runs as the
+child uid, before anything merges — a failing check on an already-merged branch
+is a report, and what was asked for was a refusal.
+
+**Which tree the check runs in is the whole of whether it checks anything.**
+`verifyTree` resolves the **run's own** worktree slot, never `state.checkout`:
+that one is the *operator's*, and `landRefusal` has already required it to be
+clean and standing on the target — so a check run there tests the branch the
+work is about to be merged into and never sees the work, passing or failing
+identically whatever the agent wrote, with nothing on either side visible. When
+the slot no longer holds the run's branch because a later run took it over,
+this **refuses** rather than falling back. It does not cut a fresh worktree,
+for the reason `resolveConflicts` records when it hands a temporary checkout
+`resolveVerifyTools: []`: a slot cut from bare git has no `node_modules` and no
+build output, so `npm test` there fails for a reason that is not the work, and
+a gate that reported a missing dependency tree as "your branch is bad" would be
+worse than no gate because an operator would believe it. Resolving the tree at
+all is gated on the command being set, so an install that configures none pays
+nothing.
 
 **The other exit.** `deliverRun` pushes a run's branch and opens a pull request
 on the checkout's GitHub remote. It is reached from one endpoint on one press
 and from nothing in the run loop: an outward-facing action taken by a loop is a
 different product from one taken by a person. It never force-pushes, it runs
-the same verify gate Land does — an operator who said "not unless this passes"
-has said nothing about which exit the work leaves by — and with
-`UF_GITHUB_TOKEN` unset it refuses, which is the honest default for a feature
-that publishes. The run's timeline carries it as `deliver`, beside `land`:
+the same verify gate Land does against the same `verifyTree` — an operator who
+said "not unless this passes" has said nothing about which exit the work leaves
+by — and with no token for the repository it refuses, which is the honest
+default for a feature that publishes. **The credential is passed explicitly and
+is the only git call in this app that carries one.** `gitEnv()` strips the whole
+`UF_` namespace, so `git()` reaches every remote unauthenticated by default and
+that withholding is deliberate — `githubEnv`'s docstring gives the reason, which
+is that a git child is the one child here that executes repository-controlled
+code. `deliverRun` hands it back through `git()`'s `env` option, which exists
+for this one caller; without it the push fails against an https GitHub remote
+with a `GIT_TERMINAL_PROMPT=0` authentication error naming nothing an operator
+could fix. *Which* token is `githubTokenFor(repo_root ?? folder)` — the
+repository's, not the checkout's, on the run loop's own rule — and the same one
+opens the pull request, so a repository configured to get none refuses at
+`planDelivery` instead of publishing as the install. The run's timeline carries it as `deliver`, beside `land`:
 `land` is work entering the operator's own checkout, `deliver` is it leaving
 the machine.

@@ -31,8 +31,11 @@ import { GITHUB_TOKEN } from "./config";
  * `UF_GITHUB_TOKEN` is documented as the agent's push credential and
  * `githubEnv()` already builds the git config that uses it. Nothing new enters
  * the trust boundary here; what changes is that the *app* can now use a
- * capability its children already had. With the variable unset this whole
- * module refuses, which is the honest default for a feature that publishes.
+ * capability its children already had. Which token is `githubTokenFor`'s
+ * answer off the **repository**, so a repository configured to get none
+ * refuses here rather than falling through to the install-wide one — and with
+ * no credential at all this whole module refuses, which is the honest default
+ * for a feature that publishes.
  */
 
 export type Remote = { owner: string; repo: string };
@@ -83,8 +86,10 @@ export function planDelivery(o: {
     return {
       ok: false,
       reason:
-        "No UF_GITHUB_TOKEN is set, so this install cannot publish anything. " +
-        "Set it in .env and restart to enable delivery.",
+        "There is no GitHub credential for this repository, so nothing can be " +
+        "published. Either UF_GITHUB_TOKEN is unset, or this repository has an " +
+        "entry in UF_GITHUB_TOKENS that gives it none — the two are different " +
+        "and both are decided at boot, so this takes a restart either way.",
     };
   }
   if (!o.branch) {
@@ -123,9 +128,14 @@ export type PullRequest = { number: number; url: string };
  * pull request opened without pushing again, which is the ordinary second press
  * after a first attempt failed at this step rather than the one before it.
  *
- * A 422 with "already exists" is reported as success with the existing pull
- * request, because from the operator's side pressing twice should not be an
- * error — the thing they wanted is true.
+ * A 422 with "already exists" is reported as a refusal that says so in those
+ * words, NOT as a success. The tempting reading is that pressing twice should
+ * not be an error because the thing the operator wanted is true — but this
+ * function's success shape carries the pull request's number and url, and it
+ * has neither: GitHub's 422 body names no pull request, so returning `ok` would
+ * mean inventing one or making a second API call this path has not made. A
+ * refusal naming the real state is the honest answer, and the caller writes no
+ * `deliver` event for a press that opened nothing.
  */
 export async function openPullRequest(o: {
   remote: Remote;

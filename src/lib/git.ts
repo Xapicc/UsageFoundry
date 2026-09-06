@@ -184,7 +184,28 @@ export function gitSync(cwd: string, args: string[]): GitResult {
 export function git(
   cwd: string,
   args: string[],
-  opts: { timeoutMs?: number; maxBytes?: number; trim?: boolean } = {},
+  opts: {
+    timeoutMs?: number;
+    maxBytes?: number;
+    trim?: boolean;
+    /**
+     * Extra environment for the one call shape that talks to a remote.
+     *
+     * Applied **after** `gitEnv()`'s scrub, and it has to be: the scrub drops
+     * the whole `UF_` namespace, which is deliberate and is what withholds
+     * `UF_GITHUB_TOKEN` from every git child this app runs — the reasoning is
+     * written out at `githubEnv` in `orchestrator.ts` and rests on git being
+     * the one child here that executes repository-controlled code. So the
+     * credential cannot be *left in*; it has to be handed back by a caller
+     * that means to, which makes every credentialed git call greppable.
+     *
+     * `deliverRun` is the only caller, because it is the only git this app
+     * runs that reaches the network. Nothing here overrides the `-c` flags in
+     * `gitArgs`: those go on the command line, which outranks `GIT_CONFIG_*`,
+     * so hooks and `core.fsmonitor` stay off however this is filled in.
+     */
+    env?: Record<string, string>;
+  } = {},
 ): Promise<GitResult & { overflowed: boolean }> {
   const { timeoutMs = 20_000, maxBytes = 0, trim = true } = opts;
 
@@ -211,7 +232,7 @@ export function git(
     try {
       const child = spawn(GIT_BIN, gitArgs(args), {
         cwd,
-        env: gitEnv(),
+        env: opts.env ? { ...gitEnv(), ...opts.env } : gitEnv(),
         ...childCredentials(),
         stdio: ["ignore", "pipe", "pipe"],
       });

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { landVerdict, parseVerifyCommand } from "./landGate";
+import { verifyTreeVerdict } from "./land";
 
 /**
  * The gate in front of Land, and the two ways it could fail quietly.
@@ -106,5 +107,67 @@ describe("landVerdict never turns 'could not check' into 'passed'", () => {
     });
     assert.equal(v.passed, false);
     assert.match(v.reason, /not runnable/);
+  });
+});
+
+/**
+ * WHICH TREE THE CHECK RUNS IN, which is the whole of whether it checks
+ * anything.
+ *
+ * The first version of the gate handed `runVerify` the operator's checkout —
+ * `state.checkout.path` — which `landRefusal` has already required to be clean
+ * and standing on the *target*. The command therefore ran against the branch
+ * the work was about to be merged into and never saw the work: it passed or
+ * failed identically whatever the agent had written, and nothing on either side
+ * could tell. A gate set to `/bin/false` still refused; one set to `/bin/true`
+ * still allowed. That is the failure these pin, and no subprocess-driven test
+ * can catch it, because the subprocess behaves the same in either tree.
+ */
+describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
+  it("answers the run's slot while it still holds the run's branch", () => {
+    assert.deepEqual(
+      verifyTreeVerdict({
+        slotPath: "/workspace/.uf-worktrees/acme-1",
+        checkedOutBranch: "uf/task-a",
+        runBranch: "uf/task-a",
+      }),
+      { ok: true, path: "/workspace/.uf-worktrees/acme-1" },
+    );
+  });
+
+  it("refuses when a later run has taken the slot over", () => {
+    // The expensive wrong answer is falling back to the operator's checkout,
+    // which is clean and on the target and would sail through any check that
+    // the target itself passes.
+    const v = verifyTreeVerdict({
+      slotPath: "/workspace/.uf-worktrees/acme-1",
+      checkedOutBranch: "uf/task-b",
+      runBranch: "uf/task-a",
+    });
+    assert.equal(v.ok, false);
+    assert.match(v.ok ? "" : v.reason, /no longer holds uf\/task-a/);
+    assert.match(v.ok ? "" : v.reason, /Nothing was landed/);
+  });
+
+  it("refuses when the run never had a checkout", () => {
+    const v = verifyTreeVerdict({
+      slotPath: null,
+      checkedOutBranch: null,
+      runBranch: "uf/task-a",
+    });
+    assert.equal(v.ok, false);
+    assert.match(v.ok ? "" : v.reason, /no checkout of its own/);
+  });
+
+  it("refuses a detached slot rather than reading null as a match", () => {
+    // `slotState` answers null for a detached HEAD and for a `rev-parse` that
+    // failed. A comparison written as `!==` against a null run branch would
+    // make those two nulls agree and hand back a tree holding no known branch.
+    const v = verifyTreeVerdict({
+      slotPath: "/workspace/.uf-worktrees/acme-1",
+      checkedOutBranch: null,
+      runBranch: null,
+    });
+    assert.equal(v.ok, false);
   });
 });

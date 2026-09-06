@@ -5,7 +5,7 @@ import path from "node:path";
 import { git } from "./git";
 import { db } from "./db";
 import { commitDiff, type DiffFile } from "./diff";
-import { GITHUB_TOKEN } from "./config";
+import { githubTokenFor } from "./config";
 import { getSettings } from "./settings";
 import {
   assistRefusal,
@@ -24,6 +24,7 @@ import {
   emitRunEvent,
   forgetSlotVerdict,
   getRun,
+  githubEnv,
   overlaps,
   repoSlug,
   resolveWorkspaceFolder,
@@ -991,12 +992,16 @@ export async function landRun(
     //
     // Off by default, and an unset command is not a check that passed. On the
     // branch, not the target, because the question is whether THIS work is
-    // good — so it runs against the run's own tree, which is where the agent
-    // left it.
-    const verify = await runVerify(state.checkout!.path, getSettings().landVerifyCommand);
-    if (!verify.passed) {
-      landing.delete(folder);
-      return { ok: false, reason: verify.reason };
+    // good — so it runs in the run's own checkout, which `verifyTree` resolves
+    // and refuses rather than substituting the operator's tree for. Resolving
+    // it at all is gated on the command being set, so an install that never
+    // configures one does not pay a `git status` per land.
+    const verifyCommand = getSettings().landVerifyCommand;
+    if (verifyCommand.trim()) {
+      const tree = await verifyTree(run);
+      if (!tree.ok) return { ok: false, reason: tree.reason };
+      const verify = await runVerify(tree.path, verifyCommand);
+      if (!verify.passed) return { ok: false, reason: verify.reason };
     }
 
     // Read before the merge: after a squash there is nothing in the target's
@@ -1654,6 +1659,87 @@ async function pendingWork(run: RunRow): Promise<PendingWork | null> {
     readable: slot.readable,
     suggestedMessage: taskSubject(run),
   };
+}
+
+/** Where `landVerifyCommand` may run, or why there is nowhere to run it. */
+export type VerifyTree =
+  | { ok: true; path: string }
+  | { ok: false; reason: string };
+
+/**
+ * The tree `landVerifyCommand` has to run in, or why there is not one.
+ *
+ * The run's **own** checkout, and this is a named decision rather than a path
+ * expression because the first version of the gate passed
+ * `state.checkout.path` — the operator's tree, which `landRefusal` has already
+ * required to be clean and standing on the *target*. A check run there tests
+ * the branch the work is about to be merged into and never sees the work at
+ * all, so it passes or fails identically whatever the agent wrote. Nothing
+ * about that is visible from either side: a gate configured as `/bin/false`
+ * still refuses and one configured as `/bin/true` still allows, which is why
+ * the live evidence that the gate "worked" could not have caught it.
+ *
+ * A **fresh** worktree is deliberately not cut when the slot is gone, and that
+ * is the same reasoning `resolveConflicts` records above when it hands a
+ * temporary checkout `resolveVerifyTools: []` — a slot cut from bare git has no
+ * `node_modules`, no `.venv` and no build output, so `npm test` there fails for
+ * a reason that is not the work. A gate reporting a missing dependency tree as
+ * "your branch is bad" would be worse than no gate, because an operator would
+ * believe it.
+ *
+ * So: the slot while it still holds this run's branch, and otherwise a refusal
+ * naming what is missing. Refusing is what the field asks for — `landVerdict`
+ * already treats a command that could not be parsed as a failure rather than a
+ * pass, for the same reason. It costs landing an *older* run whose slot a later
+ * run has taken over, and the message says so rather than leaving the operator
+ * to work out why a branch that landed yesterday will not land today.
+ *
+ * Pure, and separated from the slot read for the reason `landRefusal` and
+ * `commitRefusal` are: it is the half that decides *what gets checked*, and it
+ * fails silently. A version answering the operator's checkout would pass every
+ * test a subprocess-driven one could write, because the command it runs there
+ * exits 0 or 1 on its own terms either way.
+ */
+export function verifyTreeVerdict(s: {
+  /** The checkout recorded for this run, or null when it never had one. */
+  slotPath: string | null;
+  /** The branch that checkout holds **now** — a slot is reused by later runs. */
+  checkedOutBranch: string | null;
+  /** The branch recorded for this run. */
+  runBranch: string | null;
+}): VerifyTree {
+  if (!s.slotPath) {
+    return {
+      ok: false,
+      reason:
+        "A verify command is configured, but this run has no checkout of its " +
+        "own to run it in, so nothing here can tell whether its branch is " +
+        "good. Nothing was landed. Clear the command in Settings to land " +
+        "without a check.",
+    };
+  }
+  if (!s.runBranch || s.checkedOutBranch !== s.runBranch) {
+    return {
+      ok: false,
+      reason:
+        `A verify command is configured, but ${s.slotPath} no longer holds ` +
+        `${s.runBranch ?? "this run's branch"} — a later run has taken that ` +
+        `checkout over, so there is nowhere to run the check against this ` +
+        `work. Nothing was landed. Clear the command in Settings to land ` +
+        `without a check.`,
+    };
+  }
+  return { ok: true, path: s.slotPath };
+}
+
+/** `verifyTreeVerdict` against the slot as it stands now. */
+async function verifyTree(run: RunRow): Promise<VerifyTree> {
+  const slot = await slotState(run);
+  return verifyTreeVerdict({
+    slotPath: slot.path,
+    checkedOutBranch: slot.checkedOutBranch,
+    runBranch: run.worktree_branch,
+  });
 }
 
 /**
@@ -2798,10 +2884,14 @@ export async function branchInventory(
  * different product from one taken by a person, and this app has been careful
  * everywhere else about which of those it is.
  *
- * The push is ordinary and never forced. `githubEnv()` supplies the credential
- * the same way it does for an agent's own push, so nothing new enters the trust
- * boundary — what is new is that the app may use a capability its children
- * already had.
+ * The push is ordinary and never forced, and it is the **only** git this app
+ * runs that carries a credential. `gitEnv()` strips the whole `UF_` namespace,
+ * so every other git child reaches a remote unauthenticated — deliberately,
+ * for the reason `githubEnv` states — and this one hands the token back through
+ * `git()`'s `env` option rather than that withholding being loosened for
+ * everybody. Nothing new enters the trust boundary: it is the credential an
+ * agent's own push already gets, chosen by the same `githubTokenFor` rule off
+ * the repository. What is new is that the *app* may use it.
  *
  * The verify gate runs first, and deliberately the same one Land uses: an
  * operator who has said "not unless this passes" has not said anything about
@@ -2828,23 +2918,47 @@ export async function deliverRun(
     await git(folder, ["remote", "get-url", "origin"], NO_CLOCK)
   ).stdout.trim();
 
+  // The credential is chosen from the **repository**, not from the checkout
+  // this pushes out of, which is `githubTokenFor`'s own rule at the run loop's
+  // call site: an isolated run's cwd is a slot under `.uf-worktrees` that no
+  // operator writes a token entry for. It also means a repository configured
+  // to get no token refuses here rather than falling through to the
+  // install-wide one — the narrowest thing an operator can write stays the
+  // narrowest thing it does.
+  const github = githubTokenFor(run.repo_root ?? run.folder);
+
   const plan = planDelivery({
-    token: GITHUB_TOKEN,
+    token: github.token,
     remoteUrl,
     branch: state.branch,
     target: state.target,
   });
   if (!plan.ok) return { ok: false, reason: plan.reason };
 
-  const verify = await runVerify(folder, getSettings().landVerifyCommand);
-  if (!verify.passed) return { ok: false, reason: verify.reason };
+  // The run's own tree, for `verifyTree`'s reason: the checkout this pushes
+  // from is the operator's, standing on the target, and a check run there
+  // would not see this branch's work at all.
+  const verifyCommand = getSettings().landVerifyCommand;
+  if (verifyCommand.trim()) {
+    const tree = await verifyTree(run);
+    if (!tree.ok) return { ok: false, reason: tree.reason };
+    const verify = await runVerify(tree.path, verifyCommand);
+    if (!verify.passed) return { ok: false, reason: verify.reason };
+  }
 
   // Never `--force`, and the upstream is set so a second press is an ordinary
   // fast-forward rather than a new branch.
+  //
+  // `githubEnv()` explicitly, because `gitEnv()` strips the whole `UF_`
+  // namespace and `git()` therefore carries no credential by default — that
+  // withholding is deliberate and documented at `githubEnv`, so this is the
+  // one call that hands it back. Without it the push reaches an https GitHub
+  // remote unauthenticated and, with `GIT_TERMINAL_PROMPT=0`, fails with a
+  // message about authentication that names nothing an operator could fix.
   const push = await git(
     folder,
     ["push", "--set-upstream", "origin", `${plan.head}:${plan.head}`],
-    NO_CLOCK,
+    { ...NO_CLOCK, env: githubEnv(github.token) },
   );
   if (!push.ok) {
     return {
@@ -2854,6 +2968,10 @@ export async function deliverRun(
   }
 
   const opened = await openPullRequest({
+    // The same token the push used, not `openPullRequest`'s install-wide
+    // default: a repository scoped to its own credential must not open its
+    // pull request as the install.
+    token: github.token,
     remote: plan.remote,
     head: plan.head,
     base: plan.base,

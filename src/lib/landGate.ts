@@ -184,13 +184,23 @@ export function runVerify(
     child.stderr?.setEncoding("utf8");
     child.stdout?.on("data", take);
     child.stderr?.on("data", take);
-    child.on("error", (err) =>
+    // Settled through the same latch as `close`, and the timer cleared with
+    // it. A bare `resolve` here leaves `settled` false and a 15-minute
+    // `setTimeout` armed on a child that never started: the promise the caller
+    // holds is already answered, so nothing is visibly wrong, but the server's
+    // event loop carries a pending timer for a quarter of an hour per failed
+    // press. `error` and `close` both fire for an ENOENT, and the latch is
+    // what stops the second one re-answering with a different verdict.
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       resolve({
         ran: false,
         passed: false,
         reason: `The verify command could not start: ${err.message}.`,
-      }),
-    );
+      });
+    });
     child.on("close", (code) => finish(code));
   });
 }

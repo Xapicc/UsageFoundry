@@ -11033,8 +11033,13 @@ export function costBaselineFor(run: RunRow): CostBaseline | null {
   const signature = taskSignature(run.folder, run.prompt);
   const rows = db()
     .prepare(
+      // `completed` alone, and it is the whole of the success side of
+      // `RunStatus`: a run that replied DONE and one that used up its cycle cap
+      // are both written `completed`. `needs-review` is deliberately not here —
+      // it is a run that reached a judgement about the *task*, and what it spent
+      // getting there is not what doing the task costs.
       "SELECT spent_usd FROM runs WHERE task_signature = ? AND id != ? " +
-        "AND status IN ('completed','done') AND spent_usd > 0 " +
+        "AND status = 'completed' AND spent_usd > 0 " +
         "ORDER BY created_at DESC LIMIT ?",
     )
     .all(signature, run.id, BASELINE_WINDOW) as { spent_usd: number }[];

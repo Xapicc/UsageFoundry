@@ -1588,12 +1588,20 @@ function spawnPrune(
           // Every other child here is an agent, running work a model decided on,
           // and dropping privilege is the whole point. This one is the app's own
           // maintenance on the app's own data, and the uid split makes the drop
-          // impossible rather than merely unnecessary: measured on this install,
-          // the transcripts are `0600 root` and `DATA_DIR` is `0700 root`, so a
-          // child at `UF_AGENT_UID` can neither read the file it is meant to
-          // prune nor write the state directory winnow keeps. It fails with
-          // `PermissionError` on `WINNOW_DATA_DIR` before it reaches the
-          // transcript.
+          // impossible rather than merely unnecessary: `DATA_DIR` is `0700
+          // root`, so a child at `UF_AGENT_UID` cannot write the state
+          // directory winnow keeps. It fails with `PermissionError` on
+          // `WINNOW_DATA_DIR` before it reaches the transcript.
+          //
+          // **Read what this does and does not say about the transcript.** An
+          // earlier version of this comment gave "the transcripts are `0600
+          // root`" as a second reason, and that reading is what left the bug
+          // `restoreTranscriptOwnership` exists for standing: a transcript is
+          // written by the *agent*, so in the ordinary case it is the agent's
+          // and readable by the next cycle — it is root-owned only *after* a
+          // winnow verb that writes has been over it, which is the disease and
+          // not the justification. The state directory is the whole of why this
+          // child stays as the server.
           //
           // What is actually being trusted is narrow and worth naming: a pinned
           // commit, built at image build time into a root-owned directory no
@@ -1722,7 +1730,9 @@ export function planCut(transcriptPath: string): Promise<PlannedCut | null> {
           "--json",
         ],
         // Same credential argument as `spawnPrune`: this is the app's own
-        // maintenance on the app's own data, and the transcripts are root-owned.
+        // maintenance on the app's own data, and `WINNOW_DATA_DIR` is a
+        // root-owned `0700` directory an agent uid cannot write. This verb
+        // reads and never writes, so nothing here hands a transcript over.
         { env: pruneEnv(), stdio: ["ignore", "pipe", "ignore"] },
       );
 
@@ -1994,8 +2004,9 @@ export function contextComposition(
           "--json",
         ],
         // Same credential argument as `spawnPrune` and `planCut`: this is the
-        // app's own maintenance on the app's own data, and the transcripts are
-        // root-owned.
+        // app's own maintenance on the app's own data, and `WINNOW_DATA_DIR` is
+        // a root-owned `0700` directory an agent uid cannot write. Read-only,
+        // so no transcript changes hands here.
         { env: pruneEnv(), stdio: ["ignore", "pipe", "ignore"] },
       );
 
@@ -2580,7 +2591,9 @@ export function estimateTreatCut(
         WINNOW_PYTHON,
         ["-m", "winnow", "safe", "run", "--", "treat", transcriptPath, "-rx", tier],
         // `spawnPrune`'s credential argument, unchanged: the app's own
-        // maintenance on root-owned transcripts.
+        // maintenance, kept as the server by the root-owned state directory
+        // rather than by anything about the transcript. No `--execute`, so this
+        // one estimates and never writes.
         { env: pruneEnv(), stdio: ["ignore", "pipe", "ignore"] },
       );
 
