@@ -39,6 +39,21 @@ U3's unknown — whether resume restores the sandbox mode, the model and the
 config overrides, which is the exact class of bug this repository already found
 for `--plugin-dir` (`cycleInvocation.ts:955`–`:962`).
 
+Half of U3 is now answered on `codex-cli 0.153.4`, and it is the half that
+matters here: **`resume` and `fork` do not accept nine of `exec`'s flags** —
+`--add-dir`, `--approve-for-me`, `--cd`, `--color`, `--local-provider`, `--oss`,
+`--profile`, `--sandbox` and `--version`. So a resumed cycle cannot restate its
+sandbox mode, its working root, its extra writable directory, its profile or its
+approval routing on argv at all; `-c` overrides are the only route left, and
+whether the *session* restores what argv cannot still needs a credential
+(`14-validation.md` §1f, and U3 in `01-constraints.md` Part 2).
+
+And `--ephemeral` writes no session file, so it forecloses `resume` and `fork`
+by construction — there is nothing to resume from. Anything that wants
+continuity has to accept one rollout JSONL per session under
+`$CODEX_HOME/sessions/`, which is persistent state nobody has put on
+`docs/agent/retention.md`'s map.
+
 ---
 
 ## The four sources

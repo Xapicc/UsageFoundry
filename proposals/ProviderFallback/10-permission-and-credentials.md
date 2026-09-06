@@ -46,9 +46,44 @@ two orthogonal controls:
   are externally sandboxed."
 
 For an unattended run there is nobody to approve, so the approval axis collapses
-to `never` — and the sandbox axis is then the whole of the boundary. What
-`workspace-write` actually permits on Linux, and whether it composes with this
-container's seccomp profile, is **U5** and was not verified.
+to `never` — and the sandbox axis is then the whole of the boundary.
+
+**What `workspace-write` resolves to is now measured** (U5, on `codex-cli
+0.153.4`, read out of Codex's own prompt with `codex debug prompt-input -c
+'sandbox_mode="workspace-write"'`):
+
+```xml
+<permission_profile type="managed"><file_system type="restricted">
+  <entry access="read"><special>:root</special></entry>
+  <entry access="write"><path>{cwd}</path></entry>
+  <entry access="write"><special>:slash_tmp</special></entry>
+  <entry access="write"><special>:tmpdir</special></entry>
+  <entry access="read"><path>{cwd}/.git</path></entry>
+  <entry access="read"><path>{cwd}/.agents</path></entry>
+  <entry access="read"><path>{cwd}/.codex</path></entry>
+</file_system></permission_profile>
+```
+
+The whole filesystem is readable; `/tmp` and `$TMPDIR` are writable regardless
+of the working root; network is off and is one config key from being on
+(`sandbox_workspace_write.network_access`).
+
+**And `.git` is read-only, inside the writable root.** That is not a footnote
+for this app: every option here ends in a branch and a Land button
+(`docs/agent/isolation-and-landing.md`), and **a Codex cycle under
+`-s workspace-write` cannot commit.** With the approval axis collapsed to
+`never`, the escalation that would let it is unavailable, so the choices are an
+extra writable root covering `.git`, an approval policy that grants the escape,
+or `danger-full-access` — and the third is what the paragraph below is about.
+An implementer who picks `workspace-write` because it sounds like the
+conservative option ships a run that produces a diff nobody can land.
+
+**Whether any of it is enforced is still open.** `codex sandbox` is the
+credential-free way to test enforcement and it hangs in this agent's own
+bubblewrap sandbox — silently, no output even at `RUST_LOG=debug`
+(`14-validation.md` §1f). That result would not transfer anyway: the app spawns
+its children straight from the Node server with no bwrap between, so the
+enforcement half of U5 can only be answered inside the real image.
 
 Note what the `--yolo` help implies: OpenAI's own position is that bypassing the
 sandbox is acceptable *when something else is doing the sandboxing*. This
@@ -64,14 +99,24 @@ which is a coherent argument for using it. It is also exactly the argument that
 ```
 — `cycleInvocation.ts:1042`–`:1050`, with `PROCESS_KILLERS` at `:650`
 
-**No per-invocation equivalent was found.** Codex has execpolicy `.rules` files
-and `--ignore-rules` to skip them — a file-based mechanism with a different
-lifetime and a different owner (user, project, or managed layers).
+**No per-invocation equivalent exists**, and the second pass did not find one on
+the binary either. Codex has execpolicy `.rules` files and `--ignore-rules` to
+skip them — a file-based mechanism with a different lifetime and a different
+owner (user, project, or managed layers).
+
+This is now the *only* half of the pkill pair that is missing. The other half,
+`SELF_HOSTING_NOTICE`, **can** be delivered: `-c developer_instructions="<text>"`
+puts it at the front of Codex's first developer message and survives `resume`
+and `fork` (U6, `14-validation.md` §2f). A notice is not a denial, and
+`docs/agent/security.md`'s standing requirement that nothing on the appended
+system prompt may carry a literal an agent could `pgrep -f` applies to the Codex
+text word for word.
 
 The `--disallowedTools` half is the one that matters and it is not about
 convenience. **The app runs inside the process the agent could kill.** `pkill`
-and `killall` are denied on argv, and `SELF_HOSTING_NOTICE` (`:652`–`:663`) is
-what stops the agent routing around the denial:
+and `killall` are denied on argv, and `SELF_HOSTING_NOTICE`
+(`src/lib/cycleInvocation.ts:652`–`:663`) is what stops the agent routing around
+the denial:
 
 > `PROCESS_KILLERS` stops two commands; this is what stops the agent routing
 > around them, which otherwise takes it one turn — `kill $(pgrep -f next-server)`
@@ -143,6 +188,19 @@ Codex reads three environment variables by name —
 `codex-rs/login/src/auth_env_telemetry.rs`) — and additionally supports a
 ChatGPT-plan login persisted under `CODEX_HOME` with a `chatgpt_plan_type` on the
 token (`codex-rs/login/src/token_data.rs`).
+
+Those line numbers were read off `openai/codex@main` when this survey had no
+binary; the binary now installed is **0.153.4**, not the 0.152.1 the folder
+names. `codex-rs/login/src/lib.rs:38-47` was re-fetched at both `rust-v0.152.1`
+and `rust-v0.153.4` and is **identical**, so the citation has not drifted — it
+is the only Codex source this folder cites by line, and
+[`14-validation.md`](14-validation.md) §1e carries the diff. What the binary
+adds is that all three variables really are read at 0.153.4
+(`grep -aoE 'CODEX_[A-Z0-9_]+'` over the platform binary), and that
+`codex login --with-api-key` writes exactly `{"auth_mode":"apikey",
+"OPENAI_API_KEY":"<key>"}` into `$CODEX_HOME/auth.json` at mode `0600` —
+**without validating the key**, and `codex login status` then echoes a masked
+form of it to stdout. `14-validation.md` §1f has the login surface in full.
 
 That gives two shapes, and they are not equally good here:
 

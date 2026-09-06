@@ -6,8 +6,13 @@ next to it, item by item, and says for each whether it is **satisfied**,
 **satisfiable with work**, or **absent**.
 
 Every Codex-side claim carries the file it was read from in `openai/codex@main`.
-**No binary was run.** See `01-constraints.md` Part 2 for why, and for the ten
-things this reading cannot settle.
+**No binary was run when this file was written.** One has since been installed —
+`codex-cli 0.153.4` — and `01-constraints.md` Part 2 records what it settled.
+The two files this whole reading rests on, `codex-rs/exec/src/cli.rs` and
+`codex-rs/exec/src/exec_events.rs`, are byte-identical at `rust-v0.152.1` and
+`rust-v0.153.4`, so **nothing below is stale for the version bump**. Two rows
+are wrong for other reasons and say so in place: the appended system prompt, and
+the cost.
 
 ---
 
@@ -112,6 +117,15 @@ pub struct Usage {
 **There is no cost field anywhere in the union.** That is the single most
 consequential fact on the Codex side and it is what
 [`09-guards-and-metering.md`](09-guards-and-metering.md) is built on.
+Re-verified at `rust-v0.153.4`, and every `Usage` docblock says the figure is
+"during the turn" rather than cumulative — which is half of U2.
+
+**But the union is not Codex.** Codex ships an OTel exporter whose metrics
+include `codex.turn.cost_microusd`, and the app-server protocol exposes
+`ThreadUsage.estimatedUsageUsdMicros`. Neither is on this stream, and neither
+changes C1 — a Codex figure may never be summed with the three — but "a Codex
+cycle has zero of the three cost sources" is wrong, and
+[`14-validation.md`](14-validation.md) §2g is the correction.
 
 ---
 
@@ -148,7 +162,7 @@ from §3b.
 | `--model <m>` | `-m, --model` | **satisfied**; the *values* are a different namespace, and `runs.model` is one column |
 | `--permission-mode <mode>` | `--sandbox` × `--approve-for-me` / `--dangerously-bypass-…` | **overlapping, not equal.** See [`10-permission-and-credentials.md`](10-permission-and-credentials.md) |
 | `--allowedTools` / `--disallowedTools` | **nothing per-invocation** | **absent on argv.** Codex has execpolicy `.rules` files and `--ignore-rules`, which is a file-based mechanism with a different lifetime. **`--disallowedTools` carries `PROCESS_KILLERS = ["Bash(pkill:*)", "Bash(killall:*)"]` (`cycleInvocation.ts:650`) unconditionally (`:1050`), and it is half of what stops an agent killing the server that supervises it** — the other half is `SELF_HOSTING_NOTICE` on the appended system prompt (`:652`–`:663`), which is absent too. |
-| `--append-system-prompt <four notices + price list>` | **no flag** — `-c` overrides, `AGENTS.md` | **absent as an argv.** U6. `COMMIT_IDENTITY_NOTICE` is the sharp one. |
+| `--append-system-prompt <four notices + price list>` | **no flag**, but `-c developer_instructions="<text>"` | ~~absent as an argv~~ **satisfied, and better placed.** Measured on 0.153.4: the text lands at the **front of the first developer message**, ahead of Codex's own skills and permissions blocks, and `-c` is one of the few flags `resume` and `fork` still take. U6, and `14-validation.md` §2f. |
 | `--agents` / `--agent` (`sessionAgentArgs`) | `--profile` layers a config file | **different mechanism**; a Codex fallback cannot carry a UsageFoundry agent definition |
 | `--plugin-dir` × N (vault skill, read guard, plugins) | `codex-rs/plugin`, `codex-rs/skills` exist | **unverified**, and the generated vault skill and read guard are Claude-Code-shaped artifacts (`src/lib/vaultSkill.ts`, `src/lib/readGuard.ts`) that would have to be regenerated in another format |
 | `--add-dir <vault path>` | `--add-dir <DIR>` | **satisfied**, and identically caveated: Codex's own help says "should be **writable**", which is the same finding `cycleInvocation.ts:984`–`:986` records for Claude's flag |
@@ -195,8 +209,8 @@ So the three candidate answers to "what did a Codex cycle cost" are:
 
 Three of the fourteen reads are **absent** rather than merely different: the
 `<synthetic>` refusal marker (3), the cost (10), and the end-of-cycle subtype
-(12). Two argv items are absent: `--disallowedTools` and the appended system
-prompt.
+(12). **One** argv item is absent: `--disallowedTools`. (The appended system
+prompt was counted as the second and is not — U6.)
 
 That is the floor on any option that actually spawns Codex. It is roughly a
 second `handleStreamLine`, a second `buildArgs`, a second refusal classifier, a
