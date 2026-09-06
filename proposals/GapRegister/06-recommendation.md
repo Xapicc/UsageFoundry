@@ -18,7 +18,9 @@ makes it both the cheapest falsifier here and the largest hole in the register.
 
 **Runner-up:** Survey 2, the landing boundary. It carries the register's #1 row
 and is the only group whose failure lands in the operator's product rather than
-in UsageFoundry.
+in UsageFoundry. **Since written, two of its three rows were implemented rather
+than surveyed** (`d1d3119`) — see the note on that section; the question it asks
+is still open and one of its constraints is now fixed in place.
 
 ---
 
@@ -81,6 +83,16 @@ option 3 has to argue against it explicitly.
 
 **Rows:** 1, 6, 7 — [B2](02-backend-logic.md#b2-nothing-builds-or-tests-a-branch-before-it-is-merged-and-the-setting-that-looks-like-it-does-has-one-reader)/[M4](04-missing-features.md#m4-nothing-verifies-a-branch-before-it-is-merged),
 [B1](02-backend-logic.md#b1-the-landing-guard-covers-landrun-and-none-of-the-other-four-doors), [M1](04-missing-features.md#m1-the-app-can-push-nothing-and-open-no-pull-request).
+
+> **Two of these three were implemented instead of surveyed** — `main` at
+> `d1d3119`, out of PR #214. B2/M4 and M1 shipped as mechanisms with no
+> interface, and B1 did not ship. **This survey's question is therefore now
+> harder rather than answered**, because its own paragraph below predicted the
+> shape of the problem: "a verify gate in `landRun` makes the guard's scope
+> suddenly matter a great deal more" — and there is now a verify gate in
+> `landRun` and the guard still covers one door of five. Read this section as
+> the argument it was, not as a plan; what it asks is still open, and one of its
+> three constraints has been fixed in place without being decided.
 
 **Why these three are one question.** They are the same boundary seen three
 ways: *what is checked* (nothing), *what is synchronised* (one door of five),
@@ -160,7 +172,7 @@ issues to file, and one already owned by #78.
 | 8, 10, 14 — [B3](02-backend-logic.md#b3-a-chat-turn-exists-nowhere-durable-until-the-child-exits), [B4](02-backend-logic.md#b4-the-install-ceiling-is-checked-once-per-chat-turn-before-it-and-a-turn-has-no-cap), [F3](01-frontend.md#f3-a-chat-turn-renders-nothing-until-it-finishes-the-run-path-streams) | **One issue: bring the chat path to the run path's contract.** Persist the assistant's text incrementally and publish after persisting, as `emit()` does; write `chat_turn_spend` as the turn proceeds rather than at `src/lib/chat.ts:1978`; add a mid-turn budget check beside the one at `:1492`. Three symptoms, one mechanism, and the mechanism is already in this repository — this is implementation, not a question |
 | 15 — [F4](01-frontend.md#f4-a-runs-log-cannot-be-searched-or-filtered) | A filter box over the events already in client state in `src/components/RunOutput.tsx`. Smallest item on the register |
 | 18 — [F6](01-frontend.md#f6-settings-is-nine-sections-in-a-3502-line-page-with-no-way-to-find-a-field) | A field search on `src/app/settings/page.tsx`, and separately a `beforeunload` guard — there is none anywhere in `src/app`, and the page already derives `dirty` at `:1576` |
-| 12 — [M5](04-missing-features.md#m5-nothing-can-be-prioritised-the-queue-is-strictly-oldest-first) | A priority column and a reorder action, or an explicit decision that the queue is strictly FIFO and `queuePosition` should stop implying otherwise |
+| 12 — [M5](04-missing-features.md#m5-nothing-can-be-prioritised-the-queue-is-strictly-oldest-first) | **Half done** (`d1d3119`): the priority column exists and `queuePosition` now counts in the same order it promotes. The reorder *action* does not — no page has a control, so the issue that remains is the interface, not the mechanism |
 | 16 — [B5](02-backend-logic.md#b5-the-chat-can-identify-only-the-first-25-repositories-always-the-same-25) | **Comment is not needed — #78 already owns this.** Its suspicion 2 is confirmed against the current tree at `src/lib/workspace.ts:168, :186-188`. This survey files nothing; it records the confirmation here |
 | 13 — [G4](03-growth.md#g4-the-audit-trail-is-20000-rows-deep-evicted-on-every-insert-and-identifies-no-person) | **Measure before changing anything.** How many days does 20,000 rows buy on the live install? Do **not** raise `RETENTION_ROWS` first — `docs/agent/chat.md` explains why the eviction-per-insert cap is load-bearing, and the capability token's 401 is deliberately answered outside `auditMutation` because of it |
 | 17 — [M6](04-missing-features.md#m6-a-credential-cannot-be-rotated-without-a-restart-and-a-restart-ends-live-runs) | Not a rotation issue. The cost of rotation is that a restart terminates live runs, so the issue belongs against restart reconciliation — `lastBootReconcile.closed > 0` and #60's territory |

@@ -3910,12 +3910,33 @@ export function createRun(input: CreateRunInput): RunRow {
  * fails silently: a comparator that quietly ignored `priority` would look
  * exactly like one that worked, on every install where nobody had set one.
  */
-export function queueOrder<T extends { priority?: number | null; created_at: number }>(
-  runs: readonly T[],
-): T[] {
-  return [...runs].sort(
-    (a, b) => (b.priority ?? 0) - (a.priority ?? 0) || a.created_at - b.created_at,
-  );
+export function queueOrder<T extends QueueRank>(runs: readonly T[]): T[] {
+  return [...runs].sort(queueCompare);
+}
+
+/** What `queueOrder` needs of a row: its lever and its age. */
+export interface QueueRank {
+  priority?: number | null;
+  created_at: number;
+}
+
+/**
+ * The comparison itself, so `queueOrder` and `queuePosition` cannot disagree.
+ *
+ * They did. `queueOrder` was added as "the single definition of what runs
+ * next", and `queuePosition` — the only place that ordering is ever *shown* —
+ * went on counting `created_at <= self.created_at` and nothing else. So an
+ * operator could raise a run to the front, watch it start first, and read
+ * "queued behind 3 other runs" on the page the whole time: the lever worked and
+ * the only readout of it did not move, which is the exact complaint the column
+ * was added to answer, surviving the column.
+ *
+ * Negative means `a` is considered first. Age still breaks every tie and the
+ * default priority is 0, so an install that sets none is ordered and counted
+ * exactly as it was.
+ */
+export function queueCompare(a: QueueRank, b: QueueRank): number {
+  return (b.priority ?? 0) - (a.priority ?? 0) || a.created_at - b.created_at;
 }
 
 export function selectPromotable(
@@ -4006,7 +4027,11 @@ export function queuePosition(id: string): number {
     (r) =>
       r.id !== id &&
       r.status === "queued" &&
-      r.created_at <= self.created_at &&
+      // `queueCompare`, not `created_at`, so the number shown is a count over
+      // the same order `selectPromotable` actually promotes in. `<= 0` keeps
+      // the tie behaviour this had before priority existed: two runs created in
+      // the same millisecond each count the other as ahead.
+      queueCompare(r, self) <= 0 &&
       overlaps(key, conflictKey(workDirOf(r))),
   ).length;
 }

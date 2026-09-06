@@ -13,6 +13,32 @@ honest form of "we do not need this" is the argument, not the omission.
 
 ## M1 — The app can push nothing and open no pull request
 
+> **Shipped in half.** `main` at `d1d3119`, out of PR #214 and the correction
+> that followed it. `deliverRun` (`src/lib/land.ts`) pushes the run's branch to
+> the checkout's `origin` and opens a pull request through
+> `openPullRequest`/`planDelivery` (`src/lib/delivery.ts`), reached from
+> `POST /api/runs/:id/deliver` and from nothing in the run loop. Never
+> `--force`, refuses when the repository has no credential, runs the same
+> `landVerifyCommand` gate Land does, and writes a `deliver` event on the run's
+> timeline beside `land`.
+>
+> **The credential was the correction, and it is this row's own evidence
+> turning up as a bug.** The merged version pushed through `git()`, whose
+> `gitEnv()` deletes the whole `UF_` namespace — deliberately, because a git
+> child is the one child here that runs repository-controlled code — so the
+> push reached GitHub unauthenticated and, with `GIT_TERMINAL_PROMPT=0`, failed
+> naming nothing an operator could fix. `git()` now takes an `env` option for
+> this one caller, and the token is `githubTokenFor`'s answer off the
+> repository, so a repository configured to get none refuses rather than
+> publishing as the install.
+>
+> **Half, and the missing half is the one this row cared about.** There is no
+> button: delivery is reachable only by hand against the endpoint. And **no
+> pull request has ever been opened by it** — the push and the API call are
+> covered by unit tests and by their refusal paths, never end to end against
+> GitHub. The row's demand was marked **assumed** when it was written, and
+> shipping a mechanism nobody has yet pressed does not settle that.
+
 An agent finishes. Its branch is a local `uf/*` ref. The operator's route to
 getting that work anywhere is **Land**, which is a merge into their own checkout
 on the recorded target branch (`src/lib/land.ts:947-1057`), guarded by
@@ -157,6 +183,38 @@ it".
 
 ## M4 — Nothing verifies a branch before it is merged
 
+> **Shipped in half.** `main` at `d1d3119`. `landVerifyCommand`
+> (`src/lib/settings.ts`) is empty by default; set, a non-zero exit refuses the
+> land. It is argv and never a shell line — `parseVerifyCommand` refuses shell
+> metacharacters rather than escaping them — and a command that cannot be
+> parsed is a refusal rather than a pass, which is the failure the field exists
+> to prevent. `landVerdict` and `runVerify` are split so the decision is
+> testable without a subprocess, and `deliverRun` runs the same gate, because an
+> operator who said "not unless this passes" said nothing about which exit the
+> work leaves by.
+>
+> **Which tree it runs in was the correction, and it is the whole of whether the
+> gate checks anything.** The merged version passed `state.checkout.path` — the
+> *operator's* checkout, which `landRefusal` has already required to be clean
+> and standing on the target — so the command ran against the branch the work
+> was about to be merged into and never saw the work. It passed or failed
+> identically whatever the agent wrote, and the live evidence in the PR
+> (`/bin/false` refused, `/bin/true` allowed) could not tell the difference,
+> because neither command reads the tree. `verifyTreeVerdict`
+> (`src/lib/land.ts`) now answers the **run's own** worktree slot while it still
+> holds the run's branch, and refuses otherwise rather than falling back — it
+> does not cut a fresh worktree, for the reason `resolveConflicts` already
+> records when it hands a temporary checkout `resolveVerifyTools: []`: a slot
+> cut from bare git has no dependency tree, so `npm test` there fails for a
+> reason that is not the work.
+>
+> **Half.** There is no Settings field, so the gate is reachable only by
+> `PUT /api/settings` by hand — which means the default install is still
+> exactly as this row surveyed it. And [B2](02-backend-logic.md#b2-nothing-builds-or-tests-a-branch-before-it-is-merged-and-the-setting-that-looks-like-it-does-has-one-reader)'s
+> second half is untouched: `resolveVerifyTools` still has one reader and it is
+> still the conflict assist, so the setting that sounds like a verify gate still
+> is not one.
+
 The mechanism is [B2](02-backend-logic.md#b2-nothing-builds-or-tests-a-branch-before-it-is-merged-and-the-setting-that-looks-like-it-does-has-one-reader) and is not repeated. The
 capability framing is:
 
@@ -184,6 +242,29 @@ rather than in UsageFoundry.
 ---
 
 ## M5 — Nothing can be prioritised; the queue is strictly oldest-first
+
+> **Shipped in half.** `main` at `d1d3119`. `runs.priority` is an integer
+> defaulting to 0, clamped to ±100 by `setRunPriority` — unbounded invites
+> `MAX_SAFE_INTEGER` as a way of saying "definitely first", and the row after
+> that is unreachable by any value a person would type. `queueCompare` is the
+> one definition of the order (higher first, `created_at` breaking every tie),
+> `queueOrder` sorts by it, and `selectPromotable` promotes in it. An install
+> that never sets a priority queues exactly as it did before the column existed,
+> which is what makes it safe to have.
+>
+> **The readout was the correction, and it is this row's own headline.** The row
+> says `queuePosition` "reports a place nothing can leave". At the merge,
+> priority reached the promotion order and not `queuePosition`, which went on
+> counting `created_at <= self.created_at` — so an operator could raise a run to
+> the front, watch it start first, and read "queued behind 3 other runs" on the
+> page the whole time. The lever worked and its only readout did not move, which
+> is the complaint the column was added to answer surviving the column.
+> `queuePosition` now counts over `queueCompare`, so the number shown and the
+> order promoted are one answer.
+>
+> **Half.** No page has a control: priority is settable only by
+> `PUT /api/runs/:id/priority`. The row's confidence line already marked its
+> queue depth **assumed**, and nothing here measures it.
 
 Every selection over `runs` in the orchestrator is ordered by creation time:
 

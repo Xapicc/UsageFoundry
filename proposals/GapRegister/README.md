@@ -27,12 +27,48 @@ written:
 - **[F6](01-frontend.md#f6-settings-is-nine-sections-in-a-3502-line-page-with-no-way-to-find-a-field) shipped**, and so did the `beforeunload` prompt it filed as
   an issue rather than a row (`a8f2984`, `bdbdf08`).
 
-**[F3](01-frontend.md#f3-a-chat-turn-renders-nothing-until-it-finishes-the-run-path-streams) and [F5](01-frontend.md#f5-nothing-that-renders-is-checked-by-anything) did not ship, and neither did any of B1–B5,
-G1–G4 or M1–M6.** Sixteen of the twenty rows are exactly as surveyed, which is
-why this directory is not renamed. The invariants behind the four fixes moved to
-`docs/agent/conventions.md` and `docs/agent/testing.md`, the operator's half to
-`docs/runs.md` and `docs/install.md`, and what a person still has to open and
-click to `docs/verification.md`.
+Three more shipped later, on `main` at `d1d3119`, from PR #214 and the fixes
+that followed it — **each of them a mechanism with no interface**, which is the
+whole of why none is marked whole:
+
+- **[B2](02-backend-logic.md#b2-nothing-builds-or-tests-a-branch-before-it-is-merged-and-the-setting-that-looks-like-it-does-has-one-reader) / [M4](04-missing-features.md#m4-nothing-verifies-a-branch-before-it-is-merged) shipped in half** — `landVerifyCommand` gates both
+  `landRun` and `deliverRun`: argv never a shell line, a non-zero exit refuses,
+  and an unparseable command refuses too rather than reading as a pass. It runs
+  in the **run's own** worktree slot (`verifyTreeVerdict`), which is the half
+  that had to be corrected after the merge — the first version ran it in the
+  operator's checkout, standing on the target, where it never saw the work at
+  all. Two things keep this from being whole: there is **no Settings field**, so
+  the gate is reachable only by `PUT /api/settings` by hand; and the row's other
+  half stands untouched — `resolveVerifyTools` still has one reader and it is
+  still the conflict assist, so the setting that sounds like a verify gate still
+  is not one.
+- **[M5](04-missing-features.md#m5-nothing-can-be-prioritised-the-queue-is-strictly-oldest-first) shipped in half** — `runs.priority`, clamped ±100, higher
+  first with `created_at` breaking every tie, through `queueOrder`/`queueCompare`
+  into `selectPromotable` and `queuePosition`. The row's headline — that
+  `queuePosition` reports a place nothing can leave — needed a second fix to
+  close: priority reached the promotion order at the merge and not the readout,
+  so a run raised to the front started first while the page went on saying it
+  was queued behind three others. Not whole because there is **no control** on
+  any page; the only way to set one is `PUT /api/runs/:id/priority`.
+- **[M1](04-missing-features.md#m1-the-app-can-push-nothing-and-open-no-pull-request) shipped, and is the least proven thing here** —
+  `deliverRun` pushes the branch and opens a pull request, one endpoint, one
+  press, never forced, never reached from the run loop, refusing without a
+  credential for that repository. The credential also needed a fix after the
+  merge: it pushed through `git()`, whose `gitEnv()` strips the whole `UF_`
+  namespace, so it reached GitHub unauthenticated. **No pull request has ever
+  been opened by it.** The push and the API call are covered by unit tests and
+  by their refusal paths, not end to end against GitHub, and there is no button.
+
+**[F3](01-frontend.md#f3-a-chat-turn-renders-nothing-until-it-finishes-the-run-path-streams) and [F5](01-frontend.md#f5-nothing-that-renders-is-checked-by-anything) did not ship, and neither did B1, B3, B4, B5,
+G1–G4, or M2, M3 and M6.** Thirteen of the twenty rows are exactly as surveyed
+and three more are half closed, which is why this directory is not renamed. The
+invariants behind the frontend four moved to `docs/agent/conventions.md` and
+`docs/agent/testing.md`, the operator's half to `docs/runs.md` and
+`docs/install.md`, and what a person still has to open and click to
+`docs/verification.md`; the landing three are in
+`docs/agent/isolation-and-landing.md` and `docs/agent/run-lifecycle.md`, and
+**none of the three has an operator-facing doc yet**, because none of them has a
+surface for an operator to be told about.
 
 **The recommendation below was to survey reachability first, not to implement
 it.** The implementation was taken instead. Nothing about that answers Survey 1's

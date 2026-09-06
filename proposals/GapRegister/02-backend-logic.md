@@ -90,6 +90,18 @@ concern is live; its first two are not.
 
 ## B2 — Nothing builds or tests a branch before it is merged, and the setting that looks like it does has one reader
 
+> **Shipped in half.** `main` at `d1d3119`. The first half of this row is
+> closed: `landVerifyCommand` gates `landRun` and `deliverRun`, running in the
+> run's own worktree slot. The full account, including the correction it needed
+> after the merge, is at
+> [M4](04-missing-features.md#m4-nothing-verifies-a-branch-before-it-is-merged).
+>
+> **The second half stands exactly as surveyed.** `resolveVerifyTools` still has
+> one reader and it is still the conflict-resolution assist, so the setting whose
+> name suggests a verify gate still is not one — and now sits beside a field that
+> is, which makes the pair harder to read rather than easier. Nothing was
+> renamed, deprecated or documented against the other.
+
 `settings.resolveVerifyTools` exists (`src/lib/settings.ts:286`) and ships empty
 (`:713`, `resolveVerifyTools: []`). It reads like the install-wide answer to
 "what should be run before code lands". It is not. It has exactly one reader in
