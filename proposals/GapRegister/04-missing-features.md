@@ -1,8 +1,12 @@
 # Missing features
 
-Six candidates, judged the way the brief asked: **what can the operator not do
+Seven candidates, judged the way the brief asked: **what can the operator not do
 today, and what does that cost them.** Nothing here is polish. Every one is a
-capability the product does not have at all.
+capability the product does not have at all. The seventh is the one whose
+operator is the next agent editing this repository rather than the person
+running it, and it is filed here on
+[M4](#m4-nothing-verifies-a-branch-before-it-is-merged)'s grounds: something is
+trusted before it is used and nothing establishes that it is true.
 
 Two of the six are argued down inside their own sections — [M3](#m3-nothing-this-app-runs-can-reach-a-human-and-most-of-that-is-on-purpose) because the
 product has a documented position that covers most of it, and [M6](#m6-a-credential-cannot-be-rotated-without-a-restart-and-a-restart-ends-live-runs) because
@@ -17,6 +21,10 @@ honest form of "we do not need this" is the argument, not the omission.
 > the same missing half: no control on any page.
 > [M4](#m4-nothing-verifies-a-branch-before-it-is-merged) is still half for the same reason.
 > [M2](#m2-one-credential-no-identity-no-authorisation) and [M6](#m6-a-credential-cannot-be-rotated-without-a-restart-and-a-restart-ends-live-runs) are untouched.
+>
+> **The fourth pass, 2026-09-06, added [M7](#m7--nothing-checks-a-completeness-claim-and-docsagent-is-built-out-of-them)**, from the closed issues rather
+> than from the tree. It is the register's only row whose evidence is a closed
+> issue whose defect is back.
 
 ---
 
@@ -449,6 +457,124 @@ was performed, because Docker is unavailable here.
 
 **Owned by:** #89 carries a rotation item over-cap. Read it before opening
 anything.
+
+---
+
+## M7 — Nothing checks a completeness claim, and `docs/agent/` is built out of them
+
+> **Added by the fourth pass, 2026-09-06**, from the 181 closed issues
+> [00-method.md](00-method.md#what-was-deliberately-left-unread) named as unread.
+> It is the only row in this register whose evidence is a *closed* issue whose
+> defect is back, and there are two of them.
+
+`CLAUDE.md`'s routing section sends an editor to one file in `docs/agent/` per
+area before they touch the code, and those files answer with counts and with
+enumerations. Several of those numbers are wrong, each was filed and closed as
+its own issue, and the same numbers have since drifted again. Nothing anywhere
+in this repository reads a doc.
+
+**Two that are wrong at `66fdbab`, both of them previously filed and closed.**
+
+`docs/agent/architecture.md:190` opens the `db.ts` entry with *"every table
+`migrate()` creates, and there are 22 —"*, names twenty-two tables at
+`:191-196`, and then states at `:196-197` that *"the list is a completeness
+claim"* and hands the reader a command to check it with (`:198-200`):
+
+```
+$ grep -aoE 'CREATE TABLE IF NOT EXISTS [a-z_]+' src/lib/db.ts | sort -u | wc -l
+34
+```
+
+Twelve tables are missing from a list that says of itself that it is complete.
+**#161 — *"architecture.md's db.ts map says 22 tables; migrate() creates 24"* —
+is closed**, and the line still says 22 while the gap has grown from two to
+twelve. Materialising the schema confirms the number rather than trusting the
+grep: `migrate()` against a fresh `DATA_DIR` produces 34 non-`sqlite_` tables.
+
+`CLAUDE.md:61` says *"`grep -rn "globalThis as unknown" src/` finds the
+thirty-odd keys already there"*, in the paragraph whose whole point is that
+reusing a key whose shape changed makes every call on it throw after a dev hot
+reload:
+
+```
+$ grep -raoE '__uf[A-Za-z0-9_]+' src/ | sed 's/.*://' | sort -u | wc -l
+58
+$ grep -ran "globalThis as unknown" src/ | wc -l
+53
+```
+
+**#166 — *"Widen CLAUDE.md's globalThis grep: it misses two live keys"* — is
+closed.** The sentence around the grep still says thirty-odd; the answer is
+fifty-eight.
+
+**The repository has a form of this that does not decay, in the same
+directory.** `docs/agent/testing.md:310` ships the command with its answer
+beside it and dates it in the same breath:
+
+```
+find src -name '*.test.ts' -o -name '*.test.tsx' | wc -l          # 109 as this is written
+```
+
+That reads 128 today and is not wrong, because it never claimed to be current —
+it is a reading with a date on it. `docs/agent/conventions.md` is the other
+side of the same coin: it says the panes are *"closed at ten"* and `PANES` holds
+ten (`src/components/shell/panes.ts:42-70`), so **#163** was fixed and has
+stayed fixed. So this row is not "the docs are stale". It is that the repository
+uses two idioms for the same problem, one of which fails silently, and it is the
+silent one that carries the claims a reader is most likely to act on.
+
+**Nothing would catch either.** CI runs four things —
+`.github/workflows/ci.yml:75` typecheck, `:78` test, `:100` build, `:163`
+`npm audit --audit-level=critical` — and none reads a file under `docs/`.
+`npm test` covers *"a deliberately short list of pure functions whose failure
+modes are silent and expensive"* (`CLAUDE.md`); five test files mention
+`docs/agent/` and every one of the five is a prose citation in a docblock about
+why that test earned its place — `knowledge.test.ts:29`,
+`contextPruning.test.ts:1415`, `orchestrator.test.ts:5018`,
+`fileCostNotice.test.ts:10`, `vaultSkill.test.ts:10`. There is no linter
+(`eslint.ignoreDuringBuilds`). A doc claim is checked when a person runs the
+command the doc happens to carry, or never.
+
+**Why this is a missing mechanism and not doc hygiene.** It is
+[M4](#m4-nothing-verifies-a-branch-before-it-is-merged)'s argument one layer up:
+something is trusted before it is used and nothing establishes that it is true.
+The closed-issue list is what makes it a pattern rather than two stale numbers —
+**#123, #124, #133, #136, #140, #150, #151, #153, #161, #162, #163, #166, #169,
+#174, #175, #176** are sixteen closed issues that are each one count, one
+enumeration or one name in a doc corrected by hand — all sixteen confirmed
+closed by the `gh issue list` output this pass persisted — and two of the three
+checked against the tree are wrong again.
+That is [G1](03-growth.md#g1-nine-list-routes-read-parameters-the-one-for-runs-does-not-and-the-pattern-repeats-three-times)'s
+shape exactly — discovered separately, fixed separately, regenerating — applied
+to the repository's own instructions rather than to its list routes.
+
+**Blast radius.** The next agent editing `src/lib/`, which is who `docs/agent/`
+is written for and who `CLAUDE.md` routes. A completeness claim that is twelve
+short is worse than no list: it is the shape that makes a reader stop looking.
+
+**Cost of leaving it.** Paid by hand, roughly one issue at a time, at whatever
+rate the tree grows. Nothing breaks and nothing goes red.
+
+**Confidence: high** on both wrong numbers, each measured by a command whose
+output is quoted above. **Medium** on the sixteen: their titles were read from
+`gh issue list --state closed`, and only #161, #163 and #166 were checked against
+the tree.
+
+**A measurement worth carrying, because it makes the doc's own self-check useless
+in this container.** The command `docs/agent/architecture.md:198-200` gives the
+reader is written without `-a`, and GNU grep 3.8 here reports
+`src/lib/db.ts: binary file matches` and prints **nothing** to stdout, so the
+check answers `0` rather than 34 — see
+[00-method.md](00-method.md#the-fourth-pass-2026-09-06), where the same is true
+of `CLAUDE.md:61`'s grep and of six files under `src/lib/`. A byte-identical
+copy of `db.ts` outside the worktree greps normally, so this is a property of
+this container's filesystem and **not** of the repository, and no part of the
+row above rests on it. It is recorded because every command quoted in this pass
+carries `-a` for that reason, and because a reader who runs the doc's command as
+written may get a silent zero.
+
+**Owned by:** no open issue. #144, #152 and #154 are closed doc-drift *indexes*
+covering earlier sweeps of exactly this, which is the point.
 
 ---
 

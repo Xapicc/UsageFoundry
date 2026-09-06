@@ -1,10 +1,15 @@
 # Growth
 
-Four gaps, and the first is the shape of the other two.
+Five gaps, and the first is the shape of the other two.
 
 > **Re-checked against `main` at `66fdbab`.** All four are open. [G1](#g1-nine-list-routes-read-parameters-the-one-for-runs-does-not-and-the-pattern-repeats-three-times)'s
 > lead example was closed and the pattern it claims survives at two of its three
 > instances; [G2](#g2-chat-threads-past-the-newest-30-cannot-be-reached-at-all), [G3](#g3-one-process-is-the-hard-ceiling-and-the-usual-escape-route-is-not-the-one-that-applies) and [G4](#g4-the-audit-trail-is-20000-rows-deep-evicted-on-every-insert-and-identifies-no-person) are untouched.
+>
+> **The fourth pass, 2026-09-06, added [G5](#g5--the-chat-page-re-reads-and-re-serialises-every-message-in-the-thread-every-three-seconds-and-nothing-bounds-the-thread) and a fourth instance to
+> [G1](#g1-nine-list-routes-read-parameters-the-one-for-runs-does-not-and-the-pattern-repeats-three-times)'s
+> table.** G1's argument is now carried by four caps rather than three; G5 is the
+> first row on this axis argued from a query plan rather than from a constant.
 > One of the two refutations at the bottom of this file is now stale in its
 > facts and unchanged in its conclusion: the three npm advisories were cleared by
 > `102050d` and `npm audit` reports `found 0 vulnerabilities`.
@@ -31,6 +36,17 @@ repository, in more detail than a flag would have added.
 > title's arithmetic is out of date and its claim — that this is a pattern, fixed
 > one instance at a time, months apart — is exactly what happened: one of the
 > three was closed on its own and the other two were not touched.
+>
+> **A fourth instance, found by the fourth pass, 2026-09-06**, in the
+> `workflows.ts` region [00-method.md](00-method.md#what-was-deliberately-left-unread) named as unread. `listInstances(workflowId, limit = 20)`
+> at `src/lib/workflows.ts:2103` is called with no second argument at
+> `src/app/api/workflows/[id]/route.ts:29`, and that route reads no
+> `searchParams` — `grep -n "searchParams" src/app/api/workflows/[id]/route.ts`
+> returns nothing. So a workflow's own history is the newest **twenty** presses
+> of Run, permanently, with no paging, no filter and no date range, on the one
+> surface that answers *what has this graph done*. The table below gains a row and
+> the count in the title becomes four; the argument does not change, which is the
+> point of it.
 
 Not one cap. A class of them.
 
@@ -47,6 +63,7 @@ numbers:
 | Runs list | 100 | `src/app/api/runs/route.ts:49` | **closed** — `offset`, `limit`, `status`, `q`, `settledBefore` at `:77-97` | five |
 | Chat threads | 30 | `src/lib/chat.ts:289` (`listChats(limit = 30)`), called with no argument at `src/app/api/chat/dto.ts:89` | `src/lib/chat.ts:387`, called with no argument at `src/app/api/chat/dto.ts:132` | none |
 | GitHub repositories the chat can name | 25 | `src/lib/workspace.ts:168, :188` | `src/lib/workspace.ts:168, :188` | none |
+| A workflow's instance history | 20 | not surveyed | `src/lib/workflows.ts:2103`, called with no argument at `src/app/api/workflows/[id]/route.ts:29` | none |
 
 And the counter-example is in the same tree. `/api/branches` takes `repo`,
 `offset` and `limit` (`src/app/api/branches/route.ts:25-40`) with a docstring
@@ -239,6 +256,94 @@ day you need it is the day you learn how short.
 
 **Owned by:** nothing directly. #91 is open on the operational surface and
 should be read alongside.
+
+---
+
+## G5 — The chat page re-reads and re-serialises every message in the thread, every three seconds, and nothing bounds the thread
+
+> **Added by the fourth pass, 2026-09-06.** The first row on this axis argued
+> from an `EXPLAIN QUERY PLAN` rather than from a cap in source — see
+> [00-method.md](00-method.md#the-fourth-pass-2026-09-06) for how the schema was
+> materialised without a readable `DATA_DIR`.
+
+`chatDTO` is the shape both chat routes answer with, and it carries the whole
+thread (`src/app/api/chat/dto.ts:58`):
+
+```ts
+    messages: listMessages(chat.id).map((m) => ({
+```
+
+`listMessages` has no `LIMIT`, no offset and no cursor
+(`src/lib/chat.ts:410-413`):
+
+```ts
+export function listMessages(chatId: string): ChatMessageRow[] {
+  return db()
+    .prepare("SELECT * FROM chat_messages WHERE chat_id = ? ORDER BY seq")
+```
+
+**And the route it feeds is polled.** The file says so itself at
+`src/app/api/chat/dto.ts:96` — *"the chat page polls this route every few
+seconds"* — and the page's timer is `src/app/chat/page.tsx:460-464`, at
+`POLL_ACTIVE_MS` while a turn is in flight and `POLL_IDLE_MS` otherwise:
+**3,000 ms and 10,000 ms** (`:54-55`). So while a turn runs, every message ever
+written to that conversation is selected, sorted, mapped and JSON-encoded twenty
+times a minute.
+
+The plans, taken against a freshly migrated schema:
+
+```
+SELECT * FROM chat_messages WHERE chat_id='x' ORDER BY seq
+  SEARCH chat_messages USING INDEX idx_chat_messages_chat (chat_id=?)
+  | USE TEMP B-TREE FOR ORDER BY
+
+SELECT * FROM chat_sessions ORDER BY updated_at DESC LIMIT 30
+  SCAN chat_sessions | USE TEMP B-TREE FOR ORDER BY
+```
+
+The lookup is indexed; the ordering is not, so each poll builds a temporary
+B-tree over the thread. The same response also carries `chatListDTO()`
+(`src/app/api/chat/dto.ts:131-141`), which scans and sorts `chat_sessions` whole
+and then runs `pendingProposals` and `pendingQuestions` per row — sixty-one
+statements per poll at the 30 of [G2](#g2-chat-threads-past-the-newest-30-cannot-be-reached-at-all).
+
+**Nothing bounds the thread.** `chat_messages` is on no retention horizon, has
+no delete handler and no cap —
+[O5](08-operations.md#o5--a-chat-thread-and-every-message-in-it-is-permanent-no-horizon-no-delete-and-the-cascade-has-nothing-to-cascade-from)
+is that row, and this is what it costs while the thread is *open* rather than
+after it is closed. The two compound in a way neither says alone: past the
+thirtieth thread a conversation is undeletable and unreachable, and before that
+it is undeletable and re-read whole every three seconds.
+
+**The mechanism that would fix it is in the same repository, built for runs.**
+`/api/runs/[id]/stream` takes an `after` cursor and ships only events past it
+(`src/app/api/runs/[id]/stream/route.ts:135-141`, the evidence
+[F4](01-frontend.md#f4-a-runs-log-cannot-be-searched-or-filtered) closed on), and
+`run_events` is the store this app most expects to be large — 113,073 rows in
+eight days on this install, counted in the comment at
+`src/lib/orchestrator.ts:7306`. The run log is incremental because somebody
+reasoned about its size. The chat thread, which is the newer surface, is not.
+
+**Blast radius.** Every open chat, on the single process
+[G3](#g3-one-process-is-the-hard-ceiling-and-the-usual-escape-route-is-not-the-one-that-applies)
+is about, where `better-sqlite3` is synchronous and the sort happens on the
+event loop that also runs every agent.
+
+**Cost of leaving it.** Rising with the length of a conversation, with no
+boundary and no signal at one — the axis's definition. The absolute figure is
+**not measured**: no thread of any length exists in a readable database here, so
+what this costs at a hundred messages against a thousand is arithmetic from the
+plan and not a timing.
+
+**Confidence: high** on the mechanism and on the plans, which are quoted from a
+schema `migrate()` built on this tree. **Low** on severity, for want of a real
+thread to time it against — that is dropped candidate 3 in
+[00-method.md](00-method.md#dropped-for-lack-of-evidence) still standing, on the
+half this pass could not close.
+
+**Owned by:** no issue. #21, #26, #28 and #30 are the closed chat-poll issues
+and every one of them is about the poll *failing* or being cached, never about
+what it carries.
 
 ---
 

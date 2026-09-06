@@ -485,3 +485,76 @@ sections is not obviously too many, and no operator was observed failing to find
 anything.
 
 **Owned by:** nothing.
+
+---
+
+## F7 — The workflow editor is the app's one drawing surface, and it discards a graph without asking
+
+> **Added by the fourth pass, 2026-09-06.** It is the other half of the note
+> [F6](#f6-settings-is-nine-sections-in-a-3502-line-page-with-no-way-to-find-a-field) left behind: that row observed
+> `grep -rn "beforeunload" src/` returning zero hits and filed the prompt as an
+> issue rather than a row. The prompt shipped (`bdbdf08`) — on one page.
+
+```
+$ grep -ran "beforeunload" src/ | sed 's/:.*//' | sort -u
+src/app/settings/page.tsx
+```
+
+One file, two lines (`src/app/settings/page.tsx:2031-2032`), registered only
+while `dirty` and torn down when it clears, with eighteen lines of reasoning
+above it at `:2008-2024` — including the one thing it cannot do:
+
+> Neither can choose the wording — the browser writes it — and neither fires on
+> a *client-side* navigation, so a press on the sidebar still leaves the same way
+> it always did. The per-field rails and the bar's own unsaved count are what
+> cover that.
+
+**The workflow editor has none of the three.** Not the prompt, not per-field
+rails, not an unsaved count:
+
+- `grep -an "dirty\|unsaved\|hasChanges" src/components/WorkflowEditor.tsx`
+  returns nothing.
+- `save()` at `src/components/WorkflowEditor.tsx:585-614` is the only write. Until
+  it is pressed, the blocks, the links, and every block's prompt, guards, agent
+  and folder live in React state and nowhere else.
+- Cancel is a bare `router.push` with no confirmation
+  (`src/components/WorkflowEditor.tsx:837`, labelled at `:840`).
+
+**One thing beside the graph *is* persisted before Save, and it is the half that
+does not matter.** `writeLayout` debounces the node arrangement into
+`localStorage` 400 ms after a drag (`src/components/WorkflowEditor.tsx:330`,
+`:149-151`), and `save()` writes it again against the new id at `:607`. So a
+closed tab keeps where the boxes were and loses what was in them.
+
+**What can be lost is bounded and the bound is not small.**
+`MAX_WORKFLOW_NODES = 25` (`src/lib/apiTypes.ts:1595`), and a block is not a
+field: `docs/agent/workflows-and-schedules.md` is the doc for what a node may
+hold, and the editor is where every one of those values is typed. This is also
+the surface a chat proposal lands on for review before approval
+(`docs/agent/chat.md`), so a graph a model wrote and an operator has been
+adjusting is in exactly the same state.
+
+**Why this is a row and F6's note was not.** F6 argued the missing prompt was an
+issue because the per-field rails carried most of the protection on that page.
+Here there are no rails: a workflow's state is one object saved by one button,
+so there is nothing on screen that survives the tab, and nothing that says so.
+The precedent for the fix is in the tree, eighteen lines of it, on the page next
+door.
+
+**Blast radius.** Every workflow drawn or edited by hand, and every chat-proposed
+graph adjusted before approval.
+
+**Cost of leaving it.** Bounded by how long a graph takes to draw, and paid
+whole each time — a closed tab, a press of Cancel, or a browser navigation loses
+the lot. Nothing is corrupted and nothing is silent afterwards: the previous save
+stands, so the failure is lost work rather than wrong state.
+
+**Confidence: high** on the mechanism, all of it read from source. **No browser
+was opened**, at any viewport, so what a real dismissal looks like is
+[F5](#f5-nothing-that-renders-is-checked-by-anything)'s point rather than this
+row's evidence.
+
+**Owned by:** no issue. #35 (*"Branches page shows nothing when a Land, Purge or
+Delete request fails"*) and #56 (*"Workflow page calls every template deleted
+when the list fails to load"*) are the nearest closed neighbours and are about a
+failed fetch rather than about unsaved state.

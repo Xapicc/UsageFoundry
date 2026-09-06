@@ -356,6 +356,99 @@ tree.
 
 ---
 
+## B6 — The Claude stream parser drops an event type it does not recognise without a word, and the Codex parser twelve lines below it says why that is not survivable
+
+> **Added by the fourth pass, 2026-09-06**, from the two thirds of
+> `orchestrator.ts` [00-method.md](00-method.md#what-was-deliberately-left-unread) named as unread. It is the one row on this
+> axis whose argument the file makes about itself.
+
+`handleStreamLine` (`src/lib/orchestrator.ts:7005-7360`) tests exactly four
+event types and has no fifth branch:
+
+- `assistant` at `:7036`, returning at `:7171`
+- `user` at `:7186`, returning at `:7218`
+- `result` at `:7221`, returning at `:7296`
+- `system` at `:7299`, and the function ends at `:7360`
+
+Anything else falls off the end. No log line, no counter, no `raw` payload
+kept — the line is parsed, matches nothing, and the cycle carries on as though
+it had never arrived.
+
+Twelve lines below the end of that function, `handleCodexStreamLine`'s docblock
+(`src/lib/orchestrator.ts:7372-7381`) states the case against exactly that,
+naming the function above it:
+
+> **Nothing here goes silently.** `orchestrator.ts`'s Claude parser drops an
+> event type it does not know without a word, which was survivable while there
+> was one format to keep up with and is not now: a second format doubles the ways
+> a pin can move under this app, and the symptom of a missed rename is a cycle
+> that reports no cost, no session and no stop reason — indistinguishable on
+> every page from a cycle that simply had nothing to say.
+
+And then builds the mechanism: a `default:` arm at `src/lib/orchestrator.ts:7511-7523`,
+gated on `acc.unknownEventTypes` so it is one log line per distinct type per
+cycle rather than one per token of a long turn.
+
+**The set is initialised for every cycle and read by one of the two parsers.**
+`unknownEventTypes: new Set()` is on the `IterationResult` every
+`runIteration` builds (`src/lib/orchestrator.ts:6061`), whichever adapter is
+about to be used; `grep -an "unknownEventTypes" src/lib/orchestrator.ts` returns
+that initialiser and `:7512-7513`, and nothing else.
+
+**The parser without the guard is the one on nearly every cycle.**
+`runs.provider` is written once, by `POST /api/runs`, and is `null` for every
+other caller — a workflow node, a chat proposal, a reopened run
+(`docs/agent/run-lifecycle.md:69`) — and `selectCycleAdapter`
+(`src/lib/orchestrator.ts:5916`) answers the Claude adapter for `null`. So the
+argument in the docblock lands the wrong way round: the announcing parser is on
+the opt-in and the silent one is on the default.
+
+**The repository already enforces this rule one function away, with a test.**
+`injectionFates` reports a flag it has never been taught as `unclassified`
+rather than dropping it, and `orchestrator.test.ts` pins zero such rows by
+running the widest real `buildArgs` output through it
+(`docs/agent/run-lifecycle.md:117`) — *"So the next flag added to `buildArgs`
+fails a test instead of silently leaving the record short."* There is no
+equivalent for a stream event.
+
+**The one place the Claude parser does reason about dropping is a narrower case
+and reaches the same conclusion.** `thinking` blocks are dropped by name inside
+the `assistant` branch at `src/lib/orchestrator.ts:7164-7169`, and the comment
+ends: *"a shape that arrives and is silently ignored is indistinguishable from
+one that never arrived."* That sentence is this row's whole argument, written by
+the file, about content inside a type it knows.
+
+**Blast radius.** Every work cycle on the default provider, on the day the
+pinned CLI renames or adds a top-level event type. Nothing here establishes that
+the pin emits a fifth type today; `assistant`, `user`, `result` and `system`
+are what `--output-format stream-json` writes at `2.1.226`, **assumed** from the
+four the code handles and not observed against a running CLI.
+
+**Cost of leaving it.** Zero until a pin moves, and then exactly what the
+docblock says: a cycle with no cost, no session id and no stop reason, which
+reads on the run page, in the log and in the exit code as a cycle that had
+nothing to say. `docs/agent/run-lifecycle.md:37` is the same failure from the
+other side — a session id that never lands leaves `reopenRun` re-sending the
+original task over the previous attempt's commits.
+
+**Confidence: high** on the asymmetry, which is four line ranges in one file and
+a docblock that names it. **Assumed** on what the pinned CLI emits.
+
+**Owned by:** no issue. Not among the 181 closed issues read on this pass.
+
+**A second, smaller instance of the same seam, recorded here rather than
+filed.** `runIteration`'s deadline message is a fixed string naming one CLI —
+*"No output from Claude Code for …"* at `src/lib/orchestrator.ts:6191` — inside
+a function that takes the adapter as a required argument at `:5975` precisely so
+that a caller cannot read one provider's stdout with another's parser, and that
+uses `adapter.bin` two lines apart at `:6020` and `:6100`. A Codex cycle that
+hangs is ended with a sentence naming Claude Code on the run's own log. It is
+one interpolation and it is not a row: nothing decides differently because of
+it, and `docs/agent/run-lifecycle.md:67` requires each provider difference to be
+*disclosed*, which this misstates rather than hides.
+
+---
+
 ## What this axis got right, recorded because a register that lists only failures misreads the codebase
 
 All four re-checked at `66fdbab`; all four still hold, at the lines given.
