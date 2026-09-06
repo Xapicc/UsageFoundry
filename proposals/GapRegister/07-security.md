@@ -251,13 +251,17 @@ which is ranked immediately above it.** G4 is how long the trail is. This is wha
 never enters it. The two fail differently: a trail evicted at 20,000 rows still
 had the line, and the line for a credential rotation was never written.
 
-**Not every one of the nine is owed a row.** `/api/mcp`'s refusal is
-deliberately outside `auditMutation` and `docs/agent/security.md:26` sets out
-why at length: wrapping a route the middleware exempts hands an unauthenticated
-caller a lever on the audit table itself, twenty thousand refusals at a time.
-That reasoning applies exactly to `/api/logout`, which is also exempt, and it is
-the argument the fix has to answer rather than an argument against the row. The
-sign-in routes are behind the gate and carry no such objection.
+**One of the nine has an argument already written against wrapping it, and it is
+not on the list because it is `/api/mcp`.** That route *is* wrapped, on the
+handler that already holds a subject and not on the refusal, and
+`docs/agent/security.md:26` sets out why at length: wrapping a route the
+middleware exempts hands an unauthenticated caller a lever on the audit table
+itself, twenty thousand correctly-refused requests at a time, and every line
+naming a run that was started or a sign-in that failed is evicted with them.
+**That reasoning transfers exactly to `/api/logout`**, which is exempt for its
+own good reason and is therefore the one of the nine a fix has to answer for
+rather than simply wrap. The six sign-in routes, `/api/fleet` and
+`/api/runs/restarted` are all behind the gate and carry no such objection.
 
 **Blast radius.** Incident review of anything credential-shaped.
 
