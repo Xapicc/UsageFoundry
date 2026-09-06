@@ -34,7 +34,8 @@ is *safer* than the sentence describing it.
 
 ## What was implemented on 2026-09-06, after this register was written
 
-**Ten rows moved: six closed whole, four in half.** Done on `main` in one pass,
+**Ten rows moved: seven closed whole, three in half** (B1 closed on a
+second pass; see its entry). Done on `main` in one pass,
 against the tree this file describes — `git diff --stat 66fdbab..` over `src/`
 was empty when it started, so every line number above was still current.
 
@@ -87,13 +88,29 @@ Closed in half, and each half is named because the other one stands:
   the interface stops claiming otherwise — the copy under the button said the
   case it was for was "a cookie that got out", and now says the opposite in one
   line.
-- **[B1](02-backend-logic.md#b1-the-landing-guard-covers-landrun-and-none-of-the-other-four-doors)** — **one door of six, and it is the one this pass opened.**
-  `deliverRun` takes the `landing` claim and the `activeRuns()` overlap check on
-  the same folder `landRun` guards. The other four are untouched and the reason
-  is in the code: they are keyed on the repository root rather than on that
-  folder, so covering them is the decision this row asks for a survey about
-  rather than four more lines. The row's rank should now be read as being about
-  those four.
+- **[B1](02-backend-logic.md#b1-the-landing-guard-covers-landrun-and-none-of-the-other-four-doors)** — **closed, over two passes and with two claims rather
+  than one, which is the decision this row asked for.** `deliverRun` takes
+  `landing` and the `activeRuns()` overlap check, on the same folder `landRun`
+  guards. The other doors were not keyed on that folder and never should have
+  been: what they share with each other *and with the run loop* is the
+  repository's `$GIT_DIR/worktrees` registry, so `withRepoAdmin`
+  (`src/lib/repoLock.ts`) is a second claim keyed on the repository root, taken
+  by `ensureWorktree`, `resolveCheckout`, `deleteBranch` and `purgeBranch`.
+  `git worktree prune` is what makes it necessary — the one operation here that
+  is repository-wide rather than scoped to a named entry, and so the one git's
+  own locking does not serialise. It **waits** rather than refusing, because the
+  run loop is one of the four and a refusal there would fail a run start because
+  somebody pressed Delete; the sections are short, with `worktree add` and the
+  seeding copy deliberately outside; and `worktreeHolding` moved *inside* both
+  deletion doors, since a slot read outside the claim is a slot another caller
+  may since have taken. `commitPending` takes neither and needs neither: it
+  writes into the run's own checkout and touches no registry.
+
+  **Still no collision has been reproduced**, which was this row's stated reason
+  for being medium confidence and for asking to be surveyed first. That has not
+  changed and is not claimed to have: what shipped closes the app-level
+  interleaving, and it is not evidence that the interleaving was harming
+  anything. The row is closed on scope, not on a demonstrated failure.
 - **[M1](04-missing-features.md#m1-the-app-can-push-nothing-and-open-no-pull-request)** — there is a button. **Open pull request** on the Land card,
   offered once per pull request and replaced by a link to it afterwards, with
   every refusal `planDelivery` can return stated on the card instead of

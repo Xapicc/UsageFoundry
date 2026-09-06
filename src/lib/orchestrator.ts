@@ -19,6 +19,7 @@ import {
   type WorkspaceMount,
 } from "./config";
 import { git, gitSync } from "./git";
+import { withRepoAdmin } from "./repoLock";
 import { dataDirRefusal, mayWriteDataDir, requireDataDir } from "./serverLock";
 import { childCredentials, chownForChild } from "./privsep";
 import { currentSandbox, sandboxRefusal } from "./sandbox";
@@ -2595,12 +2596,22 @@ async function ensureWorktree(run: RunRow): Promise<string> {
 
   // Drop registrations for checkouts that were deleted from disk, so a stale
   // entry does not make `worktree add` refuse a path that is actually free.
-  await git(repoRoot, ["worktree", "prune"]);
-
-  const registered = (await git(repoRoot, ["worktree", "list", "--porcelain"]))
-    .stdout.split("\n")
-    .filter((l) => l.startsWith("worktree "))
-    .map((l) => l.slice("worktree ".length));
+  //
+  // Bracketed with the read that decides against it, because `prune` is the one
+  // operation here that is repository-wide rather than scoped to a named entry:
+  // `land.ts`'s three doors mutate the same registry, and reading the list
+  // outside the section that prunes it would decide from a list that another
+  // caller has since changed. The `worktree add` below is deliberately **not**
+  // in here — it is minutes on a large repository, and serialising it would
+  // make concurrent run starts in one repository sequential for no registry
+  // reason. See `repoLock.ts` for what this claims and what it does not.
+  const registered = await withRepoAdmin(repoRoot, async () => {
+    await git(repoRoot, ["worktree", "prune"]);
+    return (await git(repoRoot, ["worktree", "list", "--porcelain"]))
+      .stdout.split("\n")
+      .filter((l) => l.startsWith("worktree "))
+      .map((l) => l.slice("worktree ".length));
+  });
 
   if (registered.includes(slotPath)) {
     const head = await git(slotPath, ["rev-parse", "--abbrev-ref", "HEAD"]);

@@ -6,8 +6,8 @@ boundary, and what an operator can do when a live install breaks — and which o
 them are worth a survey of their own?
 
 > **Ten more rows moved on 2026-09-06, after everything below was written** —
-> six closed whole (O1, O4, G2, M5, S2, and G1's second instance of three) and
-> four in half (B2/M4, S1, B1, M1). What each half closed, what still stands,
+> seven closed whole (O1, O4, G2, M5, S2, B1, and G1's second instance of
+> three) and three in half (B2/M4, S1, M1). What each half closed, what still stands,
 > and the three rows that were deliberately left alone are in
 > [05-register.md](05-register.md#what-was-implemented-on-2026-09-06-after-this-register-was-written).
 > **The counts and ranks in the rest of this directory are as at `66fdbab` and

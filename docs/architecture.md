@@ -81,6 +81,10 @@ src/lib/
   review.ts        the on-demand reviewer (a third, deliberate child process)
   land.ts          merge preview, landing, branch deletion, branch inventory,
                    and the one exit that leaves the machine
+  repoLock.ts      one repository's worktree registry, one caller at a time —
+                   it waits rather than refusing, because the run loop is one
+                   of the four callers; `landing` in land.ts is the other
+                   claim, over the operator's checkout, and it refuses
   verifyCommand.ts what an operator's Land check may be, and nothing that runs
                    one — split from landGate.ts, which spawns, so the Settings
                    field can warn about a shell line without dragging

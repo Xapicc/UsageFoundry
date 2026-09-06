@@ -3,6 +3,7 @@ import { runVerify } from "./landGate";
 import { openPullRequest, planDelivery } from "./delivery";
 import path from "node:path";
 import { git } from "./git";
+import { withRepoAdmin } from "./repoLock";
 import { db } from "./db";
 import { commitDiff, type DiffFile } from "./diff";
 import { githubTokenFor } from "./config";
@@ -1195,14 +1196,20 @@ export async function resolveCheckout(
   // its place, which belonged to the run that had taken the directory over.
   // Throws unless the store is a real directory inside the mount.
   const slot = auxWorktreePath(repoRoot, `resolve-${short(run.id)}`);
-  if (fs.existsSync(slot)) {
-    // Left behind by an earlier attempt that could not clean up. Removing it is
-    // safe because the path is this run's alone and `resolveConflicts` admits
-    // one resolution per run, so nothing live can be standing in it.
-    await git(repoRoot, ["worktree", "remove", "--force", slot], NO_CLOCK);
-    fs.rmSync(slot, { recursive: true, force: true });
-  }
-  await git(repoRoot, ["worktree", "prune"], NO_CLOCK);
+  // The registry half, bracketed. `prune` is repository-wide, and the run loop
+  // prunes the same registry at the start of every isolated run — see
+  // `repoLock.ts`. The `worktree add` below stays outside it: it is a full
+  // checkout and a big repository legitimately takes minutes.
+  await withRepoAdmin(repoRoot, async () => {
+    if (fs.existsSync(slot)) {
+      // Left behind by an earlier attempt that could not clean up. Removing it
+      // is safe because the path is this run's alone and `resolveConflicts`
+      // admits one resolution per run, so nothing live can be standing in it.
+      await git(repoRoot, ["worktree", "remove", "--force", slot], NO_CLOCK);
+      fs.rmSync(slot, { recursive: true, force: true });
+    }
+    await git(repoRoot, ["worktree", "prune"], NO_CLOCK);
+  });
 
   // A full checkout, and one that is being made in order to merge. The half
   // hour it used to be given was the same guess as the merge's two minutes.
@@ -1964,33 +1971,51 @@ export async function deleteBranch(runId: string): Promise<LandOutcome> {
     };
   }
 
-  const slot = await worktreeHolding(repoRoot, state.branch);
-  if (slot) {
-    const status = await git(slot, ["status", "--porcelain"]);
-    if (!status.ok || status.stdout !== "") {
-      return {
-        ok: false,
-        reason: `Its checkout at ${slot} still holds uncommitted work. Clear it first.`,
-      };
-    }
-    const removed = await git(repoRoot, ["worktree", "remove", slot]);
-    if (!removed.ok) {
-      return { ok: false, reason: `Could not remove its checkout: ${removed.stderr.split("\n")[0]}` };
-    }
-  }
+  // Which checkout holds the branch is read **inside** the claim that removes
+  // it, not before: the run loop prunes and adds against this same registry at
+  // every isolated run start, so a slot read outside would be a slot another
+  // caller has since taken or freed. `repoLock.ts` says what the claim is for.
+  const freed = await withRepoAdmin(
+    repoRoot,
+    async (): Promise<{ ok: true; slot: string | null } | { ok: false; reason: string }> => {
+      const held = await worktreeHolding(repoRoot, state.branch);
+      if (held) {
+        const status = await git(held, ["status", "--porcelain"]);
+        if (!status.ok || status.stdout !== "") {
+          return {
+            ok: false,
+            reason: `Its checkout at ${held} still holds uncommitted work. Clear it first.`,
+          };
+        }
+        const removed = await git(repoRoot, ["worktree", "remove", held]);
+        if (!removed.ok) {
+          return {
+            ok: false,
+            reason: `Could not remove its checkout: ${removed.stderr.split("\n")[0]}`,
+          };
+        }
+      }
 
-  // `-d` wherever git can see the merge for itself: its check is a second
-  // opinion on the one above, and disagreeing with it is a reason to stop
-  // rather than to force. `-D` only for a squash, where git structurally
-  // cannot see it and the tip comparison above is what stands in for it.
-  const del = await git(repoRoot, [
-    "branch",
-    state.merged ? "-d" : "-D",
-    state.branch,
-  ]);
-  if (!del.ok) {
-    return { ok: false, reason: `git refused to delete the branch: ${del.stderr.split("\n")[0]}` };
-  }
+      // `-d` wherever git can see the merge for itself: its check is a second
+      // opinion on the one above, and disagreeing with it is a reason to stop
+      // rather than to force. `-D` only for a squash, where git structurally
+      // cannot see it and the tip comparison above is what stands in for it.
+      const del = await git(repoRoot, [
+        "branch",
+        state.merged ? "-d" : "-D",
+        state.branch,
+      ]);
+      if (!del.ok) {
+        return {
+          ok: false,
+          reason: `git refused to delete the branch: ${del.stderr.split("\n")[0]}`,
+        };
+      }
+      return { ok: true, slot: held };
+    },
+  );
+  if (!freed.ok) return freed;
+  const slot = freed.slot;
 
   emitRunEvent({
     runId,
@@ -2137,35 +2162,57 @@ export async function purgeBranch(
     ? Number((await git(repoRoot, ["rev-list", "--count", `${from}..${branch}`])).stdout) || 0
     : 0;
 
-  const slot = await worktreeHolding(repoRoot, branch);
-  let discarded = 0;
-  if (slot) {
-    const holder = activeRuns().find((r) => r.worktree_path === slot);
-    if (holder) {
-      return {
-        ok: false,
-        reason: `Run ${holder.id.slice(0, 8)} has that checkout. Wait for it to finish.`,
-      };
-    }
+  // The registry read and both writes in one claim, for `deleteBranch`'s
+  // reason: the run loop prunes and adds against this registry at every
+  // isolated run start. The live-holder check is inside it as well — it is the
+  // one refusal here that is about a directory somebody else owns, and asking
+  // it outside would be asking about the registry as it was.
+  const purged = await withRepoAdmin(
+    repoRoot,
+    async (): Promise<
+      { ok: true; slot: string | null; discarded: number } | { ok: false; reason: string }
+    > => {
+      const held = await worktreeHolding(repoRoot, branch);
+      let lost = 0;
+      if (held) {
+        const holder = activeRuns().find((r) => r.worktree_path === held);
+        if (holder) {
+          return {
+            ok: false,
+            reason: `Run ${holder.id.slice(0, 8)} has that checkout. Wait for it to finish.`,
+          };
+        }
 
-    const status = await git(slot, ["status", "--porcelain", "-z"], { trim: false });
-    discarded = status.ok ? parseStatusZ(status.stdout).length : 0;
+        const status = await git(held, ["status", "--porcelain", "-z"], { trim: false });
+        lost = status.ok ? parseStatusZ(status.stdout).length : 0;
 
-    // `--force` is the whole difference from `deleteBranch`, which leaves a
-    // checkout with work in it alone. Here that work is what is being purged.
-    const removed = await git(repoRoot, ["worktree", "remove", "--force", slot]);
-    if (!removed.ok) {
-      return { ok: false, reason: `Could not remove its checkout: ${removed.stderr.split("\n")[0]}` };
-    }
-    // The slot is gone, so whatever admission remembered about it is about a
-    // directory that no longer exists — see `forgetSlotVerdict`.
-    forgetSlotVerdict(slot);
-  }
+        // `--force` is the whole difference from `deleteBranch`, which leaves a
+        // checkout with work in it alone. Here that work is what is being purged.
+        const removed = await git(repoRoot, ["worktree", "remove", "--force", held]);
+        if (!removed.ok) {
+          return {
+            ok: false,
+            reason: `Could not remove its checkout: ${removed.stderr.split("\n")[0]}`,
+          };
+        }
+        // The slot is gone, so whatever admission remembered about it is about
+        // a directory that no longer exists — see `forgetSlotVerdict`.
+        forgetSlotVerdict(held);
+      }
 
-  const del = await git(repoRoot, ["branch", "-D", branch]);
-  if (!del.ok) {
-    return { ok: false, reason: `git refused to delete the branch: ${del.stderr.split("\n")[0]}` };
-  }
+      const del = await git(repoRoot, ["branch", "-D", branch]);
+      if (!del.ok) {
+        return {
+          ok: false,
+          reason: `git refused to delete the branch: ${del.stderr.split("\n")[0]}`,
+        };
+      }
+      return { ok: true, slot: held, discarded: lost };
+    },
+  );
+  if (!purged.ok) return purged;
+  const slot = purged.slot;
+  const discarded = purged.discarded;
 
   emitRunEvent({
     runId,

@@ -117,11 +117,30 @@ check**, which it arrived without: it resolves the *same* folder `landRun`
 guards — the operator's checkout — and then writes that checkout's
 `.git/config` with `push --set-upstream`, so a delivery racing a land is the
 collision the claim exists to stop. That was survivable while nothing could
-press it and stopped being when the Land card grew a button. The other four
-doors into a repository (`resolveConflicts`, `commitPending`, `deleteBranch`,
-`purgeBranch`) still take neither, and deliberately: they are keyed on the
-repository root rather than on that folder, so covering them is a decision
-about what the claim is *for*.
+press it and stopped being when the Land card grew a button.
+
+**The other doors are claimed too, and by a *second* claim, because they are
+not about that folder.** `landing` is the operator's checkout — a directory a
+person also works in — and it **refuses**, which is the honest answer for
+something that takes minutes. What `resolveCheckout`, `deleteBranch` and
+`purgeBranch` share with the run loop is the repository's
+`$GIT_DIR/worktrees` registry, and `withRepoAdmin` (`repoLock.ts`) is that one:
+keyed on the repository root, and it **waits** rather than refusing, because the
+run loop is one of the four callers and a refusal there would fail a run start
+because somebody pressed Delete. `git worktree prune` is the operation that
+makes it necessary — it is the only one here that is repository-wide rather than
+scoped to a named entry, so it is the one git's own per-entry locking does not
+serialise. Two rules for the sections it brackets. **They are short**: the
+registry read and the removals are in, and `worktree add` and the seeding copy
+after it are deliberately out, so concurrent run starts in one repository still
+overlap where the cost is. And **the read that decides is inside the claim that
+acts** — `worktreeHolding` moved in for both deletion doors, since a slot read
+outside is a slot another caller may since have taken or freed. `commitPending`
+takes neither and needs neither: it writes into the run's own checkout with
+`add`/`commit`, touches no registry, and already tests for a live holder.
+**None of this is evidence of a collision** — nothing has ever reproduced one,
+which is why `proposals/GapRegister/` ranks that row on blast radius; it closes
+the app-level interleaving, which is the half this repository owns.
 
 **The Land card offers it once, and states every refusal instead of discovering
 one.** `deliveryState` answers the card from `planDelivery`, so the button and
