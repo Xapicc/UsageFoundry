@@ -226,3 +226,44 @@ Each note carries its own confidence and grade. Where one is thin — the SLO no
 rests on a single vendor book with no replication, and the test-pyramid note's
 cost claim is supported while its ratios were never measured — the row using it
 says so rather than borrowing certainty the note does not have.
+
+## Candidates seen during the `66fdbab` refresh, not yet surveyed
+
+Written down while re-reading the twenty rows against `main` at `66fdbab` on
+2026-09-06, and **left here rather than registered**: this pass was a survey
+refresh, and a row that has not been argued against the counter-case does not
+belong on the register. Nothing below has a blast radius, a cost or a confidence
+attached to it yet. Three later runs pick these axes up.
+
+Each line is what was seen and where. None of it was fixed.
+
+- `src/app/api/mcp/route.ts:1061` — the chat's `list_runs` tool clamps to 100
+  with no `offset` and no filter, so the model cannot reach a run that
+  `/api/runs` has been able to reach since `7405720`. A fourth instance of
+  [G1](03-growth.md#g1-nine-list-routes-read-parameters-the-one-for-runs-does-not-and-the-pattern-repeats-three-times)'s shape, on the surface `docs/agent/chat.md` says may
+  write half a run.
+- `src/app/api/codex-auth/api-key/route.ts:28` — nine route files export a
+  mutating handler that is not wrapped in `auditMutation`, and six of them are
+  the sign-in routes (`api/claude-auth/*`, `api/codex-auth/*`); the others are
+  `api/fleet`, `api/logout` and `api/runs/restarted`. This one's docblock at
+  `:12-18` reasons carefully about what an audit row would *contain* and not
+  about there being none.
+- `src/lib/notify.ts:476` — `webhook_deliveries` gets a row per attempt and is
+  read only by `webhookHealth` into `/api/status:283`; nothing under `src/app`
+  renders it, so an operator whose receiver is answering 404 learns it by
+  polling the status route or not at all.
+- `src/lib/delivery.ts:11-12` — the module docblock opens by stating that a grep
+  over `src/` for `git push`, `gh pr create` and `createPullRequest` "returns
+  prose only", inside the file that made that false.
+- `src/lib/landGate.ts:16` — the docblock cites `settings.ts:871` and
+  `land.ts:1336` for values that are at `src/lib/settings.ts:890` and
+  `src/lib/land.ts:1362`.
+- `.github/workflows/ci.yml:130` — the audit gate's argument opens "As of
+  2026-08-14 `npm audit` reports exactly three high-severity advisories in this
+  tree"; since `102050d` it reports none, so the thirty-seven lines a reader is
+  meant to weigh describe a tree that no longer exists.
+
+The last three are one shape — a comment that states a fact about the repository
+which the repository has since changed — and are the kind of thing
+`docs/agent/` has no invariant about, which is what the register's third
+observation predicts.
