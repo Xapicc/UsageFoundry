@@ -1,5 +1,13 @@
 # Recommendation
 
+> **Row numbers in this file are `175ba57`'s.** The register was re-ranked
+> against `main` at `66fdbab` (see
+> [05-register.md](05-register.md#what-moved-in-the-ranking-and-why)), so every
+> "row *n*" below is the rank the survey gave it and not its rank today. The gap
+> ids beside them — F1, B2, M4 and the rest — are stable and are what to read.
+> This file was not otherwise rewritten by that refresh: it is the argument as it
+> was made, and the status notes inside it say what has since been built.
+
 Twenty rows sort into three groups: **three questions worth a survey of their
 own**, **eight things somebody should just file**, and **four groups refused by
 name**.
@@ -17,10 +25,11 @@ survey could not run it — `DATA_DIR` is unreadable by the agent uid — which
 makes it both the cheapest falsifier here and the largest hole in the register.
 
 **Runner-up:** Survey 2, the landing boundary. It carries the register's #1 row
-and is the only group whose failure lands in the operator's product rather than
-in UsageFoundry. **Since written, two of its three rows were implemented rather
-than surveyed** (`d1d3119`) — see the note on that section; the question it asks
-is still open and one of its constraints is now fixed in place.
+(#2 at `66fdbab`) and is the only group whose failure lands in the operator's
+product rather than in UsageFoundry. **Since written, two of its three rows were
+implemented rather than surveyed** (`d1d3119`) — see the note on that section;
+the question it asks is still open and one of its constraints is now fixed in
+place.
 
 ---
 
@@ -34,16 +43,18 @@ is still open and one of its constraints is now fixed in place.
 [F6](01-frontend.md#f6-settings-is-nine-sections-in-a-3502-line-page-with-no-way-to-find-a-field).
 
 > **This survey was never run. Four of its eight rows were patched instead**, on
-> branch `uf/usagefoundry-721638d11c0b-1-41e5e190`: rows 3, 15 and 18 whole and
-> row 4 in half. Row 3 took **option 1** — parameterise that one route the way
-> `/api/branches` was — and row 4's shipped half is quick open reading it. Rows
-> 15 and 18 are neither of the five: a client-side filter over the events a run
-> page already holds, and a client-side walk over `/settings`' own rendered DOM.
-> Rows 9, 11, 13 and 16 and the corpus half of row 4 are untouched, so **the
-> question this section asks is still open**, and the answer taken was never
-> weighed against the other four. Option 2, the one index and one search route,
-> is what would reach a chat, a branch, an agent, a template or a schedule, and
-> nothing shipped moves toward it. Per-row status is in
+> branch `uf/usagefoundry-721638d11c0b-1-41e5e190`: F1, F4 and F6 whole and F2 in
+> half. F1 took **option 1** — parameterise that one route the way
+> `/api/branches` was — and F2's shipped half is quick open reading it. F4 and F6
+> are neither of the five: a client-side filter over the events a run page
+> already holds, and a client-side walk over `/settings`' own rendered DOM.
+> G1, G2, G4 and B5 and the corpus half of F2 are untouched at `66fdbab`, so
+> **the question this section asks is still open**, and the answer taken was
+> never weighed against the other four. Option 2, the one index and one search
+> route, is what would reach a chat, a branch, an agent, a template or a
+> schedule, and nothing shipped moves toward it — three more pages have arrived
+> since (`/dreaming`, `/runs/[id]/touched`, `/runs/[id]/conflicts`) with nothing
+> indexing what any of them holds. Per-row status is in
 > [01-frontend.md](01-frontend.md) and [05-register.md](05-register.md).
 
 **Why it is a survey and not a patch.** There are at least five genuinely
@@ -93,6 +104,12 @@ option 3 has to argue against it explicitly.
 > `landRun` and the guard still covers one door of five. Read this section as
 > the argument it was, not as a plan; what it asks is still open, and one of its
 > three constraints has been fixed in place without being decided.
+>
+> **And at `66fdbab` it is one door of six.** `deliverRun`
+> (`src/lib/land.ts:2901`) came out of the same PR, resolves the same folder
+> `landRun` guards, takes neither of its two checks, and is the only door here
+> that reaches GitHub. The prediction above was not merely borne out — the work
+> that bore it out is what widened the thing it warned about.
 
 **Why these three are one question.** They are the same boundary seen three
 ways: *what is checked* (nothing), *what is synchronised* (one door of five),
@@ -142,9 +159,11 @@ buys, not to pick the most fashionable one.
 **The design space.** Extend the eight existing `renderToStaticMarkup` tests to
 the invariants that have none; add jsdom plus `@testing-library` for interaction
 without a browser; Playwright in CI, which means starting the container that
-`README.md:967-980` says CI *"never starts"*; visual diffing; or a written
-manual checklist in `docs/verification.md`, which is the cheapest and is what
-the four unverified narrow-viewport entries at `:1033+` are already asking for.
+`README.md:967-980` says CI *"never starts"* (`:983` at `66fdbab`); visual
+diffing; or a written manual checklist in `docs/verification.md`, which is the
+cheapest and is what the unverified narrow-viewport entries at `:1033+` are
+already asking for — four of them when this was written, **ten** at `66fdbab`, on
+a list that is now 91 entries long (`:1865`).
 
 **One narrowing, added after the fact.**
 [`proposals/OperatorInterface/`](../OperatorInterface/README.md) took the
@@ -157,8 +176,15 @@ what only a rendered page can decide.
 
 **Why it ranks second overall and third here.** It is the only row whose cost
 grows with the codebase rather than staying flat, so the case for it strengthens
-every month. It is third in this list because rows 1 and 3–4 cost something
-today and this one costs something later.
+every month. It is third in this list because Survey 2's rows and the
+reachability rows cost something today and this one costs something later.
+
+> **At `66fdbab` it ranks first overall.** The codebase grew 24% in page code
+> and the thing that checks it stayed at zero, which is this section's own
+> argument arriving as a measurement rather than a prediction — 20,447 lines of
+> `src/app/**/page.tsx` against 16,529, and 2,259 tests against 1,578, none of
+> them rendering a page component. Nothing about the *survey* changed; only the
+> case for doing it first.
 
 ---
 
@@ -167,16 +193,21 @@ today and this one costs something later.
 Eight items with an obvious fix and no design space worth a document — seven
 issues to file, and one already owned by #78.
 
+**Three of the eight have since been done and are struck below rather than
+deleted**, so what was recommended and what happened can be read against each
+other. The row numbers are `175ba57`'s ranks; the gap ids are the stable
+reference.
+
 | Row(s) | Issue to file |
 |---|---|
-| 8, 10, 14 — [B3](02-backend-logic.md#b3-a-chat-turn-exists-nowhere-durable-until-the-child-exits), [B4](02-backend-logic.md#b4-the-install-ceiling-is-checked-once-per-chat-turn-before-it-and-a-turn-has-no-cap), [F3](01-frontend.md#f3-a-chat-turn-renders-nothing-until-it-finishes-the-run-path-streams) | **One issue: bring the chat path to the run path's contract.** Persist the assistant's text incrementally and publish after persisting, as `emit()` does; write `chat_turn_spend` as the turn proceeds rather than at `src/lib/chat.ts:1978`; add a mid-turn budget check beside the one at `:1492`. Three symptoms, one mechanism, and the mechanism is already in this repository — this is implementation, not a question |
-| 15 — [F4](01-frontend.md#f4-a-runs-log-cannot-be-searched-or-filtered) | A filter box over the events already in client state in `src/components/RunOutput.tsx`. Smallest item on the register |
-| 18 — [F6](01-frontend.md#f6-settings-is-nine-sections-in-a-3502-line-page-with-no-way-to-find-a-field) | A field search on `src/app/settings/page.tsx`, and separately a `beforeunload` guard — there is none anywhere in `src/app`, and the page already derives `dirty` at `:1576` |
-| 12 — [M5](04-missing-features.md#m5-nothing-can-be-prioritised-the-queue-is-strictly-oldest-first) | **Half done** (`d1d3119`): the priority column exists and `queuePosition` now counts in the same order it promotes. The reorder *action* does not — no page has a control, so the issue that remains is the interface, not the mechanism |
-| 16 — [B5](02-backend-logic.md#b5-the-chat-can-identify-only-the-first-25-repositories-always-the-same-25) | **Comment is not needed — #78 already owns this.** Its suspicion 2 is confirmed against the current tree at `src/lib/workspace.ts:168, :186-188`. This survey files nothing; it records the confirmation here |
-| 13 — [G4](03-growth.md#g4-the-audit-trail-is-20000-rows-deep-evicted-on-every-insert-and-identifies-no-person) | **Measure before changing anything.** How many days does 20,000 rows buy on the live install? Do **not** raise `RETENTION_ROWS` first — `docs/agent/chat.md` explains why the eviction-per-insert cap is load-bearing, and the capability token's 401 is deliberately answered outside `auditMutation` because of it |
-| 17 — [M6](04-missing-features.md#m6-a-credential-cannot-be-rotated-without-a-restart-and-a-restart-ends-live-runs) | Not a rotation issue. The cost of rotation is that a restart terminates live runs, so the issue belongs against restart reconciliation — `lastBootReconcile.closed > 0` and #60's territory |
-| 19 — [M3](04-missing-features.md#m3-nothing-this-app-runs-can-reach-a-human-and-most-of-that-is-on-purpose) | One outbound webhook firing the ten stdout lifecycle events, for the operator who does not already run a monitor. Nothing larger — `README.md:229-255` is a better-specified alerting design than most products ship and should not be replaced |
+| 8, 10, 14 — [B3](02-backend-logic.md#b3-a-chat-turn-exists-nowhere-durable-until-the-child-exits), [B4](02-backend-logic.md#b4-the-install-ceiling-is-checked-once-per-chat-turn-before-it-and-a-turn-has-no-cap), [F3](01-frontend.md#f3-a-chat-turn-renders-nothing-until-it-finishes-the-run-path-streams) | **Open at `66fdbab`. One issue: bring the chat path to the run path's contract.** Persist the assistant's text incrementally and publish after persisting, as `emit()` does; write `chat_turn_spend` as the turn proceeds rather than at `src/lib/chat.ts:2628`; add a mid-turn install-ceiling check beside the one at `:2071`. Three symptoms, one mechanism, and the mechanism is already in this repository — this is implementation, not a question. **Corrected:** B4's "a turn has no cap" is wrong — `--max-budget-usd` at `:2327-2332` caps it — so the mid-turn check to add is the *install's*, not the turn's |
+| 15 — [F4](01-frontend.md#f4-a-runs-log-cannot-be-searched-or-filtered) | ~~A filter box over the events already in client state.~~ **Done** (`e250524`, `e16fd7f`), and on the page rather than in `RunOutput.tsx`: `src/app/runs/[id]/page.tsx:511-512, :650-660, :1814-1826`, filtering on the event's kind through `src/lib/logLine.ts:730` |
+| 18 — [F6](01-frontend.md#f6-settings-is-nine-sections-in-a-3502-line-page-with-no-way-to-find-a-field) | ~~A field search, and separately a `beforeunload` guard.~~ **Both done** (`a8f2984`, `bdbdf08`): `src/app/settings/page.tsx:2357-2392` and `:2031-2032`, the second gated on `dirty` (`:2000-2005`) |
+| 12 — [M5](04-missing-features.md#m5-nothing-can-be-prioritised-the-queue-is-strictly-oldest-first) | **Half done** (`d1d3119`): the priority column exists and `queuePosition` now counts in the same order it promotes (`src/lib/orchestrator.ts:4034`). The reorder *action* does not — no page has a control, so the issue that remains is the interface, not the mechanism |
+| 16 — [B5](02-backend-logic.md#b5-the-chat-can-identify-only-the-first-25-repositories-always-the-same-25) | **Comment is not needed — #78 already owns this.** Its suspicion 2 is confirmed against the tree at `src/lib/workspace.ts:168, :186-188`, and re-confirmed at `66fdbab` at the same lines. This survey files nothing; it records the confirmation here |
+| 13 — [G4](03-growth.md#g4-the-audit-trail-is-20000-rows-deep-evicted-on-every-insert-and-identifies-no-person) | **Open at `66fdbab`. Measure before changing anything.** How many days does 20,000 rows buy on the live install? Do **not** raise `RETENTION_ROWS` first — `docs/agent/chat.md` explains why the eviction-per-insert cap is load-bearing, and the capability token's 401 is deliberately answered outside `auditMutation` because of it |
+| 17 — [M6](04-missing-features.md#m6-a-credential-cannot-be-rotated-without-a-restart-and-a-restart-ends-live-runs) | **Open at `66fdbab`, and now over five more values.** Not a rotation issue: the cost of rotation is that a restart terminates live runs, so the issue belongs against restart reconciliation — `lastBootReconcile.closed > 0` and #60's territory |
+| 19 — [M3](04-missing-features.md#m3-nothing-this-app-runs-can-reach-a-human-and-most-of-that-is-on-purpose) | ~~One outbound webhook firing the ten stdout lifecycle events.~~ **Done, and narrower than this asked for** (`1891ad7`, `0d6af15`): `src/lib/notify.ts` fires on three endings rather than ten events — `needs-review`, `blocked`, `failed` (`:107-111`) — with success opt-in, which is the recommendation's "nothing larger" taken further than it was written. `README.md`'s alerting design was not replaced; it gained a fifteenth condition watching the channel itself |
 
 ---
 
@@ -225,7 +256,10 @@ Two more are in [03-growth.md](03-growth.md#refuted-on-this-axis): the workflow
 caps, whose docblocks are safety arguments rather than capacity ones, and the
 three high-severity npm advisories, which `.github/workflows/ci.yml:126-163`
 accepts on the record advisory by advisory across thirty-seven lines of
-reasoning.
+reasoning. **The advisories were cleared anyway** by `102050d`, with a `postcss`
+override inside `next` rather than the semver-major move that argument declined;
+`npm audit` at `66fdbab` reports `found 0 vulnerabilities`. The refutation was
+right and is now moot, which is the better of the two ways for one to age.
 
 ### The five existing proposals' questions
 
@@ -255,15 +289,20 @@ Three things, stated once.
 **The whole register is argued from code and never from run history.**
 `DATA_DIR` is unreadable by the agent uid and `.data/usagefoundry.db` in the
 checkout is stale (last written 2026-08-19) and was used only for a schema
-probe. Four rows carry an explicitly assumed premise. The falsifier at the top
-of this file is the query that would settle the largest of them.
+probe. Five rows carry an explicitly assumed premise — F3, B3, B5, M1 and M5 —
+and M1 gained a sixth at `66fdbab`, that no real pull request has yet been
+opened by `deliverRun`. The falsifier at the top of this file is the query that
+would settle the largest of them, and it is **still unrun**: the `66fdbab`
+refresh could not reach `DATA_DIR` either.
 
 **Nothing was reproduced.** No container ran, no browser opened, no collision
-was staged. Every "this can fail" is a reading of code, and
-[B1](02-backend-logic.md#b1-the-landing-guard-covers-landrun-and-none-of-the-other-four-doors) is marked medium for that reason rather than being
-promoted on blast radius.
+was staged — and none of that changed at `66fdbab`. Every "this can fail" is a
+reading of code, and [B1](02-backend-logic.md#b1-the-landing-guard-covers-landrun-and-none-of-the-other-four-doors) is marked medium for that reason
+rather than being promoted on blast radius, even now that it has grown a sixth
+door.
 
-**The ranking's top three are close.** Rows 1, 2 and 3 are within one judgement
-call of each other, and the judgement is that a gap costing something weekly
-beats one that is catastrophic and has never fired. An operator who has been
-burned by a bad merge should reorder them without needing new evidence.
+**The ranking's top three are close.** The survey's rows 1, 2 and 3, and
+`66fdbab`'s, are within one judgement call of each other, and the judgement is
+that a gap costing something weekly beats one that is catastrophic and has never
+fired. An operator who has been burned by a bad merge should reorder them
+without needing new evidence.
