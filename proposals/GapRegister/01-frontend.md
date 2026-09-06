@@ -1,12 +1,15 @@
 # Frontend
 
-Six gaps. The first two are one mechanism seen twice, and together they are the
-worst thing on this axis: **the app cannot find a run it has already done.**
+Seven gaps. The first two are one mechanism seen twice, and together they are the
+worst thing on this axis: **the app cannot find a run it has already done.** The
+seventh was added by the fourth pass, 2026-09-06, and is the half
+[F6](#f6-settings-is-nine-sections-in-a-3502-line-page-with-no-way-to-find-a-field)
+left behind rather than a new subject.
 
 `docs/agent/conventions.md` is unusually strict and the components obey it —
 typed variant props with `Record<Union, string>` lookup maps, seven grouping
 affordances each capped, `light-dark()` canvas probing, `jsonMaybeGzipped` on
-eighteen route handlers. None of these six is a convention violation. They are
+eighteen route handlers. None of these seven is a convention violation. They are
 things the conventions never had an opinion about.
 
 > **Four of the six were implemented, on branch

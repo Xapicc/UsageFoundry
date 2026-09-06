@@ -1,14 +1,19 @@
 # Backend logic
 
-Five gaps. This is the best-defended part of the app — `docs/agent/` documents
+Six gaps. This is the best-defended part of the app — `docs/agent/` documents
 the guard ordering, the folder claim, the display-versus-guard split and the
 `emit()` ordering, and the code holds them. Two of the five candidates that
 looked strongest going in turned out to be documented decisions and are in
 [00-method.md](00-method.md#refuted-or-already-decided) instead.
 
+The sixth was added by the fourth pass, 2026-09-06, and it is the one row here
+that needed no documented invariant to argue against: the argument is a docblock
+twelve lines below the function it is about.
+
 What is left is not carelessness. It is **scope**: a guard that covers one door
-of five, a setting with one reader that is not the path it sounds like, and a
-budget check whose granularity is a whole chat turn.
+of five, a setting with one reader that is not the path it sounds like, a budget
+check whose granularity is a whole chat turn, and a defensive rule written for
+one of two providers.
 
 > **Re-checked against `main` at `66fdbab`.** Every line reference in this file
 > is that tree; where a line moved without its code changing, the number was
