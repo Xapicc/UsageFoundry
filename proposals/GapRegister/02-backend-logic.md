@@ -374,5 +374,5 @@ All four re-checked at `66fdbab`; all four still hold, at the lines given.
 - OTLP telemetry cannot move spend onto a run: the ingest token is per-run
   (`src/lib/otlp.ts:81-93`), the route takes the run id from the token rather
   than from the payload (`:38-46`, `:112`), and a payload-supplied `uf.run_id`
-  is only ever read as the child's own resource attribute (`:260`). That was
+  is only ever read as the child's own resource attribute (`:261`). That was
   #89's item C and it is closed.

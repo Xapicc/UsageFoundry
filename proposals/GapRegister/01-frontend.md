@@ -444,7 +444,7 @@ scope here is broader than any one issue.
 > surveyed. Which is the honest reading of that fix: it made the page findable,
 > not smaller.
 >
-> **At `66fdbab` it is 4,298 lines and ten `SECTIONS`, not nine** (`:105-116`) —
+> **At `66fdbab` it is 4,298 lines and ten `SECTIONS`, not nine** (`:105-117`) —
 > "Dreaming" was added between the two, at `:3923`. The search still reaches
 > every field in it, because `findFields` loops over `SECTIONS` and reads the
 > rendered page rather than a declared index somebody has to remember to extend
