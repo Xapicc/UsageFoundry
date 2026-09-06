@@ -488,7 +488,15 @@ $ grep -aoE 'CREATE TABLE IF NOT EXISTS [a-z_]+' src/lib/db.ts | sort -u | wc -l
 Twelve tables are missing from a list that says of itself that it is complete.
 **#161 — *"architecture.md's db.ts map says 22 tables; migrate() creates 24"* —
 is closed**, and the line still says 22 while the gap has grown from two to
-twelve. Materialising the schema confirms the number rather than trusting the
+twelve.
+
+The precise shape of the decay is worth stating, because it is what makes this a
+mechanism failure and not carelessness. The doc's last clause — *"a plain
+`grep -c` says 24 and counts two comments"* — is **still exactly right**:
+`grep -c 'CREATE TABLE IF NOT EXISTS' src/lib/db.ts` returns 36 today against the
+34 distinct tables, still two comments over. The *reasoning* in that entry has
+held perfectly through twelve schema changes; only the number it was measured at
+has not, because nothing re-measures it. Materialising the schema confirms the number rather than trusting the
 grep: `migrate()` against a fresh `DATA_DIR` produces 34 non-`sqlite_` tables.
 
 `CLAUDE.md:61` says *"`grep -rn "globalThis as unknown" src/` finds the
