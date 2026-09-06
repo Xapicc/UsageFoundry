@@ -5409,6 +5409,18 @@ export function sandboxArgsFor(scope: SandboxScope): string[] {
  *   files as the agent crashing. Withheld, a child keeps the default it has
  *   always had.
  *
+ *   `OPENAI_API_KEY`, `CODEX_API_KEY` — a second provider's credential, which
+ *   no child this app spawns has any use for: all five of them are `CLAUDE_BIN`.
+ *   Withheld because a denylist fails open, and this one fails open on a key an
+ *   operator may well have set for a sibling tool on the same server — reaching
+ *   a session that has `Bash`, where `env` is read-only shell that `acceptEdits`
+ *   auto-approves. Found by `proposals/ProviderFallback/13-recommendation.md`,
+ *   which recommends *against* the provider switch that would have made these
+ *   variables this app's business; the strip stands either way, and closing a
+ *   credential shape before one exists is the cheapest this will ever be.
+ *   `ANTHROPIC_API_KEY` is deliberately **not** here — it is what a work cycle
+ *   bills against, and `claudeAuth.ts`'s copy writes out why.
+ *
  * Everything else passes through. The CLI needs PATH, HOME, CLAUDE_CONFIG_DIR,
  * proxy and CA settings, and locale to function at all, so an allowlist would
  * fail in ways that are tedious to diagnose from inside a container.
@@ -5471,13 +5483,23 @@ export function contextShapingEnv(
   return set;
 }
 
-function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+/**
+ * The strip, applied. Every exclusion's reasoning is the block above
+ * `CONTEXT_SHAPING_ENV`, which the three copies of this list cite in turn.
+ *
+ * Exported for the test that pins the two provider keys' absence, on
+ * `telemetryEnv`'s grounds: there is nothing else in this app that would notice
+ * if either came back.
+ */
+export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, FORCE_COLOR: "0" };
   for (const key of Object.keys(env)) {
     if (
       key.startsWith("UF_") ||
       key.startsWith("OTEL_") ||
       key === "ANTHROPIC_ADMIN_KEY" ||
+      key === "OPENAI_API_KEY" ||
+      key === "CODEX_API_KEY" ||
       key === "CLAUDE_CODE_ENABLE_TELEMETRY" ||
       key === "DATA_DIR" ||
       key === "NODE_OPTIONS"

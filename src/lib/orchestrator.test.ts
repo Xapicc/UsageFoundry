@@ -74,6 +74,7 @@ const {
   buildArgs,
   buildCodexArgs,
   codexPromptPreamble,
+  childEnv,
   clampRunOffset,
   compactionNotice,
   conflictKey,
@@ -3809,6 +3810,60 @@ describe("sandboxSettings — what one child may write", () => {
       // without bubblewrap would have every `claude` invocation exit non-zero
       // with no off switch an operator can reach.
       assert.equal("enabled" in overlay.sandbox, false);
+    }
+  });
+});
+
+describe("childEnv — a credential class the app has no use for", () => {
+  // A denylist fails open, and these two are the shape it fails open on today:
+  // an operator running a second provider's CLI on the same server sets one,
+  // and every `CLAUDE_BIN` child this app spawns inherits it — inside a session
+  // that has `Bash`, where `env` is read-only shell `acceptEdits` approves
+  // without asking. Nothing in the app reads them, so nothing in the app would
+  // report it if they came back; that is what this pins.
+  // `proposals/ProviderFallback/13-recommendation.md` has the finding.
+  const planted = {
+    OPENAI_API_KEY: "sk-openai-that-nothing-here-bills-against",
+    CODEX_API_KEY: "codex-key",
+  };
+  const previous = Object.fromEntries(
+    Object.keys(planted).map((k) => [k, process.env[k]]),
+  );
+  after(() => {
+    for (const [k, v] of Object.entries(previous)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  it("withholds a second provider's key from the agent's own environment", () => {
+    // Set on this process rather than passed in: reading `process.env` is the
+    // whole of what this function does, so a version handed a copy to scrub
+    // would pass a test that supplied one. `gitEnv`'s test says the same.
+    for (const [k, v] of Object.entries(planted)) process.env[k] = v;
+    const env = childEnv();
+    for (const [k, v] of Object.entries(planted)) {
+      assert.equal(env[k], undefined, `${k} reached a work cycle`);
+      for (const [key, value] of Object.entries(env)) {
+        assert.equal(
+          value?.includes(v),
+          false,
+          `${key} carries ${k}'s value under another name`,
+        );
+      }
+    }
+  });
+
+  it("still carries ANTHROPIC_API_KEY, which is what a cycle bills against", () => {
+    // The omission is deliberate and `claudeAuth.ts` answers for it on the auth
+    // panel; a strip that took this one would sign every run out.
+    const before = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "sk-ant-x";
+    try {
+      assert.equal(childEnv().ANTHROPIC_API_KEY, "sk-ant-x");
+    } finally {
+      if (before === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = before;
     }
   });
 });
