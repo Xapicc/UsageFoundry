@@ -66,6 +66,10 @@ describe("gitEnv", () => {
       UF_GITHUB_TOKENS: "acme/web=ghp_y",
       ANTHROPIC_ADMIN_KEY: "sk-admin",
       ANTHROPIC_API_KEY: "sk-x",
+      // Not covered by the `ANTHROPIC_` prefix above, and the drivers a
+      // repository can make this child run are the reason it matters here.
+      OPENAI_API_KEY: "sk-openai",
+      CODEX_API_KEY: "codex-key",
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector",
       OTEL_RESOURCE_ATTRIBUTES: "a=b",
       CLAUDE_CODE_ENABLE_TELEMETRY: "1",

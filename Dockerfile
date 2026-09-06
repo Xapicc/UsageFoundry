@@ -497,6 +497,53 @@ RUN set -eux; \
     chown -R node:node "${PLAYWRIGHT_BROWSERS_PATH}/.links"; \
     playwright --version
 
+# The Codex CLI, on PATH for an agent that is asked to reach for a second
+# model. Nothing in this app spawns it — `CLAUDE_BIN` is still the only child
+# kind there is, and `proposals/ProviderFallback/13-recommendation.md` argues
+# at length against making Codex a *provider*, which would be a second
+# `buildArgs`, a second stream parser, a second refusal classifier and a
+# second cost story, none of them optional and every one failing silently.
+# This line changes none of that: it puts a binary on PATH and stops.
+#
+# In the image rather than installed by hand, on the argument the gh, Go and
+# Playwright blocks above all make: an `npm install -g` typed into a shell
+# survives `docker restart` and is discarded by the `docker compose up
+# --build` this project is deployed with, so what the next upgrade hands an
+# agent is `codex: command not found` inside a tool call — which no part of
+# the run loop reads, and which ends the cycle looking like the agent decided
+# not to run it.
+#
+# **It arrives signed out, and that is deliberate rather than an oversight to
+# close.** `childEnv` and its four byte-identical siblings strip
+# `OPENAI_API_KEY` and `CODEX_API_KEY` from every child this app spawns, on
+# the reasoning in `docs/agent/security.md` — twenty-five unattended agents
+# with `Bash`, where `env` is a read-only command `acceptEdits` approves
+# without asking. `codex login` writes under `$HOME/.codex`, which is an image
+# layer and not one of the five named volumes, so it also lasts only until the
+# next rebuild. Making either persist is a mount plus a decision about who
+# holds the key, not a line in this file.
+#
+# ~335 MB unpacked on amd64 and ~292 MB on arm64, from a 123 MB download: a
+# 259 MB `codex`, a 69 MB `codex-code-mode-host`, and its own `rg`, `bwrap`
+# and `zsh` vendored under the package's own `vendor/`, none of which reach
+# PATH — the image's ripgrep and bubblewrap are untouched.
+#
+# Last of the install blocks so that moving this pin does not invalidate the
+# Playwright layer above it, which is a 640 MB re-download. Pinned on
+# Playwright's weaker argument rather than the CLI's: nothing here parses
+# Codex's output, so what the pin buys is only that a rebuild cannot silently
+# change the tool an agent's transcript was written against.
+#
+# The platform binary arrives through `optionalDependencies` gated on
+# `os`/`cpu`, so an `--omit=optional` added here would install a wrapper with
+# nothing behind it — the same trap the `deps` stage records at the top of
+# this file. `codex --version` is what catches that at build time instead of
+# inside a tool call.
+ARG CODEX_CLI_VERSION=0.153.4
+RUN npm install -g "@openai/codex@${CODEX_CLI_VERSION}" \
+ && npm cache clean --force \
+ && codex --version
+
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static

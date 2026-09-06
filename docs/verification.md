@@ -5485,6 +5485,24 @@ through before trusting this unattended:
   everything below them. A human should open `/` at 1920 and at about 390 with a
   run in flight.
 
+- **The Codex CLI installs and runs on this image's base, measured on arm64
+  only.** 2026-09-05, `docker run --rm node:22-bookworm-slim`: `npm install -g
+  @openai/codex@0.153.4` then `codex --version` prints `codex-cli 0.153.4`, and
+  `/usr/local/lib/node_modules/@openai` is 279 MiB on disk. The platform binary
+  arrives through `optionalDependencies` gated on `os`/`cpu` — the wrapper alone
+  has nothing to run — which is why the Dockerfile block ends in a version check
+  rather than in the install.
+
+  **Not yet verified by hand:** the image itself has not been rebuilt. Nothing
+  here is `docker compose up --build`, the amd64 figures (~335 MB unpacked, a
+  123 MB download) are the registry's own metadata rather than a build, and no
+  agent has run `codex` from a work cycle. That it arrives signed out is
+  reasoned from `childEnv`'s strip rather than observed, and `codex` under
+  `UF_SANDBOX=1` has not been tried at all — bubblewrap binds everything outside
+  the working directory read-only, and whether a tool that wants `$HOME/.codex`
+  survives that is exactly the shape of question `playwright install` answered
+  badly.
+
 There is no linter run in this repo, and `npm test` covers a deliberately short
 list: the folder-collision predicate, which queued runs may start, the budget
 policy, how a provider refusal is classified and backed off from, which prompt a
