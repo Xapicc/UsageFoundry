@@ -8,7 +8,7 @@ running it, and it is filed here on
 [M4](#m4-nothing-verifies-a-branch-before-it-is-merged)'s grounds: something is
 trusted before it is used and nothing establishes that it is true.
 
-Two of the six are argued down inside their own sections — [M3](#m3-nothing-this-app-runs-can-reach-a-human-and-most-of-that-is-on-purpose) because the
+Two of the original six are argued down inside their own sections — [M3](#m3-nothing-this-app-runs-can-reach-a-human-and-most-of-that-is-on-purpose) because the
 product has a documented position that covers most of it, and [M6](#m6-a-credential-cannot-be-rotated-without-a-restart-and-a-restart-ends-live-runs) because
 the alternative is worse than it first looks. They stay in the file because the
 honest form of "we do not need this" is the argument, not the omission.
