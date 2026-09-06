@@ -152,4 +152,10 @@ already the target) rather than something a press would find out. What it does
 Offered once per pull request, and replaced afterwards by a link to it, read off
 the run's own `deliver` event: a second press would push again — updating the
 pull request — and then be refused by GitHub's "already exists", so what it
-reported and what it did would disagree.
+reported and what it did would disagree. **The whole path has been driven
+against a real repository once**, which is what makes the paragraph above a
+record rather than an intention: the refusal before a remote existed, the offer
+once one did, one press pushing the branch and opening the pull request, the
+button withdrawing in favour of the link, and the honest 400 on a second press.
+`docs/verification.md` has the account and the three things it does not
+establish.

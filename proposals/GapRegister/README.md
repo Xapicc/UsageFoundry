@@ -6,8 +6,8 @@ boundary, and what an operator can do when a live install breaks — and which o
 them are worth a survey of their own?
 
 > **Thirteen more rows moved on 2026-09-06, after everything below was
-> written** — ten closed whole (O1, O4, G2, M5, S2, B1, B3, F3, B4, and G1's
-> second instance of three) and three in half (B2/M4, S1, M1). **F5, rank 1, was surveyed rather than
+> written** — eleven closed whole (O1, O4, G2, M5, S2, B1, B3, F3, B4, M1, and
+> G1's second instance of three) and two in half (B2/M4, S1). **F5, rank 1, was surveyed rather than
 > patched**, which is what 06-recommendation.md asked for — the survey is
 > [`../UIChecks/`](../UIChecks/README.md), and no code changed for it. What each half closed, what still stands,
 > and the three rows that were deliberately left alone are in

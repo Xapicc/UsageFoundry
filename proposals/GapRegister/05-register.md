@@ -34,8 +34,8 @@ is *safer* than the sentence describing it.
 
 ## What was implemented on 2026-09-06, after this register was written
 
-**Thirteen rows moved: ten closed whole, three in half.** B1, B3, F3 and B4
-closed on a second pass; see their entries. Done on `main` in one pass,
+**Thirteen rows moved: eleven closed whole, two in half.** B1, B3, F3, B4 and
+M1 closed on a later pass; see their entries. Done on `main` in one pass,
 against the tree this file describes — `git diff --stat 66fdbab..` over `src/`
 was empty when it started, so every line number above was still current.
 
@@ -111,13 +111,20 @@ Closed in half, and each half is named because the other one stands:
   changed and is not claimed to have: what shipped closes the app-level
   interleaving, and it is not evidence that the interleaving was harming
   anything. The row is closed on scope, not on a demonstrated failure.
-- **[M1](04-missing-features.md#m1-the-app-can-push-nothing-and-open-no-pull-request)** — there is a button. **Open pull request** on the Land card,
-  offered once per pull request and replaced by a link to it afterwards, with
-  every refusal `planDelivery` can return stated on the card instead of
-  discovered by pressing. **Still no real pull request has been opened by it**,
-  which was this row's assumed premise before and is a measured absence now:
-  nothing in the container had a GitHub remote, a credential and an isolated
-  branch at once.
+- **[M1](04-missing-features.md#m1-the-app-can-push-nothing-and-open-no-pull-request)** — **closed, and the half that closed it last is the one
+  that had never been done.** There is a button: **Open pull request** on the
+  Land card, offered once per pull request and replaced by a link to it
+  afterwards, with every refusal `planDelivery` can return stated on the card
+  instead of discovered by pressing. And the row's standing assumption — that
+  no real pull request had ever been opened by this path — is settled by
+  opening one: `Xapicc/uf-deliver-smoke#1`, from one press, against a scratch
+  repository whose branch the app pushed itself. The refusal before a remote
+  existed, the offer once one did, the withdrawal of the button afterwards and
+  the honest 400 on a second press were all exercised in the same pass;
+  `docs/verification.md` carries the account, including the three things it
+  still does not establish (the run row was seeded rather than produced by the
+  loop, `landVerifyCommand` was empty so the gate in front of delivery did not
+  run, and the id in the body is a fixture artefact).
 
 **[B3](02-backend-logic.md#b3-a-chat-turn-exists-nowhere-durable-until-the-child-exits), [F3](01-frontend.md#f3-a-chat-turn-renders-nothing-until-it-finishes-the-run-path-streams) and [B4](02-backend-logic.md#b4-the-install-ceiling-is-checked-once-per-chat-turn-before-it-and-a-turn-has-no-cap) closed together, which is
 what [06-recommendation.md](06-recommendation.md#file-an-issue-do-not-survey-it) said they were: one mechanism, three

@@ -1933,6 +1933,46 @@ Built and exercised against real transcripts:
     ceiling ran to completion, which is the control: the stop is the estimate
     crossing the limit and not the check firing on every turn.
 
+- **Delivery, end to end against a real GitHub repository, on 2026-09-06 — the
+  first pull request this app has ever opened.** `M1`'s standing assumption was
+  that none had been; that is now settled by having done it rather than by
+  reading the code.
+
+  Setup: a throwaway `Xapicc/uf-deliver-smoke` (private, deleted afterwards
+  where permissions allowed), a scratch git repository inside a workspace mount
+  with `main` pushed **by hand** and the branch deliberately *not*, a seeded
+  `completed` run with `isolation = 'worktree'` on that branch, and the dev
+  server given `UF_GITHUB_TOKEN`. The branch being unpushed is the point: what
+  is verified is that **the app** pushed it.
+
+  - **The card refuses before it offers.** With a remote that was not GitHub and
+    no credential, `delivery` came back `possible: false` with
+    `"\`origin\` is not a GitHub remote…"` — `planDelivery`'s own sentence, so
+    the button and the endpoint cannot disagree about why.
+  - **With both present it offers**, reporting `Xapicc/uf-deliver-smoke`,
+    `uf/deliver-smoke` → `main`.
+  - **One press pushed the branch and opened the pull request.**
+    `{"ok":true,"url":".../pull/1","number":1}`; GitHub reports **#1 OPEN,
+    `uf/deliver-smoke` → `main`**, titled from the prompt's first line, body
+    naming the run and quoting the task. `ls-remote` showed the branch on the
+    remote afterwards and not before. The credential reached it — this is the
+    one git call in the app that carries one, and the merged version of that
+    code did not, because `gitEnv()` strips the whole `UF_` namespace.
+  - **The card then shows the link and withdraws the button**, `delivered`
+    carrying the number and the url off the run's own `deliver` event.
+  - **A second press — reachable only by API once the button is gone — is
+    refused honestly**: 400, *"A pull request for this branch is already open.
+    GitHub will not open a second one, which is the state you were asking
+    for."* Not reported as a success, which is `openPullRequest`'s stated rule
+    about a 422.
+
+  **What this does not establish.** The run row was seeded rather than produced
+  by the run loop, so nothing here exercises an agent actually committing to
+  that branch. `landVerifyCommand` was empty, so the verify gate in front of
+  delivery was not run. And the eight-character run id in the pull request body
+  read `deliver-` because the seeded id is not a UUID — an artefact of the
+  fixture, not of the code.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the
