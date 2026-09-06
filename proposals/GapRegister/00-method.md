@@ -402,3 +402,270 @@ authentication and secrets
 which this pass was told not to refile, and none of the five rows here needed an
 external claim: every one of them is a line in this repository or a sentence in
 its own documentation.
+
+---
+
+## The operations pass, 2026-09-06
+
+Adding a sixth axis: operations and recovery. **One question** — when something
+goes wrong on a live install, what can an operator find out, what can they get
+back, and what is silently unrecoverable? Eight rows,
+[O1](08-operations.md#o1--the-one-restart-condition-the-runbook-alerts-on-never-clears-and-the-count-that-does-is-on-a-route-the-status-token-cannot-reach)
+to [O8](08-operations.md#o8--lockverdict-asks-staleness-second-docsagentconcurrency-and-ownershipmd-says-it-asks-it-last),
+in [08-operations.md](08-operations.md), ranked into
+[05-register.md](05-register.md) by that file's own method rather than appended.
+
+**This pass changed no code.** `src/` is untouched, no GitHub issue was opened,
+closed or commented on, and nothing outside `proposals/GapRegister/` was edited
+except the [proposals index](../README.md) line. Same worktree, same tree
+(`origin/main` at `66fdbab`).
+
+### The verification loop, and what it does and does not say
+
+Exit codes read from `$?` on the command itself, never through a pipe — the first
+attempt piped both scripts to `tail` and read `tail`'s exit code, which is not
+the same claim, so both were re-run.
+
+| Command | Exit | Output |
+|---|---|---|
+| `NODE_ENV=development npm ci --include=dev` | 0 | `found 0 vulnerabilities` |
+| `npm run typecheck` | 0 | nothing beyond the banner |
+| `npm test` | 0 | `# tests 2259`, `# suites 351`, `# pass 2259`, `# fail 0`, `# cancelled 0`, `# skipped 0`, `# todo 0`, `# duration_ms 16384.263133` |
+
+**The same 2,259 as the refresh and the security pass**, over `src/` unchanged
+since both, which is the expected result rather than a reassuring one.
+`env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` and `npm audit` were
+**not** re-run, on the security pass's reasoning: neither can say anything new
+about a tree byte-identical under `src/` to the one the refresh ran them against.
+That is a deliberate omission and is named here rather than left to be inferred.
+
+**Not one of the eight rows is something this loop could have failed on**, and
+one of them is about that directly: `src/lib/deployment.test.ts` carries sixty-odd
+assertions pinning the image against the compose file, all green, and
+[O2](08-operations.md#o2--the-containers-stop-grace-and-the-servers-shutdown-grace-are-one-edit-apart-and-the-file-that-pins-every-other-such-pair-does-not-pin-this-one)
+is the pin it does not carry.
+
+### Commands whose output is a row's evidence
+
+**Six of the rows rest on a command that prints nothing**, which is the shape of
+an absence claim and is why each is quoted with its exit code rather than
+described.
+
+```
+$ grep -ran "restartClosed\|restart_closed" src/lib/status.ts src/app/api/status/route.ts
+exit 1
+$ grep -an "grace\|stop_\|SIGTERM\|shutdown" src/lib/deployment.test.ts
+exit 1
+$ grep -ran "schemaVerdict\|SCHEMA_VERSION\|user_version" src/ --include=*.ts --include=*.tsx \
+    | grep -v "^src/lib/db.ts" | grep -v "\.test\."
+exit 1
+$ grep -ran "UF_BACKUP_DIR\|/backups" src/ --include=*.ts --include=*.tsx | grep -v "\.test\."
+exit 1
+$ grep -ran "export async function DELETE" src/app/api/chat/
+exit 1
+$ grep -rn "logging:" docker-compose*.yml
+exit 1
+```
+
+In order: the outstanding restart count is nowhere on the status route
+([O1](08-operations.md#o1--the-one-restart-condition-the-runbook-alerts-on-never-clears-and-the-count-that-does-is-on-a-route-the-status-token-cannot-reach));
+the shutdown-grace coupling is pinned by nothing
+([O2](08-operations.md#o2--the-containers-stop-grace-and-the-servers-shutdown-grace-are-one-edit-apart-and-the-file-that-pins-every-other-such-pair-does-not-pin-this-one));
+`PRAGMA user_version` and the schema verdict reach no route, page or other module
+([O3](08-operations.md#o3--everything-migrate-finds-wrong-with-the-database-it-just-opened-is-a-line-on-stdout-and-nothing-else));
+the server does not know the backup directory exists
+([O4](08-operations.md#o4--nothing-in-the-app-knows-the-backup-directory-exists-so-no-surface-can-say-when-the-install-was-last-backed-up));
+no route can delete a chat
+([O5](08-operations.md#o5--a-chat-thread-and-every-message-in-it-is-permanent-no-horizon-no-delete-and-the-cascade-has-nothing-to-cascade-from));
+and compose asks for no bound on the container log
+([O7](08-operations.md#o7--the-containers-own-log-is-a-fourth-unbounded-store-and-compose-asks-for-no-limit-on-it)).
+
+The two retention rows rest on one command that prints something:
+
+```
+$ comm -23 <(grep -aoP 'CREATE TABLE IF NOT EXISTS \K\w+' src/lib/db.ts | sort -u) \
+           <(grep -rhaoP 'DELETE FROM \K\w+' src/ --include=*.ts --include=*.tsx | sort -u)
+chat_messages
+chat_proposals
+chat_questions
+chat_turn_spend
+merge_queue
+plan_observations
+resume_probes
+run_deps
+run_reviews
+workflow_instance_runs
+workflow_instances
+```
+
+Eleven tables have no `DELETE FROM` anywhere in `src/`, tests included. Three of
+them — `run_reviews` and the two `workflow_instance_*` — are named as permanent
+by design at `docs/agent/retention.md:8`. **The other eight are on neither list**:
+not swept, and not argued for. `retention.ts` itself deletes from six tables
+(`:174, :182, :199, :212, :232, :239`) and none of the eight is among them.
+
+### What was read, and how much of it
+
+**Nothing large was read whole on this pass, and that is a fact about the tooling
+rather than a choice.** Long reads come back with their middles elided here, so
+what follows names the regions that were actually in front of the survey. It is
+also why every row cites a line number: a row resting on "I read the file" would
+be resting on something that did not happen.
+
+- **`docs/agent/concurrency-and-ownership.md`** — the opening and closing
+  paragraphs, including `:16` and `:18`, which is where
+  [O8](08-operations.md#o8--lockverdict-asks-staleness-second-docsagentconcurrency-and-ownershipmd-says-it-asks-it-last)'s
+  contradiction and
+  [O2](08-operations.md#o2--the-containers-stop-grace-and-the-servers-shutdown-grace-are-one-edit-apart-and-the-file-that-pins-every-other-such-pair-does-not-pin-this-one)'s
+  fails-open clause are. **`docs/agent/retention.md`** — the opening two
+  paragraphs (`:8`, `:10`) and the closing three, which carry the permanent set
+  and the cache reasoning. **`docs/agent/environment.md`** — the head, including
+  `:13` on the backup directory, and the tail on the Discord relay.
+- **`docs/agent/run-lifecycle.md` was not opened**, though `CLAUDE.md` routes
+  restart and boot through it. What this pass needed about a restart is in
+  `concurrency-and-ownership.md`'s reconcile paragraph and in the code, and no row
+  here cites it. Named as an omission rather than left to be noticed.
+- **`src/lib/serverLock.ts:1-390` of 528** — the module docblock, `parseLock`,
+  `lockVerdict`, `stillBeating`, `heartbeatVerdict`, the ownership type,
+  `writeLock`, `ownerAlive`, `heldByAnotherProcess` and `claimDataDir`, plus the
+  stand-down and release at the tail. Both halves of O8 are inside that.
+- **`src/instrumentation.ts`**, head and tail: the auth and config refusals at the
+  top and the signal handlers at `:206-249`.
+- **Both backup scripts**, header and tail each: `scripts/backup-db.mjs:1-50` and
+  `:196-245`, `scripts/restore-db.mjs:1-140` and `:258-307`. The headers are where
+  the reasoning is and the tails are where the file is moved into place.
+  `src/lib/backupRestore.test.ts` by grep, for what it pins.
+- **`src/lib/db.ts` in five regions** — `:40-140` (the schema version, the verdict,
+  `shouldMigrate`, `open`, the head of `migrate`), `:604-626` (`chat_messages`),
+  `:1860-1926` (the migration tail, `ANALYZE`, the `user_version` stamp),
+  `:1940-2130` (`recoverStrandedProposals`, `reportOrphanTables`, `addColumn`), and
+  targeted greps for every `CREATE TABLE`. It is a 32k file and reading it whole
+  would have cost more than the rows are worth.
+- **`src/lib/retention.ts:1-200`** — the module docblock and `sweepRunEvents` —
+  plus a grep for every `DELETE FROM` in it. **`src/lib/ops.ts`** head and tail:
+  the `OpsState` docblock, `OPS_EVENT_RETENTION`, `recentOpsEvents` and
+  `measureEventLoopLagMs`. **`src/lib/configCheck.ts`** head and tail: the
+  refuse-versus-warn argument and `configProblems`.
+- **Read complete, because they are short enough to come back complete:**
+  `src/app/api/health/route.ts` (71 lines) and
+  `src/app/api/runs/restarted/route.ts`.
+- **`src/lib/status.ts`** by grep and by `:20-123` and `:280-323`;
+  **`src/app/runs/page.tsx:845-900`**, which is the whole of the restart banner and
+  both of its comments; **`src/middleware.ts`** by grep for its exemption list.
+- **`README.md:200-279`** — health, status, the fifteen alertable conditions and
+  the logging section — and `:405-432` for the `VACUUM` position.
+  **`docs/backup-and-restore.md`** head and tail: the two commands and the
+  reasoning under them, and what is deliberately not in a backup.
+  **`docs/verification.md` by grep only.** It is a 109k file; the two passages
+  quoted, `:409-437` and `:4100-4113`, were pulled by line range after a grep
+  found them.
+- **`docker-compose.yml`, `Dockerfile` and `src/lib/deployment.test.ts` by grep and
+  by line range.** None of the three was read whole.
+
+### What could not be reached, and it is most of the axis
+
+**No container was started.** Docker is unavailable here, which on this axis is
+not a caveat on a few rows but the binding constraint on all of them. Every
+statement about a running container is a reading of the file that configures it
+and says so in the sentence that makes it:
+
+- The image `HEALTHCHECK`'s four timings were read out of `Dockerfile:724-725`
+  and the assertion pinning them out of `deployment.test.ts:446`. **No probe was
+  run and no boot was timed**, so whether `--start-period=180s` covers a real cold
+  start on a large database is unknown and is dropped.
+- `stop_grace_period: 30s` was read out of `docker-compose.yml:599` and
+  `SHUTDOWN_GRACE_MS` out of `orchestrator.ts:10712`. **No SIGTERM was sent and
+  nothing was watched being killed**, so O2 argues an unpinned coupling, which is
+  checkable, and never a demonstrated truncation.
+- The container log's growth rests on compose setting no `logging:` key, which is
+  certain, plus Docker's documented default, which is **not** checked here. A host
+  `daemon.json` could bound it, and
+  [O7](08-operations.md#o7--the-containers-own-log-is-a-fourth-unbounded-store-and-compose-asks-for-no-limit-on-it)
+  is discounted to medium for exactly that.
+- **No restart was performed**, so
+  [O1](08-operations.md#o1--the-one-restart-condition-the-runbook-alerts-on-never-clears-and-the-count-that-does-is-on-a-route-the-status-token-cannot-reach)'s
+  latch is read out of `status.ts`, `orchestrator.ts` and `middleware.ts` rather
+  than watched failing to clear.
+- **No lock was raced and no process killed**, so O8 is a reading of a pure
+  function against a sentence, which is the whole of what it claims to be.
+
+**Backup and restore: which half was checked.** The half this pass could check is
+**the code and the record** — both scripts in the regions above, the unit tests
+read for what they pin, and `docs/verification.md:409-437`'s account of the
+mechanism driven end to end against a live writer (a `cp` at 25 runs against
+`backup-db.mjs` at 386, both passing `integrity_check`). The half it could **not**
+check is everything about actually running them: no backup was taken, no restore
+rehearsed, and `/backups` was never listed, because that path is outside what
+this uid may read. The packaging half — that the runtime image carries `scripts/`,
+resolves `better-sqlite3`, has `sqlite3` on the PATH, and that `/backups` is
+writable by the uid compose runs as — is already on
+`docs/verification.md:4100-4113`'s own list with the four commands that would
+close it, and this pass adds nothing to it and does not refile it.
+
+**And no run history, as on every pass before this one.** `DATA_DIR` is
+unreadable by the agent uid, so no table was counted: not `chat_messages`, not
+`plan_observations`, not `ops_events`, and not `run_events` for the question of
+what is actually on disk the morning after a 03:00 failure. No row rests on a
+count of real rows.
+
+### What was deliberately left unread on this pass
+
+- **`docker-entrypoint.sh`**, 1,200 lines, not opened at all. What it does with
+  the Discord relay and the `UF_` variables is `docs/agent/environment.md:37-39`'s
+  account and `deployment.test.ts:1348-1380`'s pins, both of which are the
+  security axis's territory rather than this one's. No row here rests on it — but
+  it is the file that decides what the container does before the server starts, so
+  an operations survey with a container to run should start there and this one did
+  not.
+- **`src/lib/notify.ts` beyond its status fields.** The outbound webhook is
+  [M3](04-missing-features.md#m3-nothing-this-app-runs-can-reach-a-human-and-most-of-that-is-on-purpose),
+  closed, and the brief forbids refiling alerting.
+- **`src/lib/otlp.ts` and `src/lib/requestLog.ts` beyond their retention.** The
+  audit trail's depth is
+  [G4](03-growth.md#g4-the-audit-trail-is-20000-rows-deep-evicted-on-every-insert-and-identifies-no-person)
+  and the brief names it as not to be refiled; `otlp_requests` is swept on the
+  same horizon as `run_events` and is therefore not a growth row.
+- **`src/lib/orchestrator.ts` beyond four regions** — the boot reconciler
+  (`:11200-11290`), the restart-closed lifecycle by grep, the boundary call sites,
+  and `SHUTDOWN_GRACE_MS`. It is a 142k file.
+- **Every route handler's own error handling.** That is a per-endpoint audit, and
+  doing it here would have been that survey rather than this one — the same reason
+  `06-recommendation.md`'s M2 refusal gives.
+
+### A note on anchors
+
+The eight headings in [08-operations.md](08-operations.md) follow
+`03-growth.md`'s shape (`## O1 — Title`), as the brief asked, and the links to
+them use the **double** hyphen that heading actually generates: an em dash between
+two spaces is stripped and both spaces then become hyphens.
+
+**The rest of this directory uses a single hyphen there.** Slugging every heading
+in the directory and matching it against every internal link finds 107 that
+resolve only under the single-hyphen reading — and three of those 107 are this
+pass's own links *to* existing G and M rows, written to match how every other
+file links to them rather than to be right in isolation. They are all left
+exactly as they are. Rewriting a hundred links, or every row heading, on the
+strength of a slugger this container cannot run would be a large change resting
+on an untested claim, and it is outside this pass's scope either way. The two
+conventions in one directory are deliberate and this paragraph is where that is
+recorded.
+
+### Refuted, and dropped
+
+Both lists live in the axis file, as the security axis's do, and the drop list is
+the longest in this directory:
+[§ Refuted or already decided](08-operations.md#refuted-or-already-decided-on-this-axis)
+(eight candidates, every one killed by a paragraph that had already reasoned the
+thing through — the scheduler that is refused by name, the retry `claimDataDir`
+declines, the `VACUUM` nothing runs, Docker health being surfaced and not acted
+on, `migrate()` deliberately not being a framework, a `*_old` table reported
+rather than dropped, the stop grace's own reasoning, and alerting in general) and
+[§ Dropped for lack of evidence](08-operations.md#dropped-for-lack-of-evidence-on-this-axis)
+(eleven, each naming the evidence that is missing, and nine of the eleven are
+missing it for the same reason: there is no container here).
+
+### The vault, on this pass
+
+Not consulted. None of the eight rows needed an external claim: every one is a
+line in this repository, a command's output quoted above, or a sentence in this
+repository's own documentation.
