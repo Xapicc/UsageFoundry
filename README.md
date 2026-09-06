@@ -247,7 +247,9 @@ point; the *conditions* are the ones that have gone wrong here.
 | The database is growing without bound (#62) | `stores.databaseBytes` | `> 2e9` |
 | Checkouts are filling the disk (#69) | `stores.checkoutsBytes` | site-specific — compare against free space |
 | Transcripts are filling the disk (#95) | `stores.transcriptsBytes` | site-specific |
-| A restart terminated runs | `lastBootReconcile.closed` | `> 0` — each one needs picking up by hand |
+| A restart terminated runs and they are still sitting there | `restartClosedOutstanding` | `> 0` — each one needs picking up by hand. **Not `lastBootReconcile.closed`**, which is the newest reconciliation whenever it happened and so never clears; this one falls to zero as the runs are picked up or set aside |
+| Nothing has been backed up lately | `stores.backups.newestAgeSeconds` | `> 172800`, or `null` — the only store here this app does not write, and the only one whose failure is silence |
+| The backup directory cannot be read | `stores.backups.readable` | `false` — a missing bind mount or a root-owned directory, which is not the same as no backups |
 | Another process took the data directory | `dataDirOwned` | `false` |
 | The notification channel has stopped delivering | `webhook.consecutiveFailures` | `> 3` while `webhook.configured` — a fire-and-forget sink nobody receives from looks exactly like a quiet fleet |
 

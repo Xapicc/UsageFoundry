@@ -137,11 +137,13 @@ const {
   composeTask,
   createChat,
   createProposal,
+  findChats,
   createQuestions,
   markProposal,
   decisionNote,
   getChat,
   listMessages,
+  appendMessage,
   listProposals,
   listQuestions,
   normalizeChoices,
@@ -160,6 +162,7 @@ const {
   MCP_CONFIG_BASE,
 } = require("./chat") as typeof import("./chat");
 const { githubSlug } = require("./workspace") as typeof import("./workspace");
+const { db } = require("./db") as typeof import("./db");
 
 /**
  * Count the children a turn would start, without starting one.
@@ -1728,5 +1731,89 @@ describe("writeMcpConfig — the capability never lands in a shared directory", 
     // Idempotent: `land` can be reached twice (a timeout racing an exit), and a
     // second removal must not throw out of a settle path.
     removeMcpConfig(file);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Reaching a thread past the newest thirty                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `findChats` earns a test on the two failure modes that are silent in
+ * opposite directions.
+ *
+ * The search is `LIKE` over operator text. Unescaped, a `%` anywhere in what
+ * they typed matches every thread in the install — a search that returns
+ * everything reads exactly like a search that found everything, and the
+ * operator concludes their conversation is one of two hundred rather than that
+ * their query was ignored. And the paging is `LIMIT`/`OFFSET` beside a separate
+ * `COUNT(*)`: a page and a total computed from different predicates would show
+ * "30 of 214" over a list that has no more to give, which is a More button that
+ * does nothing.
+ */
+describe("findChats", () => {
+  const seeded: string[] = [];
+
+  const seed = (title: string, text: string) => {
+    const row = createChat();
+    db().prepare("UPDATE chat_sessions SET title=? WHERE id=?").run(title, row.id);
+    appendMessage(row.id, "user", text);
+    seeded.push(row.id);
+    return row.id;
+  };
+
+  const titlesOf = (q: string, o: { limit?: number; offset?: number } = {}) =>
+    findChats({ q, ...o }).chats.map((c) => c.title);
+
+  it("matches a title, and a message the title never mentions", () => {
+    seed("Retention horizons", "leave the transcripts alone");
+    seed("Something else", "we agreed to raise the merge queue workers to four");
+
+    // The half that is the point: the reasoning is in the thread, not in a
+    // title a model wrote from the opening line.
+    assert.deepEqual(titlesOf("merge queue workers"), ["Something else"]);
+    assert.deepEqual(titlesOf("Retention"), ["Retention horizons"]);
+  });
+
+  it("treats a LIKE wildcard in the query as a character to look for", () => {
+    seed("Ninety per cent", "the guard trips at 90%");
+    seed("Nothing to do with it", "no percentage here");
+
+    // Unescaped, `%` is "match anything" and this returns both — and every
+    // other thread in the install with it.
+    assert.deepEqual(titlesOf("90%"), ["Ninety per cent"]);
+    // `_` is the other one, and it is the likelier accident: it is in half the
+    // identifiers anybody would paste in.
+    seed("Underscored", "the column is set_aside_at");
+    assert.deepEqual(titlesOf("set_aside_at"), ["Underscored"]);
+    assert.deepEqual(titlesOf("setXasideXat"), []);
+  });
+
+  it("pages, and counts the same rows it pages over", () => {
+    const q = "distinctive-token-for-paging";
+    seed("Page A", `first ${q}`);
+    seed("Page B", `second ${q}`);
+    seed("Page C", `third ${q}`);
+
+    const first = findChats({ q, limit: 2 });
+    assert.equal(first.chats.length, 2);
+    // The total is what the More button is decided from, so it counts every
+    // match rather than the page.
+    assert.equal(first.total, 3);
+
+    const second = findChats({ q, limit: 2, offset: 2 });
+    assert.equal(second.chats.length, 1);
+    assert.equal(second.total, 3);
+    // No row is on both pages, which is what `ORDER BY` beside `OFFSET` buys.
+    const ids = new Set([...first.chats, ...second.chats].map((c) => c.id));
+    assert.equal(ids.size, 3);
+  });
+
+  it("answers a blank query with the newest threads rather than none", () => {
+    // The route only reaches this with a parameter present, and a cleared
+    // search box is exactly that: `q=` is not "match nothing".
+    const all = findChats({ q: "", limit: 5 });
+    assert.ok(all.chats.length > 0);
+    assert.ok(all.total >= seeded.length);
   });
 });

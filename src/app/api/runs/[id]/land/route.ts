@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   commitPending,
   deleteBranch,
+  deliveryState,
   landRun,
   landState,
   purgeBranch,
@@ -36,9 +37,17 @@ export async function GET(_req: Request, ctx: Ctx) {
   // seconds while a resolution runs, and there is nothing to diff until it
   // commits.
   const row = latestAssist(id, "resolve");
+  // One reading, handed to both: `landState` is several git children and this
+  // route is polled while a resolution runs.
+  const state = await landState(id);
   return NextResponse.json({
-    state: await landState(id),
+    state,
     defaultStrategy: getSettings().landStrategy,
+    // The other exit, decided here rather than at the press for the reason
+    // `deliveryState` gives: every refusal it can return is a standing
+    // condition of the install, so the card can say it instead of offering a
+    // button whose whole answer is that sentence.
+    delivery: await deliveryState(id, state),
     resolution: row
       ? {
           id: row.id,

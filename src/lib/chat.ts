@@ -390,6 +390,61 @@ export function listChats(limit = 30): ChatRow[] {
     .all(limit) as ChatRow[];
 }
 
+/** The widest page `findChats` will answer with, whatever it was asked for. */
+export const CHAT_PAGE_MAX = 100;
+
+/**
+ * Threads matching a search, past the newest thirty.
+ *
+ * The cap above is not a bug and stays: it is the sidebar's live list, re-read
+ * on every poll while a turn runs, and a page that streamed every thread into
+ * that payload would grow with the install. What was missing is any *other* way
+ * to reach a thread, so an approved proposal's reasoning became unreachable the
+ * moment thirty conversations had happened since — no paging, no search, no
+ * index, and `/api/chat` read no parameters at all.
+ *
+ * The text matches a title **or** any message in the thread, and the second
+ * half is the point: a title is written by the model from the opening line, so
+ * searching titles alone finds the conversations somebody already remembers.
+ * `EXISTS` rather than a join, so a thread with forty matching messages is one
+ * row rather than forty.
+ */
+export function findChats(o: {
+  q?: string;
+  limit?: number;
+  offset?: number;
+}): { chats: ChatRow[]; total: number } {
+  const q = (o.q ?? "").trim();
+  const limit = Math.max(1, Math.min(CHAT_PAGE_MAX, Math.trunc(o.limit ?? 30) || 30));
+  const offset = Math.max(0, Math.trunc(o.offset ?? 0) || 0);
+
+  // `LIKE` with the operator's text as a bound parameter, never interpolated.
+  // The wildcards are ours; `\` escapes the two LIKE metacharacters so a search
+  // for a literal `%` is a search for that character rather than for everything.
+  const where = q
+    ? " WHERE (COALESCE(s.title, '') LIKE ? ESCAPE '\\'" +
+      " OR EXISTS (SELECT 1 FROM chat_messages m WHERE m.chat_id = s.id" +
+      " AND m.text LIKE ? ESCAPE '\\'))"
+    : "";
+  const pattern = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  const args = q ? [pattern, pattern] : [];
+
+  const total = (
+    db()
+      .prepare(`SELECT COUNT(*) AS n FROM chat_sessions s${where}`)
+      .get(...args) as { n: number }
+  ).n;
+
+  const chats = db()
+    .prepare(
+      `SELECT s.* FROM chat_sessions s${where} ORDER BY s.updated_at DESC` +
+        " LIMIT ? OFFSET ?",
+    )
+    .all(...args, limit, offset) as ChatRow[];
+
+  return { chats, total };
+}
+
 /** The newest chat, or a fresh one. The page opens on a thread, not a list. */
 export function latestChat(): ChatRow {
   return listChats(1)[0] ?? createChat();

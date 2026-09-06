@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 
 import { childCredentials } from "./privsep";
+import { parseVerifyCommand, type VerifyCommand } from "./verifyCommand";
 
 /**
  * The check an operator can put in front of Land.
@@ -37,36 +38,14 @@ import { childCredentials } from "./privsep";
  * backtick in it becomes execution.
  */
 
-/** Characters that only mean anything to a shell. Refused, never escaped. */
-const SHELL_METACHARACTERS = /[;&|<>$`(){}[\]!#*?~\n\r\\]/;
-
-export type VerifyCommand =
-  | { ok: true; argv: string[] }
-  | { ok: false; reason: string };
-
 /**
- * Split an operator's verify command into argv, or say why it cannot be one.
+ * The parser, and it lives in `verifyCommand.ts` rather than here.
  *
- * Pure, and its failure mode is the silent kind this repository tests for: a
- * parser that quietly dropped a metacharacter would run a DIFFERENT command
- * from the one the operator read back to themselves in Settings, and it would
- * pass its own tests while doing it.
+ * Re-exported so this file stays the one place to read about the gate, while
+ * the Settings field that writes the value can import the rule without
+ * dragging `node:child_process` into a client bundle.
  */
-export function parseVerifyCommand(raw: string): VerifyCommand {
-  const text = (raw ?? "").trim();
-  if (!text) return { ok: false, reason: "no verify command is configured" };
-  if (SHELL_METACHARACTERS.test(text)) {
-    return {
-      ok: false,
-      reason:
-        "a verify command is argv, never a shell line — remove the shell " +
-        "characters, or put them in a script and name the script here",
-    };
-  }
-  const argv = text.split(/\s+/).filter(Boolean);
-  if (!argv.length) return { ok: false, reason: "no verify command is configured" };
-  return { ok: true, argv };
-}
+export { parseVerifyCommand, type VerifyCommand } from "./verifyCommand";
 
 export type VerifyOutcome = {
   ran: boolean;

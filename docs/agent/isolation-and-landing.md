@@ -112,4 +112,25 @@ repository's, not the checkout's, on the run loop's own rule — and the same on
 opens the pull request, so a repository configured to get none refuses at
 `planDelivery` instead of publishing as the install. The run's timeline carries it as `deliver`, beside `land`:
 `land` is work entering the operator's own checkout, `deliver` is it leaving
-the machine.
+the machine. **It takes the `landing` claim and the `activeRuns()` overlap
+check**, which it arrived without: it resolves the *same* folder `landRun`
+guards — the operator's checkout — and then writes that checkout's
+`.git/config` with `push --set-upstream`, so a delivery racing a land is the
+collision the claim exists to stop. That was survivable while nothing could
+press it and stopped being when the Land card grew a button. The other four
+doors into a repository (`resolveConflicts`, `commitPending`, `deleteBranch`,
+`purgeBranch`) still take neither, and deliberately: they are keyed on the
+repository root rather than on that folder, so covering them is a decision
+about what the claim is *for*.
+
+**The Land card offers it once, and states every refusal instead of discovering
+one.** `deliveryState` answers the card from `planDelivery`, so the button and
+the endpoint cannot disagree about whether delivery is possible or about why it
+is not — and every reason it can give is a standing condition of the install (no
+credential for this repository, a remote that is not GitHub, a branch that is
+already the target) rather than something a press would find out. What it does
+*not* pre-empt is the verify gate and the push, which are about the branch now.
+Offered once per pull request, and replaced afterwards by a link to it, read off
+the run's own `deliver` event: a second press would push again — updating the
+pull request — and then be refused by GitHub's "already exists", so what it
+reported and what it did would disagree.

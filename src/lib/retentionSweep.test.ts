@@ -212,3 +212,49 @@ describe("retentionCutoff", () => {
     assert.equal(retention.retentionCutoff(30, NOW), NOW - 30 * DAY);
   });
 });
+
+/**
+ * The one store here nothing in this app writes.
+ *
+ * Its failure mode is the silent kind: an unreadable directory reported as a
+ * count of zero tells an operator "no backups have been taken" when the truth
+ * is "this process could not look" — a missing bind mount, or a directory
+ * Docker created as root under a server running as somebody else. The two need
+ * opposite actions and they render identically if the reading collapses them.
+ */
+describe("backupStore", () => {
+  it("separates an unreadable directory from an empty one", async () => {
+    const empty = path.join(root, "backups-empty");
+    fs.mkdirSync(empty, { recursive: true });
+
+    const there = await retention.backupStore(empty);
+    assert.equal(there.readable, true);
+    assert.equal(there.count, 0);
+    assert.equal(there.newestAt, null);
+
+    const missing = await retention.backupStore(path.join(root, "no-such-dir"));
+    assert.equal(missing.readable, false);
+    assert.equal(missing.count, 0);
+  });
+
+  it("counts snapshots whatever they are named, and takes the newest mtime", async () => {
+    const dir = path.join(root, "backups-full");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "usagefoundry-20260101T030000Z.db"), "aa");
+    // `--dest` takes any path ending in `.db`, so matching only the generated
+    // name would report zero for an operator who names their own snapshots.
+    fs.writeFileSync(path.join(dir, "before-the-upgrade.db"), "bbbb");
+    // And nothing else in the directory is a snapshot — the cron in
+    // `docs/backup-and-restore.md` writes its log beside them.
+    fs.writeFileSync(path.join(dir, "backup.log"), "x".repeat(64));
+    fs.utimesSync(path.join(dir, "usagefoundry-20260101T030000Z.db"), 1000, 1000);
+    fs.utimesSync(path.join(dir, "before-the-upgrade.db"), 2000, 2000);
+
+    const store = await retention.backupStore(dir);
+    assert.equal(store.readable, true);
+    assert.equal(store.count, 2);
+    assert.equal(store.bytes, 6);
+    assert.equal(store.newestAt, 2_000_000);
+    assert.equal(store.partial, false);
+  });
+});

@@ -1281,6 +1281,12 @@ export interface RunDTO {
   /** Queued runs only: how many are ahead of it. 0 means next up. */
   queuePosition?: number;
   /**
+   * Where this run sits in the promotion order, ±100, 0 by default. Higher goes
+   * first and `created_at` breaks every tie, so the queue is oldest-first among
+   * runs nobody has said anything about.
+   */
+  priority?: number;
+  /**
    * The workflow run this one was halted with, or null for every other run —
    * one started outside a workflow, or a member of an instance still going.
    *
@@ -2290,6 +2296,24 @@ export interface LandStateDTO {
   landedStrategy: string | null;
 }
 
+/**
+ * The branch's other exit: pushed to `origin`, with a pull request opened on
+ * it. Every refusal here is a standing condition rather than something a press
+ * would discover, which is why the card can state it instead of offering a
+ * button.
+ */
+export interface DeliveryStateDTO {
+  possible: boolean;
+  /** Why not, when `possible` is false. Null when it is offered. */
+  reason: string | null;
+  /** `owner/repo`, once the remote is known to be a GitHub one. */
+  remote: string | null;
+  head: string | null;
+  base: string | null;
+  /** What a previous press opened, off the run's own `deliver` event. */
+  delivered: { url: string; number: number; at: number } | null;
+}
+
 /** One branch waiting to be landed, or already dealt with. */
 export interface MergeQueueItemDTO {
   id: string;
@@ -2621,6 +2645,8 @@ export interface SettingsDTO {
    * Empty means none, which is what it had before this existed.
    */
   resolveVerifyTools: string[];
+  /** argv that must exit 0 before Land merges. Empty is no check, not a pass. */
+  landVerifyCommand: string;
   isolationPreamble: string;
   /** What a run is told when it picks up the branch the run before it had. */
   continuedWorkPrompt: string;
@@ -2750,6 +2776,21 @@ export interface StorageReportDTO {
     path: string;
     files: number;
     bytes: number;
+    partial: boolean;
+  };
+  /**
+   * The one store a recovery depends on, and the only one here the app does not
+   * write. `readable: false` says this process could not look — a missing bind
+   * mount or a root-owned directory — which is not the same as no backups.
+   */
+  backups: {
+    path: string;
+    readable: boolean;
+    count: number;
+    bytes: number;
+    /** Epoch ms of the newest snapshot, or null when there is not one. */
+    newestAt: number | null;
+    /** More snapshots than one reading stats: `count` and `bytes` are floors. */
     partial: boolean;
   };
   lastSweep: {

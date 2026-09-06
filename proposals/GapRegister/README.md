@@ -5,6 +5,14 @@ logic, growth limits, features it is missing, the app's own security and trust
 boundary, and what an operator can do when a live install breaks — and which of
 them are worth a survey of their own?
 
+> **Ten more rows moved on 2026-09-06, after everything below was written** —
+> six closed whole (O1, O4, G2, M5, S2, and G1's second instance of three) and
+> four in half (B2/M4, S1, B1, M1). What each half closed, what still stands,
+> and the three rows that were deliberately left alone are in
+> [05-register.md](05-register.md#what-was-implemented-on-2026-09-06-after-this-register-was-written).
+> **The counts and ranks in the rest of this directory are as at `66fdbab` and
+> have not been re-derived since.**
+
 **The state, at `main` `66fdbab`:** **eight of the original twenty rows have
 moved — four closed whole, four closed in half — and twelve are open exactly as
 surveyed. Two further axes were then added and carry thirteen more, and a fourth

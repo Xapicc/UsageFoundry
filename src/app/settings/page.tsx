@@ -25,6 +25,7 @@ import type {
   StorageReportDTO,
 } from "@/lib/apiTypes";
 import { PRUNE_ENGINE_LABEL } from "@/lib/pruneStatement";
+import { parseVerifyCommand } from "@/lib/verifyCommand";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
 import {
   describeAmbientAgents,
@@ -356,6 +357,7 @@ const EDITABLE_PATHS = [
   "isolationCopyGlobs",
   "isolationCopyGlobsByRepo",
   "landStrategy",
+  "landVerifyCommand",
   "resolveVerifyTools",
   "continuationPrompt",
   "donePushbackPrompt",
@@ -405,6 +407,7 @@ const ISOLATED_RUN_KEYS = [
   "isolationCopyGlobs",
   "isolationCopyGlobsByRepo",
   "landStrategy",
+  "landVerifyCommand",
   "resolveVerifyTools",
 ];
 
@@ -911,7 +914,7 @@ function StorageFigures({
   }
   if (!report) return <Empty>Measuring…</Empty>;
 
-  const { database, checkouts, transcripts, lastSweep } = report;
+  const { database, checkouts, transcripts, backups, lastSweep } = report;
   return (
     <ListGroup
       label="On disk now"
@@ -983,6 +986,35 @@ function StorageFigures({
         <span className="tabular-nums text-sm">
           {transcripts.partial ? "≥ " : ""}
           {fmtBytes(transcripts.bytes)}
+        </span>
+      </ListRow>
+
+      {/* The one store here nothing in this app writes, and the one a recovery
+          needs. It is last because it is the odd one out: the three above are
+          read to find what is filling a disk, and this is read to find out
+          whether there is a second copy of any of them. Three states, never
+          two — unreadable is not the same claim as empty. */}
+      <ListRow
+        label="Backups"
+        description={
+          backups.readable
+            ? `${backups.path} — ${backups.count} snapshot${backups.count === 1 ? "" : "s"}${
+                backups.newestAt === null
+                  ? ", none taken yet"
+                  : `, newest ${ago(backups.newestAt)}`
+              }`
+            : `${backups.path} — this server cannot read the directory`
+        }
+      >
+        <span className="tabular-nums text-sm">
+          {backups.readable ? (
+            <>
+              {backups.partial ? "≥ " : ""}
+              {fmtBytes(backups.bytes)}
+            </>
+          ) : (
+            <Badge tone="warn">unreadable</Badge>
+          )}
         </span>
       </ListRow>
     </ListGroup>
@@ -1109,8 +1141,16 @@ function KnowledgeFigures({
  * It exists because a session now *is* something: the cookie used to be
  * `UF_AUTH_TOKEN` itself, so there was nothing to end short of changing the
  * environment and restarting the container — which kills every run in flight.
- * "All" is here rather than only "this browser" because the case that matters
- * is a cookie that got out, and the browser holding it is not this one.
+ * "All" is here rather than only "this browser" because the browser that needs
+ * signing out is usually not this one.
+ *
+ * The line under the buttons is the correction, not decoration. This used to
+ * say the case it was for was "a cookie that got out", which is the one case it
+ * cannot answer: the edge gate cannot read a revocation, so a *captured* cookie
+ * stays valid until its own signed expiry however many times this is pressed —
+ * `sessionToken.ts` states the limitation. A control that quietly overstated
+ * what it did was worse than one that does less, because the operator would
+ * stop looking after pressing it.
  */
 function SignOut({ sessions }: { sessions: number }) {
   const [busy, setBusy] = useState(false);
@@ -1139,6 +1179,10 @@ function SignOut({ sessions }: { sessions: number }) {
       <Button variant="secondary" busy={busy} onClick={() => void signOut(true)}>
         Sign out everywhere
       </Button>
+      <span className="block w-full text-2xs text-ink-muted">
+        A cookie already copied elsewhere keeps working until it expires, within
+        24 hours of the sign-in that issued it
+      </span>
     </span>
   );
 }
@@ -1984,6 +2028,15 @@ export default function SettingsPage() {
     }
     return out;
   }, [s, copyGlobsText, copyGlobsByRepoText, verifyToolsText]);
+
+  // Blank is off rather than broken, so an empty field says nothing; anything
+  // the gate's own parser refuses is said here, in the parser's words.
+  const landVerifyParse = useMemo(() => {
+    const raw = effective?.landVerifyCommand ?? "";
+    if (!raw.trim()) return null;
+    const parse = parseVerifyCommand(raw);
+    return parse.ok ? null : parse.reason;
+  }, [effective]);
 
   const changed = useMemo(() => {
     if (!effective || !savedS) return new Set<string>();
@@ -3214,6 +3267,43 @@ export default function SettingsPage() {
                 onChange={(v) => patch({ landStrategy: v })}
                 label="Landing a branch"
               />
+            </SettingRow>
+
+            <SettingRow
+              htmlFor="landverify"
+              edited={isEdited("landVerifyCommand")}
+              label="Check that must pass before Land merges"
+              description={
+                <>
+                  <span className="block">
+                    Land checks the checkout — clean, on the target, nobody
+                    working in it — and nothing about the work. Name a command
+                    here and a non-zero exit refuses the merge rather than
+                    warning about it. It runs in the run&rsquo;s own worktree,
+                    as the child uid, and is left blank by default: blank is no
+                    check, not a check that passes
+                  </span>
+                  <span className="block text-2xs text-ink-muted">
+                    argv, never a shell line — for <span className="mono">a &amp;&amp; b</span>{" "}
+                    put the two in a script and name the script
+                  </span>
+                </>
+              }
+            >
+              <div className="w-72">
+                <Input
+                  id="landverify"
+                  placeholder="npm test"
+                  value={effective.landVerifyCommand}
+                  onChange={(e) => patch({ landVerifyCommand: e.target.value })}
+                />
+                {/* Said here rather than at the click: an operator who types the
+                    obvious `npm test && npm run typecheck` would otherwise learn
+                    it is refused only when a finished branch is waiting on it. */}
+                {landVerifyParse !== null && (
+                  <p className="mt-1.5 text-2xs text-danger">{landVerifyParse}</p>
+                )}
+              </div>
             </SettingRow>
 
             <SettingRow

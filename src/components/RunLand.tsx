@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import type {
   ConflictFileDTO,
+  DeliveryStateDTO,
   LandStateDTO,
   MergeStrategyDTO,
   RunDTO,
@@ -187,6 +188,7 @@ function PendingWork({
 
 export function RunLand({ run }: { run: RunDTO }) {
   const [state, setState] = useState<LandStateDTO | null>(null);
+  const [delivery, setDelivery] = useState<DeliveryStateDTO | null>(null);
   const [resolution, setResolution] = useState<RunReviewDTO | null>(null);
   // Two separate facts, deliberately not one: what the operator picked, which
   // is null until they pick something, and what the server would do if they
@@ -222,12 +224,14 @@ export function RunLand({ run }: { run: RunDTO }) {
       state: LandStateDTO | null;
       defaultStrategy: MergeStrategyDTO;
       resolution: RunReviewDTO | null;
+      delivery: DeliveryStateDTO | null;
     }>(`/api/runs/${run.id}/land`);
     if (!res.ok) {
       setReadError(pollFailureMessage(res.status, res.error));
       return;
     }
     setState(res.data.state);
+    setDelivery(res.data.delivery);
     // The server's answer fills the gap while the operator has not chosen, and
     // never replaces a choice they have made. `act` re-reads the card after
     // every press, so writing this over `strategy` discarded a Squash picked
@@ -283,6 +287,39 @@ export function RunLand({ run }: { run: RunDTO }) {
     }
   }
 
+  /**
+   * The other exit: push the branch and open a pull request on it.
+   *
+   * Its own request rather than a sixth `action` on the land POST, because the
+   * two are different products. Every other button here acts on the operator's
+   * own machine and can be undone there; this one publishes to a remote other
+   * people can see, and `deliverRun` is deliberately reachable from a person
+   * and never from the run loop.
+   */
+  async function deliver() {
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    try {
+      const res = await jsonRequest<{ url?: string; number?: number }>(
+        `/api/runs/${run.id}/deliver`,
+        { method: "POST", body: {} },
+      );
+      if (res.ok) {
+        setNote(
+          res.data.number
+            ? `Pull request #${res.data.number} is open.`
+            : "The branch was pushed.",
+        );
+      } else {
+        setError(actionFailureMessage(res, "That did not work."));
+      }
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // A run with no branch renders nothing at all here, so a first read that
   // never arrived would look exactly like one — and on this card the read is
   // also the only thing that ever reports a resolution finishing.
@@ -316,6 +353,15 @@ export function RunLand({ run }: { run: RunDTO }) {
   // button, and two destructive controls side by side is how the wrong one
   // gets pressed.
   const canPurge = state.branchExists && settled && !canDelete;
+  // The other exit, and the only one here that leaves the machine. Offered once
+  // per pull request: a second press would push again — updating the pull
+  // request — and then be refused by GitHub's "already exists", so what it
+  // reports and what it did would disagree. Delivered, this becomes the link.
+  const canDeliver =
+    state.branchExists &&
+    settled &&
+    (delivery?.possible ?? false) &&
+    delivery?.delivered == null;
 
   return (
     // Raised only while there is a decision to take. A branch that is already
@@ -529,7 +575,7 @@ export function RunLand({ run }: { run: RunDTO }) {
         </div>
       )}
 
-      {(canLand || canDelete || canResolve || canPurge) && (
+      {(canLand || canDelete || canResolve || canPurge || canDeliver) && (
         <div className="mt-4 border-t border-line pt-3.5">
           {/* What the button does, stated above it rather than under it. This
               one writes into a directory the operator is working in, and the
@@ -554,6 +600,15 @@ export function RunLand({ run }: { run: RunDTO }) {
               Merges {state.target} into the branch in a throwaway checkout and has
               Claude reconcile the markers. Billed, and your own checkout is not
               involved.
+            </p>
+          )}
+          {canDeliver && (
+            <p className="mb-2.5 max-w-[70ch] text-xs leading-snug text-ink-muted">
+              Pushes <span className="mono">{delivery?.head}</span> to{" "}
+              <span className="mono">{delivery?.remote}</span> and opens a pull
+              request against <span className="mono">{delivery?.base}</span>. Never
+              forced, and nothing is merged: the push runs from your checkout but
+              leaves what is in it alone. The check Land takes applies here too.
             </p>
           )}
 
@@ -608,6 +663,20 @@ export function RunLand({ run }: { run: RunDTO }) {
                 {resolving ? "Resolving…" : "Resolve with Claude"}
               </Button>
             )}
+            {/* `secondary`, never primary: Land is the exit this app is built
+                around and the one whose button is loud. This is the exit for a
+                team whose review gate is a pull request, and it is deliberately
+                the quieter of the two. */}
+            {canDeliver && (
+              <Button
+                variant="secondary"
+                className="transition-colors duration-150"
+                onClick={() => void deliver()}
+                disabled={busy}
+              >
+                {busy ? "Delivering…" : "Open pull request"}
+              </Button>
+            )}
             {/* The safe door: git can see this work is in the target, so it is
                 deliberately *not* dressed as the destructive one below. */}
             {canDelete && (
@@ -631,6 +700,34 @@ export function RunLand({ run }: { run: RunDTO }) {
               </Button>
             )}
           </ButtonRow>
+
+          {/* Where the branch went, once it has gone somewhere. A link rather
+              than a second press, for `canDeliver`'s reason. */}
+          {delivery?.delivered && (
+            <p className="mt-2.5 text-xs text-ink-muted">
+              Delivered {fmtDateTime(delivery.delivered.at)} —{" "}
+              <a
+                className="text-accent underline"
+                href={delivery.delivered.url}
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                pull request #{delivery.delivered.number}
+              </a>
+            </p>
+          )}
+
+          {/* Refuse and explain, never show-and-caveat: each of these reasons is
+              a standing condition of the install — no credential for this
+              repository, a remote that is not GitHub — rather than something a
+              press would find out, so it is said instead of being discovered. */}
+          {state.branchExists &&
+            settled &&
+            delivery &&
+            !delivery.possible &&
+            delivery.delivered === null && (
+              <Hint>{delivery.reason}</Hint>
+            )}
         </div>
       )}
 

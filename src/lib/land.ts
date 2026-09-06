@@ -2898,6 +2898,113 @@ export async function branchInventory(
  * which exit the work leaves by. Publishing an unverified branch to a remote
  * other people can see would be a wider version of exactly what they refused.
  */
+/**
+ * What a Deliver press would do, decided before it is offered.
+ *
+ * The card's rule is refuse-and-explain rather than show-and-caveat, and every
+ * refusal here is a *standing* condition of the install rather than of the
+ * press: no GitHub credential for this repository, a remote that is not
+ * GitHub, no branch, or a branch that is already the target. All four are
+ * decided at boot or by the row, so asking the operator to find out by pressing
+ * would be asking them to spend a round trip on an answer this route already
+ * has.
+ *
+ * `planDelivery` decides it, so the button and the endpoint cannot disagree
+ * about whether delivery is possible or about why it is not. What it does not
+ * pre-empt is the verify gate and the push itself, which are about this
+ * branch's state now and belong to the press.
+ */
+export async function deliveryState(
+  runId: string,
+  // The caller's own reading, when it has one. `landState` is several git
+  // children and the route that wants both answers is polled every three
+  // seconds while a resolution runs, so taking it twice per request would
+  // double that route's git work for a value it already holds.
+  known?: Awaited<ReturnType<typeof landState>>,
+): Promise<{
+  possible: boolean;
+  reason: string | null;
+  /** `owner/repo`, once it is known to be a GitHub remote. */
+  remote: string | null;
+  head: string | null;
+  base: string | null;
+  /** The pull request a previous press opened, if there was one. */
+  delivered: { url: string; number: number; at: number } | null;
+}> {
+  const run = getRun(runId);
+  const state = run ? (known !== undefined ? known : await landState(runId)) : null;
+  const delivered = deliveredPullRequest(runId);
+  if (!run || !state) {
+    return {
+      possible: false,
+      reason: "This run has no branch to deliver.",
+      remote: null,
+      head: null,
+      base: null,
+      delivered,
+    };
+  }
+
+  const folder = state.checkout?.path;
+  const remoteUrl = folder
+    ? (await git(folder, ["remote", "get-url", "origin"], NO_CLOCK)).stdout.trim()
+    : "";
+  const plan = planDelivery({
+    token: githubTokenFor(run.repo_root ?? run.folder).token,
+    remoteUrl,
+    branch: state.branch,
+    target: state.target,
+  });
+  if (!plan.ok) {
+    return {
+      possible: false,
+      reason: plan.reason,
+      remote: null,
+      head: null,
+      base: null,
+      delivered,
+    };
+  }
+  return {
+    possible: true,
+    reason: null,
+    remote: `${plan.remote.owner}/${plan.remote.repo}`,
+    head: plan.head,
+    base: plan.base,
+    delivered,
+  };
+}
+
+/**
+ * The pull request a previous delivery opened, from the run's own timeline.
+ *
+ * Read off the `deliver` event rather than a column, because the event is what
+ * `deliverRun` writes and a second store for the same fact is a second thing to
+ * keep in step. Newest wins: a branch pushed again after a pull request was
+ * closed opens a new one, and the old number is history.
+ */
+export function deliveredPullRequest(
+  runId: string,
+): { url: string; number: number; at: number } | null {
+  const row = db()
+    .prepare(
+      "SELECT ts, payload FROM run_events WHERE run_id = ? AND kind = 'deliver'" +
+        " ORDER BY id DESC LIMIT 1",
+    )
+    .get(runId) as { ts: number; payload: string } | undefined;
+  if (!row) return null;
+  try {
+    const payload = JSON.parse(row.payload) as { url?: string; number?: number };
+    if (!payload.url || typeof payload.number !== "number") return null;
+    return { url: payload.url, number: payload.number, at: row.ts };
+  } catch {
+    // A payload this app wrote and cannot read back is a bug, not a state to
+    // render: reporting "never delivered" is the safe half of being wrong,
+    // since the operator can press and be told the pull request exists.
+    return null;
+  }
+}
+
 export async function deliverRun(
   runId: string,
   o: { title?: string; body?: string } = {},
@@ -2913,6 +3020,52 @@ export async function deliverRun(
 
   const folder = state.checkout?.path;
   if (!folder) return { ok: false, reason: "This run has no checkout to push from." };
+
+  // The same two checks `landRun` takes, on the same folder and for the same
+  // reason. This door resolves the operator's checkout exactly as that one does
+  // and then runs `git push --set-upstream` in it, which writes that
+  // checkout's `.git/config` — so a delivery racing a land, or racing an agent
+  // still working in the folder, is the collision `landing` exists to stop.
+  // It arrived without them, which was survivable while nothing could press it;
+  // it now has a button.
+  //
+  // The other four doors into a repository — `resolveConflicts`,
+  // `commitPending`, `deleteBranch`, `purgeBranch` — are still unguarded, and
+  // deliberately not changed here: they are keyed on the repository root rather
+  // than on this folder, so covering them is a decision about what the claim is
+  // *for* rather than an extra line. See `B1` in `proposals/GapRegister/`.
+  const key = conflictKey(folder);
+  const busy = activeRuns().find((r) => overlaps(key, conflictKey(workDirOf(r))));
+  if (busy) {
+    return {
+      ok: false,
+      reason:
+        `Run ${busy.id.slice(0, 8)} is working in this folder. Pushing while ` +
+        `it writes would publish a tree that is still moving.`,
+    };
+  }
+  if (landing.has(folder)) {
+    return { ok: false, reason: "Another branch is being landed into this folder." };
+  }
+  landing.add(folder);
+  try {
+    return await pushAndOpen({ run, state, folder, o });
+  } finally {
+    landing.delete(folder);
+  }
+}
+
+/** The delivery itself, so the folder claim above is one `try`/`finally`. */
+async function pushAndOpen(a: {
+  run: NonNullable<ReturnType<typeof getRun>>;
+  state: NonNullable<Awaited<ReturnType<typeof landState>>>;
+  folder: string;
+  o: { title?: string; body?: string };
+}): Promise<
+  { ok: true; url: string; number: number } | { ok: false; reason: string }
+> {
+  const { run, state, folder, o } = a;
+  const runId = run.id;
 
   const remoteUrl = (
     await git(folder, ["remote", "get-url", "origin"], NO_CLOCK)

@@ -1,6 +1,7 @@
 // Relative, not "@/…", for `src/app/api/health/route.ts`'s reason: a route a
 // test loads has to import the way src/lib does.
 import { jsonNoStore } from "../../../lib/http";
+import { SESSION_COOKIE, readSessionCookie } from "../../../lib/sessionToken";
 import { statusReport } from "../../../lib/status";
 
 export const runtime = "nodejs";
@@ -33,7 +34,7 @@ function timingSafeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
-function authorised(req: Request): boolean {
+async function authorised(req: Request): Promise<boolean> {
   const statusToken = process.env.UF_STATUS_TOKEN ?? "";
   // No read-only token configured: middleware did not exempt this path, so
   // anything reaching here already carried UF_AUTH_TOKEN.
@@ -47,14 +48,22 @@ function authorised(req: Request): boolean {
   // not have to find the monitor's credential to read this page's data.
   const appToken = process.env.UF_AUTH_TOKEN ?? "";
   if (appToken && bearer && timingSafeEqual(bearer, appToken)) return true;
-  const cookie = /(?:^|;\s*)uf_session=([^;]*)/.exec(
+
+  // The cookie is verified, not compared. It used to be tested for equality
+  // with `UF_AUTH_TOKEN`, which is what `uf_session` *was* before it became a
+  // signed handle — so the branch that exists to let the operator's own browser
+  // read this page could no longer be satisfied by any cookie this app is able
+  // to issue, and only a hand-set one from before the change would pass. Same
+  // verification the edge gate performs, minus the runtime it cannot use.
+  const cookie = new RegExp(`(?:^|;\\s*)${SESSION_COOKIE}=([^;]*)`).exec(
     req.headers.get("cookie") ?? "",
   )?.[1];
-  return Boolean(appToken && cookie && timingSafeEqual(cookie, appToken));
+  if (!appToken || !cookie) return false;
+  return Boolean(await readSessionCookie(cookie, appToken, Date.now()));
 }
 
 export async function GET(req: Request) {
-  if (!authorised(req)) {
+  if (!(await authorised(req))) {
     return jsonNoStore({ error: "Unauthorized" }, { status: 401 });
   }
   return jsonNoStore(await statusReport());

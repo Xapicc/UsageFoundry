@@ -294,6 +294,18 @@ function prefersReducedMotion(): boolean {
 export default function ChatPage() {
   const [chat, setChat] = useState<ChatDTO | null>(null);
   const [chats, setChats] = useState<ChatListEntryDTO[]>([]);
+  // The search over *every* thread, held apart from the list above and not for
+  // tidiness: that list rides both polled routes and is overwritten every few
+  // seconds, so a result set kept in it would be wiped mid-read. Null means
+  // nobody is searching and the live list is what the tab shows.
+  const [chatQuery, setChatQuery] = useState("");
+  const [found, setFound] = useState<{
+    q: string;
+    chats: ChatListEntryDTO[];
+    total: number;
+  } | null>(null);
+  const [findError, setFindError] = useState<string | null>(null);
+  const [finding, setFinding] = useState(false);
   const [draft, setDraft] = useState("");
   // Three action errors rather than one, because each belongs beside the
   // control that failed: a refused approval reported above the composer is a
@@ -417,6 +429,56 @@ export default function ChatPage() {
       setPollError(pollFailureMessage(null, cause));
     }
   }, []);
+
+  /**
+   * Every thread matching a search, not only the newest thirty.
+   *
+   * Its own request rather than parameters on the poll: the poll's job is to
+   * keep the open thread and the live list current, and a search that rode it
+   * would re-run on a three-second timer over a query the operator has stopped
+   * typing. `offset` appends, so pressing More twice reads two pages rather
+   * than one longer one.
+   */
+  const search = useCallback(
+    async (q: string, offset = 0) => {
+      const text = q.trim();
+      if (!text) {
+        setFound(null);
+        setFindError(null);
+        return;
+      }
+      setFinding(true);
+      try {
+        const res = await fetch(
+          `/api/chat?q=${encodeURIComponent(text)}&offset=${offset}&limit=30`,
+          { cache: "no-store" },
+        );
+        const data = (await res.json().catch(() => ({}))) as {
+          chats?: ChatListEntryDTO[];
+          total?: number;
+          error?: string;
+        };
+        if (!res.ok || !data.chats) {
+          setFindError(pollFailureMessage(res.status, data.error ?? null));
+          return;
+        }
+        const page = data.chats;
+        setFound((prev) =>
+          offset > 0 && prev && prev.q === text
+            ? { q: text, chats: [...prev.chats, ...page], total: data.total ?? 0 }
+            : { q: text, chats: page, total: data.total ?? 0 },
+        );
+        setFindError(null);
+      } catch (err) {
+        setFindError(
+          pollFailureMessage(null, err instanceof Error ? err.message : String(err)),
+        );
+      } finally {
+        setFinding(false);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     void load(null);
@@ -737,9 +799,11 @@ export default function ChatPage() {
     ...(decided.length > 0
       ? [{ value: "decided" as const, label: "Decided" }]
       : []),
-    // The current thread is one of these, so a lone conversation is a list with
-    // nothing to choose from — the same rule that used to hide the whole card.
-    ...(chats.length > 1 ? [{ value: "chats" as const, label: "Chats" }] : []),
+    // The current thread is one of these, so a lone conversation used to mean a
+    // list with nothing to choose from. It is offered from one now, because the
+    // tab is also where the search lives and an install past thirty threads has
+    // no other way to reach the thirty-first — the sidebar's list is capped.
+    ...(chats.length > 0 ? [{ value: "chats" as const, label: "Chats" }] : []),
   ];
   // Derived rather than corrected in an effect: opening a thread with nothing
   // decided while the Decided tab is selected must fall back on the render that
@@ -1342,7 +1406,48 @@ export default function ChatPage() {
                   to answer and a row missing from a list cannot answer it. */}
               {activeSide === "chats" && (
                 <div className="flex flex-col gap-0.5">
-                  {chats.map((c) => (
+                  {/* The list above is the newest thirty and is re-read on every
+                      poll; this is the only way to reach the thirty-first. It
+                      searches titles and message text, because a title is
+                      written from the opening line and the conversation somebody
+                      is looking for is usually remembered by what was decided
+                      in it. */}
+                  <form
+                    className="mb-1.5"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void search(chatQuery);
+                    }}
+                  >
+                    <Input
+                      type="search"
+                      value={chatQuery}
+                      placeholder="Search every thread"
+                      aria-label="Search every thread"
+                      onChange={(e) => {
+                        setChatQuery(e.target.value);
+                        if (!e.target.value.trim()) {
+                          setFound(null);
+                          setFindError(null);
+                        }
+                      }}
+                    />
+                  </form>
+                  {findError && (
+                    <Notice tone="warn" className="mb-1.5">
+                      {findError}
+                    </Notice>
+                  )}
+                  {found && (
+                    <Hint>
+                      {found.total === 0
+                        ? "No thread matches"
+                        : `${found.chats.length} of ${found.total} matching thread${
+                            found.total === 1 ? "" : "s"
+                          }`}
+                    </Hint>
+                  )}
+                  {(found ? found.chats : chats).map((c) => (
                     <ChatRow
                       key={c.id}
                       entry={c}
@@ -1362,6 +1467,16 @@ export default function ChatPage() {
                       }}
                     />
                   ))}
+                  {found && found.chats.length < found.total && (
+                    <Button
+                      variant="ghost"
+                      className="mt-1.5"
+                      busy={finding}
+                      onClick={() => void search(found.q, found.chats.length)}
+                    >
+                      More
+                    </Button>
+                  )}
                 </div>
               )}
             </div>

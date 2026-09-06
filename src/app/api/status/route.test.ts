@@ -113,6 +113,7 @@ test("carries every documented key", async () => {
     "liveGuard",
     "webhook",
     "lastBootReconcile",
+    "restartClosedOutstanding",
   ]) {
     assert.ok(key in body, `the status payload lost "${key}"`);
   }
@@ -129,6 +130,22 @@ test("carries every documented key", async () => {
   assert.equal(typeof body.stores.transcriptsBytes, "number");
   assert.equal(body.stores.partial, false);
   assert.ok(body.stores.databaseBytes > 0, "the database file has a size");
+
+  // The fourth store, minus the one thing this payload may not carry. An
+  // unreadable directory reports `readable: false` rather than a count of zero,
+  // and neither of those is a path.
+  assert.equal(typeof body.stores.backups.readable, "boolean");
+  assert.equal(typeof body.stores.backups.count, "number");
+  assert.equal(typeof body.stores.backups.bytes, "number");
+  assert.ok(
+    body.stores.backups.newestAgeSeconds === null ||
+      typeof body.stores.backups.newestAgeSeconds === "number",
+  );
+  assert.equal(
+    "path" in (body.stores.backups as Record<string, unknown>),
+    false,
+    "the backup directory's path must not reach a monitor's retained payload",
+  );
 });
 
 test("measures a checkout store's bytes, and says when it stopped early", async () => {
@@ -234,15 +251,55 @@ test("refuses a caller with no credential once a read-only token exists", async 
 
     // And the operator's own session still reads it, so nobody has to find the
     // monitor's credential to look at the same numbers.
+    //
+    // A *real* cookie, minted the way the login route mints one. This used to
+    // be a raw `uf_session=master-token-value`, which is the shape the cookie
+    // had before it became a signed handle — so the assertion passed while the
+    // branch it covers could not be satisfied by anything this app is able to
+    // issue. Changed deliberately: the old expectation was the defect.
     process.env.UF_AUTH_TOKEN = "master-token-value";
+    const { mintSessionCookie, newSessionId, SESSION_TTL_MS } = await import(
+      "../../../lib/sessionToken"
+    );
+    const cookie = await mintSessionCookie(
+      newSessionId(),
+      Date.now() + SESSION_TTL_MS,
+      "master-token-value",
+    );
+    assert.equal((await get({ cookie: `uf_session=${cookie}` })).status, 200);
+    // The token itself in the jar is not a session and never was one after the
+    // change — it is the one thing the old assertion accepted.
     assert.equal(
       (await get({ cookie: "uf_session=master-token-value" })).status,
-      200,
+      401,
     );
   } finally {
     delete process.env.UF_AUTH_TOKEN;
     delete process.env.UF_STATUS_TOKEN;
   }
+});
+
+test("counts the restart-closed runs still waiting, and clears as they go", async () => {
+  const { db } = await import("../../../lib/db");
+  const insert = db().prepare(
+    "INSERT INTO runs (id, folder, prompt, status, budget, max_iterations," +
+      " created_at, restart_closed) VALUES (?, ?, 'do the thing', 'failed', '{}', 1, ?, 1)",
+  );
+  insert.run("s-rc1", "/workspace/secret-project", Date.now());
+  insert.run("s-rc2", "/workspace/secret-project", Date.now());
+
+  assert.equal((await get()).body.restartClosedOutstanding, 2);
+
+  // The field `lastBootReconcile.closed` cannot do: picking one up moves it.
+  db().prepare("UPDATE runs SET restart_closed = 0 WHERE id = 's-rc1'").run();
+  assert.equal((await get()).body.restartClosedOutstanding, 1);
+
+  // And a run held back from the bulk pick-ups is not outstanding either, or
+  // the alert would be one nobody could ever clear.
+  db()
+    .prepare("UPDATE runs SET set_aside_at = ? WHERE id = 's-rc2'")
+    .run(Date.now());
+  assert.equal((await get()).body.restartClosedOutstanding, 0);
 });
 
 test("retains a restart's reconciliation count rather than only logging it", async () => {

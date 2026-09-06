@@ -1862,12 +1862,64 @@ Built and exercised against real transcripts:
   refusal at the door is what stands between a `codex` row and a loop that would
   spawn Claude Code for it, and it is the refusal, not the loop, that was tested.
 
+- **The gap-register pass of 2026-09-06, driven against a dev server on an
+  isolated `DATA_DIR`.** `npx next dev` with `DATA_DIR`, `CLAUDE_HOME`,
+  `WORKSPACE_ROOTS` and `CLAUDE_BIN` all pointed at a scratch directory, so no
+  real transcript was read and no `claude` could be spawned. What was exercised
+  by request rather than by unit test:
+
+  - **`POST /api/logout {"all":true}` with no credential answers 401 and revokes
+    nothing** — `env.activeSessions` read 1 before and 1 after. The same body
+    carrying the session cookie answers 200 and takes it to 0. This is the
+    branch that previously acted for any caller that could reach the port.
+  - **`/api/status` accepts a session cookie the login route can actually
+    issue.** Matrix, with `UF_STATUS_TOKEN` set: no credential 401, monitor
+    token 200, master bearer 200, **a real minted `uf_session` 200**, and the
+    master token pasted in as the cookie 401. The fourth was 401 before this —
+    the check compared the cookie against `UF_AUTH_TOKEN`, which is what the
+    cookie stopped being — so the branch that exists to let the operator's own
+    browser read this route could not be satisfied by anything this app issues.
+  - **`stores.backups` and `restartClosedOutstanding` are on `/api/status`**, and
+    the backup reading moves: an empty `./backups` reported
+    `{readable: true, count: 0, newestAt: null}`, and one file dropped in it read
+    back `count: 1, bytes: 4` with an mtime. The Storage card's copy of the same
+    reading carries the path; the status payload's does not, which the route
+    test asserts.
+  - **`GET /api/chat` reads `q`, `offset` and `limit`, and answers with the list
+    alone.** A search that matches nothing returns `{"chats": [], "total": 0}`;
+    `?offset=1&limit=2` over three threads returns 2 of 3; and — the half that
+    matters — the thread count was 3 before and 3 after, so a search does not
+    call `latestChat()` and does not create an empty thread.
+  - **`landVerifyCommand` is on `GET /api/settings`'s payload**, which it was not
+    before: the field existed on `Settings` and on the PUT, and the DTO the page
+    reads did not carry it, so no page could have rendered it.
+
+  `npm run typecheck` is clean, `npm test` is 2,268 of 2,269 (the one failure is
+  `backupRestore.test.ts`'s `ulimit -f` truncation case, which fails on this
+  macOS host before any of this and is unrelated), and
+  `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` produces the standalone
+  bundle with every new string in the client chunks.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the
 standalone bundle), and are covered by the unit tests above, but the following
 have **not** been exercised against a real CLI. They are the list to work
 through before trusting this unattended:
+
+> **Five controls added on 2026-09-06 have never been rendered in a browser.**
+> No browser was available in the session that wrote them, so what is verified
+> is that they compile, that every string is in the production client chunk, and
+> that the route each one calls behaves as above — which is not the same as
+> having seen one. They are: the `landVerifyCommand` field and its
+> shell-metacharacter warning in Settings; the Backups row on the Storage card,
+> including its `unreadable` badge, which needs a directory this server cannot
+> read to appear at all; the sentence under **Sign out everywhere** about a
+> captured cookie; the queue-priority input on a *queued* run's page, which
+> needs a run actually sitting in the queue; and **Open pull request** on the
+> Land card, which needs an isolated run with a branch, a GitHub remote and a
+> credential — none of which existed here. Nothing on that last one has opened a
+> real pull request, which was already true of the endpoint behind it.
 
 > **No Codex device sign-in has ever been completed, because there is no OpenAI
 > account in this container to complete one with.** Everything up to the

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 
-import { DB_PATH, PROJECTS_DIR } from "./config";
+import { BACKUP_DIR, DB_PATH, PROJECTS_DIR } from "./config";
 import { db, getJSON, setJSON } from "./db";
 import { git } from "./git";
 import {
@@ -847,6 +847,22 @@ export interface StorageReport {
     /** The walk hit its budget: one file per session, so this is not expected. */
     partial: boolean;
   };
+  /**
+   * The one store here this app never writes, and the one a recovery depends
+   * on. `readable: false` means this process could not look — a missing bind
+   * mount, or a directory Docker created as root — which is a different answer
+   * from a count of zero.
+   */
+  backups: {
+    path: string;
+    readable: boolean;
+    count: number;
+    bytes: number;
+    /** Epoch ms of the newest snapshot, or null when there is not one. */
+    newestAt: number | null;
+    /** More snapshots than one reading stats: the two figures are floors. */
+    partial: boolean;
+  };
   lastSweep: RetentionSweep | null;
 }
 
@@ -1085,7 +1101,76 @@ export async function storageReport(now = Date.now()): Promise<StorageReport> {
     },
     checkouts: measured.checkouts,
     transcripts: measured.transcripts,
+    // Read fresh rather than cached with the two walks: it is one `readdir` of
+    // a directory with tens of files in it, and the reason to open this card
+    // after running a backup is to see the backup.
+    backups: await backupStore(),
     lastSweep: lastSweep(),
+  };
+}
+
+/**
+ * How many entries of the backup directory one reading may stat.
+ *
+ * Ten years of nightly snapshots is under four thousand, so this is generous
+ * for the directory as used. It is here because `UF_BACKUP_DIR` is an operator
+ * path and this reading is on a route a monitor polls: nothing stops that path
+ * being a directory with a million files in it, and a gauge must not be the
+ * most expensive thing the server does.
+ */
+const MAX_BACKUP_ENTRIES = 5_000;
+
+/**
+ * What is in the backup directory, which nothing under `src/` used to know
+ * existed.
+ *
+ * Read, never written. `docs/agent/environment.md` refuses to ship a scheduler
+ * and that refusal stands; this is the other question, which it does not
+ * answer — an install backed up nightly by the operator's cron and one backed
+ * up once in August were indistinguishable on every page, on `/api/status` and
+ * in every alertable condition in `README.md`.
+ *
+ * `readable: false` is not "no backups". It is "this process could not look",
+ * which is a different and more urgent thing: a bind mount that is missing, or
+ * a directory Docker created as root under a server running as somebody else.
+ * Reported apart from a count of zero for that reason.
+ */
+export async function backupStore(
+  // Named rather than closed over so a test can point it somewhere: the
+  // constant is resolved from the mount at module load and there is no
+  // environment variable to move it, for the reason `config.ts` gives.
+  dir: string = BACKUP_DIR,
+): Promise<StorageReport["backups"]> {
+  let entries: string[];
+  try {
+    entries = await fsp.readdir(dir);
+  } catch {
+    return { path: dir, readable: false, count: 0, bytes: 0, newestAt: null, partial: false };
+  }
+  // `.db` rather than the script's own `usagefoundry-<stamp>.db`: `--dest` takes
+  // any path ending in `.db`, so matching only the generated name would report
+  // zero for an operator who names their snapshots.
+  const files = entries.filter((name) => name.endsWith(".db"));
+  const partial = files.length > MAX_BACKUP_ENTRIES;
+  let bytes = 0;
+  let newestAt: number | null = null;
+  for (const name of files.slice(0, MAX_BACKUP_ENTRIES)) {
+    try {
+      const stat = await fsp.lstat(path.join(dir, name));
+      if (!stat.isFile()) continue;
+      bytes += stat.size;
+      if (newestAt === null || stat.mtimeMs > newestAt) newestAt = stat.mtimeMs;
+    } catch {
+      /* vanished between readdir and lstat — it is a gauge */
+    }
+  }
+  return {
+    path: dir,
+    readable: true,
+    count: Math.min(files.length, MAX_BACKUP_ENTRIES),
+    bytes,
+    newestAt: newestAt === null ? null : Math.round(newestAt),
+    partial,
   };
 }
 

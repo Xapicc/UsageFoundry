@@ -10946,6 +10946,26 @@ export function restartClosedRuns(): RunRow[] {
     .all() as RunRow[];
 }
 
+/**
+ * How many of those are still waiting, without materialising any of them.
+ *
+ * `/api/status` needs the number and nothing else, and a monitor polls it every
+ * minute: selecting whole run rows — prompt text included — to call `.length`
+ * on them would put every live prompt through the query for a count. Kept
+ * beside the list rather than in `status.ts` so the two conditions cannot
+ * drift; a count that disagreed with the notice would be worse than no count.
+ */
+export function restartClosedCount(): number {
+  return (
+    db()
+      .prepare(
+        "SELECT COUNT(*) AS n FROM runs WHERE restart_closed = 1" +
+          " AND set_aside_at IS NULL",
+      )
+      .get() as { n: number }
+  ).n;
+}
+
 export type SetAsideOutcome = { ok: true } | { ok: false; reason: string };
 
 /**

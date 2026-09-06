@@ -32,6 +32,94 @@ is below both: it contradicts a documented invariant, which is the strongest
 kind of evidence here, and costs nothing at all because the code it contradicts
 is *safer* than the sentence describing it.
 
+## What was implemented on 2026-09-06, after this register was written
+
+**Ten rows moved: six closed whole, four in half.** Done on `main` in one pass,
+against the tree this file describes — `git diff --stat 66fdbab..` over `src/`
+was empty when it started, so every line number above was still current.
+
+Closed whole:
+
+- **[O1](08-operations.md#o1--the-one-restart-condition-the-runbook-alerts-on-never-clears-and-the-count-that-does-is-on-a-route-the-status-token-cannot-reach)** — `/api/status` carries `restartClosedOutstanding`, counted by
+  `restartClosedCount()` beside `restartClosedRuns()` so the two conditions
+  cannot drift, and `README.md`'s alert row was repointed at it from
+  `lastBootReconcile.closed` **with the reason stated in the row**. It de-latches:
+  the status route's test drives it 2 → 1 → 0 across a pick-up and a set-aside.
+- **[O4](08-operations.md#o4--nothing-in-the-app-knows-the-backup-directory-exists-so-no-surface-can-say-when-the-install-was-last-backed-up)** — `config.ts` resolves `BACKUP_DIR`, `retention.ts` reads it
+  (`backupStore`), the Storage card carries a Backups row and `/api/status` a
+  path-free copy of the same reading, with two alertable conditions in
+  `README.md`. **`UF_BACKUP_DIR` is deliberately not read**: it is compose's bind
+  *source*, a host path, and `deployment.test.ts` catches reading it as a `UF_`
+  name compose never forwards — the container-side answer is the mount target.
+  Three states rather than two, tested: readable-and-empty is not unreadable.
+- **[G2](03-growth.md#g2-chat-threads-past-the-newest-30-cannot-be-reached-at-all)** — `findChats` pages and searches titles *and message text*;
+  `GET /api/chat` reads `q`/`offset`/`limit` and then answers with the list
+  alone, because the plain form calls `latestChat()`, which creates a thread —
+  a search that did that would leave an empty conversation behind every time
+  somebody typed. The chat page's Chats tab holds the search and a More button,
+  in state the three-second poll does not overwrite. Four tests, including the
+  `LIKE` escaping: an unescaped `%` in the query matched every thread.
+- **[M5](04-missing-features.md#m5-nothing-can-be-prioritised-the-queue-is-strictly-oldest-first)** — a priority input on a queued run's page, beside the
+  sentence saying how many runs are ahead of it. A number rather than a "move
+  up", which is `PUT /api/runs/:id/priority`'s own argument.
+- **[S2](07-security.md#s2-the-status-route-authenticates-a-browser-against-the-master-token-which-the-session-cookie-stopped-being)** — `/api/status` verifies the cookie with `readSessionCookie`
+  instead of comparing it to `UF_AUTH_TOKEN`. **The test that covered it was
+  changed deliberately and says so**: it supplied a cookie the login route can
+  no longer issue, so it passed over a branch nothing could satisfy.
+- **[O8](08-operations.md#o8--lockverdict-asks-staleness-second-docsagentconcurrency-and-ownershipmd-says-it-asks-it-last)** is **not** among these — it was not touched.
+
+Closed in half, and each half is named because the other one stands:
+
+- **[B2](02-backend-logic.md#b2-nothing-builds-or-tests-a-branch-before-it-is-merged-and-the-setting-that-looks-like-it-does-has-one-reader)/[M4](04-missing-features.md#m4-nothing-verifies-a-branch-before-it-is-merged)** — the Settings field exists, so a stock install can turn
+  the gate on without `PUT /api/settings` by hand. It warns while the operator
+  types when the command would be refused as a shell line, which meant lifting
+  `parseVerifyCommand` out of `landGate.ts` (that file spawns, so a client
+  component cannot import it) into `verifyCommand.ts` rather than writing the
+  rule a second time. **`resolveVerifyTools` still has one reader and it is
+  still the conflict assist**, so the row's second half is untouched.
+- **[S1](07-security.md#s1-the-all-sessions-branch-of-the-logout-route-takes-no-credential-and-revoking-a-session-does-not-end-it)** — `all: true` now takes a credential: a signature-valid
+  session cookie or the master bearer, refused with a 401 answered **outside**
+  the audit path, for the same reason `/api/mcp`'s is. A revocation that happens
+  writes an `ops_events` row. **The second half stands and cannot be closed
+  here**: the edge gate cannot read `revoked_at`, so a *captured* cookie is
+  still valid until its own expiry, and closing that is the change to what
+  `middleware.ts` is that `sessionToken.ts` describes. What did change is that
+  the interface stops claiming otherwise — the copy under the button said the
+  case it was for was "a cookie that got out", and now says the opposite in one
+  line.
+- **[B1](02-backend-logic.md#b1-the-landing-guard-covers-landrun-and-none-of-the-other-four-doors)** — **one door of six, and it is the one this pass opened.**
+  `deliverRun` takes the `landing` claim and the `activeRuns()` overlap check on
+  the same folder `landRun` guards. The other four are untouched and the reason
+  is in the code: they are keyed on the repository root rather than on that
+  folder, so covering them is the decision this row asks for a survey about
+  rather than four more lines. The row's rank should now be read as being about
+  those four.
+- **[M1](04-missing-features.md#m1-the-app-can-push-nothing-and-open-no-pull-request)** — there is a button. **Open pull request** on the Land card,
+  offered once per pull request and replaced by a link to it afterwards, with
+  every refusal `planDelivery` can return stated on the card instead of
+  discovered by pressing. **Still no real pull request has been opened by it**,
+  which was this row's assumed premise before and is a measured absence now:
+  nothing in the container had a GitHub remote, a credential and an isolated
+  branch at once.
+
+**[G1](03-growth.md#g1-nine-list-routes-read-parameters-the-one-for-runs-does-not-and-the-pattern-repeats-three-times) lost its second instance of three.** The 30 at
+`src/lib/chat.ts:387` is now reachable past its cap; the 25 at
+`src/lib/workspace.ts:168, :188` is not, and is still #78's.
+
+**What was deliberately not done, and why**, so the next pass does not read the
+absence as an oversight:
+
+- **[F5](01-frontend.md#f5-nothing-that-renders-is-checked-by-anything)**, rank 1 — [06-recommendation.md](06-recommendation.md#survey-3-what-should-check-the-ui-and-what-would-it-actually-catch) argues at length that this is a
+  survey with five real answers and that "add Playwright" is the one to be
+  suspicious of. Picking one of the five in passing is what that section exists
+  to stop. It is untouched, and five of the controls above are on its list of
+  things nothing checks — see `docs/verification.md`'s note that none of them
+  has been rendered in a browser.
+- **[M2](04-missing-features.md#m2-one-credential-no-identity-no-authorisation)**, rank 6 — refused by name, on a trigger that has not fired.
+- **[B3](02-backend-logic.md#b3-a-chat-turn-exists-nowhere-durable-until-the-child-exits)**, rank 8, and the [F3](01-frontend.md#f3-a-chat-turn-renders-nothing-until-it-finishes-the-run-path-streams)/[B4](02-backend-logic.md#b4-the-install-ceiling-is-checked-once-per-chat-turn-before-it-and-a-turn-has-no-cap) issue
+  beside it — one mechanism, three symptoms, and the recommendation files it as
+  a single piece of implementation work rather than three patches. Not started.
+
 ## The state of it, at `66fdbab`
 
 **Every figure in this file is `main` at `66fdbab`, re-read row by row against

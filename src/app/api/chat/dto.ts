@@ -128,8 +128,8 @@ function proposalDTOs(
  * never moves. Sharing the projection is the same rule `chatDTO` follows: two
  * routes that answer about the same rows must not answer differently.
  */
-export function chatListDTO(): ChatListEntryDTO[] {
-  return listChats().map((c) => ({
+export function chatListDTO(rows = listChats()): ChatListEntryDTO[] {
+  return rows.map((c) => ({
     id: c.id,
     title: c.title,
     updatedAt: c.updated_at,

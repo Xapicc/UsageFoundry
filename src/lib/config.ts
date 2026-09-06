@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
@@ -281,6 +282,39 @@ export function mountById(id: string): WorkspaceMount | null {
 export const DATA_DIR = env("DATA_DIR", path.join(process.cwd(), ".data"));
 
 export const DB_PATH = path.join(DATA_DIR, "usagefoundry.db");
+
+/**
+ * Where `scripts/backup-db.mjs` puts a snapshot — read so a surface can say
+ * whether it has ever been used, never so the server writes here.
+ *
+ * That distinction is the whole reason this is allowed to exist.
+ * `docs/agent/environment.md` refuses to ship a scheduler, because a timer that
+ * spends nothing still needs somewhere to put a file that grows without bound.
+ * The refusal is about *writing*; nothing about it argues against reading the
+ * directory the operator's own cron writes into, and until this existed an
+ * install backed up nightly and one backed up once in August presented
+ * identically on every page and in every alertable condition in `README.md`.
+ *
+ * **`UF_BACKUP_DIR` is deliberately not read here**, and that is the trap this
+ * comment exists for. It is a *host* path — `docker-compose.yml` uses it as the
+ * bind **source** and hardcodes `/backups` as the target, and `docs/install.md`
+ * describes it as "host directory mounted at /backups". Reading it inside the
+ * container would point this at a directory that does not exist there, and
+ * forwarding it into the container to make that work would break the mount's
+ * one honest meaning. So the container-side answer is the mount target, exactly
+ * as every documented invocation of the script passes it
+ * (`docker compose exec usagefoundry node scripts/backup-db.mjs /backups`), and
+ * off the container it is the `./backups` this repository ships, which is the
+ * same directory compose binds by default.
+ */
+export const BACKUP_DIR = (() => {
+  try {
+    if (fs.statSync("/backups").isDirectory()) return "/backups";
+  } catch {
+    /* not in the container */
+  }
+  return path.join(process.cwd(), "backups");
+})();
 
 /** Shared secret for the UI. Empty string disables auth entirely. */
 export const AUTH_TOKEN = optionalEnv("UF_AUTH_TOKEN");

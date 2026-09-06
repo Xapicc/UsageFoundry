@@ -140,6 +140,81 @@ test("a sign-out revokes the session it was given", async () => {
   assert.match(header, /Max-Age=0/i);
 });
 
+test("signing out everywhere is refused to a caller holding no credential", async () => {
+  const value = cookieValue(setCookie(await post(TOKEN)));
+  const claim = await sessionToken.readSessionCookie(value, TOKEN, Date.now());
+  assert.ok(claim);
+
+  // The route is exempt from the edge gate, so this request reaches the handler
+  // having proved nothing. It used to revoke every session in the install.
+  const res = await logout.POST(
+    new Request("http://localhost/api/logout", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ all: true }),
+    }),
+  );
+  assert.equal(res.status, 401);
+  assert.equal(
+    sessions.getSession(claim.id)?.revokedAt ?? null,
+    null,
+    "an unauthenticated caller must not end anybody's session",
+  );
+});
+
+test("signing out everywhere ends every session, for a caller holding one", async () => {
+  const mine = cookieValue(setCookie(await post(TOKEN)));
+  const other = cookieValue(setCookie(await post(TOKEN)));
+  const claim = await sessionToken.readSessionCookie(other, TOKEN, Date.now());
+  assert.ok(claim);
+
+  const res = await logout.POST(
+    new Request("http://localhost/api/logout", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: `uf_session=${mine}` },
+      body: JSON.stringify({ all: true }),
+    }),
+  );
+  assert.equal(res.status, 200);
+  assert.equal(sessions.activeSessionCount(), 0);
+  assert.notEqual(sessions.getSession(claim.id)?.revokedAt ?? null, null);
+});
+
+test("the bearer token is the other credential the all branch takes", async () => {
+  const value = cookieValue(setCookie(await post(TOKEN)));
+  const claim = await sessionToken.readSessionCookie(value, TOKEN, Date.now());
+  assert.ok(claim);
+
+  // A wrong one is still nothing, which is what makes the header a credential
+  // rather than a flag.
+  assert.equal(
+    (
+      await logout.POST(
+        new Request("http://localhost/api/logout", {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: "Bearer wrong" },
+          body: JSON.stringify({ all: true }),
+        }),
+      )
+    ).status,
+    401,
+  );
+  assert.equal(sessions.getSession(claim.id)?.revokedAt ?? null, null);
+
+  const res = await logout.POST(
+    new Request("http://localhost/api/logout", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${TOKEN}`,
+      },
+      body: JSON.stringify({ all: true }),
+    }),
+  );
+  assert.equal(res.status, 200);
+  assert.notEqual(sessions.getSession(claim.id)?.revokedAt ?? null, null);
+});
+
 test("Secure is set when the request reached us over HTTPS", async () => {
   assert.equal(
     /;\s*Secure/i.test(setCookie(await post(TOKEN, { proto: "https" }))),

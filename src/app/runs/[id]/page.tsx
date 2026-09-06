@@ -470,6 +470,81 @@ function RunSkeleton() {
   );
 }
 
+/**
+ * Where a queued run sits in the promotion order.
+ *
+ * A number rather than "move up", for the reason `PUT /api/runs/:id/priority`
+ * gives: the value is idempotent, two operators pressing at once end with what
+ * they both asked for, and a relative move over a queue being promoted
+ * underneath is a race with no correct answer.
+ *
+ * The draft is separate from the row on purpose. This page re-reads the run
+ * every few seconds, so a single piece of state would have the poll erase
+ * whatever was half-typed; `draft === null` means "show what the server says".
+ */
+function QueuePriority({
+  runId,
+  priority,
+  onError,
+}: {
+  runId: string;
+  priority: number;
+  onError: (message: string | null) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  async function commit() {
+    if (draft === null) return;
+    const wanted = draft.trim() === "" ? 0 : Number(draft);
+    setDraft(null);
+    if (!Number.isFinite(wanted) || wanted === priority) return;
+    onError(null);
+    const res = await jsonRequest<{ priority: number }>(
+      `/api/runs/${runId}/priority`,
+      { method: "PUT", body: { priority: wanted } },
+    );
+    if (!res.ok) {
+      onError(actionFailureMessage(res, "Could not change this run's place."));
+      return;
+    }
+    setSaved(true);
+  }
+
+  return (
+    <div className="mt-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-xs text-ink-muted" htmlFor="queue-priority">
+          Priority
+        </label>
+        <div className="w-24">
+          <Input
+            id="queue-priority"
+            type="number"
+            min={-100}
+            max={100}
+            step={1}
+            className="tabular-nums"
+            value={draft ?? String(priority)}
+            onChange={(e) => {
+              setSaved(false);
+              setDraft(e.target.value);
+            }}
+            onBlur={() => void commit()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void commit();
+            }}
+          />
+        </div>
+        {saved && draft === null && (
+          <span className="text-xs text-accent">saved</span>
+        )}
+      </div>
+      <Hint>Higher starts first; runs on the same number keep their order</Hint>
+    </div>
+  );
+}
+
 export default function RunDetail({
   params,
 }: {
@@ -1137,6 +1212,18 @@ export default function RunDetail({
               Set aside {fmtRelative(setAsideAt, nowTick)}. Picking up runs in
               bulk skips this one; Resume here still works and puts it back.
             </p>
+          )}
+
+          {/* The only place the promotion order can be changed. Here rather
+              than on the runs list because this is the page that already says
+              how many runs are ahead of it, and a number is only meaningful
+              beside the position it moves. */}
+          {run.status === "queued" && (
+            <QueuePriority
+              runId={id}
+              priority={run.priority ?? 0}
+              onError={setActionError}
+            />
           )}
 
           {/* Up to four of these render together, and the variants are what say

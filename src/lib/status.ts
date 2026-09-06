@@ -5,7 +5,8 @@ import { DB_PATH, PROJECTS_DIR, WORKSPACE_MOUNTS } from "./config";
 import { db } from "./db";
 import { webhookHealth } from "./notify";
 import { opsCounters, recentOpsEvents } from "./ops";
-import { currentSnapshot } from "./orchestrator";
+import { currentSnapshot, restartClosedCount } from "./orchestrator";
+import { backupStore } from "./retention";
 import { ownsDataDir } from "./serverLock";
 
 /**
@@ -46,6 +47,23 @@ export interface StoreUsage {
   partial: boolean;
   /** When these were last measured, since they are cached between polls. */
   measuredAt: number;
+  /**
+   * The fourth store, and the only one here this app does not write.
+   *
+   * A path would be a leak of what this install is, so this is the same reading
+   * the Settings card takes with the directory's name removed: whether the
+   * process could look at all, how many snapshots there are, what they weigh,
+   * and how old the newest one is. The last is the number to alert on — the
+   * three above it grow when something is wrong, and this one goes stale.
+   */
+  backups: {
+    /** False means the directory could not be read, which is not "none". */
+    readable: boolean;
+    count: number;
+    bytes: number;
+    /** Seconds since the newest snapshot, or null when there is not one. */
+    newestAgeSeconds: number | null;
+  };
 }
 
 export interface StatusWindow {
@@ -107,6 +125,22 @@ export interface StatusReport {
   };
   /** The newest restart reconciliation, retained rather than only logged. */
   lastBootReconcile: { at: number; closed: number; kept: number } | null;
+  /**
+   * Runs a restart closed that nobody has picked up yet — and the field to
+   * alert on, which `lastBootReconcile.closed` is not.
+   *
+   * That one is the newest `boot.reconciled` row whenever it was written, so it
+   * is `> 0` for ever after the first restart that closed anything: picking
+   * every run up clears `runs.restart_closed` and writes no ops event, and a
+   * later clean boot writes no row at all (`orchestrator.ts` only records one
+   * when something was closed or kept). A monitor built on it goes red once and
+   * stays red, which is the fastest way to teach an operator to ignore the one
+   * condition whose whole content is *somebody must act*.
+   *
+   * This de-latches, because it is the same set the runs page's notice counts:
+   * it falls to zero when the last one has been picked up or set aside.
+   */
+  restartClosedOutstanding: number;
 }
 
 /**
@@ -202,6 +236,7 @@ const storeCache = ((globalThis as unknown as { __ufStoreUsage?: StoreCache })
     transcriptsBytes: 0,
     partial: false,
     measuredAt: 0,
+    backups: { readable: false, count: 0, bytes: 0, newestAgeSeconds: null },
   },
   inFlight: null,
 });
@@ -215,6 +250,7 @@ async function measureStores(now: number): Promise<StoreUsage> {
     partial = partial || res.partial;
   }
   const transcripts = await treeBytes(PROJECTS_DIR);
+  const backups = await backupStore();
   return {
     databaseBytes:
       fileBytes(DB_PATH) + fileBytes(`${DB_PATH}-wal`) + fileBytes(`${DB_PATH}-shm`),
@@ -222,6 +258,15 @@ async function measureStores(now: number): Promise<StoreUsage> {
     transcriptsBytes: transcripts.bytes,
     partial: partial || transcripts.partial,
     measuredAt: now,
+    backups: {
+      readable: backups.readable,
+      count: backups.count,
+      bytes: backups.bytes,
+      newestAgeSeconds:
+        backups.newestAt === null
+          ? null
+          : Math.round((now - backups.newestAt) / 1000),
+    },
   };
 }
 
@@ -319,5 +364,6 @@ export async function statusReport(now = Date.now()): Promise<StatusReport> {
           kept: Number(boot.detail.kept ?? 0),
         }
       : null,
+    restartClosedOutstanding: restartClosedCount(),
   };
 }

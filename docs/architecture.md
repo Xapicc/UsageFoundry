@@ -79,7 +79,12 @@ src/lib/
                    *null* count and never a zero, because `land.ts` reads the
                    merged content of only the first `MAX_CONTENT_FILES`
   review.ts        the on-demand reviewer (a third, deliberate child process)
-  land.ts          merge preview, landing, branch deletion, branch inventory
+  land.ts          merge preview, landing, branch deletion, branch inventory,
+                   and the one exit that leaves the machine
+  verifyCommand.ts what an operator's Land check may be, and nothing that runs
+                   one — split from landGate.ts, which spawns, so the Settings
+                   field can warn about a shell line without dragging
+                   node:child_process into a client bundle
   chat.ts          the orchestrator chat (a fourth, deliberate child process),
                    and the shared spawn a workflow's deciding block reuses
   workflows.ts     saved graphs of run blocks — form input, never a run; and
