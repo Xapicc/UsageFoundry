@@ -946,15 +946,46 @@ Built and exercised against real transcripts:
   `messageId:requestId`, and billing is per request, so the deduped figure is the
   right one and is what `scanUsage` supplies.
 
-  **Not yet verified by hand:** no *boundary* prune has run at all — all four
+  **Not yet verified by hand:** ~~no *boundary* prune has run at all — all four
   observations are the early-end path, because each run finished within one
-  effective cycle, so the loop broke before reaching the boundary call. The
+  effective cycle, so the loop broke before reaching the boundary call.~~
+  **Superseded the same day it was written — the first boundary receipt is six
+  hours after the fourth of these; see the paragraph below.** The
   corrected invalidation has unit tests and has not itself been re-observed
   against a fifth prune. The subprocess, the token measurement, the tier behaviour and the
-  backup were all exercised directly against a copied transcript; the boundary
+  backup were all exercised directly against a copied transcript; ~~the boundary
   call site, the early-end interrupt and the KPI arithmetic have unit tests and a
-  clean `npm run build`, and nothing more. The netted figures on the dashboard
-  have never been read against a real run.
+  clean `npm run build`, and nothing more~~ **— both call sites have since fired
+  against real runs, 54 times between them; only the KPI arithmetic is still
+  unit tests and a clean `npm run build` and nothing more**. The netted figures
+  on the dashboard have never been read against a real run.
+
+  **Both triggers have since fired for real, and these four *are* four of the
+  receipts.** Read on 2026-09-07 out of this install's own `prune_receipts` and
+  `runs` — the dump at `prune-audit-dump.json` in the operator's checkout,
+  written 2026-08-28 23:37 UTC and untracked, so re-derive it with `SELECT
+  trigger, COUNT(*) FROM prune_receipts GROUP BY trigger` against
+  `/data/usagefoundry.db` rather than trusting the file. **54 receipts: 52
+  `early-end` and 2 `boundary`**, 2026-08-24 01:53 through 2026-08-28 22:57 UTC,
+  over 47 distinct runs of which 46 completed. Receipts 1-4 are the four
+  measured above and agree with it digit for digit — same tier, `tokens_before`
+  167,326-169,283, 29.1-52.8% removed, Σ`tokens_removed` 266,683,
+  Σ`tokens_after` 405,049 — which is what settles that the block above records a
+  reading that happened rather than one that was hoped for. The boundary pair is
+  receipt 9 (2026-08-24 09:03, run `69bc8a6c`, 243,190 → 207,905) and receipt 26
+  (2026-08-25 07:12, run `601df7bc`, 489,849 → 183,652), both on runs that
+  completed two cycles. `pruneAtEarlyEnd` has one caller — the run loop's
+  `kind === "prune"` branch — and one thing raises that interrupt,
+  `checkContextCeilings`, so each of the 52 is a work cycle the context ceiling
+  ended. Two cautions on reading the rows. A receipt's `tokens_before` spans
+  91,251 to 1,058,334 and is **not** the figure the ceiling compared: the
+  receipt carries the transcript measure while the ceiling reads
+  `sampleContext`'s API measure, which is the gap *The two context measures, and
+  the 65,000 tokens between them* below is about. And
+  `CYCLE_CONTEXT_CEILING_TOKENS` is 200,000 now, not the 167,000 in force for
+  receipts 1-4. What none of this touches is the display: no netted figure has
+  been read off a page, which is why the list entry below keeps that half and
+  only that half.
 
 - **What winnow's intake filter is worth, and how far it contaminates the prune
   figure.** Measured 2026-08-24 against the real ledger at
@@ -3143,13 +3174,18 @@ through before trusting this unattended:
   6. At **390×844**: the table stacks (it is a `Table stack` and every `Td`
      carries a `label`), each value is named, and nothing scrolls sideways.
 
-- **Context pruning inside a live run.** The whole feature. The winnow
+- **Context pruning inside a live run.** ~~The whole feature.~~ **Retracted on
+  2026-09-07 to the display half; what settled it is *Both triggers have since
+  fired for real* above.** The winnow
   subprocess, the token measurement, all three prescriptions and the `.bak` it
   leaves were exercised directly against a copied transcript in the running
-  container, and those numbers are recorded above. What has **not** run is any of
-  the wiring: no boundary prune has fired at the end of a real work cycle, no
-  cycle has been ended by the context ceiling, and no netted figure on the
-  dashboard or a run page has been read against a real run. That now includes
+  container, and those numbers are recorded above. ~~What has **not** run is any
+  of the wiring: no boundary prune has fired at the end of a real work cycle, no
+  cycle has been ended by the context ceiling, and~~ **The wiring has run: this
+  install holds 52 `early-end` receipts against 2 `boundary` ones, so both call
+  sites have fired at the end of real work cycles and 52 cycles were ended by
+  the ceiling.** What has **not** been read is the display — no netted figure on
+  the dashboard or a run page has been read against a real run. That now includes
   the tile beside the window meters — now `ContextControlAside`, carrying both
   mechanisms: its six pruning states (a bounded span, an unbounded one, either
   window empty, partially priced, nothing priced at all, a negative net) were
@@ -3282,14 +3318,24 @@ through before trusting this unattended:
   not run); that a receipt whose transcript has been swept is excluded rather
   than priced at zero saving with its invalidation still charged; and that the
   single-read-three-sums path is faster than the two `pruneSavings` calls it
-  replaced — it does strictly less work by inspection, and nothing was timed. The
-  Docker build that
+  replaced — it does strictly less work by inspection, and nothing was timed.
+  ~~The Docker build that
   bundles winnow has also never completed — the repository was private when this
   was written, so the `git fetch` in the image fails and the feature reports
-  itself unavailable. Two things to watch first: whether the transcript reader's
-  shrink detection (`transcripts.ts:396`) picks up the rewrite as intended, and
-  whether the loop's `continue` after a `prune` interrupt re-enters cleanly with
-  the session still resumable.
+  itself unavailable.~~ **Retracted 2026-09-07 on the receipts.** Every prune
+  goes through `pruneTranscript`, which answers `unavailable` and runs nothing
+  unless `WINNOW_PYTHON` is a file under `WINNOW_ROOT` (`/opt/winnow`), and only
+  the `Dockerfile`'s `WINNOW_REF` step puts it there — so 54 receipts say it
+  was there. The stated cause is spent too: `gh repo view Xapicc/winnow
+  --json visibility` answers `PUBLIC`, checked 2026-09-07. Of the two things
+  this entry said to watch first, one is now answered. **The loop's `continue`
+  after a `prune` interrupt does re-enter cleanly with the session still
+  resumable**: four runs took a second early-end prune, one of them (`54931cbb`)
+  a third — cutting at 169,332 tokens at 06:01 on 2026-08-25, again at 171,716
+  at 06:20 and again at 182,478 at 06:23 — and all four completed, which the
+  loop cannot do without re-entering on a session it could resume. What stays is the
+  other — whether the transcript reader's shrink detection (the `rotated` test
+  in `readAppended`) picks up the rewrite as intended.
 
   **This is also the only thing bounding a work cycle now**, since
   `--autocompact` was removed in the same change, so an install where it silently
