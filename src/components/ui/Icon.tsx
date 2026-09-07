@@ -21,6 +21,7 @@ export type IconName =
   | "dashboard"
   | "chat"
   | "runs"
+  | "taskboard"
   | "workflows"
   | "agents"
   | "branches"
@@ -68,6 +69,19 @@ const GLYPH: Record<IconName, ReactElement> = {
     <>
       <circle cx="8" cy="8" r="5.25" />
       <path d="M6.75 5.9 10.4 8l-3.65 2.1Z" />
+    </>
+  ),
+  // A checked item over an unchecked one. Deliberately not a kanban board — a
+  // rounded rect with a partition is `sidebar` drawn again, which is the failure
+  // `agents` and `knowledge` below both record — and deliberately not a bare
+  // tick, which is `check` and means affirmation rather than a destination. The
+  // marks sit clear of the rules rather than on them, so it does not read as
+  // `settings`' two sliders at 16px.
+  taskboard: (
+    <>
+      <path d="M2.5 5.15 3.85 6.5 6.35 4" />
+      <circle cx="4.4" cy="10.85" r="1.9" />
+      <path d="M8.5 5.15h5M8.5 10.85h5" />
     </>
   ),
   workflows: (

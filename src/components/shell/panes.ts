@@ -12,10 +12,13 @@ import type { IconName } from "@/components/ui/Icon";
  * The digit follows the row's position rather than the pane's age: a shortcut
  * that names the fifth row and lands on the sixth is worse than one somebody
  * has to relearn, so inserting a pane renumbers the ones under it. **Nine is
- * the ceiling** — ⌘1…⌘9 is nine digits and the list is ten rows — so the tenth
- * row has no digit at all, and *which* row that is falls out of the order
- * rather than being chosen: today it is Settings, because Dreaming moved up to
- * eighth and pushed the two configuration panes down one each.
+ * the ceiling** — ⌘1…⌘9 is nine digits and the list is eleven rows — so the
+ * last **two** rows have no digit at all, and *which* rows those are falls out
+ * of the order rather than being chosen: today they are API account and
+ * Settings, because Taskboard went in under Runs and pushed everything below it
+ * down one. The loss is always taken from the bottom, which is the only rule
+ * that keeps "the digit is the row's position" true; a two-key chord to buy a
+ * digit back is a different decision and not one this file may make on its own.
  *
  * That used to be a warning rather than a mechanism, and it named the wrong row
  * (Knowledge, which has been the seventh since it moved above the two
@@ -30,8 +33,8 @@ export interface Pane {
   label: string;
   icon: IconName;
   /**
-   * The digit after ⌘, or absent past the ninth row — Settings, as the list
-   * below stands.
+   * The digit after ⌘, or absent past the ninth row — API account and Settings,
+   * as the list below stands.
    *
    * Announced with `aria-keyshortcuts` on the row and shown in quick open, and
    * **every reader of it must handle its absence** — see the note above.
@@ -43,30 +46,38 @@ export const PANES: readonly Pane[] = [
   { href: "/", label: "Dashboard", icon: "dashboard", shortcut: "1" },
   { href: "/chat", label: "Orchestrator", icon: "chat", shortcut: "2" },
   { href: "/runs", label: "Runs", icon: "runs", shortcut: "3" },
-  { href: "/workflows", label: "Workflows", icon: "workflows", shortcut: "4" },
-  { href: "/agents", label: "Agents", icon: "agents", shortcut: "5" },
-  { href: "/branches", label: "Branches", icon: "branches", shortcut: "6" },
+  // Directly under Runs rather than beside the other backlogs, because it is
+  // what *feeds* the list above it: a task is a brief nobody has started, and
+  // the press that starts one is a run. Under Workflows it would read as a
+  // third way of describing work to do, which is the one thing it is not — a
+  // row here claims no folder and spawns nothing (`docs/agent/taskboard.md`).
+  { href: "/tasks", label: "Taskboard", icon: "taskboard", shortcut: "4" },
+  { href: "/workflows", label: "Workflows", icon: "workflows", shortcut: "5" },
+  { href: "/agents", label: "Agents", icon: "agents", shortcut: "6" },
+  { href: "/branches", label: "Branches", icon: "branches", shortcut: "7" },
   // Above the two configuration panes rather than after them: those two are the
   // install's own settings and keep the bottom, where Knowledge is a place the
   // operator reads — and so is the row now directly under it. The renumbering
   // below both is what the rule above asks for.
-  { href: "/knowledge", label: "Knowledge", icon: "knowledge", shortcut: "7" },
+  { href: "/knowledge", label: "Knowledge", icon: "knowledge", shortcut: "8" },
   // Directly under Knowledge, which is the pane it is nearest in kind — both
   // are places the operator reads, and this one is a readout of what the
   // install did to itself. It sat below the configuration pair until the
   // operator asked for this order, and the digits are what that cost: the rule
   // above renumbers everything under an inserted row, so the two config panes
-  // each drop one and the list runs out of digits one row early.
-  { href: "/dreaming", label: "Dreaming", icon: "dreaming", shortcut: "8" },
-  { href: "/account", label: "API account", icon: "account", shortcut: "9" },
-  // The tenth row, and the first row in this app with no shortcut. Losing ⌘9
-  // is the price of the order above, and the loss falls on the pane somebody
-  // opens when something is wrong — which is the argument the old arrangement
-  // made for keeping the digit here, and which was overruled, not forgotten.
-  // Settings stays one press away in quick open. What may never be done is the
-  // compromise: leaving the digits alone while Dreaming sits eighth would give
-  // ⌘8 a name in the list and a landing one row down, which is the failure the
+  // each dropped one and the list ran out of digits one row early. Taskboard
+  // going in under Runs took the second row's digit on the same rule.
+  { href: "/dreaming", label: "Dreaming", icon: "dreaming", shortcut: "9" },
+  // The tenth and eleventh rows, and the only two in this app with no shortcut.
+  // ⌘9 moved up to Dreaming when Taskboard went in above it, so the account
+  // pane joined Settings in losing its digit — the loss is taken from the
+  // bottom, and both of these are read rather than worked in: the account pane
+  // is a readout and Settings is opened when something is already wrong. Both
+  // stay one press away in quick open. What may never be done is the
+  // compromise: leaving the digits alone while Taskboard sits fourth would give
+  // ⌘4 a name in the list and a landing one row down, which is the failure the
   // position rule at the top of this file exists to prevent.
+  { href: "/account", label: "API account", icon: "account" },
   { href: "/settings", label: "Settings", icon: "settings" },
 ];
 
