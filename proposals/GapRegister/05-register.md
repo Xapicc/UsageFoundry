@@ -165,6 +165,254 @@ absence as an oversight:
 - **[M2](04-missing-features.md#m2-one-credential-no-identity-no-authorisation)**, rank 6 — refused by name, on a trigger that has not fired.
 - **[F5](01-frontend.md#f5-nothing-that-renders-is-checked-by-anything)**, rank 1 — see above; still the one row deliberately left.
 
+## What was implemented on 2026-09-07, and merged onto `main` in one pass
+
+**Seventeen more rows moved, every one of them whole.** Fifty-two commits off
+the tree the section above describes, written by parallel sessions that did not
+read each other and merged onto `main` at `a21beaa`. **Four rows are open at
+that tree — M2, O5, G3 and G4 — one is still half closed, S1, and one is marked
+superseded rather than closed, F2**, which is the disposition its own survey
+asked this pass to take. Every claim below was re-read against `a21beaa` rather
+than taken from the commit message that made it; where a commit claims more than
+the tree shows, the tree is what is written here.
+
+- **[F5](01-frontend.md#f5--nothing-that-renders-is-checked-by-anything)**, rank
+  1 and the one row 2026-09-06 deliberately left — **closed on the survey's own
+  terms.** `proposals/UIChecks/09-recommendation.md` named Option C2 as "what
+  closes F5", and `scripts/smoke-pages.mjs` is C2 and nothing else (`68ef0f1`,
+  `7eb741d`): the built standalone server against a throwaway `DATA_DIR` and a
+  `CLAUDE_BIN` that exits 1, all nineteen `src/app/**/page.tsx` at 390px and
+  1280px, three assertions each — a 200, no console error, no sideways body
+  scroll — seeded through the app's own API because one writer per data
+  directory is a boot-time rule, and a skip that exits 2 so a pass that never ran
+  cannot read as a pass. **Three things it does not do, each a decision on the
+  record**: it is in neither `npm test` nor CI, which is the argument
+  `README.md:1031` asked to have on its own merits; it asserts about *load* and
+  never about interaction, which is what keeps it out of the check-then-act race;
+  and page components rendered by a test is still 0, so Option A stands exactly
+  where the survey left it. **It is also red on this tree and that is not
+  written down anywhere a person would look**: `/knowledge` logs a console error
+  at both widths, because "no vault is configured" travels as an HTTP 409 that
+  Chromium records as a failed resource, and the page was left alone
+  deliberately. `68ef0f1`'s commit message is the only place that says so —
+  `docs/verification.md` gained no entry for the pass ever having been run, and
+  its paragraph at `:6124` still reads as though the smoke pass were
+  hypothetical.
+- **[B2](02-backend-logic.md#b2--nothing-builds-or-tests-a-branch-before-it-is-merged-and-the-setting-that-looks-like-it-does-has-one-reader)/[M4](04-missing-features.md#m4--nothing-verifies-a-branch-before-it-is-merged)**
+  — **the second half closed, by renaming rather than by wiring.** The row's
+  standing complaint was that `resolveVerifyTools` sounded like a verify gate and
+  had one reader, the conflict assist. `a3490b3` renames it `resolveAllowedTools`
+  everywhere, with a read-side migration at `src/lib/settings.ts:945-957` so an
+  install that already stored the old key keeps its value. Nothing gained a
+  second reader and nothing needed to: what the row asked was that the setting
+  stop making a claim the code does not honour. `3f01803` puts the gate on the
+  page a person actually reads before pressing Land (`docs/review-and-land.md`),
+  which is where it was missing after the field shipped, and `03e45bb` records
+  the field being *looked at* in a browser rather than trusted to compile.
+- **[B5](02-backend-logic.md#b5--the-chat-can-identify-only-the-first-25-repositories-always-the-same-25)**
+  — `537112d`. `githubRemotes` read `candidates.slice(0, MAX_REMOTES_READ)` in
+  scan order, so the same twenty-five repositories won every call for ever. The
+  cap stays, because a mount holding two hundred repositories should not fork two
+  hundred git children on one tool call, and becomes a page: `selectRemoteReads`
+  is the pure half clamping the offset, `list_folders` takes `offset` and a
+  `folders` filter, and every folder a call did not look at carries `repoUnread`
+  — which is the sharper half of the fix, since an unread folder used to come
+  back byte-for-byte identical to one that is not on GitHub. Closes #78's second
+  suspicion with it.
+- **[G1](03-growth.md#g1--nine-list-routes-read-parameters-the-one-for-runs-does-not-and-the-pattern-repeats-three-times)**
+  — **closed outright at its fourth and last instance** (`47eea68`), the 20 a
+  workflow's own history was pinned to. `listInstances` becomes `findInstances`
+  with `offset`, `limit` and a `total` over every row — `listRunsPage`'s
+  reasoning, that a count which is itself truncated cannot say an instance has
+  fallen out of reach — through `clampRunOffset` rather than a second copy of
+  that rule, with `INSTANCE_PAGE_MAX` bounding one request because `rowToInstance`
+  reads three tables per row, and `id DESC` behind `created_at DESC` so a paged
+  list cannot show one instance twice and another never. All four caps the row
+  named — 100, 30, 25, 20 — are parameters now, and the 25 went with B5 above.
+- **[G5](03-growth.md#g5--the-chat-page-re-reads-and-re-serialises-every-message-in-the-thread-every-three-seconds-and-nothing-bounds-the-thread)**
+  — `ba66628`, `22ae92d`. `GET /api/chat/[id]?after=` ships what has arrived past
+  a sequence instead of the whole conversation, which is the run log's own
+  cursor carried across the seam the row was about. The first load deliberately
+  carries none, and a cursor that is not a whole number at or above zero answers
+  with the whole thread rather than an error.
+- **[B6](02-backend-logic.md#b6--the-claude-stream-parser-drops-an-event-type-it-does-not-recognise-without-a-word-and-the-codex-parser-twelve-lines-below-it-says-why-that-is-not-survivable)**
+  — `0f1253a`. One `noteUnknownStreamEvent` serves both parsers rather than a
+  second copy of the Codex arm, which is the point: the same asymmetry written
+  twice is how it came back. Non-fatal, because a parser that threw on a provider
+  rename would turn a cosmetic change into every run on the box failing, and
+  bounded twice for the two lifetimes its two sinks have — one log line per
+  distinct type per cycle, one `ops_events` row per type per boot, per boot
+  rather than for ever because that table keeps 500 rows and a sighting evicted
+  months later would read as "this stopped happening".
+- **[F7](01-frontend.md#f7--the-workflow-editor-is-the-apps-one-drawing-surface-and-it-discards-a-graph-without-asking)**
+  — `db20f9d`, `8d43dff`. `src/lib/unsavedWork.ts` is one guard the page
+  registers and the exits ask, because `beforeunload` covers one exit of five and
+  the other four are `router.push` calls the page cannot see: a sidebar link, an
+  in-page link, ⌘1…⌘9 and quick open.
+- **[M6](04-missing-features.md#m6--a-credential-cannot-be-rotated-without-a-restart-and-a-restart-ends-live-runs)**
+  — `98dee4d`, `bb51fe9`, and **the row's own diagnosis is corrected in
+  closing it.** The module-level `const` the row blamed is not what makes rotation
+  cost a restart: nothing outside a process can write that process's environment,
+  and `middleware.ts:41`/`:114` already read two of these values per request —
+  measured in the built edge bundle, not assumed — and rotate exactly as poorly.
+  So no read site changed. What the operator needed was the split the row does
+  not make: `UF_AUTH_TOKEN` and `UF_STATUS_TOKEN` are issued here and a restart is
+  the only revocation there is, while every other credential is revoked at
+  GitHub, at the Anthropic console or at the webhook's receiver in seconds with
+  nothing restarted. `docs/agent/environment.md` carries the enumeration, three
+  credentials wider than the register's own list, and `deployment.test.ts` pins it
+  against `config.ts`, `middleware.ts` and the entrypoint because the way this
+  went wrong last time was by growing.
+- **[M7](04-missing-features.md#m7--nothing-checks-a-completeness-claim-and-docsagent-is-built-out-of-them)**
+  — `1e5735b`, `6dda0a1`. `src/lib/docClaims.test.ts` reads the claim out of the
+  document and asserts it against the tree, so correcting the assertion is not a
+  way to clear a failure and the message says so. Pinned are the claims whose
+  decay is already on the record — the `db.ts` table list (#161), the pane list
+  (#163), the `globalThis` roster in both documents that carry it (#166) — plus
+  the two that name their own successor. Three claims were re-measured to land
+  it: the table list said 22 against 34 created, and the roster's own grep
+  reached none of the five keys declared through a second cast idiom, thirty-odd
+  being a roster of fifty-six. **This is the only mechanism the register has
+  produced that has already caught something it was not aimed at — see below.**
+- **[O2](08-operations.md#o2--the-containers-stop-grace-and-the-servers-shutdown-grace-are-one-edit-apart-and-the-file-that-pins-every-other-such-pair-does-not-pin-this-one)**
+  — `d6e4e50`. `deployment.test.ts`, whose whole purpose is that class of pair,
+  now pins `stop_grace_period` against `SHUTDOWN_GRACE_MS`.
+- **[O3](08-operations.md#o3--everything-migrate-finds-wrong-with-the-database-it-just-opened-is-a-line-on-stdout-and-nothing-else)**
+  — `c28767a`. `migrate()`'s findings survive as `schemaFaultsThisBoot()` and
+  reach `/api/status` as `schemaFaults`, empty on a clean boot — which is what
+  makes it alertable rather than a line in a log a restart erases.
+- **[O6](08-operations.md#o6--plan_observations-grows-at-every-boundary-is-swept-by-nothing-and-is-read-by-nothing)**
+  — `810e417`, **closed by deleting the writer rather than by giving it a
+  horizon**, on the row's own third clause: nothing read it, so a sweeper would
+  have been an expiry policy for a store with no consumer. Dropped in `migrate()`
+  inside a `db.transaction` on the convention every destructive statement here
+  follows; `observePlan` and its subprocess stay, because the comparison has an
+  audience in the run's own log, and the copy that said "Recorded for comparison"
+  now says "Shown". `resume_probes` is the same shape one table over and
+  deliberately untouched, being read at `boundaryInvalidation`.
+- **[O7](08-operations.md#o7--the-containers-own-log-is-a-fourth-unbounded-store-and-compose-asks-for-no-limit-on-it)**
+  — `fe3d3f1`. `json-file` with `max-size`/`max-file` in `docker-compose.yml`,
+  `UF_LOG_MAX_SIZE`/`UF_LOG_MAX_FILE` in `.env.example`, pinned by
+  `deployment.test.ts` and alertable from `README.md`.
+- **[O8](08-operations.md#o8--lockverdict-asks-staleness-second-docsagentconcurrency-and-ownershipmd-says-it-asks-it-last)**
+  — `a083eb6`, **closed by correcting the sentence rather than the code**, which
+  is what the row asked for and the reason it ranked last: the code was the safer
+  of the two. `docs/agent/concurrency-and-ownership.md` and `serverLock.ts`'s own
+  docblock now say staleness is asked second, name both cases it decides, and
+  argue why the shortcut is a shortcut rather than a second answer.
+- **[S3](07-security.md#s3-nine-mutating-route-files-write-no-audit-line-and-six-of-them-are-the-credential-routes)**
+  — `d943fb5`, `a7f40e9`, `1e4a15b`, `2aa36cc`. **Forty-one route files call
+  `auditMutation` or `recordDurableMutation` now, and the two mutating routes
+  that do not each carry a docblock saying why**: `/api/workflows/validate`
+  writes nothing and fires behind the canvas's debounce, and `/api/otlp/v1/logs`
+  is delivered to by this app's own children every few seconds per run.
+  `/api/mcp` is the third shape — it audits, but *after* its 401, because
+  auditing a credential-free refusal hands any caller who can reach that path a
+  lever on a capped table. So the row's nine became zero plus two arguments,
+  which is the disposition it asked for rather than a blanket. The six
+  provider-credential routes and the two install-wide presses — `POST /api/fleet`,
+  which ends every run in flight, and `POST /api/runs/restarted`, which starts up
+  to twenty-five billed agents — were the ones that left nothing anywhere. The
+  half that matters most is the split `2aa36cc` writes down: a line that must
+  outlive twenty thousand ordinary presses goes to `ops_events` through
+  `recordDurableMutation`, and the row
+  follows the change rather than the press, so a refused code or a cancel over no
+  pending login cannot evict a real record from a 500-row table.
+- **[S4](07-security.md#s4-the-no-literal-rule-is-pinned-by-an-assertion-whose-fixture-omits-the-one-notice-that-carries-figures)**
+  — `11ddd10`. The argv assertion is spawned with the notice that carries
+  figures, so the fixture the rule is pinned against is the one the other test
+  requires.
+- **[S5](07-security.md#s5-the-one-write-path-the-edge-gate-exempts-buffers-an-unbounded-body)**
+  — `da64c08`. `MAX_INGEST_BODY_BYTES`, and a 413 that names the limit rather
+  than the blanket 200 the route answers everything else with.
+
+**[G4](03-growth.md#g4--the-audit-trail-is-20000-rows-deep-evicted-on-every-insert-and-identifies-no-person)
+was measured rather than moved, and stays open with its premise answered.**
+`be5bbd2` is `proposals/GrowthLimits/13-measurement-audit-trail-window.md`: at
+the busiest run rate this install has measured, 20,000 rows is about **eight
+months** rather than a fortnight or four hours, because no GET is audited and the
+only server-driven writer is `POST /api/mcp`; the per-insert eviction is
+confirmed and priced at 6–7µs. No behaviour changed and the recommendation is to
+leave `RETENTION_ROWS` alone. Two findings it turned up that the row did not ask
+for: the session id already exists as a non-secret component of the cookie and is
+the concrete form "identifies no person" should take, and
+`POST /api/workflows/validate` fires twice a second behind the graph editor's
+debounce, so auditing it would collapse the window from eight months to three
+hours. **S3 landed forty-one audited route files against that arithmetic and not
+one of them is a poll** — the two routes that are, `/api/workflows/validate` and
+`/api/otlp/v1/logs`, are exactly the two that argue their way out of the wrapper
+— so the eight months survives the pass that most threatened it.
+
+**[F2](01-frontend.md#f2--quick-open-the-apps-only-search-surface-inherits-that-cap)
+is marked superseded here, which is the disposition its survey asked this pass
+to take.** Survey 1, reachability, was finally performed — `proposals/Findability/`
+(`3bacfc2`, `e93623e`, `2ab8b9c`): what the app holds, what can be found today,
+the rate things arrive, six mechanisms ranked and three refused by name, with no
+product code changed for it. Measured, four of the five kinds F2 named do not
+survive its framing: a chat is already findable through `findChats`, a branch is
+a projection of `runs` rather than a corpus, a schedule is a `UNIQUE` column on a
+workflow with no text of its own, and agents and templates are refused as search
+targets because their lists are already complete. **Superseded rather than
+closed, because closing it would imply the remedy was applied and it was not** —
+quick open's corpus is still three hardcoded blocks at `a21beaa`. What survives
+of the row is ranked first and second in that survey: `q=` belongs on the two
+routes whose corpus is measured large and lacks it, and the destination list
+should be derived rather than hand-registered, `/runs/[id]/conflicts` being the
+worked example.
+
+**The falsifier is still unrun, and now for a measured reason rather than an
+assumed one.** The survey found two install databases reachable from a container
+and copied both read-only: `SELECT count(*) FROM runs` answers **0** on each and
+every content table in both is empty. `DATA_DIR` proper is still sandbox-denied
+and Docker is still unavailable. What it did measure on real data is what lives
+outside the database — 141 branches across 15 repositories, 2,160 session
+transcripts, 1,415 vault notes — which is why item 1 above names `/api/branches`.
+
+### What the merge itself demonstrated, and nobody planned
+
+**M7's mechanism caught a claim that decayed during this very pass, and `main`
+was red for it.** `6dda0a1` re-measured `docs/agent/architecture.md`'s `db.ts`
+table list to 34 created and a plain `grep -c` of 36; `810e417`, on a branch that
+never saw it, dropped `plan_observations` to close O6. Neither commit is an
+ancestor of the other. Merged together the tree creates 33 tables and the
+document claimed 34, so `npm test` failed on two `docClaims` cases. **The
+sentence is corrected by this pass** — `docs/agent/architecture.md`'s list is 33
+names and its `grep -c` figure is 35 — and the suite is green again but for one
+failure that predates the fork, below. **That is the register's dominant failure
+mode caught in the act by the row written about it** — a completeness claim
+decaying silently,
+nothing throwing, nothing failing to typecheck — except that this time something
+did fail, loudly, naming both numbers and refusing the shortcut of editing the
+assertion. It is also the first evidence on this register that parallel sessions
+merging without reading each other is itself a source of the gaps here.
+
+**One test fails on `a21beaa` for a reason that is not this pass's**:
+`backupRestore.test.ts`'s "leaves the database that was there when the copy dies
+part-way" fails on macOS at the fork point too, with nothing on its path changed
+since. It is an environment reading rather than a regression, and the container
+is where that suite's claim actually lives.
+
+### Three defects found and not ranked
+
+`proposals/Findability/11-defects-found.md` files three things it explicitly
+declines to put on this register, all three still true at `a21beaa`. They are
+recorded here as candidates for the next pass rather than ranked in, because
+ranking them means re-deriving the table below:
+
+- **`/runs/[id]/conflicts` is in neither hand-written list.**
+  `src/components/shell/panes.ts` has an explicit case for `/runs/[id]/touched`
+  and none for its sibling, so the conflicts screen's toolbar reads "Run" — the
+  exact failure the comment five lines above it describes — and the page is
+  absent from `PANES`, so quick open cannot reach it. `touched` arrived on
+  2026-08-27 and was registered; `conflicts` arrived on 2026-08-28 and was not.
+- **A dead `haystack` on quick open's run items**
+  (`src/components/shell/QuickOpen.tsx:227`): nothing reads it, and it matches
+  `status` where the server it stands in for matches `prompt`.
+- **`request_log` is written by forty-one route files and read by nothing.**
+  `recentRequests` has no caller outside its own module, which S3's pass made
+  sharper rather than better: the trail is more complete and still has no
+  surface.
+
 ## The state of it, at `66fdbab`
 
 **Every figure in this file is `main` at `66fdbab`, re-read row by row against
@@ -395,6 +643,13 @@ the first time that column has been confirmed rather than assumed since the
 survey was written.
 
 ## Ranked
+
+**This table is the `66fdbab` snapshot and its status column has not been
+re-derived since.** Thirty-one of these rows are closed whole at `a21beaa`, one
+is half closed, one is superseded and four are open; the two dated sections at
+the top of this file are the live account, and they are what a reader acting on
+a row should take. The table is kept as made, for the ranking and the reasoning
+rather than as a record of what shipped.
 
 | # | ID | Axis | Gap | Evidence | Blast radius | Cost of leaving it | Conf. | Already owned? |
 |---|---|---|---|---|---|---|---|---|

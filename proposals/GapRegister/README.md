@@ -5,6 +5,23 @@ logic, growth limits, features it is missing, the app's own security and trust
 boundary, and what an operator can do when a live install breaks — and which of
 them are worth a survey of their own?
 
+> **Seventeen more rows moved on 2026-09-07, at `main` `a21beaa`, and every
+> one of them closed whole** — F5, B2/M4, B5, B6, F7, G1, G5, M6, M7, O2, O3,
+> O6, O7, O8, S3, S4 and S5, off 52 commits written by parallel sessions that did
+> not read each other and merged in one pass. **Thirty-one of the thirty-seven
+> rows are closed whole, one is half closed (S1), one is superseded (F2) and
+> four are open: M2, O5, G3 and G4.** G4 was *measured* rather than moved —
+> 20,000 rows is about eight months, not a fortnight — and F2 is superseded
+> rather than closed by the survey this directory recommended first,
+> [`../Findability/`](../Findability/README.md), which measured four of the five
+> kinds F2 named out of its own framing and left the disposition to this pass.
+> What closed each row, what each one still does not do, what the merge itself
+> demonstrated about parallel sessions, and the three defects that survey filed
+> without ranking are in
+> [05-register.md](05-register.md#what-was-implemented-on-2026-09-07-and-merged-onto-main-in-one-pass).
+> **Everything below this line is the `66fdbab` account, the note under it
+> included, except where a dated sentence says otherwise.**
+
 > **Thirteen more rows moved on 2026-09-06, after everything below was
 > written** — eleven closed whole (O1, O4, G2, M5, S2, B1, B3, F3, B4, M1, and
 > G1's second instance of three) and two in half (B2/M4, S1). **F5, rank 1, was surveyed rather than
@@ -182,9 +199,22 @@ rather than refuted. The five still open are F5, G1, G2, G4 and B5, plus F2's
 corpus — and `/api/branches`' pattern was carried across to `/api/runs` and to
 nothing else.
 
+**At `a21beaa`, everything on that list is closed but two.** F5, G1 and B5
+went on 2026-09-07, G2 and the runs list before them. What is left of the theme
+is G4, which was measured rather than moved — its window is about eight months
+rather than a fortnight — and F2's corpus, still panes, runs and workflows.
+`/api/branches`' pattern did reach the rest in the end: `/api/runs`,
+`/api/chat`, `/api/workflows/[id]` and `list_folders`, one at a time and one
+branch each, which is the thing this observation predicted rather than a win it
+can claim.
+
 **What would overturn it:** `SELECT COUNT(*) FROM runs` on the live install. If
 history is a few hundred rows, reachability is theoretical and the landing
-boundary leads instead. That query is one line and **this survey could not run
+boundary leads instead. **`../Findability/` tried on 2026-09-07 and got a better
+answer to a smaller question**: the two install databases reachable from a
+container answer `0`, every content table in both empty, and `DATA_DIR` proper
+is still sandbox-denied — so the falsifier is unrun for a reason now measured
+rather than assumed. That query is one line and **this survey could not run
 it** — `DATA_DIR` is unreadable by the agent uid — which makes it the cheapest
 falsifier here and the largest hole in the register.
 
@@ -254,10 +284,21 @@ Full table, ranked, with evidence and confidence per row:
 
 ## The three worth a survey
 
+**All three have been answered at `a21beaa`, and each in a different way**: the
+first was surveyed (`../Findability/`), the second was built rather than
+surveyed and its last half closed on 2026-09-07, and the third was surveyed
+(`../UIChecks/`) and then given the floor that survey asked for. The three
+entries below are as written at `66fdbab`; what happened to each is the sentence
+under it.
+
 1. **Reachability** — what should an operator be able to find, and by what
    mechanism? Five genuinely different answers, two of which pull in opposite
    directions, and one of which collides with a documented invariant.
    [→](06-recommendation.md#survey-1-reachability-what-should-an-operator-be-able-to-find-and-how)
+   **Done on 2026-09-07**: [`../Findability/`](../Findability/README.md) measures
+   what the app holds, what can be found today and the rate things arrive, ranks
+   six mechanisms and refuses three by name. No product code changed for it, and
+   it filed three defects it declined to rank into this register.
 2. **The landing boundary** — what must be true before an agent's work leaves
    the machine? **Half of this one was built rather than surveyed, and the half
    that was built needed two corrections after its merge.** At `66fdbab`:
@@ -271,6 +312,11 @@ Full table, ranked, with evidence and confidence per row:
    that one is a semantic reading of the diff, this one is whether the code
    builds.
    [→](06-recommendation.md#survey-2-the-landing-boundary-what-must-be-true-before-an-agents-work-leaves-the-machine)
+   **Closed rather than surveyed, on 2026-09-07**: the Settings field shipped and
+   was then looked at in a browser, `docs/review-and-land.md` says Land can be
+   gated on a check, `resolveVerifyTools` became `resolveAllowedTools` so the
+   setting stops claiming to be a gate it is not, and M1's first real pull
+   request had already settled the delivery half. The survey was never held.
 3. **What should check the UI** — **20,447** lines of page code at `66fdbab`
    (16,529 when surveyed), zero page tests, no jsdom, no browser in CI, and
    **ten** narrow-viewport entries on `docs/verification.md`'s "Not yet verified
@@ -280,6 +326,12 @@ Full table, ranked, with evidence and confidence per row:
    one recommendation whose case has strengthened rather than been overtaken**:
    nothing was done about it and the number it turns on grew 24%.
    [→](06-recommendation.md#survey-3-what-should-check-the-ui-and-what-would-it-actually-catch)
+   **Overtaken on 2026-09-07, in the order it asked for**: the survey is
+   `../UIChecks/`, its Option C2 is `scripts/smoke-pages.mjs`, and F5 closed on
+   it. Page code is 20,871 lines by the same measure and page tests are still
+   zero — the floor is a load check rather than coverage — and the pass is red
+   on one page of nineteen at both widths, which is recorded in a commit message
+   and nowhere else.
 
 ## The four biggest things the register says that no single row does
 
