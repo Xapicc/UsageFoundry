@@ -4,9 +4,10 @@
 > silent — nothing throws, nothing fails to typecheck, and the board looks right.
 > **Read before editing `src/lib/tasks.ts`, `src/app/api/tasks/`,
 > `src/app/tasks/page.tsx`, or the `tasks` table in `src/lib/db.ts`.**
-> This is the storage, the server half and the board. The chat and block tools
-> and a work cycle's own access are later work and are deliberately absent — what
-> they will need exists here, typed and tested, and nothing else does.
+> This is the storage, the server half, the board, and the two orchestrators
+> that reach it over MCP. A work cycle's own access is later work and is
+> deliberately absent — what it will need exists here, typed and tested, and
+> nothing else does.
 
 **A task is not a run, and the absence of every hook that would make it one is
 what keeps this feature out of the orchestrator.** `run_templates`' rule, and the
@@ -207,6 +208,89 @@ number the route quietly reduced and then report a whole board it had not been
 sent. **The day the board needs a second page is the day this trade stops
 holding**, and the answer then is a per-status request with its own offset, not
 a larger cap.
+
+**Which subject may do what to the board, and the one thing none of them may
+do.** `src/app/api/mcp/route.ts` gates its tool list by capability subject, and
+the board sits across all three groups of it. `list_tasks` and `get_task` are
+**shared**: a chat turn and an orchestrator block both read the board, and
+reading it starts nothing — no folder is claimed, no slot is taken and no guard
+is consulted — which is exactly what makes it safe to hand a block that emits
+runs with nobody watching. `create_task` is **chat only**, and the division is
+about who is reading rather than about what the tool does: a chat turn has an
+operator at the keyboard, so a task it filed is one somebody sees within the
+minute, where a block's turn is unattended and a backlog it wrote to is a board
+the operator later meets already full of an agent's own idea of the work. The
+refusal a block gets names `list_tasks` and the `taskId` field rather than
+pointing at `emit_runs`, because answering "write this down for later" with the
+one tool that starts work *now* is the opposite of what was asked.
+
+**Nothing on the MCP surface can move a task to any status, and that is enforced
+twice rather than once.** `create_task` files as `open`, there is no `status`
+property on its schema, and `normalizeTaskInput` refuses one **by name** if a
+model sends it regardless — the same door the operator's own POST goes through.
+The reason a second enforcement is not belt-and-braces is that the first one is
+only a *description*: a schema is what a model is told, and `additionalProperties
+: false` is checked by the CLI rather than by this app. `taskTransitionRefusal`
+is the whole of the board's authority model and no route may become a second
+answer to it; a chat turn that could write `done` would be a model closing the
+operator's work on its own say-so, from the one surface whose entire design is
+that a person decides whether anything happens. If a model wants a task closed,
+that is a proposal or the operator's own press — and the tool description says
+so, because a model told it may file a task reads the omission as an oversight.
+
+**A run that came off the board carries the link, and the link is a record
+rather than a trigger.** `propose_run` and `emit_runs` each take an optional
+`taskId`. It rides `chat_proposals.task_id` from the proposal and lands on
+`runs.task_id` at the approval or the emission, written in the same synchronous
+pass as the insert it came from, so nothing can see the run without seeing what
+it was started for. What it does **not** do is the point: naming a task does not
+claim it, and the run reaching a terminal status does not close it. A run can
+complete and still not have done the thing — it can stop on a budget, be
+cancelled, or finish having decided the work was wrong — so a status-derived
+rule here would close backlog items nobody worked. Completion belongs to the run
+that did the work, in its own name, or to the operator's press. Nothing on the
+run reads the column either: not the loop, not a guard, not the budget, not
+occupancy. A run carrying a task id and one that is not are the same run, which
+is why the write lives in `tasks.ts` and `createRun` knows nothing about it.
+
+**An unknown `taskId` is refused by name, and a *closed* one is not.**
+`taskRefusal` in `tasks.ts` is the one wording, so an id that is not there reads
+the same in a chat, in an emission and in `get_task` — `agentRefusal`'s ground.
+The failure it closes is the quiet one: a proposal that said "for the flaky-auth
+task" and silently carried no task is bit-for-bit a proposal that named none, and
+the operator approves a card whose provenance line is simply absent. The
+asymmetry with `agentRefusal` is deliberate and is where the two stop being the
+same rule. An agent that has gone changes **what the run is** — `--agent` takes a
+name and a missing one dies at the spawn — where a task that is `done` or
+`dropped` changes nothing about the run at all. Refusing one would be this
+function deciding on the operator's behalf that work off closed work may not
+happen, which is their call. What the caller gets instead is the status, said
+back, so a model that named a dropped task can see that it did.
+
+**The board is read whole to answer "is this id there", and the runs behind a
+page are read in one query.** `currentTaskKnowledge` takes every row rather than
+a page, because a page answers that question wrongly for everything past it —
+`currentAgentKnowledge`'s split, with the impure half here and the rule pure.
+`EmissionLimits` takes it as a **function** where `agents` beside it is data, and
+the difference is that the registry is a list somebody curated while the board is
+a backlog nothing expires: copying every task the install has ever filed into
+every emission would grow with the install to answer a question about at most
+`fanOut` ids. On the other side, `runLinksForTasks` answers for a whole page at
+once, because the board polls every ten seconds and the per-row read it replaces
+is an N+1 on a timer. Its id list is capped at `MAX_TASK_RUN_LINKS` and its count
+is not, on the rule a shortened diff follows: a row showing three of eleven runs
+and saying nothing reports a task worked eleven times as one worked three.
+
+**A run whose task has been deleted still names it, and that is a third answer
+rather than a missing one.** Neither `chat_proposals.task_id` nor `runs.task_id`
+is a foreign key — the operator deletes tasks freely and nothing in this app
+deletes a `runs` row, so a cascade would describe a deletion that never happens
+in one direction and destroy a run's provenance in the other. `taskForRun`
+returns the id with `title` and `status` both null where the row has gone, and
+every surface that draws it tells that apart from "no task": the run page says
+*a task since deleted*, the proposal card says the same, and neither links,
+because the row they would open is not there. A surface that collapsed the two
+would lose exactly the provenance the column exists to hold.
 
 **The board draws controls; it never decides a move.** Every press on this page
 is a `PATCH` and the sentence that comes back is rendered verbatim, because
