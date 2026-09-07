@@ -142,6 +142,7 @@ let pruningMod: typeof import("./contextPruning");
 let dbMod: typeof import("./db");
 let realCeilingCut: typeof import("./contextPruning").ceilingCut;
 let realPruningEnabled: typeof import("./contextPruning").pruningEnabled;
+let realContextComposition: typeof import("./contextPruning").contextComposition;
 let seq = 0;
 
 /** The maps `startRun` writes, read from the singletons the tick reads. */
@@ -238,6 +239,7 @@ before(async () => {
 
   realCeilingCut = pruningMod.ceilingCut;
   realPruningEnabled = pruningMod.pruningEnabled;
+  realContextComposition = pruningMod.contextComposition;
   // The acting half is gated on the feature, and both cases are about acting.
   // Stubbed rather than switched on through `saveSettings`, because
   // `pruningEnabled` is also `winnowAvailable`, which stats a hard-coded
@@ -249,6 +251,7 @@ before(async () => {
 after(() => {
   patch("ceilingCut", realCeilingCut);
   patch("pruningEnabled", realPruningEnabled);
+  patch("contextComposition", realContextComposition);
   fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -260,7 +263,7 @@ after(() => {
  * reaches these through its own import, and a seam it does not have would pin
  * the test's wiring instead of the tick's.
  */
-function patch<K extends "ceilingCut" | "pruningEnabled">(
+function patch<K extends "ceilingCut" | "pruningEnabled" | "contextComposition">(
   name: K,
   fn: (typeof import("./contextPruning"))[K],
 ): void {
@@ -376,6 +379,81 @@ describe("the context ceiling's declines", () => {
       "the second decline was swallowed by `earlyEndDeclined`, which latches the " +
         "operator-facing line and must not latch the record — a run climbing from " +
         "200k to 300k is re-decided the whole way up",
+    );
+  });
+});
+
+describe("the composition stack across a cut", () => {
+  /**
+   * The reading the tick pages on distance, and what a cut does to that pacing.
+   *
+   * `COMPOSITION_REMEASURE_GROWTH_TOKENS` is 40,000 and is compared in both
+   * directions, which reads like it covers a cut and does not: the test is
+   * against the **sampled figure**, and a cut is not obliged to move that. Under
+   * the fork engine it does not move it at all — the API window after the resume
+   * was 1,153 to 5,238 tokens higher than before the cut on all five forks
+   * measured here — and under the in-place engine 12 of this install's 54
+   * receipts removed under 40,000 tokens. Every one of those left the stack
+   * drawing the shape the conversation had before the cut, which is the one
+   * moment the composition is worth having.
+   *
+   * The control is the whole test. A tick that re-read on every pass would pass
+   * the second assertion for the wrong reason and go on passing it for ever, so
+   * the first case pins that the distance still holds a reading back.
+   */
+  const SHAPE = {
+    window: 190_000,
+    slices: [
+      { label: "tool traffic", tokens: 120_000, kind: "estimated", children: [] },
+      { label: "prefix", tokens: 70_000, kind: "derived", children: [] },
+    ],
+  };
+
+  /** How many distinct readings this run has filed. */
+  function readingCount(runId: string): number {
+    return (
+      dbMod
+        .db()
+        .prepare(
+          "SELECT COUNT(DISTINCT reading) AS n FROM context_compositions WHERE run_id = ?",
+        )
+        .get(runId) as { n: number }
+    ).n;
+  }
+
+  it("re-reads the shape after a cut, which the distance alone never would", async () => {
+    const id = liveCycle();
+    patch("contextComposition", async () => SHAPE);
+    patch("ceilingCut", async () => TINY_CUT);
+
+    await orchestrator.checkContextCeilings();
+    assert.equal(readingCount(id), 1, "the first tick has no mark to compare against");
+
+    // One tick that does both halves. 30,000 tokens of growth is **under** the
+    // 40,000 distance, so the composition must not be re-read — that is the
+    // control — and **over** the 25,000 the ceiling paces by, so the cut below
+    // is measured and admitted on the same pass.
+    grow(id, 30_000);
+    patch("ceilingCut", async () => HUGE_CUT);
+    await orchestrator.checkContextCeilings();
+    assert.equal(interrupts().get(id)?.kind, "prune", "the cut has to have happened");
+    assert.equal(
+      readingCount(id),
+      1,
+      "growth under the distance must not re-read, or the case below proves nothing",
+    );
+
+    // The next work cycle, as `startRun` leaves it: the interrupt consumed and
+    // the run still watched. The sampled figure has not moved since the tick
+    // above — a simulated cut does not rewrite the transcript, exactly as a real
+    // fork does not shrink the window — so a reading here can only come from the
+    // cut having cleared the mark.
+    interrupts().delete(id);
+    await orchestrator.checkContextCeilings();
+    assert.equal(
+      readingCount(id),
+      2,
+      "a cut clears the mark, so the following tick reads the shape the run now has",
     );
   });
 });

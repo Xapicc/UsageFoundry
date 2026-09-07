@@ -6500,6 +6500,7 @@ async function pruneAtBoundary(
   // about the conversation that was standing at this boundary, and the control
   // group is read by looking for the first billed turn after it.
   await settleBoundary(id, sessionId, outcome !== null, contextTokensNow);
+  if (outcome) forgetComposition(id);
   return outcome;
 }
 
@@ -6594,6 +6595,35 @@ async function pruneAtEarlyEnd(
         adopt,
       )
     : await prune(id, sessionId, "early-end");
+}
+
+/**
+ * Drop the composition mark, so the next tick re-reads the shape.
+ *
+ * Called where a cut is decided rather than from the tick, because the tick
+ * cannot see one happen: it pages the reading on **distance** — 40,000 tokens
+ * from where the sampled figure stood at the last reading, in either direction
+ * — and a cut is not obliged to move that figure at all. Under the fork engine
+ * it does not: measured on all five forks here, the API window after the resume
+ * was 1,153 to 5,238 tokens *higher* than before the cut, so the distance test
+ * never fires on a run whose whole shape has just changed. Under the in-place
+ * engine 12 of this install's 54 receipts removed under 40,000 tokens, and each
+ * of those left the stack drawing the pre-cut shape until ordinary growth had
+ * regrown what the cut took *and then* 40,000 more.
+ *
+ * Two call sites and they are not redundant. The ceiling watcher clears it as
+ * it writes the interrupt, which is the only route to an early-end cut and the
+ * only one a tick can be standing beside; `pruneAtBoundary` clears its own,
+ * because a natural boundary never passes through the watcher. Clearing at the
+ * interrupt is a shade early — winnow may still refuse the cut — and that costs
+ * one extra `winnow context` on a cycle that was ending anyway, which is the
+ * cheaper of the two ways to be wrong.
+ *
+ * A function rather than the bare `delete` twice, so the argument above has one
+ * home instead of being half-stated in two comments.
+ */
+function forgetComposition(id: string): void {
+  compositionMeasuredAt.delete(id);
 }
 
 /**
@@ -10121,6 +10151,10 @@ export async function checkContextCeilings(): Promise<void> {
     // be told about rather than have swallowed by a latch set before the cut.
     ceilingMeasuredAt.delete(id);
     earlyEndDeclined.delete(id);
+    // And the shape, which stops describing the run at the same moment for a
+    // different reason: what a cut changes *is* the composition, and the
+    // distance test above cannot notice that — see `forgetComposition`.
+    forgetComposition(id);
 
     interruptRun(id, {
       kind: "prune",
@@ -10240,10 +10274,21 @@ const ceilingMeasuredAt = ((globalThis as unknown as {
  * only cares about growth toward it; a prune that drops a conversation by 80k
  * leaves `tokens - measuredAt` negative for as long as it takes to grow back,
  * and read one-sided here that is the whole post-cut shape missed — the one
- * moment the composition is worth having. So the distance is absolute, and a
- * cut large enough to matter takes its own reading on the next tick.
+ * moment the composition is worth having.
  *
- * Keyed by run, cleared when the run's loop ends.
+ * **The distance is the pacing for growth and was never the trigger for a
+ * cut**, though it was left standing as both for a while and could not do the
+ * second job. A cut is not obliged to move the sampled figure: under the fork
+ * engine it does not move it at all — measured on all five forks here, the API
+ * window after the resume was 1,153 to 5,238 tokens *higher* than before the
+ * cut — and under the in-place engine 12 of this install's 54 receipts removed
+ * under 40,000 tokens. In both cases the stack went on drawing the pre-cut
+ * shape, and after a cut that lowered the figure it had to regrow what the cut
+ * took *and then* 40,000 more before anything re-read it. So the cut clears
+ * this mark itself, through `forgetComposition`, and the distance goes on
+ * pacing ordinary growth between cuts, which is what it was written for.
+ *
+ * Keyed by run, cleared when a cut lands and when the run's loop ends.
  */
 const compositionMeasuredAt = ((globalThis as unknown as {
   __ufCompositionMeasuredAt?: Map<string, number>;
