@@ -2044,6 +2044,95 @@ function migrate(db: Database.Database) {
   // destroys nothing, and `SCHEMA_VERSION` records that a *rebuild* finished.
   addColumn(db, "runs", "provider", "TEXT");
 
+  // The taskboard: one board across every mount, holding units of work that a
+  // chat turn, an orchestrator block or a work cycle can read and write.
+  //
+  // **A task is not a run and must never become one.** `run_templates`' rule,
+  // and it is what keeps this table out of every occupancy, budget and
+  // concurrency decision in the app: a row here claims no folder, consumes no
+  // slot, spawns nothing, and `activeRuns()` cannot see it. The three run id
+  // columns are *records of what happened*, never handles the scheduler acts
+  // on, which is why none of them is a foreign key — see below.
+  //
+  // `status` is the closed set `open | claimed | done | dropped`, and which
+  // actor may move a row between which two of them is the whole of what
+  // `taskTransitionRefusal` in tasks.ts decides. It lives there rather than in
+  // a CHECK constraint because the rule is about *who is asking* as much as
+  // about the pair, and a constraint cannot see the asker.
+  //
+  // `mount_id` and `folder` are nullable **together**: a task tied to no
+  // project is the ordinary case for a board that spans every mount, and half a
+  // pair is refused at the door rather than stored. `folder` holds the
+  // canonical absolute path `resolveWorkspaceFolder` returned — the same shape
+  // `runs.folder` holds, and deliberately so, since the read that matters to a
+  // work cycle is "tasks for the folder I am working in" and a run knows its
+  // own folder as an absolute path.
+  //
+  // `priority` stores the word rather than a rank, on `runs.status`' grounds: a
+  // closed set is legible in a hand-read of the table and greppable in the
+  // codebase, where an integer is a number whose meaning lives somewhere else.
+  // What that costs is stated at the index below.
+  //
+  // The three run id columns are plain columns, `dreaming_notes.run_id`'s
+  // reasoning: nothing in this app deletes a `runs` row, so a cascade would
+  // describe a deletion that never happens, and a `RESTRICT` would let a task
+  // block something it has no business blocking. `parent_task_id` **is** a
+  // foreign key, because tasks *are* deleted — by the operator, and by nobody
+  // else — and `ON DELETE SET NULL` is what keeps a task filed by a run while
+  // it worked another from disappearing with its parent. Losing the link is the
+  // right loss; losing the task is not.
+  //
+  // `closed_at` is set on the move into `done` or `dropped` and cleared on the
+  // move back out, so "is this closed" has one answer whichever of the two
+  // terminal words it wears.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id                  TEXT PRIMARY KEY,
+      title               TEXT NOT NULL,
+      -- The brief a future agent reads with no other context. Free text, and
+      -- the reason the list route ships a clipped copy rather than this.
+      body                TEXT NOT NULL,
+      status              TEXT NOT NULL,
+      mount_id            TEXT,
+      folder              TEXT,
+      priority            TEXT NOT NULL,
+      -- Who put it on the board: operator | chat | block | run. Recorded
+      -- rather than derived, because the two model-driven origins are the ones
+      -- an operator reads the board differently for.
+      origin              TEXT NOT NULL,
+      created_by_run_id   TEXT,
+      -- Which run holds it. A record, never a lock: nothing expires it, and
+      -- see docs/agent/taskboard.md for why a clock here would be worse than
+      -- the stale claim it would be trying to fix.
+      claimed_by_run_id   TEXT,
+      completed_by_run_id TEXT,
+      parent_task_id      TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+      created_at          INTEGER NOT NULL,
+      updated_at          INTEGER NOT NULL,
+      closed_at           INTEGER
+    );
+    -- The board's own listing: narrow to a status, newest movement first.
+    --
+    -- It deliberately does **not** carry \`priority\`, and that is a decision
+    -- rather than an omission. The listing orders by priority *before*
+    -- \`updated_at\`, and priority is stored as a word — so an index on
+    -- (status, priority, updated_at) would supply the run of a lexical order
+    -- (high, low, normal, urgent) that is not the board's, which is the worst
+    -- kind of index: one the planner will happily use to produce a wrong
+    -- order. \`listTasks\` sorts on a CASE over the word instead. The cost is a
+    -- sort over the rows matching the status filter, which is a backlog rather
+    -- than an event log; the day that stops being true the answer is a stored
+    -- rank column written by tasks.ts and backfilled here, never a widening of
+    -- this index.
+    CREATE INDEX IF NOT EXISTS idx_tasks_board
+      ON tasks(status, updated_at DESC);
+    -- "What is on the board for the folder I am working in", which is the read
+    -- a work cycle makes and the one that must not be a scan of every task the
+    -- install has ever held.
+    CREATE INDEX IF NOT EXISTS idx_tasks_folder
+      ON tasks(mount_id, folder);
+  `);
+
   // Anything still wearing the rebuild suffix after the one rebuild above has
   // run. Last, so a leftover this boot has just completed is not reported as
   // one it left behind.

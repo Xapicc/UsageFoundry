@@ -3476,3 +3476,81 @@ export interface DreamingDTO {
   nightLimit: number;
   nightsTruncated: boolean;
 }
+
+/* ------------------------------------------------------------------ */
+/* The taskboard                                                       */
+/* ------------------------------------------------------------------ */
+
+/** Mirrors `TaskStatus` in `tasks.ts`; see the column note in `db.ts`. */
+export type TaskStatusDTO = "open" | "claimed" | "done" | "dropped";
+
+/** Mirrors `TaskPriority` in `tasks.ts`. Four words, and never a number. */
+export type TaskPriorityDTO = "urgent" | "high" | "normal" | "low";
+
+/** Mirrors `TaskOrigin` in `tasks.ts`: who put the task on the board. */
+export type TaskOriginDTO = "operator" | "chat" | "block" | "run";
+
+/**
+ * One task on the board, whole.
+ *
+ * `mountId` and `folder` are null together or set together — the wire shape of
+ * the column pair, and the reason a client may branch on either one alone.
+ * `folder` is the canonical absolute path, which is what `runs.folder` holds;
+ * `relPath` and `mountLabel` are what a surface actually draws, resolved here
+ * so that no two of them can split the path differently.
+ */
+export interface TaskDTO {
+  id: string;
+  title: string;
+  /** The brief a future agent reads with no other context. Whole, here. */
+  body: string;
+  status: TaskStatusDTO;
+  priority: TaskPriorityDTO;
+  origin: TaskOriginDTO;
+  mountId: string | null;
+  mountLabel: string | null;
+  folder: string | null;
+  /** The folder within its mount, or null when the task names no folder. */
+  relPath: string | null;
+  createdByRunId: string | null;
+  claimedByRunId: string | null;
+  completedByRunId: string | null;
+  parentTaskId: string | null;
+  createdAt: number;
+  updatedAt: number;
+  closedAt: number | null;
+}
+
+/**
+ * Characters of a task's brief the list carries.
+ *
+ * `MAX_LIST_PROMPT`'s decision one table over: the brief is what a future agent
+ * is handed and can run to a page, where a board draws a line of it. A hundred
+ * whole briefs is the payload `RunListItemDTO` was written to stop being.
+ */
+export const MAX_LIST_TASK_BODY = 200;
+
+/**
+ * One row of the board's listing.
+ *
+ * The brief is clipped rather than dropped, `RunListItemDTO`'s shape: a board
+ * shows enough of a task to tell two of them apart, and the route that answers
+ * about one task has the rest. A clipped value carries the `…` marker so it
+ * cannot be mistaken for a whole one.
+ */
+export type TaskListItemDTO = Omit<TaskDTO, "body"> & { body: string };
+
+/**
+ * One page of the taskboard, as `GET /api/tasks` answers it.
+ *
+ * `RunListDTO`'s shape and its reasoning: `total` is counted over every row
+ * matching the filter rather than over the page, so a board can say what it is
+ * a slice of, and `offset`/`limit` are the applied ones after the clamp rather
+ * than the asked-for ones.
+ */
+export interface TaskListDTO {
+  tasks: TaskListItemDTO[];
+  total: number;
+  offset: number;
+  limit: number;
+}
