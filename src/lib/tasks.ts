@@ -2,15 +2,20 @@ import { randomUUID } from "node:crypto";
 import { db } from "./db";
 import { describeFolder, resolveWorkspaceFolder } from "./orchestrator";
 import type {
+  RunTaskDTO,
   TaskDTO,
   TaskListItemDTO,
   TaskOriginDTO,
   TaskPriorityDTO,
   TaskStatusDTO,
 } from "./apiTypes";
-// The two board figures live with the DTOs they bound, so the page that asks
-// for a whole board and the query that caps one read the same number.
-import { MAX_LIST_TASK_BODY, MAX_TASK_PAGE } from "./apiTypes";
+// The board figures live with the DTOs they bound, so the page that asks for a
+// whole board and the query that caps one read the same number.
+import {
+  MAX_LIST_TASK_BODY,
+  MAX_TASK_PAGE,
+  MAX_TASK_RUN_LINKS,
+} from "./apiTypes";
 
 /**
  * The taskboard: one board across every mount, and the only module that
@@ -370,6 +375,77 @@ export function taskDeletionRefusal(actor: TaskActor): string | null {
 /** Enough of a run id to name it in a sentence, `agentRefusal`'s clip. */
 function short(id: string): string {
   return id.slice(0, 8);
+}
+
+/* ------------------------------------------------------------------ */
+/* Naming a task from somewhere else — pure                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The two fields a refusal is written from, which is all a caller naming a
+ * task needs to be told about it.
+ *
+ * `AgentFacts`' shape and its reason: the whole row is not what decides whether
+ * an id may be named, and passing one would make every caller of the rule below
+ * carry a `Task`.
+ */
+export interface TaskFacts {
+  title: string;
+  status: TaskStatus;
+}
+
+/**
+ * Why this id may not be named as the task a run is for, or null when it may.
+ *
+ * Pure, `agentRefusal`'s shape and its reason: three doors name a task from
+ * outside this module — `propose_run`, an orchestrator block's `emit_runs`, and
+ * whatever run 4/4 gives a work cycle — and one wording is what stops them
+ * disagreeing about an id that is not there.
+ *
+ * **An unknown id is refused rather than dropped.** The failure it closes is the
+ * quiet one: a proposal that said "for the flaky-auth task" and silently carried
+ * no task is bit-for-bit a proposal that named none, and the operator approves a
+ * card whose provenance line is simply absent. That is `agentRefusal`'s own
+ * argument, and it applies here with a smaller consequence and the same shape.
+ *
+ * **A closed task is not refused**, and the asymmetry with `agentRefusal` is
+ * deliberate. An agent that has gone changes *what the run is*; a task that is
+ * `done` or `dropped` changes nothing about the run at all — the link is a
+ * record of what prompted the work, and refusing it here would be this function
+ * deciding on the operator's behalf that work off a closed task may not happen.
+ * What the caller gets instead is the status, said back in the tool's own reply,
+ * so a model that named a dropped task can see that it did.
+ */
+export function taskRefusal(
+  taskId: string,
+  knowledge: ReadonlyMap<string, TaskFacts>,
+): string | null {
+  return knowledge.has(taskId)
+    ? null
+    : `No task with id "${taskId}" is on the board. Call list_tasks for the ` +
+        `ids, or leave taskId out — a run that names no task is the ordinary run.`;
+}
+
+/**
+ * The board as a caller naming a task sees it: id to the two fields above.
+ *
+ * The impure half `taskRefusal` is kept clean of, `currentAgentKnowledge`'s
+ * split. Every row rather than a page of one, because this answers "is this id
+ * on the board" and a page would answer it wrongly for anything past the page.
+ */
+export function currentTaskKnowledge(): Map<string, TaskFacts> {
+  const rows = db()
+    .prepare("SELECT id, title, status FROM tasks")
+    .all() as Array<{ id: string; title: string; status: string }>;
+  return new Map(
+    rows.map((row) => [
+      row.id,
+      {
+        title: row.title,
+        status: isTaskStatus(row.status) ? row.status : ("open" as TaskStatus),
+      },
+    ]),
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -1069,6 +1145,98 @@ export function deleteTask(id: string, actor: TaskActor): TaskWriteResult {
 }
 
 /* ------------------------------------------------------------------ */
+/* The link between a task and the runs started for it                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Record that a run was started for a task.
+ *
+ * **A record, and the whole of what the link does.** It writes one column and
+ * moves nothing else: the task keeps the status it had, nobody claims it, and
+ * when the run finishes nothing here closes it — a run can complete and still
+ * not have done the thing, so completion stays with the run that did the work,
+ * in its own name, or with the operator. See `taskTransitionRefusal`.
+ *
+ * Here rather than inside `createRun`, and that is a boundary rather than a
+ * convenience: `orchestrator.ts` decides what a run may do and what it costs,
+ * and nothing in its loop, its guards, its occupancy or its budget reads this
+ * column. A run that carries a task id and one that does not are the same run.
+ * Both callers write it in the same synchronous pass as the insert they made it
+ * from, so a reader that can see the run can see the link.
+ *
+ * The id is written whether or not the row is still there. It is not a foreign
+ * key for that reason — the operator may delete a task at any point — and a
+ * dangling id reads as "the task this run was for has been deleted", which is
+ * what `taskForRun` answers and what both surfaces say.
+ */
+export function recordRunForTask(runId: string, taskId: string): void {
+  db().prepare("UPDATE runs SET task_id = ? WHERE id = ?").run(taskId, runId);
+}
+
+/**
+ * The task a run was started for, or null for a run that names none.
+ *
+ * `title` and `status` are null together when the id names nothing any more,
+ * which is a third answer rather than a missing one: a run whose task was
+ * deleted is not a run that never had one, and a surface that collapsed the two
+ * would quietly lose the provenance the column exists to hold.
+ */
+export function taskForRun(runId: string): RunTaskDTO | null {
+  const row = db()
+    .prepare("SELECT task_id FROM runs WHERE id = ?")
+    .get(runId) as { task_id: string | null } | undefined;
+  if (!row?.task_id) return null;
+
+  const task = getTask(row.task_id);
+  return {
+    id: row.task_id,
+    title: task?.title ?? null,
+    status: task ? (task.status as TaskStatusDTO) : null,
+  };
+}
+
+/** What one board row says about the runs started for it. */
+export interface TaskRunLinks {
+  /** Newest first, capped at `MAX_TASK_RUN_LINKS`. */
+  runIds: string[];
+  /** Runs naming this task, which may exceed `runIds.length`. */
+  runCount: number;
+}
+
+/**
+ * The runs started for each of these tasks, in one query rather than one each.
+ *
+ * A board draws a hundred rows a poll, so the per-row read this replaces is the
+ * N+1 the listing route would otherwise run every ten seconds. The ids are
+ * capped and the count is not, for the reason a shortened diff names the files
+ * it left out: a row that showed three of eleven runs and said nothing would
+ * report a task worked eleven times as one worked three times.
+ */
+export function runLinksForTasks(
+  taskIds: readonly string[],
+): Map<string, TaskRunLinks> {
+  const links = new Map<string, TaskRunLinks>();
+  if (taskIds.length === 0) return links;
+
+  const placeholders = taskIds.map(() => "?").join(", ");
+  const rows = db()
+    .prepare(
+      `SELECT id, task_id FROM runs
+        WHERE task_id IN (${placeholders})
+        ORDER BY created_at DESC, id`,
+    )
+    .all(...taskIds) as Array<{ id: string; task_id: string }>;
+
+  for (const row of rows) {
+    const entry = links.get(row.task_id) ?? { runIds: [], runCount: 0 };
+    if (entry.runIds.length < MAX_TASK_RUN_LINKS) entry.runIds.push(row.id);
+    entry.runCount += 1;
+    links.set(row.task_id, entry);
+  }
+  return links;
+}
+
+/* ------------------------------------------------------------------ */
 /* The wire                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -1079,10 +1247,19 @@ export function deleteTask(id: string, actor: TaskActor): TaskWriteResult {
  * with a task and two copies of "what a task says about its folder" would be two
  * payloads that could split the same path differently. `describeFolder` is the
  * one splitter, and it is the same one the runs list uses.
+ *
+ * `links` is passed rather than read, so the listing can ask about a whole page
+ * in one query where the single-task route asks about one; both go through
+ * `runLinksForTasks`. Absent is **no runs named this task**, which is the same
+ * answer the query gives for a task nothing was started for — the two are not
+ * told apart because there is nothing to tell apart: the link is written when
+ * the run is created and never later.
  */
-export function taskDTO(task: Task): TaskDTO {
+export function taskDTO(task: Task, links?: TaskRunLinks): TaskDTO {
   const placed = task.folder ? describeFolder(task.folder) : null;
   return {
+    runIds: links?.runIds ?? [],
+    runCount: links?.runCount ?? 0,
     id: task.id,
     title: task.title,
     body: task.body,
@@ -1110,8 +1287,8 @@ export function taskDTO(task: Task): TaskDTO {
  * ellipsis, so a clipped value is the marked length rather than one character
  * over it and cannot be read as a whole brief.
  */
-export function taskListItemDTO(task: Task): TaskListItemDTO {
-  const dto = taskDTO(task);
+export function taskListItemDTO(task: Task, links?: TaskRunLinks): TaskListItemDTO {
+  const dto = taskDTO(task, links);
   return {
     ...dto,
     body:

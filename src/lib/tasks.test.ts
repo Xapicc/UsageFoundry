@@ -70,12 +70,38 @@ const {
   normalizeTaskInput,
   normalizeTaskListQuery,
   normalizeTaskPatch,
+  recordRunForTask,
+  runLinksForTasks,
   taskDTO,
+  taskForRun,
+  taskRefusal,
   taskDeletionRefusal,
   taskListItemDTO,
   taskTransitionRefusal,
   updateTask,
 } = require("./tasks") as typeof import("./tasks");
+const { MAX_TASK_RUN_LINKS } = require("./apiTypes") as typeof import("./apiTypes");
+const { db } = require("./db") as typeof import("./db");
+
+/**
+ * A `runs` row with nothing on it but the columns the insert refuses to be
+ * without.
+ *
+ * Written straight rather than through `createRun`, and that is the point being
+ * kept rather than a shortcut: this file is about the board, and a board test
+ * that reached the orchestrator would be claiming a folder, taking a
+ * concurrency slot and spawning a child to answer a question about one column.
+ * The link is a record — nothing on the run reads it — so a row is all it needs.
+ */
+function seedRun(id: string, createdAt = Date.now()): string {
+  db()
+    .prepare(
+      `INSERT INTO runs (id, folder, prompt, status, created_at, budget)
+       VALUES (?, ?, 'seeded', 'queued', ?, '{}')`,
+    )
+    .run(id, path.join(tmp, "repo"), createdAt);
+  return id;
+}
 
 /** The id is `slug(label)` and never the label — `parseMounts` in `config.ts`. */
 const MOUNT = "main";
@@ -611,4 +637,95 @@ test("the listing clips the brief and the detail DTO does not", () => {
   // cannot be read as a whole one.
   assert.equal(row.body.length, 200);
   assert.ok(row.body.endsWith("…"));
+});
+
+/* ------------------------------------------------------------------ */
+/* Naming a task from somewhere else                                   */
+/* ------------------------------------------------------------------ */
+
+test("an id that is not on the board is refused, and a closed task is not", () => {
+  // The failure this closes is the quiet one and it is why the function
+  // exists: three doors name a task from outside `tasks.ts`, and an id they
+  // dropped instead of refusing produces a proposal that said "for the
+  // flaky-auth task" and is bit-for-bit one that named none.
+  const board = new Map([
+    ["t-open", { title: "Open one", status: "open" as const }],
+    ["t-done", { title: "Closed one", status: "done" as const }],
+    ["t-dropped", { title: "Dropped one", status: "dropped" as const }],
+  ]);
+
+  assert.equal(taskRefusal("t-open", board), null);
+  // Closed is *not* refused, and the asymmetry with `agentRefusal` is the
+  // decision under test: an agent that has gone changes what the run is, where
+  // a closed task changes nothing about it — refusing here would be this
+  // function deciding on the operator's behalf that work off closed work may
+  // not happen.
+  assert.equal(taskRefusal("t-done", board), null);
+  assert.equal(taskRefusal("t-dropped", board), null);
+
+  const missing = taskRefusal("t-gone", board);
+  assert.ok(missing, "an unknown id is refused rather than dropped");
+  // By name, so a model that mistyped an id can see which one — the property
+  // `agentRefusal` is written for and the one a generic "not found" loses.
+  assert.match(missing!, /t-gone/);
+  assert.match(missing!, /list_tasks/);
+
+  // An empty board refuses everything rather than admitting everything, which
+  // is the direction a `.size === 0` shortcut would have got wrong.
+  assert.ok(taskRefusal("t-open", new Map()));
+});
+
+test("the runs started for a task are counted whole and listed capped", () => {
+  const task = file();
+  const other = file({ title: "Untouched" });
+
+  // Eight, against a cap of five: the count is the figure a row reports and
+  // the list is what fits beside it. A row that showed five and said nothing
+  // would report a task worked eight times as one worked five.
+  // Distinct `created_at` values, because "newest first" is what the query
+  // orders on and the id beside it is a tiebreak for determinism rather than a
+  // second ordering. Eight rows written in one millisecond would be testing the
+  // tiebreak and calling it the order.
+  const ids: string[] = [];
+  for (let n = 0; n < 8; n += 1) {
+    const run = seedRun(`run-for-task-${n}`, Date.now() + n);
+    recordRunForTask(run, task.id);
+    ids.push(run);
+  }
+
+  const links = runLinksForTasks([task.id, other.id]);
+  assert.equal(links.get(task.id)?.runCount, 8);
+  assert.equal(links.get(task.id)?.runIds.length, MAX_TASK_RUN_LINKS);
+  // Absent rather than a zeroed entry, so "no runs" and "not asked about" are
+  // one answer — there is nothing to tell apart, since the link is written at
+  // the creation and never later.
+  assert.equal(links.get(other.id), undefined);
+  // Newest first, so the five a row draws are the five that matter.
+  assert.deepEqual(links.get(task.id)?.runIds, ids.slice(-5).reverse());
+
+  // The link is a record and moves nothing: eight runs later the task is still
+  // open, unclaimed and unclosed. A status derived from a run here is the rule
+  // this whole feature is built to not have.
+  const after = getTask(task.id)!;
+  assert.equal(after.status, "open");
+  assert.equal(after.claimedByRunId, null);
+  assert.equal(after.completedByRunId, null);
+});
+
+test("a run whose task was deleted still names it", () => {
+  const task = file();
+  const run = seedRun("run-outliving-its-task");
+  recordRunForTask(run, task.id);
+
+  assert.equal(taskForRun(run)?.title, task.title);
+  assert.equal(deleteTask(task.id, { kind: "operator" }).ok, true);
+
+  // Three states rather than two, which is why the id is not a foreign key: a
+  // run whose task has gone is not a run that never had one, and a surface
+  // collapsing them loses the provenance the column exists to hold.
+  const orphan = taskForRun(run);
+  assert.equal(orphan?.id, task.id);
+  assert.equal(orphan?.title, null);
+  assert.equal(orphan?.status, null);
+  assert.equal(taskForRun(seedRun("run-off-no-task")), null);
 });

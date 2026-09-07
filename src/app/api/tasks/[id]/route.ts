@@ -3,6 +3,7 @@ import {
   deleteTask,
   getTask,
   normalizeTaskPatch,
+  runLinksForTasks,
   taskDTO,
   updateTask,
   type TaskActor,
@@ -33,7 +34,9 @@ export async function GET(_req: Request, ctx: Ctx) {
   if (!task) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  return NextResponse.json({ task: taskDTO(task) });
+  return NextResponse.json({
+    task: taskDTO(task, runLinksForTasks([task.id]).get(task.id)),
+  });
 }
 
 /**
@@ -65,7 +68,12 @@ async function patchHandler(req: Request, ctx: Ctx) {
       { status: updated.kind === "missing" ? 404 : 400 },
     );
   }
-  return NextResponse.json({ task: taskDTO(updated.task) });
+  // The same shape the GET answers with, so the editor that saved does not
+  // lose the links it was drawn with — `chatDTO`'s rule: two routes answering
+  // about the same row must not answer differently.
+  return NextResponse.json({
+    task: taskDTO(updated.task, runLinksForTasks([updated.task.id]).get(updated.task.id)),
+  });
 }
 
 /**

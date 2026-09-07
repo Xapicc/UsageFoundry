@@ -70,6 +70,11 @@ import {
   type AgentKnowledge,
   type RegistryAgent,
 } from "./agents";
+import {
+  currentTaskKnowledge,
+  recordRunForTask,
+  taskRefusal,
+} from "./tasks";
 import { telemetrySpendSince } from "./otlp";
 import type { UsageSnapshot } from "./windows";
 import {
@@ -575,6 +580,18 @@ export interface RunSpec {
    * the argv would not be quietly ignored; it would fail the spawn.
    */
   agent: string | null;
+  /**
+   * The task on the board this run is for, by id, or null.
+   *
+   * A **record of what prompted the run** and not a sixth field on the list
+   * above: it decides nothing about the run — not the guards, not the folder,
+   * not who it is — and it moves nothing on the board, since an emitted run
+   * neither claims its task nor closes it. It is on the spec rather than on the
+   * *node* for the reason the task text and the folder are: a saved graph is a
+   * shape a person agreed to, and which backlog item a particular pass is
+   * working is a decision the turn makes when it gets there.
+   */
+  taskId: string | null;
   /** Siblings in this same emission that must settle first. */
   dependsOn: Array<{ id: string; edge: DependencyEdge }>;
 }
@@ -608,6 +625,17 @@ export interface EmissionLimits {
    * created.
    */
   agents: readonly AgentFacts[];
+  /**
+   * Why a spec may not name this task, or null when it may.
+   *
+   * Injected as a **function** where `agents` beside it is data, and the reason
+   * is neither of that field's: the registry is a list somebody curated and the
+   * board is a backlog nothing expires, so handing every emission a copy of
+   * every task the install has ever filed would grow with the install for a
+   * question about at most `fanOut` ids. `tasks.ts` owns the wording —
+   * `taskRefusal` — so an unknown id reads the same here as it does in a chat.
+   */
+  taskRefusal: (taskId: string) => string | null;
 }
 
 /** How many characters of a spec's own fields are worth keeping. */
@@ -836,6 +864,25 @@ function normalizeSpec(
       agent = match.name;
     }
 
+    // The board row this run came off, refused by name rather than dropped —
+    // `agentRefusal`'s rule, reached from the door where nobody is looking. The
+    // consequence is smaller than the agent's and the shape is the same: a run
+    // emitted "for the flaky-auth task" that silently carried no task is
+    // indistinguishable afterwards from one that named none, and the operator
+    // then reads a board row nothing was ever started for.
+    //
+    // A *closed* task is accepted, unlike an unusable agent. The link records
+    // what prompted the work and reaches nothing on the run, so refusing one
+    // here would be this function deciding that work off a task somebody already
+    // closed may not happen — which is the operator's call and not a spec's.
+    const taskId = String(e.taskId ?? "").trim() || null;
+    if (taskId !== null) {
+      const taskProblem = limits.taskRefusal(taskId);
+      if (taskProblem) {
+        return { ok: false, reason: `“${title}” names a task that is not on the board: ${taskProblem}` };
+      }
+    }
+
   return {
     ok: true,
     value: {
@@ -844,6 +891,7 @@ function normalizeSpec(
           task,
           folder,
           agent,
+          taskId,
           dependsOn: [],
     },
   };
@@ -4736,6 +4784,17 @@ function createEmitted(
         origin: "orchestrator-block",
         originRef: nodeId,
       });
+      // The link, carried from the spec onto the run — in this same pass, so
+      // nothing can see the run without seeing what it was started for. Written
+      // whatever became of the row, unlike the agent above it, and the
+      // difference is what each one decides: a run that is not the agent it was
+      // emitted as is a different run, where a run whose task has since been
+      // deleted is the same run with a record of where it came from.
+      //
+      // It is not a claim and not a completion. An emitted run neither moves the
+      // task nor closes it when it ends — a run can complete and still not have
+      // done the thing, and `taskTransitionRefusal` is where that stays decided.
+      if (spec.taskId) recordRunForTask(run.id, spec.taskId);
       runIds.set(spec.id, run.id);
       recordMember(instanceId, {
         nodeId: `${nodeId}#${spec.id}`,
@@ -4910,6 +4969,13 @@ export function emitBlockRuns(
     // any task: an agent carries no capability, and every guard still comes off
     // the block a person saved.
     agents: listAgents().map((a) => ({ name: a.name, usable: a.usable })),
+    // The board, asked one id at a time rather than copied whole — see the
+    // field. The knowledge is read once for the emission so a task filed
+    // mid-call cannot make two specs in one list disagree about what exists.
+    taskRefusal: (() => {
+      const knowledge = currentTaskKnowledge();
+      return (taskId: string) => taskRefusal(taskId, knowledge);
+    })(),
   });
   if (!plan.ok) {
     // The one refusal that most needs recording. Everything above is a turn

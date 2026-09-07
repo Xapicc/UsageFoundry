@@ -2164,6 +2164,29 @@ function Proposal({
                 </span>
               </span>
             )}
+            {/* The task on the board this proposal came off. Outside the guard
+                mark for the agent's reason and one step weaker than it: an
+                agent decides who the run is, where this decides nothing at all
+                — it records what prompted the work. So it is drawn in the row's
+                own muted grey with no tone, because a toned phrase here would
+                read as a fact the click acts on, and the click does not: a task
+                deleted before the operator presses Approve still starts the run.
+                `for` rather than `on` or `as`, since the two neighbouring
+                phrases already own those words. */}
+            {proposal.taskId && (
+              <span className="inline-flex min-w-0 max-w-full items-center gap-1">
+                <Icon name="taskboard" size="sm" />
+                <span className="truncate">
+                  {proposal.taskTitle
+                    ? `for “${proposal.taskTitle}”${
+                        proposal.taskStatus && proposal.taskStatus !== "open"
+                          ? ` (${proposal.taskStatus})`
+                          : ""
+                      }`
+                    : "for a task since deleted"}
+                </span>
+              </span>
+            )}
             {/* The model the chat named, drawn for the reason an untemplated
                 card spells its guards out: values on a card are a promise, and
                 this one displaces the operator's own default. Outside the

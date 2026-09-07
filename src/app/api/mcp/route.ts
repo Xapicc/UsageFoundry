@@ -29,6 +29,20 @@ import {
   normalizeWorkflowInput,
 } from "@/lib/workflows";
 import {
+  createTask,
+  currentTaskKnowledge,
+  getTask,
+  listTasks,
+  normalizeTaskInput,
+  runLinksForTasks,
+  taskListItemDTO,
+  taskRefusal,
+  TASK_ORIGINS,
+  TASK_STATUSES,
+  type TaskOrigin,
+  type TaskStatus,
+} from "@/lib/tasks";
+import {
   createTemplate,
   getTemplate,
   listTemplates,
@@ -282,10 +296,143 @@ const SHARED_TOOLS = [
       "every run either way and cannot be named here.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
+  {
+    // The board, and the sentence that has to survive both callers reading it:
+    // a task is a *brief*, not a run. Nothing on this list is queued, holds a
+    // folder or costs anything, and reading it starts nothing — which is what
+    // makes it safe to hand a block that emits runs without approval.
+    name: "list_tasks",
+    description:
+      "The operator's backlog: work somebody wrote down, which nothing has " +
+      "started. A task is a brief and not a run — it claims no folder, spends " +
+      "nothing and is running nowhere — so this says what is worth doing, " +
+      "never what is happening. Read it before proposing or emitting work: " +
+      "the thing being asked for may already be on the board, and a run named " +
+      "for the task it does is one the operator can follow. Bodies are " +
+      "clipped; call get_task for a whole brief.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: ["open", "claimed", "done", "dropped"],
+          description:
+            "Only tasks in this state. Omit for the whole board. 'open' is " +
+            "what is waiting for somebody, 'claimed' is what a run already " +
+            "holds — proposing a second run for one of those is how two " +
+            "agents end up with the same brief.",
+        },
+        mountId: {
+          type: "string",
+          description:
+            "Only tasks filed against this mount, exactly as list_folders " +
+            "gives it. Send it with folder to narrow to one project.",
+        },
+        folder: {
+          type: "string",
+          description:
+            "Only tasks filed against this folder within that mount. Needs " +
+            "mountId beside it; alone it narrows nothing.",
+        },
+        origin: {
+          type: "string",
+          enum: ["operator", "chat", "block", "run"],
+          description:
+            "Who filed it. 'operator' is what a person wrote down themselves.",
+        },
+        offset: {
+          type: "number",
+          description: "Skip this many. The reply says how many are left.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_task",
+    description:
+      "One task's whole brief, unclipped, with what it is filed against and " +
+      "which runs were started for it. Call it before working from a task " +
+      "list_tasks showed you: the list clips the body, and the body is the " +
+      "whole of what the task says.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string", description: "An id from list_tasks." },
+      },
+      required: ["taskId"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 /** Tools only the orchestrator chat gets. None of them starts anything. */
 const CHAT_TOOLS = [
+  {
+    // The one write on this surface that is not a proposal and not a template,
+    // and it is here rather than in SHARED_TOOLS for a reason about *who is
+    // reading*: a chat turn is a conversation with an operator at the keyboard,
+    // so a task it filed is one somebody sees within the minute. A block's turn
+    // has nobody watching, and a backlog it wrote to unattended is a board the
+    // operator finds already full of an agent's own idea of the work.
+    //
+    // It cannot close anything, and the schema is where that is enforced twice:
+    // there is no status field here, and `normalizeTaskInput` refuses one by
+    // name if a model sends it anyway. Which actor may move a task to which
+    // status is `taskTransitionRefusal` and nothing on this route may become a
+    // second answer to it — see docs/agent/taskboard.md.
+    name: "create_task",
+    description:
+      "Write something down on the operator's board. It starts nothing, " +
+      "claims no folder and costs nothing: a task is a brief somebody — the " +
+      "operator, a later run — picks up as a separate decision. Use it for " +
+      "work worth doing that this conversation is not proposing now: the " +
+      "thing found while looking at something else, the follow-up a proposal " +
+      "leaves behind. It files a task as open and can do nothing else to one: " +
+      "it cannot mark a task done, claimed or dropped, and closing work is " +
+      "the operator's press or the run that did it. If a task should be " +
+      "closed, say so and let them.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          description: "Short specific label, e.g. 'Fix flaky auth test'.",
+        },
+        body: {
+          type: "string",
+          description:
+            "The brief: what to do, where, and what done looks like. Written " +
+            "for somebody with nothing else to go on — this may be handed to " +
+            "an agent months from now with none of this conversation.",
+        },
+        priority: {
+          type: "string",
+          enum: ["low", "normal", "high"],
+          description: "Omit for normal.",
+        },
+        mountId: {
+          type: "string",
+          description:
+            "The mount this is filed against, exactly as list_folders gives " +
+            "it. Send folder with it.",
+        },
+        folder: {
+          type: "string",
+          description:
+            "The folder within that mount. Needs mountId beside it. File it " +
+            "against a project wherever you know one — a task nobody can " +
+            "place is one nobody picks up.",
+        },
+        parentTaskId: {
+          type: "string",
+          description: "An id from list_tasks this is filed under.",
+        },
+      },
+      required: ["title", "body"],
+      additionalProperties: false,
+    },
+  },
   {
     name: "list_proposals",
     description:
@@ -432,6 +579,17 @@ const CHAT_TOOLS = [
           description:
             "id from list_templates. Omit to use the operator's default " +
             "guard set, which is the right choice for one-off work.",
+        },
+        taskId: {
+          type: "string",
+          description:
+            "id from list_tasks: the task on the board this run is for. It " +
+            "is a record of what prompted the run and changes nothing about " +
+            "it — no guard, no folder, no prompt — so name it whenever the " +
+            "work is on the board and leave it out otherwise. It also does " +
+            "nothing to the task: approving this does not claim it and the " +
+            "run finishing does not close it. An id that is not on the board " +
+            "is refused rather than ignored.",
         },
         promptOverride: {
           type: "string",
@@ -741,6 +899,17 @@ const BLOCK_TOOLS = [
                   "The full brief for the agent: what to do, where, and what " +
                   "done looks like. It cannot ask you a follow-up question.",
               },
+              taskId: {
+                type: "string",
+                description:
+                  "id from list_tasks: the task on the board this run is " +
+                  "for. A record of what prompted it and nothing more — it " +
+                  "sets no guard, picks no folder and does not change the " +
+                  "brief above. It also moves nothing on the board: emitting " +
+                  "this does not claim the task and the run ending does not " +
+                  "close it. An id that is not on the board is refused by " +
+                  "name and the whole emission is refused with it.",
+              },
               folder: {
                 type: "string",
                 description:
@@ -965,7 +1134,19 @@ async function callTool(
         ? "ask_operator is not available to an orchestrator block: there is " +
           "nobody watching this workflow to answer. Decide with what you can " +
           "read, and say what you assumed in your reply."
-        : `${name} is not available to an orchestrator block. Use emit_runs.`,
+        : // `create_task` needs its own sentence for `ask_operator`'s reason
+          // rather than its own: pointing a block at `emit_runs` would answer a
+          // request to *write something down for later* with the one tool that
+          // starts work now, which is the opposite of what was asked. The board
+          // stays readable from here, and naming that is what stops a block
+          // reading this as "the taskboard is not yours".
+          name === "create_task"
+          ? "create_task is not available to an orchestrator block: nobody is " +
+            "watching this workflow, and a backlog written unattended is one " +
+            "the operator meets already full. You can read the board with " +
+            "list_tasks and name a task on a run you emit; filing a new one " +
+            "belongs to a chat turn or the operator."
+          : `${name} is not available to an orchestrator block. Use emit_runs.`,
       true,
     );
   }
@@ -1191,6 +1372,15 @@ async function callTool(
         ),
       );
     }
+
+    case "list_tasks":
+      return listTasksTool(args);
+
+    case "get_task":
+      return getTaskTool(args);
+
+    case "create_task":
+      return createTaskTool(args, chatId!);
 
     case "ask_operator":
       return askOperator(args, chatId!);
@@ -1586,6 +1776,211 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
  * the question back — so it survives even the replay a lost session falls back
  * to, without a system message saying twice what the row already says.
  */
+/**
+ * The board, filtered and paginated, for either subject.
+ *
+ * `listTasks`' own page cap is what bounds this rather than a number of this
+ * route's own — the board's cap is written once beside its DTO, and a second
+ * one here would be a tool answering with a different amount than the page for
+ * the same query. What this adds is a *narrower row than the page draws*: the
+ * clipped body and the fields a model needs to pick one, and none of the
+ * timestamps, folder splits or three run-id records that only a board renders.
+ * The reason is the turn rather than the wire — a full board of a hundred rows
+ * with every column is a tool result the size of the conversation asking for it.
+ *
+ * Narrowed at the boundary, `list_folders`' rule: every value here arrives off a
+ * model's tool call, so a `status` holding a number must be refused rather than
+ * become a filter that silently matches nothing. `listTasks` takes closed
+ * vocabularies and an unparseable one is dropped by it — which is the one thing
+ * a filter may not do quietly, so each is checked by name first.
+ */
+function listTasksTool(args: Record<string, unknown>) {
+  for (const [field, allowed] of [
+    ["status", TASK_STATUSES],
+    ["origin", TASK_ORIGINS],
+  ] as const) {
+    const raw = args[field];
+    if (raw === undefined || raw === null) continue;
+    if (typeof raw !== "string" || !(allowed as readonly string[]).includes(raw)) {
+      return text(
+        `${field} must be one of ${allowed.join(", ")}; got ${JSON.stringify(raw)}. ` +
+          "Leave it out for the whole board.",
+        true,
+      );
+    }
+  }
+
+  const mountId = String(args.mountId ?? "").trim() || null;
+  const folder = String(args.folder ?? "").trim() || null;
+  // Said rather than silently ignored: `listTasks` narrows on the pair, so a
+  // folder without its mount filters nothing and a model that sent one would
+  // read a whole board back as "everything in that folder".
+  if (folder && !mountId) {
+    return text(
+      "folder needs mountId beside it — a folder path alone does not say " +
+        "which mount it is on and narrows nothing. Call list_folders for both.",
+      true,
+    );
+  }
+
+  const page = listTasks({
+    status: (args.status as TaskStatus | undefined) ?? null,
+    origin: (args.origin as TaskOrigin | undefined) ?? null,
+    mountId,
+    folder,
+    offset: Number(args.offset) || 0,
+  });
+
+  return text(
+    JSON.stringify(
+      {
+        tasks: page.tasks.map((t) => {
+          // Projected off the board's own list DTO rather than off the row, so
+          // the clip a model reads is the clip the operator reads — one rule,
+          // in `taskListItemDTO`, rather than a second copy of it here that
+          // could disagree about where a brief is cut.
+          const row = taskListItemDTO(t);
+          return {
+            taskId: row.id,
+            title: row.title,
+            // A clip and not the brief. `get_task` returns the whole of it and
+            // the description says so, because a model that works from this
+            // field writes a run against two hundred characters and an
+            // ellipsis — the same failure the board's own editor guards.
+            bodyPreview: row.body,
+            // Said rather than left to be spotted from the ellipsis, the rule
+            // `list_folders` follows for a repo it did not look at: a model
+            // that cannot tell a clipped brief from a short one writes a run
+            // against the clip.
+            bodyClipped: row.body.length < t.body.length,
+            status: row.status,
+            priority: row.priority,
+            origin: row.origin,
+            mountId: row.mountId,
+            folder: row.folder,
+            // Which run holds it, because proposing a second run for a task an
+            // agent is already working is the expensive mistake this board's
+            // own doc names: two agents, one brief, one folder, nothing saying
+            // so.
+            claimedByRunId: row.claimedByRunId,
+          };
+        }),
+        // The three figures the existing list tools answer with, for their
+        // reason: a page that did not say what it left out reads as the whole
+        // board, and a model then reports a backlog it only saw the top of.
+        offset: page.offset,
+        returned: page.tasks.length,
+        totalMatching: page.total,
+      },
+      null,
+      1,
+    ),
+  );
+}
+
+/**
+ * One task, whole — the brief unclipped, and the runs started for it.
+ *
+ * Refused by name where the id is not there, `taskRefusal`'s wording, so a
+ * model that mistyped an id is told which tool has the right ones rather than
+ * being handed an empty object it reads as an empty task.
+ */
+function getTaskTool(args: Record<string, unknown>) {
+  const taskId = String(args.taskId ?? "").trim();
+  const task = taskId ? getTask(taskId) : null;
+  if (!task) {
+    // `taskRefusal`'s wording rather than one of this route's, so an id that is
+    // not there reads the same here as it does when a proposal or an emission
+    // names it. The board is read again on the miss path only.
+    return text(taskRefusal(taskId, currentTaskKnowledge()) ?? "", true);
+  }
+
+  const links = runLinksForTasks([task.id]).get(task.id);
+  return text(
+    JSON.stringify(
+      {
+        taskId: task.id,
+        title: task.title,
+        body: task.body,
+        status: task.status,
+        priority: task.priority,
+        origin: task.origin,
+        mountId: task.mountId,
+        folder: task.folder,
+        parentTaskId: task.parentTaskId,
+        createdByRunId: task.createdByRunId,
+        claimedByRunId: task.claimedByRunId,
+        completedByRunId: task.completedByRunId,
+        // Runs started *for* this task, which is the link a `taskId` on a
+        // proposal or an emission writes. Reported so a model can see the work
+        // has been tried before proposing it again — and capped and counted
+        // separately for the reason the diff names its omissions.
+        runsStartedForIt: links?.runIds ?? [],
+        runsStartedForItTotal: links?.runCount ?? 0,
+        createdAt: new Date(task.createdAt).toISOString(),
+        updatedAt: new Date(task.updatedAt).toISOString(),
+      },
+      null,
+      1,
+    ),
+  );
+}
+
+/**
+ * File a task on the operator's board.
+ *
+ * **The one write on this surface that is not a proposal**, and what makes it
+ * defensible is the same property the two proposal tools have: it starts
+ * nothing. A row in `tasks` claims no folder, consumes no concurrency slot,
+ * spawns nothing and is invisible to every guard — so there is nothing here for
+ * an approval step to hold back, and asking for one would only teach an operator
+ * to click through a dialog that never mattered.
+ *
+ * It files as `open` and can reach no other status. That is enforced twice and
+ * neither is decoration: there is no `status` on the schema, and
+ * `normalizeTaskInput` refuses one **by name** if a model sends it regardless —
+ * the same door the operator's own POST goes through. Which actor may move a
+ * task to which status is `taskTransitionRefusal`, and this route deliberately
+ * is not a second answer to it: a chat turn that could write `done` would be a
+ * model closing the operator's work on its own say-so, from a surface whose
+ * whole design is that a person decides whether anything happens.
+ */
+function createTaskTool(args: Record<string, unknown>, chatId: string) {
+  const parsed = normalizeTaskInput(args, {
+    // Stated here rather than read off the body, `OPERATOR`'s rule on the
+    // task routes: a field that could name a different origin would be a model
+    // filing work as though the operator had written it down themselves.
+    origin: "chat",
+    // Null because a chat turn is not a run. `createdByRunId` records the run
+    // that filed a task and there is none here — the chat is a conversation,
+    // and `chatId` is not a run id however much a column would take it.
+    createdByRunId: null,
+  });
+  if (!parsed.ok) return text(parsed.error, true);
+
+  const created = createTask(parsed.value);
+  // A parent id that is not on the board arrives here, not above: only the
+  // write knows whether the row it would be filed under exists. Said back
+  // rather than dropped, `agentRefusal`'s rule.
+  if (!created.ok) return text(created.error, true);
+  const task = created.task;
+  // On the thread, for `save_template`'s reason: the operator's transcript is
+  // where anything the chat wrote outside the conversation has to appear, or a
+  // board that grew a row has no trace on the page that grew it.
+  appendMessage(
+    chatId,
+    "system",
+    `The chat filed a task on the board: “${task.title}”. It is open and ` +
+      "nothing is running for it.",
+  );
+  return text(
+    `Filed “${task.title}” (id ${task.id}) on the board as open. Nothing is ` +
+      "running for it and nothing will until somebody starts it — name this " +
+      "id as taskId on a propose_run to link a run to it. You cannot close it; " +
+      "that is the operator's press or the run that does the work.",
+  );
+}
+
 function askOperator(args: Record<string, unknown>, chatId: string) {
   const raw = Array.isArray(args.questions) ? args.questions : [];
   if (raw.length === 0) {

@@ -541,6 +541,24 @@ export default function TasksPage() {
           {task.completedByRunId && (
             <RunLink label="closed by run" runId={task.completedByRunId} />
           )}
+          {/* Runs started *for* this task, which is the one link here the board
+              did not write about itself — the three above are records this page
+              keeps and this is `runs.task_id` read back. Drawn last and worded
+              "started for", because none of them says the work happened: a run
+              named here can have completed without doing the thing, which is
+              exactly why nothing closes this task when one ends. */}
+          {task.runIds.map((runId) => (
+            <RunLink key={runId} label="started for it" runId={runId} />
+          ))}
+          {/* Named rather than left to be inferred from a list that stops at
+              `MAX_TASK_RUN_LINKS`, the rule a shortened diff follows: a row
+              showing three of eleven and saying nothing reports a task worked
+              eleven times as one worked three times. */}
+          {task.runCount > task.runIds.length && (
+            <span className="block text-ink-faint">
+              and {task.runCount - task.runIds.length} more
+            </span>
+          )}
         </Td>
         <Td label="Priority" className="align-top">
           <span className="flex flex-wrap gap-1.5">

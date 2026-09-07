@@ -1286,6 +1286,11 @@ function limits(over: Partial<EmissionLimits> = {}): EmissionLimits {
       { name: "Reviewer", usable: true },
       { name: "Half a thing", usable: false },
     ],
+    // A function rather than a list, unlike the agents above, for the reason the
+    // field gives: the board is unbounded where the registry is curated. This
+    // fixture knows one id.
+    taskRefusal: (taskId) =>
+      taskId === "task-known" ? null : `No task with id "${taskId}".`,
     ...over,
   };
 }
@@ -1661,15 +1666,36 @@ describe("planEmission — which specs become runs", () => {
     // `agent` is on this list and is not one of those: a saved agent holds no
     // tool list and no permission mode, so naming one decides who does a piece
     // of the work exactly as the task text decides what the work is.
+    // `taskId` is further from that line again: it decides nothing about the
+    // run at all and moves nothing on the board — it records what prompted the
+    // work, and the board keeps deciding its own status.
     assert.deepEqual(Object.keys(specs[0]).sort(), [
       "agent",
       "dependsOn",
       "folder",
       "id",
       "task",
+      "taskId",
       "title",
     ]);
     assert.equal(specs[0].agent, null, "a spec that names none carries none");
+    assert.equal(specs[0].taskId, null, "a spec that names none carries none");
+  });
+
+  it("refuses a taskId that is not on the board, and takes one that is", () => {
+    // `agentRefusal`'s rule reached from the door where nobody is looking. The
+    // failure it closes is the quiet one: a run emitted "for the flaky-auth
+    // task" that silently carried no task is afterwards indistinguishable from
+    // one that named none, and the operator reads a board row nothing was ever
+    // started for.
+    const named = emitted([spec("a", { taskId: "task-known" })]);
+    assert.equal(named[0].taskId, "task-known");
+
+    const refused = planEmission([spec("a", { taskId: "task-gone" })], limits());
+    assert.equal(refused.ok, false);
+    // The whole emission, not the one spec — `planEmission`'s all-or-nothing
+    // rule: a partial list is a workflow that did some of what it decided.
+    assert.match(refused.ok ? "" : refused.reason, /task-gone/);
   });
 
   it("takes the mount root as a real answer", () => {

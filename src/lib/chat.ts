@@ -61,6 +61,7 @@ import {
   type AgentDefinition,
   type RegistryAgent,
 } from "./agents";
+import { recordRunForTask } from "./tasks";
 
 /**
  * The orchestrator chat: a conversation that proposes runs.
@@ -250,6 +251,16 @@ export interface ChatProposalRow {
    * one precedence, resolved in `planProposal`.
    */
   model: string | null;
+  /**
+   * The task on the board this proposal is for, by id, or null.
+   *
+   * On the *work* side beside the agent and the task text — it records what
+   * prompted the run — and it is neither a guard nor a trigger: it reaches no
+   * budget, no permission mode and no isolation choice, and approving a proposal
+   * that names one neither claims the task nor moves it. See the column note in
+   * `db.ts` and the frozen-versus-read paragraph in docs/agent/chat.md.
+   */
+  task_id: string | null;
   title: string;
   task: string;
   /** The prompt the task is appended to, when the chat wrote one for this run. */
@@ -875,6 +886,15 @@ export interface ProposalInput {
    * about what the run may do. See the column note in `db.ts`.
    */
   model?: string | null;
+  /**
+   * The task on the board this run is for, by id. Null is work nobody wrote
+   * down first, which is the ordinary proposal.
+   *
+   * Neither work nor a guard: it is a *record* of what prompted the run. It
+   * moves nothing on the board — approving does not claim the task and
+   * finishing does not close it — and it reaches nothing on the run.
+   */
+  taskId?: string | null;
   title: string;
   task: string;
   /** Replaces the template's prompt for this run only. Null keeps it. */
@@ -898,10 +918,10 @@ export function createProposal(
   db()
     .prepare(
       `INSERT INTO chat_proposals
-         (id, chat_id, created_at, kind, template_id, agent_id, model, title,
-          task, prompt_override, mount_id, folder, spec_id, depends_on, graph,
-          guards_json, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+         (id, chat_id, created_at, kind, template_id, agent_id, model, task_id,
+          title, task, prompt_override, mount_id, folder, spec_id, depends_on,
+          graph, guards_json, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
     )
     .run(
       id,
@@ -915,6 +935,12 @@ export function createProposal(
       // model decides what this run costs and a guard set decides what it may
       // do, so only one of them is a thing a model may name.
       input.model ?? null,
+      // The board row this run came off, recorded here and read live at the
+      // click. It is not a third thing beside the two above: a model and a guard
+      // set decide what the run costs and what it may do, and this decides
+      // neither — it says what prompted the work, and the board keeps deciding
+      // its own status.
+      input.taskId ?? null,
       input.title,
       input.task,
       input.promptOverride,
@@ -1559,6 +1585,16 @@ export function approveProposal(
       origin: "chat",
       originRef: proposal.id,
     });
+    // The link, carried from the proposal onto the run it became — in this same
+    // synchronous pass, so nothing can see the run without seeing what it was
+    // started for. Written whatever became of the row: the operator may delete a
+    // task, and a run that names one that has gone is not a run that named none.
+    //
+    // It is deliberately **not** a claim. `open → claimed` is a move on the
+    // board with its own rule about who may make it, and approving a proposal is
+    // not a run deciding to work the task — it is a person agreeing to start
+    // one. The board stays the operator's to move.
+    if (proposal.task_id) recordRunForTask(run.id, proposal.task_id);
     markProposal(id, "approved", { runId: run.id });
     return { ok: true, runId: run.id };
   } catch (err) {

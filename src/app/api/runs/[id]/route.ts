@@ -16,6 +16,7 @@ import {
   prunerState,
 } from "@/lib/contextPruning";
 import { runAgentDTO } from "@/lib/agents";
+import { taskForRun } from "@/lib/tasks";
 import { normalizePolicy } from "@/lib/budget";
 import { auditMutation } from "../../../../lib/requestLog";
 import { jsonMaybeGzipped } from "../../../../lib/http";
@@ -83,6 +84,15 @@ export async function GET(req: Request, ctx: Ctx) {
       // What `reopenRun` will refuse this run for, sent so the page can decline
       // to offer the button rather than let the operator find out by pressing it.
       haltedWorkflow: haltedWorkflowOf(id),
+      // What this run was started for, if anything wrote it down. Provenance
+      // beside `origin` and never authority: nothing on the run reads it, and
+      // the run reaching a terminal status does not close what is named here —
+      // a run can complete without having done the thing, so the board keeps
+      // deciding its own status. Resolved rather than sent as an id, for
+      // `agent`'s reason: a task deleted since must read as a deletion rather
+      // than as a link to nothing. On the run's own page only — the runs list
+      // draws no link and would pay a query a row for one.
+      task: taskForRun(id),
     },
     running: isRunning(id),
     // Reported alongside spent_usd, never merged into it. The two are

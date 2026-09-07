@@ -8,6 +8,7 @@ import {
   isTaskStatus,
   listTasks,
   normalizeTaskInput,
+  runLinksForTasks,
   taskDTO,
   taskListItemDTO,
 } from "../../../lib/tasks";
@@ -81,8 +82,13 @@ export async function GET(req: Request) {
     folder: params.get("folder"),
   });
 
+  // One query for the whole page rather than one per row: the board polls
+  // every ten seconds and a page is up to `MAX_TASK_PAGE` rows, so the per-row
+  // read this replaces is an N+1 running on a timer.
+  const links = runLinksForTasks(page.tasks.map((t) => t.id));
+
   const body: TaskListDTO = {
-    tasks: page.tasks.map(taskListItemDTO),
+    tasks: page.tasks.map((t) => taskListItemDTO(t, links.get(t.id))),
     total: page.total,
     offset: page.offset,
     limit: page.limit,

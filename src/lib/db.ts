@@ -1176,6 +1176,32 @@ function migrate(db: Database.Database) {
   // fail the copy for every install that has one to make.
   addColumn(db, "chat_proposals", "guards_json", "TEXT");
 
+  // The task on the board this proposal is for, by id, or null for work nobody
+  // wrote down first.
+  //
+  // A **record of what prompted the run**, and it is neither a guard nor a
+  // trigger. It reaches nothing: no budget, no permission mode, no isolation
+  // choice, and no status on the row it names — approving a proposal that
+  // carries one does not claim the task, and the run finishing does not close
+  // it. Completion belongs to the run that did the work or to the operator, and
+  // `taskTransitionRefusal` is where that is decided; a column here that moved a
+  // task would be a route around it that no test of that function would see.
+  //
+  // Not a foreign key, `runs.origin_ref`'s rule: the operator deletes tasks, and
+  // a proposal that named one has to keep reading true afterwards rather than
+  // taking the row the operator is looking at with it. A dangling id is read as
+  // "the task this was for has been deleted", which is what the card and the run
+  // page both say.
+  //
+  // Read live rather than frozen, and it is the one field on a proposal that is
+  // neither: the guards are frozen because a card that spells values out is a
+  // promise, the template and the agent are read at the click *and gate it*, and
+  // this is read at the click for what the card **says** and gates nothing. See
+  // docs/agent/chat.md.
+  //
+  // Deliberately not in PROPOSAL_BASE_COLUMNS, for `guards_json`' reason above.
+  addColumn(db, "chat_proposals", "task_id", "TEXT");
+
   // The order a chat's messages were written in, because `ts` does not decide
   // it: `finishTurn` appends the reply, an error and a denial note inside one
   // synchronous block, so they routinely share a millisecond, and the primary
@@ -1429,6 +1455,34 @@ function migrate(db: Database.Database) {
   // version bump — that constant records that a *rebuild* completed, and this is
   // not one.
   addColumn(db, "runs", "needs_review_reason", "TEXT");
+
+  // The task on the board this run was started for, by id, or null.
+  //
+  // The other end of `chat_proposals.task_id` and of an emitted spec's own
+  // `taskId`: the proposal or the spec records which task the work came off, and
+  // this is what survives into the run so the run's page and the board row can
+  // both name the other. Written once, beside the insert, by the two doors that
+  // create a run from something naming a task — never by `createRun`, which
+  // knows nothing about the board and must keep knowing nothing: a run's loop,
+  // its guards, its occupancy and its budget do not read this column and adding
+  // one that did is the day a task starts being a run.
+  //
+  // A record and not a trigger. Nothing derives a task's status from the run
+  // named here — a run can complete and still not have done the thing, so
+  // closing stays with the run that did the work (through
+  // `taskTransitionRefusal`, in its own name) or with the operator.
+  //
+  // Not a foreign key, `origin_ref`'s rule: the operator deletes tasks and
+  // nothing deletes runs, so a cascade here would describe a deletion that never
+  // happens in one direction and destroy a run's provenance in the other.
+  addColumn(db, "runs", "task_id", "TEXT");
+  // "Which runs were started for this task", which is the board row's own read
+  // and the one that must not be a scan of every run the install has ever held.
+  // Partial, because the column is null on nearly every row: the index then
+  // holds one entry per run that came off the board rather than one per run.
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_runs_task ON runs(task_id) WHERE task_id IS NOT NULL",
+  );
 
   // The same pair for an instance, so a node created *later* — a deferred one,
   // behind an orchestrator block's decision — records the trigger the press of
