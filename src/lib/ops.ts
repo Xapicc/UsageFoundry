@@ -142,7 +142,11 @@ export function opsCounters(): Readonly<OpsState> {
  * restart that closed every run out.
  *
  * Retention is a count rather than an age: this table is written a handful of
- * times per boot, so a cap keeps it from ever being a store worth reporting on.
+ * times per boot and once per operator press on a credential or a fleet control
+ * (`recordDurableMutation`), so a cap keeps it from ever being a store worth
+ * reporting on. Both writers are human-scale, which is the premise the cap rests
+ * on — anything that writes here per *request* would break it, and belongs in
+ * `request_log`, whose window is twenty thousand rows wide for that reason.
  */
 export function recordOpsEvent(
   level: OpsLevel,
