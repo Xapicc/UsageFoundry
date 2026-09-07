@@ -5792,6 +5792,34 @@ through before trusting this unattended:
     an exhausted credit on a Codex run is still filed under Claude's sentences.
     Exhaust a Codex account and read `stop_reason`.
 
+- **What one poll of an open chat thread reads, 2026-09-07.** The chat page
+  re-asked `GET /api/chat/[id]` for the whole conversation every three seconds
+  for as long as it was open, so the cost of holding a chat on screen rose with
+  the chat. Measured on this tree against a throwaway database built by
+  `migrate()`, two threads of equal length and messages of 400 characters, the
+  body of one poll: at **500 messages, 246,362 bytes to 1,136**; at **2,000
+  messages, 1,004,522 bytes to 1,137**. The two figures after are the result —
+  the poll is now flat in the length of the thread, and what is left of it is
+  the thirty-thread sidebar, which is bounded and deliberate. `EXPLAIN QUERY
+  PLAN` on the same database, before and after: `SEARCH chat_messages USING
+  INDEX idx_chat_messages_chat (chat_id=?)` with `USE TEMP B-TREE FOR ORDER BY`
+  for **both** the whole-thread and the cursored read — the cursor alone shrank
+  the response and left the work where it was — against `SEARCH chat_messages
+  USING INDEX idx_chat_messages_seq (chat_id=? AND seq>?)` and no sort. The
+  first read of a thread is unchanged except for the `seq` each message now
+  carries: 246,362 to 251,271 bytes at 500 messages, 2.0% more, paid once per
+  thread opened rather than twenty times a minute.
+
+  **Not yet verified by hand:** nothing here is the real page. The append path
+  is covered by unit tests over `mergeMessages` and by three route tests that
+  fail with the cursor removed, but no browser has held a chat open across a
+  turn landing — so what is unproven is the sequence on screen: that a reply
+  arriving mid-turn appends rather than replaces, that the unseen-count and the
+  follow-the-reader scroll still behave when the poll's answer is a tail, and
+  that switching threads while a poll is out draws the new conversation whole. A
+  human should open `/chat`, send a message to a thread with some history, and
+  watch the reply land.
+
 There is no linter run in this repo, and `npm test` covers a deliberately short
 list: the folder-collision predicate, which queued runs may start, the budget
 policy, how a provider refusal is classified and backed off from, which prompt a
@@ -5804,8 +5832,9 @@ run's diff is parsed and budgeted, whether a saved graph of run blocks can run a
 all and the order its runs are created in, when a branch may be landed, what a
 queued merge does with the branch it reaches, what counts as a conflict marker — both
 for deciding whether one was really resolved and for deciding what to show, what
-the orchestrator chat may ask its operator, what an answer to it settles and where
-a question is drawn in the thread that shows it — and
+the orchestrator chat may ask its operator, what an answer to it settles, where
+a question is drawn in the thread that shows it and what one poll of an open thread
+reads against how long that thread already is — and
 the two renderings that would lie quietly about a number: an unconfigured
 ceiling, and a first-party figure shown beside the meters. Two entries are
 neither a function nor a rendering: the order a chat's thread renders in, driven
