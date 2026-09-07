@@ -2036,8 +2036,12 @@ Built and exercised against real transcripts:
     under the page through the API, pressing Done rendered
     `taskTransitionRefusal`'s own sentence — "This task is already dropped.
     Re-open it first — …" — rather than a generic failure.
-  - **A move the rules allow.** Open → done through the button, with the note
-    and the row landing in the Closed fold.
+  - **Every move the rules allow an operator, through its own button.** Open →
+    done, open → dropped, claimed → open (releasing a stale claim), done → open
+    from behind the Closed fold, and a delete through the sheet; each confirmed
+    against `GET /api/tasks/[id]` afterwards rather than against the redraw.
+    There is no Claim button and there should not be — a claim names the run
+    that will hold the task, and the operator is not a run.
   - **Filing by hand.** The form's `POST /api/tasks` stored title, brief,
     priority and a mount/folder pair chosen from the real workspace scan.
   - **All three nothings, each on screen.** An empty board; a filter matching
@@ -2071,13 +2075,13 @@ standalone bundle), and are covered by the unit tests above, but the following
 have **not** been exercised against a real CLI. They are the list to work
 through before trusting this unattended:
 
-> **Four of the taskboard's controls are still unpressed.** Release on a
-> claimed row, Re-open on a closed one, Drop, and the delete sheet: each is the
-> same `PATCH`/`DELETE` as a control that was exercised above, against a rule
-> that is unit-tested, but none has been pressed against a live row. Nor has any
-> refusal an *actor other than the operator* would get — every one of those
-> needs a run or a chat turn holding the task, and neither has a door to this
-> table yet.
+> **No refusal an actor other than the operator would get has been seen on a
+> screen.** Every non-operator branch of `taskTransitionRefusal` is unit-tested
+> and none has been rendered, because producing one needs a run or a chat turn
+> holding a task and neither has a door to this table yet — that is run 3/4's
+> and run 4/4's work. The board is where those sentences will surface, so the
+> first thing to check when a door opens is that one of them reaches the page
+> intact rather than as a generic failure.
 >
 > **The chat turn's live view has never been rendered in a browser either**, and
 > it is the one addition whose whole point is what it looks like while it moves.
