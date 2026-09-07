@@ -5792,6 +5792,19 @@ through before trusting this unattended:
     an exhausted credit on a Codex run is still filed under Claude's sentences.
     Exhaust a Codex account and read `stop_reason`.
 
+> **The chat has never been shown a workspace holding more than twenty-five git
+> repositories.** `list_folders`' `folders` and `offset` parameters, the
+> per-folder `repoUnread` mark and the `repoLookups` block carrying `nextOffset`
+> are covered by `remoteReads.test.ts` over the pure selection beneath them and
+> by nothing else: no scan on this machine has reached the cap, so nothing has
+> watched a model read `notRead` and call back with the offset it was handed.
+> What is verified is that the selection pages, that the union of the pages is
+> every repository, and that a key naming no folder comes back named. What is
+> not is that the tool description persuades a model to ask for the rest — and
+> the failure if it does not is the one this change was made about, a repository
+> the chat reports as unidentifiable, except that the payload now says which
+> ones it never looked at.
+
 There is no linter run in this repo, and `npm test` covers a deliberately short
 list: the folder-collision predicate, which queued runs may start, the budget
 policy, how a provider refusal is classified and backed off from, which prompt a
