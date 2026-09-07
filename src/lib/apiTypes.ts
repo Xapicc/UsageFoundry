@@ -2644,7 +2644,7 @@ export interface SettingsDTO {
    * `--allowedTools` patterns a conflict resolution may use to check its merge.
    * Empty means none, which is what it had before this existed.
    */
-  resolveVerifyTools: string[];
+  resolveAllowedTools: string[];
   /** argv that must exit 0 before Land merges. Empty is no check, not a pass. */
   landVerifyCommand: string;
   isolationPreamble: string;
@@ -2823,6 +2823,16 @@ export interface RunGuardsDTO {
 export interface ChatMessageDTO {
   id: string;
   ts: number;
+  /**
+   * Insert order, and the cursor the page's poll asks for the next batch from.
+   *
+   * Carried rather than left on the server because the page has to say where to
+   * resume from, and the only honest answer is the last number it actually
+   * merged — a count of what it holds would be wrong the moment two polls
+   * overlap. Ordering is still the server's: nothing on the client re-sorts by
+   * it, for the reason stated over `threadItems`.
+   */
+  seq: number;
   role: "user" | "assistant" | "system";
   text: string;
 }
@@ -3049,6 +3059,17 @@ export interface ChatDTO {
    */
   turnTimeoutMs: number;
   messages: ChatMessageDTO[];
+  /**
+   * The cursor this read started after. Zero means `messages` is the thread.
+   *
+   * The payload says which of the two it is, rather than the caller remembering
+   * what it asked: the chat page has polls, a send, a cancel, an answer and a
+   * decision all setting the same state, only one of them carries a cursor, and
+   * a reader that had to match responses to requests would be one race away from
+   * replacing a thread with a two-message tail. Above zero the client appends;
+   * at zero it replaces, which is what every route but the poll answers with.
+   */
+  messagesFrom: number;
   proposals: ChatProposalDTO[];
   /**
    * Every question this thread has asked, oldest first.

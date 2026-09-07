@@ -1623,3 +1623,124 @@ describe("the container's log has a ceiling, and README states it", () => {
     );
   });
 });
+
+/**
+ * Every environment-sourced credential's rotation cost is written down, and the
+ * list cannot grow again without saying so.
+ *
+ * Nothing here asserts a behaviour, because there is no behaviour to assert:
+ * `process.env` is fixed for the life of this process, so every value below
+ * needs a container restart to change and none of them can be tested by
+ * changing one. What can go wrong is the *record*, and it already has — the
+ * notification channel arrived as five more variables read exactly the way the
+ * credentials are, and the only place that fact lived was a survey somebody
+ * happened to re-derive. A restart is what ends every run in flight, so an
+ * operator deciding whether a leak is worth that needs the list to be complete;
+ * one short by five is the same as no list.
+ *
+ * Held against the source rather than a second hand-written list, `namesRead`'s
+ * reason one block up: a credential added to `config.ts` or to the edge gate is
+ * how the next omission arrives, not an edit to the doc.
+ */
+describe("the rotation cost of every environment-sourced value is recorded", () => {
+  const ANCHOR = "Rotating any of these is a container restart";
+  const environmentDoc = fs.readFileSync(
+    path.join(root, "docs", "agent", "environment.md"),
+    "utf8",
+  );
+
+  /** The one bullet, up to the next top-level one. Empty when it is gone. */
+  const section = (() => {
+    const start = environmentDoc.indexOf(ANCHOR);
+    if (start === -1) return "";
+    const rest = environmentDoc.slice(start);
+    const end = rest.indexOf("\n- ");
+    return end === -1 ? rest : rest.slice(0, end);
+  })();
+
+  it("carries the bullet the other cases read", () => {
+    assert.notEqual(
+      section,
+      "",
+      `docs/agent/environment.md no longer carries the rotation bullet ` +
+        `(anchored on "${ANCHOR}"). It is the only written statement of what ` +
+        `rotating a leaked credential costs on this install; do not remove it ` +
+        `without putting the enumeration somewhere a reader is routed to.`,
+    );
+  });
+
+  it("names every variable config.ts reads through optionalEnv", () => {
+    const configSource = fs.readFileSync(path.join(root, "src", "lib", "config.ts"), "utf8");
+    const names = [
+      ...configSource.matchAll(/optionalEnv\(\s*"([A-Z0-9_]+)"/g),
+    ].map((m) => m[1]);
+    assert.ok(names.length > 0, "no optionalEnv reads found in config.ts");
+
+    for (const name of new Set(names)) {
+      assert.ok(
+        section.includes(name),
+        `${name} is read through optionalEnv in config.ts and the rotation ` +
+          `bullet in docs/agent/environment.md does not name it. Say which of ` +
+          `the three groups it is in — issued here (only a restart revokes it), ` +
+          `issued elsewhere (revoke at the issuer, the restart only re-arms ` +
+          `this install), or not a credential at all.`,
+      );
+    }
+  });
+
+  it("names every UF_ variable the edge gate reads", () => {
+    const middlewareSource = fs.readFileSync(path.join(root, "src", "middleware.ts"), "utf8");
+    const names = [...middlewareSource.matchAll(/process\.env\.(UF_[A-Z0-9_]+)/g)].map(
+      (m) => m[1],
+    );
+    assert.ok(names.length > 0, "no process.env reads found in src/middleware.ts");
+
+    for (const name of new Set(names)) {
+      assert.ok(
+        section.includes(name),
+        `${name} is compared in the edge gate and the rotation bullet in ` +
+          `docs/agent/environment.md does not name it. This is the group that ` +
+          `matters most: the edge runtime has no node:fs and must not import ` +
+          `lib/config, so a credential checked there cannot be given a source ` +
+          `that changes while the process runs.`,
+      );
+    }
+  });
+
+  /**
+   * The three this app never reads and still hands out, listed rather than
+   * derived because what puts them in the list is an *absence* — no strip in
+   * `childEnv` and its four siblings — and a test that greps for a missing line
+   * asserts nothing. They are the easiest ones to forget for the same reason.
+   */
+  it("names the credentials this app forwards but never reads itself", () => {
+    for (const name of ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY"]) {
+      assert.ok(
+        section.includes(name),
+        `${name} reaches a child from this process's own environment and the ` +
+          `rotation bullet in docs/agent/environment.md does not name it. It ` +
+          `rotates on the same restart as everything this app does read.`,
+      );
+    }
+  });
+
+  /**
+   * `DISCORD_WEBHOOK_URL` is the one the server is deliberately kept from, so
+   * "config.ts does not read it" is the *expected* state rather than evidence
+   * it is out of scope — it is still an operator credential this deployment
+   * carries, and it still needs a restart. Pinned off the entrypoint, which is
+   * the file that does read it.
+   */
+  it("names the credential only the entrypoint holds", () => {
+    const entrypoint = fs.readFileSync(path.join(root, "docker-entrypoint.sh"), "utf8");
+    assert.ok(
+      entrypoint.includes("DISCORD_WEBHOOK_URL"),
+      "docker-entrypoint.sh no longer reads DISCORD_WEBHOOK_URL",
+    );
+    assert.ok(
+      section.includes("DISCORD_WEBHOOK_URL"),
+      "docker-entrypoint.sh launches the Discord relay with DISCORD_WEBHOOK_URL " +
+        "and the rotation bullet in docs/agent/environment.md does not name it.",
+    );
+  });
+});

@@ -251,6 +251,7 @@ point; the *conditions* are the ones that have gone wrong here.
 | Nothing has been backed up lately | `stores.backups.newestAgeSeconds` | `> 172800`, or `null` — the only store here this app does not write, and the only one whose failure is silence |
 | The backup directory cannot be read | `stores.backups.readable` | `false` — a missing bind mount or a root-owned directory, which is not the same as no backups |
 | Another process took the data directory | `dataDirOwned` | `false` |
+| The schema is not the one this build expects | `schemaFaults` | non-empty — a rollback to an older image, or a table an interrupted migration left behind. Each entry is `{ at, level, detail }` and `detail.finding` is one of `downgrade`, `proposals_stranded`, `proposals_unreadable`, `orphan_table`. Scoped to the process now running, so it clears on a clean boot; the same findings are also rows in `ops_events` under the event `schema.fault`, which is the copy a restart does not erase |
 | The notification channel has stopped delivering | `webhook.consecutiveFailures` | `> 3` while `webhook.configured` — a fire-and-forget sink nobody receives from looks exactly like a quiet fleet |
 
 A `guardFraction` of `null` means *no ceiling is configured and the provider

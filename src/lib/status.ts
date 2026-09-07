@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { DB_PATH, PROJECTS_DIR, WORKSPACE_MOUNTS } from "./config";
-import { db } from "./db";
+import { type SchemaFault, db, schemaFaultsThisBoot } from "./db";
 import { webhookHealth } from "./notify";
 import { opsCounters, recentOpsEvents } from "./ops";
 import { currentSnapshot, restartClosedCount } from "./orchestrator";
@@ -141,6 +141,21 @@ export interface StatusReport {
    * it falls to zero when the last one has been picked up or set aside.
    */
   restartClosedOutstanding: number;
+  /**
+   * What `migrate()` found wrong with the database file when this process
+   * opened it: a rollback to an older image, or the residue of an interrupted
+   * migration. Empty on a clean boot, which is what makes it alertable.
+   *
+   * Each of these is also an `ops_events` row — that is the copy a restart does
+   * not erase, and the restart is when an operator comes looking. This one is
+   * scoped to the process now running so that it de-latches, for the reason
+   * `lastBootReconcile` above does not.
+   *
+   * Payload-safe under this file's rule: `detail` carries table names, column
+   * names and version numbers, which are schema rather than anything an
+   * operator or an agent wrote.
+   */
+  schemaFaults: SchemaFault[];
 }
 
 /**
@@ -365,5 +380,9 @@ export async function statusReport(now = Date.now()): Promise<StatusReport> {
         }
       : null,
     restartClosedOutstanding: restartClosedCount(),
+    // Copied rather than handed out: the list behind it is the one `migrate()`
+    // clears and refills, and a caller that held a reference to it would see it
+    // emptied under them by the next boot in this process.
+    schemaFaults: [...schemaFaultsThisBoot()],
   };
 }

@@ -33,6 +33,7 @@ let route: typeof import("./route");
 let logout: typeof import("../logout/route");
 let sessions: typeof import("../../../lib/sessions");
 let sessionToken: typeof import("../../../lib/sessionToken");
+let dbMod: typeof import("../../../lib/db");
 
 before(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "uf-login-route-"));
@@ -55,6 +56,7 @@ before(async () => {
   logout = await import("../logout/route");
   sessions = await import("../../../lib/sessions");
   sessionToken = await import("../../../lib/sessionToken");
+  dbMod = await import("../../../lib/db");
 });
 
 after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -312,6 +314,84 @@ test("failures are recorded durably: count, first and last", async () => {
   assert.equal(summary.failures, before + 2);
   assert.ok(summary.firstAt !== null && summary.lastAt !== null);
   assert.ok(summary.lastAt >= summary.firstAt);
+});
+
+/**
+ * What a sign-out records, and — the half this route exists to get right — what
+ * a caller who proved nothing can make it record.
+ *
+ * `/api/logout` is exempt from the edge gate, so an anonymous request reaches
+ * the handler. That is why it is the one mutating route deliberately *not*
+ * wrapped in `auditMutation`: a refusal that wrote a row would hand anyone who
+ * can reach the port a lever on the audit tables, and `ops_events` keeps 500
+ * rows against `request_log`'s 20,000, so a durable row on a refusal is the
+ * sharper version of the same lever. Both assertions below are about absence,
+ * which is the direction nothing else would catch.
+ */
+function opsEvents(): Array<{ event: string; detail: Record<string, unknown> }> {
+  const rows = dbMod
+    .db()
+    .prepare("SELECT event, detail FROM ops_events ORDER BY id")
+    .all() as Array<{ event: string; detail: string }>;
+  return rows.map((r) => ({
+    event: r.event,
+    detail: JSON.parse(r.detail) as Record<string, unknown>,
+  }));
+}
+
+test("a sign-out names the session it ended, once", async () => {
+  dbMod.db().prepare("DELETE FROM ops_events").run();
+  const value = cookieValue(setCookie(await post(TOKEN)));
+  const claim = await sessionToken.readSessionCookie(value, TOKEN, Date.now());
+  assert.ok(claim);
+
+  const send = () =>
+    logout.POST(
+      new Request("http://localhost/api/logout", {
+        method: "POST",
+        headers: { cookie: `uf_session=${value}` },
+      }),
+    );
+
+  assert.equal((await send()).status, 200);
+  assert.deepEqual(
+    opsEvents().map((e) => e.event),
+    ["auth.session_revoked"],
+  );
+  // The session id is the whole of "which object", and on this install it is
+  // also the whole of "who": one credential and no user model.
+  assert.equal(opsEvents()[0].detail.session, claim.id);
+
+  // The same cookie again revokes nothing, so it writes nothing. A captured
+  // cookie is replayable until its own expiry, and one row per replay would be
+  // a way to spend a 500-row table.
+  assert.equal((await send()).status, 200);
+  assert.equal(opsEvents().length, 1);
+});
+
+test("a caller who proved nothing writes no row at all", async () => {
+  dbMod.db().prepare("DELETE FROM ops_events").run();
+  dbMod.db().prepare("DELETE FROM request_log").run();
+
+  for (let i = 0; i < 3; i++) {
+    // No cookie and no bearer: the `all: true` branch refuses, and the ordinary
+    // branch has no id to revoke. Neither may leave anything behind.
+    const res = await logout.POST(
+      new Request("http://localhost/api/logout", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ all: i % 2 === 0 }),
+      }),
+    );
+    assert.equal(res.status, i % 2 === 0 ? 401 : 200);
+  }
+
+  assert.deepEqual(opsEvents(), []);
+  assert.deepEqual(
+    dbMod.db().prepare("SELECT * FROM request_log").all(),
+    [],
+    "an exempt path's refusal must not spend the audit window",
+  );
 });
 
 test("a successful sign-in clears the install-wide budget", async () => {

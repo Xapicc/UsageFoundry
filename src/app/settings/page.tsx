@@ -358,7 +358,7 @@ const EDITABLE_PATHS = [
   "isolationCopyGlobsByRepo",
   "landStrategy",
   "landVerifyCommand",
-  "resolveVerifyTools",
+  "resolveAllowedTools",
   "continuationPrompt",
   "donePushbackPrompt",
   "isolationPreamble",
@@ -408,7 +408,7 @@ const ISOLATED_RUN_KEYS = [
   "isolationCopyGlobsByRepo",
   "landStrategy",
   "landVerifyCommand",
-  "resolveVerifyTools",
+  "resolveAllowedTools",
 ];
 
 /**
@@ -2024,7 +2024,7 @@ export default function SettingsPage() {
       out = { ...out, isolationCopyGlobsByRepo: parseGlobsByRepo(copyGlobsByRepoText) };
     }
     if (verifyToolsText !== null) {
-      out = { ...out, resolveVerifyTools: parseGlobs(verifyToolsText) };
+      out = { ...out, resolveAllowedTools: parseGlobs(verifyToolsText) };
     }
     return out;
   }, [s, copyGlobsText, copyGlobsByRepoText, verifyToolsText]);
@@ -3308,7 +3308,7 @@ export default function SettingsPage() {
 
             <SettingRow
               htmlFor="verifytools"
-              edited={isEdited("resolveVerifyTools")}
+              edited={isEdited("resolveAllowedTools")}
               label="Checks a conflict resolution may run"
               description={
                 <>
@@ -3326,11 +3326,11 @@ export default function SettingsPage() {
               <div className="w-72">
                 <Input
                   id="verifytools"
-                  value={verifyToolsText ?? effective.resolveVerifyTools.join(", ")}
+                  value={verifyToolsText ?? effective.resolveAllowedTools.join(", ")}
                   onChange={(e) => setVerifyToolsText(e.target.value)}
                   onBlur={() => {
                     if (verifyToolsText === null) return;
-                    patch({ resolveVerifyTools: parseGlobs(verifyToolsText) });
+                    patch({ resolveAllowedTools: parseGlobs(verifyToolsText) });
                     setVerifyToolsText(null);
                   }}
                 />
