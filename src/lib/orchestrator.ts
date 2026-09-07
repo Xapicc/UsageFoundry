@@ -67,15 +67,15 @@ import { parseRunAgent, sessionAgentArgs, type AgentDefinition } from "./agents"
 // The board's half of a run, and the two modules it needs. Both of these import
 // this one back, which is the shape `cycleInvocation.ts` and `notify.ts` already
 // have with it: nothing here is read at module evaluation, only inside
-// `startRun`, so the partial namespace a cycle hands over during load is never
-// the one anything reads.
+// `createRun` and `startRun`, so the partial namespace a cycle hands over
+// during load is never the one anything reads.
 import {
   mintRunCapability,
   removeMcpConfig,
   revokeRunCapabilities,
   writeMcpConfig,
 } from "./chat";
-import { taskForRun, updateTask } from "./tasks";
+import { recordRunForTask, taskForRun, updateTask } from "./tasks";
 import { enabledPluginDirs, pluginDirArgs } from "./plugins";
 import {
   BOUNDARY_BREAK_EVEN_BUDGET,
@@ -3150,6 +3150,18 @@ export interface CreateRunInput {
   origin: RunOrigin;
   /** The authorising record, where one exists: a proposal, instance, schedule. */
   originRef?: string | null;
+  /**
+   * The taskboard item this run was started for, where a caller named one.
+   *
+   * Through the door rather than written onto the row afterwards, and that is a
+   * correctness constraint rather than tidiness: `createRun` finishes by
+   * promoting, `startRun` reaches `claimTaskForRun` with no `await` in between,
+   * so a caller that wrote `runs.task_id` after this call returned had the
+   * claim read a null column and silently file nothing. Recorded as given —
+   * an id naming a task the operator has since deleted is refused by the
+   * callers that can ask, never here.
+   */
+  taskId?: string | null;
 }
 
 /**
@@ -3809,6 +3821,14 @@ export function createRun(input: CreateRunInput): RunRow {
         input.originRef ?? null,
         taskSignature(folder, prompt),
       );
+
+    // In the same transaction as the row it belongs to, because `promoteQueued`
+    // below can start this run before this function returns and `startRun`
+    // claims the task without an `await` in between: written after the call, it
+    // is a column the claim reads as null, and the board then shows `open` for
+    // work already in flight with nothing on the run's log saying why. The SQL
+    // stays in `tasks.ts`; what reaches here is the id.
+    if (input.taskId) recordRunForTask(id, input.taskId);
 
     const addLink = db().prepare(
       "INSERT INTO run_deps (run_id, depends_on, edge, continue_branch, created_at) VALUES (?, ?, ?, ?, ?)",

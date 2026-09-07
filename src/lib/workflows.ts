@@ -72,7 +72,6 @@ import {
 } from "./agents";
 import {
   currentTaskKnowledge,
-  recordRunForTask,
   taskRefusal,
 } from "./tasks";
 import { telemetrySpendSince } from "./otlp";
@@ -4787,18 +4786,20 @@ function createEmitted(
         // and readable without that join.
         origin: "orchestrator-block",
         originRef: nodeId,
+        // The link, carried from the spec onto the run — through the door
+        // rather than written after it, because `createRun` may start the run
+        // before it returns and the run's own claim reads this column. Written
+        // whatever became of the row, unlike the agent above it, and the
+        // difference is what each one decides: a run that is not the agent it
+        // was emitted as is a different run, where a run whose task has since
+        // been deleted is the same run with a record of where it came from.
+        //
+        // It is not a claim and not a completion. An emitted run neither moves
+        // the task nor closes it when it ends — a run can complete and still
+        // not have done the thing, and `taskTransitionRefusal` is where that
+        // stays decided.
+        taskId: spec.taskId,
       });
-      // The link, carried from the spec onto the run — in this same pass, so
-      // nothing can see the run without seeing what it was started for. Written
-      // whatever became of the row, unlike the agent above it, and the
-      // difference is what each one decides: a run that is not the agent it was
-      // emitted as is a different run, where a run whose task has since been
-      // deleted is the same run with a record of where it came from.
-      //
-      // It is not a claim and not a completion. An emitted run neither moves the
-      // task nor closes it when it ends — a run can complete and still not have
-      // done the thing, and `taskTransitionRefusal` is where that stays decided.
-      if (spec.taskId) recordRunForTask(run.id, spec.taskId);
       runIds.set(spec.id, run.id);
       recordMember(instanceId, {
         nodeId: `${nodeId}#${spec.id}`,

@@ -1233,12 +1233,22 @@ export function deleteTask(id: string, actor: TaskActor): TaskWriteResult {
  * not have done the thing, so completion stays with the run that did the work,
  * in its own name, or with the operator. See `taskTransitionRefusal`.
  *
- * Here rather than inside `createRun`, and that is a boundary rather than a
- * convenience: `orchestrator.ts` decides what a run may do and what it costs,
- * and nothing in its loop, its guards, its occupancy or its budget reads this
- * column. A run that carries a task id and one that does not are the same run.
- * Both callers write it in the same synchronous pass as the insert they made it
- * from, so a reader that can see the run can see the link.
+ * The SQL is here rather than in `createRun`, and that is a boundary rather
+ * than a convenience: `orchestrator.ts` decides what a run may do and what it
+ * costs, and nothing in its loop, its guards, its occupancy or its budget reads
+ * this column. A run that carries a task id and one that does not are the same
+ * run.
+ *
+ * **It is called from inside `createRun`'s transaction and from nowhere else,
+ * which is a correctness rule rather than a preference.** Written by a caller
+ * after `createRun` returned, it lands too late to be seen: that function ends
+ * by promoting, and `startRun` reaches `claimTaskForRun` with no `await` in
+ * between, so the run's own claim reads a null column and files nothing — the
+ * board shows `open` for work already in flight, the run's log says nothing at
+ * all, and the run can then never complete the task, because a run may complete
+ * only the one claimed in its own name. Whether it bites depends on whether the
+ * run started or queued, which is exactly the kind of intermittence this file
+ * exists to keep out.
  *
  * The id is written whether or not the row is still there. It is not a foreign
  * key for that reason — the operator may delete a task at any point — and a

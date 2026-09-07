@@ -412,17 +412,33 @@ so, because a model told it may file a task reads the omission as an oversight.
 **A run that came off the board carries the link, and the link is a record
 rather than a trigger.** `propose_run` and `emit_runs` each take an optional
 `taskId`. It rides `chat_proposals.task_id` from the proposal and lands on
-`runs.task_id` at the approval or the emission, written in the same synchronous
-pass as the insert it came from, so nothing can see the run without seeing what
-it was started for. What it does **not** do is the point: naming a task does not
-claim it, and the run reaching a terminal status does not close it. A run can
-complete and still not have done the thing — it can stop on a budget, be
-cancelled, or finish having decided the work was wrong — so a status-derived
-rule here would close backlog items nobody worked. Completion belongs to the run
-that did the work, in its own name, or to the operator's press. Nothing on the
-run reads the column either: not the loop, not a guard, not the budget, not
-occupancy. A run carrying a task id and one that is not are the same run, which
-is why the write lives in `tasks.ts` and `createRun` knows nothing about it.
+`runs.task_id` **inside `createRun`'s own transaction**, carried in on
+`CreateRunInput.taskId` from the approval or the emission, so nothing can see
+the run without seeing what it was started for. What it does **not** do is the
+point: naming a task does not claim it, and the run reaching a terminal status
+does not close it. A run can complete and still not have done the thing — it can
+stop on a budget, be cancelled, or finish having decided the work was wrong — so
+a status-derived rule here would close backlog items nobody worked. Completion
+belongs to the run that did the work, in its own name, or to the operator's
+press. Nothing in the run *loop* reads the column either: not a guard, not the
+budget, not occupancy. A run carrying a task id and one that is not are the same
+run, which is why the SQL still lives in `tasks.ts` and `createRun` holds only
+the id.
+
+**The link has to be written before the run can be promoted, and that is the one
+ordering here whose violation is silent.** It used to be a `recordRunForTask`
+call on the line after `createRun` returned, which reads as the same synchronous
+pass and is not: `createRun` ends by calling `promoteQueued`, `startRun` runs to
+`claimTaskForRun` without an `await` in between, so the entire claim happens
+*inside* the `createRun(...)` call expression. The column was still null,
+`taskForRun` returned null, and the claim returned at its first line — the one
+branch that logs nothing, because a run that names no task has nothing to say.
+The board then showed `open` for work already in flight, and the run could never
+complete the task afterwards either, since a run may complete only the one
+claimed in its own name. It bit only runs that started immediately; a run that
+queued behind a busy folder was promoted later, after the write, and claimed
+correctly. Anything that gives a new run a task id must hand it to `createRun`
+rather than write it afterwards.
 
 **An unknown `taskId` is refused by name, and a *closed* one is not.**
 `taskRefusal` in `tasks.ts` is the one wording, so an id that is not there reads

@@ -61,7 +61,6 @@ import {
   type AgentDefinition,
   type RegistryAgent,
 } from "./agents";
-import { recordRunForTask } from "./tasks";
 
 /**
  * The orchestrator chat: a conversation that proposes runs.
@@ -1584,17 +1583,19 @@ export function approveProposal(
       // been deleted.
       origin: "chat",
       originRef: proposal.id,
+      // The link, carried from the proposal onto the run it became — through the
+      // door rather than written after it, because `createRun` may start the run
+      // before it returns and the run's own claim reads this column. Written
+      // whatever became of the row: the operator may delete a task, and a run
+      // that names one that has gone is not a run that named none.
+      //
+      // It is deliberately **not** a claim. `open → claimed` is a move on the
+      // board with its own rule about who may make it, and approving a proposal
+      // is not a run deciding to work the task — it is a person agreeing to
+      // start one. The board stays the operator's to move, and the claim is the
+      // run's own, made when it starts.
+      taskId: proposal.task_id,
     });
-    // The link, carried from the proposal onto the run it became — in this same
-    // synchronous pass, so nothing can see the run without seeing what it was
-    // started for. Written whatever became of the row: the operator may delete a
-    // task, and a run that names one that has gone is not a run that named none.
-    //
-    // It is deliberately **not** a claim. `open → claimed` is a move on the
-    // board with its own rule about who may make it, and approving a proposal is
-    // not a run deciding to work the task — it is a person agreeing to start
-    // one. The board stays the operator's to move.
-    if (proposal.task_id) recordRunForTask(run.id, proposal.task_id);
     markProposal(id, "approved", { runId: run.id });
     return { ok: true, runId: run.id };
   } catch (err) {
