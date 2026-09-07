@@ -129,6 +129,80 @@ export function runForIngestToken(token: string): string | null {
 }
 
 /* ---------------------------------------------------------------- */
+/* How much one post may weigh                                       */
+/* ---------------------------------------------------------------- */
+
+/**
+ * The ceiling on one ingest body, in bytes.
+ *
+ * `/api/otlp/v1/logs` is exempt from `middleware.ts`, so whatever bounds a
+ * request on this path is written here and nowhere else — Next configures no
+ * body limit for a route handler, and `parseLogsPayload` below bounds its
+ * *output* rather than its input. What buffers the body is the single Node
+ * process that also runs every agent, the run loop and SQLite: there is no
+ * second one to take over, and a restart ends every run in flight.
+ *
+ * Derived rather than guessed, from the largest batch the exporter this app
+ * configures can legitimately send. One `claude_code.api_request` record
+ * reconstructed at realistic value lengths from the attribute set this file
+ * names — the fifteen read below plus the five identity ones the docblock over
+ * `str` records as present and deliberately unread — is ~1.55 KiB of
+ * OTLP/HTTP-JSON. The OpenTelemetry batch processor's default
+ * `maxExportBatchSize` is 512 records per request, which this app does not
+ * override, so a saturated batch is ~0.75 MiB. Observed ones are nowhere near
+ * it: `telemetryEnv` sets `OTEL_LOGS_EXPORT_INTERVAL` to 1000ms and the batch
+ * captured in `docs/verification.md` carried a single record.
+ *
+ * 4 MiB is five times that saturated ceiling — headroom for a CLI release that
+ * adds attributes or lengthens them, while staying a size no legitimate
+ * exporter reaches. Raising it is a decision about how much this one process
+ * will hold for an unattended caller, not a tuning knob.
+ */
+export const MAX_INGEST_BODY_BYTES = 4 * 1024 * 1024;
+
+/** What `readCappedBody` answers: the whole body, or a refusal to hold it. */
+export type CappedBody = { ok: true; text: string } | { ok: false };
+
+/**
+ * Read a request body, refusing rather than buffering past the ceiling.
+ *
+ * The count runs over the bytes as they arrive, because a limit checked after
+ * `req.json()` has already paid for the thing it exists to refuse — the body
+ * is in memory and parsed by the time such a check could read a length.
+ *
+ * `Content-Length` is deliberately not the check. It is absent under
+ * `Transfer-Encoding: chunked` and it is the sender's own claim either way, so
+ * the running count has to exist regardless and a header test could only ever
+ * be an optimisation on top of it.
+ *
+ * Only the size refusal is a return value. A read that fails for any other
+ * reason — a connection that died mid-body — still throws, so the caller's
+ * existing handling of a body it could not read is unchanged.
+ */
+export async function readCappedBody(req: Request): Promise<CappedBody> {
+  if (!req.body) return { ok: true, text: "" };
+
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > MAX_INGEST_BODY_BYTES) {
+      // Drop the remainder rather than draining it: reading what has already
+      // been refused is the cost this cap was put here to avoid.
+      await reader.cancel();
+      return { ok: false };
+    }
+    chunks.push(value);
+  }
+
+  return { ok: true, text: Buffer.concat(chunks).toString("utf8") };
+}
+
+/* ---------------------------------------------------------------- */
 /* OTLP/HTTP-JSON wire shapes (the subset we read)                   */
 /* ---------------------------------------------------------------- */
 

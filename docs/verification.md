@@ -3897,6 +3897,34 @@ through before trusting this unattended:
   the CLIs reported, with the estimate beside it and not inside it. And that a
   workflow saved with a fraction guard and no ceiling is refused **at Run**, by
   name, rather than starting and halting a moment later.
+- **A 413 from the ingest route, on the wire.** `readCappedBody` and the order
+  the route answers in are unit-tested (`otlp.test.ts`), and the whole build
+  compiles, but no HTTP request has been made against a running server: what a
+  unit test cannot say is whether Next's own request handling reaches the
+  handler at all for a body of this size, or refuses it first with something
+  else. Docker was unavailable where this was written. What a human should run,
+  against a container with a live run so a valid ingest token exists:
+
+  ```bash
+  # Take the bearer from the run's own environment:
+  #   task the agent with:  env | grep OTEL_EXPORTER_OTLP_HEADERS
+  TOKEN=<the bearer that prints>
+  head -c 5000000 /dev/zero | tr '\0' 'a' > /tmp/oversized
+  curl -si -X POST http://127.0.0.1:3000/api/otlp/v1/logs \
+    -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+    --data-binary @/tmp/oversized | head -1
+  curl -si -X POST http://127.0.0.1:3000/api/otlp/v1/logs \
+    -H 'Authorization: Bearer nonsense' \
+    --data-binary @/tmp/oversized | head -1
+  ```
+
+  Three things to watch. That the first is `413` and its body names
+  `limitBytes`, rather than the `200 {"partialSuccess":{}}` every other
+  unreadable payload gets. That the second is `401` — an unauthenticated caller
+  is refused before the body is read, so the size never enters into it. And that
+  `request_log` has grown by nothing across both, which is the constraint the
+  route inherits from `/api/logout`: an exempted path's own refusal must not
+  spend a capped table's window.
 - **An orchestrator block, end to end.** Nothing about it has been run. The two
   decisions are unit tested — `planEmission` over the cap on both sides, a
   folder the mount check refuses, a spec graph that loops, a dependency naming a

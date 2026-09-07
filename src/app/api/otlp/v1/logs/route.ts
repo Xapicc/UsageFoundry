@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import { parseLogsPayload, recordTelemetry, runForIngestToken } from "@/lib/otlp";
+import {
+  MAX_INGEST_BODY_BYTES,
+  parseLogsPayload,
+  readCappedBody,
+  recordTelemetry,
+  runForIngestToken,
+} from "@/lib/otlp";
 
 /**
  * OTLP/HTTP-JSON logs receiver.
@@ -33,12 +39,16 @@ import { parseLogsPayload, recordTelemetry, runForIngestToken } from "@/lib/otlp
  * `otlp_requests` row keyed on a request id, and the run page and the status
  * endpoint both report on that.
  *
- * Past authentication the response is always 200. A batch exporter retries on
- * failure, and a malformed or unrecognised record is not something a retry will
- * fix — it would just cost the same batch again on a loop. An unauthenticated
- * caller is the opposite case and gets a 401: retrying is the right thing for it
- * to do, and answering 200 while dropping the batch would report success for
- * telemetry that never arrived.
+ * Past authentication the response is 200 for anything this route *read*. A
+ * batch exporter retries on failure, and a malformed or unrecognised record is
+ * not something a retry will fix — it would just cost the same batch again on a
+ * loop. An unauthenticated caller is the opposite case and gets a 401: retrying
+ * is the right thing for it to do, and answering 200 while dropping the batch
+ * would report success for telemetry that never arrived.
+ *
+ * The one other refusal is a body over `MAX_INGEST_BODY_BYTES`, which is a 413
+ * because it is neither of those: the batch was never read, so 200 would be the
+ * same false report, and it will be refused at that size on every retry.
  */
 
 export const runtime = "nodejs";
@@ -54,7 +64,30 @@ export async function POST(req: Request) {
   }
 
   try {
-    const rows = parseLogsPayload(await req.json());
+    // Bounded at the read rather than after the parse: this path is exempt
+    // from the edge gate, so nothing upstream of here has decided how much
+    // this process will hold, and `req.json()` would have buffered and parsed
+    // the whole body before any check on its size could run. `MAX_INGEST_BODY_BYTES`
+    // carries the number and how it was derived.
+    const body = await readCappedBody(req);
+    if (!body.ok) {
+      // Answered before anything durable is written — `recordTelemetry` is not
+      // reached and this route is not wrapped in `auditMutation` — for the
+      // reason `/api/logout` states: an exempted path's own refusal must not
+      // spend a capped table's window on behalf of a caller that passed
+      // nothing. Anything added above this line inherits that.
+      //
+      // 413 rather than the blanket 200 below, and it names the limit: a batch
+      // exporter should not retry a body this app will refuse at the same size
+      // every time, and an operator reading it has to be able to tell a size
+      // refusal from a payload this route could not parse.
+      return NextResponse.json(
+        { error: "Payload too large", limitBytes: MAX_INGEST_BODY_BYTES },
+        { status: 413 },
+      );
+    }
+
+    const rows = parseLogsPayload(JSON.parse(body.text));
     const inserted = recordTelemetry(rows.map((r) => ({ ...r, runId })));
     return NextResponse.json({ partialSuccess: {}, seen: rows.length, inserted });
   } catch {
