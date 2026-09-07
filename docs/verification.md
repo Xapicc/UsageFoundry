@@ -3664,6 +3664,37 @@ through before trusting this unattended:
   confirm `restart: unless-stopped` brought the container back and that
   `reconcileOnBoot` closed out the runs it was carrying rather than leaving
   folders claimed.
+- **The cap on the container's own log.** `docker-compose.yml` now declares
+  `logging: {driver: json-file, options: {max-size: ${UF_LOG_MAX_SIZE:-20m},
+  max-file: ${UF_LOG_MAX_FILE:-5}}}`, and `deployment.test.ts` pins that the
+  block exists, that the driver is named, that `max-size` x `max-file` holds a
+  day of the worst case, and that README states the same figures — but no
+  Docker has applied it, no line has been observed rotating, and the two rates
+  the size came from are **derived, not measured on a running container**.
+  `~270 B` a line is `JSON.stringify` of the five event shapes inside
+  json-file's own envelope, computed in a `node -e`; `~1,800 work cycles a day`
+  and `~11,000 tool events an hour` are README's own figures for a 25-run
+  fleet, not a count taken from a log file. That it is in force at all:
+
+  ```bash
+  docker compose up -d --build
+  docker inspect -f '{{json .HostConfig.LogConfig}}' usagefoundry
+  # expect {"Type":"json-file","Config":{"max-file":"5","max-size":"20m"}}
+  sudo ls -la /var/lib/docker/containers/$(docker inspect -f '{{.Id}}' usagefoundry)/
+  # expect *-json.log, and *-json.log.1 … .4 once it has wrapped
+  ```
+
+  `Type` reading anything else means the daemon overrode it, most likely a
+  `log-driver` in `/etc/docker/daemon.json`, which is the one place a host can
+  make this block a no-op. Then the numbers themselves, which need a busy
+  install rather than a fresh one: leave a fleet running, and compare
+  `du -c …-json.log*` after a day against the ~2 MB the ordinary rate predicts.
+  The storm figure is the one worth provoking deliberately once — a sandbox
+  policy that refuses every tool call, with `UF_SANDBOX` on and a profile that
+  denies broadly, should reach the 100 MiB ceiling in roughly a day and not in
+  an afternoon. Nothing here fails loudly either way: an overridden driver, a
+  wrong rate and a cap that never wraps all look identical from inside the app,
+  which does not read this file at all.
 - **The process budget refusing a real child.** `liveAssistChildren`,
   `assistBudgetRefusal` and the deferral of a workflow block are covered by
   `src/lib/assistBudget.test.ts` against a real database, and `npm run

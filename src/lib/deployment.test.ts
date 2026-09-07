@@ -1527,3 +1527,99 @@ describe("the Discord relay ships, starts, and does not leak its credential", ()
     }
   });
 });
+
+/**
+ * The ceiling on the container's own log, and the operator-facing page that
+ * states it — the one store this app grows and does not own.
+ *
+ * `run_events`, the checkouts and the transcripts each have a retention
+ * horizon, a figure on `/api/status` and a suggested alert. Container stdout
+ * has none of the three, and it is written by this app on purpose: ten
+ * structured event kinds beside the `[usagefoundry]` prose. Docker's
+ * `json-file` driver keeps every line for ever unless compose says otherwise,
+ * so the absence of a `logging:` block is a store with no bound at all — on the
+ * same disk as the three that are bounded, and the one that will still be
+ * growing after they have stopped.
+ *
+ * Nothing else can notice it. The compose file parses, the container starts,
+ * every page works, and the evidence arrives months later as a full disk on a
+ * host whose Docker directory nobody was watching. That is the same shape as
+ * the `memswap_limit` and `stop_grace_period` pairs above: a value that is
+ * correct in every observable way and wrong only in what it permits.
+ *
+ * The floor is the *bad* case rather than the ordinary one, because that is
+ * what sized the number. `run.sandbox_refusal` is on stdout precisely so a
+ * policy refusing every tool call is visible without opening twenty-five run
+ * pages, and a cap that such a storm empties inside a shift hides the thing it
+ * was widened for. So the window has to outlast one unattended night.
+ */
+describe("the container's log has a ceiling, and README states it", () => {
+  /** Docker's `json-file` options, as an install that sets nothing gets them. */
+  function logOption(name: "max-size" | "max-file"): string {
+    assert.match(
+      compose,
+      /^\s*driver:\s*json-file\s*$/m,
+      "docker-compose.yml no longer pins the json-file driver. `max-size` and " +
+        "`max-file` belong to that driver alone: named without it they are " +
+        "handed to whatever the daemon defaults to, and a journald or fluentd " +
+        "default refuses them and the container will not start.",
+    );
+    return shippedDefault(name);
+  }
+
+  it("caps the stream at all, which is the whole of the defect", () => {
+    const size = bytes(logOption("max-size"));
+    const files = Number(logOption("max-file"));
+    assert.ok(files >= 1, `max-file is "${files}", which is not a file count`);
+    assert.ok(size > 0, "max-size is zero, which Docker reads as no limit");
+  });
+
+  it("keeps a refusal storm readable for longer than one unattended night", () => {
+    // Both terms are this repository's own numbers. README's "Disk and
+    // retention" measures ~11,000 tool events an hour at 25 concurrent runs; a
+    // sandbox policy refusing all of them puts one `run.sandbox_refusal` on
+    // stdout per refusal. 300 bytes is a deliberately round figure *below* the
+    // 327 that shape actually encodes to inside json-file's
+    // {"log":…,"stream":…,"time":…} envelope, so this is a floor rather than a
+    // model — it fails on the edit that halves the cap, not on a plausible one.
+    const TOOL_EVENTS_PER_HOUR = 11_000;
+    const BYTES_PER_REFUSAL_LINE = 300;
+    const stormBytesPerDay = TOOL_EVENTS_PER_HOUR * 24 * BYTES_PER_REFUSAL_LINE;
+
+    const ceiling = bytes(logOption("max-size")) * Number(logOption("max-file"));
+    assert.ok(
+      ceiling >= stormBytesPerDay,
+      `max-size x max-file is ${(ceiling / 2 ** 20).toFixed(0)} MiB, and a ` +
+        `sandbox refusing every tool call at the shipped fleet writes ` +
+        `${(stormBytesPerDay / 2 ** 20).toFixed(0)} MiB a day. The window has ` +
+        `to outlast a night, or the storm evicts its own beginning before ` +
+        `anybody reads it — which is the failure putting that line on stdout ` +
+        `exists to prevent.`,
+    );
+  });
+
+  it("states the same ceiling on the page an operator reads", () => {
+    // The other half, and it drifts in silence: an operator who is told 100 MiB
+    // and has 20 provisions, alerts and reasons about a window that is not
+    // there. README's "Logs" is where the trade — a cap discards the *oldest*
+    // lines, which are the ones wanted after a bad ending at 03:00 — is
+    // written down, and a figure it no longer matches makes that paragraph
+    // describe a different install.
+    const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
+    const mib = bytes(logOption("max-size")) / 2 ** 20;
+    const stated = `${mib} MiB across ${Number(logOption("max-file"))} files`;
+    assert.ok(
+      readme.includes(stated),
+      `README does not say "${stated}", which is what docker-compose.yml now ` +
+        `configures. The section is "Logs"; the numbers there are what an ` +
+        `operator sizes a shipper and a disk against.`,
+    );
+    assert.match(
+      readme,
+      /oldest lines/,
+      "README no longer says what the cap costs. A capped log throws away the " +
+        "beginning, and an operator who does not know that reads a truncated " +
+        "history as a complete one.",
+    );
+  });
+});
