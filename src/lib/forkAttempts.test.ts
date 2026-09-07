@@ -66,7 +66,15 @@ describe("recordForkAttempt", () => {
     const { recordForkAttempt } = await import("./contextPruning.js");
     const { db } = await import("./db.js");
 
-    const rowId = recordForkAttempt("run-a", "src-session", WRITTEN, 300, "boundary", 180_000);
+    const rowId = recordForkAttempt(
+      "run-a",
+      "src-session",
+      WRITTEN,
+      300,
+      "boundary",
+      180_000,
+      201_500,
+    );
     assert.notEqual(
       rowId,
       null,
@@ -94,6 +102,16 @@ describe("recordForkAttempt", () => {
     // a third of it.
     assert.equal(row.trigger, "boundary");
     assert.equal(row.context_tokens_after, 180_000);
+    // The one reading only this moment can take. The run moves off the source
+    // session as soon as the fork is adopted, so a window not written here is
+    // gone; and without it the removal is credited on transcript bytes, which
+    // is the thing five measured forks say does not reach the API at all.
+    assert.equal(row.api_context_before, 201_500);
+    assert.equal(
+      row.api_context_after,
+      null,
+      "the other half is the resume's, and no cycle has resumed this yet",
+    );
   });
 
   it("puts a fork in front of the dashboard, not only its own run's page", async () => {
@@ -104,7 +122,15 @@ describe("recordForkAttempt", () => {
     // now share, and this asserts it can see a fork at all.
     const { recordForkAttempt, pricedCuts } = await import("./contextPruning.js");
 
-    recordForkAttempt("run-dash", "src-session", WRITTEN, 0, "early-end", 180_000);
+    recordForkAttempt(
+      "run-dash",
+      "src-session",
+      WRITTEN,
+      0,
+      "early-end",
+      180_000,
+      null,
+    );
     const cuts = await pricedCuts({ runId: "run-dash" });
     assert.equal(
       cuts.length,
@@ -124,7 +150,15 @@ describe("recordForkAttempt", () => {
     const { recordForkAttempt } = await import("./contextPruning.js");
     const { db } = await import("./db.js");
 
-    const rowId = recordForkAttempt("run-b", "src-session", REFUSED, 3600, "early-end", null);
+    const rowId = recordForkAttempt(
+      "run-b",
+      "src-session",
+      REFUSED,
+      3600,
+      "early-end",
+      null,
+      null,
+    );
     assert.notEqual(rowId, null);
 
     const row = db()
@@ -140,19 +174,29 @@ describe("recordForkAttempt", () => {
     const { recordForkAttempt, markForkResumed } = await import("./contextPruning.js");
     const { db } = await import("./db.js");
     const read = (id: number) =>
-      (db().prepare("SELECT resumed FROM fork_attempts WHERE id = ?").get(id) as {
-        resumed: number | null;
-      }).resumed;
+      db()
+        .prepare(
+          "SELECT resumed, api_context_after FROM fork_attempts WHERE id = ?",
+        )
+        .get(id) as { resumed: number | null; api_context_after: number | null };
 
-    const good = recordForkAttempt("run-c", "s", WRITTEN, 0, "boundary", null)!;
-    markForkResumed(good, true);
-    assert.equal(read(good), 1);
+    const good = recordForkAttempt("run-c", "s", WRITTEN, 0, "boundary", null, 200_000)!;
+    markForkResumed(good, true, 199_400);
+    assert.equal(read(good).resumed, 1);
+    // The second half of the removal measurement, settled at the same moment
+    // and by the same call because that is when it becomes true: the window the
+    // resume was asked to carry.
+    assert.equal(read(good).api_context_after, 199_400);
 
     // The kill condition. It has to be writable, or milestone 2's guardrail
     // cannot fail — which is worse than failing it.
-    const bad = recordForkAttempt("run-d", "s", WRITTEN, 0, "boundary", null)!;
+    const bad = recordForkAttempt("run-d", "s", WRITTEN, 0, "boundary", null, 200_000)!;
     markForkResumed(bad, false);
-    assert.equal(read(bad), 0);
+    assert.equal(read(bad).resumed, 0);
+    // A rollback measures nothing, and an omitted reading must stay omitted
+    // rather than land as a zero — a zero here says the resume carried an empty
+    // conversation, which would credit the fork with removing the whole window.
+    assert.equal(read(bad).api_context_after, null);
   });
 
   it("finds a fork a parked run came back holding, and only that one", async () => {
@@ -160,7 +204,15 @@ describe("recordForkAttempt", () => {
       "./contextPruning.js"
     );
 
-    const rowId = recordForkAttempt("run-e", "before-the-fork", WRITTEN, 0, "boundary", null)!;
+    const rowId = recordForkAttempt(
+      "run-e",
+      "before-the-fork",
+      WRITTEN,
+      0,
+      "boundary",
+      null,
+      null,
+    )!;
     const found = pendingForkFor("run-e", WRITTEN.newSessionId);
     assert.equal(found?.rowId, rowId);
     assert.equal(found?.fallbackSessionId, "before-the-fork");
@@ -176,7 +228,9 @@ describe("recordForkAttempt", () => {
     // Ties the row to the symptom. Before the INSERT was fixed this returned
     // zero for every install, and a zero on that panel reads as the engine
     // having done nothing rather than as nothing having been written down.
-    const { recordForkAttempt, forkSavings } = await import("./contextPruning.js");
+    const { recordForkAttempt, markForkResumed, forkSavings } = await import(
+      "./contextPruning.js"
+    );
     const { db } = await import("./db.js");
     db()
       .prepare(
@@ -184,9 +238,44 @@ describe("recordForkAttempt", () => {
       )
       .run("run-f", "/x", "t", "completed", 10, Date.now() - 1000, "claude-opus-5");
 
-    recordForkAttempt("run-f", "s", WRITTEN, 0, "boundary", null);
+    // Measured on both sides, because that is now what a credit takes. The
+    // window fell 6,000 tokens across the resume; `net_bytes` claims 22,725
+    // bytes came out of the file and has no bearing on the figure below.
+    const rowId = recordForkAttempt("run-f", "s", WRITTEN, 0, "boundary", null, 206_000)!;
+    markForkResumed(rowId, true, 200_000);
     const savings = await forkSavings({ runId: "run-f" });
     assert.equal(savings.prunes, 1);
-    assert.ok(savings.tokensRemoved > 0);
+    assert.equal(
+      savings.tokensRemoved,
+      6_000,
+      "the credited removal is the API window's own fall, not net_bytes ÷ 3.6",
+    );
+  });
+
+  it("credits nothing for a fork nobody measured against the API", async () => {
+    // The defect this pair exists to close. `winnow fork` rewrites
+    // `message.content` and leaves `toolUseResult`, which the resumed CLI
+    // rebuilds its tool results from — so bytes leave the file whether or not
+    // they leave the request. On all five forks this install wrote before the
+    // two columns existed, the API window after the resume was *higher* than
+    // before the cut while `net_bytes` claimed 4,678–17,594 tokens removed.
+    // A row with no reading is unknown, and unknown may not be priced.
+    const { recordForkAttempt, forkSavings } = await import("./contextPruning.js");
+    const { db } = await import("./db.js");
+    db()
+      .prepare(
+        "INSERT OR REPLACE INTO runs (id, folder, prompt, status, budget, created_at, model) VALUES (?,?,?,?,?,?,?)",
+      )
+      .run("run-g", "/x", "t", "completed", 10, Date.now() - 1000, "claude-opus-5");
+
+    recordForkAttempt("run-g", "s", WRITTEN, 0, "boundary", null, null);
+    const savings = await forkSavings({ runId: "run-g" });
+    assert.equal(savings.prunes, 1, "the cut still happened and is still counted");
+    assert.equal(savings.tokensRemoved, 0);
+    assert.equal(
+      savings.cacheSavedUSD,
+      0,
+      "a saving is a claim about the request, so an unread request earns none",
+    );
   });
 });

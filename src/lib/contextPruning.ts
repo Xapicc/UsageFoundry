@@ -223,6 +223,18 @@ export const PAYBACK_HORIZON_TURNS = 18;
 export const CEILING_PAYBACK_HORIZON_TURNS = 20;
 
 /**
+ * How many settled forks the ceiling weighs when asking what forking is worth.
+ *
+ * Small on purpose. The quantity being estimated is not noisy — on the five
+ * forks measured here it was zero every time and by a wide margin — so the
+ * value of a larger window is not precision. What it costs is responsiveness:
+ * the answer is a property of the pinned CLI, and if a release stops rebuilding
+ * tool results from `toolUseResult` the gate should reopen within a handful of
+ * cuts rather than after a hundred. See `measuredForkRemoval`.
+ */
+export const FORK_REMOVAL_EVIDENCE_ROWS = 20;
+
+/**
  * How much a conversation must grow before the ceiling re-measures it.
  *
  * `checkContextCeilings` runs on the live ticker — every
@@ -1073,7 +1085,8 @@ export function contextOccupancy(runId: string): ContextOccupancyDTO | undefined
     // and only a cut may draw a mark.
     const forks = db()
       .prepare(
-        `SELECT ts, removed_bytes, net_bytes, suffix_bytes, trigger, context_tokens_after
+        `SELECT ts, removed_bytes, net_bytes, suffix_bytes, trigger,
+                context_tokens_after, api_context_before, api_context_after
            FROM fork_attempts
           WHERE run_id = ? AND written = 1 ORDER BY ts DESC LIMIT ?`,
       )
@@ -1084,6 +1097,8 @@ export function contextOccupancy(runId: string): ContextOccupancyDTO | undefined
       suffix_bytes: number;
       trigger: PruneTrigger | null;
       context_tokens_after: number | null;
+      api_context_before: number | null;
+      api_context_after: number | null;
     }>;
     const { series, total } = compositionSeries(runId);
     if (
@@ -1122,6 +1137,8 @@ export function contextOccupancy(runId: string): ContextOccupancyDTO | undefined
           model: null,
           trigger: f.trigger,
           contextTokensAfter: f.context_tokens_after,
+          apiContextBefore: f.api_context_before,
+          apiContextAfter: f.api_context_after,
         });
         return { ts: cut.ts, trigger: cut.trigger, tokensRemoved: cut.tokensRemoved };
       }),
@@ -2441,6 +2458,19 @@ export interface CeilingCut {
   engine: Settings["contextPruningEngine"];
   /** In the same currency as `apiContextNow`. See each estimator. */
   removedTokens: number;
+  /**
+   * How many past forks this install has measured against the API's own window,
+   * or null for an engine that does not need the question asked.
+   *
+   * The fork engine's plan measures a file and the gate spends money on a
+   * request, and no conversion joins the two — `winnow fork` leaves
+   * `toolUseResult` in place and the resumed CLI rebuilds the tool results the
+   * pointers replaced. So under that engine `removedTokens` comes from what
+   * forks here have been *observed* to remove, and this is the size of that
+   * evidence: 0 means nobody has measured one yet, which is a different reason
+   * for declining than having measured them and found nothing.
+   */
+  measuredForks: number | null;
 }
 
 /**
@@ -2667,14 +2697,91 @@ export async function ceilingCut(
   if (s.contextPruningEngine === "winnow") {
     const plan = await planCut(transcriptPath);
     if (plan === null) return null;
-    return { engine: "winnow", removedTokens: plan.netBytes / BYTES_PER_TOKEN };
+    // **The plan says whether anything would fire; it cannot say what would
+    // stop being sent.**
+    //
+    // `netBytes / BYTES_PER_TOKEN` used to be returned here, and the gate below
+    // divides by it to decide whether to spend ~$1.80 manufacturing a boundary.
+    // That is a transcript measurement standing in for a request one, and the
+    // five forks this install wrote on the strength of it removed 58,002 tokens
+    // by that arithmetic and nothing at all from the API's window. So the
+    // engine's own history is what answers "how much", and the plan is kept for
+    // the only question it can answer: is there a rule that would fire here.
+    if (plan.netBytes <= 0) {
+      return { engine: "winnow", removedTokens: 0, measuredForks: null };
+    }
+    const measured = measuredForkRemoval();
+    return {
+      engine: "winnow",
+      removedTokens: measured?.removed ?? 0,
+      measuredForks: measured?.forks ?? 0,
+    };
   }
   const estimate = await estimateTreatCut(transcriptPath, s.contextPruningStrictness);
   if (estimate === null) return null;
   return {
     engine: "legacy",
+    // No such question for this engine: it edits the session the run keeps
+    // using and strips `toolUseResult` with the content, so its estimate is a
+    // reading of the request. `treatRemovedTokens` carries that argument.
+    measuredForks: null,
     removedTokens: treatRemovedTokens(estimate, apiContextNow),
   };
+}
+
+/**
+ * What a fork on this install has actually taken off the API's window.
+ *
+ * The mean over the most recent settled forks, or null when none has been
+ * settled. Both halves come from `fork_attempts`: `api_context_before` is read
+ * off the source session at the cut and `api_context_after` is the first billed
+ * turn of the cycle that resumed the fork, so the difference is the same
+ * quantity `apiContextTokens` reports and the same one the ceiling is measured
+ * in.
+ *
+ * **A mean and not the newest**, because the question is what forking is worth
+ * on this install rather than what one cut did, and one atypical fork should
+ * not open or close the gate by itself.
+ *
+ * **Bounded to the newest few**, because the answer is a property of the pinned
+ * CLI: if a release stops rebuilding tool results from `toolUseResult`, forks
+ * would start reaching the wire and an all-time mean would take dozens of cuts
+ * to notice. It is also the direction that recovers — a gate held shut by old
+ * zeroes can reopen once new evidence displaces them.
+ *
+ * Null rather than 0 when there is no evidence, on `ceilingPayback`'s contract:
+ * both decline, and only one of them is a finding.
+ */
+export function measuredForkRemoval(): { removed: number; forks: number } | null {
+  try {
+    const rows = db()
+      .prepare(
+        `SELECT api_context_before AS before_tokens, api_context_after AS after_tokens
+           FROM fork_attempts
+          WHERE written = 1
+            AND api_context_before IS NOT NULL
+            AND api_context_after IS NOT NULL
+          ORDER BY ts DESC
+          LIMIT ?`,
+      )
+      .all(FORK_REMOVAL_EVIDENCE_ROWS) as {
+      before_tokens: number;
+      after_tokens: number;
+    }[];
+    if (rows.length === 0) return null;
+    // Floored per fork rather than over the sum: a resume that carried more than
+    // the cut left is a fork that removed nothing, and letting its negative pay
+    // for another fork's positive would net two unrelated conversations against
+    // each other.
+    const total = rows.reduce(
+      (sum, r) => sum + Math.max(0, r.before_tokens - r.after_tokens),
+      0,
+    );
+    return { removed: Math.round(total / rows.length), forks: rows.length };
+  } catch (err) {
+    noteBookkeepingFailure("measuredForkRemoval", err);
+    return null;
+  }
 }
 
 /** How many distinct faults get a durable row before the rest are stdout only. */
@@ -3010,6 +3117,8 @@ export function ceilingDeclineMessage(o: {
   turnsNeeded: number | null;
   /** Which engine measured it, or null where nothing could be measured. */
   engine: CeilingCut["engine"] | null;
+  /** `CeilingCut.measuredForks`, which only the fork engine carries. */
+  measuredForks: number | null;
   /** False for the first line of a run, true for every one after it. */
   repeat: boolean;
 }): string {
@@ -3024,21 +3133,42 @@ export function ceilingDeclineMessage(o: {
     ? `the pruner in use (${PRUNE_ENGINE_LABEL[o.engine].toLowerCase()})`
     : null;
 
-  // Three findings, not two. "The pruner ran and found nothing" and "nothing
+  // Five findings, not two. "The pruner ran and found nothing" and "nothing
   // measured it" are the same blank on screen and opposite facts underneath:
   // the first is a clean conversation and the second is a winnow that would not
   // run, a wording change in its output, or a transcript that could not be
   // read. Collapsing them is the failure this whole area keeps having — an
   // operator cannot tell a working feature from a broken one.
+  //
+  // The last two are the fork engine's, and they are the same distinction one
+  // level down. A fork removes bytes from the transcript that the request still
+  // carries, so "nothing worth removing" would be flatly wrong here — there is
+  // plenty worth removing and removing it changes nothing the API is sent. An
+  // operator who has switched this engine on and sees it never fire is owed the
+  // reason, and the reason is a measurement rather than a rule.
+  const forkFinding =
+    o.measuredForks === null || o.removedTokens > 0
+      ? null
+      : o.measuredForks === 0
+        ? `${engine} has a cut to make here, but no fork on this install has ` +
+          `been measured against the API's own window yet, so there is nothing ` +
+          `to weigh the rewrite against`
+        : `${engine} has a cut to make here, but the last ${o.measuredForks} ` +
+          `${o.measuredForks === 1 ? "fork" : "forks"} measured here took ` +
+          `nothing off the request: winnow rewrites the transcript and leaves ` +
+          `the tool output the CLI resends, so the bytes leave the file and not ` +
+          `the window`;
+
   const finding =
     engine === null
       ? `nothing here could be measured, so no cut has been priced`
-      : o.turnsNeeded === null || o.removedTokens <= 0
-        ? `${engine} found nothing here worth removing`
-        : `${engine} would remove ${fmtTokens(o.removedTokens)} tokens ` +
-          `(${share.toFixed(1)}% of it) and need ${o.turnsNeeded} further turns ` +
-          `to pay for the rewrite that ending this cycle would cause, against a ` +
-          `limit of ${CEILING_PAYBACK_HORIZON_TURNS}`;
+      : (forkFinding ??
+        (o.turnsNeeded === null || o.removedTokens <= 0
+          ? `${engine} found nothing here worth removing`
+          : `${engine} would remove ${fmtTokens(o.removedTokens)} tokens ` +
+            `(${share.toFixed(1)}% of it) and need ${o.turnsNeeded} further turns ` +
+            `to pay for the rewrite that ending this cycle would cause, against a ` +
+            `limit of ${CEILING_PAYBACK_HORIZON_TURNS}`));
 
   if (o.repeat) {
     return (
@@ -3107,6 +3237,11 @@ export function parseFork(body: string): ForkResult | null {
  *
  * Returns the row id so a later resume can be written back against it, or null
  * if the insert failed — best-effort here as everywhere in this file.
+ *
+ * `apiContextBefore` is the *only* half of the removal measurement that can be
+ * taken here, and it has to be taken here: it is the source session's last
+ * billed window, and the run moves off that session the moment the fork is
+ * adopted. The other half arrives a cycle later through `markForkResumed`.
  */
 export function recordForkAttempt(
   runId: string,
@@ -3115,6 +3250,7 @@ export function recordForkAttempt(
   minColdAgeSeconds: number | null,
   trigger: PruneTrigger,
   contextTokensAfter: number | null,
+  apiContextBefore: number | null,
 ): number | null {
   try {
     const info = db()
@@ -3122,8 +3258,9 @@ export function recordForkAttempt(
         `INSERT INTO fork_attempts
            (ts, run_id, source_session_id, new_session_id, written, refused_by,
             reason, removed_bytes, net_bytes, suffix_bytes, break_even_turns,
-            cold_age_seconds, min_cold_age, trigger, context_tokens_after)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            cold_age_seconds, min_cold_age, trigger, context_tokens_after,
+            api_context_before)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         Date.now(),
@@ -3141,6 +3278,7 @@ export function recordForkAttempt(
         minColdAgeSeconds,
         trigger,
         contextTokensAfter,
+        apiContextBefore,
       );
     return Number(info.lastInsertRowid);
   } catch (err) {
@@ -3197,12 +3335,30 @@ export function pendingForkFor(
  * — collected one production cycle at a time instead of in a dedicated run. A 0
  * here is the kill condition that guardrail names, and it is worth more than
  * the same 0 from a harness because the resume was a real one the run needed.
+ *
+ * `apiContextAfter` is the second half of the removal measurement, and it is
+ * settled here rather than in a call of its own because this is the moment it
+ * becomes true: the row is being told the fork resumed, and the window that
+ * resume carried is the first billed turn of the cycle now ending. Passing null
+ * leaves the column alone, which is what a rollback and a pre-measurement build
+ * both want — an unmeasured fork must stay unmeasured rather than acquire a
+ * zero, because `forkCutFromRow` reads a zero as "the API carried the same
+ * conversation" and that is a claim, not an absence.
  */
-export function markForkResumed(rowId: number, resumed: boolean): void {
+export function markForkResumed(
+  rowId: number,
+  resumed: boolean,
+  apiContextAfter: number | null = null,
+): void {
   try {
     db()
-      .prepare("UPDATE fork_attempts SET resumed = ? WHERE id = ?")
-      .run(resumed ? 1 : 0, rowId);
+      .prepare(
+        `UPDATE fork_attempts
+            SET resumed = ?,
+                api_context_after = COALESCE(?, api_context_after)
+          WHERE id = ?`,
+      )
+      .run(resumed ? 1 : 0, apiContextAfter, rowId);
   } catch (err) {
     noteBookkeepingFailure("markForkResumed", err);
   }
@@ -3479,6 +3635,23 @@ export interface NettableCut {
   tokensBefore: number;
   tokensAfter: number;
   tokensRemoved: number;
+  /**
+   * Whether `tokensRemoved` is a figure the API agrees with, or an absence.
+   *
+   * The two engines earn this differently and that is the whole reason the flag
+   * exists. `treat` edits the session the run keeps using and strips
+   * `toolUseResult` along with the content, so its own before/after over
+   * `message` bytes is also a reading of the request — measured within 5% of the
+   * API's fall on the legacy cuts with samples either side. `fork` writes a new
+   * transcript, leaves `toolUseResult` bit-identical, and the resumed CLI
+   * rebuilds its tool results from it: the bytes leave the file and not the
+   * request. So a fork's removal is true only when the wire was read on both
+   * sides of it, and `false` here means **unknown**, never nothing.
+   *
+   * A cut that is not known credits nothing. Zero with this `true` is a
+   * measurement — the case the five forks in `docs/verification.md` are.
+   */
+  removalKnown: boolean;
   model: string | null;
 }
 
@@ -3516,8 +3689,24 @@ export interface PruneNet {
    * The aggregate keeps the count so a reader can be told what the money covers.
    */
   priced: boolean;
-  /** What not re-reading the removed tokens saved, at the cache-read rate. */
+  /**
+   * What not re-reading the removed tokens saved, at the cache-read rate.
+   *
+   * **$0 whenever `removalKnown` is false**, and there it means *unknown* on
+   * `invalidationUSD`'s contract rather than nothing. A saving is a claim about
+   * the request, so it may only be made where the request was read.
+   */
   cacheSavedUSD: number;
+  /**
+   * Whether the removal `cacheSavedUSD` is computed over was measured at all.
+   *
+   * `NettableCut.removalKnown`, carried through so a caller can tell a cut that
+   * demonstrably freed nothing from one nobody has measured. The two are the
+   * same $0 and are not the same fact: the first is a finished argument about
+   * whether an engine earns its keep, the second is a row waiting on its next
+   * turn.
+   */
+  removalKnown: boolean;
   /**
    * What the edit cost — **$0 only when that has been observed**, never merely
    * assumed.
@@ -3865,6 +4054,7 @@ export function netReceipt(
       turnsAfter,
       priced: false,
       cacheSavedUSD: 0,
+      removalKnown: row.removalKnown,
       invalidationUSD: 0,
       invalidationKnown: false,
       netUSD: 0,
@@ -3872,8 +4062,18 @@ export function netReceipt(
   }
   const perToken = price.input / 1_000_000;
 
-  const cacheSavedUSD =
-    row.tokensRemoved * turnsAfter * perToken * cacheReadMultiplierOf(price);
+  // **Nothing is credited for a removal nobody measured.**
+  //
+  // The fork engine's file-byte figure used to arrive here as though it were a
+  // count of tokens the API had stopped carrying, and it was priced over every
+  // turn since. On the five forks this install wrote it credited 58,002 tokens
+  // of avoided cache reads against a measured API-window change of +14,745 —
+  // the saving was not merely overstated, it was the wrong sign. The cost side
+  // of those same five was real and is still charged below, which is the point:
+  // a cut that removes nothing must be able to show a loss.
+  const cacheSavedUSD = row.removalKnown
+    ? row.tokensRemoved * turnsAfter * perToken * cacheReadMultiplierOf(price)
+    : 0;
 
   // **Measured where it can be, modelled only until then.**
   //
@@ -3923,6 +4123,7 @@ export function netReceipt(
     turnsAfter,
     priced: true,
     cacheSavedUSD,
+    removalKnown: row.removalKnown,
     invalidationUSD,
     invalidationKnown,
     netUSD: cacheSavedUSD - invalidationUSD,
@@ -4105,6 +4306,14 @@ export function readReceipts(
       tokensBefore: r.tokens_before,
       tokensAfter: r.tokens_after,
       tokensRemoved: r.tokens_removed,
+      // The in-place engine's own before/after is a reading of the request as
+      // well as of the file, and that is a property of what it edits rather
+      // than an assumption: it strips `toolUseResult` with the content and the
+      // run keeps the same session, so nothing rebuilds what it removed. Its
+      // `message`-basis figure of 108,534 tokens on run `115c617d` sat against
+      // a measured API fall of 114,350. See `NettableCut.removalKnown` for why
+      // the fork engine cannot claim the same.
+      removalKnown: true,
       model: r.model,
     }));
   } catch (err) {
@@ -4268,8 +4477,14 @@ export async function forkSavings(
  * One `fork_attempts` row as a cut the netting can price.
  *
  * Pure and exported so the conversions in it can be tested without a database:
- * the byte-to-token change of basis, what happens to a row written before
- * `suffix_bytes` existed, and how a row with no recorded trigger is read.
+ * what a row with no API reading on both sides is worth, what happens to a row
+ * written before `suffix_bytes` existed, and how a row with no recorded trigger
+ * is read.
+ *
+ * **The removal is the API's figure or it is nothing.** Every other quantity
+ * here is a size of file and stays one; `tokensRemoved` is a quantity of
+ * request, because that is what `netReceipt` prices and what `ceilingPayback`
+ * divides by. The two are not convertible — see the comment on `measured`.
  */
 export function forkCutFromRow(row: {
   ts: number;
@@ -4280,27 +4495,54 @@ export function forkCutFromRow(row: {
   model: string | null;
   trigger: PruneTrigger | null;
   contextTokensAfter: number | null;
+  apiContextBefore: number | null;
+  apiContextAfter: number | null;
 }): NettableCut {
-  // The **net** of the cut, not the gross. `removedBytes` is what came out;
-  // `netBytes` is that less the pointers winnow put back in, and the pointers
-  // are really there — a saving counted on the gross would be claiming bytes
-  // the fork still carries.
-  const removed = Math.max(0, Math.round(row.netBytes / BYTES_PER_TOKEN));
+  // **What came out of the request, and nothing else.**
+  //
+  // `net_bytes` is what came out of the *file*, and for this engine the two are
+  // not the same quantity: `winnow fork` rewrites `message.content` and leaves
+  // `toolUseResult` bit-identical, so the resumed CLI rebuilds the very tool
+  // results the pointers replaced. Measured on all five forks this install
+  // wrote before these columns existed, the API window after the resume was
+  // 1,153 to 5,238 tokens *higher* than before the cut while `net_bytes` said
+  // 4,678 to 17,594 tokens had gone — see `docs/verification.md`. Dividing that
+  // byte figure by `BYTES_PER_TOKEN` and pricing it as cache reads avoided was
+  // this table's one wrong number, and the division is not what was wrong with
+  // it: no conversion of a file measurement produces a wire measurement.
+  //
+  // Clamped at zero rather than allowed to go negative. A resume that carries
+  // *more* than the cut left behind is what these five did, and the honest
+  // reading of that is "the cut removed nothing", not "the cut added tokens" —
+  // the growth is the next turn's, not the edit's.
+  const measured =
+    row.apiContextBefore !== null && row.apiContextAfter !== null
+      ? Math.max(0, row.apiContextBefore - row.apiContextAfter)
+      : null;
+  const removed = measured ?? 0;
+  // The **net** of the cut in bytes, not the gross. `removedBytes` is what came
+  // out; `netBytes` is that less the pointers winnow put back in, and the
+  // pointers are really there. It is a size of *file* and is used below only
+  // where a size of file is what is wanted — never as a quantity of request.
+  const bytesRemoved = Math.max(0, Math.round(row.netBytes / BYTES_PER_TOKEN));
   // `suffixBytes` is winnow's own S: the conversation standing after the cut
   // line. `tokensBefore` is that suffix as it stood *before* the cut, so the
   // removed tokens go back on — which is what the counterfactual read in
   // `boundaryInvalidation` has to cover, and the only reason the column exists.
   //
   // A row written before that column existed reads 0 and falls back to the
-  // removed tokens alone. That understates the suffix, which overstates the
+  // removed bytes alone. That understates the suffix, which overstates the
   // invalidation and understates the net — the conservative direction, and the
   // one to be wrong in on a figure that decides whether to keep a feature on.
+  // The byte figure and not `removed` here: this asks how big the conversation
+  // was, which is the question `contextTokens` answers everywhere else, and not
+  // how much of it stopped being sent.
   const suffix = Math.max(0, Math.round(row.suffixBytes / BYTES_PER_TOKEN));
   // `suffix_bytes` is already the **pre-cut** suffix. `winnow plan` computes it
   // as the bytes standing from the cut line to the end of the source
   // transcript, which is the file before anything was removed — so the removed
   // tokens are inside it, and adding them back counted them twice.
-  const before = suffix > 0 ? suffix : removed;
+  const before = suffix > 0 ? suffix : bytesRemoved;
   return {
     ts: row.ts,
     runId: row.runId,
@@ -4323,8 +4565,9 @@ export function forkCutFromRow(row: {
     tokensAfter:
       row.contextTokensAfter !== null && row.contextTokensAfter > 0
         ? row.contextTokensAfter
-        : Math.max(0, before - removed),
+        : Math.max(0, before - bytesRemoved),
     tokensRemoved: removed,
+    removalKnown: measured !== null,
     model: row.model,
   };
 }
@@ -4340,7 +4583,7 @@ function readForkCuts(
     const rows = db()
       .prepare(
         `SELECT ts, run_id, new_session_id, removed_bytes, net_bytes, suffix_bytes,
-                trigger, context_tokens_after
+                trigger, context_tokens_after, api_context_before, api_context_after
            FROM fork_attempts
           WHERE written = 1 AND ${where}
           ORDER BY ts`,
@@ -4354,6 +4597,8 @@ function readForkCuts(
       suffix_bytes: number;
       trigger: PruneTrigger | null;
       context_tokens_after: number | null;
+      api_context_before: number | null;
+      api_context_after: number | null;
     }[];
 
     // One lookup per run, as `priceReceipts` does, and for the model rather
@@ -4378,6 +4623,8 @@ function readForkCuts(
           model: models.get(r.run_id) ?? null,
           trigger: r.trigger,
           contextTokensAfter: r.context_tokens_after,
+          apiContextBefore: r.api_context_before,
+          apiContextAfter: r.api_context_after,
         }),
       };
     });

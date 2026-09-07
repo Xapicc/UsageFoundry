@@ -78,6 +78,7 @@ import {
 import { recordRunForTask, taskForRun, updateTask } from "./tasks";
 import { enabledPluginDirs, pluginDirArgs } from "./plugins";
 import {
+  apiContextSample,
   BOUNDARY_BREAK_EVEN_BUDGET,
   contextTokens,
   sampleContext,
@@ -6118,6 +6119,7 @@ export function runIteration(
       costUSD: 0,
       tokens: 0,
       contextTokens: 0,
+      firstContextTokens: 0,
       sessionId: null,
       finalText: "",
       isError: false,
@@ -6634,6 +6636,22 @@ async function forkAndAdopt(
     return null;
   }
 
+  // **Read before the fork, because it is the only side of the measurement this
+  // moment holds.** `winnow fork` writes a new file and leaves this one alone,
+  // so the reading would survive the call — but the run moves off this session
+  // the instant the fork is adopted, and nothing downstream can find its way
+  // back to the window it was carrying. The other side arrives a cycle later,
+  // as the first billed turn of the resume; see `markForkResumed`.
+  //
+  // Only the `api` basis is taken. `apiContextTokens` falls back to
+  // `contextTokens` when a session has no usage frame, which is right for a
+  // ceiling that must not switch itself off and wrong here: a transcript-basis
+  // "before" subtracted from a wire-basis "after" is a number in no units at
+  // all, and the whole of this issue is one such subtraction.
+  const beforeReading = apiContextSample(transcript, null);
+  const apiContextBefore =
+    beforeReading.basis === "api" ? beforeReading.tokens : null;
+
   const result = await forkTranscript(transcript, minColdAge, maxBreakEven);
   if (!result) {
     log(id, `Context pruning is switched on but winnow is not installed.`);
@@ -6656,6 +6674,7 @@ async function forkAndAdopt(
     minColdAge,
     trigger,
     contextTokensAfter,
+    apiContextBefore,
   );
 
   if (!result.written || !result.newSessionId) {
@@ -6704,11 +6723,19 @@ async function forkAndAdopt(
   const breakEven = result.breakEvenTurns === null
     ? ""
     : `, needing ${Math.round(result.breakEvenTurns)} further turns to pay for itself`;
+  // "out of the transcript", not "removed", and the two are not the same claim.
+  // The fork rewrites `message.content` and leaves `toolUseResult`, which the
+  // resumed CLI rebuilds its tool results from — so this many bytes leave the
+  // file and some or none of them leave the request. What actually came off the
+  // window is settled a cycle later against the resume's own first turn, and
+  // this line must not pre-empt it with a figure in the wrong units.
   log(
     id,
     `Forked this run's conversation: ${fmtTokens(Math.round(result.netBytes / BYTES_PER_TOKEN))} ` +
-      `tokens net removed${breakEven}. The original is untouched and stays the ` +
-      `recovery path; this run continues in session ${result.newSessionId}.`,
+      `tokens' worth of transcript replaced by pointers${breakEven}. What that ` +
+      `takes off the API's window is measured on the next cycle's first turn. ` +
+      `The original is untouched and stays the recovery path; this run ` +
+      `continues in session ${result.newSessionId}.`,
   );
   pendingFork.set(id, {
     fallbackSessionId: sessionId,
@@ -6735,16 +6762,29 @@ async function forkAndAdopt(
   // has no counterpart here; only `tokensRemoved` is read by
   // `contextAfterPrune`, and the rest is filled from what the fork reported so
   // nothing downstream sees an invented number.
-  const removedTokens = Math.max(0, Math.round(result.netBytes / BYTES_PER_TOKEN));
+  //
+  // **`tokensRemoved` is 0 here, and that is a measurement rather than a
+  // placeholder.** `contextAfterPrune` subtracts it from `lastContextTokens`,
+  // which is a wire-basis figure off the cycle's own `usage` frames, and
+  // `startsFresh` then reads the result to decide whether to drop the
+  // conversation. Handing it the transcript delta told it a 200k conversation
+  // had become a 180k one when the API went on carrying all 200k — an invented
+  // shrink, on the one figure whose failure is to throw a conversation away.
+  // Five forks were measured for this and none of them moved the window.
+  //
+  // Not "unknown", because this return has nowhere to put one and the caller's
+  // conservative direction is the same either way: claiming *less* was freed
+  // can only cost a fresh start that was not needed.
+  const bytesRemoved = Math.max(0, Math.round(result.netBytes / BYTES_PER_TOKEN));
   const before = Math.max(
-    removedTokens,
+    bytesRemoved,
     Math.round(result.suffixBytes / BYTES_PER_TOKEN),
   );
   return {
     tier: PLAN_TIER as PruneOutcome["tier"],
     tokensBefore: before,
-    tokensAfter: Math.max(0, before - removedTokens),
-    tokensRemoved: removedTokens,
+    tokensAfter: Math.max(0, before - bytesRemoved),
+    tokensRemoved: 0,
     apiTokensBefore: 0,
     elapsedMs: 0,
   };
@@ -7218,6 +7258,12 @@ function handleStreamLine(
         n(usage.cache_creation_input_tokens) +
         n(usage.cache_read_input_tokens);
       if (window > 0) acc.contextTokens = window;
+      // And the first one, kept beside it rather than derived from it. What a
+      // resume was asked to carry and what the cycle grew to are different
+      // facts, and after a fork only the first says whether the cut landed.
+      if (window > 0 && acc.firstContextTokens === 0) {
+        acc.firstContextTokens = window;
+      }
     }
 
     for (const b of blocks as Array<Record<string, unknown>>) {
@@ -8723,7 +8769,22 @@ export async function startRun(id: string): Promise<void> {
         const worked = res.sawResult || res.finalText !== "";
         if (worked) {
           pendingFork.delete(id);
-          if (settling.rowId !== null) markForkResumed(settling.rowId, true);
+          if (settling.rowId !== null) {
+            // The other half of the fork's removal measurement, and this is the
+            // first moment it exists: the window the resume was actually asked
+            // to carry, against the one the source session was carrying when
+            // the cut was taken. Nothing else in this app can see it — the
+            // transcript records bytes the request no longer sends.
+            //
+            // Null rather than 0 for a cycle that billed nothing, so a fork
+            // whose resume was killed before its first turn stays unmeasured
+            // instead of being recorded as having removed the whole window.
+            markForkResumed(
+              settling.rowId,
+              true,
+              res.firstContextTokens > 0 ? res.firstContextTokens : null,
+            );
+          }
         }
         // Not `worked` falls through: that is the resume-failure shape, and the
         // branch below owns it, including the rollback.
@@ -10002,6 +10063,7 @@ export async function checkContextCeilings(): Promise<void> {
           removedTokens: cut ? Math.round(cut.removedTokens) : 0,
           turnsNeeded: predicted,
           engine: cut?.engine ?? null,
+          measuredForks: cut?.measuredForks ?? null,
           repeat: explained,
         }),
       );
@@ -10036,7 +10098,17 @@ export async function checkContextCeilings(): Promise<void> {
         cut === null
           ? "no engine measurement was available for this crossing"
           : predicted === null
-            ? "the measurement removed nothing"
+            ? // Four words apart and two different findings. Under the in-place
+              // engine the estimate is a reading of the request, so a zero is
+              // a clean conversation. Under the fork engine it is a reading of
+              // past forks, so a zero is either no evidence yet or the evidence
+              // this app now has: bytes leave the transcript and the request
+              // still carries them.
+              cut.measuredForks === null
+              ? "the measurement removed nothing"
+              : cut.measuredForks === 0
+                ? "no fork here has been measured against the API's window yet"
+                : "forks measured here take nothing off the API's window"
             : null,
         predicted,
       );

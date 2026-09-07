@@ -1947,7 +1947,24 @@ function migrate(db: Database.Database) {
       -- standing after the cut line, which on this install runs 70-90k against
       -- conversations of 180k. Estimating the rewrite from S understated it by
       -- about a third.
-      context_tokens_after INTEGER
+      context_tokens_after INTEGER,
+      -- The two readings that say whether the cut reached the wire, both on
+      -- apiContextTokens' basis -- input + cache_creation + cache_read.
+      --
+      -- They exist because the byte columns above cannot answer it. winnow
+      -- fork rewrites message.content and leaves toolUseResult untouched, and
+      -- the resumed CLI rebuilds its tool results from that field, so bytes
+      -- that left the file need not have left the request. Measured on the five
+      -- forks this install wrote before these columns existed, none of them did:
+      -- the API window after the resume was 1,153 to 5,238 tokens *higher* than
+      -- before the cut while net_bytes claimed 4,678 to 17,594 tokens removed.
+      --
+      -- before is read off the source session at the fork; after is the first
+      -- billed turn of the cycle that resumed the fork, written back by
+      -- markForkResumed. Null on either means the removal is unknown and the
+      -- netting credits nothing for it -- never that it removed nothing.
+      api_context_before INTEGER,
+      api_context_after  INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_fork_attempts_ts ON fork_attempts(ts);
     CREATE INDEX IF NOT EXISTS idx_fork_attempts_run ON fork_attempts(run_id, ts);
@@ -2005,6 +2022,12 @@ function migrate(db: Database.Database) {
   // a column added to it reaches new databases only.
   addColumn(db, "fork_attempts", "trigger", "TEXT");
   addColumn(db, "fork_attempts", "context_tokens_after", "INTEGER");
+  // Same story again, and these two are the ones that decide whether a fork is
+  // credited at all: a row without them is a cut nobody measured against the
+  // API's window, and `forkCutFromRow` reads that as unknown rather than as the
+  // byte figure beside it.
+  addColumn(db, "fork_attempts", "api_context_before", "INTEGER");
+  addColumn(db, "fork_attempts", "api_context_after", "INTEGER");
 
   // What Dreaming has written into the operator's vault, and when.
   //

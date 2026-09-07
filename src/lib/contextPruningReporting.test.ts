@@ -107,7 +107,7 @@ describe("a fork attempt that cannot be recorded", () => {
     db.exec("DELETE FROM ops_events");
 
     const ids = Array.from({ length: 20 }, (_, i) =>
-      pruningMod.recordForkAttempt(`r${i}`, "s-old", FORK, 0, "boundary", null),
+      pruningMod.recordForkAttempt(`r${i}`, "s-old", FORK, 0, "boundary", null, null),
     );
 
     // Still non-fatal, and still null: the run carries on without a receipt.
@@ -134,6 +134,8 @@ describe("a fork attempt that cannot be recorded", () => {
     db.exec("ALTER TABLE fork_attempts ADD COLUMN suffix_bytes INTEGER NOT NULL DEFAULT 0");
     db.exec("ALTER TABLE fork_attempts ADD COLUMN trigger TEXT");
     db.exec("ALTER TABLE fork_attempts ADD COLUMN context_tokens_after INTEGER");
+    db.exec("ALTER TABLE fork_attempts ADD COLUMN api_context_before INTEGER");
+    db.exec("ALTER TABLE fork_attempts ADD COLUMN api_context_after INTEGER");
     db.exec("DELETE FROM ops_events");
 
     const rowId = pruningMod.recordForkAttempt(
@@ -143,6 +145,7 @@ describe("a fork attempt that cannot be recorded", () => {
       0,
       "early-end",
       180_000,
+      201_500,
     );
 
     assert.notEqual(rowId, null);

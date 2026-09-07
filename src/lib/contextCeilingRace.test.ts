@@ -59,6 +59,9 @@ const OVER_CEILING = 210_000;
 const HUGE_CUT: CeilingCut = {
   engine: "legacy",
   removedTokens: OVER_CEILING,
+  // The in-place engine never asks the question: its estimate is a reading of
+  // the request, so there is no fork history to weigh it against.
+  measuredForks: null,
 };
 
 /**
@@ -73,6 +76,7 @@ const HUGE_CUT: CeilingCut = {
 const TINY_CUT: CeilingCut = {
   engine: "legacy",
   removedTokens: 10_000,
+  measuredForks: null,
 };
 
 /** Every decision row this install has written for one run, oldest first. */
