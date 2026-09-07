@@ -158,6 +158,10 @@ schedules.ts    when a saved workflow presses its own Run — the recurrence, th
 canvasGraph.ts  the workflow canvas's own model — client-safe and pure: where
                 a block sits, which is not in the graph, and the draft the
                 validate and save routes are sent
+unsavedWork.ts  leaving a page that has work in it — client-safe and pure:
+                which clicks are an in-app navigation, and the one registration
+                the exits that are not clicks ask first. beforeunload covers
+                the closed tab and nothing else
 chat.ts         the orchestrator chat: a conversation that proposes runs —
                 ordered against each other, and whole workflows, none of which
                 starts anything until a person approves it

@@ -1,4 +1,4 @@
-import { db } from "./db";
+import { appendOpsEvent, db } from "./db";
 
 /**
  * Process-level operational counters — what this server has been doing, as
@@ -141,8 +141,16 @@ export function opsCounters(): Readonly<OpsState> {
  * it is per run and cascades with it, and the event worth keeping most is the
  * restart that closed every run out.
  *
+ * The row itself is `appendOpsEvent` in `db.ts`, which is also what `migrate()`
+ * writes its own findings with — it cannot call this one, because `db()` is not
+ * callable from inside the `open()` that is still running.
+ *
  * Retention is a count rather than an age: this table is written a handful of
- * times per boot, so a cap keeps it from ever being a store worth reporting on.
+ * times per boot and once per operator press on a credential or a fleet control
+ * (`recordDurableMutation`), so a cap keeps it from ever being a store worth
+ * reporting on. Both writers are human-scale, which is the premise the cap rests
+ * on — anything that writes here per *request* would break it, and belongs in
+ * `request_log`, whose window is twenty thousand rows wide for that reason.
  */
 export function recordOpsEvent(
   level: OpsLevel,
@@ -151,15 +159,7 @@ export function recordOpsEvent(
 ): void {
   opsLog(level, event, detail);
   try {
-    const handle = db();
-    handle
-      .prepare("INSERT INTO ops_events (ts, level, event, detail) VALUES (?, ?, ?, ?)")
-      .run(Date.now(), level, event, JSON.stringify(detail));
-    handle
-      .prepare(
-        "DELETE FROM ops_events WHERE id <= (SELECT MAX(id) FROM ops_events) - ?",
-      )
-      .run(OPS_EVENT_RETENTION);
+    appendOpsEvent(db(), level, event, detail);
   } catch {
     // The one place a swallow is right: this is the *reporting* path, and a
     // database that cannot take the row is exactly the condition the line
@@ -167,9 +167,6 @@ export function recordOpsEvent(
     // reconciler whose outcome it is recording.
   }
 }
-
-/** How many `ops_events` rows are kept. Boot-frequency writes, so generous. */
-const OPS_EVENT_RETENTION = 500;
 
 /** One recorded server event, as a page or a monitor reads it. */
 export interface OpsEvent {

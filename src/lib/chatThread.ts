@@ -72,6 +72,42 @@ export function threadItems(
 }
 
 /**
+ * The thread the page holds, brought up to date by what a poll answered with.
+ *
+ * The poll asks for the messages past the highest `seq` it holds, so what comes
+ * back is a tail rather than a conversation — see `messagesFrom` on `ChatDTO`.
+ * That field is the whole switch: above zero the answer is a tail and is
+ * appended, at zero it is the thread and replaces what was there, which is what
+ * a send, a cancel, an answer, a decision and the first load all return.
+ *
+ * Pure and unit-tested on `threadItems`' grounds, and against a failure of the
+ * same kind: a merge that drops a message loses a paragraph out of the middle of
+ * a conversation with nothing on the page to say so, and one that keeps a
+ * duplicate says the model answered twice. Both look exactly like a normal
+ * transcript.
+ *
+ * **The tail is filtered rather than trusted.** The interval fires whether or
+ * not the last poll has answered, so two requests carrying the same cursor are
+ * ordinary — the second one's answer overlaps the first's and everything at or
+ * below what is already held has to go. That is also what makes the cursor safe
+ * to advance only here: it moves when a message is merged and never when one is
+ * merely asked for, so a slow answer that lands out of order cannot leave a hole
+ * behind it.
+ */
+export function mergeMessages(
+  held: ChatMessageDTO[],
+  answer: readonly ChatMessageDTO[],
+  messagesFrom: number,
+): ChatMessageDTO[] {
+  if (messagesFrom <= 0) return [...answer];
+  const highest = held.length > 0 ? held[held.length - 1].seq : 0;
+  const arrived = answer.filter((m) => m.seq > highest);
+  // The same array back where nothing arrived, which is most polls: a new one
+  // would re-render every message in the thread to say that nothing changed.
+  return arrived.length === 0 ? held : [...held, ...arrived];
+}
+
+/**
  * The instant the turn in flight began, which is what its clock counts from.
  *
  * Pure and unit-tested on `threadItems`' grounds: every way of getting it wrong

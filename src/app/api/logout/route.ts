@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 // Relative, not "@/…" — see the note in the login route.
 import { AUTH_TOKEN, COOKIE_SECURE, authEnabled } from "../../../lib/config";
-import { recordOpsEvent } from "../../../lib/ops";
+import { recordDurableMutation } from "../../../lib/requestLog";
 import { revokeAllSessions, revokeSession } from "../../../lib/sessions";
 import {
   SESSION_COOKIE,
@@ -41,8 +41,14 @@ export const dynamic = "force-dynamic";
  * The refusal is answered **before** any audit or rate-limit machinery, for
  * `/api/mcp`'s reason: this path is reachable without a credential, so a
  * refusal that wrote a row would let an unauthenticated caller evict
- * `request_log`'s 20,000-line window at will. A revocation that *happened* is
- * worth a durable line, and gets one on `ops_events` instead.
+ * `request_log`'s 20,000-line window at will. This is also why the handler is
+ * **not** wrapped in `auditMutation` the way every gated mutating route is —
+ * a `grep` for that name lists this file, and the answer is this paragraph
+ * rather than the wrapper. A revocation that *happened* is worth a durable
+ * line, and gets one on `ops_events` instead: both branches below record only
+ * after something has actually been revoked, so what an anonymous caller can
+ * write here is nothing at all, and what a replayed cookie can write is one row
+ * for the one session it ends.
  *
  * **What this does not close.** A revoked session's cookie stays
  * signature-valid at the edge gate until its own `SESSION_TTL_MS` expiry,
@@ -66,10 +72,23 @@ export async function POST(req: Request) {
       }
       const closed = revokeAllSessions();
       // Durable, because this is the one action here that changes what somebody
-      // else can do, and nothing else in the app would say it happened.
-      recordOpsEvent("warn", "auth.sessions_revoked", { closed });
-    } else if (claim) {
-      revokeSession(claim.id);
+      // else can do, and nothing else in the app would say it happened. Written
+      // after the 401 above, so the caller of this line has presented either a
+      // signature-valid cookie or the master bearer.
+      recordDurableMutation(req, "warn", "auth.sessions_revoked", { closed });
+    } else if (claim && revokeSession(claim.id)) {
+      // The session id is the whole of "which object", and on this install it is
+      // also the whole of "who": one credential, no user model, so a name here
+      // would be invented rather than recorded.
+      //
+      // Guarded on the revocation having happened rather than on the press.
+      // `claim` means a signature-valid cookie, so this is never an anonymous
+      // caller — but a captured cookie can be replayed, and `revokeSession` is
+      // true exactly once per session, which is what bounds a replay to a single
+      // row on a 500-row table.
+      recordDurableMutation(req, "info", "auth.session_revoked", {
+        session: claim.id,
+      });
     }
   }
 

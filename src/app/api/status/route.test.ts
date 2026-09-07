@@ -114,6 +114,7 @@ test("carries every documented key", async () => {
     "webhook",
     "lastBootReconcile",
     "restartClosedOutstanding",
+    "schemaFaults",
   ]) {
     assert.ok(key in body, `the status payload lost "${key}"`);
   }

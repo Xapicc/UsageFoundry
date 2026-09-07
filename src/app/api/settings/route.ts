@@ -494,13 +494,13 @@ async function putHandler(req: Request) {
     patch.isolationCopyGlobs = list;
   }
 
-  if ("resolveVerifyTools" in body) {
+  if ("resolveAllowedTools" in body) {
     // Same two shapes `isolationCopyGlobs` accepts, for the same reason: the
     // page sends an array and a person pasting into the textarea sends lines.
     // An empty list is the meaningful default here rather than an omission —
     // it is how an operator turns the grant back off.
-    const raw = body.resolveVerifyTools;
-    patch.resolveVerifyTools = (
+    const raw = body.resolveAllowedTools;
+    patch.resolveAllowedTools = (
       Array.isArray(raw)
         ? raw.map((t) => String(t))
         : String(raw ?? "").split(/[\n,]/)

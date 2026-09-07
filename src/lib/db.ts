@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import Database from "better-sqlite3";
 import { DATA_DIR, DB_PATH } from "./config";
+// Types only, and it has to stay that way: `ops.ts` imports this module, so a
+// value import here would be a cycle between the schema and the thing that
+// reports on it.
+import type { OpsFields, OpsLevel } from "./ops";
 import { heldByAnotherProcess } from "./serverLock";
 
 /**
@@ -121,15 +125,151 @@ function open(): Database.Database {
   return db;
 }
 
+/** How many `ops_events` rows are kept. Boot-frequency writes, so generous. */
+const OPS_EVENT_RETENTION = 500;
+
+/**
+ * Append one `ops_events` row on a connection that is already open, and trim.
+ *
+ * Takes the handle rather than calling `db()` because `migrate()` is one of the
+ * two callers: `db()` assigns `__ufDb` only once `open()` has *returned*, so a
+ * write from inside the migration it is reporting on re-enters `open()`, opens
+ * a second connection, migrates again and recurses until the stack runs out.
+ * `recordOpsEvent` in `ops.ts` is the ordinary entry point and passes `db()`.
+ *
+ * Throws rather than swallowing. Both callers swallow, and each has its own
+ * reason to.
+ */
+export function appendOpsEvent(
+  handle: Database.Database,
+  level: OpsLevel,
+  event: string,
+  detail: OpsFields,
+): void {
+  handle
+    .prepare("INSERT INTO ops_events (ts, level, event, detail) VALUES (?, ?, ?, ?)")
+    .run(Date.now(), level, event, JSON.stringify(detail));
+  handle
+    .prepare(
+      "DELETE FROM ops_events WHERE id <= (SELECT MAX(id) FROM ops_events) - ?",
+    )
+    .run(OPS_EVENT_RETENTION);
+}
+
+/** One thing `migrate()` found wrong with the file it had just opened. */
+export interface SchemaFault {
+  at: number;
+  level: OpsLevel;
+  /** Primitives only, as `OpsFields` requires. `finding` names which one. */
+  detail: OpsFields;
+}
+
+/** The one `ops_events` name every migration finding is written under. */
+const SCHEMA_FAULT_EVENT = "schema.fault";
+
+/**
+ * What *this process's* migration found, beside the durable rows rather than
+ * instead of them.
+ *
+ * The rows are the archive, and they are the point: a container's stdout is a
+ * scrollback buffer that the restart destroys, and the restart is exactly when
+ * an operator comes looking. But a monitor built on the archive would go red at
+ * the first fault and stay red until five hundred later events pushed it out —
+ * `restartClosedOutstanding` in `status.ts` is the same trap, written up. This
+ * list is what `/api/status` reads instead: it is empty on a boot that found
+ * nothing, so it de-latches on the only event that can clear one of these,
+ * which is a boot.
+ *
+ * On `globalThis` for the reason every long-lived singleton here is, and under
+ * its own key because `??=` would keep a pre-upgrade value of a different shape.
+ */
+const schemaFaults = ((
+  globalThis as unknown as { __ufSchemaFaults?: SchemaFault[] }
+).__ufSchemaFaults ??= []);
+
+/** What the migration in this process found wrong, oldest first. */
+export function schemaFaultsThisBoot(): SchemaFault[] {
+  return schemaFaults;
+}
+
+/**
+ * Report something wrong with the database `migrate()` has just opened: on
+ * stdout, where all of it used to go and stop, and in `ops_events`, which a
+ * restart does not erase.
+ *
+ * One event name for every finding rather than one each, because they answer a
+ * single question — what did this boot find wrong with the file — and the
+ * status endpoint reads them with the same single-name query `boot.reconciled`
+ * already uses. `detail.finding` says which.
+ *
+ * **Never fatal, and it must not become fatal.** Reporting rather than refusing
+ * is the decision `recoverStrandedProposals` and `reportOrphanTables` each
+ * argue for in their own docblock; a report that could abort the boot would
+ * quietly invert it.
+ */
+function noteSchemaFault(
+  db: Database.Database,
+  level: OpsLevel,
+  message: string,
+  detail: OpsFields,
+): void {
+  if (level === "error") console.error(message);
+  else console.warn(message);
+  schemaFaults.push({ at: Date.now(), level, detail });
+  try {
+    appendOpsEvent(db, level, SCHEMA_FAULT_EVENT, detail);
+  } catch {
+    // The same swallow `recordOpsEvent` makes and for the same reason: a
+    // database that cannot take the row is the condition the line just printed
+    // describes, and a boot must not die reporting on itself.
+  }
+}
+
 function migrate(db: Database.Database) {
+  // A second migration in one process is a second boot — the tests reopen, and
+  // `next dev` can — so what the last one found is not what this one found.
+  schemaFaults.length = 0;
+
+  // Things that happened to the *server* rather than to a run.
+  //
+  // `run_events` is per run and cascades with it, so the one moment there is
+  // nothing to attach to is the moment worth recording: a restart that closed
+  // out every run it found. That was one `console.warn` into a stream nobody
+  // tails — twenty-five runs terminated, each needing a manual reopen, reported
+  // once and then unanswerable. This is where it is kept so a page can say it.
+  //
+  // `detail` is JSON and holds counts, never prose about a folder or a prompt:
+  // the status endpoint is read by a monitor, and rows here are what it reads.
+  //
+  // **First in this function, which is load-bearing rather than tidy.** Every
+  // fault below is written here as well as to stdout, and the first of them —
+  // the downgrade — is found before this file has any other table at all.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ops_events (
+      id     INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts     INTEGER NOT NULL,
+      level  TEXT NOT NULL,
+      event  TEXT NOT NULL,
+      detail TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ops_events_event ON ops_events(event, ts);
+  `);
+
   const found = Number(db.pragma("user_version", { simple: true }));
   if (schemaVerdict(found, SCHEMA_VERSION) === "downgrade") {
-    console.error(
+    noteSchemaFault(
+      db,
+      "error",
       `[usagefoundry] This database was written by a newer build (schema ` +
         `${found}; this build knows ${SCHEMA_VERSION}). Migrating anyway — ` +
         `every step below is additive or guarded by the live schema — but a ` +
         `rollback has no defined behaviour here and anything the newer build ` +
         `added is invisible to this one.`,
+      {
+        finding: "downgrade",
+        fileVersion: found,
+        buildVersion: SCHEMA_VERSION,
+      },
     );
   }
 
@@ -1053,6 +1193,25 @@ function migrate(db: Database.Database) {
   addColumn(db, "chat_messages", "seq", "INTEGER");
   db.exec("UPDATE chat_messages SET seq = rowid WHERE seq IS NULL");
 
+  // Here rather than beside the other indexes above, because `seq` is a column
+  // this function adds and the block up there runs before it exists.
+  //
+  // It is what makes the chat page's cursor a bound rather than a filter. The
+  // page polls one thread every three seconds for as long as it is open, and
+  // asks for the messages past the highest `seq` it holds; on
+  // `idx_chat_messages_chat(chat_id, ts)` SQLite answers that by walking every
+  // row of the thread, discarding all but the new ones and then sorting what
+  // survives in a temp B-tree — so the work per poll still grew with the
+  // conversation and only the *response* was small. Measured on a 500-message
+  // thread: `SEARCH … USING INDEX idx_chat_messages_chat (chat_id=?)` plus
+  // `USE TEMP B-TREE FOR ORDER BY` for both the cursored and the whole-thread
+  // read. With `(chat_id, seq)` both become a range scan in `seq` order over
+  // exactly the rows asked for, and the sort disappears.
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_chat_messages_seq" +
+      " ON chat_messages(chat_id, seq)",
+  );
+
   // When the turn now in flight began, so the ten-minute bound on a chat turn
   // is enforceable by something outside the closure that spawned it. Not
   // `updated_at`, which looks like the same instant and is not: the chat's own
@@ -1305,27 +1464,6 @@ function migrate(db: Database.Database) {
       duration_ms INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_request_log_ts ON request_log(ts);
-  `);
-
-  // Things that happened to the *server* rather than to a run.
-  //
-  // `run_events` is per run and cascades with it, so the one moment there is
-  // nothing to attach to is the moment worth recording: a restart that closed
-  // out every run it found. That was one `console.warn` into a stream nobody
-  // tails — twenty-five runs terminated, each needing a manual reopen, reported
-  // once and then unanswerable. This is where it is kept so a page can say it.
-  //
-  // `detail` is JSON and holds counts, never prose about a folder or a prompt:
-  // the status endpoint is read by a monitor, and rows here are what it reads.
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS ops_events (
-      id     INTEGER PRIMARY KEY AUTOINCREMENT,
-      ts     INTEGER NOT NULL,
-      level  TEXT NOT NULL,
-      event  TEXT NOT NULL,
-      detail TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_ops_events_event ON ops_events(event, ts);
   `);
 
   // What one chat turn cost, and when.
@@ -2027,11 +2165,20 @@ function recoverStrandedProposals(db: Database.Database) {
     // safely drop either, and refusing to boot over it would strand the whole
     // install rather than one table — where leaving it in place costs nothing
     // but the disk it is already using.
-    console.error(
+    noteSchemaFault(
+      db,
+      "error",
       `[usagefoundry] chat_proposals_old is present and does not have the ` +
         `columns this build knows (missing: ${missing.join(", ")}). It has ` +
         `been left alone; nothing in the app reads it. This is the residue of ` +
         `an interrupted migration and needs a hand.`,
+      {
+        finding: "proposals_unreadable",
+        table: "chat_proposals_old",
+        // Column names, which are schema rather than anything an operator or an
+        // agent wrote — the line this payload may not cross.
+        missing: missing.join(", "),
+      },
     );
     return;
   }
@@ -2060,9 +2207,16 @@ function recoverStrandedProposals(db: Database.Database) {
     return res.changes;
   })();
 
-  console.warn(
+  // Recorded as well, though this branch is the one that ends well: what it
+  // reports is still that an interrupted migration happened, and an operator
+  // reading the archive after a bad ending needs the boot that moved rows back
+  // for them at least as much as the boot that could not.
+  noteSchemaFault(
+    db,
+    "warn",
     `[usagefoundry] Recovered ${moved} chat proposal(s) stranded in ` +
       `chat_proposals_old by an interrupted migration.`,
+    { finding: "proposals_stranded", table: "chat_proposals_old", recovered: moved },
   );
 }
 
@@ -2131,10 +2285,13 @@ function reportOrphanTables(db: Database.Database) {
     )
     .all() as { name: string }[];
   for (const row of rows) {
-    console.error(
+    noteSchemaFault(
+      db,
+      "error",
       `[usagefoundry] ${row.name} is present and nothing in this app reads it. ` +
         `It is the residue of an interrupted migration — the rows in it are not ` +
         `visible anywhere in the UI.`,
+      { finding: "orphan_table", table: row.name },
     );
   }
 }
