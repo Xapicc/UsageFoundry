@@ -147,6 +147,7 @@ const { normalizePolicy } = require("./budget") as typeof import("./budget");
 const { revokeIngestTokens, runForIngestToken } =
   require("./otlp") as typeof import("./otlp");
 const { db } = require("./db") as typeof import("./db");
+const { recentOpsEvents } = require("./ops") as typeof import("./ops");
 const { saveSettings } = require("./settings") as typeof import("./settings");
 
 const clash = (a: string, b: string) => overlaps(conflictKey(a), conflictKey(b));
@@ -3158,10 +3159,11 @@ describe("buildCodexArgs", () => {
  * breakdowns of them; adding them inflates `runs.spent_tokens`, which is a
  * number an operator plans against.
  *
- * **An unrecognised event must reach a person.** `orchestrator.ts:6604` is
- * where a Claude line that does not parse goes silently, and that silence is
- * exactly what makes a moved CLI pin look like an idle agent. The Codex parser
- * logs instead, once per distinct type per cycle.
+ * **An unrecognised event must reach a person**, and that silence is exactly
+ * what makes a moved CLI pin look like an idle agent. Both parsers log instead,
+ * once per distinct type per cycle, through one shared `noteUnknownStreamEvent`
+ * — so this case and its counterpart under `handleStreamLine` pin the same
+ * function from both sides.
  */
 describe("handleCodexStreamLine", () => {
   const { parseLine } = selectCycleAdapter("codex");
@@ -3356,6 +3358,154 @@ describe("handleCodexStreamLine", () => {
     );
     assert.deepEqual(logs, ["Reading additional input from stdin"]);
     assert.equal(acc.sawResult, false);
+  });
+});
+
+/**
+ * The Claude parser, on the one shape it has no branch for.
+ *
+ * `handleStreamLine` tests `assistant`, `user`, `result` and `system` and used
+ * to let a fifth type fall off the end of the function — no log line, no
+ * counter, no `raw` payload kept. That is the parser on nearly every cycle this
+ * app runs: `runs.provider` is written only by `POST /api/runs`, so a workflow
+ * node, a chat proposal and a reopened run all arrive here as `null`, and
+ * `selectCycleAdapter` answers Claude for `null`.
+ *
+ * Two cases, because the failure has two halves and fixing one badly creates
+ * the other:
+ *
+ * **The drop must be visible.** A pinned CLI that renames a top-level type
+ * takes with it whatever that event carried, and a cycle with no cost, no
+ * session id and no stop reason renders on every page in this app as a cycle
+ * that simply had nothing to say.
+ *
+ * **Visible must not mean fatal, or a flood.** An unrecognised type can arrive
+ * on every chunk of every concurrent run, so it is bounded to one line per
+ * distinct type per cycle — and the events around it must still parse, because
+ * a parser that threw on a rename would turn a cosmetic provider change into
+ * every run on the box failing.
+ */
+describe("handleStreamLine on an unrecognised event type", () => {
+  const { parseLine } = selectCycleAdapter(null);
+
+  const fresh = () =>
+    ({
+      costUSD: 0,
+      tokens: 0,
+      contextTokens: 0,
+      sessionId: null,
+      finalText: "",
+      isError: false,
+      subagentNames: new Map(),
+      toolCalls: new Map(),
+      unknownEventTypes: new Set(),
+      sawResult: false,
+      subtype: null,
+      apiError: null,
+      stderrTail: "",
+    }) as Parameters<typeof parseLine>[2];
+
+  let seq = 0;
+
+  const insertRun = (): string => {
+    const id = `claude-parse-${++seq}`;
+    db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations,
+                           iterations, created_at)
+         VALUES (?, ?, 'do the thing', 'running', '{}', 1, 0, ?)`,
+      )
+      .run(id, `${ws}/Other`, Date.now() + seq);
+    return id;
+  };
+
+  const run = (lines: unknown[]) => {
+    const runId = insertRun();
+    const acc = fresh();
+    for (const line of lines) {
+      parseLine(runId, JSON.stringify(line), acc, () => {});
+    }
+    return {
+      acc,
+      logs: runEvents(runId).events.flatMap((e) =>
+        e.kind === "log" ? [String((e.payload as { message: string }).message)] : [],
+      ),
+    };
+  };
+
+  it("reports an unrecognised event once per type, not once per line", () => {
+    const { acc, logs } = run([
+      { type: "stream_event", event: 1 },
+      { type: "stream_event", event: 2 },
+      { type: "stream_event", event: 3 },
+      { type: "control_response" },
+    ]);
+    assert.deepEqual([...acc.unknownEventTypes].sort(), [
+      "control_response",
+      "stream_event",
+    ]);
+    assert.equal(logs.length, 2);
+    assert.equal(
+      logs.every((l) => l.includes("does not recognise")),
+      true,
+    );
+    assert.equal(
+      logs.some((l) => l.includes('"stream_event"')),
+      true,
+    );
+    // The CLI it names is the one that was actually spawned. The Codex parser
+    // says "Codex" from the same function; an operator holding one of these
+    // lines has to be able to tell which pin moved.
+    assert.equal(
+      logs.every((l) => l.includes("Claude Code")),
+      true,
+    );
+  });
+
+  it("keeps parsing the types it does know around one it does not", () => {
+    const { acc, logs } = run([
+      { type: "system", subtype: "init", session_id: "sess-1" },
+      { type: "tool_permission_request", session_id: "sess-1" },
+      {
+        type: "result",
+        subtype: "success",
+        session_id: "sess-1",
+        total_cost_usd: 0.25,
+        usage: { input_tokens: 100, output_tokens: 10 },
+        result: "all done",
+      },
+    ]);
+    // Nothing threw, and every figure the cycle is accounted by still landed.
+    assert.equal(acc.sessionId, "sess-1");
+    assert.equal(acc.sawResult, true);
+    assert.equal(acc.costUSD, 0.25);
+    assert.equal(acc.tokens, 110);
+    assert.equal(acc.subtype, "success");
+    assert.equal(acc.finalText, "all done");
+    assert.equal(acc.isError, false);
+    assert.deepEqual([...acc.unknownEventTypes], ["tool_permission_request"]);
+    assert.equal(
+      logs.filter((l) => l.includes("does not recognise")).length,
+      1,
+    );
+  });
+
+  it("files one durable ops event per distinct type, not one per cycle", () => {
+    // The run's log answers "what went wrong with *this* run"; it cannot answer
+    // "when did this start", because `run_events` cascades with the run and
+    // expires at 30 days. That is what the `ops_events` row is for — and why it
+    // is bounded per *process* rather than per cycle: the table is capped at 500
+    // rows, so a per-cycle writer would evict every restart record on the box.
+    run([{ type: "uf_test_novel_event" }]);
+    run([{ type: "uf_test_novel_event" }]);
+    run([{ type: "uf_test_novel_event" }]);
+
+    const filed = recentOpsEvents(50, "stream.unknown_event").filter(
+      (e) => e.detail.type === "uf_test_novel_event",
+    );
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].level, "warn");
+    assert.equal(filed[0].detail.cli, "Claude Code");
   });
 });
 

@@ -7012,6 +7012,76 @@ export function cycleCostAfterResult(prevUSD: number, reported: unknown): number
   return Math.max(prevUSD, cost);
 }
 
+/**
+ * Distinct `${cli}:${type}` pairs this *process* has already filed an ops event
+ * for.
+ *
+ * A second guard beside `acc.unknownEventTypes`, because the two answer
+ * different questions and need different lifetimes. The per-cycle set keeps the
+ * run's own log to one line per type, which is what the operator reading *that
+ * run* needs. This one keeps `ops_events` to one row per type per boot, which is
+ * what the operator who has only noticed that runs look thinner than they used
+ * to needs: a dated first sighting they can find without opening every run.
+ *
+ * Per boot rather than forever, so a restart re-files it — the table is capped
+ * at 500 rows and a sighting evicted months later must not read as "this stopped
+ * happening". Per cycle would be catastrophic here: `ops_events` is written a
+ * handful of times per boot by design, so a renamed high-frequency type would
+ * evict every restart and reconciliation record on the box within minutes.
+ *
+ * `globalThis`-pinned for the reason every long-lived singleton here is, under
+ * its own key: module state resets on every request under `next dev`, and a
+ * dedupe that forgets is the flood it exists to prevent.
+ */
+const unknownEventTypesReported = ((globalThis as unknown as {
+  __ufUnknownStreamEvents?: Set<string>;
+}).__ufUnknownStreamEvents ??= new Set<string>());
+
+/**
+ * Say, once, that a CLI sent an event type this build has no branch for.
+ *
+ * Shared by both parsers rather than written twice, because the whole of what
+ * this fixes is that it *was* written once: the Codex parser announced its
+ * unknowns and the Claude parser — the one on every run whose `provider` is
+ * null, which is every run not created through `POST /api/runs` — dropped them
+ * silently. Two copies is how that asymmetry came back a second time.
+ *
+ * **Never fatal.** An unrecognised type is a provider moving under a pin, and a
+ * parser that threw on one would turn a cosmetic rename into every run on the
+ * box failing. It is reported and then ignored, exactly as before.
+ *
+ * Two sinks with two lifetimes, per `unknownEventTypesReported`: the run's log,
+ * where the reader of the odd run finds it, and one `ops_events` row per boot,
+ * which outlives the run and its 30-day event retention.
+ */
+function noteUnknownStreamEvent(
+  runId: string,
+  cli: string,
+  type: string,
+  ev: Record<string, unknown>,
+  acc: IterationResult,
+): void {
+  if (acc.unknownEventTypes.has(type)) return;
+  acc.unknownEventTypes.add(type);
+
+  log(
+    runId,
+    `This work cycle's CLI sent an event this app does not recognise: ` +
+      `"${type}". ${cli}'s event vocabulary has moved, and whatever that ` +
+      `event carried — a session id, a cost, a stop reason — is not being ` +
+      `read. Reported once per event type per cycle.`,
+    { stream: "stdout", raw: ev },
+  );
+
+  // The type and the CLI and nothing else. `ops.ts` forbids handing this a
+  // payload object, and an unrecognised event's body is the one place a prompt
+  // or a folder path could be hiding — it is unparsed by definition.
+  const seen = `${cli}:${type}`;
+  if (unknownEventTypesReported.has(seen)) return;
+  unknownEventTypesReported.add(seen);
+  recordOpsEvent("warn", "stream.unknown_event", { cli, type, runId });
+}
+
 /** Interpret one line of Claude Code's `stream-json` output. */
 function handleStreamLine(
   runId: string,
@@ -7367,7 +7437,15 @@ function handleStreamLine(
         );
       }
     }
+    return;
   }
+
+  // A fifth top-level type. `assistant`, `user`, `result` and `system` are what
+  // `--output-format stream-json` was measured to write, so anything here means
+  // the pin has moved — and the symptom of missing that is a cycle with no cost,
+  // no session id and no stop reason, which every page in this app renders as a
+  // cycle that simply had nothing to say.
+  noteUnknownStreamEvent(runId, "Claude Code", type, ev, acc);
 }
 
 /**
@@ -7380,16 +7458,14 @@ function handleStreamLine(
  * `agent_message`, `reasoning`, `command_execution`, `file_change`,
  * `mcp_tool_call`, `web_search`, `todo_list` and `error`.
  *
- * **Nothing here goes silently.** `orchestrator.ts`'s Claude parser drops an
- * event type it does not know without a word, which was survivable while there
- * was one format to keep up with and is not now: a second format doubles the
- * ways a pin can move under this app, and the symptom of a missed rename is a
- * cycle that reports no cost, no session and no stop reason — indistinguishable
- * on every page from a cycle that simply had nothing to say. So an unrecognised
- * `type` is written to the run's own log, where an operator reading the run that
- * behaved oddly will actually find it. Once per distinct type per cycle, via
- * `acc.unknownEventTypes`: a rename of `item.updated` would otherwise be one log
- * row per token of a long turn.
+ * **Nothing here goes silently**, and nothing in the Claude parser does either:
+ * both hand a `type` they have no branch for to `noteUnknownStreamEvent`. A
+ * second format doubles the ways a pin can move under this app, and the symptom
+ * of a missed rename is a cycle that reports no cost, no session and no stop
+ * reason — indistinguishable on every page from a cycle that simply had nothing
+ * to say. The `default:` arm below is the whole of this parser's share of that;
+ * the bounding, the wording and the durable record are one function so that the
+ * two parsers cannot drift apart again.
  */
 function handleCodexStreamLine(
   runId: string,
@@ -7520,17 +7596,7 @@ function handleCodexStreamLine(
     }
 
     default: {
-      if (!acc.unknownEventTypes.has(type)) {
-        acc.unknownEventTypes.add(type);
-        log(
-          runId,
-          `This work cycle's CLI sent an event this app does not recognise: ` +
-            `"${type}". Codex's event vocabulary has moved, and whatever that ` +
-            `event carried — a session id, a cost, a stop reason — is not being ` +
-            `read. Reported once per event type per cycle.`,
-          { stream: "stdout", raw: ev },
-        );
-      }
+      noteUnknownStreamEvent(runId, "Codex", type, ev, acc);
     }
   }
 }
