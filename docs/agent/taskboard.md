@@ -2,9 +2,9 @@
 
 > Each paragraph records a correctness or safety decision whose violation is
 > silent — nothing throws, nothing fails to typecheck, and the board looks right.
-> **Read before editing `src/lib/tasks.ts`, `src/app/api/tasks/`, or the `tasks`
-> table in `src/lib/db.ts`.**
-> This is the storage and server half. The sidebar pane, the chat and block tools
+> **Read before editing `src/lib/tasks.ts`, `src/app/api/tasks/`,
+> `src/app/tasks/page.tsx`, or the `tasks` table in `src/lib/db.ts`.**
+> This is the storage, the server half and the board. The chat and block tools
 > and a work cycle's own access are later work and are deliberately absent — what
 > they will need exists here, typed and tested, and nothing else does.
 
@@ -166,3 +166,93 @@ looks like an answer, and on a backlog that reads as an absence of work rather
 than as a failed filter. `mountId` and `folder` are matched against the stored
 columns exactly as held and are deliberately **not** re-resolved on a read — a
 board must not stop listing because a mount is briefly unavailable.
+
+**The pane sits directly under Runs, and two panes now go without a digit.**
+`panes.ts` is a closed, ordered list whose number shortcut follows a row's
+*position* rather than its age, so inserting Taskboard fourth renumbered
+everything below it — Workflows to ⌘5, Agents ⌘6, Branches ⌘7, Knowledge ⌘8,
+Dreaming ⌘9 — and pushed the account pane off the end beside Settings. ⌘1…⌘9 is
+nine digits against eleven rows and **the loss is always taken from the bottom**,
+which is the only rule that keeps "the digit is the row's position" true; the
+alternative, leaving the digits where they were, gives ⌘4 a name in the list and
+a landing one row down, which is the failure the position rule exists to
+prevent. The two rows that lost it are both read rather than worked in — a
+readout and the pane somebody opens when something is already wrong — and both
+stay one press away in quick open. **A two-key chord to buy a digit back is a
+different decision** and not one this feature may make on the way past. Under
+Runs rather than beside Workflows because the board is what *feeds* the list
+above it: a task is a brief nobody has started and the press that starts one is
+a run, where a row under Workflows would read as a third way of describing work
+to do — which is the one thing the first paragraph of this document says a task
+is not.
+
+**The board asks for the whole page and narrows in the browser, which is the one
+place this feature departs from `/api/runs`' rule that narrowing belongs in the
+query.** Two reasons, both specific to a board rather than to a list. The page
+draws every status group at once, so a server-side narrowing is one request per
+group against an offset that cuts across them — page two of a priority-ordered
+listing is half of Open and half of Claimed, and the two requests that produce
+it can disagree about what a row's status is. And the project filter's options
+are derived from the same answer the rows are, so the select can offer neither a
+project the board cannot show nor a hidden one it can; built from
+`/api/folders` instead they would need a mount root joined to a stored relative
+path *in the browser*, which is the second, looser resolver the `resolveInMount`
+paragraph above exists to prevent. The cost is bounded and stated rather than
+hidden: the page asks for `MAX_TASK_PAGE` rows, and a `total` larger than what
+came back is a notice on the board saying so — because a filter narrowing a
+silently truncated set is the "board that looks like an answer" failure one
+layer up from the route. `MAX_TASK_PAGE` therefore lives in `apiTypes.ts` beside
+`MAX_LIST_TASK_BODY`, not in `tasks.ts`: written twice, the page would ask for a
+number the route quietly reduced and then report a whole board it had not been
+sent. **The day the board needs a second page is the day this trade stops
+holding**, and the answer then is a per-status request with its own offset, not
+a larger cap.
+
+**The board draws controls; it never decides a move.** Every press on this page
+is a `PATCH` and the sentence that comes back is rendered verbatim, because
+`taskTransitionRefusal` is a server module a `"use client"` file may not import
+and a mirrored copy of the edge table in the browser is a second set to keep in
+step — confidently wrong about what a press does, from the moment one of them
+changes. What the page *does* decide is which buttons to draw, and that is the
+smaller claim: the operator's own edges, with **no Claim button among them**,
+because a claim names the run that will hold the task and the operator is not a
+run. A row that moved between the poll that drew it and the press against it is
+exactly when the server's refusal matters, so it is shown rather than swallowed
+and the board is re-read either way. The in-flight state is keyed on the *edge*
+(`id:status`) and not on the row: keyed on the row, pressing Done lit Release
+and Drop too, which reads as three presses having been made.
+
+**The editor is never filled from a list row.** `TaskListItemDTO` carries the
+brief clipped to `MAX_LIST_TASK_BODY` with an ellipsis on it, so a form seeded
+from the board and saved writes two hundred characters and a `…` over the whole
+brief — the one field a future agent is handed with nothing else to go on,
+destroyed by an edit to the title, silently, with the row still looking right
+afterwards. So opening a task fetches `GET /api/tasks/[id]` first, the draft is
+set only from that, and Save is gated until it lands; a failed read leaves the
+editor open saying why, with no path that writes the clip. The folder select
+carries the same shape of guard for a different reason: a stored folder the
+workspace scan does not currently offer stays in the list as its own option,
+since a `<select>` whose value is absent resolves to the first option and an
+unrelated save would then move the task to a folder nobody picked.
+
+**The three ways of having nothing are three different screens, and none of them
+is an empty list.** A board with nothing on it says a task is a brief anybody —
+the orchestrator, a workflow block, a work cycle, the operator — can file, and
+offers the press that files one; a filter that matched none names the project it
+narrowed to, says how many the board holds, and offers the way back to every
+project; a fetch that failed says *this is a failed request rather than an empty
+backlog* and offers a retry. The third is the one that matters and the reason
+this is written down: an unreadable board rendered as an empty one tells an
+operator their backlog is clear, which is both false and the most expensive
+thing this page could say. It is told apart by `pollError !== null && tasks
+.length === 0` — a poll that fails over rows already on screen keeps the rows and
+carries the notice above them, because stale work is still work.
+
+**The poll does not stand down**, which is the deliberate exception to
+`conventions.md`'s rule that a page stops polling what cannot change. A run's
+page gates its interval on the row being live because a terminal run moves no
+further on its own; a board has no terminal state at all — a row can be filed or
+claimed by a door this page does not own whatever the board currently holds, and
+a board of nothing but closed work is exactly when a newly filed task is the
+thing worth seeing. There is therefore no gate to re-arm, and the cost is one
+capped request every ten seconds.
