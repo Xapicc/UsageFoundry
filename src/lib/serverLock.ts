@@ -64,15 +64,27 @@ export const HEARTBEAT_MS = 1_000;
  * multiple of git's own ceiling rather than a fraction of it.
  *
  * A longer window costs very little, and that is a fact about `lockVerdict`
- * rather than optimism. Staleness is the *last* question it asks, and the only
- * case it decides is "the lock's pid is alive and has stopped beating": no lock
- * is claimed outright, a dead pid goes to the four-second observation, and our
- * own pid — the container restart, where the server reliably lands where its
- * predecessor was — is claimed outright. And a live pid that has stopped
+ * rather than optimism. Staleness is the *second* question it asks — after only
+ * "is there a lock at all", and before both pid comparisons — so it decides two
+ * cases rather than one. The case the window is really about is "the lock's pid
+ * is alive and has stopped beating", because a live pid that has stopped
  * beating is a *stalled owner*, which is precisely the one that must not be
  * claimed: taking it runs the six boot reconcilers over runs whose agents are
- * still working and still billing. What the longer window does cost is an owner
- * that died and whose pid a live process has since taken, which then holds the
+ * still working and still billing. A longer window only waits longer before
+ * claiming that, which is the safe direction. The second case is a lock whose
+ * beat is old and whose pid is *also* gone — what a server killed without
+ * releasing leaves behind, so the one an operator actually meets. Asking
+ * staleness first claims it outright instead of sending it to the four-second
+ * observation, and that is a shortcut rather than a second answer: a dead pid
+ * and a beat older than this window are two independent readings of the same
+ * corpse, and the observation would end in `claim` as well unless a third
+ * process wrote the file inside those four seconds — which `heartbeatVerdict`
+ * settles within a beat either way. Lengthening the window makes that case four
+ * seconds slower and never wrong, since past the window it is `observe` again
+ * and still ends in a claim. A missing lock is claimed outright, and so is one
+ * carrying our own pid — the container restart, where the server reliably lands
+ * where its predecessor was. What the longer window does cost is an owner that
+ * died and whose pid a live process has since taken, which then holds the
  * directory for up to this long. Bounded, rare, and the cheaper mistake.
  *
  * It is no longer the only defence either, which is the other half of why the

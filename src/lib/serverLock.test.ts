@@ -84,6 +84,19 @@ describe("lockVerdict", () => {
   it("watches a fresh lock whose pid has gone", () => {
     assert.equal(lockVerdict(held, self, false), "observe");
   });
+
+  it("claims a stale lock whose pid has gone, rather than watching it", () => {
+    // The one lock state where the order of the questions changes the verdict,
+    // and it is the state a server killed without releasing leaves behind.
+    // Staleness is asked before both pid comparisons, so this is `claim` and
+    // not the `observe` above: a dead pid and a beat older than STALE_MS are
+    // two independent readings of the same corpse. Asking staleness last —
+    // which `STALE_MS`'s own docblock claimed for a while — reaches the same
+    // claim four seconds later, and would spend those four seconds on every
+    // boot after a kill.
+    const old = { ...held, heartbeatAt: NOW - STALE_MS - 1 };
+    assert.equal(lockVerdict(old, self, false), "claim");
+  });
 });
 
 describe("heartbeatVerdict", () => {
