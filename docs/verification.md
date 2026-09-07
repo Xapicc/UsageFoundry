@@ -2116,6 +2116,33 @@ Built and exercised against real transcripts:
   exists to close and which typecheck, the unit suite and the build all passed
   over.
 
+- **All three surfaces the link added were rendered in Chromium on 2026-09-07 at
+  1280px, against the production build.** Not through `smoke-pages`, which
+  asserts about *load* and would have drawn none of these: every one needs a row
+  holding a task id, so a throwaway `DATA_DIR` was seeded through `src/lib` —
+  two chat proposals, one naming a live task and one naming a task then deleted,
+  and a **completed** run recorded against the live one. The server was started
+  and driven inside one shell invocation, because each gets its own network
+  namespace and a server left running in a previous one is not reachable.
+
+  - The **proposal card** draws `for “Fix the flaky auth test”` under the guard
+    line, in the row's own muted grey with the taskboard glyph and no tone — and
+    the second card, whose task was deleted between the proposal and the render,
+    draws `for a task since deleted` in the same place. Both cards still offer
+    Approve, which is the rule the card is drawn to: the deletion refuses
+    nothing.
+  - The **run page** draws `· for Fix the flaky auth test` between the origin
+    and *Start another like this*, linked to `/tasks`. The run is `completed`
+    and the task it names is still **Open** on the board two pages away, which
+    is the whole record-not-trigger rule visible in one pair of screenshots.
+  - The **board row** draws `started for it run-shot` under `Filed by the
+    orchestrator`, through the same `RunLink` the other three run links use.
+
+  No console error came from any of it. The one 503 each page logs is the
+  read-only data directory this container's server-lock notice already explains
+  — `/api/tasks`, `/api/runs/[id]`, `/api/usage` and `/api/settings` all answered
+  200, and the same 503 appears on pages this run did not touch.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the
@@ -2132,19 +2159,6 @@ through before trusting this unattended:
 > where those sentences will surface, so the first thing to check when that door
 > opens is that one of them reaches the page intact rather than as a generic
 > failure.
->
-> **Nothing added on 2026-09-07 for the chat and block doors has been rendered in
-> a browser.** The three tools and both refusals were driven through the real
-> route handler and are recorded above, but the two *surfaces* the link added are
-> not: the proposal card's "for “…”" line beside the model and guard marks, and
-> the run page's "· for …" beside the origin, including the "a task since
-> deleted" wording on both. The board row's "started for it" links go through
-> `RunLink`, which the 2026-09-06 pass did see, but not with this label. What is
-> verified is that each string is in the production client chunk and that the
-> DTO carries what draws it; what is not is any of them on a screen. The same
-> session had no browser and `npm run smoke-pages` was not run — it asserts about
-> load and would not have exercised these, since drawing one needs a proposal
-> holding a task id.
 >
 > **The chat turn's live view has never been rendered in a browser either**, and
 > it is the one addition whose whole point is what it looks like while it moves.
