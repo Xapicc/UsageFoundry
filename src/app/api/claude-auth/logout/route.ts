@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
-import type { ClaudeAuthDTO } from "@/lib/apiTypes";
-import { signOut } from "@/lib/claudeAuth";
+// Relative, not "@/…" — see the note in the login route.
+import type { ClaudeAuthDTO } from "../../../../lib/apiTypes";
+import { signOut } from "../../../../lib/claudeAuth";
+import { auditMutation, recordDurableMutation } from "../../../../lib/requestLog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,9 +20,19 @@ export const dynamic = "force-dynamic";
  * Distinct from `/api/logout`, which ends a *session of this app*. The two are
  * separate credentials and the Settings page keeps them in separate rows.
  */
-export async function POST() {
+async function postHandler(req: Request) {
   const res = await signOut();
   if (!res.ok) return NextResponse.json({ error: res.error }, { status: 502 });
   const auth: ClaudeAuthDTO = res.value;
+  // `warn`, unlike the sign-in beside it: this destroys the credential every
+  // billed child authenticates with, and every run still working will fail on
+  // its next cycle. An operator reading `ops_events` after a fleet went quiet
+  // needs this row above the noise rather than in it.
+  recordDurableMutation(req, "warn", "auth.provider_signed_out", {
+    provider: "claude",
+  });
   return NextResponse.json({ auth });
 }
+
+/** Wrapped for the reason `/api/claude-auth/login` is. */
+export const POST = auditMutation(postHandler);
