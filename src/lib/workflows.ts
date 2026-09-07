@@ -879,7 +879,11 @@ function normalizeSpec(
     if (taskId !== null) {
       const taskProblem = limits.taskRefusal(taskId);
       if (taskProblem) {
-        return { ok: false, reason: `“${title}” names a task that is not on the board: ${taskProblem}` };
+        // The spec named rather than the sentence wrapped, because
+        // `taskRefusal` already says the id is not on the board and which tool
+        // has the right ones: what a whole-emission refusal has to add is
+        // *which run in the list* carried it, or a model rewrites the wrong one.
+        return { ok: false, reason: `“${title}”: ${taskProblem}` };
       }
     }
 

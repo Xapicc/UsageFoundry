@@ -2438,10 +2438,26 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
   // must not become `--model "  "`.
   const model = String(args.model ?? "").trim() || null;
 
+  // The board row this run is for, refused here for the template's and the
+  // agent's reason and gating nothing at the click, unlike either of them: a
+  // proposal that named a task nobody can find is discovered by a person
+  // reading a card, which is the wrong moment, but a task *deleted* between the
+  // proposal and the press changes nothing about the run and must not refuse
+  // the approval. `taskRefusal` owns the wording so a chat and a block say the
+  // same thing about the same id. A closed task is accepted — see
+  // docs/agent/taskboard.md.
+  const taskId = String(args.taskId ?? "").trim() || null;
+  const board = taskId ? currentTaskKnowledge() : null;
+  if (taskId && board) {
+    const problem = taskRefusal(taskId, board);
+    if (problem) return text(problem, true);
+  }
+
   const proposal = createProposal(chatId, {
     templateId: template ? template.id : null,
     agentId,
     model,
+    taskId,
     title,
     task,
     promptOverride,
@@ -2465,6 +2481,16 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
   // is a fact the reply should carry rather than one the operator meets on a
   // bill. Silent where none was named: the card draws no row there either.
   const onModel = model ? ` It runs on ${model}.` : "";
+  // Said back for the model's reason and with the model's caveat: it is a fact
+  // the operator should meet on the card rather than work out. Worded as a
+  // record — "for" — because that is all it is: the approval does not claim the
+  // task and the run ending does not close it, and a reply reading as though it
+  // did is what would make a model stop filing the follow-up.
+  const forTask = taskId
+    ? ` It is recorded as being for “${board?.get(taskId)?.title ?? taskId}” on ` +
+      "the board; approving it does not claim that task and finishing will not " +
+      "close it."
+    : "";
   const after =
     dependsOn.length === 0
       ? ""
@@ -2476,7 +2502,7 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
           .join(" and ")} — say so, because both have to be approved in the ` +
         "same click unless the earlier one has already started.";
   return text(
-    `Proposed "${title}" (id ${proposal.id}) under ${guards}.${asAgent}${onModel}${after} ` +
+    `Proposed "${title}" (id ${proposal.id}) under ${guards}.${asAgent}${onModel}${forTask}${after} ` +
       "It is waiting for the operator to approve it; nothing is running.",
   );
 }

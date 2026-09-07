@@ -2073,6 +2073,49 @@ Built and exercised against real transcripts:
   harness's environment and one page's requirements rather than a defect in
   either.
 
+- **The board's three MCP tools were driven in-process on 2026-09-07, against
+  the real route handler and both capability subjects.** Not through a browser
+  and not through a spawned CLI: `src/app/api/mcp/route.ts` was compiled to
+  CommonJS beside `src/lib/**` with the repo's own `tsc`, `@/…` was resolved by
+  a `Module._resolveFilename` hook, `next/server` was shimmed down to the one
+  `NextResponse.json` the route uses, and capabilities were minted straight
+  through `mintCapability` — which is the only way to hold one, since `caps` is
+  an in-memory map and a token cannot be minted from outside the server process.
+  What that buys is the **gating and the wording** exercised for real rather than
+  reasoned about; what it does not cover is a model actually calling any of it
+  over stdio, which needs a billed run. Twenty-three assertions, all passing:
+
+  - **The subject split, off `tools/list` rather than off the source.** A chat
+    token is offered `list_tasks`, `get_task` and `create_task`; a block token is
+    offered the first two and not the third, and calling it anyway comes back as
+    the refusal that names `list_tasks` and the `taskId` field rather than
+    pointing at `emit_runs`.
+  - **Nothing on the surface can close a task.** `create_task` sent a
+    `status: "done"` was refused by name by `normalizeTaskInput` — the schema is
+    what a model is *told*, and this is the check that holds when it ignores it —
+    and the task it did file came back `open`, `origin: "chat"`, unclaimed.
+  - **An unknown id is refused by name at all three doors**, in `taskRefusal`'s
+    one wording: `get_task`, `propose_run` and `planEmission`, the last refusing
+    the **whole** emission and naming which spec carried it.
+  - **A filter that cannot be honoured is refused rather than quietly matching
+    nothing** — `status: "finished"`, and a `folder` sent without its `mountId`.
+  - **The link is written and moves nothing.** `propose_run` with a `taskId`
+    stored it on the row with `run_id` null; the card resolved it live to the
+    title and `open`; a *completed* run recorded against the task left it `open`
+    with `completed_by_run_id` null; and the board row listed the run under
+    "started for it".
+  - **A deleted task is a third answer, not a missing one.** With the row
+    deleted, `taskForRun` returned the id with `title` and `status` both null and
+    the card kept the id with a null title — which is what both surfaces draw as
+    "a task since deleted".
+
+  The bug this run caught is the reason it was worth doing: `taskId` was on
+  `propose_run`'s schema and **not** wired into the handler, so a known id was
+  silently dropped and an unknown one silently accepted — a proposal that read as
+  naming a task and carried none, which is exactly the failure `taskRefusal`
+  exists to close and which typecheck, the unit suite and the build all passed
+  over.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the
@@ -2082,11 +2125,26 @@ through before trusting this unattended:
 
 > **No refusal an actor other than the operator would get has been seen on a
 > screen.** Every non-operator branch of `taskTransitionRefusal` is unit-tested
-> and none has been rendered, because producing one needs a run or a chat turn
-> holding a task and neither has a door to this table yet — that is run 3/4's
-> and run 4/4's work. The board is where those sentences will surface, so the
-> first thing to check when a door opens is that one of them reaches the page
-> intact rather than as a generic failure.
+> and none has been rendered. The chat's and the block's doors opened on
+> 2026-09-07 and deliberately reach none of those branches: neither can move a
+> task at all, so the only refusal either produces is `taskRefusal`'s, and the
+> actor branches still need the work cycle's own tool — run 4/4. The board is
+> where those sentences will surface, so the first thing to check when that door
+> opens is that one of them reaches the page intact rather than as a generic
+> failure.
+>
+> **Nothing added on 2026-09-07 for the chat and block doors has been rendered in
+> a browser.** The three tools and both refusals were driven through the real
+> route handler and are recorded above, but the two *surfaces* the link added are
+> not: the proposal card's "for “…”" line beside the model and guard marks, and
+> the run page's "· for …" beside the origin, including the "a task since
+> deleted" wording on both. The board row's "started for it" links go through
+> `RunLink`, which the 2026-09-06 pass did see, but not with this label. What is
+> verified is that each string is in the production client chunk and that the
+> DTO carries what draws it; what is not is any of them on a screen. The same
+> session had no browser and `npm run smoke-pages` was not run — it asserts about
+> load and would not have exercised these, since drawing one needs a proposal
+> holding a task id.
 >
 > **The chat turn's live view has never been rendered in a browser either**, and
 > it is the one addition whose whole point is what it looks like while it moves.
