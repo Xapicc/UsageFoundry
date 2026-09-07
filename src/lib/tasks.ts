@@ -8,7 +8,9 @@ import type {
   TaskPriorityDTO,
   TaskStatusDTO,
 } from "./apiTypes";
-import { MAX_LIST_TASK_BODY } from "./apiTypes";
+// The two board figures live with the DTOs they bound, so the page that asks
+// for a whole board and the query that caps one read the same number.
+import { MAX_LIST_TASK_BODY, MAX_TASK_PAGE } from "./apiTypes";
 
 /**
  * The taskboard: one board across every mount, and the only module that
@@ -652,16 +654,6 @@ export function normalizeTaskPatch(
 /** Rows a board request gets when it names no size, or names an unreadable one. */
 const DEFAULT_TASK_PAGE = 100;
 
-/**
- * Rows one request may take, whatever it asks for.
- *
- * `MAX_RUN_PAGE`'s reasoning at a third of the size: a task carries a clipped
- * brief rather than a whole run's worth of columns, and nothing expires an open
- * task, so the ceiling is what stops a board that has grown for two years being
- * one request that serialises the whole table.
- */
-const MAX_TASK_PAGE = 300;
-
 export interface TaskListQuery {
   /** Rows to skip. Clamped into the list rather than refused. */
   offset?: number;
@@ -693,7 +685,7 @@ export interface TaskListPage {
   total: number;
   /** Where this page starts, after the clamp below. */
   offset: number;
-  /** The page size actually applied, after the cap above. */
+  /** The page size actually applied, after `MAX_TASK_PAGE`. */
   limit: number;
 }
 

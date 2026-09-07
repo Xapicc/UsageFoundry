@@ -268,7 +268,7 @@ async function postJSON(baseUrl, pathname, headers, body) {
 /**
  * Seed through the app's own API, never by writing to its database.
  *
- * Six of the nineteen pages are addressed by an id, and a page fetching an id
+ * Six of the twenty pages are addressed by an id, and a page fetching an id
  * that does not exist logs a console error for the 404 — so the ids have to be
  * real or a third of the pass measures the wrong thing. The app permits exactly
  * one writer to a data directory and says so at boot, which rules out opening
@@ -321,6 +321,7 @@ function routes({ runId, workflowId, instanceId }) {
     `/runs/${runId}/touched`,
     `/runs/${runId}/conflicts`,
     "/settings",
+    "/tasks",
     "/workflows",
     "/workflows/new",
     `/workflows/${workflowId}`,

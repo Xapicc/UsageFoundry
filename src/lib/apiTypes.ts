@@ -3531,6 +3531,21 @@ export interface TaskDTO {
 export const MAX_LIST_TASK_BODY = 200;
 
 /**
+ * Rows one board request may take, whatever it asks for.
+ *
+ * `MAX_RUN_PAGE`'s reasoning at a third of the size: a task carries a clipped
+ * brief rather than a whole run's worth of columns, and nothing expires an open
+ * task, so the ceiling is what stops a board that has grown for two years being
+ * one request that serialises the whole table.
+ *
+ * Here rather than in `tasks.ts` because the board asks for exactly this many
+ * and then says whether `total` was larger — see the note on the fetch in
+ * `src/app/tasks/page.tsx`. Written twice, the page would ask for a number the
+ * route silently reduced and report a whole board it had not been sent.
+ */
+export const MAX_TASK_PAGE = 300;
+
+/**
  * One row of the board's listing.
  *
  * The brief is clipped rather than dropped, `RunListItemDTO`'s shape: a board
