@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
-import type { CodexAuthDTO } from "@/lib/apiTypes";
-import { signOut } from "@/lib/codexAuth";
+// Relative, not "@/…" — see the note in the login route.
+import type { CodexAuthDTO } from "../../../../lib/apiTypes";
+import { signOut } from "../../../../lib/codexAuth";
+import { auditMutation, recordDurableMutation } from "../../../../lib/requestLog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,9 +19,17 @@ export const dynamic = "force-dynamic";
  * `/api/claude-auth/logout`, which is the other provider. Three credentials,
  * three rows on the Settings page, three routes.
  */
-export async function POST() {
+async function postHandler(req: Request) {
   const res = await signOut();
   if (!res.ok) return NextResponse.json({ error: res.error }, { status: 502 });
   const auth: CodexAuthDTO = res.value;
+  // `warn` for its Claude twin's reason: this destroys the credential a Codex
+  // run authenticates with, and the runs that fail afterwards will not name it.
+  recordDurableMutation(req, "warn", "auth.provider_signed_out", {
+    provider: "codex",
+  });
   return NextResponse.json({ auth });
 }
+
+/** Wrapped for the reason `/api/claude-auth/login` is. */
+export const POST = auditMutation(postHandler);

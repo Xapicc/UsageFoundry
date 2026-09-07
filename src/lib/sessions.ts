@@ -56,13 +56,21 @@ export function createSession(id: string, expiresAt: number): AuthSession {
  * End one session. Idempotent, and it keeps the row: a revocation that deleted
  * its own evidence would leave "was this cookie ever ended, or never issued?"
  * unanswerable at the one moment somebody is asking it.
+ *
+ * Returns whether *this* call was the one that ended it. The `WHERE revoked_at
+ * IS NULL` clause already makes a second call a no-op, and saying so is what
+ * lets `/api/logout` write one durable line per revocation rather than one per
+ * press — which matters on that route more than on any other, because it is
+ * exempt from the edge gate and a replayed cookie must not be a way to spend
+ * `ops_events`' cap.
  */
-export function revokeSession(id: string): void {
-  db()
+export function revokeSession(id: string): boolean {
+  const res = db()
     .prepare(
       "UPDATE auth_sessions SET revoked_at=? WHERE id=? AND revoked_at IS NULL",
     )
     .run(Date.now(), id);
+  return res.changes > 0;
 }
 
 /** End every session at once — the operator action for a credential that leaked. */

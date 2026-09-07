@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { reopenRestartClosed, restartClosedRuns } from "@/lib/orchestrator";
+import { auditMutation, recordDurableMutation } from "@/lib/requestLog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,7 +33,22 @@ export async function GET() {
  * cycles is refused by name, and reporting that as "the batch failed" would
  * hide the ones that did start.
  */
-export async function POST() {
+async function postHandler(req: Request) {
   const outcome = reopenRestartClosed();
+  // Durable and only when the press reached a run. This is a bulk start of
+  // billed children, and the count is the fact — the per-run detail is already
+  // on each run's own events, and a press over an empty list changed nothing.
+  if (outcome.reopened > 0 || outcome.refused.length > 0) {
+    recordDurableMutation(req, "info", "runs.restart_closed_reopened", {
+      reopened: outcome.reopened,
+      refused: outcome.refused.length,
+    });
+  }
   return NextResponse.json({ ok: true, ...outcome });
 }
+
+/**
+ * Wrapped like every other mutating route behind the gate. One press here can
+ * start twenty-five billed agents and nothing said it had been made.
+ */
+export const POST = auditMutation(postHandler);
