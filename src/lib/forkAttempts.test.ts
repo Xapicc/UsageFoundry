@@ -252,6 +252,52 @@ describe("recordForkAttempt", () => {
     );
   });
 
+  it("weighs the ceiling's cut against what forks here have measured", async () => {
+    // The figure the expensive gate divides by. `ceilingCut` used to hand it
+    // `plan.netBytes / BYTES_PER_TOKEN`, a quantity of file, to decide whether
+    // to spend ~$1.80 manufacturing a boundary. It now asks the table what
+    // forks on this install have actually taken off the API's window.
+    //
+    // The per-row floor is the part that fails silently. A resume carrying more
+    // than the cut left is a fork that removed nothing — which is what all five
+    // measured forks did — and letting its negative pay for another fork's
+    // positive would net two unrelated conversations against each other and
+    // reopen the gate on arithmetic nobody intended.
+    const { recordForkAttempt, markForkResumed, measuredForkRemoval } = await import(
+      "./contextPruning.js"
+    );
+    const { db } = await import("./db.js");
+
+    // The figure is install-wide by design — what forking is worth here is a
+    // property of the pinned CLI and not of one run — so a case about having no
+    // evidence has to own the table. Every assertion after this one in the file
+    // is scoped to its own run id.
+    db().exec("DELETE FROM fork_attempts");
+    assert.equal(
+      measuredForkRemoval(),
+      null,
+      "no settled fork is unknown, and unknown declines rather than reading zero",
+    );
+
+    // Removed 4,000. Measured.
+    markForkResumed(
+      recordForkAttempt("run-m1", "s", WRITTEN, 0, "boundary", null, 200_000)!,
+      true,
+      196_000,
+    );
+    // Grew by 3,000 across the resume: removed nothing, and may not subtract
+    // from the one above.
+    markForkResumed(
+      recordForkAttempt("run-m2", "s", WRITTEN, 0, "boundary", null, 200_000)!,
+      true,
+      203_000,
+    );
+    // Never measured, so not evidence either way and not a zero in the mean.
+    recordForkAttempt("run-m3", "s", WRITTEN, 0, "boundary", null, null);
+
+    assert.deepEqual(measuredForkRemoval(), { removed: 2_000, forks: 2 });
+  });
+
   it("credits nothing for a fork nobody measured against the API", async () => {
     // The defect this pair exists to close. `winnow fork` rewrites
     // `message.content` and leaves `toolUseResult`, which the resumed CLI

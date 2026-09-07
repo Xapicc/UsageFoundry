@@ -10202,6 +10202,20 @@ function predictedPayback(runId: string): number | null {
     //
     // Reading receipts alone left a run under the fork engine with no prediction
     // at all — see `freshestPayback`.
+    //
+    // **`d` is a byte figure here and deliberately stays one, which is the
+    // opposite of what `ceilingCut` now does.** The two gates are asked
+    // different questions. This one decides whether to cut at a *natural*
+    // boundary, where the resume was happening anyway and the cut rides it, so
+    // being optimistic costs almost nothing — and it is the only path that
+    // still produces written forks, which is where `measuredForkRemoval` gets
+    // the evidence the expensive gate divides by. Pessimism here would starve
+    // that and close the ceiling gate permanently, on no measurements at all.
+    // `ceilingPayback`'s question is whether to spend ~$1.80 manufacturing a
+    // boundary, and there a quantity of file may not stand in for a quantity of
+    // request. Both quantities in this reading are transcript-basis, so the
+    // ratio `paybackTurns` takes is at least internally consistent; that is the
+    // whole of what is claimed for it.
     const forkRow = db()
       .prepare(
         `SELECT ts, context_tokens_after AS s, net_bytes AS d FROM fork_attempts
