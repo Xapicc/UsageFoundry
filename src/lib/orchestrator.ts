@@ -6678,6 +6678,13 @@ async function forkAndAdopt(
   // ceiling that must not switch itself off and wrong here: a transcript-basis
   // "before" subtracted from a wire-basis "after" is a number in no units at
   // all, and the whole of this issue is one such subtraction.
+  //
+  // `apiContextSample` rather than `apiContextTokens` only because it is the
+  // one that reports its basis; its turn count is not wanted here. That costs a
+  // walk of the whole file where `apiContextTokens` stops at the first frame
+  // from the end, and it is affordable at this site alone: a fork already
+  // spawns winnow over this transcript and then parses the file it wrote, at
+  // most once per work cycle.
   const beforeReading = apiContextSample(transcript, null);
   const apiContextBefore =
     beforeReading.basis === "api" ? beforeReading.tokens : null;

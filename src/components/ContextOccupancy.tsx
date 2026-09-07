@@ -906,20 +906,7 @@ function CompositionStack({
         </Table>
       </div>
 
-      {/*
-        The stack's own age, and it has to be its own because the one age on
-        this pane belongs to something else. "read 40s ago" above is
-        `lastCheck`, the guard tick, which also paces the sparkline; this
-        reading is paced by distance instead — 40,000 tokens of movement, or a
-        cut — so the two are the same age only by coincidence and the stack was
-        routinely many minutes older than the line sitting over it.
-
-        "Shape taken", not "read": the verb is what separates this from the
-        line above, and `taken` is already what the absence copy and
-        `CompositionDetail` call this reading. Rendered with no band picked,
-        because the only place a reader could previously learn it was inside
-        `CompositionDetail`, behind a click nobody makes on first sight.
-      */}
+      {/* Its own age and not the pane's; see "Why the stack dates itself". */}
       <p className="mt-1.5 max-w-[68ch] text-xs leading-snug text-ink-muted">
         Shape taken{" "}
         {live ? fmtRelative(latest.ts, now) : `at ${fmtClock(latest.ts)}`}.
