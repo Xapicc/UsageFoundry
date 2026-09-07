@@ -5873,6 +5873,57 @@ through before trusting this unattended:
      procedure rather than a backlog, and because what was exercised was the
      path where the branch, the remote and the credential are all present.
 
+- **The class of every interface defect found from here on is recorded here, and
+  the running list has one entry.** This is a measurement rather than a
+  convention for its own sake, and it exists because the argument it settles is
+  currently resting on a sample of size one. `proposals/UIChecks/` recommends
+  reaching for a real engine — the expensive class — and its whole case for
+  doing so is the `w-auto`/`w-full` ordering in `src/components/RunLand.tsx`.
+  One defect. If the next three interface defects are **state machines** rather
+  than **layout**, then jsdom is the right instrument, the recommendation was
+  aimed at the wrong class, and the cheapest thing that would have said so is a
+  line per defect written at the moment somebody already knows the answer. There
+  is no published measurement of this ratio for anybody's codebase, so nothing
+  can be borrowed and the only way to have it is to keep it.
+
+  **What to record.** One line, appended to the list below, when an interface
+  defect is found — by a person looking, by a bug report, or by a check that
+  fails. It names what was wrong, where, how it was found, and its **class**,
+  using the five in
+  `proposals/UIChecks/01-what-only-a-rendered-page-decides.md` because they are
+  the ones the argument is phrased in: **A** decidable from the source text
+  (declared values standing in a relation, e.g. contrast); **B** decidable from
+  static markup (what element and what classes a component emits for given
+  props); **C** a state machine — needs a DOM and events but not layout (a
+  disclosure that will not toggle, a draft a poll overwrites, focus landing in
+  the wrong place); **D** layout — needs a real engine (a box that scrolls
+  sideways, a class that lost a cascade, a `sticky` footer behind a keyboard);
+  **E** needs a person (whether the copy is right, whether the reading order
+  makes sense, whether a ring reads as loud). Record the class of the **defect**,
+  which is the cheapest instrument that could have caught it — not the class of
+  the thing that happened to find it, since a person finds class D defects all
+  the time and that is the fact being measured. A defect that two instruments
+  could have caught takes the cheaper letter. When the letter is genuinely
+  arguable, say so on the line rather than picking one, because an honest "C or
+  D" still tells a later reader which half of the argument it lands in and a
+  confident wrong letter does not.
+
+  **The list.**
+
+  - **2026-08-23, `434c235`, class D.** The Land card's strategy select took the
+    whole row on a narrow window: Tailwind emits `.w-auto` ahead of `.w-full`,
+    so the `w-auto` written beside it lost silently and neither the markup nor
+    the type checker could say so. Found by a person at a narrow window; fixed
+    by moving the width onto a wrapper (`src/components/RunLand.tsx:623-636`).
+
+  **And this is not "the interface is now checked".** Even with the pass above
+  written down and the smoke pass `proposals/UIChecks/09-recommendation.md`
+  recommends in place, the classes stand at: A by arithmetic, B by
+  assertion, D at a floor, E by a person, and **C — the state machines — covered
+  by nothing at all**. That hole is deliberate and it is written here so a green
+  `npm test` cannot be read as covering it. The list above is the thing that
+  would tell a future reader whether leaving it open is still the right call.
+
 There is no linter run in this repo, and `npm test` covers a deliberately short
 list: the folder-collision predicate, which queued runs may start, the budget
 policy, how a provider refusal is classified and backed off from, which prompt a
