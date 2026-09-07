@@ -596,6 +596,10 @@ services:
     # the exact moment the last agent died and throw away the accounting this
     # exists to recover. Not much longer either: `restart: unless-stopped` means
     # this is also how long a routine restart takes.
+    #
+    # `deployment.test.ts` pins this against SHUTDOWN_GRACE_MS, with room left
+    # for the reconciliation that follows the wait, so neither half can be
+    # raised or lowered alone.
     stop_grace_period: 30s
 
     restart: unless-stopped

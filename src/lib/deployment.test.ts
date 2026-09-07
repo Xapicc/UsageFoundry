@@ -620,6 +620,119 @@ describe("the container's memory ceiling and the server's heap agree", () => {
 });
 
 /**
+ * Docker's duration spelling as milliseconds — one or more `{value}{unit}`
+ * pairs, largest unit first. Anything else fails here rather than being guessed
+ * at: compose refuses a duration it cannot read, so a value this cannot parse is
+ * a value the deployment does not have.
+ */
+function durationMs(spec: string): number {
+  const scale: Record<string, number> = {
+    us: 1 / 1000,
+    ms: 1,
+    s: 1_000,
+    m: 60_000,
+    h: 3_600_000,
+  };
+  const parts = [...spec.trim().matchAll(/(\d+(?:\.\d+)?)(us|ms|s|m|h)/g)];
+  assert.ok(
+    parts.length > 0 && parts.map((part) => part[0]).join("") === spec.trim(),
+    `cannot read "${spec}" as a Docker duration`,
+  );
+  return parts.reduce((total, part) => total + Number(part[1]) * scale[part[2]], 0);
+}
+
+const orchestratorSource = fs.readFileSync(
+  path.join(root, "src", "lib", "orchestrator.ts"),
+  "utf8",
+);
+
+/**
+ * A millisecond literal read out of `orchestrator.ts`'s source, `_` separators
+ * and all. Read as text rather than imported because importing that module
+ * opens the database and installs the fleet's long-lived state on `globalThis`,
+ * which is a great deal to do for two numbers.
+ */
+function orchestratorMs(what: string, pattern: RegExp): number {
+  const match = pattern.exec(orchestratorSource);
+  assert.ok(match, `orchestrator.ts no longer states ${what} where this can read it.`);
+  return Number(match[1].replace(/_/g, ""));
+}
+
+/**
+ * How long Docker gives the shutdown, against how long the shutdown takes.
+ *
+ * On `SIGTERM` the server does not exit. `shutdownRuns` interrupts every live
+ * run through the same ladder an operator's Stop uses — `SIGINT` at once,
+ * `SIGTERM` at 3s, `SIGKILL` at 8s — waits up to `SHUTDOWN_GRACE_MS` for the
+ * children to go *and* for the loops behind them to write what the cycle cost,
+ * and only then reconciles whatever they did not finish out of the transcripts.
+ * Docker sends that `SIGTERM` and `SIGKILL`s the container `stop_grace_period`
+ * later, whatever the process is in the middle of.
+ *
+ * So the two are a pair, in two files, neither of which typechecks against the
+ * other, and the edit that breaks them is an ordinary one: `SHUTDOWN_GRACE_MS`
+ * is exactly the number somebody raises when a slow agent is not dying cleanly.
+ * Past `stop_grace_period` the process is killed mid-reconciliation, which is
+ * the failure `shutdownRuns` was written to end — every in-flight cycle's spend
+ * lost, and `active_started_at` left set on cycles whose agents are gone, which
+ * `installBudget` and a workflow instance's budget both bound
+ * `telemetrySpendSince` below by. That half fails *open*: it widens two ceilings
+ * at once, silently, in the direction a guard may never move by accident, and
+ * the only symptom is spend that does not add up.
+ *
+ * Nothing else can notice. Both values are correct as literals, both files
+ * parse, the container starts, and `docker compose stop` returns 0 either way —
+ * Docker says nothing when a grace period runs out.
+ */
+describe("the container's stop grace and the server's shutdown grace agree", () => {
+  const stopGraceMs = () => durationMs(shippedDefault("stop_grace_period"));
+  const shutdownGraceMs = () =>
+    orchestratorMs("SHUTDOWN_GRACE_MS", /^export const SHUTDOWN_GRACE_MS = ([\d_]+);$/m);
+
+  it("kills the container later than the server stops waiting", () => {
+    // The headroom is what `reconcileInterruptedCycles` runs in. That happens
+    // *after* the wait and nothing bounds it: one `scanUsage` per in-flight
+    // cycle, awaited one at a time. Ten seconds is a floor rather than a
+    // measurement — Docker is not available where these tests run, so no real
+    // shutdown was timed — and it is chosen to fail on the edit rather than to
+    // model the work. It leaves the shipped pair ten seconds of slack and
+    // refuses both halves of the plausible drift: `stop_grace_period` dropped
+    // back to Docker's own 10s default, and `SHUTDOWN_GRACE_MS` raised until it
+    // fills the grace it was given.
+    const headroom = 10_000;
+    const stop = stopGraceMs();
+    const wait = shutdownGraceMs();
+    assert.ok(
+      stop >= wait + headroom,
+      `stop_grace_period is ${stop}ms and the server waits ${wait}ms before it ` +
+        "even starts reconciling. Raise stop_grace_period in docker-compose.yml " +
+        "or lower SHUTDOWN_GRACE_MS, or Docker SIGKILLs the process part-way " +
+        "through the accounting that path exists to recover.",
+    );
+  });
+
+  it("waits past the last moment a child could still be coming back", () => {
+    // `SHUTDOWN_GRACE_MS`'s own docblock is this assertion in prose: ten seconds
+    // is "the first moment after that last step at which a child can be said not
+    // to be coming back". Raise the ladder past it and the wait ends while the
+    // SIGKILL meant to end it is still pending, so the loops the grace exists to
+    // give a chance have not had one — the same lost accounting as above,
+    // reached from the other side and without touching either grace.
+    const ladderEnd = orchestratorMs(
+      "the kill ladder's SIGKILL step",
+      /signalTree\(child, "SIGKILL"\);\s*\n\s*\}, ([\d_]+)\)/,
+    );
+    const wait = shutdownGraceMs();
+    assert.ok(
+      ladderEnd < wait,
+      `the kill ladder reaches SIGKILL at ${ladderEnd}ms and the shutdown stops ` +
+        `waiting at ${wait}ms. The grace has to outlast the ladder, or it ends ` +
+        "before the children it is waiting for are dead.",
+    );
+  });
+});
+
+/**
  * The agreement that decides whether a *correct* install accuses itself.
  *
  * Compose cannot omit an environment key conditionally, so every optional

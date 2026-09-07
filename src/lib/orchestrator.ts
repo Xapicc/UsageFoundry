@@ -10718,7 +10718,10 @@ export function killAllAgents(sig: NodeJS.Signals = "SIGTERM"): number {
  *
  * `docker-compose.yml` sets `stop_grace_period` above this. Docker's default is
  * 10s and would `SIGKILL` the server at the exact moment the last agent died,
- * which is the accounting this whole path exists to recover.
+ * which is the accounting this whole path exists to recover. Both halves of
+ * that — the ladder below this number, and `stop_grace_period` above it with
+ * room left for `reconcileInterruptedCycles` — are pinned in
+ * `deployment.test.ts`, because neither file typechecks against the other.
  */
 export const SHUTDOWN_GRACE_MS = 10_000;
 
