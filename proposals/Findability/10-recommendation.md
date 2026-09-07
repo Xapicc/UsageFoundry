@@ -21,7 +21,7 @@ page has to remember anything.
 **Catches:** the largest corpus this survey measured anywhere in the app. 141
 branches in one repository, 121 of them named `uf/<repo>-<hash>-<n>-<hash>`,
 served 60 at a time (`MAX_INVENTORY = 60`, `src/lib/land.ts:2334`) with no way to
-narrow. An operator looking for the branch that did a particular piece of work has
+narrow — and 143 by the time this file was finished, fifteen minutes later (§01). An operator looking for the branch that did a particular piece of work has
 to page three times through indistinguishable hashes.
 
 **Why it is nearly free.** §01 shows a branch is not an object: `branchBearingRuns()`

@@ -68,7 +68,14 @@ uf/usagefoundry-721638d11c0b-1-5c471f16
 concurrent-runs-per-folder
 ```
 
-**121 of 141 names are machine-generated and mutually indistinguishable.** This
+**121 of 141 names are machine-generated and mutually indistinguishable.**
+
+The same two commands re-run about fifteen minutes later, at the end of writing
+this survey, returned **143 and 123**: two branches arrived while the file was
+being written, from sibling agent runs working in this container. That is not
+noise to be averaged away — it is the shape of the corpus. Branches are produced
+by the machine, continuously, without an operator present, which is exactly the
+test §09 uses to decide what deserves a search surface. This
 kills the obvious design before it is written: a branch search that matches on
 *branch name* is worthless here. What identifies a branch to a person is the task
 its run was given, which is `runs.prompt` — the column `listRunsPage` already
@@ -165,5 +172,6 @@ install are not measured here and are not estimated.** The command a human shoul
 run on a live install is in §10's falsifier.
 
 What *was* measured on real data is what lives outside the database: 141 branches
-and 15 repositories on this machine, 2,157 Claude session transcripts under
-`~/.claude/projects`, and 1,415 markdown notes in the vault at `/workspace2`.
+(143 fifteen minutes later) across 15 repositories on this machine, 2,160 Claude
+session transcripts under `~/.claude/projects`, and 1,415 markdown notes in the
+vault at `/workspace2`.

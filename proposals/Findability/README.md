@@ -17,8 +17,8 @@ searches more than one kind at once.
 not of an index.* Three things, ranked:
 
 1. **Give `q=` to the two routes whose corpus is measured large and lacks it** —
-   `/api/branches` (141 branches in one repository on this machine) and
-   `/api/dreaming`. Use the predicate `src/lib/orchestrator.ts:1044-1049` already
+   `/api/branches` (141 branches in one repository on this machine, 143 fifteen
+   minutes later) and `/api/dreaming`. Use the predicate `src/lib/orchestrator.ts:1044-1049` already
    runs, which was measured at 4.1 ms over 50,000 rows with no index of its own
    (`src/lib/orchestrator.ts:1018-1026`). No new table, no new dependency, no new
    mechanism.

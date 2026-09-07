@@ -19,7 +19,7 @@ By that test:
 | runs | the machine — one per started task | search (has it) |
 | chat threads | the operator, but per conversation, unbounded over time | search (has it) |
 | knowledge notes | outside the app entirely — 1,415 measured | search (has it) |
-| **branches** | the machine — 141 measured, 121 auto-named | **search (missing)** |
+| **branches** | the machine — 141 measured, 143 fifteen minutes later, 121 auto-named | **search (missing)** |
 | **dreaming notes** | the machine — written unattended, capped at 500 | **search (missing)** |
 | agents | the operator, by hand, one at a time | **no search** |
 | templates | the operator, by hand, one at a time | **no search** |
