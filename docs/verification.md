@@ -5792,6 +5792,87 @@ through before trusting this unattended:
     an exhausted credit on a Codex run is still filed under Claude's sentences.
     Exhaust a Codex account and read `stop_reason`.
 
+- **A four-item release pass is now written down, and nothing has performed it.**
+  `proposals/UIChecks/` sorted this app's interface claims by the cheapest
+  instrument that could decide each one — arithmetic over the declared tokens,
+  `renderToStaticMarkup` over the emitted markup, a DOM for events, a real engine
+  for layout, and a person for what is left — and the last of those is the only
+  class with no instrument in this repository at all. This is that class written
+  as a **procedure** rather than left as a memory: performed page by page before a
+  release, at two widths. It is deliberately not a general "check the UI"
+  instruction. Each of the four items is bound to something this app has already
+  got wrong, and each names ground no assertion here reaches. The pages are the
+  nineteen under `src/app/**/page.tsx` — `/`, `/account`, `/agents`, `/branches`,
+  `/chat`, `/dreaming`, `/knowledge`, `/login`, `/runs`, `/runs/[id]`,
+  `/runs/[id]/conflicts`, `/runs/[id]/touched`, `/runs/new`, `/settings`,
+  `/workflows`, `/workflows/[id]`, `/workflows/[id]/edit`,
+  `/workflows/[id]/instances/[instanceId]`, `/workflows/new` — and the pass is
+  each item across all of them rather than each page across all four items,
+  because the items need different states seeded and the pages do not.
+  **Nothing below has been performed**, so the one number that would say whether
+  writing it was worth the afternoon — how many pages fail it the first time —
+  does not exist.
+
+  1. **Every page at 390px: nothing scrolls the body sideways, no control is
+     clipped, and every `stack`ed table names its own fields.** This is the item
+     with a recorded failure behind it rather than a worry: `434c235` moved the
+     Land card's strategy select onto a wrapper because Tailwind emits `.w-auto`
+     ahead of `.w-full`, so the `w-auto` beside it lost silently and the select
+     took the whole row (`src/components/RunLand.tsx:623-636`). Nothing saw that
+     but a person at a narrow window, and nothing that runs could have: a class
+     string is a string until an engine cascades it. The same shape is why the
+     runs list stayed 916px wide however narrow the window got and why
+     `SegmentedControl` carries `max-md:flex-wrap`. `src/components/ui/Table.test.tsx` pins that
+     a stacked cell names its own field *in the markup*; whether that label is on
+     screen, unclipped and beside its value at 390px is layout, and the survey
+     counted 222 viewport-conditional classes deciding it, none of them exercised
+     by anything in `npm test`.
+  2. **Every page in both themes, and once with the app on "Match system" while
+     the OS appearance changes.** Three theme states, not two: an absent
+     `[data-theme]` follows the OS through `color-scheme` and `light-dark()`, and
+     the two explicit values override it — so the OS switch is a fourth thing to
+     do and it is the boundary that fires no React render. What a person is
+     deciding here is not contrast: that is settled by arithmetic over the
+     declared tokens in `proposals/OperatorInterface/`, better than a browser
+     settles it, and this item must not quietly become an accessibility pass.
+     What is left is whether the page *reads* in the theme the operator actually
+     runs it in, and one mechanism that only a rendered page shows — a `<canvas>`
+     probes its colours rather than inheriting them, so a toggle with one open
+     must re-probe without a reload. That is already asked of the path map at
+     item 11 of its own pass above and is asked of no other canvas on this list.
+  3. **Tab through each page's primary flow; the focus ring is visible on every
+     stop, and the order is the order the page reads in.** The ring is one
+     token used everywhere, and `proposals/OperatorInterface/` names the reading
+     of its alpha — whether it is loud enough for somebody who looks at it all
+     day — as the single judgement that would overturn that survey's
+     recommendation. A judgement rather than a measurement, which is what puts it
+     here. Three places to be deliberate. Inside the sidebar drawer, quick open
+     and any `Sheet`, the trap and the Esc route are the browser's because all
+     three are native `<dialog>`s, so what is being checked is that nothing here
+     has broken them rather than that they exist. On the settings page, where the
+     search focuses a control it scrolled into view. And through the one
+     `keydown` listener the shell registers: ⌘1…⌘9 and ⌘K are bound, ⌘↩ is
+     deliberately bound to nothing so a form's own commit chord keeps working,
+     and a keystroke that disappears in a text field looks exactly like a dropped
+     character.
+  4. **The four controls that need state to exist at all, exercised one at a
+     time.** They are on this list because no automated option reaches them
+     without seeding, which is the same reason they have sat unrendered above.
+     A **queued run's priority input**, which needs a run actually sitting in the
+     queue behind `maxConcurrentRuns`, and whose `draft === null` rule decides a
+     value on screen rather than throwing. The **Backups row's `unreadable`
+     state** on the Storage card, which needs a directory this server cannot
+     read and does not appear at all otherwise. The **chat turn's live view**,
+     whose whole point is what it looks like while it moves, in a region that
+     also polls — a still frame is not the check. And the **Deliver button** —
+     `canDeliver` at `src/components/RunLand.tsx:360`, drawn as **Open pull
+     request** on the Land card — which is the one of the four that is **no
+     longer open**: it
+     was pressed against a real GitHub remote and opened a real pull request, and
+     that is recorded above. It stays named here because a release pass is a
+     procedure rather than a backlog, and because what was exercised was the
+     path where the branch, the remote and the credential are all present.
+
 There is no linter run in this repo, and `npm test` covers a deliberately short
 list: the folder-collision predicate, which queued runs may start, the budget
 policy, how a provider refusal is classified and backed off from, which prompt a
