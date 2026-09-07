@@ -514,19 +514,6 @@ d.transaction(() => {
     insR.run(runById.get(runId).created_at + int(0, 3600_000), runId,
       runById.get(runId).session_id, rnd() < 0.4 ? 1 : 0, int(50000, 900000));
   }
-  const insP = d.prepare(`
-    INSERT INTO plan_observations (ts, run_id, session_id, tier, tool_calls, stripped,
-      removed_bytes, pointer_overhead, net_bytes, suffix_bytes, break_even_turns, pruned)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
-  for (let i = 0; i < 6000; i++) {
-    const runId = runIds[int(0, N_RUNS - 1)];
-    const removed = int(50000, 800000);
-    insP.run(runById.get(runId).created_at + int(0, 3600_000), runId,
-      runById.get(runId).session_id, pick(["standard", "aggressive"]),
-      int(1, 400), int(0, 300), removed, int(1000, 40000),
-      Math.floor(removed * 0.9), int(100000, 400000),
-      Number((rnd() * 40).toFixed(2)), rnd() < 0.5 ? 1 : 0);
-  }
 })();
 
 // ------------------------------------------------------ chat / webhook / auth
@@ -574,7 +561,7 @@ d.transaction(() => {
       rnd() < 0.2 ? created + 86400_000 : null);
   }
 })();
-for (const t of ["fork_attempts", "resume_probes", "plan_observations", "chat_sessions", "chat_messages", "chat_turn_spend", "webhook_deliveries", "auth_sessions"]) {
+for (const t of ["fork_attempts", "resume_probes", "chat_sessions", "chat_messages", "chat_turn_spend", "webhook_deliveries", "auth_sessions"]) {
   console.log(`${t}:`, d.prepare(`SELECT COUNT(*) n FROM ${t}`).get().n);
 }
 

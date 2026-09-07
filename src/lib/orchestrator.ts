@@ -94,7 +94,6 @@ import {
   pruningEnabled,
   recordForkAttempt,
   recordPrune,
-  recordPlanObservation,
   recordPruneDecision,
   recordResumeProbe,
   WINNOW_MISSING_REASON,
@@ -5292,7 +5291,7 @@ export function sandboxSettings(scope: SandboxScope): SandboxPolicy {
       // deliberately **not**: it is not asked to run git, and the merge commit
       // is made by this server afterwards once the result has been checked —
       // and, for the resolver only, the toolchain caches, since
-      // `settings.resolveVerifyTools` is the operator naming a build command
+      // `settings.resolveAllowedTools` is the operator naming a build command
       // for it to run against the merge it wrote.
       return writeSet(
         scope.permissionMode === "plan" ? [] : [scope.cwd, ...BUILD_CACHE_DIRS],
@@ -6466,7 +6465,7 @@ async function settleBoundary(
   // was removed is exactly as interesting a comparison as one where something
   // was. Awaited rather than left floating for `pruneAtBoundary`'s own reason:
   // the next spawn must not read the transcript while a subprocess is on it.
-  await observePlan(id, sessionId, cut);
+  await observePlan(id, sessionId);
 }
 
 /**
@@ -6693,8 +6692,12 @@ async function forkAndAdopt(
 }
 
 /**
- * Ask winnow's newer rule engine what it would have removed here, and write the
- * answer down. Acts on nothing.
+ * Ask winnow's newer rule engine what it would have removed here, and say so in
+ * the run's log. Acts on nothing.
+ *
+ * The answer used to go to a `plan_observations` row as well. Nothing ever read
+ * one — the log line was the whole of the audience the comparison ever had — so
+ * the table is gone and the line is what is left.
  *
  * This is the only place in the app where SPEC section 4's rules run at all.
  * The pruner is `winnow treat`, the inherited engine, and the two classifiers
@@ -6705,11 +6708,7 @@ async function forkAndAdopt(
  * Silent on every failure. An observation that could end a cycle would be worth
  * less than not taking it.
  */
-async function observePlan(
-  id: string,
-  sessionId: string | null,
-  pruned: boolean,
-): Promise<void> {
+async function observePlan(id: string, sessionId: string | null): Promise<void> {
   // Gated here as well as at `pruneAtBoundary`'s head, because this is reached
   // through `settleBoundary` on the off branch too — and an observation is
   // still a subprocess spawned against the operator's transcript. Read-only is
@@ -6722,9 +6721,8 @@ async function observePlan(
     if (!transcript) return;
     const plan = await planCut(transcript);
     if (!plan) return;
-    recordPlanObservation(id, sessionId, plan, pruned);
-    // Logged rather than only stored, because a comparison nobody sees is one
-    // nobody acts on — and the whole point of the row is to be argued with.
+    // The whole output. A comparison nobody sees is one nobody acts on, and
+    // this is the only place it is seen.
     const breakEven =
       plan.breakEvenTurns === null
         ? "nothing would fire"
@@ -6734,7 +6732,7 @@ async function observePlan(
       `winnow's rule engine, asked about this conversation at tier ${plan.tier}: ` +
         `${plan.stripped} of ${plan.toolCalls} tool results, ` +
         `${fmtTokens(Math.round(plan.netBytes / BYTES_PER_TOKEN))} tokens net — ${breakEven}. ` +
-        `Recorded for comparison; nothing acted on it.`,
+        `Shown for comparison; nothing acted on it.`,
     );
   } catch {
     // See above.
@@ -7010,6 +7008,76 @@ export function cycleCostAfterResult(prevUSD: number, reported: unknown): number
   const cost = Number(reported ?? 0);
   if (!Number.isFinite(cost) || cost <= 0) return prevUSD;
   return Math.max(prevUSD, cost);
+}
+
+/**
+ * Distinct `${cli}:${type}` pairs this *process* has already filed an ops event
+ * for.
+ *
+ * A second guard beside `acc.unknownEventTypes`, because the two answer
+ * different questions and need different lifetimes. The per-cycle set keeps the
+ * run's own log to one line per type, which is what the operator reading *that
+ * run* needs. This one keeps `ops_events` to one row per type per boot, which is
+ * what the operator who has only noticed that runs look thinner than they used
+ * to needs: a dated first sighting they can find without opening every run.
+ *
+ * Per boot rather than forever, so a restart re-files it — the table is capped
+ * at 500 rows and a sighting evicted months later must not read as "this stopped
+ * happening". Per cycle would be catastrophic here: `ops_events` is written a
+ * handful of times per boot by design, so a renamed high-frequency type would
+ * evict every restart and reconciliation record on the box within minutes.
+ *
+ * `globalThis`-pinned for the reason every long-lived singleton here is, under
+ * its own key: module state resets on every request under `next dev`, and a
+ * dedupe that forgets is the flood it exists to prevent.
+ */
+const unknownEventTypesReported = ((globalThis as unknown as {
+  __ufUnknownStreamEvents?: Set<string>;
+}).__ufUnknownStreamEvents ??= new Set<string>());
+
+/**
+ * Say, once, that a CLI sent an event type this build has no branch for.
+ *
+ * Shared by both parsers rather than written twice, because the whole of what
+ * this fixes is that it *was* written once: the Codex parser announced its
+ * unknowns and the Claude parser — the one on every run whose `provider` is
+ * null, which is every run not created through `POST /api/runs` — dropped them
+ * silently. Two copies is how that asymmetry came back a second time.
+ *
+ * **Never fatal.** An unrecognised type is a provider moving under a pin, and a
+ * parser that threw on one would turn a cosmetic rename into every run on the
+ * box failing. It is reported and then ignored, exactly as before.
+ *
+ * Two sinks with two lifetimes, per `unknownEventTypesReported`: the run's log,
+ * where the reader of the odd run finds it, and one `ops_events` row per boot,
+ * which outlives the run and its 30-day event retention.
+ */
+function noteUnknownStreamEvent(
+  runId: string,
+  cli: string,
+  type: string,
+  ev: Record<string, unknown>,
+  acc: IterationResult,
+): void {
+  if (acc.unknownEventTypes.has(type)) return;
+  acc.unknownEventTypes.add(type);
+
+  log(
+    runId,
+    `This work cycle's CLI sent an event this app does not recognise: ` +
+      `"${type}". ${cli}'s event vocabulary has moved, and whatever that ` +
+      `event carried — a session id, a cost, a stop reason — is not being ` +
+      `read. Reported once per event type per cycle.`,
+    { stream: "stdout", raw: ev },
+  );
+
+  // The type and the CLI and nothing else. `ops.ts` forbids handing this a
+  // payload object, and an unrecognised event's body is the one place a prompt
+  // or a folder path could be hiding — it is unparsed by definition.
+  const seen = `${cli}:${type}`;
+  if (unknownEventTypesReported.has(seen)) return;
+  unknownEventTypesReported.add(seen);
+  recordOpsEvent("warn", "stream.unknown_event", { cli, type, runId });
 }
 
 /** Interpret one line of Claude Code's `stream-json` output. */
@@ -7367,7 +7435,15 @@ function handleStreamLine(
         );
       }
     }
+    return;
   }
+
+  // A fifth top-level type. `assistant`, `user`, `result` and `system` are what
+  // `--output-format stream-json` was measured to write, so anything here means
+  // the pin has moved — and the symptom of missing that is a cycle with no cost,
+  // no session id and no stop reason, which every page in this app renders as a
+  // cycle that simply had nothing to say.
+  noteUnknownStreamEvent(runId, "Claude Code", type, ev, acc);
 }
 
 /**
@@ -7380,16 +7456,14 @@ function handleStreamLine(
  * `agent_message`, `reasoning`, `command_execution`, `file_change`,
  * `mcp_tool_call`, `web_search`, `todo_list` and `error`.
  *
- * **Nothing here goes silently.** `orchestrator.ts`'s Claude parser drops an
- * event type it does not know without a word, which was survivable while there
- * was one format to keep up with and is not now: a second format doubles the
- * ways a pin can move under this app, and the symptom of a missed rename is a
- * cycle that reports no cost, no session and no stop reason — indistinguishable
- * on every page from a cycle that simply had nothing to say. So an unrecognised
- * `type` is written to the run's own log, where an operator reading the run that
- * behaved oddly will actually find it. Once per distinct type per cycle, via
- * `acc.unknownEventTypes`: a rename of `item.updated` would otherwise be one log
- * row per token of a long turn.
+ * **Nothing here goes silently**, and nothing in the Claude parser does either:
+ * both hand a `type` they have no branch for to `noteUnknownStreamEvent`. A
+ * second format doubles the ways a pin can move under this app, and the symptom
+ * of a missed rename is a cycle that reports no cost, no session and no stop
+ * reason — indistinguishable on every page from a cycle that simply had nothing
+ * to say. The `default:` arm below is the whole of this parser's share of that;
+ * the bounding, the wording and the durable record are one function so that the
+ * two parsers cannot drift apart again.
  */
 function handleCodexStreamLine(
   runId: string,
@@ -7520,17 +7594,7 @@ function handleCodexStreamLine(
     }
 
     default: {
-      if (!acc.unknownEventTypes.has(type)) {
-        acc.unknownEventTypes.add(type);
-        log(
-          runId,
-          `This work cycle's CLI sent an event this app does not recognise: ` +
-            `"${type}". Codex's event vocabulary has moved, and whatever that ` +
-            `event carried — a session id, a cost, a stop reason — is not being ` +
-            `read. Reported once per event type per cycle.`,
-          { stream: "stdout", raw: ev },
-        );
-      }
+      noteUnknownStreamEvent(runId, "Codex", type, ev, acc);
     }
   }
 }
@@ -9657,7 +9721,7 @@ export async function checkContextCeilings(): Promise<void> {
     //
     // `plan` is read-only, is allowed while the session is live, and is the same
     // subprocess `observePlan` already spawns at every boundary — whose answer
-    // went into `plan_observations` and was read by nothing.
+    // is logged for an operator to argue with and acted on nowhere.
     //
     // Re-measured on growth rather than on every tick. This function runs once a
     // minute and the plan spawns winnow over the whole transcript, so a run
@@ -10718,7 +10782,10 @@ export function killAllAgents(sig: NodeJS.Signals = "SIGTERM"): number {
  *
  * `docker-compose.yml` sets `stop_grace_period` above this. Docker's default is
  * 10s and would `SIGKILL` the server at the exact moment the last agent died,
- * which is the accounting this whole path exists to recover.
+ * which is the accounting this whole path exists to recover. Both halves of
+ * that — the ladder below this number, and `stop_grace_period` above it with
+ * room left for `reconcileInterruptedCycles` — are pinned in
+ * `deployment.test.ts`, because neither file typechecks against the other.
  */
 export const SHUTDOWN_GRACE_MS = 10_000;
 

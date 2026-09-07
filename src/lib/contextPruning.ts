@@ -2719,44 +2719,6 @@ function noteBookkeepingFailure(site: string, err: unknown): void {
   recordOpsEvent("error", "context_pruning.record_failed", fields);
 }
 
-/**
- * Record what the new engine would have done at this boundary.
- *
- * Best-effort and never thrown from, on `recordPrune`'s reasoning.
- */
-export function recordPlanObservation(
-  runId: string,
-  sessionId: string | null,
-  plan: PlannedCut,
-  pruned: boolean,
-): void {
-  try {
-    db()
-      .prepare(
-        `INSERT INTO plan_observations
-           (ts, run_id, session_id, tier, tool_calls, stripped, removed_bytes,
-            pointer_overhead, net_bytes, suffix_bytes, break_even_turns, pruned)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        Date.now(),
-        runId,
-        sessionId,
-        plan.tier,
-        plan.toolCalls,
-        plan.stripped,
-        plan.removedBytes,
-        plan.pointerOverhead,
-        plan.netBytes,
-        plan.suffixBytes,
-        plan.breakEvenTurns,
-        pruned ? 1 : 0,
-      );
-  } catch (err) {
-    noteBookkeepingFailure("recordPlanObservation", err);
-  }
-}
-
 /* ------------------------------------------------------------------ */
 /* The fork engine — a new transcript, a new session id                */
 /* ------------------------------------------------------------------ */

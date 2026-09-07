@@ -5,6 +5,7 @@ import {
   setFleetPaused,
   stopFleet,
 } from "@/lib/fleet";
+import { auditMutation, recordDurableMutation } from "@/lib/requestLog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,18 +27,45 @@ export async function GET() {
   return NextResponse.json({ state: fleetState() });
 }
 
-export async function POST(req: Request) {
+async function postHandler(req: Request) {
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   const action = String(body.action ?? "");
 
   if (action === "stop") {
     // Synchronous from the first instance to the last run; see `stopFleet`.
     const report = stopFleet();
+    // Durable, and only when it landed on something. This is the widest single
+    // press in the app — every run in flight and every started instance — and
+    // the runs themselves record it as `FLEET_CAUSE`, which says what happened
+    // to each and never that one press did all of them at once. A stop over an
+    // idle install changed nothing and gets the request line only.
+    const touched =
+      report.signalled.length +
+      report.cancelled.length +
+      report.blocked.length +
+      report.instances.length;
+    if (touched > 0) {
+      recordDurableMutation(req, "warn", "fleet.stopped", {
+        signalled: report.signalled.length,
+        cancelled: report.cancelled.length,
+        blocked: report.blocked.length,
+        instances: report.instances.length,
+      });
+    }
     return NextResponse.json({ report, state: fleetState() });
   }
 
   if (action === "pause" || action === "resume") {
     setFleetPaused(action === "pause");
+    // Unconditional, unlike the branches around it, because there is no no-op
+    // press to exclude: resuming an install that is already running still
+    // releases dependents and promotes the queue. What bounds these rows is
+    // that the press is behind the gate and made by a person.
+    recordDurableMutation(
+      req,
+      "info",
+      action === "pause" ? "fleet.paused" : "fleet.resumed",
+    );
     return NextResponse.json({ state: fleetState() });
   }
 
@@ -67,6 +95,10 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
+    recordDurableMutation(req, "info", "fleet.reopened", {
+      reopened: report.reopened.length,
+      refused: report.refused.length,
+    });
     return NextResponse.json({ report, state: fleetState() });
   }
 
@@ -75,3 +107,13 @@ export async function POST(req: Request) {
     { status: 400 },
   );
 }
+
+/**
+ * Wrapped like every other mutating route behind the gate: these four presses
+ * are the widest controls in the app — one of them ends every run in flight —
+ * and nothing recorded that any of them was made. The wrapper is the *request*
+ * line and catches the refusals; the calls above are the durable half, on
+ * `ops_events`, because a fleet stop has to still be findable after twenty
+ * thousand ordinary requests have gone through `request_log`.
+ */
+export const POST = auditMutation(postHandler);

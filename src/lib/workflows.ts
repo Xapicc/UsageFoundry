@@ -16,6 +16,7 @@ import { installBudgetRefusal } from "./installBudget";
 import {
   DEPENDENCY_EDGES,
   blockWaitingRun,
+  clampRunOffset,
   createRun,
   currentSnapshot,
   dependencyCycle,
@@ -2100,23 +2101,80 @@ const LIVE_STATUSES: readonly RunStatus[] = [
   "paused",
 ];
 
-export function listInstances(workflowId: string, limit = 20): WorkflowInstance[] {
+/** The widest page `findInstances` will answer with, whatever it was asked for. */
+export const INSTANCE_PAGE_MAX = 100;
+
+/** What it answers with when nothing legible was asked for — the old whole. */
+const INSTANCE_PAGE_DEFAULT = 20;
+
+/**
+ * One page of a workflow's presses of Run, newest first, with the count it is a
+ * slice of.
+ *
+ * The twenty this replaces was the whole of the history a graph could show, and
+ * the surface it capped is the one that answers *what has this workflow done* —
+ * so a graph that runs nightly answered that question with a fortnight of itself
+ * and said nothing about the rest. `total` is counted over every row rather than
+ * over the page, for `listRunsPage`'s reason: a count that is itself truncated
+ * cannot say an instance has fallen out of reach.
+ *
+ * The page is also what bounds the work, which no other list here has to think
+ * about: `rowToInstance` parses each instance's graph snapshot and reads its
+ * node, block and spend rows, so a limit off a query string is a limit on how
+ * much of that one request may do.
+ *
+ * `id DESC` behind `created_at DESC` carries `listRunsPage`'s reasoning rather
+ * than its measurement: the stamp is milliseconds, and two rows that may order
+ * differently between two requests mean one instance appears on both pages and
+ * another on neither.
+ *
+ * A limit that is missing, zero, negative or unreadable is the default page and
+ * not the smallest legal one, which is `normalizeRunListQuery`'s rule verbatim:
+ * these arrive off a query string, and a one-row page is a far worse answer to a
+ * typo than the ordinary one.
+ */
+export function findInstances(o: {
+  workflowId: string;
+  limit?: number;
+  offset?: number;
+}): {
+  instances: WorkflowInstance[];
+  total: number;
+  offset: number;
+  limit: number;
+} {
+  const asked = Math.floor(Number(o.limit));
+  const limit =
+    Number.isFinite(asked) && asked > 0
+      ? Math.min(INSTANCE_PAGE_MAX, asked)
+      : INSTANCE_PAGE_DEFAULT;
+
+  const total = (
+    db()
+      .prepare("SELECT COUNT(*) AS n FROM workflow_instances WHERE workflow_id = ?")
+      .get(o.workflowId) as { n: number }
+  ).n;
+  // The same rule the runs list pages by, and the same reason it is a clamp
+  // rather than a refusal — see `clampRunOffset`.
+  const offset = clampRunOffset(o.offset ?? 0, total);
+
   const rows = db()
     .prepare(
       `SELECT ${INSTANCE_COLUMNS} FROM workflow_instances
-        WHERE workflow_id = ? ORDER BY created_at DESC LIMIT ?`,
+        WHERE workflow_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
     )
-    .all(workflowId, limit) as InstanceRow[];
-  return rows.map(rowToInstance);
+    .all(o.workflowId, limit, offset) as InstanceRow[];
+
+  return { instances: rows.map(rowToInstance), total, offset, limit };
 }
 
 /**
  * When this workflow was last started, or null.
  *
- * Its own query rather than `listInstances(id, 1)[0]`: the list page asks it
- * once per workflow, and building a whole instance — parsing its graph snapshot
- * and reading its node rows — to take one timestamp off it is work per row that
- * nothing on that page displays.
+ * Its own query rather than the first row of `findInstances`: the list page asks
+ * it once per workflow, and building a whole instance — parsing its graph
+ * snapshot and reading its node rows — to take one timestamp off it is work per
+ * row that nothing on that page displays.
  */
 export function lastRunAt(workflowId: string): number | null {
   const row = db()

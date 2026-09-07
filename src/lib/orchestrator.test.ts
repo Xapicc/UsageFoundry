@@ -147,7 +147,10 @@ const { normalizePolicy } = require("./budget") as typeof import("./budget");
 const { revokeIngestTokens, runForIngestToken } =
   require("./otlp") as typeof import("./otlp");
 const { db } = require("./db") as typeof import("./db");
+const { recentOpsEvents } = require("./ops") as typeof import("./ops");
 const { saveSettings } = require("./settings") as typeof import("./settings");
+const { priceFiles, renderFileCostNotice } =
+  require("./fileCostNotice") as typeof import("./fileCostNotice");
 
 const clash = (a: string, b: string) => overlaps(conflictKey(a), conflictKey(b));
 
@@ -2487,11 +2490,39 @@ describe("buildArgs", () => {
    * runs with it. The argv is the whole mechanism — there is no ownership
    * boundary between an agent and the process supervising it — so it is pinned
    * for every mode, including the one whose entire purpose is skipping checks.
+   *
+   * The flag is spawned here with a price list on it, because the no-literal
+   * rule below is **two** rules and this is the only place both are visible. A
+   * standing notice names commands, so it may carry no figure; the price list is
+   * nothing but figures, so it may name no command. A version of this test that
+   * left the price list off asserted the first form against a string that could
+   * not contain the second, and read as covering the whole flag while never
+   * seeing the one notice that carries digits at all.
    */
   for (const permissionMode of ["acceptEdits", "bypassPermissions"] as const) {
     for (const isolated of [true, false]) {
       it(`withholds name-matched kills from a ${permissionMode} run (isolated: ${isolated})`, () => {
-        const args = buildArgs({ ...base, permissionMode, isolated });
+        // Rendered rather than typed, and the only fixture in this describe that
+        // is: the prose a later editor would hang a worked example off is the
+        // generator's own head and tail, not a line spelled out here, so a
+        // hand-written `path — 116k` would leave most of what ships untested.
+        const priceList = renderFileCostNotice(
+          priceFiles(
+            [
+              { path: "src/lib/orchestrator.ts", bytes: 500_000 },
+              { path: "docs/verification.md", bytes: 200_000 },
+            ],
+            new Map(),
+          ),
+        );
+        assert.ok(priceList.length > 0, "these inputs must produce a price list at all");
+
+        const args = buildArgs({
+          ...base,
+          permissionMode,
+          isolated,
+          fileCostNotice: priceList,
+        });
         const at = args.indexOf("--disallowedTools");
         assert.notEqual(at, -1, "no run may select processes to kill by name");
         assert.deepEqual(args.slice(at + 1, at + 3), [
@@ -2507,6 +2538,20 @@ describe("buildArgs", () => {
         assert.match(said, /next-server/, "must name the collision");
         assert.match(said, /pgrep -P/, "must give the child-process form");
         assert.match(said, /pid=\$!/, "must give the recipe, not just the ban");
+        // Which half is which, derived rather than listed. Whatever this flag
+        // carries with no price list passed *is* the standing half, so a sixth
+        // notice added to the join inherits the strict form below without
+        // anybody remembering to name it here — which is the way the price list
+        // itself escaped it.
+        const bare = buildArgs({ ...base, permissionMode, isolated });
+        const standing = bare[bare.indexOf("--append-system-prompt") + 1] ?? "";
+        assert.ok(
+          said.startsWith(standing),
+          "the price list is appended to the standing notices, never interleaved with them",
+        );
+        const prices = said.slice(standing.length);
+        assert.ok(prices.includes(priceList), "the price list must reach the flag under test");
+
         // This string reaches the argv of *every* concurrent agent, so a literal
         // in it is a pattern that matches all of them. The worked example used
         // to be `pgrep -f 3100`, and twice — 2026-08-15 23:39:42 and 2026-08-16
@@ -2514,10 +2559,25 @@ describe("buildArgs", () => {
         // repository that had no such port and had never mentioned the number.
         // Any run of digits here is the same trap under a different number.
         assert.doesNotMatch(
-          said,
+          standing,
           /\d\d+/,
-          "no multi-digit literal: it is on every sibling's command line",
+          "no multi-digit literal in a notice that names commands: it is on every sibling's command line",
         );
+        // The price list cannot be held to that and must not be: every line of
+        // it ends in a figure by construction, which `fileCostNotice.test.ts`
+        // separately requires. What makes those figures inert is the other half
+        // of the same rule — nothing beside them offers itself as a pattern, no
+        // verb near them is `kill`, and the block names no command — so that is
+        // what is asserted of this half, at the site whose failure message would
+        // otherwise be read as a claim about the whole flag.
+        assert.doesNotMatch(
+          prices,
+          /\bp?kill(all)?\b|\bpgrep\b|\bps -|\$\(/,
+          "a figure is safe only while nothing beside it reads as a command",
+        );
+        for (const line of prices.split("\n").filter((line) => line.startsWith("  "))) {
+          assert.doesNotMatch(line, /^ {2}\//, "an absolute path names a mount, not a file");
+        }
         assert.match(said, /pgrep -af/, "must say to look before killing");
       });
     }
@@ -3158,10 +3218,11 @@ describe("buildCodexArgs", () => {
  * breakdowns of them; adding them inflates `runs.spent_tokens`, which is a
  * number an operator plans against.
  *
- * **An unrecognised event must reach a person.** `orchestrator.ts:6604` is
- * where a Claude line that does not parse goes silently, and that silence is
- * exactly what makes a moved CLI pin look like an idle agent. The Codex parser
- * logs instead, once per distinct type per cycle.
+ * **An unrecognised event must reach a person**, and that silence is exactly
+ * what makes a moved CLI pin look like an idle agent. Both parsers log instead,
+ * once per distinct type per cycle, through one shared `noteUnknownStreamEvent`
+ * — so this case and its counterpart under `handleStreamLine` pin the same
+ * function from both sides.
  */
 describe("handleCodexStreamLine", () => {
   const { parseLine } = selectCycleAdapter("codex");
@@ -3356,6 +3417,154 @@ describe("handleCodexStreamLine", () => {
     );
     assert.deepEqual(logs, ["Reading additional input from stdin"]);
     assert.equal(acc.sawResult, false);
+  });
+});
+
+/**
+ * The Claude parser, on the one shape it has no branch for.
+ *
+ * `handleStreamLine` tests `assistant`, `user`, `result` and `system` and used
+ * to let a fifth type fall off the end of the function — no log line, no
+ * counter, no `raw` payload kept. That is the parser on nearly every cycle this
+ * app runs: `runs.provider` is written only by `POST /api/runs`, so a workflow
+ * node, a chat proposal and a reopened run all arrive here as `null`, and
+ * `selectCycleAdapter` answers Claude for `null`.
+ *
+ * Two cases, because the failure has two halves and fixing one badly creates
+ * the other:
+ *
+ * **The drop must be visible.** A pinned CLI that renames a top-level type
+ * takes with it whatever that event carried, and a cycle with no cost, no
+ * session id and no stop reason renders on every page in this app as a cycle
+ * that simply had nothing to say.
+ *
+ * **Visible must not mean fatal, or a flood.** An unrecognised type can arrive
+ * on every chunk of every concurrent run, so it is bounded to one line per
+ * distinct type per cycle — and the events around it must still parse, because
+ * a parser that threw on a rename would turn a cosmetic provider change into
+ * every run on the box failing.
+ */
+describe("handleStreamLine on an unrecognised event type", () => {
+  const { parseLine } = selectCycleAdapter(null);
+
+  const fresh = () =>
+    ({
+      costUSD: 0,
+      tokens: 0,
+      contextTokens: 0,
+      sessionId: null,
+      finalText: "",
+      isError: false,
+      subagentNames: new Map(),
+      toolCalls: new Map(),
+      unknownEventTypes: new Set(),
+      sawResult: false,
+      subtype: null,
+      apiError: null,
+      stderrTail: "",
+    }) as Parameters<typeof parseLine>[2];
+
+  let seq = 0;
+
+  const insertRun = (): string => {
+    const id = `claude-parse-${++seq}`;
+    db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations,
+                           iterations, created_at)
+         VALUES (?, ?, 'do the thing', 'running', '{}', 1, 0, ?)`,
+      )
+      .run(id, `${ws}/Other`, Date.now() + seq);
+    return id;
+  };
+
+  const run = (lines: unknown[]) => {
+    const runId = insertRun();
+    const acc = fresh();
+    for (const line of lines) {
+      parseLine(runId, JSON.stringify(line), acc, () => {});
+    }
+    return {
+      acc,
+      logs: runEvents(runId).events.flatMap((e) =>
+        e.kind === "log" ? [String((e.payload as { message: string }).message)] : [],
+      ),
+    };
+  };
+
+  it("reports an unrecognised event once per type, not once per line", () => {
+    const { acc, logs } = run([
+      { type: "stream_event", event: 1 },
+      { type: "stream_event", event: 2 },
+      { type: "stream_event", event: 3 },
+      { type: "control_response" },
+    ]);
+    assert.deepEqual([...acc.unknownEventTypes].sort(), [
+      "control_response",
+      "stream_event",
+    ]);
+    assert.equal(logs.length, 2);
+    assert.equal(
+      logs.every((l) => l.includes("does not recognise")),
+      true,
+    );
+    assert.equal(
+      logs.some((l) => l.includes('"stream_event"')),
+      true,
+    );
+    // The CLI it names is the one that was actually spawned. The Codex parser
+    // says "Codex" from the same function; an operator holding one of these
+    // lines has to be able to tell which pin moved.
+    assert.equal(
+      logs.every((l) => l.includes("Claude Code")),
+      true,
+    );
+  });
+
+  it("keeps parsing the types it does know around one it does not", () => {
+    const { acc, logs } = run([
+      { type: "system", subtype: "init", session_id: "sess-1" },
+      { type: "tool_permission_request", session_id: "sess-1" },
+      {
+        type: "result",
+        subtype: "success",
+        session_id: "sess-1",
+        total_cost_usd: 0.25,
+        usage: { input_tokens: 100, output_tokens: 10 },
+        result: "all done",
+      },
+    ]);
+    // Nothing threw, and every figure the cycle is accounted by still landed.
+    assert.equal(acc.sessionId, "sess-1");
+    assert.equal(acc.sawResult, true);
+    assert.equal(acc.costUSD, 0.25);
+    assert.equal(acc.tokens, 110);
+    assert.equal(acc.subtype, "success");
+    assert.equal(acc.finalText, "all done");
+    assert.equal(acc.isError, false);
+    assert.deepEqual([...acc.unknownEventTypes], ["tool_permission_request"]);
+    assert.equal(
+      logs.filter((l) => l.includes("does not recognise")).length,
+      1,
+    );
+  });
+
+  it("files one durable ops event per distinct type, not one per cycle", () => {
+    // The run's log answers "what went wrong with *this* run"; it cannot answer
+    // "when did this start", because `run_events` cascades with the run and
+    // expires at 30 days. That is what the `ops_events` row is for — and why it
+    // is bounded per *process* rather than per cycle: the table is capped at 500
+    // rows, so a per-cycle writer would evict every restart record on the box.
+    run([{ type: "uf_test_novel_event" }]);
+    run([{ type: "uf_test_novel_event" }]);
+    run([{ type: "uf_test_novel_event" }]);
+
+    const filed = recentOpsEvents(50, "stream.unknown_event").filter(
+      (e) => e.detail.type === "uf_test_novel_event",
+    );
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].level, "warn");
+    assert.equal(filed[0].detail.cli, "Claude Code");
   });
 });
 
@@ -3671,7 +3880,7 @@ describe("sandboxSettings — what one child may write", () => {
     );
 
     // And the resolver gets them too: it is the other child an operator can
-    // point at a build command, through `settings.resolveVerifyTools`.
+    // point at a build command, through `settings.resolveAllowedTools`.
     const resolver = sandboxSettings({
       kind: "assist",
       cwd: own,

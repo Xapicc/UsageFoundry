@@ -33,6 +33,7 @@ after(() => fs.rmSync(DATA_DIR, { recursive: true, force: true }));
 let saveSettings: (patch: Partial<Settings>) => Settings;
 let getSettings: () => Settings;
 let stored: () => unknown;
+let writeStored: (value: unknown) => void;
 /** The shipped defaults, read off an empty store before anything is written. */
 let shipped: Settings;
 
@@ -42,6 +43,7 @@ before(async () => {
   saveSettings = settings.saveSettings;
   getSettings = settings.getSettings;
   stored = () => db.getJSON<unknown>("settings", null);
+  writeStored = (value) => db.setJSON("settings", value);
   shipped = settings.getSettings();
   assert.equal(stored(), null, "the fixture must start with nothing written");
 });
@@ -115,5 +117,46 @@ describe("what a Save actually persists", () => {
     assert.deepEqual(stored(), { maxConcurrentRuns: null });
     saveSettings({ maxConcurrentRuns: shipped.maxConcurrentRuns });
     assert.deepEqual(stored(), {});
+  });
+});
+
+/**
+ * `resolveAllowedTools` was `resolveVerifyTools`, and the value has to survive.
+ *
+ * The rename is the point of the change: sitting one line from
+ * `landVerifyCommand`, the old name read as the gate in front of Land when its
+ * only reader is `resolveConflicts`, where it is the assist's `allowedTools`
+ * grant and decides no land at all. But the blob above holds only the keys that
+ * differ from `DEFAULTS` and carries no version, so a bare rename is an
+ * operator's list of checks becoming `[]` — the conflict resolver stops running
+ * the commands somebody named and reports that it could not check its merge,
+ * which is indistinguishable from an install that never named one.
+ *
+ * The blob is written directly because that is the only way to reach this
+ * state: nothing writes the old key any more.
+ */
+describe("the one key this module has renamed", () => {
+  it("reads a grant stored under the old name", () => {
+    writeStored({ resolveVerifyTools: ["Bash(npm run typecheck:*)"] });
+    assert.deepEqual(getSettings().resolveAllowedTools, ["Bash(npm run typecheck:*)"]);
+  });
+
+  it("lets the new name win where an install has both", () => {
+    // A carried value must never outrank one the operator has set since.
+    writeStored({
+      resolveVerifyTools: ["Bash(old:*)"],
+      resolveAllowedTools: ["Bash(new:*)"],
+    });
+    assert.deepEqual(getSettings().resolveAllowedTools, ["Bash(new:*)"]);
+  });
+
+  it("never answers with the dead key, and drops it on the next Save", () => {
+    // Left in the effective object it would ride out to `GET /api/settings` and
+    // back in on the next PUT, which is how a key nobody has a branch for stays
+    // in a blob for ever.
+    writeStored({ resolveVerifyTools: ["Bash(npm test:*)"] });
+    assert.ok(!("resolveVerifyTools" in getSettings()));
+    saveSettings({});
+    assert.deepEqual(stored(), { resolveAllowedTools: ["Bash(npm test:*)"] });
   });
 });

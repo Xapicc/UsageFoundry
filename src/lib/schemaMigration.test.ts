@@ -427,6 +427,135 @@ function hasColumn(db: Database.Database, table: string, col: string): boolean {
     .some((c) => c.name === col);
 }
 
+/** Every `schema.fault` row on the file, oldest first, with `detail` parsed. */
+function faults(db: Database.Database): Array<{
+  level: string;
+  detail: Record<string, unknown>;
+}> {
+  return (
+    db
+      .prepare(
+        "SELECT level, detail FROM ops_events WHERE event = 'schema.fault' ORDER BY id",
+      )
+      .all() as Array<{ level: string; detail: string }>
+  ).map((r) => ({
+    level: r.level,
+    detail: JSON.parse(r.detail) as Record<string, unknown>,
+  }));
+}
+
+/**
+ * Everything `migrate()` finds wrong with the file it has just opened used to
+ * be a `console.error` and nothing else, which in a container is a scrollback
+ * buffer that the next restart destroys — and a restart is exactly when an
+ * operator comes looking for what the last boot said. These assert the durable
+ * half: a row per finding, written on the connection the migration already
+ * holds, because `db()` cannot be called from inside the `open()` that is
+ * still running.
+ */
+describe("what migrate finds wrong with the database it just opened", () => {
+  beforeEach(() => {
+    dbMod.db().exec("DELETE FROM ops_events");
+  });
+
+  it("records a rollback to an older image rather than only printing it", () => {
+    // The one case that cannot be produced by running this build forwards.
+    let db = dbMod.db();
+    db.pragma(`user_version = ${dbMod.SCHEMA_VERSION + 5}`);
+
+    db = reboot();
+
+    assert.deepEqual(faults(db), [
+      {
+        level: "error",
+        detail: {
+          finding: "downgrade",
+          fileVersion: dbMod.SCHEMA_VERSION + 5,
+          buildVersion: dbMod.SCHEMA_VERSION,
+        },
+      },
+    ]);
+  });
+
+  it("records a leftover table it cannot read, naming the columns it wanted", () => {
+    let db = dbMod.db();
+    db.exec("CREATE TABLE chat_proposals_old (id TEXT PRIMARY KEY, junk TEXT)");
+
+    db = reboot();
+
+    try {
+      // Two findings, and both matter: the recovery could not run, and the
+      // sweep at the end of `migrate` still sees the table nobody reads.
+      assert.deepEqual(
+        faults(db).map((f) => f.detail.finding),
+        ["proposals_unreadable", "orphan_table"],
+      );
+      const unreadable = faults(db)[0];
+      assert.equal(unreadable.detail.table, "chat_proposals_old");
+      assert.match(String(unreadable.detail.missing), /template_id/);
+    } finally {
+      db.exec("DROP TABLE chat_proposals_old");
+    }
+  });
+
+  it("records the residue of an interrupted rebuild it did complete", () => {
+    let db = dbMod.db();
+    db.exec("ALTER TABLE chat_proposals RENAME TO chat_proposals_old");
+    db.exec(proposalsCreateSql);
+
+    db = reboot();
+
+    assert.deepEqual(faults(db), [
+      {
+        level: "warn",
+        detail: {
+          finding: "proposals_stranded",
+          table: "chat_proposals_old",
+          recovered: 0,
+        },
+      },
+    ]);
+  });
+
+  it("records any other orphan, and the row outlives the restart that found it", () => {
+    let db = dbMod.db();
+    db.exec("CREATE TABLE runs_old (id TEXT PRIMARY KEY)");
+
+    db = reboot();
+
+    try {
+      assert.deepEqual(faults(db), [
+        { level: "error", detail: { finding: "orphan_table", table: "runs_old" } },
+      ]);
+      db.exec("DROP TABLE runs_old");
+      // The point of the row rather than the line: the next boot finds nothing
+      // and prints nothing, and what the last one found is still readable.
+      db = reboot();
+      assert.equal(faults(db).length, 1);
+    } finally {
+      dbMod.db().exec("DROP TABLE IF EXISTS runs_old");
+    }
+  });
+
+  it("reports only this boot's findings to /api/status, so a monitor de-latches", () => {
+    let db = dbMod.db();
+    db.exec("CREATE TABLE runs_old (id TEXT PRIMARY KEY)");
+
+    db = reboot();
+    assert.deepEqual(
+      dbMod.schemaFaultsThisBoot().map((f) => f.detail.finding),
+      ["orphan_table"],
+    );
+
+    db.exec("DROP TABLE runs_old");
+    reboot();
+
+    // The archive still holds it; the field the status endpoint reads does not.
+    assert.equal(faults(dbMod.db()).length, 1);
+    assert.deepEqual(dbMod.schemaFaultsThisBoot(), []);
+  });
+});
+
 describe("a fork_attempts table created before suffix_bytes existed", () => {
   it("gains the column on the next boot, keeping the rows already in it", () => {
     let db = dbMod.db();
@@ -469,5 +598,68 @@ describe("a fork_attempts table created before suffix_bytes existed", () => {
       2, "r2", "s-old", "s-new", 1, null, null, 4096, 3072, 81920, 18.5, 4.2, 0,
     );
     assert.equal(rows(migrated, "fork_attempts"), 1);
+  });
+});
+
+/** The table as every install that ran a build before the drop has it. */
+const PLAN_OBSERVATIONS = `
+  CREATE TABLE plan_observations (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts               INTEGER NOT NULL,
+    run_id           TEXT NOT NULL,
+    session_id       TEXT,
+    tier             TEXT NOT NULL,
+    tool_calls       INTEGER NOT NULL,
+    stripped         INTEGER NOT NULL,
+    removed_bytes    INTEGER NOT NULL,
+    pointer_overhead INTEGER NOT NULL,
+    net_bytes        INTEGER NOT NULL,
+    suffix_bytes     INTEGER NOT NULL,
+    break_even_turns REAL,
+    pruned           INTEGER NOT NULL
+  );
+  CREATE INDEX idx_plan_observations_ts ON plan_observations(ts);
+  CREATE INDEX idx_plan_observations_run ON plan_observations(run_id, ts);`;
+
+describe("a plan_observations table left by an install that predates the drop", () => {
+  it("is gone after the next boot, indices with it", () => {
+    // The whole of what the drop has to do, and the only way to find out that it
+    // did not: the table took a row at every cycle boundary and every early end,
+    // nothing ever read one, and nothing swept it. A boot that skipped the DROP
+    // leaves an install growing a store with no reader and no horizon — which
+    // looks exactly like a healthy one, because no page renders it either.
+    let db = dbMod.db();
+    // Dropped first on `fork_attempts`' reasoning: the case has to start from
+    // the old shape whatever the boot above left, or a build where the DROP was
+    // never added fails here at the CREATE rather than at the assertion.
+    db.exec("DROP TABLE IF EXISTS plan_observations");
+    db.exec(PLAN_OBSERVATIONS);
+    db.prepare(
+      `INSERT INTO plan_observations
+         (ts, run_id, tier, tool_calls, stripped, removed_bytes,
+          pointer_overhead, net_bytes, suffix_bytes, break_even_turns, pruned)
+       VALUES (1, 'r1', 'CB', 183, 9, 40960, 4096, 36864, 819200, 18.5, 0)`,
+    ).run();
+    assert.equal(exists(db, "plan_observations"), true);
+
+    db = reboot();
+
+    assert.equal(exists(db, "plan_observations"), false);
+    // `resume_probes` is the same shape one table over and the difference is the
+    // whole reason only one of them was dropped: it *is* read, as the control
+    // group `boundaryInvalidation` needs. A drop that took both would leave the
+    // arithmetic that compares pruned boundaries to clean ones with no clean
+    // ones — and that reads as "no evidence yet", not as a fault.
+    assert.equal(exists(db, "resume_probes"), true);
+  });
+
+  it("does not make a boot that never had it throw", () => {
+    // `IF EXISTS`, and it carries every boot after the first one. Without it the
+    // second start of a fresh install dies in `migrate` before any table is
+    // reachable, which is a failure mode with no rows in it to notice.
+    assert.equal(exists(dbMod.db(), "plan_observations"), false);
+    const again = reboot();
+    assert.equal(exists(again, "plan_observations"), false);
+    assert.equal(exists(again, "settings"), true);
   });
 });
