@@ -98,9 +98,11 @@ export interface IterationResult {
    * *once* per cycle instead of once per line. An event type this app has never
    * heard of is the shape a CLI pin moving takes, and the symptom of missing one
    * is a cycle that reports no cost, no session id and no stop reason — which
-   * every page in this app renders as a cycle that had nothing to say. Only
-   * `handleCodexStreamLine` writes to it today; the Claude parser's own silence
-   * on an unknown type predates this and is a separate change.
+   * every page in this app renders as a cycle that had nothing to say. Both
+   * parsers write to it, through the one `noteUnknownStreamEvent` that bounds
+   * them; the log line it guards is per cycle, and the `ops_events` row beside
+   * it is per boot, because a table capped at 500 rows cannot take a per-cycle
+   * writer.
    */
   unknownEventTypes: Set<string>;
   /**
