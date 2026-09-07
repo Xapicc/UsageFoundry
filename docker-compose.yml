@@ -587,6 +587,67 @@ services:
     # share the same quota.
     cpus: ${UF_CPUS:-0}
 
+    # A ceiling on the container's own log — the fourth store this install
+    # grows, and the only one nothing in the app bounds, measures or alerts on.
+    #
+    # Docker's json-file driver keeps every line for ever unless told
+    # otherwise, and this server writes to stdout on purpose: ten structured
+    # event kinds beside the `[usagefoundry] …` prose, listed in README's
+    # "Logs". `run_events`, the checkouts and the transcripts each have a
+    # retention horizon, a figure on `/api/status` and a suggested alert. This
+    # one had none of the three, on the same disk, written by this app, and
+    # named in this app's own documentation as where an operator goes to find
+    # things out.
+    #
+    # 20 MiB x 5 = 100 MiB, and both terms come from this repository's own
+    # numbers rather than from a tutorial:
+    #
+    #   a line on disk    ~270 B — the five event shapes JSON-encoded, inside
+    #                     json-file's own {"log":…,"stream":…,"time":…} envelope
+    #   ordinary          1,800 work cycles a day at 25 concurrent runs (the
+    #                     figure README's "Disk and retention" already uses),
+    #                     ~4 lines each once the per-run status transitions and
+    #                     the mutation that created the run are amortised in
+    #                     = ~2 MB a day, so 100 MiB is about seven weeks
+    #   the bad case      ~11,000 tool events an hour at that same fleet, and a
+    #                     sandbox policy refusing all of them puts one
+    #                     `run.sandbox_refusal` on stdout per refusal
+    #                     = ~86 MB a day, so 100 MiB is about 29 hours
+    #
+    # **The bad case is what sizes it**, not the ordinary one. That line is on
+    # stdout precisely so a policy refusing every tool call is visible at all,
+    # so the window has to outlast one unattended night rather than a shift —
+    # 29 hours does, and a single 20 MiB file would give under six.
+    #
+    # Against the disk an operator is already told to provision, 100 MiB is a
+    # rounding error: 30-85 GB a month of transcripts at this concurrency, and
+    # 300 MB-1.5 GB for one checkout. This is not the store that fills a disk;
+    # it is the store that would still be growing after the other three stopped.
+    #
+    # Five files rather than one 100 MiB file because rotation deletes a whole
+    # file. `docker logs` reads them all, so the readable window is the product
+    # either way, but the loss comes 20 MiB at a time instead of taking the
+    # entire history in one step.
+    #
+    # **What a cap costs is the oldest lines**, which is exactly the wrong end:
+    # after a bad ending at 03:00 the boot lines and the first hour are what an
+    # operator wants, and a refusal storm overnight can evict them. README's
+    # "Logs" states that, so it is a known limitation rather than a surprise.
+    # The answer to it is a shipper or a wider cap — **never** emitting less,
+    # which is what makes any of these lines worth keeping.
+    #
+    # The driver is pinned because `max-size`/`max-file` are json-file's own
+    # options: named without it they would be handed to whatever the daemon
+    # defaults to, and a journald or fluentd default rejects them and refuses
+    # the container. An install that ships its logs elsewhere overrides this
+    # block in `docker-compose.override.yml`, the same way `security_opt` above
+    # expects to be turned on.
+    logging:
+      driver: json-file
+      options:
+        max-size: "${UF_LOG_MAX_SIZE:-20m}"
+        max-file: "${UF_LOG_MAX_FILE:-5}"
+
     # Long enough for the shutdown to account for the work cycles it is killing.
     #
     # On SIGTERM the server interrupts every live run, waits out
@@ -596,6 +657,10 @@ services:
     # the exact moment the last agent died and throw away the accounting this
     # exists to recover. Not much longer either: `restart: unless-stopped` means
     # this is also how long a routine restart takes.
+    #
+    # `deployment.test.ts` pins this against SHUTDOWN_GRACE_MS, with room left
+    # for the reconciliation that follows the wait, so neither half can be
+    # raised or lowered alone.
     stop_grace_period: 30s
 
     restart: unless-stopped

@@ -42,8 +42,18 @@ import type {
  * than on the client is what lets the card say "the template this was proposed
  * against is gone" — a null name is the same fact `planProposal` refuses on,
  * shown before the operator clicks rather than after.
+ *
+ * `afterSeq` is the poll's cursor and defaults to the whole thread, so the two
+ * routes still answer identically to the same question — it changes how much of
+ * the answer is re-sent, not what the answer is. Only the messages ride it:
+ * they are the half that grows without bound and the only half that is
+ * append-only, so they are the only half a cursor can be right about. The
+ * proposal and question lists are re-read whole on every poll deliberately —
+ * both are updated in place after they are written, and a decided proposal or
+ * an answered question that the page never re-read would be a card still
+ * offering a button for work already done.
  */
-export function chatDTO(chat: ChatRow): ChatDTO {
+export function chatDTO(chat: ChatRow, afterSeq = 0): ChatDTO {
   return {
     id: chat.id,
     createdAt: chat.created_at,
@@ -63,12 +73,14 @@ export function chatDTO(chat: ChatRow): ChatDTO {
     // off are believed to have cost, priced by this app rather than reported by
     // the CLI. Zero on every thread that has never lost one.
     costEstUSD: chat.cost_usd_est ?? 0,
-    messages: listMessages(chat.id).map((m) => ({
+    messages: listMessages(chat.id, afterSeq).map((m) => ({
       id: m.id,
       ts: m.ts,
+      seq: m.seq,
       role: m.role,
       text: m.text,
     })),
+    messagesFrom: afterSeq,
     proposals: proposalDTOs(listProposals(chat.id)),
     questions: listQuestions(chat.id).map(questionDTO),
   };

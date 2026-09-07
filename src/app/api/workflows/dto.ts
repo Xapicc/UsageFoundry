@@ -5,8 +5,8 @@ import type {
   WorkflowInstanceNodeDTO,
   WorkflowListItemDTO,
   WorkflowScheduleDTO,
-} from "@/lib/apiTypes";
-import { getSchedule, scheduleView, type ScheduleView } from "@/lib/schedules";
+} from "../../../lib/apiTypes";
+import { getSchedule, scheduleView, type ScheduleView } from "../../../lib/schedules";
 import {
   lastRunAt,
   liveBlocksOf,
@@ -14,7 +14,7 @@ import {
   runStateOf,
   type Workflow,
   type WorkflowInstance,
-} from "@/lib/workflows";
+} from "../../../lib/workflows";
 
 /**
  * The wire shapes, in one place so the five routes cannot disagree about them.

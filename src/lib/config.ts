@@ -5,6 +5,14 @@ import os from "node:os";
 /**
  * Process-level configuration. Everything here is fixed at boot from the
  * environment; user-editable preferences live in the settings table instead.
+ *
+ * Fixed at boot is also fixed for **rotation**, and that is the consequence
+ * worth carrying into any edit here: nothing can write a running process's
+ * environment, so changing any value below — a leaked credential included —
+ * takes a container restart whether it is read once into a `const` or read
+ * again on every request. `docs/agent/environment.md` enumerates every one of
+ * them with what changing it costs, and which of them can be revoked at their
+ * issuer without touching this container at all.
  */
 
 const strictNames: string[] = [];

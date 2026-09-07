@@ -1973,6 +1973,55 @@ Built and exercised against real transcripts:
   read `deliver-` because the seeded id is not a UUID — an artefact of the
   fixture, not of the code.
 
+- **The Land verify field rendered in a browser, on 2026-09-07.** The
+  production standalone bundle, an empty throwaway `DATA_DIR` and Chromium
+  through Playwright — the first time any of the controls added on 2026-09-06
+  has been seen rather than compiled.
+
+  - **The search finds it while it is still folded away.** `landVerifyCommand`
+    sits inside the *Isolated runs* disclosure, which is closed on load.
+    Typing `land merges` into the settings search listed
+    **"Check that must pass before Land merges"**, which is what the corpus
+    being the rendered DOM rather than a declared index buys: a `<details>`
+    keeps its children in the DOM, so a closed fold hides a field from the eye
+    and not from the walk.
+  - **Pressing the hit opens the fold and lands on the control.** The input was
+    `visible` and `document.activeElement` afterwards, so a field behind a
+    closed fold on a page of ten sections is one keystroke and one press away,
+    rather than a scroll and a guess about which fold it is in.
+  - **The shell warning is drawn where it was designed to be drawn.** Typing
+    `npm test && npm run typecheck` — the obvious first thing to type — put
+    *"a verify command is argv, never a shell line — remove the shell
+    characters, or put them in a script and name the script here"* under the
+    field, on blur and before any Save. That is the whole point of saying it
+    here rather than at the click.
+  - **The pair reads correctly now.** The renamed grant renders directly under
+    it as **"Checks a conflict resolution may run"**, so the gate and the
+    conflict-assist grant are two visibly different things in the one place an
+    operator looks.
+
+  **What this does not establish.** Nothing was saved, so this is the form and
+  not the round trip — that is what the settings route's probe table covers.
+  The other four controls in the list below were not looked at.
+
+- **A workflow's history paged, in a browser, on 2026-09-07.** `/api/workflows/[id]`
+  read no `searchParams` and answered with `listInstances`' newest twenty, so this
+  was checked at both ends against a production build (`next start`, a throwaway
+  `DATA_DIR`, one workflow seeded with 45 instances an hour apart). The route:
+  no parameters answers `total 45, offset 0, limit 20` with `inst-44 … inst-25`;
+  `?offset=20` answers `inst-24 … inst-05`; `?offset=999` answers `offset 44`
+  with the single oldest row rather than an empty page; `?limit=5000` answers
+  `limit 100` — the ceiling, not the ask. The page: the table drew twenty rows
+  under *Runs of this workflow* with `1–20 of 45` and a disabled Previous beside
+  an enabled Next, and pressing Next drew the next twenty under `21–40 of 45`
+  with both enabled. So this one is not on the list below: it was rendered, and
+  the control was pressed.
+
+  **What this does not establish.** The instances were inserted directly rather
+  than produced by presses of Run, so every row read `finished` with no member
+  runs; nothing here exercises the pager against a graph with something live in
+  it, or against instances arriving while an older page is open.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the
@@ -1986,19 +2035,21 @@ through before trusting this unattended:
 > above; what is not is the panel drawing it, or how a partial that grows under
 > a reader behaves in a region that also polls. The same session had no browser.
 >
-> **Six controls added on 2026-09-06 have never been rendered in a browser.**
-> No browser was available in the session that wrote them, so what is verified
-> is that they compile, that every string is in the production client chunk, and
-> that the route each one calls behaves as above — which is not the same as
-> having seen one. They are: the `landVerifyCommand` field and its
-> shell-metacharacter warning in Settings; the Backups row on the Storage card,
+> **Four of the six controls added on 2026-09-06 have never been rendered in a
+> browser.** No browser was available in the session that wrote them, so what is
+> verified is that they compile, that every string is in the production client
+> chunk, and that the route each one calls behaves as above — which is not the
+> same as having seen one. The `landVerifyCommand` field and its
+> shell-metacharacter warning came off this list on 2026-09-07 and are recorded
+> above. The rest are: the Backups row on the Storage card,
 > including its `unreadable` badge, which needs a directory this server cannot
 > read to appear at all; the sentence under **Sign out everywhere** about a
 > captured cookie; the queue-priority input on a *queued* run's page, which
 > needs a run actually sitting in the queue; and **Open pull request** on the
 > Land card, which needs an isolated run with a branch, a GitHub remote and a
-> credential — none of which existed here. Nothing on that last one has opened a
-> real pull request, which was already true of the endpoint behind it.
+> credential — none of which existed here. The endpoint behind that last one has
+> since opened a real pull request, recorded above; the button itself has still
+> not been pressed in a browser.
 
 > **No Codex device sign-in has ever been completed, because there is no OpenAI
 > account in this container to complete one with.** Everything up to the
@@ -3664,6 +3715,37 @@ through before trusting this unattended:
   confirm `restart: unless-stopped` brought the container back and that
   `reconcileOnBoot` closed out the runs it was carrying rather than leaving
   folders claimed.
+- **The cap on the container's own log.** `docker-compose.yml` now declares
+  `logging: {driver: json-file, options: {max-size: ${UF_LOG_MAX_SIZE:-20m},
+  max-file: ${UF_LOG_MAX_FILE:-5}}}`, and `deployment.test.ts` pins that the
+  block exists, that the driver is named, that `max-size` x `max-file` holds a
+  day of the worst case, and that README states the same figures — but no
+  Docker has applied it, no line has been observed rotating, and the two rates
+  the size came from are **derived, not measured on a running container**.
+  `~270 B` a line is `JSON.stringify` of the five event shapes inside
+  json-file's own envelope, computed in a `node -e`; `~1,800 work cycles a day`
+  and `~11,000 tool events an hour` are README's own figures for a 25-run
+  fleet, not a count taken from a log file. That it is in force at all:
+
+  ```bash
+  docker compose up -d --build
+  docker inspect -f '{{json .HostConfig.LogConfig}}' usagefoundry
+  # expect {"Type":"json-file","Config":{"max-file":"5","max-size":"20m"}}
+  sudo ls -la /var/lib/docker/containers/$(docker inspect -f '{{.Id}}' usagefoundry)/
+  # expect *-json.log, and *-json.log.1 … .4 once it has wrapped
+  ```
+
+  `Type` reading anything else means the daemon overrode it, most likely a
+  `log-driver` in `/etc/docker/daemon.json`, which is the one place a host can
+  make this block a no-op. Then the numbers themselves, which need a busy
+  install rather than a fresh one: leave a fleet running, and compare
+  `du -c …-json.log*` after a day against the ~2 MB the ordinary rate predicts.
+  The storm figure is the one worth provoking deliberately once — a sandbox
+  policy that refuses every tool call, with `UF_SANDBOX` on and a profile that
+  denies broadly, should reach the 100 MiB ceiling in roughly a day and not in
+  an afternoon. Nothing here fails loudly either way: an overridden driver, a
+  wrong rate and a cap that never wraps all look identical from inside the app,
+  which does not read this file at all.
 - **The process budget refusing a real child.** `liveAssistChildren`,
   `assistBudgetRefusal` and the deferral of a workflow block are covered by
   `src/lib/assistBudget.test.ts` against a real database, and `npm run
@@ -5792,6 +5874,234 @@ through before trusting this unattended:
     an exhausted credit on a Codex run is still filed under Claude's sentences.
     Exhaust a Codex account and read `stop_reason`.
 
+> **The chat has never been shown a workspace holding more than twenty-five git
+> repositories.** `list_folders`' `folders` and `offset` parameters, the
+> per-folder `repoUnread` mark and the `repoLookups` block carrying `nextOffset`
+> are covered by `remoteReads.test.ts` over the pure selection beneath them and
+> by nothing else: no scan on this machine has reached the cap, so nothing has
+> watched a model read `notRead` and call back with the offset it was handed.
+> What is verified is that the selection pages, that the union of the pages is
+> every repository, and that a key naming no folder comes back named. What is
+> not is that the tool description persuades a model to ask for the rest — and
+> the failure if it does not is the one this change was made about, a repository
+> the chat reports as unidentifiable, except that the payload now says which
+> ones it never looked at.
+
+- **A drawn workflow cannot be discarded without being asked — 2026-09-07,
+  Chromium 1400×900 against a production build of this branch.** Every exit the
+  editor has was pressed with a block on the canvas and a name typed. The
+  sidebar's `next/link`, the breadcrumb above the heading, the Cancel button,
+  ⌘3, and quick open (⌘K, "Runs", Return) each left the URL on
+  `/workflows/new` and raised *Discard unsaved changes?*; **Keep editing**
+  returned to the graph with the name still in the field, **Discard** navigated.
+  A Ctrl-click on the same sidebar link raised nothing, which is the case that
+  must not prompt — it opens a tab and the editor stays. `page.close({
+  runBeforeUnload: true })` produced a `beforeunload` dialog, so the tab is
+  covered too. On the same build an untouched `/workflows/{id}/edit` navigated
+  away with no prompt at all, and one whose name was changed and then typed back
+  to what was stored navigated with no prompt again: the round trip through
+  `toBlocks` and `draftToGraph` lands on itself, which is the failure that would
+  otherwise teach the operator to dismiss the dialog unread. **Browser Back was
+  not covered and was not tested**, deliberately: see
+  `docs/agent/workflows-and-schedules.md` for why `popstate` is left alone.
+
+- **What a migration finds now outlives the stdout it was printed to,
+  2026-09-07.** All four findings — the `downgrade` verdict, the
+  `chat_proposals_old` this build cannot read, the one it can and recovered, and
+  any other `*_old` table — were driven against a real SQLite file by reopening
+  the database, which is what `migrate()` runs against on a restart, and each
+  writes one `ops_events` row under the event `schema.fault` beside the
+  `console.error` it already wrote. The five cases are in
+  `schemaMigration.test.ts` and all five fail with the row-writing line removed
+  and the printing left in place, which was run both ways: `# fail 5` before,
+  `# pass 16` after. What they pin beyond the INSERT is the ordering, which is
+  the part that is silent when it is wrong — the `ops_events` CREATE is the
+  first statement in `migrate()` because the downgrade is found before this file
+  has any other table, and the write takes the caller's connection because
+  `db()` from inside the `open()` that has not returned recurses without end.
+  The de-latching case asserts both halves at once: after the fault is cleared
+  and the database reopened, the row is still there and `schemaFaultsThisBoot()`
+  is empty. `npm run typecheck` is clean, `npm test` is 2294 passing / 0
+  failing, and `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` exits 0.
+
+  **Not yet verified by hand:** **no container was involved.** Docker was not
+  available in the session that wrote this, so what has never been seen is the
+  finding on a real boot — the line in `docker compose logs`, the row surviving
+  the `docker compose restart` that erases those logs, and the `schemaFaults`
+  array on `GET /api/status`. The whole check is three commands against a live
+  install: `docker compose exec app node -e
+  "require('better-sqlite3')('/data/usagefoundry.db').pragma('user_version =
+  99')"`, then `docker compose restart app`, then
+  `curl -s -H "Authorization: Bearer $UF_STATUS_TOKEN"
+  http://127.0.0.1:3000/api/status | jq .schemaFaults` — which should carry one
+  `downgrade` entry naming file version 99 against this build's, and `docker
+  compose logs app | grep schema` the sentence beside it. A second `docker
+  compose restart` clears it, because `migrate()` stamps `SCHEMA_VERSION` on the
+  way out, and that is the de-latching the test asserts in the small.
+
+- **What one poll of an open chat thread reads, 2026-09-07.** The chat page
+  re-asked `GET /api/chat/[id]` for the whole conversation every three seconds
+  for as long as it was open, so the cost of holding a chat on screen rose with
+  the chat. Measured on this tree against a throwaway database built by
+  `migrate()`, two threads of equal length and messages of 400 characters, the
+  body of one poll: at **500 messages, 246,362 bytes to 1,136**; at **2,000
+  messages, 1,004,522 bytes to 1,137**. The two figures after are the result —
+  the poll is now flat in the length of the thread, and what is left of it is
+  the thirty-thread sidebar, which is bounded and deliberate. `EXPLAIN QUERY
+  PLAN` on the same database, before and after: `SEARCH chat_messages USING
+  INDEX idx_chat_messages_chat (chat_id=?)` with `USE TEMP B-TREE FOR ORDER BY`
+  for **both** the whole-thread and the cursored read — the cursor alone shrank
+  the response and left the work where it was — against `SEARCH chat_messages
+  USING INDEX idx_chat_messages_seq (chat_id=? AND seq>?)` and no sort. The
+  first read of a thread is unchanged except for the `seq` each message now
+  carries: 246,362 to 251,271 bytes at 500 messages, 2.0% more, paid once per
+  thread opened rather than twenty times a minute.
+
+  **Not yet verified by hand:** nothing here is the real page. The append path
+  is covered by unit tests over `mergeMessages` and by three route tests that
+  fail with the cursor removed, but no browser has held a chat open across a
+  turn landing — so what is unproven is the sequence on screen: that a reply
+  arriving mid-turn appends rather than replaces, that the unseen-count and the
+  follow-the-reader scroll still behave when the poll's answer is a tail, and
+  that switching threads while a poll is out draws the new conversation whole. A
+  human should open `/chat`, send a message to a thread with some history, and
+  watch the reply land. That is the fourth item of the release pass below — the
+  chat turn's live view, in a region that also polls — and what that region
+  polls for is now a tail rather than the conversation.
+
+- **A four-item release pass is now written down, and nothing has performed it.**
+  `proposals/UIChecks/` sorted this app's interface claims by the cheapest
+  instrument that could decide each one — arithmetic over the declared tokens,
+  `renderToStaticMarkup` over the emitted markup, a DOM for events, a real engine
+  for layout, and a person for what is left — and the last of those is the only
+  class with no instrument in this repository at all. This is that class written
+  as a **procedure** rather than left as a memory: performed page by page before a
+  release, at two widths. It is deliberately not a general "check the UI"
+  instruction. Each of the four items is bound to something this app has already
+  got wrong, and each names ground no assertion here reaches. The pages are the
+  nineteen under `src/app/**/page.tsx` — `/`, `/account`, `/agents`, `/branches`,
+  `/chat`, `/dreaming`, `/knowledge`, `/login`, `/runs`, `/runs/[id]`,
+  `/runs/[id]/conflicts`, `/runs/[id]/touched`, `/runs/new`, `/settings`,
+  `/workflows`, `/workflows/[id]`, `/workflows/[id]/edit`,
+  `/workflows/[id]/instances/[instanceId]`, `/workflows/new` — and the pass is
+  each item across all of them rather than each page across all four items,
+  because the items need different states seeded and the pages do not.
+  **Nothing below has been performed**, so the one number that would say whether
+  writing it was worth the afternoon — how many pages fail it the first time —
+  does not exist.
+
+  1. **Every page at 390px: nothing scrolls the body sideways, no control is
+     clipped, and every `stack`ed table names its own fields.** This is the item
+     with a recorded failure behind it rather than a worry: `434c235` moved the
+     Land card's strategy select onto a wrapper because Tailwind emits `.w-auto`
+     ahead of `.w-full`, so the `w-auto` beside it lost silently and the select
+     took the whole row (`src/components/RunLand.tsx:623-636`). Nothing saw that
+     but a person at a narrow window, and nothing that runs could have: a class
+     string is a string until an engine cascades it. The same shape is why the
+     runs list stayed 916px wide however narrow the window got and why
+     `SegmentedControl` carries `max-md:flex-wrap`.
+     `src/components/ui/Table.test.tsx` pins that a stacked cell names its own
+     field *in the markup*; whether that label is on screen, unclipped and
+     beside its value at 390px is layout, and the survey
+     counted 222 viewport-conditional classes deciding it, none of them exercised
+     by anything in `npm test`.
+  2. **Every page in both themes, and once with the app on "Match system" while
+     the OS appearance changes.** Three theme states, not two: an absent
+     `[data-theme]` follows the OS through `color-scheme` and `light-dark()`, and
+     the two explicit values override it — so the OS switch is a fourth thing to
+     do and it is the boundary that fires no React render. What a person is
+     deciding here is not contrast: that is settled by arithmetic over the
+     declared tokens in `proposals/OperatorInterface/`, better than a browser
+     settles it, and this item must not quietly become an accessibility pass.
+     What is left is whether the page *reads* in the theme the operator actually
+     runs it in, and one mechanism that only a rendered page shows — a `<canvas>`
+     probes its colours rather than inheriting them, so a toggle with one open
+     must re-probe without a reload. That is already asked of the path map at
+     item 11 of its own pass above and is asked of no other canvas on this list.
+  3. **Tab through each page's primary flow; the focus ring is visible on every
+     stop, and the order is the order the page reads in.** The ring is one
+     token used everywhere, and `proposals/OperatorInterface/` names the reading
+     of its alpha — whether it is loud enough for somebody who looks at it all
+     day — as the single judgement that would overturn that survey's
+     recommendation. A judgement rather than a measurement, which is what puts it
+     here. Three places to be deliberate. Inside the sidebar drawer, quick open
+     and any `Sheet`, the trap and the Esc route are the browser's because all
+     three are native `<dialog>`s, so what is being checked is that nothing here
+     has broken them rather than that they exist. On the settings page, where the
+     search focuses a control it scrolled into view. And through the one
+     `keydown` listener the shell registers: ⌘1…⌘9 and ⌘K are bound, ⌘↩ is
+     deliberately bound to nothing so a form's own commit chord keeps working,
+     and a keystroke that disappears in a text field looks exactly like a dropped
+     character.
+  4. **The four controls that need state to exist at all, exercised one at a
+     time.** They are on this list because no automated option reaches them
+     without seeding, which is the same reason they have sat unrendered above.
+     A **queued run's priority input**, which needs a run actually sitting in the
+     queue behind `maxConcurrentRuns`, and whose `draft === null` rule decides a
+     value on screen rather than throwing. The **Backups row's `unreadable`
+     state** on the Storage card, which needs a directory this server cannot
+     read and does not appear at all otherwise. The **chat turn's live view**,
+     whose whole point is what it looks like while it moves, in a region that
+     also polls — a still frame is not the check. And the **Deliver button** —
+     `canDeliver` at `src/components/RunLand.tsx:360`, drawn as **Open pull
+     request** on the Land card — which is the one of the four that is **no
+     longer open**: it was pressed against a real GitHub remote and opened a
+     real pull request, and that is recorded above. It stays named here because
+     a release pass is a procedure rather than a backlog, and because what was
+     exercised was the path where the branch, the remote and the credential are
+     all present.
+
+- **The class of every interface defect found from here on is recorded here, and
+  the running list has one entry.** This is a measurement rather than a
+  convention for its own sake, and it exists because the argument it settles is
+  currently resting on a sample of size one. `proposals/UIChecks/` recommends
+  reaching for a real engine — the expensive class — and its whole case for
+  doing so is the `w-auto`/`w-full` ordering in `src/components/RunLand.tsx`.
+  One defect. If the next three interface defects are **state machines** rather
+  than **layout**, then jsdom is the right instrument, the recommendation was
+  aimed at the wrong class, and the cheapest thing that would have said so is a
+  line per defect written at the moment somebody already knows the answer. There
+  is no published measurement of this ratio for anybody's codebase, so nothing
+  can be borrowed and the only way to have it is to keep it.
+
+  **What to record.** One line, appended to the list below, when an interface
+  defect is found — by a person looking, by a bug report, or by a check that
+  fails. It names what was wrong, where, how it was found, and its **class**,
+  using the five in
+  `proposals/UIChecks/01-what-only-a-rendered-page-decides.md` because they are
+  the ones the argument is phrased in: **A** decidable from the source text
+  (declared values standing in a relation, e.g. contrast); **B** decidable from
+  static markup (what element and what classes a component emits for given
+  props); **C** a state machine — needs a DOM and events but not layout (a
+  disclosure that will not toggle, a draft a poll overwrites, focus landing in
+  the wrong place); **D** layout — needs a real engine (a box that scrolls
+  sideways, a class that lost a cascade, a `sticky` footer behind a keyboard);
+  **E** needs a person (whether the copy is right, whether the reading order
+  makes sense, whether a ring reads as loud). Record the class of the **defect**,
+  which is the cheapest instrument that could have caught it — not the class of
+  the thing that happened to find it, since a person finds class D defects all
+  the time and that is the fact being measured. A defect that two instruments
+  could have caught takes the cheaper letter. When the letter is genuinely
+  arguable, say so on the line rather than picking one, because an honest "C or
+  D" still tells a later reader which half of the argument it lands in and a
+  confident wrong letter does not.
+
+  **The list.**
+
+  - **2026-08-23, `434c235`, class D.** The Land card's strategy select took the
+    whole row on a narrow window: Tailwind emits `.w-auto` ahead of `.w-full`,
+    so the `w-auto` written beside it lost silently and neither the markup nor
+    the type checker could say so. Found by a person at a narrow window; fixed
+    by moving the width onto a wrapper (`src/components/RunLand.tsx:623-636`).
+
+  **And this is not "the interface is now checked".** Even with the pass above
+  written down and the smoke pass `proposals/UIChecks/09-recommendation.md`
+  recommends in place, the classes stand at: A by arithmetic, B by
+  assertion, D at a floor, E by a person, and **C — the state machines — covered
+  by nothing at all**. That hole is deliberate and it is written here so a green
+  `npm test` cannot be read as covering it. The list above is the thing that
+  would tell a future reader whether leaving it open is still the right call.
+
 There is no linter run in this repo, and `npm test` covers a deliberately short
 list: the folder-collision predicate, which queued runs may start, the budget
 policy, how a provider refusal is classified and backed off from, which prompt a
@@ -5801,11 +6111,13 @@ provider that cannot carry one on a flag, the GitHub credentials handed to a wor
 work cycle started as a saved agent both defines and selects it and moves none of
 what bounds the run, how a
 run's diff is parsed and budgeted, whether a saved graph of run blocks can run at
-all and the order its runs are created in, when a branch may be landed, what a
+all and the order its runs are created in, what a save would keep of a drawn one
+and which clicks would take it with them before it is saved, when a branch may be landed, what a
 queued merge does with the branch it reaches, what counts as a conflict marker — both
 for deciding whether one was really resolved and for deciding what to show, what
-the orchestrator chat may ask its operator, what an answer to it settles and where
-a question is drawn in the thread that shows it — and
+the orchestrator chat may ask its operator, what an answer to it settles, where
+a question is drawn in the thread that shows it and what one poll of an open thread
+reads against how long that thread already is — and
 the two renderings that would lie quietly about a number: an unconfigured
 ceiling, and a first-party figure shown beside the meters. Two entries are
 neither a function nor a rendering: the order a chat's thread renders in, driven

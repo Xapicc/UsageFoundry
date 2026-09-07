@@ -56,7 +56,12 @@ import {
 import { diffAsText, runDiff } from "@/lib/diff";
 import { rivalContinuation } from "@/lib/proposalContinuation";
 import { chatGuards } from "@/lib/settings";
-import { githubRemotes, scanWorkspace } from "@/lib/workspace";
+import {
+  MAX_REMOTES_READ,
+  folderKey,
+  githubRemotes,
+  scanWorkspace,
+} from "@/lib/workspace";
 import { mountById } from "@/lib/config";
 import { fmtUSD } from "@/lib/format";
 import { auditMutation, sourceAddress } from "../../../lib/requestLog";
@@ -154,8 +159,35 @@ const SHARED_TOOLS = [
     description:
       "List every workspace mount and the project folders in it, with which " +
       "runs are already working there and, for git repositories, the GitHub " +
-      "repo they point at. Folder paths for propose_run must come from here.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      "repo they point at. Folder paths for propose_run must come from here. " +
+      "Naming the GitHub repo costs a git call per folder, so at most " +
+      `${MAX_REMOTES_READ} are identified per call. Every folder this call ` +
+      "did not look at carries repoUnread, and repoLookups counts them: a " +
+      'null "repo" WITHOUT repoUnread means the folder is genuinely not a ' +
+      "GitHub repository, and one WITH it means nobody asked yet. To ask, " +
+      "call again with the nextOffset from repoLookups, or pass folders to " +
+      "identify only the ones you need.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        folders: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            'Folders to identify, each as "mountId:folder" — e.g. ' +
+            '"w1:acme/web" for the folder listed as mountId w1, folder ' +
+            `acme/web. Omit to identify the next ${MAX_REMOTES_READ} in ` +
+            "listing order.",
+        },
+        offset: {
+          type: "number",
+          description:
+            "How many git folders to skip before identifying any. Pass the " +
+            "nextOffset from a previous call to reach the ones it left out.",
+        },
+      },
+      additionalProperties: false,
+    },
   },
   {
     name: "list_templates",
@@ -948,7 +980,17 @@ async function callTool(
   switch (name) {
     case "list_folders": {
       const { mounts, folders } = await scanWorkspace();
-      const { repos, notRead } = await githubRemotes(folders);
+      // Narrowed at the boundary rather than passed through: these arrive off a
+      // model's tool call, so a `folders` holding a number is a thing that
+      // happens and must not become a key that matches nothing in silence.
+      const lookup = await githubRemotes(folders, {
+        folders: Array.isArray(args.folders)
+          ? args.folders.filter((f): f is string => typeof f === "string")
+          : null,
+        offset: Number(args.offset) || 0,
+      });
+      const looked = new Set(lookup.read);
+      const nextOffset = lookup.offset + lookup.read.length;
       return text(
         JSON.stringify(
           {
@@ -968,15 +1010,39 @@ async function callTool(
               mountId: f.mountId,
               folder: f.path,
               isGitRepo: f.isGitRepo,
-              repo: repos[`${f.mountId}:${f.path}`] ?? null,
+              repo: lookup.repos[folderKey(f)] ?? null,
+              // Said on the folder rather than left to be inferred, for the
+              // reason a shortened diff says it is shortened: a missing `repo`
+              // that means "not looked at" and one that means "not GitHub" are
+              // different sentences, and only the total used to distinguish
+              // them. A count tells a model how many folders it is missing and
+              // never which — and the folder it is missing is the one it then
+              // reports to the operator as a repository it cannot identify.
+              ...(f.isGitRepo && !looked.has(folderKey(f))
+                ? { repoUnread: true }
+                : {}),
               busyRunId: f.busyRunId,
               parkedRunId: f.parkedRunId,
               queuedCount: f.queuedCount,
             })),
-            // Said rather than left to be inferred, for the reason a shortened
-            // diff says so: a missing `repo` that means "not looked at" and one
-            // that means "not GitHub" are different sentences.
-            repoLookupsSkipped: notRead,
+            repoLookups: {
+              gitRepos: lookup.gitRepos,
+              matching: lookup.matching,
+              read: lookup.read.length,
+              offset: lookup.offset,
+              notRead: lookup.notRead,
+              // The offset that reaches what this call left out, or null when
+              // it left out nothing after it. Handed over as a number the next
+              // call can pass back, because a cap a caller cannot get past is
+              // indistinguishable from a workspace that stops there.
+              nextOffset: nextOffset < lookup.matching ? nextOffset : null,
+              // A key that named no folder is reported rather than dropped: it
+              // is the one case where reading nothing is a typo and not an
+              // answer, and it would otherwise render as "not a repository".
+              ...(lookup.unmatched.length
+                ? { unmatched: lookup.unmatched }
+                : {}),
+            },
           },
           null,
           1,

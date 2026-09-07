@@ -636,7 +636,7 @@ function spawnAssist(id: string, req: AssistRequest): Promise<void> {
     // `Grep` and `Glob` is what makes the CLI offer them at all, they read and
     // cannot write, and `--permission-mode plan` is still the whole of what
     // stops a review changing anything. The operator's own list stays behind
-    // them, so `resolveVerifyTools` remains the only thing that can name a
+    // them, so `resolveAllowedTools` remains the only thing that can name a
     // *command*, and `resolvePrompt` still sees only that list.
     args.push("--allowedTools", ...SEARCH_TOOLS, ...(allowedTools ?? []));
 

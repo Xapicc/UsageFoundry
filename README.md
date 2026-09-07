@@ -251,6 +251,7 @@ point; the *conditions* are the ones that have gone wrong here.
 | Nothing has been backed up lately | `stores.backups.newestAgeSeconds` | `> 172800`, or `null` — the only store here this app does not write, and the only one whose failure is silence |
 | The backup directory cannot be read | `stores.backups.readable` | `false` — a missing bind mount or a root-owned directory, which is not the same as no backups |
 | Another process took the data directory | `dataDirOwned` | `false` |
+| The schema is not the one this build expects | `schemaFaults` | non-empty — a rollback to an older image, or a table an interrupted migration left behind. Each entry is `{ at, level, detail }` and `detail.finding` is one of `downgrade`, `proposals_stranded`, `proposals_unreadable`, `orphan_table`. Scoped to the process now running, so it clears on a clean boot; the same findings are also rows in `ops_events` under the event `schema.fault`, which is the copy a restart does not erase |
 | The notification channel has stopped delivering | `webhook.consecutiveFailures` | `> 3` while `webhook.configured` — a fire-and-forget sink nobody receives from looks exactly like a quiet fleet |
 
 A `guardFraction` of `null` means *no ceiling is configured and the provider
@@ -288,6 +289,43 @@ its message: a rate limit is retried **in place** over roughly 17-26 minutes
 without the run ever leaving `running`, and those two fields are what tell that
 wait apart from a run that has actually died. Absent is not `false` — an error
 that is not a refusal at all carries `null` for both.
+
+#### What the log keeps, and what it throws away
+
+`docker-compose.yml` caps that stream at **20 MiB across 5 files — 100 MiB**,
+under Docker's `json-file` driver. Uncapped it is a fourth store beside the
+three under **Disk and retention** below, and the only one with no retention
+horizon, no figure on `/api/status` and no row in the alert table above: the
+three the app watches are the three that are not the problem on a machine whose
+disk fills.
+
+A line comes to about 270 bytes on disk once json-file's own envelope is
+counted. At 25 concurrent runs — ~1,800 work cycles a day — ordinary traffic is
+around 2 MB a day, so 100 MiB is roughly **seven weeks**. The case that sized
+the cap is not that one: at that fleet there are ~11,000 tool events an hour,
+and a sandbox policy refusing all of them puts a `run.sandbox_refusal` on stdout
+for each, which is ~86 MB a day and empties the window in about **29 hours**.
+That is deliberately longer than one unattended night.
+
+**What a cap costs is the oldest lines, and that is the wrong end.** After a bad
+ending at 03:00 the lines an operator wants are the boot and the first hour, and
+a refusal storm overnight can evict exactly those. Three things follow:
+
+- **Raise it** if you run a busy install with no log shipper. `UF_LOG_MAX_SIZE`
+  and `UF_LOG_MAX_FILE` in `.env`; 100 MiB is a rounding error against the
+  30-85 GB a month of transcripts the same fleet writes.
+- **Ship it** if you have somewhere to ship to. The driver is pinned because
+  `max-size` and `max-file` belong to `json-file` and a daemon defaulting to
+  journald would refuse them; replace the whole `logging:` block in a
+  `docker-compose.override.yml`.
+- **Do not answer it by logging less.** What is on stdout is already the short
+  list — the noisy kinds are deliberately off it — and each of these lines is
+  there because a run page is not where twenty-five unattended runs are watched.
+
+The few facts a restart itself has to survive are written to the database as
+well as to stdout — `boot.reconciled` is a row, and it is what
+`lastBootReconcile` on `/api/status` reads. The JSON stream is for whatever is
+scraping, and it wraps.
 
 ### Who started what
 
@@ -353,7 +391,9 @@ name on it: **[docs/limits-and-accuracy.md](docs/limits-and-accuracy.md)**.
 
 Agents produce data on three different volumes, and all three grow with the work
 rather than with your settings. What each one is bounded by is on
-**Settings → Storage**, which also shows what is in each of them. The two
+**Settings → Storage**, which also shows what is in each of them — and the
+fourth row of the table below is on none of those pages, which is the whole
+reason it is in the table. The two
 figures that come from walking a directory — checkouts and transcripts — are
 measured once and reused for five minutes rather than re-walked per reader: on a
 real checkout store that walk is 88,325 `lstat` calls and seconds of wall clock,
@@ -366,6 +406,12 @@ from git, or from its own walk.
 | Run logs (`run_events`, telemetry) | the `usagefoundry-data` named volume | tool calls, replies, agent stderr | 30 days after a run finishes |
 | Isolated checkouts (`.uf-worktrees`) | **your workspace**, beside your own code | one per concurrent run per repository | 7 days after the run finishes |
 | Session transcripts | **`~/.claude/projects`**, beside your credentials | one file per session, growing as it runs | 30 days after the file was last written |
+| Container stdout | the Docker daemon's own directory, on the host | lifecycle events and boot prose, ~270 B a line | **not a horizon**: 100 MiB, oldest lines first (see "Logs") |
+
+The last row is the odd one and is here so it is not forgotten: this app fills
+it and nothing in this app measures, sweeps or alerts on it, so what bounds it
+is `docker-compose.yml`'s `logging:` block rather than any setting on this
+dashboard. Everything below is about the three the app does own.
 
 The horizons are per store because the media are. Blank means *keep for ever*,
 which is what shipped before this existed. **A run that has not finished is

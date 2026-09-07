@@ -620,6 +620,119 @@ describe("the container's memory ceiling and the server's heap agree", () => {
 });
 
 /**
+ * Docker's duration spelling as milliseconds — one or more `{value}{unit}`
+ * pairs, largest unit first. Anything else fails here rather than being guessed
+ * at: compose refuses a duration it cannot read, so a value this cannot parse is
+ * a value the deployment does not have.
+ */
+function durationMs(spec: string): number {
+  const scale: Record<string, number> = {
+    us: 1 / 1000,
+    ms: 1,
+    s: 1_000,
+    m: 60_000,
+    h: 3_600_000,
+  };
+  const parts = [...spec.trim().matchAll(/(\d+(?:\.\d+)?)(us|ms|s|m|h)/g)];
+  assert.ok(
+    parts.length > 0 && parts.map((part) => part[0]).join("") === spec.trim(),
+    `cannot read "${spec}" as a Docker duration`,
+  );
+  return parts.reduce((total, part) => total + Number(part[1]) * scale[part[2]], 0);
+}
+
+const orchestratorSource = fs.readFileSync(
+  path.join(root, "src", "lib", "orchestrator.ts"),
+  "utf8",
+);
+
+/**
+ * A millisecond literal read out of `orchestrator.ts`'s source, `_` separators
+ * and all. Read as text rather than imported because importing that module
+ * opens the database and installs the fleet's long-lived state on `globalThis`,
+ * which is a great deal to do for two numbers.
+ */
+function orchestratorMs(what: string, pattern: RegExp): number {
+  const match = pattern.exec(orchestratorSource);
+  assert.ok(match, `orchestrator.ts no longer states ${what} where this can read it.`);
+  return Number(match[1].replace(/_/g, ""));
+}
+
+/**
+ * How long Docker gives the shutdown, against how long the shutdown takes.
+ *
+ * On `SIGTERM` the server does not exit. `shutdownRuns` interrupts every live
+ * run through the same ladder an operator's Stop uses — `SIGINT` at once,
+ * `SIGTERM` at 3s, `SIGKILL` at 8s — waits up to `SHUTDOWN_GRACE_MS` for the
+ * children to go *and* for the loops behind them to write what the cycle cost,
+ * and only then reconciles whatever they did not finish out of the transcripts.
+ * Docker sends that `SIGTERM` and `SIGKILL`s the container `stop_grace_period`
+ * later, whatever the process is in the middle of.
+ *
+ * So the two are a pair, in two files, neither of which typechecks against the
+ * other, and the edit that breaks them is an ordinary one: `SHUTDOWN_GRACE_MS`
+ * is exactly the number somebody raises when a slow agent is not dying cleanly.
+ * Past `stop_grace_period` the process is killed mid-reconciliation, which is
+ * the failure `shutdownRuns` was written to end — every in-flight cycle's spend
+ * lost, and `active_started_at` left set on cycles whose agents are gone, which
+ * `installBudget` and a workflow instance's budget both bound
+ * `telemetrySpendSince` below by. That half fails *open*: it widens two ceilings
+ * at once, silently, in the direction a guard may never move by accident, and
+ * the only symptom is spend that does not add up.
+ *
+ * Nothing else can notice. Both values are correct as literals, both files
+ * parse, the container starts, and `docker compose stop` returns 0 either way —
+ * Docker says nothing when a grace period runs out.
+ */
+describe("the container's stop grace and the server's shutdown grace agree", () => {
+  const stopGraceMs = () => durationMs(shippedDefault("stop_grace_period"));
+  const shutdownGraceMs = () =>
+    orchestratorMs("SHUTDOWN_GRACE_MS", /^export const SHUTDOWN_GRACE_MS = ([\d_]+);$/m);
+
+  it("kills the container later than the server stops waiting", () => {
+    // The headroom is what `reconcileInterruptedCycles` runs in. That happens
+    // *after* the wait and nothing bounds it: one `scanUsage` per in-flight
+    // cycle, awaited one at a time. Ten seconds is a floor rather than a
+    // measurement — Docker is not available where these tests run, so no real
+    // shutdown was timed — and it is chosen to fail on the edit rather than to
+    // model the work. It leaves the shipped pair ten seconds of slack and
+    // refuses both halves of the plausible drift: `stop_grace_period` dropped
+    // back to Docker's own 10s default, and `SHUTDOWN_GRACE_MS` raised until it
+    // fills the grace it was given.
+    const headroom = 10_000;
+    const stop = stopGraceMs();
+    const wait = shutdownGraceMs();
+    assert.ok(
+      stop >= wait + headroom,
+      `stop_grace_period is ${stop}ms and the server waits ${wait}ms before it ` +
+        "even starts reconciling. Raise stop_grace_period in docker-compose.yml " +
+        "or lower SHUTDOWN_GRACE_MS, or Docker SIGKILLs the process part-way " +
+        "through the accounting that path exists to recover.",
+    );
+  });
+
+  it("waits past the last moment a child could still be coming back", () => {
+    // `SHUTDOWN_GRACE_MS`'s own docblock is this assertion in prose: ten seconds
+    // is "the first moment after that last step at which a child can be said not
+    // to be coming back". Raise the ladder past it and the wait ends while the
+    // SIGKILL meant to end it is still pending, so the loops the grace exists to
+    // give a chance have not had one — the same lost accounting as above,
+    // reached from the other side and without touching either grace.
+    const ladderEnd = orchestratorMs(
+      "the kill ladder's SIGKILL step",
+      /signalTree\(child, "SIGKILL"\);\s*\n\s*\}, ([\d_]+)\)/,
+    );
+    const wait = shutdownGraceMs();
+    assert.ok(
+      ladderEnd < wait,
+      `the kill ladder reaches SIGKILL at ${ladderEnd}ms and the shutdown stops ` +
+        `waiting at ${wait}ms. The grace has to outlast the ladder, or it ends ` +
+        "before the children it is waiting for are dead.",
+    );
+  });
+});
+
+/**
  * The agreement that decides whether a *correct* install accuses itself.
  *
  * Compose cannot omit an environment key conditionally, so every optional
@@ -1412,5 +1525,222 @@ describe("the Discord relay ships, starts, and does not leak its credential", ()
           `does nothing at all and the boot log says the relay is off`,
       );
     }
+  });
+});
+
+/**
+ * The ceiling on the container's own log, and the operator-facing page that
+ * states it — the one store this app grows and does not own.
+ *
+ * `run_events`, the checkouts and the transcripts each have a retention
+ * horizon, a figure on `/api/status` and a suggested alert. Container stdout
+ * has none of the three, and it is written by this app on purpose: ten
+ * structured event kinds beside the `[usagefoundry]` prose. Docker's
+ * `json-file` driver keeps every line for ever unless compose says otherwise,
+ * so the absence of a `logging:` block is a store with no bound at all — on the
+ * same disk as the three that are bounded, and the one that will still be
+ * growing after they have stopped.
+ *
+ * Nothing else can notice it. The compose file parses, the container starts,
+ * every page works, and the evidence arrives months later as a full disk on a
+ * host whose Docker directory nobody was watching. That is the same shape as
+ * the `memswap_limit` and `stop_grace_period` pairs above: a value that is
+ * correct in every observable way and wrong only in what it permits.
+ *
+ * The floor is the *bad* case rather than the ordinary one, because that is
+ * what sized the number. `run.sandbox_refusal` is on stdout precisely so a
+ * policy refusing every tool call is visible without opening twenty-five run
+ * pages, and a cap that such a storm empties inside a shift hides the thing it
+ * was widened for. So the window has to outlast one unattended night.
+ */
+describe("the container's log has a ceiling, and README states it", () => {
+  /** Docker's `json-file` options, as an install that sets nothing gets them. */
+  function logOption(name: "max-size" | "max-file"): string {
+    assert.match(
+      compose,
+      /^\s*driver:\s*json-file\s*$/m,
+      "docker-compose.yml no longer pins the json-file driver. `max-size` and " +
+        "`max-file` belong to that driver alone: named without it they are " +
+        "handed to whatever the daemon defaults to, and a journald or fluentd " +
+        "default refuses them and the container will not start.",
+    );
+    return shippedDefault(name);
+  }
+
+  it("caps the stream at all, which is the whole of the defect", () => {
+    const size = bytes(logOption("max-size"));
+    const files = Number(logOption("max-file"));
+    assert.ok(files >= 1, `max-file is "${files}", which is not a file count`);
+    assert.ok(size > 0, "max-size is zero, which Docker reads as no limit");
+  });
+
+  it("keeps a refusal storm readable for longer than one unattended night", () => {
+    // Both terms are this repository's own numbers. README's "Disk and
+    // retention" measures ~11,000 tool events an hour at 25 concurrent runs; a
+    // sandbox policy refusing all of them puts one `run.sandbox_refusal` on
+    // stdout per refusal. 300 bytes is a deliberately round figure *below* the
+    // 327 that shape actually encodes to inside json-file's
+    // {"log":…,"stream":…,"time":…} envelope, so this is a floor rather than a
+    // model — it fails on the edit that halves the cap, not on a plausible one.
+    const TOOL_EVENTS_PER_HOUR = 11_000;
+    const BYTES_PER_REFUSAL_LINE = 300;
+    const stormBytesPerDay = TOOL_EVENTS_PER_HOUR * 24 * BYTES_PER_REFUSAL_LINE;
+
+    const ceiling = bytes(logOption("max-size")) * Number(logOption("max-file"));
+    assert.ok(
+      ceiling >= stormBytesPerDay,
+      `max-size x max-file is ${(ceiling / 2 ** 20).toFixed(0)} MiB, and a ` +
+        `sandbox refusing every tool call at the shipped fleet writes ` +
+        `${(stormBytesPerDay / 2 ** 20).toFixed(0)} MiB a day. The window has ` +
+        `to outlast a night, or the storm evicts its own beginning before ` +
+        `anybody reads it — which is the failure putting that line on stdout ` +
+        `exists to prevent.`,
+    );
+  });
+
+  it("states the same ceiling on the page an operator reads", () => {
+    // The other half, and it drifts in silence: an operator who is told 100 MiB
+    // and has 20 provisions, alerts and reasons about a window that is not
+    // there. README's "Logs" is where the trade — a cap discards the *oldest*
+    // lines, which are the ones wanted after a bad ending at 03:00 — is
+    // written down, and a figure it no longer matches makes that paragraph
+    // describe a different install.
+    const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
+    const mib = bytes(logOption("max-size")) / 2 ** 20;
+    const stated = `${mib} MiB across ${Number(logOption("max-file"))} files`;
+    assert.ok(
+      readme.includes(stated),
+      `README does not say "${stated}", which is what docker-compose.yml now ` +
+        `configures. The section is "Logs"; the numbers there are what an ` +
+        `operator sizes a shipper and a disk against.`,
+    );
+    assert.match(
+      readme,
+      /oldest lines/,
+      "README no longer says what the cap costs. A capped log throws away the " +
+        "beginning, and an operator who does not know that reads a truncated " +
+        "history as a complete one.",
+    );
+  });
+});
+
+/**
+ * Every environment-sourced credential's rotation cost is written down, and the
+ * list cannot grow again without saying so.
+ *
+ * Nothing here asserts a behaviour, because there is no behaviour to assert:
+ * `process.env` is fixed for the life of this process, so every value below
+ * needs a container restart to change and none of them can be tested by
+ * changing one. What can go wrong is the *record*, and it already has — the
+ * notification channel arrived as five more variables read exactly the way the
+ * credentials are, and the only place that fact lived was a survey somebody
+ * happened to re-derive. A restart is what ends every run in flight, so an
+ * operator deciding whether a leak is worth that needs the list to be complete;
+ * one short by five is the same as no list.
+ *
+ * Held against the source rather than a second hand-written list, `namesRead`'s
+ * reason one block up: a credential added to `config.ts` or to the edge gate is
+ * how the next omission arrives, not an edit to the doc.
+ */
+describe("the rotation cost of every environment-sourced value is recorded", () => {
+  const ANCHOR = "Rotating any of these is a container restart";
+  const environmentDoc = fs.readFileSync(
+    path.join(root, "docs", "agent", "environment.md"),
+    "utf8",
+  );
+
+  /** The one bullet, up to the next top-level one. Empty when it is gone. */
+  const section = (() => {
+    const start = environmentDoc.indexOf(ANCHOR);
+    if (start === -1) return "";
+    const rest = environmentDoc.slice(start);
+    const end = rest.indexOf("\n- ");
+    return end === -1 ? rest : rest.slice(0, end);
+  })();
+
+  it("carries the bullet the other cases read", () => {
+    assert.notEqual(
+      section,
+      "",
+      `docs/agent/environment.md no longer carries the rotation bullet ` +
+        `(anchored on "${ANCHOR}"). It is the only written statement of what ` +
+        `rotating a leaked credential costs on this install; do not remove it ` +
+        `without putting the enumeration somewhere a reader is routed to.`,
+    );
+  });
+
+  it("names every variable config.ts reads through optionalEnv", () => {
+    const configSource = fs.readFileSync(path.join(root, "src", "lib", "config.ts"), "utf8");
+    const names = [
+      ...configSource.matchAll(/optionalEnv\(\s*"([A-Z0-9_]+)"/g),
+    ].map((m) => m[1]);
+    assert.ok(names.length > 0, "no optionalEnv reads found in config.ts");
+
+    for (const name of new Set(names)) {
+      assert.ok(
+        section.includes(name),
+        `${name} is read through optionalEnv in config.ts and the rotation ` +
+          `bullet in docs/agent/environment.md does not name it. Say which of ` +
+          `the three groups it is in — issued here (only a restart revokes it), ` +
+          `issued elsewhere (revoke at the issuer, the restart only re-arms ` +
+          `this install), or not a credential at all.`,
+      );
+    }
+  });
+
+  it("names every UF_ variable the edge gate reads", () => {
+    const middlewareSource = fs.readFileSync(path.join(root, "src", "middleware.ts"), "utf8");
+    const names = [...middlewareSource.matchAll(/process\.env\.(UF_[A-Z0-9_]+)/g)].map(
+      (m) => m[1],
+    );
+    assert.ok(names.length > 0, "no process.env reads found in src/middleware.ts");
+
+    for (const name of new Set(names)) {
+      assert.ok(
+        section.includes(name),
+        `${name} is compared in the edge gate and the rotation bullet in ` +
+          `docs/agent/environment.md does not name it. This is the group that ` +
+          `matters most: the edge runtime has no node:fs and must not import ` +
+          `lib/config, so a credential checked there cannot be given a source ` +
+          `that changes while the process runs.`,
+      );
+    }
+  });
+
+  /**
+   * The three this app never reads and still hands out, listed rather than
+   * derived because what puts them in the list is an *absence* — no strip in
+   * `childEnv` and its four siblings — and a test that greps for a missing line
+   * asserts nothing. They are the easiest ones to forget for the same reason.
+   */
+  it("names the credentials this app forwards but never reads itself", () => {
+    for (const name of ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY"]) {
+      assert.ok(
+        section.includes(name),
+        `${name} reaches a child from this process's own environment and the ` +
+          `rotation bullet in docs/agent/environment.md does not name it. It ` +
+          `rotates on the same restart as everything this app does read.`,
+      );
+    }
+  });
+
+  /**
+   * `DISCORD_WEBHOOK_URL` is the one the server is deliberately kept from, so
+   * "config.ts does not read it" is the *expected* state rather than evidence
+   * it is out of scope — it is still an operator credential this deployment
+   * carries, and it still needs a restart. Pinned off the entrypoint, which is
+   * the file that does read it.
+   */
+  it("names the credential only the entrypoint holds", () => {
+    const entrypoint = fs.readFileSync(path.join(root, "docker-entrypoint.sh"), "utf8");
+    assert.ok(
+      entrypoint.includes("DISCORD_WEBHOOK_URL"),
+      "docker-entrypoint.sh no longer reads DISCORD_WEBHOOK_URL",
+    );
+    assert.ok(
+      section.includes("DISCORD_WEBHOOK_URL"),
+      "docker-entrypoint.sh launches the Discord relay with DISCORD_WEBHOOK_URL " +
+        "and the rotation bullet in docs/agent/environment.md does not name it.",
+    );
   });
 });
