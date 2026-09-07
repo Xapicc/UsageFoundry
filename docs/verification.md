@@ -2022,25 +2022,47 @@ Built and exercised against real transcripts:
   runs; nothing here exercises the pager against a graph with something live in
   it, or against instances arriving while an older page is open.
 
-- **The taskboard loaded, in a browser, on 2026-09-07.** `npm run smoke-pages`
-  against a production build, with `/tasks` added to the script's route list —
-  which is hand-written rather than discovered, so a new page does *not* enter
-  it on its own and the next one to land has to add itself the same way.
-  `/tasks` was clean at 390px and 1280px: a 200, no console error, no sideways
-  scroll. The run as a whole still exits 1, on `/knowledge` at both widths and
-  for a reason that predates this page and has nothing to do with it — the
-  smoke sandbox configures no vault root, so the knowledge pane's own fetch
-  answers 409 and the browser logs it as a failed resource. That is a gap
-  between the harness's throwaway environment and one page's requirements
-  rather than a defect in either.
+- **The taskboard was driven, in a browser, on 2026-09-07.** A production
+  build under `node .next/standalone/server.js`, a throwaway `DATA_DIR`, a
+  scratch `UF_AUTH_TOKEN`, rows seeded straight into `tasks` with the repo's own
+  `better-sqlite3`, and Playwright holding the `uf_session` cookie. What was
+  measured rather than assumed:
 
-  **What this does not establish.** This is *load* and nothing else, which is
-  what the script asserts about — see its header. Nothing on the board has been
-  pressed against a real database: filing a task, editing one, moving one
-  between statuses, the delete sheet, the project filter and all three empty
-  states are markup that typechecks and has never been exercised, and the board
-  the smoke run opened held no rows at all. Those are on the list below.
+  - **The clipped brief cannot be written back.** The seeded brief was 310
+    characters; the board's row carried 200 ending in `…`, the editor's textarea
+    carried all 310 with no ellipsis, and a title-only save left the stored
+    brief at 310. That is the one destructive path on this page and it is shut.
+  - **A refusal reaches the operator verbatim.** With the row dropped out from
+    under the page through the API, pressing Done rendered
+    `taskTransitionRefusal`'s own sentence — "This task is already dropped.
+    Re-open it first — …" — rather than a generic failure.
+  - **A move the rules allow.** Open → done through the button, with the note
+    and the row landing in the Closed fold.
+  - **Filing by hand.** The form's `POST /api/tasks` stored title, brief,
+    priority and a mount/folder pair chosen from the real workspace scan.
+  - **All three nothings, each on screen.** An empty board; a filter matching
+    none, naming the project ("No tasks in Github / DaiVELOPER") with the way
+    back to every project; and — with `/api/tasks` aborted at the network layer
+    — "The board could not be read", which says it is a failed request rather
+    than an empty backlog.
+  - **Every pane shortcut after the renumbering.** ⌘1…⌘9 each landed on the row
+    the sidebar announces (`/` `/chat` `/runs` `/tasks` `/workflows` `/agents`
+    `/branches` `/knowledge` `/dreaming`), `aria-keyshortcuts` matched on each,
+    `/account` and `/settings` carry none, and quick open still reaches
+    `/account`. Note that a shortcut pressed before hydration does nothing —
+    a test that navigates with `domcontentloaded` and presses immediately will
+    report every chord as broken and be wrong.
+  - No console error at 1280px, and none at 390px on the stacked board.
 
+  `npm run smoke-pages` agrees on the load half — `/tasks` clean at both widths,
+  a 200, no console error, no sideways scroll — after `/tasks` was added to that
+  script's route list, which is **hand-written rather than discovered**, so the
+  next page to land has to add itself the same way. The run as a whole still
+  exits 1, on `/knowledge` at both widths, for a reason that predates this page:
+  the smoke sandbox configures no vault root, so that pane's own fetch answers
+  409 and the browser logs it as a failed resource. That is a gap between the
+  harness's environment and one page's requirements rather than a defect in
+  either.
 
 ## Not yet verified by hand
 
@@ -2049,16 +2071,13 @@ standalone bundle), and are covered by the unit tests above, but the following
 have **not** been exercised against a real CLI. They are the list to work
 through before trusting this unattended:
 
-> **Every control on the taskboard has been rendered and none has been
-> pressed.** The page loads clean at both widths and the transition rules under
-> it are unit-tested, but no press has been made against a live row: a create,
-> an edit that rewrites a brief, each of Release / Done / Drop / Re-open, a
-> delete through the sheet, and — the one this page is built around — the
-> refusal path, a move the server declines, which needs a second window or a run
-> holding the task to produce at all. The board's three nothings are in the same
-> position: an empty board, a filter matching none and an unreadable fetch each
-> get their own screen and only the first has been seen, since the smoke run's
-> database had no tasks in it.
+> **Four of the taskboard's controls are still unpressed.** Release on a
+> claimed row, Re-open on a closed one, Drop, and the delete sheet: each is the
+> same `PATCH`/`DELETE` as a control that was exercised above, against a rule
+> that is unit-tested, but none has been pressed against a live row. Nor has any
+> refusal an *actor other than the operator* would get — every one of those
+> needs a run or a chat turn holding the task, and neither has a door to this
+> table yet.
 >
 > **The chat turn's live view has never been rendered in a browser either**, and
 > it is the one addition whose whole point is what it looks like while it moves.
