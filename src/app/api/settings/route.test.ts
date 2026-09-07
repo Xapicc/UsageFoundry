@@ -95,7 +95,7 @@ const PROBES: Record<keyof Settings, Probe> = {
   freshStartContextTokens: { send: 150_000 },
   maxConcurrentRuns: { send: 3 },
   maxConcurrentAssists: { send: 5 },
-  resolveVerifyTools: { send: ["Bash(npm run typecheck:*)"] },
+  resolveAllowedTools: { send: ["Bash(npm run typecheck:*)"] },
   isolationCopyGlobs: { send: [".env.local"] },
   isolationCopyGlobsByRepo: { send: { "acme/web": ["apps/web/.env"] } },
   isolationPreamble: { send: "CHANGED preamble" },

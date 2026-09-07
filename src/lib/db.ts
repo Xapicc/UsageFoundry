@@ -1193,6 +1193,25 @@ function migrate(db: Database.Database) {
   addColumn(db, "chat_messages", "seq", "INTEGER");
   db.exec("UPDATE chat_messages SET seq = rowid WHERE seq IS NULL");
 
+  // Here rather than beside the other indexes above, because `seq` is a column
+  // this function adds and the block up there runs before it exists.
+  //
+  // It is what makes the chat page's cursor a bound rather than a filter. The
+  // page polls one thread every three seconds for as long as it is open, and
+  // asks for the messages past the highest `seq` it holds; on
+  // `idx_chat_messages_chat(chat_id, ts)` SQLite answers that by walking every
+  // row of the thread, discarding all but the new ones and then sorting what
+  // survives in a temp B-tree — so the work per poll still grew with the
+  // conversation and only the *response* was small. Measured on a 500-message
+  // thread: `SEARCH … USING INDEX idx_chat_messages_chat (chat_id=?)` plus
+  // `USE TEMP B-TREE FOR ORDER BY` for both the cursored and the whole-thread
+  // read. With `(chat_id, seq)` both become a range scan in `seq` order over
+  // exactly the rows asked for, and the sort disappears.
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_chat_messages_seq" +
+      " ON chat_messages(chat_id, seq)",
+  );
+
   // When the turn now in flight began, so the ten-minute bound on a chat turn
   // is enforceable by something outside the closure that spawned it. Not
   // `updated_at`, which looks like the same instant and is not: the chat's own
