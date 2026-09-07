@@ -2156,6 +2156,45 @@ Built and exercised against real transcripts:
   vault root configured* against the harness's throwaway `DATA_DIR`, it is not
   reached by anything on this path, and it was left alone.
 
+- **A written fork removes nothing from the API's window, measured on all five
+  forks this install has ever written (2026-08-28 export, re-derived from the
+  session transcripts under `~/.claude/projects`).** "Before" is the last
+  main-thread `usage` frame in the source session; "after" is the first one the
+  resumed process wrote. Both are `input_tokens + cache_creation_input_tokens +
+  cache_read_input_tokens`, which is exactly what `apiContextTokens` sums.
+
+  | run | `net_bytes` | recorded removed (÷3.6) | API before | API after | measured change | resume's `cache_creation` |
+  |---|---|---|---|---|---|---|
+  | 3da14af4 | 16,839 | 4,678 | 200,964 | 202,117 | **+1,153** | 180,259 |
+  | 07f9e442 | 31,962 | 8,878 | 199,751 | 201,908 | **+2,157** | 178,675 |
+  | 7f361068 | 63,337 | 17,594 | 199,807 | 205,045 | **+5,238** | 183,187 |
+  | fc491479 | 60,911 | 16,920 | 204,471 | 207,102 | **+2,631** | 185,244 |
+  | c939c07a | 35,756 | 9,932 | 281,628 | 285,194 | **+3,566** | 259,881 |
+
+  Recorded removal across the five: 58,002 tokens. Measured change in the API
+  window: **+14,745 tokens**. Nothing came out and five cold rewrites of
+  178k–260k tokens — about $1.80 each at the one-hour class — were paid for.
+
+  The `message`-byte arithmetic itself is not wrong: winnow really did remove
+  17,153 / 32,175 / 65,221 / 62,251 / 36,433 bytes of `message` content. It
+  removed **0** bytes of `toolUseResult` on every one of the five (370,002 →
+  370,002 on `c939c07a`; 371,631, 428,492, 956,077, 359,319 unchanged on the
+  other four), from a uuid-keyed record-by-record diff of each source against
+  its fork. The bytes left the file; they did not leave the request. The
+  in-place engine is not affected and was measured separately: it strips
+  `toolUseResult` too, and its `message`-basis figure of 108,534 tokens on run
+  `115c617d` sat against a measured API fall of 114,350.
+
+  **Assumed, not measured:** that the resumed CLI rebuilding tool results from
+  the untouched `toolUseResult` is *why* the edit does not reach the wire. The
+  measurement that it does not reach the wire is direct on all five pairs; the
+  mechanism is the one structural difference between the two engines and is
+  offered as the most likely cause rather than as a second measurement.
+
+  Acted on 2026-09-07: `fork_attempts.api_context_before` /
+  `api_context_after`, `NettableCut.removalKnown`, and `measuredForkRemoval`
+  feeding `ceilingCut`. See `forkCutFromRow`.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the
