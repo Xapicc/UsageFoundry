@@ -151,17 +151,17 @@ function placeKey(task: TaskListItemDTO): string {
 }
 
 /** What a row says about where its work is. */
-function placeLabel(task: {
-  mountLabel: string | null;
-  mountId: string | null;
-  relPath: string | null;
-  folder: string | null;
-}): string {
+function placeLabel(task: TaskListItemDTO): string {
   if (task.folder === null) return "Unassigned";
-  const mount = task.mountLabel ?? task.mountId ?? "?";
+  // `describeFolder` answers `mountLabel: null` and the whole stored path when
+  // no configured mount contains the folder — a workspace removed from config
+  // since the task was filed. The `mountId` is *not* a stand-in for the label
+  // there: printing it would name a workspace that is not on this install, and
+  // the path is the only true thing left to say.
+  if (task.mountLabel === null) return task.relPath ?? task.folder;
   // A task on a mount root has an empty `relPath`, which reads as a missing
   // value rather than as the root — so the mount's own name stands alone.
-  return task.relPath ? `${mount} / ${task.relPath}` : mount;
+  return task.relPath ? `${task.mountLabel} / ${task.relPath}` : task.mountLabel;
 }
 
 /** Who put this on the board, in a phrase rather than a column of enum words. */
@@ -213,7 +213,19 @@ export default function TasksPage() {
   // the second clock `docs/agent/conventions.md` warns about.
   const [fetchedAt, setFetchedAt] = useState(() => Date.now());
 
-  const [place, setPlace] = useState<string>(EVERY_PROJECT);
+  /**
+   * The project filter, carrying the label it was chosen by.
+   *
+   * The label cannot be looked back up from the rows: the state the heading is
+   * for is a filter that now matches nothing, and by then the row the label came
+   * from is gone — so the derived version read "No tasks in that project"
+   * always, and the named case was unreachable in exactly the case it exists
+   * for. Taken at the press, where the row is still on the board.
+   */
+  const [place, setPlace] = useState<{ key: string; label: string }>({
+    key: EVERY_PROJECT,
+    label: "",
+  });
 
   const [mounts, setMounts] = useState<WorkspaceMountDTO[]>([]);
   const [folders, setFolders] = useState<WorkspaceFolderDTO[]>([]);
@@ -290,9 +302,9 @@ export default function TasksPage() {
 
   const visible = useMemo(
     () =>
-      place === EVERY_PROJECT
+      place.key === EVERY_PROJECT
         ? tasks
-        : tasks.filter((t) => placeKey(t) === place),
+        : tasks.filter((t) => placeKey(t) === place.key),
     [tasks, place],
   );
 
@@ -310,10 +322,6 @@ export default function TasksPage() {
   );
 
   const truncated = total > tasks.length;
-  const placeName =
-    place === NO_PROJECT
-      ? "tasks with no project"
-      : (places.find(([key]) => key === place)?.[1] ?? "that project");
 
   function openNew() {
     setEditing({ id: null, ready: true });
@@ -456,6 +464,18 @@ export default function TasksPage() {
   const boardIsEmpty = !unreadable && loaded && total === 0;
   const filterMatchedNone =
     !unreadable && loaded && total > 0 && visible.length === 0;
+
+  /** What the select's options are, so a press can keep the label it chose. */
+  function pick(key: string) {
+    if (key === EVERY_PROJECT) return setPlace({ key, label: "" });
+    if (key === NO_PROJECT) {
+      return setPlace({ key, label: "tasks with no project" });
+    }
+    setPlace({
+      key,
+      label: places.find(([candidate]) => candidate === key)?.[1] ?? key,
+    });
+  }
 
   const folderOptions = folders.filter((f) => f.mountId === draft.mountId);
   // A stored folder the scan no longer offers — a deleted directory, a mount
@@ -615,7 +635,10 @@ export default function TasksPage() {
               <Th scope="col" className="min-w-[104px]">
                 Updated
               </Th>
-              <Th scope="col" className="min-w-[176px]">
+              {/* Wide enough for the three a claimed row draws — Release,
+                  Done and Drop — which otherwise wrap into a ragged block that
+                  reads as two groups of controls. */}
+              <Th scope="col" className="min-w-[232px]">
                 Move
               </Th>
             </tr>
@@ -635,8 +658,8 @@ export default function TasksPage() {
           </h1>
           <p className="max-w-[68ch] text-ink-muted">
             A <strong className="font-semibold text-ink">task</strong> is a
-            brief nobody has started: the text an agent would be handed, and the
-            folder it belongs to. Writing one down costs nothing and starting
+            brief nobody has started — the text an agent would be handed, and
+            the folder it belongs to. Writing one down costs nothing; starting
             the work is a separate press.
           </p>
         </div>
@@ -699,7 +722,7 @@ export default function TasksPage() {
                 <Field
                   label="Brief"
                   htmlFor="task-body"
-                  hint="The whole of what an agent picking this up would know — it is handed this and nothing else"
+                  hint="What an agent picking this up is handed, and nothing else"
                 >
                   <Textarea
                     id="task-body"
@@ -735,7 +758,7 @@ export default function TasksPage() {
                 <Field
                   label="Workspace"
                   htmlFor="task-mount"
-                  hint="A task names a mount and a folder together or neither"
+                  hint="A mount and a folder together, or neither"
                 >
                   <div className="w-64">
                     <Select
@@ -850,13 +873,13 @@ export default function TasksPage() {
           <Field
             label="Project"
             htmlFor="task-place"
-            hint="Every mount by default. A task tied to no project is its own choice below"
+            hint="Every mount by default"
           >
             <div className="w-80">
               <Select
                 id="task-place"
-                value={place}
-                onChange={(e) => setPlace(e.target.value)}
+                value={place.key}
+                onChange={(e) => pick(e.target.value)}
               >
                 <option value={EVERY_PROJECT}>
                   Every project ({tasks.length})
@@ -928,7 +951,7 @@ export default function TasksPage() {
       ) : filterMatchedNone ? (
         <Card emphasis="primary">
           <Empty>
-            <div className="font-medium text-ink">No tasks in {placeName}</div>
+            <div className="font-medium text-ink">No tasks in {place.label}</div>
             <div className="mx-auto mt-1 max-w-[52ch]">
               The board holds {tasks.length}
               {truncated ? ` of ${total}` : ""}, and this filter matched none of
@@ -937,7 +960,7 @@ export default function TasksPage() {
             <div className="mt-3">
               <Button
                 variant="secondary"
-                onClick={() => setPlace(EVERY_PROJECT)}
+                onClick={() => pick(EVERY_PROJECT)}
               >
                 Show every project
               </Button>
