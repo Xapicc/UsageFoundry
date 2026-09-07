@@ -149,6 +149,8 @@ const { revokeIngestTokens, runForIngestToken } =
 const { db } = require("./db") as typeof import("./db");
 const { recentOpsEvents } = require("./ops") as typeof import("./ops");
 const { saveSettings } = require("./settings") as typeof import("./settings");
+const { priceFiles, renderFileCostNotice } =
+  require("./fileCostNotice") as typeof import("./fileCostNotice");
 
 const clash = (a: string, b: string) => overlaps(conflictKey(a), conflictKey(b));
 
@@ -2488,11 +2490,39 @@ describe("buildArgs", () => {
    * runs with it. The argv is the whole mechanism — there is no ownership
    * boundary between an agent and the process supervising it — so it is pinned
    * for every mode, including the one whose entire purpose is skipping checks.
+   *
+   * The flag is spawned here with a price list on it, because the no-literal
+   * rule below is **two** rules and this is the only place both are visible. A
+   * standing notice names commands, so it may carry no figure; the price list is
+   * nothing but figures, so it may name no command. A version of this test that
+   * left the price list off asserted the first form against a string that could
+   * not contain the second, and read as covering the whole flag while never
+   * seeing the one notice that carries digits at all.
    */
   for (const permissionMode of ["acceptEdits", "bypassPermissions"] as const) {
     for (const isolated of [true, false]) {
       it(`withholds name-matched kills from a ${permissionMode} run (isolated: ${isolated})`, () => {
-        const args = buildArgs({ ...base, permissionMode, isolated });
+        // Rendered rather than typed, and the only fixture in this describe that
+        // is: the prose a later editor would hang a worked example off is the
+        // generator's own head and tail, not a line spelled out here, so a
+        // hand-written `path — 116k` would leave most of what ships untested.
+        const priceList = renderFileCostNotice(
+          priceFiles(
+            [
+              { path: "src/lib/orchestrator.ts", bytes: 500_000 },
+              { path: "docs/verification.md", bytes: 200_000 },
+            ],
+            new Map(),
+          ),
+        );
+        assert.ok(priceList.length > 0, "these inputs must produce a price list at all");
+
+        const args = buildArgs({
+          ...base,
+          permissionMode,
+          isolated,
+          fileCostNotice: priceList,
+        });
         const at = args.indexOf("--disallowedTools");
         assert.notEqual(at, -1, "no run may select processes to kill by name");
         assert.deepEqual(args.slice(at + 1, at + 3), [
@@ -2508,6 +2538,20 @@ describe("buildArgs", () => {
         assert.match(said, /next-server/, "must name the collision");
         assert.match(said, /pgrep -P/, "must give the child-process form");
         assert.match(said, /pid=\$!/, "must give the recipe, not just the ban");
+        // Which half is which, derived rather than listed. Whatever this flag
+        // carries with no price list passed *is* the standing half, so a sixth
+        // notice added to the join inherits the strict form below without
+        // anybody remembering to name it here — which is the way the price list
+        // itself escaped it.
+        const bare = buildArgs({ ...base, permissionMode, isolated });
+        const standing = bare[bare.indexOf("--append-system-prompt") + 1] ?? "";
+        assert.ok(
+          said.startsWith(standing),
+          "the price list is appended to the standing notices, never interleaved with them",
+        );
+        const prices = said.slice(standing.length);
+        assert.ok(prices.includes(priceList), "the price list must reach the flag under test");
+
         // This string reaches the argv of *every* concurrent agent, so a literal
         // in it is a pattern that matches all of them. The worked example used
         // to be `pgrep -f 3100`, and twice — 2026-08-15 23:39:42 and 2026-08-16
@@ -2515,10 +2559,25 @@ describe("buildArgs", () => {
         // repository that had no such port and had never mentioned the number.
         // Any run of digits here is the same trap under a different number.
         assert.doesNotMatch(
-          said,
+          standing,
           /\d\d+/,
-          "no multi-digit literal: it is on every sibling's command line",
+          "no multi-digit literal in a notice that names commands: it is on every sibling's command line",
         );
+        // The price list cannot be held to that and must not be: every line of
+        // it ends in a figure by construction, which `fileCostNotice.test.ts`
+        // separately requires. What makes those figures inert is the other half
+        // of the same rule — nothing beside them offers itself as a pattern, no
+        // verb near them is `kill`, and the block names no command — so that is
+        // what is asserted of this half, at the site whose failure message would
+        // otherwise be read as a claim about the whole flag.
+        assert.doesNotMatch(
+          prices,
+          /\bp?kill(all)?\b|\bpgrep\b|\bps -|\$\(/,
+          "a figure is safe only while nothing beside it reads as a command",
+        );
+        for (const line of prices.split("\n").filter((line) => line.startsWith("  "))) {
+          assert.doesNotMatch(line, /^ {2}\//, "an absolute path names a mount, not a file");
+        }
         assert.match(said, /pgrep -af/, "must say to look before killing");
       });
     }
