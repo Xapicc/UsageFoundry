@@ -1973,6 +1973,37 @@ Built and exercised against real transcripts:
   read `deliver-` because the seeded id is not a UUID — an artefact of the
   fixture, not of the code.
 
+- **The Land verify field rendered in a browser, on 2026-09-07.** The
+  production standalone bundle, an empty throwaway `DATA_DIR` and Chromium
+  through Playwright — the first time any of the controls added on 2026-09-06
+  has been seen rather than compiled.
+
+  - **The search finds it while it is still folded away.** `landVerifyCommand`
+    sits inside the *Isolated runs* disclosure, which is closed on load.
+    Typing `land merges` into the settings search listed
+    **"Check that must pass before Land merges"**, which is what the corpus
+    being the rendered DOM rather than a declared index buys: a `<details>`
+    keeps its children in the DOM, so a closed fold hides a field from the eye
+    and not from the walk.
+  - **Pressing the hit opens the fold and lands on the control.** The input was
+    `visible` and `document.activeElement` afterwards, so a field behind a
+    closed fold on a page of ten sections is one keystroke and one press away,
+    rather than a scroll and a guess about which fold it is in.
+  - **The shell warning is drawn where it was designed to be drawn.** Typing
+    `npm test && npm run typecheck` — the obvious first thing to type — put
+    *"a verify command is argv, never a shell line — remove the shell
+    characters, or put them in a script and name the script here"* under the
+    field, on blur and before any Save. That is the whole point of saying it
+    here rather than at the click.
+  - **The pair reads correctly now.** The renamed grant renders directly under
+    it as **"Checks a conflict resolution may run"**, so the gate and the
+    conflict-assist grant are two visibly different things in the one place an
+    operator looks.
+
+  **What this does not establish.** Nothing was saved, so this is the form and
+  not the round trip — that is what the settings route's probe table covers.
+  The other four controls in the list below were not looked at.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the
@@ -1986,19 +2017,21 @@ through before trusting this unattended:
 > above; what is not is the panel drawing it, or how a partial that grows under
 > a reader behaves in a region that also polls. The same session had no browser.
 >
-> **Six controls added on 2026-09-06 have never been rendered in a browser.**
-> No browser was available in the session that wrote them, so what is verified
-> is that they compile, that every string is in the production client chunk, and
-> that the route each one calls behaves as above — which is not the same as
-> having seen one. They are: the `landVerifyCommand` field and its
-> shell-metacharacter warning in Settings; the Backups row on the Storage card,
+> **Four of the six controls added on 2026-09-06 have never been rendered in a
+> browser.** No browser was available in the session that wrote them, so what is
+> verified is that they compile, that every string is in the production client
+> chunk, and that the route each one calls behaves as above — which is not the
+> same as having seen one. The `landVerifyCommand` field and its
+> shell-metacharacter warning came off this list on 2026-09-07 and are recorded
+> above. The rest are: the Backups row on the Storage card,
 > including its `unreadable` badge, which needs a directory this server cannot
 > read to appear at all; the sentence under **Sign out everywhere** about a
 > captured cookie; the queue-priority input on a *queued* run's page, which
 > needs a run actually sitting in the queue; and **Open pull request** on the
 > Land card, which needs an isolated run with a branch, a GitHub remote and a
-> credential — none of which existed here. Nothing on that last one has opened a
-> real pull request, which was already true of the endpoint behind it.
+> credential — none of which existed here. The endpoint behind that last one has
+> since opened a real pull request, recorded above; the button itself has still
+> not been pressed in a browser.
 
 > **No Codex device sign-in has ever been completed, because there is no OpenAI
 > account in this container to complete one with.** Everything up to the
