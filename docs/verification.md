@@ -2143,6 +2143,19 @@ Built and exercised against real transcripts:
   — `/api/tasks`, `/api/runs/[id]`, `/api/usage` and `/api/settings` all answered
   200, and the same 503 appears on pages this run did not touch.
 
+- **The `taskboardForRuns` row was rendered in Chromium on 2026-09-07 at 1280px
+  against the production build**, signed in over `/api/login` against a scratch
+  token, off an empty `DATA_DIR`. It draws directly under *Let agents report
+  per-request cost over OpenTelemetry* in the same `ListGroup`, in that row's
+  shape, and its switch is **off** on a settings file that has never been
+  written — which is the only claim about it a screenshot can settle, and the
+  one worth settling, since a per-run capability whose default came back on
+  would be a switch nobody chose. `npm run smoke-pages` over the same build drew
+  `/settings` and `/tasks` clean at 390px and 1280px. It reported `/knowledge`
+  failing on a 409 at both widths; that is `/api/knowledge/*` answering *no
+  vault root configured* against the harness's throwaway `DATA_DIR`, it is not
+  reached by anything on this path, and it was left alone.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the
