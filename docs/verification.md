@@ -5822,9 +5822,10 @@ through before trusting this unattended:
      but a person at a narrow window, and nothing that runs could have: a class
      string is a string until an engine cascades it. The same shape is why the
      runs list stayed 916px wide however narrow the window got and why
-     `SegmentedControl` carries `max-md:flex-wrap`. `src/components/ui/Table.test.tsx` pins that
-     a stacked cell names its own field *in the markup*; whether that label is on
-     screen, unclipped and beside its value at 390px is layout, and the survey
+     `SegmentedControl` carries `max-md:flex-wrap`.
+     `src/components/ui/Table.test.tsx` pins that a stacked cell names its own
+     field *in the markup*; whether that label is on screen, unclipped and
+     beside its value at 390px is layout, and the survey
      counted 222 viewport-conditional classes deciding it, none of them exercised
      by anything in `npm test`.
   2. **Every page in both themes, and once with the app on "Match system" while
@@ -5867,11 +5868,11 @@ through before trusting this unattended:
      also polls — a still frame is not the check. And the **Deliver button** —
      `canDeliver` at `src/components/RunLand.tsx:360`, drawn as **Open pull
      request** on the Land card — which is the one of the four that is **no
-     longer open**: it
-     was pressed against a real GitHub remote and opened a real pull request, and
-     that is recorded above. It stays named here because a release pass is a
-     procedure rather than a backlog, and because what was exercised was the
-     path where the branch, the remote and the credential are all present.
+     longer open**: it was pressed against a real GitHub remote and opened a
+     real pull request, and that is recorded above. It stays named here because
+     a release pass is a procedure rather than a backlog, and because what was
+     exercised was the path where the branch, the remote and the credential are
+     all present.
 
 - **The class of every interface defect found from here on is recorded here, and
   the running list has one entry.** This is a measurement rather than a
