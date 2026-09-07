@@ -5792,6 +5792,24 @@ through before trusting this unattended:
     an exhausted credit on a Codex run is still filed under Claude's sentences.
     Exhaust a Codex account and read `stop_reason`.
 
+- **A drawn workflow cannot be discarded without being asked — 2026-09-07,
+  Chromium 1400×900 against a production build of this branch.** Every exit the
+  editor has was pressed with a block on the canvas and a name typed. The
+  sidebar's `next/link`, the breadcrumb above the heading, the Cancel button,
+  ⌘3, and quick open (⌘K, "Runs", Return) each left the URL on
+  `/workflows/new` and raised *Discard unsaved changes?*; **Keep editing**
+  returned to the graph with the name still in the field, **Discard** navigated.
+  A Ctrl-click on the same sidebar link raised nothing, which is the case that
+  must not prompt — it opens a tab and the editor stays. `page.close({
+  runBeforeUnload: true })` produced a `beforeunload` dialog, so the tab is
+  covered too. On the same build an untouched `/workflows/{id}/edit` navigated
+  away with no prompt at all, and one whose name was changed and then typed back
+  to what was stored navigated with no prompt again: the round trip through
+  `toBlocks` and `draftToGraph` lands on itself, which is the failure that would
+  otherwise teach the operator to dismiss the dialog unread. **Browser Back was
+  not covered and was not tested**, deliberately: see
+  `docs/agent/workflows-and-schedules.md` for why `popstate` is left alone.
+
 There is no linter run in this repo, and `npm test` covers a deliberately short
 list: the folder-collision predicate, which queued runs may start, the budget
 policy, how a provider refusal is classified and backed off from, which prompt a
@@ -5801,7 +5819,8 @@ provider that cannot carry one on a flag, the GitHub credentials handed to a wor
 work cycle started as a saved agent both defines and selects it and moves none of
 what bounds the run, how a
 run's diff is parsed and budgeted, whether a saved graph of run blocks can run at
-all and the order its runs are created in, when a branch may be landed, what a
+all and the order its runs are created in, what a save would keep of a drawn one
+and which clicks would take it with them before it is saved, when a branch may be landed, what a
 queued merge does with the branch it reaches, what counts as a conflict marker — both
 for deciding whether one was really resolved and for deciding what to show, what
 the orchestrator chat may ask its operator, what an answer to it settles and where
