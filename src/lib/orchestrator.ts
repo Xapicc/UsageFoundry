@@ -94,7 +94,6 @@ import {
   pruningEnabled,
   recordForkAttempt,
   recordPrune,
-  recordPlanObservation,
   recordPruneDecision,
   recordResumeProbe,
   WINNOW_MISSING_REASON,
@@ -6466,7 +6465,7 @@ async function settleBoundary(
   // was removed is exactly as interesting a comparison as one where something
   // was. Awaited rather than left floating for `pruneAtBoundary`'s own reason:
   // the next spawn must not read the transcript while a subprocess is on it.
-  await observePlan(id, sessionId, cut);
+  await observePlan(id, sessionId);
 }
 
 /**
@@ -6693,8 +6692,12 @@ async function forkAndAdopt(
 }
 
 /**
- * Ask winnow's newer rule engine what it would have removed here, and write the
- * answer down. Acts on nothing.
+ * Ask winnow's newer rule engine what it would have removed here, and say so in
+ * the run's log. Acts on nothing.
+ *
+ * The answer used to go to a `plan_observations` row as well. Nothing ever read
+ * one — the log line was the whole of the audience the comparison ever had — so
+ * the table is gone and the line is what is left.
  *
  * This is the only place in the app where SPEC section 4's rules run at all.
  * The pruner is `winnow treat`, the inherited engine, and the two classifiers
@@ -6705,11 +6708,7 @@ async function forkAndAdopt(
  * Silent on every failure. An observation that could end a cycle would be worth
  * less than not taking it.
  */
-async function observePlan(
-  id: string,
-  sessionId: string | null,
-  pruned: boolean,
-): Promise<void> {
+async function observePlan(id: string, sessionId: string | null): Promise<void> {
   // Gated here as well as at `pruneAtBoundary`'s head, because this is reached
   // through `settleBoundary` on the off branch too — and an observation is
   // still a subprocess spawned against the operator's transcript. Read-only is
@@ -6722,9 +6721,8 @@ async function observePlan(
     if (!transcript) return;
     const plan = await planCut(transcript);
     if (!plan) return;
-    recordPlanObservation(id, sessionId, plan, pruned);
-    // Logged rather than only stored, because a comparison nobody sees is one
-    // nobody acts on — and the whole point of the row is to be argued with.
+    // The whole output. A comparison nobody sees is one nobody acts on, and
+    // this is the only place it is seen.
     const breakEven =
       plan.breakEvenTurns === null
         ? "nothing would fire"
@@ -6734,7 +6732,7 @@ async function observePlan(
       `winnow's rule engine, asked about this conversation at tier ${plan.tier}: ` +
         `${plan.stripped} of ${plan.toolCalls} tool results, ` +
         `${fmtTokens(Math.round(plan.netBytes / BYTES_PER_TOKEN))} tokens net — ${breakEven}. ` +
-        `Recorded for comparison; nothing acted on it.`,
+        `Shown for comparison; nothing acted on it.`,
     );
   } catch {
     // See above.
@@ -9657,7 +9655,7 @@ export async function checkContextCeilings(): Promise<void> {
     //
     // `plan` is read-only, is allowed while the session is live, and is the same
     // subprocess `observePlan` already spawns at every boundary — whose answer
-    // went into `plan_observations` and was read by nothing.
+    // is logged for an operator to argue with and acted on nowhere.
     //
     // Re-measured on growth rather than on every tick. This function runs once a
     // minute and the plan spawns winnow over the whole transcript, so a run

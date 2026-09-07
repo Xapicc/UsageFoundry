@@ -1670,46 +1670,26 @@ function migrate(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_resume_probes_clean ON resume_probes(pruned, ts);
   `);
 
-  // What winnow's *newer* rule engine would have removed at each boundary, from
-  // `winnow plan --json`. Nothing acts on these rows.
+  // `plan_observations` held what winnow's newer rule engine would have removed
+  // at each boundary, against what the inherited one actually did. It took a row
+  // at every cycle boundary and every early end, for the life of the install,
+  // and no query in this app ever read one back — not a route, not a page, not
+  // `retention.ts`, which is also why it had no horizon. The comparison it was
+  // collecting for is still made: `observePlan` still asks `winnow plan` and
+  // still writes the answer into the run's own log, which is where the only
+  // reader it ever had was reading it. What is gone is the store.
   //
-  // The pruner this app runs is `winnow treat`, the inherited one: about twenty
-  // strategies that never import winnow.rules. `plan` runs SPEC section 4's six
-  // rules instead, and the two agree almost nowhere in detail. Which is better
-  // is an open question that running the old one cannot answer, and the blind
-  // label that bears on it scored the new rules rather than these.
+  // Dropped rather than swept. A horizon is how this schema bounds *evidence* —
+  // rows something reads until they go stale — and a sweeper here would have
+  // been an expiry policy for a table with no consumer to serve.
   //
-  // So the new engine is asked at every boundary and its answer written down
-  // beside what the old one did. `pruned` is what actually happened, which is
-  // what makes a row a comparison rather than a note.
-  //
-  // Sizes are bytes, not tokens, because that is what plan reports and SPEC
-  // section 6 measures: len() of the content string. Dividing by four here
-  // would put an estimate in a column whose whole value is being exact.
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS plan_observations (
-      id               INTEGER PRIMARY KEY AUTOINCREMENT,
-      ts               INTEGER NOT NULL,
-      run_id           TEXT NOT NULL,
-      session_id       TEXT,
-      tier             TEXT NOT NULL,
-      tool_calls       INTEGER NOT NULL,
-      stripped         INTEGER NOT NULL,
-      removed_bytes    INTEGER NOT NULL,
-      pointer_overhead INTEGER NOT NULL,
-      net_bytes        INTEGER NOT NULL,
-      suffix_bytes     INTEGER NOT NULL,
-      -- Null when nothing fired: there is no cut, so there is no break-even. A
-      -- 0 here would read as 'pays immediately', which is the opposite.
-      break_even_turns REAL,
-      -- Whether the inherited pruner actually ran at this boundary, so a row
-      -- can be read as 'what the other engine would have done instead' or 'what
-      -- both engines declined'.
-      pruned           INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_plan_observations_ts ON plan_observations(ts);
-    CREATE INDEX IF NOT EXISTS idx_plan_observations_run ON plan_observations(run_id, ts);
-  `);
+  // In a `db.transaction` on the convention every destructive statement in
+  // `migrate` follows. This one is a single atomic statement and does not need
+  // it; the second destructive step added beside it would, and doing that
+  // without one is what stranded every row in `chat_proposals_old`.
+  db.transaction(() => {
+    db.exec("DROP TABLE IF EXISTS plan_observations");
+  })();
 
   // Every attempt by the fork engine, refusals included.
   //

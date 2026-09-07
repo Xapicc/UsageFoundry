@@ -471,3 +471,66 @@ describe("a fork_attempts table created before suffix_bytes existed", () => {
     assert.equal(rows(migrated, "fork_attempts"), 1);
   });
 });
+
+/** The table as every install that ran a build before the drop has it. */
+const PLAN_OBSERVATIONS = `
+  CREATE TABLE plan_observations (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts               INTEGER NOT NULL,
+    run_id           TEXT NOT NULL,
+    session_id       TEXT,
+    tier             TEXT NOT NULL,
+    tool_calls       INTEGER NOT NULL,
+    stripped         INTEGER NOT NULL,
+    removed_bytes    INTEGER NOT NULL,
+    pointer_overhead INTEGER NOT NULL,
+    net_bytes        INTEGER NOT NULL,
+    suffix_bytes     INTEGER NOT NULL,
+    break_even_turns REAL,
+    pruned           INTEGER NOT NULL
+  );
+  CREATE INDEX idx_plan_observations_ts ON plan_observations(ts);
+  CREATE INDEX idx_plan_observations_run ON plan_observations(run_id, ts);`;
+
+describe("a plan_observations table left by an install that predates the drop", () => {
+  it("is gone after the next boot, indices with it", () => {
+    // The whole of what the drop has to do, and the only way to find out that it
+    // did not: the table took a row at every cycle boundary and every early end,
+    // nothing ever read one, and nothing swept it. A boot that skipped the DROP
+    // leaves an install growing a store with no reader and no horizon — which
+    // looks exactly like a healthy one, because no page renders it either.
+    let db = dbMod.db();
+    // Dropped first on `fork_attempts`' reasoning: the case has to start from
+    // the old shape whatever the boot above left, or a build where the DROP was
+    // never added fails here at the CREATE rather than at the assertion.
+    db.exec("DROP TABLE IF EXISTS plan_observations");
+    db.exec(PLAN_OBSERVATIONS);
+    db.prepare(
+      `INSERT INTO plan_observations
+         (ts, run_id, tier, tool_calls, stripped, removed_bytes,
+          pointer_overhead, net_bytes, suffix_bytes, break_even_turns, pruned)
+       VALUES (1, 'r1', 'CB', 183, 9, 40960, 4096, 36864, 819200, 18.5, 0)`,
+    ).run();
+    assert.equal(exists(db, "plan_observations"), true);
+
+    db = reboot();
+
+    assert.equal(exists(db, "plan_observations"), false);
+    // `resume_probes` is the same shape one table over and the difference is the
+    // whole reason only one of them was dropped: it *is* read, as the control
+    // group `boundaryInvalidation` needs. A drop that took both would leave the
+    // arithmetic that compares pruned boundaries to clean ones with no clean
+    // ones — and that reads as "no evidence yet", not as a fault.
+    assert.equal(exists(db, "resume_probes"), true);
+  });
+
+  it("does not make a boot that never had it throw", () => {
+    // `IF EXISTS`, and it carries every boot after the first one. Without it the
+    // second start of a fresh install dies in `migrate` before any table is
+    // reachable, which is a failure mode with no rows in it to notice.
+    assert.equal(exists(dbMod.db(), "plan_observations"), false);
+    const again = reboot();
+    assert.equal(exists(again, "plan_observations"), false);
+    assert.equal(exists(again, "settings"), true);
+  });
+});
