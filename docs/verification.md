@@ -1973,6 +1973,24 @@ Built and exercised against real transcripts:
   read `deliver-` because the seeded id is not a UUID — an artefact of the
   fixture, not of the code.
 
+- **A workflow's history paged, in a browser, on 2026-09-07.** `/api/workflows/[id]`
+  read no `searchParams` and answered with `listInstances`' newest twenty, so this
+  was checked at both ends against a production build (`next start`, a throwaway
+  `DATA_DIR`, one workflow seeded with 45 instances an hour apart). The route:
+  no parameters answers `total 45, offset 0, limit 20` with `inst-44 … inst-25`;
+  `?offset=20` answers `inst-24 … inst-05`; `?offset=999` answers `offset 44`
+  with the single oldest row rather than an empty page; `?limit=5000` answers
+  `limit 100` — the ceiling, not the ask. The page: the table drew twenty rows
+  under *Runs of this workflow* with `1–20 of 45` and a disabled Previous beside
+  an enabled Next, and pressing Next drew the next twenty under `21–40 of 45`
+  with both enabled. So this one is not on the list below: it was rendered, and
+  the control was pressed.
+
+  **What this does not establish.** The instances were inserted directly rather
+  than produced by presses of Run, so every row read `finished` with no member
+  runs; nothing here exercises the pager against a graph with something live in
+  it, or against instances arriving while an older page is open.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the

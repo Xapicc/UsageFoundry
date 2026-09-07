@@ -2,14 +2,14 @@ import { NextResponse } from "next/server";
 import {
   currentKnowledge,
   deleteWorkflow,
+  findInstances,
   folderRefusal,
   getWorkflow,
-  listInstances,
   liveBlocksOf,
   liveRunsOf,
   normalizeWorkflowInput,
   updateWorkflow,
-} from "@/lib/workflows";
+} from "../../../../lib/workflows";
 import { instanceDTO, workflowDTO } from "../dto";
 import { auditMutation } from "../../../../lib/requestLog";
 
@@ -18,15 +18,39 @@ export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-export async function GET(_req: Request, ctx: Ctx) {
+/**
+ * The graph, plus one page of the presses of Run it has had.
+ *
+ * `offset` and `limit` are what make the history reachable rather than only its
+ * newest page, which is `/api/branches`' principle and now the last list route
+ * in the tree that was not holding to it: this answered with `listInstances`'
+ * newest twenty for as long as it existed, so the page above it could not have
+ * paged however it was written.
+ *
+ * `total` and `offset` travel back because the page states which slice it is
+ * showing, and the count has to be over every instance rather than over what
+ * arrived — a Next button that may or may not do anything is the same dead end
+ * one press along. `limit` is the effective one, after clamping, since that is
+ * the step the page's own controls move by.
+ */
+export async function GET(req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const workflow = getWorkflow(id);
   if (!workflow) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
+  const params = new URL(req.url).searchParams;
+  const page = findInstances({
+    workflowId: id,
+    limit: Number(params.get("limit") ?? 20),
+    offset: Number(params.get("offset") ?? 0),
+  });
   return NextResponse.json({
     workflow: workflowDTO(workflow),
-    instances: listInstances(id).map(instanceDTO),
+    instances: page.instances.map(instanceDTO),
+    total: page.total,
+    offset: page.offset,
+    limit: page.limit,
   });
 }
 
