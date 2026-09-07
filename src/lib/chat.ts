@@ -492,11 +492,32 @@ export function latestChat(): ChatRow {
  * "the tool was refused, and separately here is an answer". `seq` is the order
  * the rows were written and nothing else can reorder them, including a clock
  * that steps backwards mid-conversation.
+ *
+ * **`afterSeq` is what keeps the chat page's poll off the whole thread.** That
+ * page re-asks this route every three seconds for as long as it is open, so a
+ * read of the whole conversation is a cost that rises with the conversation and
+ * never comes down — the longest threads, which are the ones worth having, are
+ * the dearest to leave on screen. `chat_messages` is the one store here that
+ * only ever grows by appending (nothing updates or deletes a row), which is what
+ * makes a cursor sound: a message the page already holds cannot have changed, so
+ * anything past the highest `seq` it holds is the entire difference. Proposals
+ * and questions are not read this way and must not be, because both are updated
+ * in place after they are written.
+ *
+ * Zero means the whole thread, which is what every caller that is not the poll
+ * wants and what `seq > 0` gives for free — `appendMessage` hands out `MAX + 1`
+ * from one, and the backfill in `migrate()` uses `rowid`, so no row has ever
+ * carried a lower number. One statement rather than a branch for the same
+ * reason: two spellings of "this thread, in order" are two plans to keep in
+ * step. The bound is only real with `idx_chat_messages_seq` — see the argument
+ * beside it in `migrate()`.
  */
-export function listMessages(chatId: string): ChatMessageRow[] {
+export function listMessages(chatId: string, afterSeq = 0): ChatMessageRow[] {
   return db()
-    .prepare("SELECT * FROM chat_messages WHERE chat_id = ? ORDER BY seq")
-    .all(chatId) as ChatMessageRow[];
+    .prepare(
+      "SELECT * FROM chat_messages WHERE chat_id = ? AND seq > ? ORDER BY seq",
+    )
+    .all(chatId, afterSeq) as ChatMessageRow[];
 }
 
 export function appendMessage(

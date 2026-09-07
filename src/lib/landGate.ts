@@ -10,11 +10,11 @@ import { parseVerifyCommand, type VerifyCommand } from "./verifyCommand";
  *
  * `docs/agent/isolation-and-landing.md` describes every condition Land already
  * enforces about the *checkout* — clean, on target, nobody working in it — and
- * none about the *work*. An operator cannot say "do not land this unless the
- * tests pass": there is no field for it, no gate in `landRun`, and the one
- * setting whose name suggests otherwise, `resolveVerifyTools`, has a single
- * reader that is the conflict-resolution assist and ships as `[]`
- * (`settings.ts:871`, read at `land.ts:1336`).
+ * none about the *work*. Without this an operator cannot say "do not land this
+ * unless the tests pass": nothing in `landRun` asks, and the one setting that
+ * read as though it did — `resolveAllowedTools`, called `resolveVerifyTools`
+ * until that reading was the whole of why it was renamed — has a single reader
+ * that is the conflict-resolution assist and ships as `[]`.
  *
  * That asymmetry is the point. This app will spend an afternoon of an
  * operator's allowance producing a branch unattended, then let it into their

@@ -5292,7 +5292,7 @@ export function sandboxSettings(scope: SandboxScope): SandboxPolicy {
       // deliberately **not**: it is not asked to run git, and the merge commit
       // is made by this server afterwards once the result has been checked —
       // and, for the resolver only, the toolchain caches, since
-      // `settings.resolveVerifyTools` is the operator naming a build command
+      // `settings.resolveAllowedTools` is the operator naming a build command
       // for it to run against the merge it wrote.
       return writeSet(
         scope.permissionMode === "plan" ? [] : [scope.cwd, ...BUILD_CACHE_DIRS],

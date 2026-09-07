@@ -1366,7 +1366,7 @@ async function startResolution(runId: string): Promise<LandOutcome> {
   // cuts a fresh one that has no dependency tree in it — where a check fails for
   // a reason that is not the merge, and an agent reading a missing-module error
   // as its own bad resolution will "fix" code that was right.
-  const verifyTools = checkout.temporary ? [] : getSettings().resolveVerifyTools;
+  const verifyTools = checkout.temporary ? [] : getSettings().resolveAllowedTools;
 
   const outcome = startAssist({
     run,
@@ -1688,7 +1688,7 @@ export type VerifyTree =
  *
  * A **fresh** worktree is deliberately not cut when the slot is gone, and that
  * is the same reasoning `resolveConflicts` records above when it hands a
- * temporary checkout `resolveVerifyTools: []` — a slot cut from bare git has no
+ * temporary checkout `resolveAllowedTools: []` — a slot cut from bare git has no
  * `node_modules`, no `.venv` and no build output, so `npm test` there fails for
  * a reason that is not the work. A gate reporting a missing dependency tree as
  * "your branch is bad" would be worse than no gate, because an operator would

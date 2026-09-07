@@ -3671,7 +3671,7 @@ describe("sandboxSettings — what one child may write", () => {
     );
 
     // And the resolver gets them too: it is the other child an operator can
-    // point at a build command, through `settings.resolveVerifyTools`.
+    // point at a build command, through `settings.resolveAllowedTools`.
     const resolver = sandboxSettings({
       kind: "assist",
       cwd: own,

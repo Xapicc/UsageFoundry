@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { threadItems, turnStartInstant } from "./chatThread";
+import { mergeMessages, threadItems, turnStartInstant } from "./chatThread";
 import type { ChatMessageDTO, ChatQuestionDTO } from "./apiTypes";
 
 /**
@@ -24,12 +24,16 @@ import type { ChatMessageDTO, ChatQuestionDTO } from "./apiTypes";
  * has done.
  */
 
+// `seq` defaults to the timestamp because `threadItems` never reads it and the
+// cases above are written in distinct, increasing `ts`. `mergeMessages` reads
+// nothing else, so its cases pass it.
 function msg(
   id: string,
   role: ChatMessageDTO["role"],
   ts: number,
+  seq = ts,
 ): ChatMessageDTO {
-  return { id, ts, role, text: id };
+  return { id, ts, seq, role, text: id };
 }
 
 function question(id: string, createdAt: number): ChatQuestionDTO {
@@ -161,4 +165,72 @@ test("the turn's clock counts from the claim, not from the last write", () => {
   // caller would draw as the elapsed time since 1970.
   assert.equal(turnStartInstant(null, null), null);
   assert.equal(turnStartInstant(undefined, undefined), null);
+});
+
+/**
+ * What a poll's answer does to the thread already on screen.
+ *
+ * The poll asks for the messages past the highest `seq` it holds, so the answer
+ * is a tail and the page has to put it back together. Every way of getting that
+ * wrong renders a transcript rather than an error, which is the bar this file
+ * was opened at: a dropped tail is a paragraph missing from the middle of a
+ * conversation with nothing to say so, and a kept duplicate is the model
+ * appearing to answer twice.
+ */
+test("a tail is appended to the thread already held", () => {
+  const held = [msg("a", "user", 1_000, 1), msg("b", "assistant", 2_000, 2)];
+  const merged = mergeMessages(held, [msg("c", "user", 3_000, 3)], 2);
+  assert.deepEqual(
+    merged.map((m) => m.id),
+    ["a", "b", "c"],
+  );
+});
+
+test("a whole thread replaces what is held, however long that is", () => {
+  // Zero is what a send, a cancel, an answer, a decision and the first load all
+  // answer with, and what a broken `?after=` falls back to. Appending one would
+  // draw the whole conversation twice.
+  const held = [msg("a", "user", 1_000, 1), msg("b", "assistant", 2_000, 2)];
+  const merged = mergeMessages(held, held, 0);
+  assert.deepEqual(
+    merged.map((m) => m.id),
+    ["a", "b"],
+  );
+});
+
+test("two polls carrying one cursor do not say the same message twice", () => {
+  // The interval fires whether or not the last request has answered, so two
+  // polls on the same cursor are ordinary rather than exotic — and the second
+  // one's answer overlaps the first's entirely.
+  const held = [msg("a", "user", 1_000, 1)];
+  const first = mergeMessages(held, [msg("b", "assistant", 2_000, 2)], 1);
+  const second = mergeMessages(first, [msg("b", "assistant", 2_000, 2)], 1);
+  assert.deepEqual(
+    second.map((m) => m.id),
+    ["a", "b"],
+  );
+});
+
+test("a poll that adds nothing hands back the very same array", () => {
+  // Reference equality, not contents: this is the shape of nearly every poll,
+  // and a fresh array each time re-renders every message in the thread to say
+  // that nothing has changed.
+  const held = [msg("a", "user", 1_000, 1)];
+  assert.equal(mergeMessages(held, [], 1), held);
+});
+
+test("what a poll merges does not grow with the length of the thread", () => {
+  // The whole of G5 in one assertion, and stated as work rather than as time:
+  // the same single message arrives onto a thread of ten and a thread of a
+  // thousand, and both merges consider exactly what the answer carried.
+  const thread = (n: number) =>
+    Array.from({ length: n }, (_, i) => msg(`m${i}`, "user", i + 1, i + 1));
+  const arriving = (n: number) => [msg("new", "assistant", n + 1, n + 1)];
+
+  for (const n of [10, 1_000]) {
+    const held = thread(n);
+    const merged = mergeMessages(held, arriving(n), n);
+    assert.equal(merged.length, n + 1);
+    assert.equal(merged.at(-1)?.id, "new");
+  }
 });
