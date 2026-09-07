@@ -2644,7 +2644,7 @@ export interface SettingsDTO {
    * `--allowedTools` patterns a conflict resolution may use to check its merge.
    * Empty means none, which is what it had before this existed.
    */
-  resolveVerifyTools: string[];
+  resolveAllowedTools: string[];
   /** argv that must exit 0 before Land merges. Empty is no check, not a pass. */
   landVerifyCommand: string;
   isolationPreamble: string;

@@ -85,7 +85,7 @@ identically whatever the agent wrote, with nothing on either side visible. When
 the slot no longer holds the run's branch because a later run took it over,
 this **refuses** rather than falling back. It does not cut a fresh worktree,
 for the reason `resolveConflicts` records when it hands a temporary checkout
-`resolveVerifyTools: []`: a slot cut from bare git has no `node_modules` and no
+`resolveAllowedTools: []`: a slot cut from bare git has no `node_modules` and no
 build output, so `npm test` there fails for a reason that is not the work, and
 a gate that reported a missing dependency tree as "your branch is bad" would be
 worse than no gate because an operator would believe it. Resolving the tree at

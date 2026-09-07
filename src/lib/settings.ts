@@ -349,6 +349,14 @@ export interface Settings {
   /**
    * Tool patterns a conflict resolution may run to check the merge it wrote.
    *
+   * **Not a gate on anything, which is why it no longer says "verify".** It was
+   * `resolveVerifyTools`, sitting one line from `landVerifyCommand` and reading
+   * like the install-wide answer to "what must pass before code lands" — and it
+   * has exactly one reader, `resolveConflicts`, where it is the assist's
+   * `allowedTools` grant and nothing decides a land. A name that describes the
+   * setting next to it is worse than no name: the gate is the other one, and an
+   * operator who set this one believing it was the gate would have set nothing.
+   *
    * `resolveConflicts` pins `acceptEdits`, which auto-approves file edits and
    * read-only shell and holds everything else for a human — and a `-p` child has
    * nobody to ask. So the resolver could edit the conflicted files and could not
@@ -373,7 +381,7 @@ export interface Settings {
    * which is worse than not running it — an agent that reads a missing-module
    * error as a conflict it resolved badly will "fix" working code.
    */
-  resolveVerifyTools: string[];
+  resolveAllowedTools: string[];
   /**
    * A command that must exit 0 before Land will merge a run's branch.
    *
@@ -887,7 +895,7 @@ export const DEFAULTS: Settings = {
   freshStartContextTokens: null,
   maxConcurrentRuns: 4,
   maxConcurrentAssists: 2,
-  resolveVerifyTools: [],
+  resolveAllowedTools: [],
   landVerifyCommand: "",
   isolationCopyGlobs: [".env", ".env.*", "!.env.example"],
   isolationCopyGlobsByRepo: {},
@@ -934,7 +942,20 @@ export const SETTINGS_KEYS = Object.keys(DEFAULTS) as (keyof Settings)[];
 const KEY = "settings";
 
 export function getSettings(): Settings {
-  return { ...DEFAULTS, ...getJSON<Partial<Settings>>(KEY, {}) };
+  const stored = getJSON<Partial<Settings> & { resolveVerifyTools?: string[] }>(KEY, {});
+  // `resolveAllowedTools` was stored as `resolveVerifyTools` until that name
+  // was read as the gate in front of Land. The blob holds only the
+  // keys that differ from `DEFAULTS` and carries no version, so a bare rename is
+  // an operator's grant silently becoming `[]` — the conflict resolver would
+  // stop running the checks somebody named, and nothing anywhere would say so.
+  // Destructured rather than left in place so `GET /api/settings` stops
+  // answering the dead key; the blob loses it the next time anything saves,
+  // because `saveSettings` rebuilds it from `SETTINGS_KEYS`.
+  const { resolveVerifyTools, ...rest } = stored;
+  if (resolveVerifyTools !== undefined && rest.resolveAllowedTools === undefined) {
+    rest.resolveAllowedTools = resolveVerifyTools;
+  }
+  return { ...DEFAULTS, ...rest };
 }
 
 /**
