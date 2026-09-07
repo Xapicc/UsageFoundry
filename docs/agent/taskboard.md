@@ -279,7 +279,18 @@ on the board by guessing an id out of a list, and `list_my_tasks` hands it a lis
 `create_task` places what it files the same way — `origin: "run"`,
 `created_by_run_id`, the folder, and the parent — from the token and the run's own
 row rather than from the arguments, which is why its schema has no `folder` and
-no `mountId`. The one exception is `parentTaskId`, which a run may name because
+no `mountId`. **The folder a run reads the board for and the pair it may file
+against are two answers and must not be collapsed into one.** The read compares
+a string against `tasks.folder` and needs no mount; the write is the
+`mount_id`/`folder` pair `normalizeTaskInput` proves, and that door refuses half
+a pair by design. `describeFolder` returns a null `mountId` for a path under no
+configured mount — a mount the operator renamed or removed while a run was in
+flight — so passing it through beside a live folder refuses **every**
+`create_task` that run makes, for half a pair it never named, over a field its
+schema does not have. Filing therefore drops both when the mount cannot be
+identified and the task lands unplaced, which the tool result says rather than
+claiming a folder: an unplaced brief is still a brief, and a message asserting
+one would send the model looking for it on a project board. The one exception is `parentTaskId`, which a run may name because
 it may find something while working a task other than the one it was started for;
 it defaults to the task it holds, and a parent that has been **deleted** is
 dropped rather than refused, because otherwise an operator deleting a brief

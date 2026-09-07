@@ -2182,22 +2182,42 @@ function createTaskTool(args: Record<string, unknown>, chatId: string) {
 /* ------------------------------------------------------------------ */
 
 /**
- * The folder a run's tasks are filed against, resolved once per call.
+ * Where a run is working: the folder it reads the board for, and the pair it may
+ * file a task against.
  *
  * `runs.folder` and not `runs.work_dir`: an isolated run works in a checkout
  * under `.uf-worktrees` that exists for the length of the run, and a task filed
  * against it would name a directory nobody can find afterwards. The folder is
  * the project, which is what a backlog is about.
  *
- * Null when the run is gone — a run deleted mid-cycle, which the retention sweep
- * can do — and callers treat that as "no folder" rather than throwing: a token
- * whose run row has vanished is still a token that must not reach another run's
- * work, and every rule below is keyed on the run id rather than on this.
+ * **The read's folder and the write's pair are separate answers, and collapsing
+ * them is a bug.** `folder` is a string compared against `tasks.folder`, which
+ * needs no mount; `filing` is the `mount_id`/`folder` pair `normalizeTaskInput`
+ * proves, and that door refuses **half a pair** by design. `describeFolder`
+ * returns a null `mountId` for a path under no configured mount — a mount the
+ * operator renamed or removed while a run was in flight, which is a thing that
+ * happens — so passing its `mountId` through beside a non-null folder would
+ * refuse every `create_task` that run made, for a reason the model can do
+ * nothing about and over a field it never named. An unplaced task is still a
+ * task and the brief is the part that matters, so filing drops **both** when the
+ * mount cannot be identified while the read keeps the folder.
+ *
+ * All three are null when the run is gone — a run deleted mid-cycle — and
+ * callers treat that as "no folder" rather than throwing: a token whose run row
+ * has vanished is still a token that must not reach another run's work, and
+ * every rule keyed on the run id is unaffected by this.
  */
-function runFolder(runId: string): { mountId: string | null; folder: string | null } {
+function runFolder(runId: string): {
+  folder: string | null;
+  filing: { mountId: string; folder: string } | null;
+} {
   const run = getRun(runId);
-  if (!run?.folder) return { mountId: null, folder: null };
-  return { mountId: describeFolder(run.folder).mountId, folder: run.folder };
+  if (!run?.folder) return { folder: null, filing: null };
+  const mountId = describeFolder(run.folder).mountId;
+  return {
+    folder: run.folder,
+    filing: mountId ? { mountId, folder: run.folder } : null,
+  };
 }
 
 /**
@@ -2314,7 +2334,7 @@ function completeTaskForRun(args: Record<string, unknown>, runId: string) {
  * of a row it is only annotated with.
  */
 function createTaskForRun(args: Record<string, unknown>, runId: string) {
-  const { mountId, folder } = runFolder(runId);
+  const { filing } = runFolder(runId);
   const named = String(args.parentTaskId ?? "").trim();
   const inherited = taskForRun(runId);
   const parent = named || inherited?.id || null;
@@ -2324,9 +2344,10 @@ function createTaskForRun(args: Record<string, unknown>, runId: string) {
       ...args,
       // Never off the call: a run has no `list_folders` and no way to name a
       // folder it was not pointed at, and a folder off the wire would be one
-      // more place `resolveWorkspaceFolder` has to be re-proved from.
-      mountId,
-      folder,
+      // more place `resolveWorkspaceFolder` has to be re-proved from. Both or
+      // neither — `runFolder` carries why.
+      mountId: filing?.mountId ?? null,
+      folder: filing?.folder ?? null,
       parentTaskId: parent && getTask(parent) ? parent : null,
     },
     {
@@ -2342,11 +2363,18 @@ function createTaskForRun(args: Record<string, unknown>, runId: string) {
   const created = createTask(parsed.value);
   if (!created.ok) return text(created.error, true);
 
+  // Says where it landed rather than asserting a folder, because a run under a
+  // mount the operator has since removed files an unplaced task and a message
+  // claiming otherwise would send the model looking for it on a project board.
   return text(
     `Filed “${created.task.title}” (id ${created.task.id}) on the board as ` +
-      "open, against this run's folder. Nothing is running for it and nothing " +
-      "will until somebody starts it — carry on with the work you were given, " +
-      "and say in your reply that you filed it.",
+      (created.task.folder
+        ? `open, against ${created.task.folder}. `
+        : "open, against no project — this run's folder is under no mount the " +
+          "app currently has, so the brief is on the board unplaced. ") +
+      "Nothing is running for it and nothing will until somebody starts it — " +
+      "carry on with the work you were given, and say in your reply that you " +
+      "filed it.",
   );
 }
 

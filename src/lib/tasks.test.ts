@@ -414,6 +414,20 @@ test("a mount and a folder arrive together or not at all", () => {
   assert.equal(neither.ok, true);
   assert.equal(neither.ok && neither.value.mountId, null);
   assert.equal(neither.ok && neither.value.folder, null);
+
+  // Explicit nulls are the same "neither", and this is the shape a caller that
+  // *computes* the pair sends: `create_task` on a work cycle fills it from the
+  // run's own row and drops both when the run's folder is under no mount the
+  // app currently has. If an explicit null read as a claim, that run would have
+  // every task it filed refused for half a pair it never named — over a field
+  // its schema does not have, so with nothing it could do about it.
+  const nulls = normalizeTaskInput(
+    { title: "t", body: "b", mountId: null, folder: null },
+    CREATION,
+  );
+  assert.equal(nulls.ok, true);
+  assert.equal(nulls.ok && nulls.value.mountId, null);
+  assert.equal(nulls.ok && nulls.value.folder, null);
 });
 
 test("a folder inside the mount is stored as the canonical absolute path", () => {
