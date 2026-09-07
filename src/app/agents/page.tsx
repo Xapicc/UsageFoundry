@@ -493,16 +493,6 @@ export default function AgentsPage() {
             </Table>
           </TableWrap>
         )}
-        <Hint className="mt-3">
-          These already reach every run, chat turn, deciding block and review this
-          app spawns, whatever is saved above — naming a saved agent merges with
-          them rather than replacing them. They cannot be picked here: a picker
-          needs a handle this app can store, and a file on disk has only its path.
-          Only your own <span className="mono">~/.claude</span> is listed — a
-          repository’s own <span className="mono">.claude/agents</span> reaches an
-          isolated run’s checkout too, and which one that is depends on the folder
-          the run was given.
-        </Hint>
       </Card>
 
       <Sheet
