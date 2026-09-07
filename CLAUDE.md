@@ -14,6 +14,7 @@ npm run build        # produces .next/standalone (output: "standalone")
 npm run typecheck    # tsc --noEmit
 npm test             # node --test over src/**/*.test.ts, via tsconfig.test.json
 npm start            # serve a production build
+npm run smoke-pages  # after a build: every page, two widths, three assertions
 
 docker compose up --build     # the real deployment path; binds 127.0.0.1:3000
 
@@ -26,6 +27,8 @@ Two environment traps, both of which make a green tree look broken and neither o
 - A shell inheriting `__NEXT_PRIVATE_STANDALONE_CONFIG` from a UsageFoundry container (which is what an agent this app spawns gets) makes `next build` die with `TypeError: generate is not a function`: `loadConfig` returns that JSON verbatim rather than loading `next.config.ts` and applying defaults, and a serialized config cannot carry `generateBuildId`, which is a function. `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` is the whole fix.
 
 There is **no linter run** (`eslint.ignoreDuringBuilds` is on), and `npm test` covers a deliberately short list of pure functions whose failure modes are silent and expensive. `npm run typecheck` plus a `docker compose up --build` smoke test is the real verification loop, and `docs/verification.md` — including its "Not yet verified by hand" list, which must stay honest — records what was checked by hand. Before adding a test, read `docs/agent/testing.md`: it names every existing one and the grounds each earned, and that is the bar, not a general convention to follow.
+
+`npm run smoke-pages` is the one check that opens a browser: it starts the built app against a throwaway `DATA_DIR` and a `CLAUDE_BIN` that cannot spawn, opens every `src/app/**/page.tsx` at 390px and 1280px, and asserts a 200, no console error and no sideways scroll. It is deliberately **not** in `npm test` and **not** in CI — it needs a Chromium and a build, and `README.md`'s position that CI "never starts the container and never exercises a run" is a decision rather than an accident. It asserts about *load* and never about interaction; the reasoning for that line, and for the accessibility engine it does not carry, is in `scripts/smoke-pages.mjs`'s header and in `proposals/UIChecks/`. It exits 2 rather than 0 when it could not run.
 
 Note that `npm run dev` on the host reads the host's **real** `~/.claude` transcripts and can spawn **real, billed** `claude` processes. Runs default to `acceptEdits`, so an agent started from the UI writes files.
 
