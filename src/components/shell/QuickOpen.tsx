@@ -9,6 +9,7 @@ import type {
 } from "@/lib/apiTypes";
 import { pollFailureMessage, shortPath } from "@/lib/format";
 import { jsonRequest } from "@/lib/jsonRequest";
+import { leaving } from "@/lib/unsavedWork";
 import { Icon } from "@/components/ui/Icon";
 import { Input } from "@/components/ui/Field";
 import { Notice } from "@/components/ui/Notice";
@@ -282,7 +283,11 @@ export function QuickOpen({
   function go(item: QuickItem | undefined) {
     if (!item) return;
     onDismiss();
-    router.push(item.href);
+    // Dismissed first, then guarded: a page with unsaved work answers with a
+    // sheet of its own, and two `showModal()`s in the top layer means one Esc
+    // closing the wrong one. Most pages have nothing to lose and `leaving`
+    // pushes straight through.
+    leaving(() => router.push(item.href));
   }
 
   function onKeyDown(e: React.KeyboardEvent) {

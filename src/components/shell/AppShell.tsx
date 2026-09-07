@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { leaving } from "@/lib/unsavedWork";
 import { QuickOpen } from "@/components/shell/QuickOpen";
 import { PANES } from "@/components/shell/panes";
 import { ReadOnlyNotice } from "@/components/shell/ReadOnlyNotice";
@@ -252,7 +253,12 @@ export function AppShell({
         // pane just arrived underneath it.
         setQuickOpen(false);
         setDrawerOpen(false);
-        router.push(pane.href);
+        // Through the unsaved-work guard, because a chord is an exit no page
+        // can see coming: there is no click to stop and no unload to warn on,
+        // so a pane shortcut pressed over a half-drawn workflow would take the
+        // graph with it. Nothing has anything to lose most of the time and the
+        // guard says so by proceeding.
+        leaving(() => router.push(pane.href));
       }
     }
     window.addEventListener("keydown", onKeyDown);
