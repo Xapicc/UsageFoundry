@@ -4,10 +4,11 @@
 > silent — nothing throws, nothing fails to typecheck, and the board looks right.
 > **Read before editing `src/lib/tasks.ts`, `src/app/api/tasks/`,
 > `src/app/tasks/page.tsx`, or the `tasks` table in `src/lib/db.ts`.**
-> This is the storage, the server half, the board, and the two orchestrators
-> that reach it over MCP. A work cycle's own access is later work and is
-> deliberately absent — what it will need exists here, typed and tested, and
-> nothing else does.
+> This is the storage, the server half, the board, and the three kinds of agent
+> that reach it over MCP — a chat turn, an orchestrator block, and a work cycle.
+> The last of those is the one that carries a credential and a switch of its own;
+> `security.md` holds the half of it that is about authorisation, and
+> `run-lifecycle.md` the flag it puts on every cycle's argv.
 
 **A task is not a run, and the absence of every hook that would make it one is
 what keeps this feature out of the orchestrator.** `run_templates`' rule, and the
@@ -211,18 +212,177 @@ a larger cap.
 
 **Which subject may do what to the board, and the one thing none of them may
 do.** `src/app/api/mcp/route.ts` gates its tool list by capability subject, and
-the board sits across all three groups of it. `list_tasks` and `get_task` are
-**shared**: a chat turn and an orchestrator block both read the board, and
-reading it starts nothing — no folder is claimed, no slot is taken and no guard
-is consulted — which is exactly what makes it safe to hand a block that emits
-runs with nobody watching. `create_task` is **chat only**, and the division is
-about who is reading rather than about what the tool does: a chat turn has an
-operator at the keyboard, so a task it filed is one somebody sees within the
-minute, where a block's turn is unattended and a backlog it wrote to is a board
-the operator later meets already full of an agent's own idea of the work. The
-refusal a block gets names `list_tasks` and the `taskId` field rather than
-pointing at `emit_runs`, because answering "write this down for later" with the
-one tool that starts work *now* is the opposite of what was asked.
+the board sits across every group of it. `list_tasks` and `get_task` are
+**shared** between the two orchestrator subjects: a chat turn and an orchestrator
+block both read the board, and reading it starts nothing — no folder is claimed,
+no slot is taken and no guard is consulted — which is exactly what makes it safe
+to hand a block that emits runs with nobody watching. `create_task` is refused to
+a **block**, and the division is about who is reading rather than about what the
+tool does: a chat turn has an operator at the keyboard, so a task it filed is one
+somebody sees within the minute, where a block's turn is unattended and a backlog
+it wrote to is a board the operator later meets already full of an agent's own
+idea of the work. The refusal a block gets names `list_tasks` and the `taskId`
+field rather than pointing at `emit_runs`, because answering "write this down for
+later" with the one tool that starts work *now* is the opposite of what was
+asked. A **work cycle** gets neither of the shared tools and a `create_task` of
+its own; the next four paragraphs are its half.
+
+**The gate is one membership test against the list the same function published,
+and that shape is load-bearing rather than tidy.** `toolsFor(subject)` decides
+what `tools/list` returns, and `callTool` refuses anything not on that list for
+this subject — so a tool is unreachable by the same expression that made it
+invisible. The pairwise version it replaced was correct for two subjects and
+silently wrong the moment there were three: it asked "is this a chat" and
+answered every other case as a block, so a work cycle asking for a chat tool was
+told it was an orchestrator block, and a work cycle asking for a *block* tool
+passed the guard entirely. Nothing about that failure is visible from a
+transcript. A name on **no** list falls through to "Unknown tool" instead of
+being refused as somebody else's, because a model that mistyped a tool needs to
+know it does not exist rather than that it belongs to a subject it has never
+heard of. `subjectRefusal` is the one wording, and every sentence it produces
+names something the caller *can* do instead — `agentRefusal`'s rule, for
+`agentRefusal`'s reason: a model told only "no" reaches for the next tool on the
+list.
+
+**A work cycle's three tools, and what their absence is.** `list_my_tasks`,
+`complete_task`, `create_task`, and nothing else — deliberately not
+`SHARED_TOOLS`, so a run has no `list_runs`, no `get_run_diff`, no
+`list_folders`, and specifically **no `list_tasks`**. The two orchestrator
+subjects are deciding what work to start and need to see the install to do it; a
+run is already doing one piece of work in one folder, and the whole backlog is
+neither its business nor something it can act on. `tasksForRun` answers the
+narrower question instead, in two lists rather than one board: `held` is every
+task whose `claimed_by_run_id` is this run — carrying **every status**, because a
+run that has completed its task must be able to see that it did or a second
+`complete_task` reads as a board that lost the write — and `openInFolder` is what
+is open where it is working, which is what a run reads before filing so it does
+not write down something already there. They are named apart in the payload
+because the ids are the same shape and one flat list is an invitation to complete
+something merely seen. A run whose folder is null gets an **empty**
+`openInFolder` rather than the whole board: treating "no folder" as "no filter"
+is one `WHERE` clause away and turns a tool scoped to one project into a read of
+the operator's entire backlog. Both halves are capped at `MAX_RUN_TASKS`, far
+below `MAX_TASK_PAGE` because this is a tool result a cycle pays for by the token
+rather than a page somebody scrolls, and the count of what was left out travels
+beside the rows on a shortened diff's rule — a run shown twenty of sixty and told
+nothing files the duplicate it read the list to avoid.
+
+**The run id comes from the token and never from the call, and that sentence is
+the entire authorisation of this surface.** `CapabilitySubject` gained a third
+arm, `{ kind: "run"; runId }`, and it is the one whose id is load-bearing rather
+than descriptive: `complete_task` passes `subject.runId` to `updateTask`, which
+compares it against the row's own `claimed_by_run_id` through
+`taskTransitionRefusal` — the same pure function the operator's route and the
+chat tools ask. **No tool on this surface takes a run id**, and that is not an
+omission to be tidied: an argument would be a work cycle able to close every task
+on the board by guessing an id out of a list, and `list_my_tasks` hands it a list.
+`create_task` places what it files the same way — `origin: "run"`,
+`created_by_run_id`, the folder, and the parent — from the token and the run's own
+row rather than from the arguments, which is why its schema has no `folder` and
+no `mountId`. The one exception is `parentTaskId`, which a run may name because
+it may find something while working a task other than the one it was started for;
+it defaults to the task it holds, and a parent that has been **deleted** is
+dropped rather than refused, because otherwise an operator deleting a brief
+mid-flight would have every `create_task` refused by `createTask`'s
+dangling-parent check and the new brief — the thing worth keeping — would be
+lost to the state of a row it is only annotated with.
+
+**The token is minted per run, lives as long as the run's loop and is revoked
+outright, with no grace.** `mintRunCapability` and `revokeRunCapabilities` in
+`chat.ts` follow `otlp.ts`'s `ingestTokenFor` rather than `mintCapability` beside
+them, and the difference is the clock: a chat turn's capability expires on
+`CHAT_TIMEOUT_MS` because a turn that has not finished by then is not going to,
+where a run has no such bound — parks, resumes, the 429 ladder, a weekly wall —
+so a lifetime here would be a run whose tools stop existing partway through,
+which reads as a model that chose not to call any. It is `Infinity` plus a
+revocation in `startRun`'s `finally`, on every path the loop can leave by, and
+**unconditionally** rather than gated on the setting: a run that had the board for
+its first cycles and lost it to a Settings edit still minted a token, and a
+revocation that fires only when the feature is currently on is one an operator
+switching it off would skip for exactly the runs it matters for. It is minted
+once per run and re-used across cycles for the exporter credential's reason — a
+token per cycle is one more thing to revoke on each of the paths a cycle can end
+on — and where OTLP's revocation waits out a batching timer, this one does not:
+a tool call is synchronous with a child that no longer exists, so there is no
+tail to lose, and a grace would be a window in which a token recovered from a
+sibling's `/proc/<pid>/cmdline` still closes tasks. `security.md` carries what a
+recovered one is worth and why the tool list is the bound that answers for it.
+
+**A run's MCP config is deliberately not strict, and the claim is not the
+config.** `--mcp-config` rides every cycle's argv; `--strict-mcp-config` never
+does. The chat child passes it because its tool surface is closed by design — an
+orchestrator turn is meant to reach this app and nothing else — where a work
+cycle's is not: the operator's own MCP servers, configured in the `~/.claude`
+this app mounts, are part of what their agents work with, and strict here would
+strip every one of them out of every run the moment the setting was switched on.
+That regression is invisible from inside this app and would read, to the
+operator, as their servers having broken. The **file** is written per cycle even
+though the token in it is per run, and removed in the cycle's own `finally`: a
+config left on disk is a live capability, where the token it names is bounded by
+the loop. Ownership is passed as `null`, which is the opposite of the chat's and
+is stated rather than absorbed — the run child is not in `UF_CHAT_GID` and must
+not be, so there is no file mode separating two work cycles from each other.
+`security.md` holds what that costs.
+
+**The run is told the board exists on the appended system prompt, and the notice
+rides the same value the flag does.** `TASKBOARD_NOTICE` in `cycleInvocation.ts`
+is keyed on `buildArgs`' `taskboard` option, so a run cannot be told to call
+tools it does not have and cannot have them without being told — the two failures
+that pairing exists to make impossible, both of which look like a normal run from
+the outside. What it says is **behavioural rather than descriptive**: the tool
+list already says what the tools are, and a model reading only that closes its
+task and stops, or finds a second defect and fixes it because nothing told it
+there was anywhere else to put one. "Complete only what you hold" and "file what
+you find rather than fixing it" are the two sentences that earn their tokens.
+What it may **not** carry is `security.md`'s rule about literals: nothing on this
+prompt may give an agent a pattern that selects a process. The three tool names
+are shared across every board-enabled run on the box and are exactly that kind of
+literal — what keeps them safe is that nothing near them offers a pattern, no
+verb selects a process, no command is named and there are no digits at all. They
+are named rather than alluded to because a model told "there is a board" without
+the names writes prose about filing a task instead of filing one. A run without
+the board gets an appended prompt **byte-identical** to the one this app sent
+before the feature existed, the file price list's rule: a run mid-flight across a
+deploy that gained one newline would otherwise pay a cold prefix for a notice it
+did not get.
+
+**A run started from a task claims it when the run starts, not when a tool is
+first called.** `claimTaskForRun` fires at the top of `startRun`, before the
+worktree and before the first cycle. A claim written at the first `list_my_tasks`
+is a claim a run never writes if the setting is off, if the model never opens the
+tool, or if the cycle dies before it does — so the board would show `open` for
+work already in flight, and the chat tool that exists to stop two agents taking
+one brief would be reading it. It is deliberately **not** gated on
+`taskboardForRuns`: the claim is this app writing down what it just did, and the
+setting is about what an *agent* may do, so a run started from a task with the
+board switched off still holds it. Every refusal on that path is a log line and
+never a failure — a task somebody dropped, one another run still holds, one the
+operator deleted between the press and the start. None of them says anything
+about whether this run can do the work it was given, and a run that refused to
+start over the state of a row on a backlog would be this app turning a note into
+a lock. The sentence shown is `taskTransitionRefusal`'s own, repeated onto the
+run's log, because the alternative is a board that silently disagrees with the
+run page about who holds what.
+
+**Whether a work cycle reaches the board at all is `taskboardForRuns`, off by
+default, and the whole path is inert while it is off.** `telemetryForRuns`' shape
+one step further: that setting turns on a behaviour inside the child, and this
+one gives an unattended agent a write path into this app's own database. No guard
+decides that — the guards bound what a run may spend and how long it may run, and
+none of them has an opinion about whether an agent nobody is watching may close
+an item on a person's backlog. Off means no token is minted, no config is
+written, `--mcp-config` is not on the argv and the appended prompt is the string
+it was before the feature. It is read **per cycle** rather than fixed at the
+run's start, the read guard's rule rather than `liveSpendTelemetry`'s: an
+operator who has just decided this should stop gets it at the next cycle rather
+than at the next restart, and the price is one cold prefix on that cycle for the
+run in flight. A **Codex** run reaches no board and is told about none — Codex
+takes its MCP servers from a `config.toml` that `--ignore-user-config`
+deliberately keeps out of a cycle — and no token is minted for it, since a
+credential a child could never spend is one on disk for nothing. That is said
+once on the run's own log rather than left silent, because an operator who
+switched the board on and started a Codex run would otherwise watch it finish
+having filed nothing with nothing to read that explains it.
 
 **Nothing on the MCP surface can move a task to any status, and that is enforced
 twice rather than once.** `create_task` files as `open`, there is no `status`

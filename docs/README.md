@@ -27,6 +27,9 @@
   schedules.
 - **[The orchestrator chat](orchestrator-chat.md)** — a conversation that
   proposes runs and workflows; nothing it writes starts until you approve it.
+- **[Taskboard](taskboard.md)** — a backlog of briefs that start nothing on
+  their own, what a claim is and is not, and the switch that lets a run complete
+  the task it was given and file what it found.
 - **[Reviewing and landing](review-and-land.md)** — diffs, the on-demand
   reviewer, AI conflict resolution, the merge queue, and branch cleanup.
 

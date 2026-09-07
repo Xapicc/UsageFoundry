@@ -2150,15 +2150,39 @@ standalone bundle), and are covered by the unit tests above, but the following
 have **not** been exercised against a real CLI. They are the list to work
 through before trusting this unattended:
 
+> **The work cycle's taskboard tools have never been exercised against a real
+> CLI.** The whole path added on 2026-09-07 — `taskboardForRuns`, the third
+> capability subject, the per-run token, the per-cycle MCP config and
+> `--mcp-config` on every cycle's argv — typechecks, builds, and is unit-tested
+> at the three places whose failure is silent: that the flag survives a
+> `--resume`, that `--strict-mcp-config` is never beside it, that the appended
+> notice rides the same value the flag does, that `tasksForRun` narrows to the
+> run and the folder, and that the token is one per run and dies with it. What
+> has **not** happened is a `claude` child reading that config and calling one of
+> the three tools. Docker is unavailable in the container that wrote this, so
+> nothing here started a run. The list to work through, in order: that the CLI
+> accepts `--mcp-config` pointing at this app's own HTTP endpoint and lists
+> `list_my_tasks`, `complete_task` and `create_task`; that a *second* cycle of
+> the same run — the `--resume` one — still lists them, which is the failure the
+> unit test can only pin at the argv; that the operator's own MCP servers are
+> still there beside them, which is what the absent `--strict-mcp-config` buys
+> and which no test in this repository can see; that `complete_task` against a
+> task the run does not hold comes back as `taskTransitionRefusal`'s sentence
+> rather than as a transport error; and that the token stops working once the run
+> ends. The exact command is `docker compose up --build`, then a run started from
+> a task with the Settings switch on.
+>
 > **No refusal an actor other than the operator would get has been seen on a
 > screen.** Every non-operator branch of `taskTransitionRefusal` is unit-tested
 > and none has been rendered. The chat's and the block's doors opened on
 > 2026-09-07 and deliberately reach none of those branches: neither can move a
-> task at all, so the only refusal either produces is `taskRefusal`'s, and the
-> actor branches still need the work cycle's own tool — run 4/4. The board is
-> where those sentences will surface, so the first thing to check when that door
-> opens is that one of them reaches the page intact rather than as a generic
-> failure.
+> task at all, so the only refusal either produces is `taskRefusal`'s. The work
+> cycle's door opened the same day and is the one that reaches them — a run
+> naming a task it does not hold gets the `claimed → done` branch — but it
+> arrives in a tool result rather than on a page, and the board is still where
+> those sentences will surface for a person. The first thing to check when a run
+> claims a task is that the run log's claim line and the board agree about who
+> holds it.
 >
 > **The chat turn's live view has never been rendered in a browser either**, and
 > it is the one addition whose whole point is what it looks like while it moves.

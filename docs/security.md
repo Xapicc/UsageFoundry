@@ -136,6 +136,21 @@ read — reaches something that is not this run's business.
   and fan-out cap, for a `block` — and `get_run_diff` is scoped to the caller's
   own runs, so neither reaches the patch of a run in a repository it was not
   working in.
+- **The taskboard, if you switch it on.** *Let runs use the taskboard* in
+  Settings is **off by default** and gives a work cycle a third kind of
+  capability: three tools that let it list the task it was started for, mark
+  that one complete, and file a new task. That is a write into this app's
+  database from an agent nobody is watching, which is why it is a switch rather
+  than something the budget guards decide. What bounds it is the size of the
+  grant rather than a file mode — a run's config has to be readable by the
+  agents' uid, which every work cycle shares, so unlike the chat's there is no
+  ownership that stops one run reading another's config file. A stolen one buys
+  the same three tools: it starts no run, approves nothing, reads no other run's
+  work, and cannot complete a task its own run does not hold. The token is
+  minted when the run starts and revoked when its loop ends, on no grace. The
+  run's config is deliberately **not** strict, so your own MCP servers stay
+  available to your agents — which also means those servers are what actually
+  bounds an agent, not this switch.
 
 There is one thing the split *does* close that reads similarly and is worth not
 confusing with the above: an agent can no longer read the **server's**
