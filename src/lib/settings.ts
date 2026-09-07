@@ -450,6 +450,24 @@ export interface Settings {
    */
   telemetryForRuns: boolean;
   /**
+   * Let a work cycle read, complete and file tasks on the operator's board.
+   *
+   * Off by default, and `telemetryForRuns`' reason one step further: that one
+   * turns on a behaviour inside the child, and this one gives an unattended
+   * agent a **write path into this app's own database**. Nothing about a guard
+   * decides that — the guards bound what a run may spend and how long it may
+   * run, and none of them has an opinion about whether an agent nobody is
+   * watching may close an item on a person's backlog. It is an operator's
+   * decision and it is taken here.
+   *
+   * The whole path is inert while it is off: no capability token is minted, no
+   * MCP config is written, `--mcp-config` is not on the argv and the appended
+   * system prompt is byte-identical to the one this app emitted before the board
+   * existed. A run started while it was on keeps it only until its next cycle —
+   * it is read per cycle, so switching it off reaches runs already in flight.
+   */
+  taskboardForRuns: boolean;
+  /**
    * Sent when an agent reports DONE and the run is set to carry on regardless.
    *
    * Cannot be `continuationPrompt`: that one says "if it is fully complete,
@@ -902,6 +920,7 @@ export const DEFAULTS: Settings = {
   isolationPreamble: DEFAULT_ISOLATION_PREAMBLE,
   continuedWorkPrompt: DEFAULT_CONTINUED_WORK_PROMPT,
   telemetryForRuns: false,
+  taskboardForRuns: false,
   donePushbackPrompt: DEFAULT_DONE_PUSHBACK_PROMPT,
   liveGuardIntervalSeconds: 60,
   maxCycleSilenceMinutes: 120,

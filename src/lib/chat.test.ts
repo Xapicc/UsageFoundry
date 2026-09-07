@@ -147,6 +147,7 @@ const {
   listProposals,
   listQuestions,
   normalizeChoices,
+  mintRunCapability,
   proposalDeps,
   proposalGuards,
   parseTurnOutput,
@@ -155,10 +156,12 @@ const {
   questionChoices,
   reconcileChatsOnBoot,
   removeMcpConfig,
+  revokeRunCapabilities,
   sendChatMessage,
   settleOnExit,
   settleQuestions,
   staleTurn,
+  subjectForCapability,
   writeMcpConfig,
   MCP_CONFIG_BASE,
 } = require("./chat") as typeof import("./chat");
@@ -1913,5 +1916,63 @@ describe("reconcileChatsOnBoot keeps what a stranded turn produced", () => {
       listMessages(chat.id).filter((m) => m.role === "system").length,
       1,
     );
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The credential a work cycle carries                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A run's capability outlives every cycle of the run and nothing else, and both
+ * halves of that fail silently.
+ *
+ * **A token that is not revoked** is the one that matters: it is a live write
+ * path into this app's database sitting in a `Map` after the run it belonged to
+ * has finished, and nothing anywhere would report it — the tools go on working,
+ * which is exactly the problem. **A token that is not stable across cycles**
+ * fails the opposite way and looks like nothing at all: every cycle would mint
+ * one more entry, so the set the constant-time scan walks would grow with the
+ * length of a run rather than with the number of live agents, and the old ones
+ * would never be swept because nothing but a run ending sweeps them.
+ *
+ * `subjectForCapability` is what the route asks, so it is what is asserted
+ * rather than the map: the claim is that the token resolves to *this* run and
+ * that after revocation it resolves to nothing.
+ */
+describe("mintRunCapability", () => {
+  it("is one token for the run, and dies with it", () => {
+    const runId = "run-holding-a-board";
+    const token = mintRunCapability(runId);
+
+    assert.deepEqual(subjectForCapability(token), { kind: "run", runId });
+
+    // Cycle two, cycle three, a resume: the same token, because a token per cycle
+    // is one more thing to revoke on each of the paths a cycle can end on.
+    assert.equal(mintRunCapability(runId), token);
+
+    // A second run is a second credential. Sharing one would be a work cycle able
+    // to complete the task another run holds, which is the whole rule.
+    const other = mintRunCapability("run-holding-another");
+    assert.notEqual(other, token);
+    assert.deepEqual(subjectForCapability(other), {
+      kind: "run",
+      runId: "run-holding-another",
+    });
+
+    revokeRunCapabilities(runId);
+    assert.equal(
+      subjectForCapability(token),
+      null,
+      "a revoked run token must open nothing, on no grace at all",
+    );
+    // Revoking one run must not disarm another's — they are separate entries and
+    // a sweep keyed on the wrong field would take both.
+    assert.deepEqual(subjectForCapability(other), {
+      kind: "run",
+      runId: "run-holding-another",
+    });
+
+    revokeRunCapabilities("run-holding-another");
   });
 });

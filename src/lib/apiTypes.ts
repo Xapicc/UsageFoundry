@@ -2666,6 +2666,8 @@ export interface SettingsDTO {
   /** What a run is told when it picks up the branch the run before it had. */
   continuedWorkPrompt: string;
   telemetryForRuns: boolean;
+  /** Whether a work cycle may reach the taskboard. Off unless switched on. */
+  taskboardForRuns: boolean;
   donePushbackPrompt: string;
   liveGuardIntervalSeconds: number;
   /** How long a work cycle may print nothing before it is ended. Never null. */

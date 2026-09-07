@@ -76,7 +76,9 @@ const {
   taskForRun,
   taskRefusal,
   taskDeletionRefusal,
+  MAX_RUN_TASKS,
   taskListItemDTO,
+  tasksForRun,
   taskTransitionRefusal,
   updateTask,
 } = require("./tasks") as typeof import("./tasks");
@@ -728,4 +730,101 @@ test("a run whose task was deleted still names it", () => {
   assert.equal(orphan?.title, null);
   assert.equal(orphan?.status, null);
   assert.equal(taskForRun(seedRun("run-off-no-task")), null);
+});
+
+/* ------------------------------------------------------------------ */
+/* What a work cycle may see of the board                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `tasksForRun` is where "not the whole board" is actually decided, and every
+ * way it can go wrong is silent. It feeds an MCP tool result rather than a page:
+ * nothing throws if it returns a stranger's task, nothing looks wrong if it
+ * returns another project's backlog, and the only reader is a model that will
+ * treat whatever arrives as the truth about what it holds.
+ *
+ * The three failures are separate assertions because they fail apart. Widening
+ * `held` past `claimed_by_run_id` hands a run ids it cannot complete but will
+ * try to; widening `openInFolder` past the folder turns a tool scoped to one
+ * project into a read of the operator's whole backlog; and losing the count
+ * turns a clipped list into a silent one, which is how the run files the
+ * duplicate it read the list to avoid.
+ */
+test("a run sees the tasks it holds and the open ones where it is working", () => {
+  const here = path.join(ws, "RepoOne");
+  const elsewhere = path.join(ws, "RepoOne", "sub");
+  const mine = seedRun("run-with-a-board");
+  const theirs = seedRun("run-with-its-own");
+
+  const held = file({ mountId: MOUNT, folder: here });
+  updateTask(held.id, { status: "claimed" }, { kind: "run", runId: mine });
+  const strangers = file({ mountId: MOUNT, folder: here });
+  updateTask(strangers.id, { status: "claimed" }, { kind: "run", runId: theirs });
+  const openHere = file({ mountId: MOUNT, folder: here });
+  const openThere = file({ mountId: MOUNT, folder: elsewhere });
+
+  const seen = tasksForRun(mine, here);
+
+  assert.deepEqual(
+    seen.held.map((t: Task) => t.id),
+    [held.id],
+    "held is keyed on claimed_by_run_id and nothing else",
+  );
+
+  const openIds = seen.openInFolder.map((t: Task) => t.id);
+  assert.ok(openIds.includes(openHere.id));
+  assert.ok(
+    !openIds.includes(openThere.id),
+    "a task in another folder is another project's business",
+  );
+  // Claimed is not open, whoever holds it: a run reading a claimed task as
+  // something nobody is doing files a second brief for work already running.
+  assert.ok(!openIds.includes(strangers.id));
+  assert.ok(!openIds.includes(held.id));
+
+  // A run that has completed its task must still see it, or a board that took
+  // the write looks like one that lost it.
+  updateTask(held.id, { status: "done" }, { kind: "run", runId: mine });
+  const after = tasksForRun(mine, here);
+  assert.deepEqual(
+    after.held.map((t: Task) => t.status),
+    ["done"],
+    "held carries every status, not just the ones a run may still move",
+  );
+});
+
+test("a run with no folder gets no board rather than all of it", () => {
+  const run = seedRun("run-with-no-folder");
+  const held = file({ mountId: MOUNT, folder: path.join(ws, "RepoOne") });
+  updateTask(held.id, { status: "claimed" }, { kind: "run", runId: run });
+
+  // The failure this pins is the tempting one: treating a null folder as "no
+  // filter" is one `WHERE` clause away and turns the narrow tool into a read of
+  // every open task in the install.
+  const seen = tasksForRun(run, null);
+  assert.deepEqual(seen.openInFolder, []);
+  assert.equal(seen.openInFolderTotal, 0);
+  assert.deepEqual(
+    seen.held.map((t: Task) => t.id),
+    [held.id],
+    "what a run holds does not depend on it having a folder",
+  );
+});
+
+test("a clipped board says how much it left out", () => {
+  // Its own folder, because the count is of the folder rather than of this
+  // test: sharing one with an earlier case makes the assertion a running total
+  // that changes whenever a test above it files something.
+  const folder = path.join(ws, "RepoOne", "long");
+  fs.mkdirSync(folder, { recursive: true });
+  const total = MAX_RUN_TASKS + 3;
+  for (let i = 0; i < total; i += 1) file({ mountId: MOUNT, folder, title: `open ${i}` });
+
+  const seen = tasksForRun(seedRun("run-reading-a-long-board"), folder);
+  assert.equal(seen.openInFolder.length, MAX_RUN_TASKS);
+  assert.equal(
+    seen.openInFolderTotal,
+    total,
+    "the count is of what exists, not of what was returned",
+  );
 });

@@ -35,8 +35,11 @@ import {
   listTasks,
   normalizeTaskInput,
   runLinksForTasks,
+  taskForRun,
   taskListItemDTO,
   taskRefusal,
+  tasksForRun,
+  updateTask,
   TASK_ORIGINS,
   TASK_STATUSES,
   type TaskOrigin,
@@ -361,6 +364,107 @@ const SHARED_TOOLS = [
         taskId: { type: "string", description: "An id from list_tasks." },
       },
       required: ["taskId"],
+      additionalProperties: false,
+    },
+  },
+];
+
+/**
+ * Everything a work cycle gets, and the whole of it.
+ *
+ * **Three tools, and what is absent is the design.** A run does not get
+ * `SHARED_TOOLS`: not `list_runs`, not `get_run_diff`, not `list_folders`, and
+ * deliberately not `list_tasks` — a work cycle is an unattended agent that was
+ * pointed at one folder and given one brief, and the whole backlog is neither
+ * its business nor something it can act on. `list_my_tasks` is the narrower
+ * question it can actually answer from: what am I holding, and what is already
+ * written down where I am working.
+ *
+ * Nothing here starts a run, approves anything, reads another run's work or
+ * moves a task this run does not hold. The one rule that needs enforcing rather
+ * than describing — a run completes only what it holds — is enforced in
+ * `tasks.ts` against the row's own `claimed_by_run_id`, compared with the run id
+ * off **the capability token**. No tool below takes a run id, and that is not an
+ * omission: a `runId` argument would be a work cycle able to close every task on
+ * the board by guessing an id out of a list.
+ */
+const RUN_TOOLS = [
+  {
+    name: "list_my_tasks",
+    description:
+      "The task this run was started for, and what else is already open in " +
+      "the folder you are working in. Not the whole board. Read it before you " +
+      "call complete_task, so you close the thing you were given rather than " +
+      "one you read about, and before create_task, so you do not write down " +
+      "something already on the board.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "complete_task",
+    description:
+      "Mark a task this run holds as done. You can complete only a task " +
+      "already recorded against this run — the one list_my_tasks returns as " +
+      "held — and naming any other is refused. Call it when the work the task " +
+      "asked for is actually finished, not when you have decided to stop: a " +
+      "task marked done is one nobody looks at again. If you could not finish " +
+      "it, leave it and say why in your reply.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: {
+          type: "string",
+          description: "An id from list_my_tasks, from the tasks you hold.",
+        },
+      },
+      required: ["taskId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    // The point of the whole surface: a run that found a second problem writes
+    // it down instead of widening its own change. The description says that
+    // rather than leaving the model to infer it, because the failure it
+    // prevents — a diff that fixed four things nobody asked for — is the one
+    // that costs a reviewer the most and never looks like an error.
+    name: "create_task",
+    description:
+      "Write something down on the operator's board for later. Use it for the " +
+      "thing you found that needs fixing and is not what you were asked to " +
+      "do: file it and carry on with your own work rather than widening it. " +
+      "It starts nothing, costs nothing and claims no folder — a task is a " +
+      "brief the operator or a later run picks up as a separate decision. It " +
+      "files as open and can do nothing else to a task. Filed against the " +
+      "folder this run is working in, and under the task you were given, " +
+      "unless you say otherwise.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          description: "Short specific label, e.g. 'Fix flaky auth test'.",
+        },
+        body: {
+          type: "string",
+          description:
+            "The brief: what to do, where, and what done looks like. Written " +
+            "for somebody with nothing else to go on — this may be handed to " +
+            "an agent months from now that cannot see your work or read this " +
+            "conversation. Name files and symbols rather than 'the thing " +
+            "above'.",
+        },
+        priority: {
+          type: "string",
+          enum: ["low", "normal", "high"],
+          description: "Omit for normal.",
+        },
+        parentTaskId: {
+          type: "string",
+          description:
+            "The task this was found while working on. Omit to file it under " +
+            "the task this run was started for, which is almost always right.",
+        },
+      },
+      required: ["title", "body"],
       additionalProperties: false,
     },
   },
@@ -960,11 +1064,87 @@ const BLOCK_TOOLS = [
   },
 ];
 
-/** What this caller may see and call. See the note at the top of the file. */
+/**
+ * What this caller may see and call. See the note at the top of the file.
+ *
+ * A work cycle gets `RUN_TOOLS` and **not** `SHARED_TOOLS`, which is the one
+ * asymmetry here: the two orchestrator subjects are deciding what work to start
+ * and need to see the install to do it, where a run is already doing one piece
+ * of work in one folder. `RUN_TOOLS`' docblock carries what that leaves out.
+ */
 function toolsFor(subject: CapabilitySubject) {
+  if (subject.kind === "run") return [...RUN_TOOLS];
   return subject.kind === "chat"
     ? [...SHARED_TOOLS, ...CHAT_TOOLS]
     : [...SHARED_TOOLS, ...BLOCK_TOOLS];
+}
+
+/**
+ * Why this subject may not call this tool.
+ *
+ * Every sentence names something the caller *can* do instead, `agentRefusal`'s
+ * rule, because a model told only "no" reaches for the next tool on the list.
+ * Split out from `callTool` so the check there can be one exhaustive membership
+ * test against `toolsFor` rather than a pair of hand-maintained lists — the
+ * shape that let a run subject, added later, fall through both of them.
+ */
+function subjectRefusal(subject: CapabilitySubject, name: string): string {
+  if (subject.kind === "block") {
+    // `ask_operator` is the one of these with no alternative to name, and
+    // pointing a block at `emit_runs` would be worse than saying nothing: a
+    // block that wanted an answer would emit a run whose task is the question.
+    // A block runs with nobody looking, which is the whole difference between
+    // it and a chat — what it does with an unanswerable question is decide.
+    if (name === "ask_operator") {
+      return (
+        "ask_operator is not available to an orchestrator block: there is " +
+        "nobody watching this workflow to answer. Decide with what you can " +
+        "read, and say what you assumed in your reply."
+      );
+    }
+    // `create_task` needs its own sentence for `ask_operator`'s reason rather
+    // than its own: pointing a block at `emit_runs` would answer a request to
+    // *write something down for later* with the one tool that starts work now,
+    // which is the opposite of what was asked. The board stays readable from
+    // here, and naming that is what stops a block reading this as "the taskboard
+    // is not yours".
+    if (name === "create_task") {
+      return (
+        "create_task is not available to an orchestrator block: nobody is " +
+        "watching this workflow, and a backlog written unattended is one the " +
+        "operator meets already full. You can read the board with list_tasks " +
+        "and name a task on a run you emit; filing a new one belongs to a chat " +
+        "turn or the operator."
+      );
+    }
+    return `${name} is not available to an orchestrator block. Use emit_runs.`;
+  }
+
+  if (subject.kind === "chat") {
+    return (
+      `${name} is not available in a chat. Use propose_run, which the operator ` +
+      "approves before anything starts."
+    );
+  }
+
+  // A work cycle, and the sentence has to do two things at once: refuse, and
+  // stop the model concluding that the thing it wanted is impossible here. Both
+  // of the tools it is most likely to reach for have a real answer — write it
+  // down, or say it in the reply that the operator reads — and neither is
+  // "start something", which is the reading this surface must never leave.
+  if (name === "list_tasks" || name === "get_task") {
+    return (
+      `${name} is not available to a work cycle: a run sees the task it holds ` +
+      "and what is open in the folder it is working in, not the whole board. " +
+      "Call list_my_tasks."
+    );
+  }
+  return (
+    `${name} is not available to a work cycle. A run can list the tasks it ` +
+    "holds, complete one of those, and file a new one — it cannot start work, " +
+    "approve anything or touch another run. Anything else belongs in your " +
+    "reply, which the operator reads."
+  );
 }
 
 /**
@@ -1120,43 +1300,31 @@ async function callTool(
 ) {
   // Checked here as well as in `toolsFor`, because a list is what a caller is
   // *offered* and this is what it may *do*. A chat that has read a block's
-  // schema from somewhere must still not be able to start runs, and a block
-  // must not be able to write a proposal into a stranger's thread.
+  // schema from somewhere must still not be able to start runs, a block must
+  // not be able to write a proposal into a stranger's thread, and a work cycle
+  // must reach neither.
+  //
+  // **One membership test against the same list `tools/list` published**, rather
+  // than a refusal per pair of subjects. The pairwise shape it replaces was
+  // correct for two subjects and quietly wrong for three: it keyed everything on
+  // "is this a chat", so a work cycle asking for a chat tool was told it was an
+  // orchestrator block, and a work cycle asking for a *block* tool passed the
+  // guard entirely and reached the switch below. Deriving the gate from
+  // `toolsFor` is what makes a fourth subject safe by construction.
+  //
+  // A name in *no* list falls through to the switch's "Unknown tool" instead of
+  // being refused as somebody else's: a model that mistyped a tool needs to know
+  // it does not exist, not that it belongs to a subject it has never heard of.
+  const knownSomewhere = [
+    ...SHARED_TOOLS,
+    ...CHAT_TOOLS,
+    ...BLOCK_TOOLS,
+    ...RUN_TOOLS,
+  ].some((t) => t.name === name);
+  if (knownSomewhere && !toolsFor(subject).some((t) => t.name === name)) {
+    return text(subjectRefusal(subject, name), true);
+  }
   const chatId = subject.kind === "chat" ? subject.chatId : null;
-  if (chatId === null && (CHAT_TOOLS.some((t) => t.name === name))) {
-    // `ask_operator` is the one of these with no alternative to name, and
-    // pointing a block at `emit_runs` would be worse than saying nothing: a
-    // block that wanted an answer would emit a run whose task is the question.
-    // A block runs with nobody looking, which is the whole difference between
-    // it and a chat — what it does with an unanswerable question is decide.
-    return text(
-      name === "ask_operator"
-        ? "ask_operator is not available to an orchestrator block: there is " +
-          "nobody watching this workflow to answer. Decide with what you can " +
-          "read, and say what you assumed in your reply."
-        : // `create_task` needs its own sentence for `ask_operator`'s reason
-          // rather than its own: pointing a block at `emit_runs` would answer a
-          // request to *write something down for later* with the one tool that
-          // starts work now, which is the opposite of what was asked. The board
-          // stays readable from here, and naming that is what stops a block
-          // reading this as "the taskboard is not yours".
-          name === "create_task"
-          ? "create_task is not available to an orchestrator block: nobody is " +
-            "watching this workflow, and a backlog written unattended is one " +
-            "the operator meets already full. You can read the board with " +
-            "list_tasks and name a task on a run you emit; filing a new one " +
-            "belongs to a chat turn or the operator."
-          : `${name} is not available to an orchestrator block. Use emit_runs.`,
-      true,
-    );
-  }
-  if (chatId !== null && BLOCK_TOOLS.some((t) => t.name === name)) {
-    return text(
-      `${name} is not available in a chat. Use propose_run, which the operator ` +
-        "approves before anything starts.",
-      true,
-    );
-  }
 
   switch (name) {
     case "list_folders": {
@@ -1379,8 +1547,26 @@ async function callTool(
     case "get_task":
       return getTaskTool(args);
 
+    // Shared by name between a chat and a work cycle and by nothing else: the
+    // two schemas differ, the two origins differ, and what a run files is placed
+    // and parented from the token rather than from the call. Narrowed rather
+    // than asserted, `emit_runs`' rule — `subject.kind` is what decides.
     case "create_task":
-      return createTaskTool(args, chatId!);
+      return subject.kind === "run"
+        ? createTaskForRun(args, subject.runId)
+        : createTaskTool(args, chatId!);
+
+    // Narrowed rather than asserted, for `emit_runs`' reason: the gate above
+    // proves the tool is on this subject's list, and the union is what makes the
+    // run id unmixable with a chat id or an instance id. The run id these two
+    // act on comes from here and from nowhere else — no argument supplies one.
+    case "list_my_tasks":
+    case "complete_task": {
+      if (subject.kind !== "run") return text(subjectRefusal(subject, name), true);
+      return name === "list_my_tasks"
+        ? listMyTasks(subject.runId)
+        : completeTaskForRun(args, subject.runId);
+    }
 
     case "ask_operator":
       return askOperator(args, chatId!);
@@ -1519,16 +1705,26 @@ async function getRunPatch(
   const runId = String(args.runId ?? "").trim();
   if (!getRun(runId)) return text(`No run with id "${runId}". Call list_runs.`, true);
 
+  // Exhaustive over the union rather than "chat or else", which is what the
+  // third subject makes worth writing out: a work cycle is never offered this
+  // tool — `callTool`'s gate refuses it first — and `false` is the answer that
+  // stays correct if one ever reached here, since another run's patch is exactly
+  // what this surface must not hand it and its own is not something it needs a
+  // tool to read.
   const mine =
     subject.kind === "chat"
       ? chatOwnsRun(subject.chatId, runId)
-      : instanceOwnsRun(subject.instanceId, runId);
+      : subject.kind === "block"
+        ? instanceOwnsRun(subject.instanceId, runId)
+        : false;
   if (!mine) {
     return text(
       `The patch for run ${runId} is not available here: ${
         subject.kind === "chat"
           ? "this conversation did not start that run"
-          : "that run is not part of this workflow instance"
+          : subject.kind === "block"
+            ? "that run is not part of this workflow instance"
+            : "a work cycle does not read another run's work"
       }. get_run still reports its status, its spend, its log and the files it ` +
         "changed, and its folder is one you can read directly.",
       true,
@@ -1978,6 +2174,179 @@ function createTaskTool(args: Record<string, unknown>, chatId: string) {
       "running for it and nothing will until somebody starts it — name this " +
       "id as taskId on a propose_run to link a run to it. You cannot close it; " +
       "that is the operator's press or the run that does the work.",
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* The board, as one work cycle sees it                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The folder a run's tasks are filed against, resolved once per call.
+ *
+ * `runs.folder` and not `runs.work_dir`: an isolated run works in a checkout
+ * under `.uf-worktrees` that exists for the length of the run, and a task filed
+ * against it would name a directory nobody can find afterwards. The folder is
+ * the project, which is what a backlog is about.
+ *
+ * Null when the run is gone — a run deleted mid-cycle, which the retention sweep
+ * can do — and callers treat that as "no folder" rather than throwing: a token
+ * whose run row has vanished is still a token that must not reach another run's
+ * work, and every rule below is keyed on the run id rather than on this.
+ */
+function runFolder(runId: string): { mountId: string | null; folder: string | null } {
+  const run = getRun(runId);
+  if (!run?.folder) return { mountId: null, folder: null };
+  return { mountId: describeFolder(run.folder).mountId, folder: run.folder };
+}
+
+/**
+ * What this run holds and what is open beside it.
+ *
+ * Deliberately two lists rather than one board: `held` is what this run may
+ * complete, `openInFolder` is what it should read before filing. Naming them
+ * apart in the payload is what stops a model completing something it merely saw
+ * — the ids are in the same shape, and a single flat list is an invitation.
+ */
+function listMyTasks(runId: string) {
+  const { folder } = runFolder(runId);
+  const mine = tasksForRun(runId, folder);
+
+  return text(
+    JSON.stringify(
+      {
+        // `taskListItemDTO`'s clip, for its reason: one rule about where a brief
+        // is cut, read by the operator's board and by this tool alike.
+        held: mine.held.map((t) => {
+          const row = taskListItemDTO(t);
+          return {
+            taskId: row.id,
+            title: row.title,
+            bodyPreview: row.body,
+            bodyClipped: row.body.length < t.body.length,
+            status: row.status,
+            priority: row.priority,
+          };
+        }),
+        openInFolder: mine.openInFolder.map((t) => {
+          const row = taskListItemDTO(t);
+          return {
+            taskId: row.id,
+            title: row.title,
+            bodyPreview: row.body,
+            bodyClipped: row.body.length < t.body.length,
+            priority: row.priority,
+          };
+        }),
+        // Said rather than left to be inferred from a list that stops, the rule
+        // every other list tool here follows: a run shown twenty of sixty files
+        // the duplicate it read the list to avoid.
+        openInFolderShown: mine.openInFolder.length,
+        openInFolderTotal: mine.openInFolderTotal,
+        folder,
+        // The sentence the shape cannot carry. A model reading two arrays of
+        // ids will reach for the nearest one, and only one of them is closeable.
+        note:
+          "complete_task works on held only. Nothing here can close, claim or " +
+          "drop anything in openInFolder — file a new task if one of those " +
+          "needs saying something about.",
+      },
+      null,
+      1,
+    ),
+  );
+}
+
+/**
+ * Close a task this run holds.
+ *
+ * **The run id is the token's, never the call's**, which is the whole of the
+ * authorisation here and the one line in this file not to change without reading
+ * `docs/agent/security.md`. `updateTask` compares it against the row's own
+ * `claimed_by_run_id` through `taskTransitionRefusal`; this route adds no second
+ * answer to that rule and must not — a work cycle that could complete a task it
+ * does not hold could close the whole board, and every refusal below is that
+ * function's sentence rather than one written here.
+ */
+function completeTaskForRun(args: Record<string, unknown>, runId: string) {
+  const taskId = String(args.taskId ?? "").trim();
+  if (!taskId) {
+    return text(
+      "complete_task needs the taskId of a task this run holds. list_my_tasks " +
+        "returns them under held.",
+      true,
+    );
+  }
+
+  const done = updateTask(taskId, { status: "done" }, { kind: "run", runId });
+  if (!done.ok) {
+    // `missing` and `refused` are told apart by `tasks.ts` and both are the
+    // model's own error to read: an id that is not there is a mistyped id, and a
+    // refusal names the run that actually holds the task.
+    return text(
+      done.kind === "missing"
+        ? `No task with id ${taskId}. list_my_tasks returns the ones this run holds.`
+        : done.error,
+      true,
+    );
+  }
+
+  return text(
+    `Marked “${done.task.title}” done. It is recorded as completed by this run. ` +
+      "If it turns out not to be finished, say so in your reply — you cannot " +
+      "re-open it, and only the operator can.",
+  );
+}
+
+/**
+ * File a task a run found while doing something else.
+ *
+ * Three of the four fields that place it are taken from the token rather than
+ * from the call, and none of them is on the schema: the origin, the run that
+ * filed it, and the folder. The fourth, `parentTaskId`, defaults to the task
+ * this run was started for — the trail back to what was being done when the
+ * thing was noticed, which is the whole reason the column exists.
+ *
+ * The parent is dropped rather than refused when the task it names is gone. A
+ * run whose brief the operator deleted mid-flight would otherwise have every
+ * `create_task` refused by `createTask`'s dangling-parent check, which is the
+ * one path where the thing worth keeping — the new brief — is lost to the state
+ * of a row it is only annotated with.
+ */
+function createTaskForRun(args: Record<string, unknown>, runId: string) {
+  const { mountId, folder } = runFolder(runId);
+  const named = String(args.parentTaskId ?? "").trim();
+  const inherited = taskForRun(runId);
+  const parent = named || inherited?.id || null;
+
+  const parsed = normalizeTaskInput(
+    {
+      ...args,
+      // Never off the call: a run has no `list_folders` and no way to name a
+      // folder it was not pointed at, and a folder off the wire would be one
+      // more place `resolveWorkspaceFolder` has to be re-proved from.
+      mountId,
+      folder,
+      parentTaskId: parent && getTask(parent) ? parent : null,
+    },
+    {
+      // Stated here rather than read off the body, `createTaskTool`'s rule: an
+      // origin that could arrive in a call is a run able to file work as though
+      // a person had written it down.
+      origin: "run",
+      createdByRunId: runId,
+    },
+  );
+  if (!parsed.ok) return text(parsed.error, true);
+
+  const created = createTask(parsed.value);
+  if (!created.ok) return text(created.error, true);
+
+  return text(
+    `Filed “${created.task.title}” (id ${created.task.id}) on the board as ` +
+      "open, against this run's folder. Nothing is running for it and nothing " +
+      "will until somebody starts it — carry on with the work you were given, " +
+      "and say in your reply that you filed it.",
   );
 }
 

@@ -101,6 +101,7 @@ const PROBES: Record<keyof Settings, Probe> = {
   isolationPreamble: { send: "CHANGED preamble" },
   continuedWorkPrompt: { send: "CHANGED continued work" },
   telemetryForRuns: { send: true },
+  taskboardForRuns: { send: true },
   donePushbackPrompt: { send: "CHANGED pushback" },
   liveGuardIntervalSeconds: { send: 90 },
   maxCycleSilenceMinutes: { send: 45 },

@@ -2392,6 +2392,94 @@ describe("buildArgs", () => {
     }
   });
 
+  /**
+   * The taskboard's whole presence on a cycle, and every failure it has is
+   * silent in the same specific way: a child with no MCP server is a child with
+   * no tools, which reads from the transcript exactly like a model that chose
+   * not to call any. Nothing throws, nothing fails to typecheck, and the run
+   * finishes looking normal — having closed no task and filed nothing.
+   *
+   * Three claims, and they fail apart. **The flag on a resumed cycle** is the one
+   * the feature dies of quietly: `--resume` restores no MCP config, so the
+   * version of this that passes it only on cycle one gives every run a board
+   * that works once. **`--strict-mcp-config`'s absence** fails the other way and
+   * is worse for being invisible from inside this app — strict here would strip
+   * the operator's own MCP servers out of every run, which they would read as
+   * their servers having broken rather than as this feature having landed. And
+   * **the notice riding the same value the flag does** is what keeps a run from
+   * being told to call tools it does not have, or from having them and never
+   * opening them.
+   */
+  it("puts the taskboard on every cycle's argv, resumed cycles included", () => {
+    const config = "/run/uf-mcp/run-1/config.json";
+    for (const resumeSessionId of [null, "sess-1"]) {
+      const args = buildArgs({
+        ...base,
+        isolated: false,
+        resumeSessionId,
+        taskboard: { mcpConfigPath: config },
+      });
+      const at = args.indexOf("--mcp-config");
+      assert.notEqual(at, -1, `no board on a cycle with resume=${resumeSessionId}`);
+      assert.equal(args[at + 1], config);
+      assert.equal(
+        args.filter((a) => a === "--mcp-config").length,
+        1,
+        "a second --mcp-config replaces the first rather than adding to it",
+      );
+    }
+  });
+
+  it("never makes a run's MCP config strict", () => {
+    // The one flag not to copy from `chat.ts`. A chat's tool surface is closed
+    // by design; a run's is not, and the operator's own servers live in the
+    // `~/.claude` this app mounts. Pinned as an assertion rather than left to a
+    // comment because the two argv builders read alike and this is the line
+    // between them.
+    const args = buildArgs({
+      ...base,
+        isolated: false,
+      taskboard: { mcpConfigPath: "/run/uf-mcp/run-1/config.json" },
+    });
+    assert.equal(
+      args.includes("--strict-mcp-config"),
+      false,
+      "strict would silently strip every MCP server the operator configured",
+    );
+  });
+
+  it("tells a run about the board exactly when it can reach it", () => {
+    const noticeOf = (args: string[]) =>
+      args[args.indexOf("--append-system-prompt") + 1];
+
+    const withBoard = noticeOf(
+      buildArgs({ ...base, isolated: false, taskboard: { mcpConfigPath: "/run/uf-mcp/c.json" } }),
+    );
+    assert.ok(
+      withBoard.includes("list_my_tasks") &&
+        withBoard.includes("complete_task") &&
+        withBoard.includes("create_task"),
+      "a run with the tools must be told they exist, or it never opens them",
+    );
+
+    // The other direction, and the byte-identical rule the price list already
+    // has: a run without the board gets the exact prompt this app sent before
+    // the feature existed, or every run on an install with the setting off pays
+    // a cold prefix for a notice it did not get.
+    const without = buildArgs({ ...base, isolated: false });
+    for (const taskboard of [undefined, null]) {
+      assert.equal(
+        noticeOf(buildArgs({ ...base, isolated: false, taskboard })),
+        noticeOf(without),
+      );
+    }
+    assert.equal(
+      noticeOf(without).includes("list_my_tasks"),
+      false,
+      "a run with no board must not be told to call tools it does not have",
+    );
+  });
+
   it("hands the vault skill to the child, alongside the enabled plugins", () => {
     // The whole feature reduced to one claim: the switch being on has to put
     // the generated skill directory on the argv of the process that is spawned.
@@ -3660,6 +3748,7 @@ describe("injectionFates", () => {
       spentGuardUSD: 1,
       pluginDirs: ["/workspace/plug"],
       vaultSkill: { pluginDir: "/run/uf-skills/vault", vaultPath: "/workspace2" },
+      taskboard: { mcpConfigPath: "/run/uf-mcp/run-1/config.json" },
       fileCostNotice: "src/lib/orchestrator.ts — 116k",
       agent: {
         name: "reviewer",

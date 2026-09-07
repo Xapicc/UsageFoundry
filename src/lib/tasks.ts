@@ -933,6 +933,82 @@ export function listTasks(query: TaskListQuery = {}): TaskListPage {
 }
 
 /**
+ * How many rows either half of a run's own view of the board may carry.
+ *
+ * Far below `MAX_TASK_PAGE`, and the difference is who reads it. The board's
+ * page is drawn for a person who scrolls; this is a tool result a work cycle
+ * pays for by the token on every cycle that calls it, inside a context the
+ * pruner already spends money keeping down. A run does not need the backlog —
+ * it needs the task it is holding and enough of what is open beside it to file
+ * a duplicate-free one.
+ */
+export const MAX_RUN_TASKS = 20;
+
+/** What a work cycle may see of the board: its own, and what is open beside it. */
+export interface RunTasks {
+  /** Every task this run's row is claimed by, whatever status it now has. */
+  held: Task[];
+  /** Open tasks filed against the folder the run is working in. */
+  openInFolder: Task[];
+  /** Open tasks in that folder beyond `MAX_RUN_TASKS`, so a clip is never silent. */
+  openInFolderTotal: number;
+}
+
+/**
+ * The board as one run sees it — not the board.
+ *
+ * Two queries rather than a filter on `listTasks`, because the two halves answer
+ * different questions and neither is a page of the same list. `held` is keyed on
+ * `claimed_by_run_id` and carries **every** status, which is deliberate: a run
+ * that has already completed its task must be able to see that it did, or a
+ * second `complete_task` on the same id reads as a board that lost the write.
+ * `openInFolder` is what the run may file against without duplicating something
+ * already written down.
+ *
+ * A run whose folder is null — a task tied to no project, or a run outside every
+ * mount — gets an empty `openInFolder` rather than the whole board. Widening
+ * "the folder I am in" to "everything" is how a tool scoped to one project
+ * becomes a tool that reads the operator's entire backlog.
+ *
+ * The count is separate from the rows for the reason a shortened diff names the
+ * files it left out: a run shown twenty of sixty open tasks and told nothing
+ * files the duplicate it was reading the list to avoid.
+ */
+export function tasksForRun(runId: string, folder: string | null): RunTasks {
+  const held = (
+    db()
+      .prepare(
+        `SELECT ${COLUMNS} FROM tasks
+          WHERE claimed_by_run_id = ?
+          ORDER BY ${PRIORITY_RANK_SQL}, updated_at DESC, id
+          LIMIT ?`,
+      )
+      .all(runId, MAX_RUN_TASKS) as TaskRow[]
+  ).map(rowToTask);
+
+  if (!folder) return { held, openInFolder: [], openInFolderTotal: 0 };
+
+  const openInFolderTotal = (
+    db()
+      .prepare("SELECT COUNT(*) AS n FROM tasks WHERE status = 'open' AND folder = ?")
+      .get(folder) as { n: number }
+  ).n;
+
+  const openInFolder = (
+    db()
+      .prepare(
+        `SELECT ${COLUMNS} FROM tasks
+          WHERE status = 'open' AND folder = ?
+          ORDER BY ${PRIORITY_RANK_SQL}, updated_at DESC, id
+          LIMIT ?`,
+      )
+      .all(folder, MAX_RUN_TASKS) as TaskRow[]
+  ).map(rowToTask);
+
+  return { held, openInFolder, openInFolderTotal };
+}
+
+/**
  * File a task. Always `open`, and always with `closed_at` null.
  *
  * A `parentTaskId` that names nothing is refused rather than stored as a

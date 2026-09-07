@@ -368,6 +368,7 @@ const EDITABLE_PATHS = [
   "killProcessGroup",
   "resumeGraceHours",
   "telemetryForRuns",
+  "taskboardForRuns",
   "readGuard",
   "readGuardMaxTokens",
   "contextPruning",
@@ -3646,6 +3647,34 @@ export default function SettingsPage() {
               id="telemetry"
               checked={effective.telemetryForRuns}
               onChange={(v) => patch({ telemetryForRuns: v })}
+            />
+          </SettingRow>
+
+          {/* The copy has one job the row above does not: saying what the run
+              can and cannot do, because "reach the taskboard" reads as a much
+              larger grant than it is. Three tools, none of which starts work.
+              The refusal is worth naming rather than implying — an operator
+              weighing this is asking whether an unattended agent could close
+              somebody else's item, and the answer is no. */}
+          <SettingRow
+            htmlFor="taskboard"
+            edited={isEdited("taskboardForRuns")}
+            label="Let runs use the taskboard"
+            description={
+              <>
+                A run can list the task it was started for, mark that one
+                complete, and file a new task for something it found and should
+                not fix itself. It cannot complete a task it was not given,
+                start anything, or see the rest of the board. Off by default
+                because it is a write into this app&rsquo;s own database from an
+                agent nobody is watching
+              </>
+            }
+          >
+            <Switch
+              id="taskboard"
+              checked={effective.taskboardForRuns}
+              onChange={(v) => patch({ taskboardForRuns: v })}
             />
           </SettingRow>
         </ListGroup>

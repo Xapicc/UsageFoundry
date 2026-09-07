@@ -897,6 +897,50 @@ const COMMIT_IDENTITY_NOTICE =
   "commit for want of an identity, report that and stop rather than inventing " +
   "one.";
 
+/**
+ * What a run is told about the operator's board, and only when it has one.
+ *
+ * **Behavioural rather than descriptive**, which is the whole of why it is worth
+ * the prefix it costs. The tool list already says what the three tools *are*; a
+ * model reading only that closes the task it was given and stops there, or —
+ * worse — finds a second defect and fixes it, because nothing told it there was
+ * anywhere else to put one. The two sentences that matter are "complete only
+ * what you hold" and "file what you find rather than fixing it", and both are
+ * about when to reach for a tool rather than what it does.
+ *
+ * It satisfies `docs/agent/security.md`'s rule about literals the way the file
+ * price list and the git-identity notice do. The three tool names are shared
+ * across every board-enabled run on the box, so they *are* the kind of literal
+ * that made `pgrep -f 3100` fatal; what keeps them safe is that nothing near
+ * them offers a pattern — no verb here selects a process, no command is named at
+ * all, and the notice carries no digits. They are named rather than alluded to
+ * because a model told "there is a board" without the names writes prose about
+ * filing a task instead of filing one.
+ *
+ * It rides the flag only when the tools do, and that pairing is the invariant:
+ * a run told about a board it cannot reach spends cycles trying, and a run with
+ * the tools and no notice never opens them. `taskboard` is the single thing both
+ * are keyed on, so the two cannot drift apart.
+ *
+ * Switching the setting under a run in flight costs that run one cold prefix on
+ * its next cycle, once — the same charge `COMMIT_IDENTITY_NOTICE` names for a
+ * reword. That is the price of the toggle being live rather than frozen at
+ * creation, and it is the right way round: an operator switching this off has
+ * decided an unattended agent should not be writing to their database, and
+ * waiting for every run in flight to end is not a way to honour that.
+ */
+const TASKBOARD_NOTICE =
+  "This app keeps a taskboard — the operator's own backlog — and you can reach " +
+  "it. Call list_my_tasks to see the task this run was started for and what " +
+  "else is open in the folder you are working in. When the work you were given " +
+  "is done, call complete_task on it: you can complete only a task already " +
+  "recorded against this run, and nothing you have can close anybody else's or " +
+  "start any work. When you notice something that needs fixing and is not what " +
+  "you were asked to do, call create_task to write it down and carry on with " +
+  "your own change — a brief somebody can pick up later is worth more than a " +
+  "fix nobody asked for, and widening your own work is how a diff a reviewer " +
+  "could read stops being one. Say in your reply what you filed.";
+
 export function buildArgs(opts: {
   prompt: string;
   model: string | null;
@@ -1073,6 +1117,33 @@ export function buildArgs(opts: {
    * the directory the sandbox opened.
    */
   workDir?: string | null;
+  /**
+   * The taskboard tool surface, when the operator has switched it on.
+   *
+   * `mcpConfigPath` is a file `chat.ts`'s `writeMcpConfig` wrote for this cycle,
+   * holding a capability token minted for this run. It becomes `--mcp-config`,
+   * and it is passed per cycle for `pluginDirs`' reason, which applies with
+   * exactly the same force: **`--resume` does not restore it**, so a version of
+   * this that sent it only on the opening cycle would leave every later cycle of
+   * the same run without the board — silently, since a session with no tools
+   * looks exactly like a model that chose not to call one. The path itself is
+   * per cycle even though the token is per run, so a config left behind by a
+   * killed cycle is one file rather than a credential outliving the run.
+   *
+   * **`--strict-mcp-config` is deliberately absent**, which is the one thing on
+   * this argv not to copy from `chat.ts`. The chat child passes it because its
+   * tool surface is closed by design — an orchestrator turn is meant to reach
+   * this app and nothing else. A work cycle's is not: the operator's own MCP
+   * servers, configured in the `~/.claude` this app mounts, are part of what
+   * their agents work with. Strict here would silently strip every one of them
+   * from every run the moment this setting was switched on, which is a
+   * regression an operator would read as their servers having broken.
+   *
+   * Optional, and absent means an argv byte-identical to the one this app
+   * emitted before the board existed — which is what every run gets while the
+   * setting is off.
+   */
+  taskboard?: { mcpConfigPath: string } | null;
 }): string[] {
   const args = ["-p", opts.prompt, "--output-format", "stream-json", "--verbose"];
   if (opts.model) args.push("--model", opts.model);
@@ -1102,12 +1173,12 @@ export function buildArgs(opts: {
   // a run in the operator's own checkout is inside the same process as one in a
   // worktree, and the kill does not care which.
   args.push("--disallowedTools", ...PROCESS_KILLERS);
-  // One flag carrying all four notices, for the reason `--allowedTools` carries
-  // both its lists: a second `--append-system-prompt` is a replacement, not an
-  // addition, and losing one of them would be silent. The last is per-run and
-  // may be absent, so it is filtered rather than interpolated — an empty one
-  // must leave this string exactly as it was before the feature existed,
-  // trailing blank lines included, or every run predating the column pays a
+  // One flag carrying every notice, for the reason `--allowedTools` carries both
+  // its lists: a second `--append-system-prompt` is a replacement, not an
+  // addition, and losing one of them would be silent. The last two are per-run
+  // and may be absent, so they are filtered rather than interpolated — an argv
+  // with neither must be exactly the string it was before either feature
+  // existed, trailing blank lines included, or every run without them pays a
   // cold prefix on its next cycle for a notice it did not get.
   args.push(
     "--append-system-prompt",
@@ -1116,6 +1187,7 @@ export function buildArgs(opts: {
       DELEGATION_NOTICE,
       RENDERING_NOTICE,
       COMMIT_IDENTITY_NOTICE,
+      opts.taskboard ? TASKBOARD_NOTICE : null,
       opts.fileCostNotice?.trim(),
     ]
       .filter((notice): notice is string => Boolean(notice))
@@ -1130,6 +1202,10 @@ export function buildArgs(opts: {
       ...(opts.readGuardDir ? [opts.readGuardDir] : []),
     ]),
   );
+  // Beside `--plugin-dir` because it shares that flag's one property: not
+  // restored by `--resume`, therefore on every cycle's argv rather than only the
+  // first. No `--strict-mcp-config` beside it — see `taskboard`.
+  if (opts.taskboard) args.push("--mcp-config", opts.taskboard.mcpConfigPath);
   // The run's cwd is its workspace and needs no flag; this is the one
   // directory it is told about that is not its own. `--add-dir` is variadic,
   // which is worth knowing when moving it — measured against the pinned CLI, a
@@ -1316,6 +1392,14 @@ export function codexPromptPreamble(fileCostNotice?: string | null): string {
  *   Codex's tool permissions are the sandbox rather than a list. An isolated
  *   Codex run under `acceptEdits` can commit because `workspace-write` covers
  *   its checkout, not because anything here granted it.
+ * - **`taskboard`.** `--mcp-config` is a Claude Code flag; Codex configures MCP
+ *   servers through `config.toml`, which `--ignore-user-config` above
+ *   deliberately keeps out of the cycle. A Codex run therefore reaches no board,
+ *   and it is told about none for the same reason it is told nothing else this
+ *   function does not emit: `TASKBOARD_NOTICE` is `buildArgs`' string and there
+ *   is no `--append-system-prompt` here at all. The run loop does not prepare
+ *   the config for a Codex cycle either, so no capability token is minted for a
+ *   run that could never spend it.
  *
  * What it does emit, and why each is load-bearing:
  *

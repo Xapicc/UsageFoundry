@@ -1859,15 +1859,24 @@ export function markProposal(
 /**
  * Who a bearer token speaks for.
  *
- * Two kinds now, and they are deliberately a discriminated union rather than a
- * pair of optional ids: `/api/mcp` publishes a *different tool list* to each —
- * a chat may propose and save templates, an orchestrator block may emit runs
- * and neither may do the other's — and a shape where both ids can be absent is
- * a shape where the route can forget to check which it has.
+ * Three kinds now, and they are deliberately a discriminated union rather than a
+ * bag of optional ids: `/api/mcp` publishes a *different tool list* to each — a
+ * chat may propose and save templates, an orchestrator block may emit runs, a
+ * work cycle may only move its own task and file a new one — and a shape where
+ * every id can be absent is a shape where the route can forget to check which it
+ * has.
+ *
+ * **`run` is the one whose id is load-bearing rather than descriptive.** The
+ * board's rule is that a run may complete only the task its own row is claimed
+ * by, and the whole of that rule's enforcement is that `runId` comes from here —
+ * from the token this server minted for one run — and never from an argument the
+ * tool call supplied. A version of this that took a run id off the wire would be
+ * a work cycle able to close every task on the board.
  */
 export type CapabilitySubject =
   | { kind: "chat"; chatId: string }
-  | { kind: "block"; instanceId: string; nodeId: string };
+  | { kind: "block"; instanceId: string; nodeId: string }
+  | { kind: "run"; runId: string };
 
 /**
  * What lets an orchestrator child call back into this server, and nothing else.
@@ -1902,6 +1911,53 @@ export function mintCapability(subject: CapabilitySubject): string {
 
 export function revokeCapability(token: string): void {
   caps.delete(token);
+}
+
+/**
+ * The token a work cycle calls the taskboard with, minted once per run.
+ *
+ * `ingestTokenFor` in `otlp.ts` is the shape this follows rather than
+ * `mintCapability` above, and the difference is the clock. A chat turn's
+ * capability expires on `CHAT_TIMEOUT_MS` because a turn that has not finished
+ * by then is not going to; a run has no such bound — it is hours of work cycles
+ * with parks and resumes in between — so a lifetime here would be a run whose
+ * tools stop existing partway through, which reads as a model that chose not to
+ * call any. `Infinity` and `revokeRunCapabilities` is the pair, exactly as the
+ * exporter's credential is.
+ *
+ * Idempotent for the same reason the exporter's is: every cycle of a run writes
+ * a fresh config file naming this token, and a token per cycle would be one more
+ * thing to revoke on each of the paths a cycle can end on.
+ *
+ * It shares `caps` with the two above rather than taking a map of its own, so
+ * `/api/mcp` keeps one check for the whole tool surface. What separates the
+ * three is the subject it returns, which is what decides the tool list.
+ */
+export function mintRunCapability(runId: string): string {
+  for (const [token, cap] of caps) {
+    if (cap.subject.kind === "run" && cap.subject.runId === runId && cap.expiresAt === Infinity) {
+      return token;
+    }
+  }
+  const token = randomBytes(32).toString("base64url");
+  caps.set(token, { subject: { kind: "run", runId }, expiresAt: Infinity });
+  return token;
+}
+
+/**
+ * Called from `startRun`'s `finally`, on every path a run's loop can leave by.
+ *
+ * Revoked outright rather than on the exporter's grace, and the asymmetry is the
+ * point: OTLP records arrive on a batching timer *after* the cycle that produced
+ * them, so cutting the exporter off at the instant understates the run. A tool
+ * call is synchronous with a child that no longer exists by the time this runs,
+ * so there is no tail to wait for — and a grace here would be a window in which
+ * a token recovered from a sibling's `/proc/<pid>/cmdline` still closes tasks.
+ */
+export function revokeRunCapabilities(runId: string): void {
+  for (const [token, cap] of caps) {
+    if (cap.subject.kind === "run" && cap.subject.runId === runId) caps.delete(token);
+  }
 }
 
 /**
@@ -3400,6 +3456,17 @@ function mcpConfigBase(): string {
  * — this falls back to the previous arrangement whole rather than half-applying
  * it, because a config the child cannot read is a turn with no tools, which
  * reads as a model that chose not to call any.
+ *
+ * **A work cycle passes `null` deliberately, and it is not the fallback.** The
+ * taskboard config a run is spawned with has to be readable by the agents' own
+ * uid — that child is not in `UF_CHAT_GID` and must not be, since the group is
+ * exactly what keeps it out of the chat's capability. What that costs is stated
+ * rather than absorbed: two work cycles are one uid, so there is no file mode
+ * that separates them, and a run that reads a sibling's `--mcp-config` path off
+ * `/proc/<pid>/cmdline` can read the file. A second gid would not help, because
+ * every work cycle would be in it. So the run capability is bounded by *what it
+ * can do* instead — `docs/agent/security.md` carries what a stolen one is worth,
+ * and it is why the run tool list is three tools that start nothing.
  *
  * @param ownership defaulted from `privsep.ts`; a parameter so the modes can be
  *   tested without a second uid, which a unit test in this process cannot have.

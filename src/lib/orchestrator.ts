@@ -64,6 +64,18 @@ import {
   type TelemetrySpend,
 } from "./otlp";
 import { parseRunAgent, sessionAgentArgs, type AgentDefinition } from "./agents";
+// The board's half of a run, and the two modules it needs. Both of these import
+// this one back, which is the shape `cycleInvocation.ts` and `notify.ts` already
+// have with it: nothing here is read at module evaluation, only inside
+// `startRun`, so the partial namespace a cycle hands over during load is never
+// the one anything reads.
+import {
+  mintRunCapability,
+  removeMcpConfig,
+  revokeRunCapabilities,
+  writeMcpConfig,
+} from "./chat";
+import { taskForRun, updateTask } from "./tasks";
 import { enabledPluginDirs, pluginDirArgs } from "./plugins";
 import {
   BOUNDARY_BREAK_EVEN_BUDGET,
@@ -4879,6 +4891,7 @@ const ARGV_ARITY: Record<string, "none" | "one" | "many"> = {
   "--disallowedTools": "many",
   "--append-system-prompt": "one",
   "--plugin-dir": "one",
+  "--mcp-config": "one",
   "--add-dir": "many",
   "--resume": "one",
   "--autocompact": "one",
@@ -4930,6 +4943,12 @@ const CLASSIFIED_INJECTIONS = new Set([
   "--agents",
   "--agent",
   "--plugin-dir",
+  // Here rather than in `CARRIES_NO_CONTEXT` beside `--allowedTools`, and the
+  // distinction is the one this table exists to hold: `--allowedTools` names
+  // tools that already exist, where an MCP config *adds* tools, and a tool's
+  // schema and description are text in the window. The row below says where it
+  // lands.
+  "--mcp-config",
 ]);
 
 /**
@@ -4957,6 +4976,7 @@ export function injectionFates(argv: readonly string[]): WindowInjection[] {
   let appendedPrompt: string | null = null;
   let agentDefinition = false;
   let agentName: string | null = null;
+  let mcpConfig = false;
   let prompt: string | null = null;
   let unknownFlag: string | null = null;
   let previousFlag: string | null = null;
@@ -5028,6 +5048,9 @@ export function injectionFates(argv: readonly string[]): WindowInjection[] {
       case "--plugin-dir":
         if (values[0]) pluginDirs.push(values[0]);
         break;
+      case "--mcp-config":
+        mcpConfig = true;
+        break;
     }
 
     if (!CARRIES_NO_CONTEXT.has(flag) && !CLASSIFIED_INJECTIONS.has(flag)) {
@@ -5058,6 +5081,22 @@ export function injectionFates(argv: readonly string[]): WindowInjection[] {
       via: "--agents",
       fate: "survives",
       note: "Same row: it becomes the session's system prompt, which is not part of message history.",
+    });
+  }
+
+  if (mcpConfig) {
+    // The path on the argv carries nothing; what it causes is a tool list, and
+    // a tool list is in the request rather than in message history — the same
+    // place the appended prompt sits and for the same reason it survives. The
+    // *results* of calling one are message history and are not this row: they
+    // are indistinguishable from any other tool's output once they are in the
+    // conversation, which is what the `-p` row already says about everything a
+    // summariser rewrites.
+    rows.push({
+      what: "the definitions of the taskboard tools this run was given",
+      via: "--mcp-config",
+      fate: "survives",
+      note: "Tool definitions — unchanged; sent with every request rather than being part of message history.",
     });
   }
 
@@ -7739,6 +7778,104 @@ async function reconcileKilledCycle(
   }
 }
 
+/**
+ * Put the task a run was started for into this run's name, if there is one.
+ *
+ * Asked of `tasks.ts` rather than read off `runs.task_id` here, which is the
+ * boundary `recordRunForTask` names in that file: this module decides what a run
+ * may do and what it costs, and no loop, guard, occupancy check or budget on
+ * this side reads that column. `taskForRun` is the one reader.
+ *
+ * **Every refusal is a log line and never a failure**, and that direction is the
+ * decision. A task somebody dropped, a task another run still holds, a task the
+ * operator deleted between pressing Run and the run starting — none of them says
+ * anything about whether this run can do the work it was given, and a run that
+ * refused to start over the state of a row on a backlog would be this app
+ * turning a note into a lock. `taskTransitionRefusal` writes the sentence; it is
+ * repeated to the operator on the run's own log because the alternative is a
+ * board that silently disagrees with the run page about who holds what.
+ *
+ * A task already `claimed` by this same run is `from === to`, which the rule
+ * allows and which changes nothing — the shape a resumed or picked-up run takes,
+ * since this fires again on every segment.
+ */
+function claimTaskForRun(id: string): void {
+  const link = taskForRun(id);
+  if (!link) return;
+  if (link.status === null) {
+    log(id, `The task this run was started for has been deleted (${link.id}).`);
+    return;
+  }
+
+  const claimed = updateTask(link.id, { status: "claimed" }, { kind: "run", runId: id });
+  if (!claimed.ok) {
+    log(id, `This run was started for a task it could not claim: ${claimed.error}`);
+    return;
+  }
+  // Only when this run is the holder. A task already claimed by a *different*
+  // run reaches here as an allowed no-op — `from === to` — and saying "claimed"
+  // about it would be this app reporting a write it did not make.
+  if (claimed.task.claimedByRunId === id) {
+    log(id, `Claimed the task this run was started for: “${claimed.task.title}”.`);
+  } else {
+    log(
+      id,
+      `The task this run was started for is already held by run ${claimed.task.claimedByRunId?.slice(0, 8) ?? "nobody"}; this run has not claimed it.`,
+    );
+  }
+}
+
+/**
+ * What one cycle gets of the taskboard: nothing, a config file, or a reason.
+ *
+ * `ReadGuardDelivery`'s three cases and for its reason — "off" and "could not be
+ * built" are different answers and collapsing them would either say nothing when
+ * a feature the operator switched on silently failed, or say something on every
+ * cycle of every run that never asked for it.
+ */
+type RunTaskboardDelivery =
+  | { kind: "off" }
+  | { kind: "ready"; mcpConfigPath: string }
+  | { kind: "unavailable"; reason: string };
+
+/**
+ * Mint this run's capability if it does not have one, and write the cycle's
+ * config file naming it.
+ *
+ * `null` ownership on `writeMcpConfig` is deliberate and is the opposite of the
+ * chat's: this file is read by a child in the agents' uid, which is not in
+ * `UF_CHAT_GID` and must not be. `writeMcpConfig`'s docblock and
+ * `docs/agent/security.md` carry what that costs and why the run tool list is
+ * bounded to answer for it.
+ *
+ * A failure is degraded rather than refused — the read guard's choice, not the
+ * Codex rules' — because a cycle with no board still does the work it was given,
+ * where a cycle refused over a config file does none of it.
+ */
+function prepareRunTaskboard(
+  runId: string,
+  provider: RunProviderDTO | null,
+): RunTaskboardDelivery {
+  if (!getSettings().taskboardForRuns) return { kind: "off" };
+  // Not `unavailable`: there is nothing here that failed. `buildCodexArgs` says
+  // why a Codex cycle reaches no MCP server, and `startRun` says so once on the
+  // run's own log rather than once per cycle. Minting a token for a child that
+  // could never spend it would be a live credential on disk for nothing.
+  if (provider === "codex") return { kind: "off" };
+
+  try {
+    return {
+      kind: "ready",
+      mcpConfigPath: writeMcpConfig(mintRunCapability(runId), null),
+    };
+  } catch (err) {
+    return {
+      kind: "unavailable",
+      reason: `The taskboard tool config could not be written: ${(err as Error).message}`,
+    };
+  }
+}
+
 export async function startRun(id: string): Promise<void> {
   const run = getRun(id);
   if (!run) throw new Error(`No such run: ${id}`);
@@ -7888,6 +8025,34 @@ export async function startRun(id: string): Promise<void> {
       log(
         id,
         "Live spending limits are enforced from Claude Code's own per-request telemetry, which arrives while a cycle works. Expect a lag of a few seconds rather than an exact cut-off.",
+      );
+    }
+
+    // The board says who is doing the work before the work starts, not after.
+    //
+    // **At the run's start rather than at the first tool call**, which is the
+    // decision to preserve. A claim written when a work cycle first calls
+    // `list_my_tasks` is a claim a run never writes if the setting is off, if
+    // the model never opens the tool, or if the cycle dies before it does — so
+    // the operator's board would show `open` for work already in flight, and the
+    // chat tool that exists to stop two agents taking one brief would be reading
+    // it. Here it is a fact about the run having started, which is what
+    // `runs.task_id` records.
+    //
+    // Deliberately **not** gated on `taskboardForRuns`: the claim is this app
+    // writing down what it just did, and the setting is about what an agent may
+    // do. A run started from a task with the board switched off still holds it.
+    claimTaskForRun(id);
+
+    // Once per segment rather than once per cycle, because it is a fact about
+    // how this run was started and it does not change while it runs. Said at all
+    // because the alternative is silence: an operator who switched the board on
+    // and started a Codex run would otherwise watch it finish without ever
+    // filing anything and have nothing to read that explains it.
+    if (settings.taskboardForRuns && run.provider === "codex") {
+      log(
+        id,
+        "This run was spawned as Codex, which takes its MCP servers from a config file this app deliberately keeps out of a cycle. It cannot reach the taskboard, and it is not told there is one.",
       );
     }
 
@@ -8292,6 +8457,28 @@ export async function startRun(id: string): Promise<void> {
         );
       }
 
+      // The board's tool surface for this cycle, or nothing at all.
+      //
+      // Read per cycle rather than fixed for the run, the read guard's rule
+      // rather than `liveSpendTelemetry`'s: an operator who has just decided an
+      // unattended agent should not be writing to their database gets that at
+      // the next cycle rather than at the next restart. What it costs is one
+      // cold prefix on that cycle, because `TASKBOARD_NOTICE` leaves the
+      // appended system prompt with it — `buildArgs` carries why that is the
+      // right way round.
+      //
+      // The **file** is per cycle even though the token it holds is per run.
+      // A cycle killed mid-flight leaves one config behind, which the `finally`
+      // below removes; a per-run file would be a live capability sitting on disk
+      // across every park and resume the run takes.
+      const taskboard = prepareRunTaskboard(id, run.provider);
+      if (taskboard.kind === "unavailable") {
+        log(
+          id,
+          `Taskboard tools not loaded for this cycle — ${taskboard.reason}. This cycle cannot complete or file a task.`,
+        );
+      }
+
       // A run can last hours, and the working directory was validated once when
       // it was created. Re-checking before every spawn means a folder that has
       // since been replaced by a symlink out of the mount cannot be handed to a
@@ -8357,6 +8544,14 @@ export async function startRun(id: string): Promise<void> {
         pluginDirs: plugins.dirs,
         vaultSkill: vaultSkill.kind === "ready" ? vaultSkill : null,
         readGuardDir: readGuard.kind === "ready" ? readGuard.pluginDir : null,
+        // On every cycle including a resumed one, `--plugin-dir`'s rule: the
+        // CLI restores no MCP config on `--resume`, so a version of this that
+        // passed it once would leave cycle two of every run without the board
+        // and nothing would say so.
+        taskboard:
+          taskboard.kind === "ready"
+            ? { mcpConfigPath: taskboard.mcpConfigPath }
+            : null,
         isolated: run.isolation === "worktree",
         // Written out as the guard's own expression rather than passed as one
         // number, because `buildArgs` is where the subtraction is tested and
@@ -8483,6 +8678,12 @@ export async function startRun(id: string): Promise<void> {
       } finally {
         liveGuards.delete(id);
         contextWatches.delete(id);
+        // The child is gone by here on every path this `finally` is reached by,
+        // including a kill, so the file has no reader left. The token inside it
+        // outlives the cycle — it is the run's, revoked in the loop's own
+        // `finally` — which is exactly why the file must not: a config left on
+        // disk is a live capability a sibling agent sharing this uid could read.
+        if (taskboard.kind === "ready") removeMcpConfig(taskboard.mcpConfigPath);
       }
 
       cyclesThisSegment += 1;
@@ -9110,6 +9311,13 @@ export async function startRun(id: string): Promise<void> {
     // one-second timer and revoking on the instant would drop the tail of the
     // last cycle and understate what the run spent.
     revokeIngestTokens(id);
+    // The board's credential dies with the run's loop too, and on no grace at
+    // all — see `revokeRunCapabilities` for the asymmetry. Unconditional rather
+    // than gated on the setting: a run that had the board for its first cycles
+    // and lost it to a Settings edit still minted a token, and a revocation that
+    // only fires when the feature is currently on is one an operator switching
+    // it off would skip for exactly the runs it matters for.
+    revokeRunCapabilities(id);
 
     // Spend is only ever read from the CLI's `result` event, so a cycle killed
     // before that event lands contributes $0 to `spent_usd`. Say what was

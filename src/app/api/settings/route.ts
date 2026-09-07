@@ -358,6 +358,10 @@ async function putHandler(req: Request) {
     patch.telemetryForRuns = Boolean(body.telemetryForRuns);
   }
 
+  if ("taskboardForRuns" in body) {
+    patch.taskboardForRuns = Boolean(body.taskboardForRuns);
+  }
+
   if ("planUsageFromApi" in body) {
     patch.planUsageFromApi = Boolean(body.planUsageFromApi);
     // The cached reading outlives the setting otherwise: switching this off
