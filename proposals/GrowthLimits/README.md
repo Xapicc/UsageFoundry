@@ -186,6 +186,7 @@ Recorded because it is why one option is nearly free and three are refused.
 | [10-comparison.md](10-comparison.md) | Eight weighted criteria, justified before the scores, and four places the table misleads — starting with the fact that it returns the answer the brief invited |
 | [11-recommendation.md](11-recommendation.md) | Three steps, three refusals by name, one option handed back, five falsifiers |
 | [12-validation.md](12-validation.md) | Five measurements that would confirm or overturn this and could not be taken here, fourteen commands that were run with what they returned, and what would count as this survey having failed |
+| [13-measurement-audit-trail-window.md](13-measurement-audit-trail-window.md) | Answers §4 of the above and GapRegister G4: 20,000 rows is **≈244 days** at the busiest measured run rate, the per-insert eviction costs 6–7 µs, and `POST /api/workflows/validate` is the one unaudited route that would collapse the window to three hours |
 
 ## Neighbours
 

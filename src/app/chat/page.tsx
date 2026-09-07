@@ -13,7 +13,7 @@ import type {
   ProposedBlockDTO,
 } from "@/lib/apiTypes";
 import { chatRequest } from "@/lib/chatRequest";
-import { threadItems, turnStartInstant } from "@/lib/chatThread";
+import { mergeMessages, threadItems, turnStartInstant } from "@/lib/chatThread";
 import {
   describeAmbientAgents,
   fmtDateTime,
@@ -355,6 +355,24 @@ export default function ChatPage() {
     chatId: null,
     count: 0,
   });
+  /**
+   * Where the next poll resumes from, so it asks for a tail and not a thread.
+   *
+   * A ref rather than state because `load` is its only reader: in state it would
+   * be a dependency of the callback, the callback is a dependency of the
+   * interval, and the interval would then be torn down and re-armed by every
+   * message that arrives — restarting the three-second period mid-turn, which is
+   * exactly when it is being counted on.
+   *
+   * Mirrored out of the thread on screen rather than kept beside it, because
+   * what the page holds is what it has drawn and a second count maintained by
+   * hand is a second thing that can be wrong. Keyed by thread: switching
+   * conversations must ask for a whole one rather than resume another's number.
+   */
+  const cursor = useRef<{ chatId: string | null; seq: number }>({
+    chatId: null,
+    seq: 0,
+  });
 
   const chatId = chat?.id ?? null;
   const thinking = chat?.status === "thinking";
@@ -380,7 +398,15 @@ export default function ChatPage() {
    */
   const load = useCallback(async (id: string | null) => {
     try {
-      const res = await fetch(id ? `/api/chat/${id}` : "/api/chat", { cache: "no-store" });
+      // The thread past what is already on screen, which is what makes the cost
+      // of leaving this page open flat rather than a function of how long the
+      // conversation has got. Zero — the whole thread — on the first poll of a
+      // thread and on every poll of a thread this page has not drawn yet.
+      const after = id !== null && cursor.current.chatId === id ? cursor.current.seq : 0;
+      const query = after > 0 ? `?after=${after}` : "";
+      const res = await fetch(id ? `/api/chat/${id}${query}` : "/api/chat", {
+        cache: "no-store",
+      });
       // Parsed before the status check: a 500 from inside `chatDTO` carries no
       // JSON, and letting that throw would report a reachable server as an
       // unreachable one.
@@ -394,7 +420,26 @@ export default function ChatPage() {
         setPollError(pollFailureMessage(res.status, detail));
         return;
       }
-      setChat(data.chat);
+      const answered = data.chat;
+      setChat((prev) => {
+        // Appended rather than replaced when the answer is a tail, and only
+        // onto the thread it is a tail *of*.
+        if (prev && prev.id === answered.id) {
+          return {
+            ...answered,
+            messages: mergeMessages(
+              prev.messages,
+              answered.messages,
+              answered.messagesFrom,
+            ),
+          };
+        }
+        // A tail that arrives after the page has moved on — New chat pressed
+        // while this request was out — is not a conversation and must not be
+        // drawn as one. Dropped rather than shown headless; the poll after it
+        // carries no cursor and answers with the whole thread.
+        return answered.messagesFrom > 0 ? prev : answered;
+      });
       // A proposal this thread was holding can be decided somewhere this page
       // cannot see — another tab, another window — and its id then stays in
       // `selected` with no row left to untick. The route refuses it by id, so
@@ -479,6 +524,15 @@ export default function ChatPage() {
     },
     [],
   );
+
+  // What the page holds, so the next poll can ask for what it does not. Taken
+  // from the thread after it is merged rather than from the answer before it,
+  // because the cursor may only move over a message that is actually on screen
+  // — a poll firing before this lands re-asks for one or two, and `mergeMessages`
+  // drops them, which is the overlap it is written for.
+  useEffect(() => {
+    cursor.current = { chatId, seq: chat?.messages.at(-1)?.seq ?? 0 };
+  }, [chatId, chat]);
 
   useEffect(() => {
     void load(null);

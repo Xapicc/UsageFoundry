@@ -4,6 +4,7 @@ import {
   NODE_H,
   NODE_W,
   autoLayout,
+  draftSignature,
   draftToGraph,
   freeSpot,
   layoutBounds,
@@ -12,6 +13,7 @@ import {
   type BlockDraft,
   type CanvasDraft,
   type LinkDraft,
+  type WorkflowDraftBody,
 } from "./canvasGraph";
 
 /**
@@ -304,4 +306,140 @@ test("no gesture on a handle ever links a block to itself", () => {
       assert.notEqual(gesture.from, gesture.to, `armed=${armed} over=${over}`);
     }
   }
+});
+
+/* ------------------------------------------------------------------ */
+/* What leaving the page would destroy                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The editor prompts before an exit only while `draftSignature` says the graph
+ * has moved, so the failure is silent in both directions and neither shows on
+ * the page. A value the signature cannot see is a block, a prompt or a link
+ * discarded by a press on the sidebar with no dialog at all — the graph is the
+ * one thing in this app nobody can retype in a minute. A value it sees that a
+ * save would not keep is the opposite failure and costs more than it looks: a
+ * dialog raised over a page with nothing to lose is a dialog the operator
+ * learns to dismiss, and the next one they dismiss is the real one.
+ */
+function signature(
+  blocks: BlockDraft[],
+  links: LinkDraft[] = [],
+  over: Partial<WorkflowDraftBody["instanceBudget"]> = {},
+  name = "Nightly maintenance",
+): string {
+  return draftSignature({
+    name,
+    graph: draftToGraph({ blocks, links }),
+    instanceBudget: {
+      maxInstanceCostUSD: "20",
+      maxSessionFraction: null,
+      maxWeeklyFraction: null,
+      ...over,
+    },
+  });
+}
+
+test("two drafts holding the same graph sign identically", () => {
+  const one = signature([block("a"), block("b")], [link("a", "b")]);
+  const two = signature([block("a"), block("b")], [link("a", "b")]);
+  assert.equal(one, two);
+});
+
+test("every value a block's kind carries moves the signature", () => {
+  const carried: Array<{
+    what: string;
+    base: Partial<BlockDraft>;
+    edit: Partial<BlockDraft>;
+  }> = [
+    { what: "name", base: {}, edit: { name: "renamed" } },
+    { what: "kind", base: {}, edit: { kind: "merge" } },
+    { what: "templateId", base: {}, edit: { templateId: "tpl-1" } },
+    { what: "mountId", base: {}, edit: { mountId: "other" } },
+    { what: "folder", base: {}, edit: { folder: "sub/dir" } },
+    { what: "task", base: {}, edit: { task: "something else entirely" } },
+    { what: "promptOverride", base: {}, edit: { promptOverride: "be brief" } },
+    { what: "agentId", base: {}, edit: { agentId: "agent-1" } },
+    {
+      what: "fanOut",
+      base: { kind: "orchestrator" },
+      edit: { fanOut: "5" },
+    },
+    {
+      what: "mergeStrategy",
+      base: { kind: "merge" },
+      edit: { mergeStrategy: "squash" },
+    },
+    {
+      what: "mergeAutoResolve",
+      base: { kind: "merge" },
+      edit: { mergeAutoResolve: true },
+    },
+    {
+      what: "maxPasses",
+      base: { kind: "loop", maxPasses: "3" },
+      edit: { maxPasses: "4" },
+    },
+    {
+      what: "maxLoopCostUSD",
+      base: { kind: "loop", maxPasses: "3" },
+      edit: { maxLoopCostUSD: "5" },
+    },
+  ];
+  for (const { what, base, edit } of carried) {
+    assert.notEqual(
+      signature([block("a", { ...base, ...edit })]),
+      signature([block("a", base)]),
+      `a change to ${what} would be discarded without a prompt`,
+    );
+  }
+});
+
+test("a value the block's kind does not carry is not unsaved work", () => {
+  const dropped: Array<Partial<BlockDraft>> = [
+    { fanOut: "9" },
+    { mergeStrategy: "squash" },
+    { mergeAutoResolve: true },
+    { maxPasses: "7" },
+    { maxLoopCostUSD: "12" },
+  ];
+  for (const edit of dropped) {
+    assert.equal(
+      signature([block("a", { kind: "run", ...edit })]),
+      signature([block("a", { kind: "run" })]),
+      `${JSON.stringify(edit)} is dropped by a save and must not prompt`,
+    );
+  }
+  // The same rule one kind along: a merge block cannot name a specialist, so
+  // one left over from before the kind was switched is not work either.
+  assert.equal(
+    signature([block("a", { kind: "merge", agentId: "agent-1" })]),
+    signature([block("a", { kind: "merge" })]),
+  );
+});
+
+test("a link's condition and its branch flag are both work", () => {
+  const blocks = [block("a"), block("b")];
+  const bare = signature(blocks, [link("a", "b")]);
+  assert.notEqual(signature(blocks, [link("a", "b", { edge: "on-success" })]), bare);
+  assert.notEqual(signature(blocks, [link("a", "b", { continueBranch: true })]), bare);
+  assert.notEqual(signature(blocks, []), bare);
+});
+
+test("the workflow name and each of its limits are work", () => {
+  const blocks = [block("a")];
+  const bare = signature(blocks);
+  assert.notEqual(signature(blocks, [], {}, "Something else"), bare);
+  assert.notEqual(signature(blocks, [], { maxInstanceCostUSD: "40" }), bare);
+  assert.notEqual(signature(blocks, [], { maxSessionFraction: 0.5 }), bare);
+  assert.notEqual(signature(blocks, [], { maxWeeklyFraction: 0.5 }), bare);
+});
+
+test("whitespace either side of the name is not work", () => {
+  // `normalizeWorkflowInput` trims it, so a trailing space is not a change a
+  // save would preserve — and a prompt over one is a prompt over nothing.
+  assert.equal(
+    signature([block("a")], [], {}, "  Nightly maintenance "),
+    signature([block("a")]),
+  );
 });

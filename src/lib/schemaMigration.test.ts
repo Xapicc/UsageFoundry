@@ -427,6 +427,135 @@ function hasColumn(db: Database.Database, table: string, col: string): boolean {
     .some((c) => c.name === col);
 }
 
+/** Every `schema.fault` row on the file, oldest first, with `detail` parsed. */
+function faults(db: Database.Database): Array<{
+  level: string;
+  detail: Record<string, unknown>;
+}> {
+  return (
+    db
+      .prepare(
+        "SELECT level, detail FROM ops_events WHERE event = 'schema.fault' ORDER BY id",
+      )
+      .all() as Array<{ level: string; detail: string }>
+  ).map((r) => ({
+    level: r.level,
+    detail: JSON.parse(r.detail) as Record<string, unknown>,
+  }));
+}
+
+/**
+ * Everything `migrate()` finds wrong with the file it has just opened used to
+ * be a `console.error` and nothing else, which in a container is a scrollback
+ * buffer that the next restart destroys — and a restart is exactly when an
+ * operator comes looking for what the last boot said. These assert the durable
+ * half: a row per finding, written on the connection the migration already
+ * holds, because `db()` cannot be called from inside the `open()` that is
+ * still running.
+ */
+describe("what migrate finds wrong with the database it just opened", () => {
+  beforeEach(() => {
+    dbMod.db().exec("DELETE FROM ops_events");
+  });
+
+  it("records a rollback to an older image rather than only printing it", () => {
+    // The one case that cannot be produced by running this build forwards.
+    let db = dbMod.db();
+    db.pragma(`user_version = ${dbMod.SCHEMA_VERSION + 5}`);
+
+    db = reboot();
+
+    assert.deepEqual(faults(db), [
+      {
+        level: "error",
+        detail: {
+          finding: "downgrade",
+          fileVersion: dbMod.SCHEMA_VERSION + 5,
+          buildVersion: dbMod.SCHEMA_VERSION,
+        },
+      },
+    ]);
+  });
+
+  it("records a leftover table it cannot read, naming the columns it wanted", () => {
+    let db = dbMod.db();
+    db.exec("CREATE TABLE chat_proposals_old (id TEXT PRIMARY KEY, junk TEXT)");
+
+    db = reboot();
+
+    try {
+      // Two findings, and both matter: the recovery could not run, and the
+      // sweep at the end of `migrate` still sees the table nobody reads.
+      assert.deepEqual(
+        faults(db).map((f) => f.detail.finding),
+        ["proposals_unreadable", "orphan_table"],
+      );
+      const unreadable = faults(db)[0];
+      assert.equal(unreadable.detail.table, "chat_proposals_old");
+      assert.match(String(unreadable.detail.missing), /template_id/);
+    } finally {
+      db.exec("DROP TABLE chat_proposals_old");
+    }
+  });
+
+  it("records the residue of an interrupted rebuild it did complete", () => {
+    let db = dbMod.db();
+    db.exec("ALTER TABLE chat_proposals RENAME TO chat_proposals_old");
+    db.exec(proposalsCreateSql);
+
+    db = reboot();
+
+    assert.deepEqual(faults(db), [
+      {
+        level: "warn",
+        detail: {
+          finding: "proposals_stranded",
+          table: "chat_proposals_old",
+          recovered: 0,
+        },
+      },
+    ]);
+  });
+
+  it("records any other orphan, and the row outlives the restart that found it", () => {
+    let db = dbMod.db();
+    db.exec("CREATE TABLE runs_old (id TEXT PRIMARY KEY)");
+
+    db = reboot();
+
+    try {
+      assert.deepEqual(faults(db), [
+        { level: "error", detail: { finding: "orphan_table", table: "runs_old" } },
+      ]);
+      db.exec("DROP TABLE runs_old");
+      // The point of the row rather than the line: the next boot finds nothing
+      // and prints nothing, and what the last one found is still readable.
+      db = reboot();
+      assert.equal(faults(db).length, 1);
+    } finally {
+      dbMod.db().exec("DROP TABLE IF EXISTS runs_old");
+    }
+  });
+
+  it("reports only this boot's findings to /api/status, so a monitor de-latches", () => {
+    let db = dbMod.db();
+    db.exec("CREATE TABLE runs_old (id TEXT PRIMARY KEY)");
+
+    db = reboot();
+    assert.deepEqual(
+      dbMod.schemaFaultsThisBoot().map((f) => f.detail.finding),
+      ["orphan_table"],
+    );
+
+    db.exec("DROP TABLE runs_old");
+    reboot();
+
+    // The archive still holds it; the field the status endpoint reads does not.
+    assert.equal(faults(dbMod.db()).length, 1);
+    assert.deepEqual(dbMod.schemaFaultsThisBoot(), []);
+  });
+});
+
 describe("a fork_attempts table created before suffix_bytes existed", () => {
   it("gains the column on the next boot, keeping the rows already in it", () => {
     let db = dbMod.db();

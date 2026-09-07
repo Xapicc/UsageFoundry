@@ -158,17 +158,118 @@ export async function scanWorkspace(): Promise<WorkspaceScan> {
 }
 
 /**
- * How many repositories one scan will read a remote for.
+ * How many repositories one request will read a remote for.
  *
  * Reading a remote is a git child per folder, so this is a spend of processes
- * rather than of bytes. The picker never pays it — only the chat does, once per
- * turn — but a mount holding two hundred repositories would still fork two
- * hundred times, so it is capped and the caller is told what the cap left out.
+ * rather than of bytes. The picker never pays it — only the chat does — but a
+ * mount holding two hundred repositories would still fork two hundred times on
+ * one tool call, so it is capped.
+ *
+ * It is a **page**, and that is the whole difference from what it was: the cap
+ * used to be `slice(0, 25)` over the folders in scan order, so the same
+ * twenty-five repositories won every time and the twenty-sixth could not be
+ * named however many times it was asked for. A caller that wants the rest asks
+ * by `offset`, or names the folders it cares about and pays a git child only
+ * for those.
  */
 export const MAX_REMOTES_READ = 25;
 
+/** The name a folder is reported and asked for by, on every remote lookup. */
+export function folderKey(folder: { mountId: string; path: string }): string {
+  return `${folder.mountId}:${folder.path}`;
+}
+
+/** Which git repositories a remote lookup is being asked about. */
+export interface RemoteQuery {
+  /**
+   * `folderKey`s to read, or null/undefined for every git repository in scan
+   * order. A key naming no folder in the scan comes back in `unmatched` rather
+   * than being dropped: a filter that quietly matched nothing produces exactly
+   * the "no such repository" this whole page exists to stop reporting.
+   */
+  folders?: readonly string[] | null;
+  /** Git repositories to skip, in scan order. */
+  offset?: number;
+}
+
+/** What a lookup must say about the repositories it did not read. */
+export interface RemoteRemainder {
+  /** Git repositories the scan holds at all, before `folders` narrows it. */
+  gitRepos: number;
+  /** Git repositories `folders` matched — `gitRepos` when it named none. */
+  matching: number;
+  offset: number;
+  /** Matched repositories this request does not read, before it and after it. */
+  notRead: number;
+  /** Asked-for keys naming no git repository in the scan. */
+  unmatched: string[];
+}
+
+export interface RemoteSelection<T> extends RemoteRemainder {
+  /** The repositories this request pays a git child for, in scan order. */
+  read: T[];
+}
+
 /**
- * `owner/name` for each git repository in a scan, as GitHub would name it.
+ * Which repositories this request reads a remote for, and what it must say
+ * about the rest.
+ *
+ * Pure, and split out from the git work below for the reason
+ * `selectBranchCandidates` is split from its own: the failure mode is silent
+ * and it is not the failure it looks like. A repository dropped here is one the
+ * caller renders with no `owner/name`, which is the same rendering as "this is
+ * not a GitHub repository" — so an operator reads a working repository as a
+ * broken one, and nothing throws, nothing is red, and the total that ought to
+ * say so used to be a bare count of how many, never which.
+ *
+ * `gitRepos` is counted over the unfiltered scan for `selectBranchCandidates`'
+ * reason: a filter that hides how much it excluded is a filter you cannot tell
+ * you are inside.
+ */
+export function selectRemoteReads<
+  T extends { mountId: string; path: string; isGitRepo: boolean },
+>(folders: readonly T[], query: RemoteQuery = {}): RemoteSelection<T> {
+  const candidates = folders.filter((f) => f.isGitRepo);
+
+  const asked = query.folders?.length ? query.folders : null;
+  const wanted = asked ? new Set(asked) : null;
+  const matching = wanted
+    ? candidates.filter((f) => wanted.has(folderKey(f)))
+    : candidates;
+  const present = new Set(candidates.map((f) => folderKey(f)));
+  const unmatched = asked
+    ? [...new Set(asked)].filter((key) => !present.has(key))
+    : [];
+
+  // Clamped rather than refused, as the branch inventory clamps its own: an
+  // offset past the end is what asking for one page more than there is
+  // produces, and an empty page beside an honest `matching` is a better answer
+  // to that than an error a model has to interpret.
+  const offset = Math.min(
+    Math.max(0, Math.floor(Number(query.offset) || 0)),
+    Math.max(0, matching.length - 1),
+  );
+  const read = matching.slice(offset, offset + MAX_REMOTES_READ);
+
+  return {
+    read,
+    gitRepos: candidates.length,
+    matching: matching.length,
+    offset,
+    notRead: matching.length - read.length,
+    unmatched,
+  };
+}
+
+export interface RemoteLookup extends RemoteRemainder {
+  /** `folderKey` → `owner/name`, for the repositories whose remote resolved. */
+  repos: Record<string, string>;
+  /** The folders this request paid a git child for, resolved or not. */
+  read: string[];
+}
+
+/**
+ * `owner/name` for the git repositories a query names, as GitHub would name it.
  *
  * The chat needs this and nothing else about a repository: `gh issue list`
  * takes `--repo owner/name`, so supplying it saves the chat a shell round trip
@@ -180,18 +281,25 @@ export const MAX_REMOTES_READ = 25;
  * chat is then told it could not identify the repository, which is a sentence
  * an operator can act on; a wrong `owner/name` is a `gh` call against somebody
  * else's project.
+ *
+ * `read` comes back as well as `repos` because those two absences are different
+ * sentences and only one of them is about the repository: a folder that was
+ * read and has no entry is not on GitHub, and a folder that was not read is a
+ * question nobody asked. A caller holding only a count of the second knows how
+ * many it is missing and never which — and the one it is missing is the one it
+ * then reports to an operator as unidentifiable.
  */
 export async function githubRemotes(
   folders: WorkspaceFolderDTO[],
-): Promise<{ repos: Record<string, string>; notRead: number }> {
-  const candidates = folders.filter((f) => f.isGitRepo);
-  const read = candidates.slice(0, MAX_REMOTES_READ);
+  query: RemoteQuery = {},
+): Promise<RemoteLookup> {
+  const selection = selectRemoteReads(folders, query);
 
   const mountPath = new Map(WORKSPACE_MOUNTS.map((m) => [m.id, m.path]));
   const repos: Record<string, string> = {};
 
   await Promise.all(
-    read.map(async (f) => {
+    selection.read.map(async (f) => {
       const root = mountPath.get(f.mountId);
       if (!root) return;
       const res = await git(path.join(root, f.path), [
@@ -201,11 +309,11 @@ export async function githubRemotes(
       ]);
       if (!res.ok) return;
       const slug = githubSlug(res.stdout);
-      if (slug) repos[`${f.mountId}:${f.path}`] = slug;
+      if (slug) repos[folderKey(f)] = slug;
     }),
   );
 
-  return { repos, notRead: candidates.length - read.length };
+  return { ...selection, repos, read: selection.read.map((f) => folderKey(f)) };
 }
 
 /**

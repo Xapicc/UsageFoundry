@@ -21,13 +21,16 @@ import {
   MAX_WORKFLOW_NODES,
 } from "@/lib/apiTypes";
 import {
+  draftSignature,
   draftToGraph,
   linkKey,
   resolveLayout,
   type BlockDraft,
   type LinkDraft,
   type Point,
+  type WorkflowDraftBody,
 } from "@/lib/canvasGraph";
+import { exitHref, leaving, registerLeaveGuard } from "@/lib/unsavedWork";
 import {
   EDGE_OPTION_LABEL,
   WORKFLOW_LIMIT_TIMING_NOTE,
@@ -55,6 +58,7 @@ import {
 import { Hint } from "@/components/ui/Hint";
 import { GroupLabel, ListGroup, ListRow } from "@/components/ui/List";
 import { Notice } from "@/components/ui/Notice";
+import { Sheet } from "@/components/ui/Sheet";
 
 /**
  * The canvas a workflow is drawn on, and the inspector its selection is edited
@@ -511,7 +515,7 @@ export function WorkflowEditor({
   /* What the server says about it                                     */
   /* ---------------------------------------------------------------- */
 
-  const body = useMemo(
+  const body: WorkflowDraftBody = useMemo(
     () => ({
       name,
       graph: draftToGraph({ blocks, links }),
@@ -577,6 +581,106 @@ export function WorkflowEditor({
       controller.abort();
     };
   }, [body]);
+
+  /* ---------------------------------------------------------------- */
+  /* Not losing it                                                     */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Whether there is a graph here that leaving would destroy.
+   *
+   * Against the signature taken on the first render rather than against a
+   * re-derivation of the saved workflow: the drafts are seeded from the DTO by
+   * `toBlocks`/`toLinks` and read back by `draftToGraph`, and a round trip that
+   * did not land on itself exactly would make an untouched page dirty from the
+   * moment it opened. A snapshot cannot drift from the state it was taken of.
+   *
+   * Nothing clears it on a save, because a save navigates: `router.push` leaves
+   * this component, and a page that stays would be lying about what is stored.
+   */
+  const signature = useMemo(() => draftSignature(body), [body]);
+  const savedSignature = useRef(signature);
+  const dirty = signature !== savedSignature.current;
+
+  /** The exit that was stopped, held until the operator answers for it. */
+  const [pendingExit, setPendingExit] = useState<{
+    proceed: () => void;
+  } | null>(null);
+
+  /**
+   * The tab, the reload and the typed URL — and only those three.
+   *
+   * The settings page's prompt, for its reasons: registered only while there is
+   * something to lose so that a dialog is never raised over a page with nothing
+   * on it, `preventDefault` and `returnValue` together because either alone is
+   * a silent no-op in some engine, and the wording is the browser's.
+   *
+   * It does not fire on a client-side navigation, which for this page is most
+   * of them; the two effects below are what cover those.
+   */
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
+  /**
+   * Every link on the page, including the shell's own.
+   *
+   * One listener on the document rather than a guarded `<Link>`: the exits that
+   * matter are the sidebar's and the toolbar's, which are outside this
+   * component and have no reason to know a graph is being drawn.
+   *
+   * Capture, and both `preventDefault` and `stopPropagation`. `next/link`
+   * navigates from a React handler attached at the root container and reads
+   * neither the default nor who prevented it, so a bubble-phase listener runs
+   * too late and a prevented default alone still pushes the route — the click
+   * has to be stopped before it reaches React at all.
+   */
+  useEffect(() => {
+    if (!dirty) return;
+    function onClick(e: MouseEvent) {
+      const anchor = e.target instanceof Element ? e.target.closest("a") : null;
+      const href = exitHref({
+        href: anchor?.hasAttribute("href") ? anchor.href : null,
+        target: anchor?.target ?? "",
+        download: anchor?.hasAttribute("download") ?? false,
+        button: e.button,
+        modified: e.metaKey || e.ctrlKey || e.shiftKey || e.altKey,
+        defaultPrevented: e.defaultPrevented,
+        here: window.location.href,
+        origin: window.location.origin,
+      });
+      if (href === null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setPendingExit({ proceed: () => router.push(href) });
+    }
+    document.addEventListener("click", onClick, true);
+    return () => document.removeEventListener("click", onClick, true);
+  }, [dirty, router]);
+
+  /**
+   * The exits that are not clicks on anything: ⌘1…⌘9 and quick open.
+   *
+   * Both are `router.push` calls in the shell, so there is no event to stop and
+   * nothing this page could observe — they ask instead, and this is the answer.
+   * Browser Back is the one exit left uncovered: intercepting `popstate` means
+   * pushing a sentinel entry the operator never made and re-pushing it against
+   * the router's own restore, which corrupts the history stack in exchange for
+   * a dialog. The graph is still there afterwards, one Forward away.
+   */
+  useEffect(() => {
+    if (!dirty) return;
+    return registerLeaveGuard((proceed) => {
+      setPendingExit({ proceed });
+      return true;
+    });
+  }, [dirty]);
 
   /* ---------------------------------------------------------------- */
   /* Saving                                                            */
@@ -831,10 +935,17 @@ export function WorkflowEditor({
               ? "Saving the graph…"
               : "Saves the graph. Nothing starts until you press Run on it."}
           </p>
+          {/* Through the same guard the shell's exits use rather than around
+              it: Cancel is the one exit this component owns, and an exit that
+              asks on its own terms is an exit that drifts from the others. */}
           <Button
             variant="secondary"
             onClick={() =>
-              router.push(workflow ? `/workflows/${workflow.id}` : "/workflows")
+              leaving(() =>
+                router.push(
+                  workflow ? `/workflows/${workflow.id}` : "/workflows",
+                ),
+              )
             }
           >
             Cancel
@@ -844,6 +955,27 @@ export function WorkflowEditor({
           </Button>
         </div>
       </div>
+
+      {/* The one thing standing between a drawn graph and a press on the
+          sidebar. It says where the graph is, which is the fact the operator
+          cannot see: every block, prompt, guard and link is in this tab and
+          nowhere else until the button beside Cancel is pressed. */}
+      <Sheet
+        open={pendingExit !== null}
+        onDismiss={() => setPendingExit(null)}
+        title="Discard unsaved changes?"
+        confirmLabel="Discard"
+        confirmVariant="danger"
+        cancelLabel="Keep editing"
+        onConfirm={() => {
+          const exit = pendingExit;
+          setPendingExit(null);
+          exit?.proceed();
+        }}
+      >
+        Nothing in this graph is stored until{" "}
+        {workflow ? "Save changes" : "Create workflow"} is pressed.
+      </Sheet>
     </>
   );
 }
