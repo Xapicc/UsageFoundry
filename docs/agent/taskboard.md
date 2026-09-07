@@ -150,3 +150,19 @@ derived from `TASK_PRIORITIES`' own order, and the cost is a sort over the rows
 matching the status filter — a backlog rather than an event log. The day that
 stops being cheap the answer is a stored rank column written by `tasks.ts` and
 backfilled in `migrate()`, never a widening of this index.
+
+**`GET`/`POST /api/tasks` and `GET`/`PATCH`/`DELETE /api/tasks/[id]` are
+operator-facing and behind the app's ordinary gate**, and the actor is a constant
+in the route rather than anything read off a request. That is the point: a route
+that could be persuaded to act as another actor kind would be a route around the
+rule above, so the way a run or a chat turn gets access later is a door of its
+own carrying its own credential — not a field on this one's body. Both mutating
+handlers are wrapped in `auditMutation`. The list route reads `offset`, `limit`,
+`status`, `origin`, `mountId` and `folder` off `searchParams` and refuses an
+unknown `status` or `origin` with a **400** rather than dropping it, on
+`/api/runs`' rule that a parameter deciding *which rows exist* must never widen
+quietly: answering "every task" to "show me the claimed ones" is a board that
+looks like an answer, and on a backlog that reads as an absence of work rather
+than as a failed filter. `mountId` and `folder` are matched against the stored
+columns exactly as held and are deliberately **not** re-resolved on a read — a
+board must not stop listing because a mount is briefly unavailable.
