@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { beginLogin, cancelLogin } from "@/lib/codexAuth";
+// Relative, not "@/…" — see the note in the login route.
+import { beginLogin, cancelLogin, pendingLogin } from "../../../../lib/codexAuth";
+import { auditMutation, recordDurableMutation } from "../../../../lib/requestLog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,9 +24,17 @@ export const dynamic = "force-dynamic";
  * 502 rather than 500 on failure: everything that can go wrong here went wrong
  * in the CLI, and the body carries its own sentence about it.
  */
-export async function POST() {
+async function postHandler(req: Request) {
   const res = await beginLogin();
   if (!res.ok) return NextResponse.json({ error: res.error }, { status: 502 });
+  // `warn` where the Claude twin is `info`, and the field says why rather than
+  // leaving the level to be read as a mood: this press is a credential
+  // *deletion* that happens to be the start of a sign-in, so an operator
+  // working out when Codex stopped being signed in has to find it here.
+  recordDurableMutation(req, "warn", "auth.provider_login_started", {
+    provider: "codex",
+    cleared_existing_credential: true,
+  });
   return NextResponse.json(res.value);
 }
 
@@ -35,7 +45,20 @@ export async function POST() {
  * quarter of an hour — and so the page never shows a code the operator has
  * already walked away from.
  */
-export async function DELETE() {
+async function deleteHandler(req: Request) {
+  // Read before the cancel, for the reason the Claude route states: afterwards
+  // there is nothing to tell an abandoned login from a dialog closed over
+  // nothing, and only the first is worth a row on a 500-row table.
+  const abandoned = pendingLogin() !== null;
   cancelLogin();
+  if (abandoned) {
+    recordDurableMutation(req, "info", "auth.provider_login_cancelled", {
+      provider: "codex",
+    });
+  }
   return NextResponse.json({ ok: true });
 }
+
+/** Wrapped for the reason `/api/claude-auth/login` is. */
+export const POST = auditMutation(postHandler);
+export const DELETE = auditMutation(deleteHandler);

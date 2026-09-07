@@ -119,6 +119,16 @@ export default function WorkflowPage() {
 
   const [workflow, setWorkflow] = useState<WorkflowDTO | null>(null);
   const [instances, setInstances] = useState<WorkflowInstanceDTO[]>([]);
+  // What the poll asks for, and what came back. The second is the server's own
+  // reading of the first — it clamps an offset past the end — so the readout and
+  // the two buttons are drawn from the answer rather than from the request, and
+  // null until one has arrived rather than a second copy of the page size here.
+  const [offset, setOffset] = useState(0);
+  const [page, setPage] = useState<{
+    total: number;
+    offset: number;
+    limit: number;
+  } | null>(null);
   // Null until the list has been read, and null for good if it cannot be:
   // `guardBadge` reads that as "unknown", where `[]` reads as "every template
   // this graph names has been deleted".
@@ -132,10 +142,15 @@ export default function WorkflowPage() {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(`/api/workflows/${id}`, { cache: "no-store" });
+      const res = await fetch(`/api/workflows/${id}?offset=${offset}`, {
+        cache: "no-store",
+      });
       const data = (await res.json().catch(() => ({}))) as {
         workflow?: WorkflowDTO;
         instances?: WorkflowInstanceDTO[];
+        total?: number;
+        offset?: number;
+        limit?: number;
         error?: string;
       };
       if (!res.ok || !data.workflow) {
@@ -146,6 +161,13 @@ export default function WorkflowPage() {
       }
       setWorkflow(data.workflow);
       setInstances(data.instances ?? []);
+      // No pager rather than one that steps by a guess: a payload missing either
+      // figure cannot say where this page sits or how far the next one is.
+      setPage(
+        typeof data.total === "number" && typeof data.limit === "number"
+          ? { total: data.total, offset: data.offset ?? 0, limit: data.limit }
+          : null,
+      );
       setPollError(null);
     } catch (err) {
       setPollError(
@@ -154,8 +176,11 @@ export default function WorkflowPage() {
     } finally {
       setLoaded(true);
     }
-  }, [id]);
+  }, [id, offset]);
 
+  // Stepping the history re-arms the poll on the page being read, which is the
+  // point of it: the newest page is what changes on its own, and an older one is
+  // still worth keeping current while somebody has it open.
   useEffect(() => {
     load();
     const poll = setInterval(load, POLL_MS);
@@ -559,7 +584,7 @@ export default function WorkflowPage() {
             <TableWrap>
               <Table stack>
                 <caption className="sr-only">
-                  Every press of Run, newest first
+                  Presses of Run, newest first
                 </caption>
                 <THead>
                   <tr>
@@ -611,6 +636,33 @@ export default function WorkflowPage() {
             </TableWrap>
           )}
         </Card>
+        {/* Which slice of the history is on screen, and the way to the rest of
+            it. The count is the server's, over every press this graph has had
+            rather than over what arrived — the table was the newest twenty for
+            as long as it existed, and nothing on the page said so. */}
+        {page && page.total > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <span className="text-sm tabular-nums text-ink-muted">
+              {page.offset + 1}–{page.offset + instances.length} of {page.total}
+            </span>
+            <ButtonRow className="ml-auto">
+              <Button
+                variant="secondary"
+                disabled={page.offset === 0}
+                onClick={() => setOffset(Math.max(0, page.offset - page.limit))}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="secondary"
+                disabled={page.offset + page.limit >= page.total}
+                onClick={() => setOffset(page.offset + page.limit)}
+              >
+                Next
+              </Button>
+            </ButtonRow>
+          </div>
+        )}
       </div>
     </>
   );

@@ -101,6 +101,14 @@ and everything that principle protected is a check rather than a caveat:
 - Merge or squash, defaulted in Settings. Merging keeps the run's commits, so the
   diff above still means something afterwards; squashing gives your history one
   commit per run.
+- Every check above is about your *checkout*. **Check that must pass before Land
+  merges**, in Settings under Runs → Isolated runs, is the one about the *work*: name a
+  command there and a non-zero exit refuses the merge rather than warning about
+  it. It runs in the run's own worktree, so it sees the branch — and it is left
+  blank by default, which is no check rather than a check that passes. Open pull
+  request runs the same one, because saying "not unless this passes" said nothing
+  about which exit the work leaves by. It is argv and never a shell line: put
+  `a && b` in a script and name the script.
 
 **Several branches can be queued, and a queue is not a batch.** Tick them on the
 Branches page in the order you want them landed and the branches in one

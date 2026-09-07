@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { opsLog } from "./ops";
+import { opsLog, recordOpsEvent, type OpsFields, type OpsLevel } from "./ops";
 
 /**
  * A durable line per mutating request: what was asked, of what, by whom, from
@@ -132,6 +132,62 @@ export function recordRequest(entry: RequestLogEntry): void {
     actor: entry.actor,
     address: entry.address,
     duration_ms: entry.durationMs,
+  });
+}
+
+/**
+ * The second half of the trail: what a mutation *changed*, on the channel that
+ * ordinary traffic cannot evict.
+ *
+ * `recordRequest` above is the trail of **requests**, and it is a 20,000-row
+ * window trimmed on every insert. That is the right shape for what it holds and
+ * the wrong shape for a credential: the line saying the OAuth credential every
+ * billed child runs against was replaced is exactly the line that has to still
+ * be there after twenty thousand ordinary presses, and it is the first to go.
+ * `ops_events` is written at boot frequency and at operator-press frequency, so
+ * a row put here outlives traffic that would have evicted it next door.
+ *
+ * **Both, not either**, on the routes behind the gate. The wrapper records that
+ * a request happened *including when it was refused*, which is the line an audit
+ * most wants and the one this cannot produce; this records what changed when
+ * something did, which the wrapper cannot say because it never reads a body or a
+ * response. A route that wrote only here would lose its refusals. One that wrote
+ * only next door would lose the rotation.
+ *
+ * **Who, as far as this install has one.** There is a single credential and no
+ * user model, so the honest answer is the credential *class* and the first hop —
+ * the same two fields the request line carries, computed by the same two
+ * functions, and for the same reason stated at the top of this file: an audit
+ * needs to know which credential was used and must never record which secret.
+ * Nothing here invents an identity that does not exist.
+ *
+ * **`detail` is named by the caller, field by field, and never read out of a
+ * request.** `OpsFields` stops an object being serialised whole, and that is the
+ * mechanical half; the rule is the other half. A body posted to
+ * `/api/codex-auth/api-key` is an API key and a body posted to `/api/login` is
+ * the master token, and either one placed in a `detail` would be written to
+ * SQLite *and* to stdout by the same call.
+ *
+ * **Never call this from a path the edge gate exempts, on a branch that refuses.**
+ * `ops_events` keeps 500 rows against `request_log`'s 20,000, so a refusal
+ * recorded here is a *forty times sharper* version of the lever
+ * `docs/agent/security.md` describes for `/api/mcp`: an anonymous caller who can
+ * reach the port empties the durable trail in five hundred requests. `/api/logout`
+ * is the one exempt path that calls this, and it calls it only after a revocation
+ * has actually happened — see the comments there.
+ */
+export function recordDurableMutation(
+  req: Request,
+  level: OpsLevel,
+  event: string,
+  detail: OpsFields = {},
+): void {
+  const path = new URL(req.url).pathname;
+  // Spread first, so a caller's field cannot shadow either of these two.
+  recordOpsEvent(level, event, {
+    ...detail,
+    actor: actorOf(req, path),
+    address: sourceAddress(req.headers),
   });
 }
 
