@@ -2202,6 +2202,38 @@ standalone bundle), and are covered by the unit tests above, but the following
 have **not** been exercised against a real CLI. They are the list to work
 through before trusting this unattended:
 
+> **No fork has been written since the API-basis measurement was added.** The
+> two new `fork_attempts` columns, `NettableCut.removalKnown` and
+> `measuredForkRemoval` typecheck, build and are unit-tested at every point
+> whose failure is silent — that a row with a reading on only one side is
+> unknown rather than zero, that a resume which grew reads as having removed
+> nothing rather than as a negative, that the byte columns cannot move
+> `tokensRemoved` at all, that `netReceipt` credits nothing for an unmeasured
+> fork while still charging its rewrite, and that `measuredForkRemoval` floors
+> per row before it means. What has **not** happened is a real
+> `winnow … fork --write` under this build, so nothing has yet confirmed that
+> `apiContextSample` returns the `api` basis at the fork site on a live
+> transcript, or that `IterationResult.firstContextTokens` picks up the resumed
+> cycle's first billed turn rather than a `<synthetic>` zero. Docker is
+> unavailable in the container that wrote this. The list, in order: set
+> `contextPruningEngine` to the fork engine and run to a natural boundary; check
+> the row has both `api_context_before` and `api_context_after`; check the run
+> page prints no saving for it unless the window actually fell; then let a run
+> cross the context ceiling and check the decline line names the measurement
+> rather than saying nothing was worth removing.
+>
+> **The composition stack's re-read after a cut has been driven only through
+> `checkContextCeilings`.** `contextCeilingRace.test.ts` drives the real tick,
+> writes the real interrupt and reads the real `context_compositions` rows, and
+> the case fails without the clear. What it cannot reach is `pruneAtBoundary`'s
+> own clear, on the natural-boundary path, because nothing in this repository
+> runs the run loop. That one is an argument from the code.
+>
+> **The stack's new age line has not been seen rendered.** The copy is pinned in
+> `ContextOccupancy.test.tsx` against `renderToStaticMarkup`, live and finished
+> branches both, and the caption's existing "newest N of M" clause is pinned
+> beside it. Nobody has looked at the pane.
+
 > **The work cycle's taskboard tools have never been exercised against a real
 > CLI.** The whole path added on 2026-09-07 — `taskboardForRuns`, the third
 > capability subject, the per-run token, the per-cycle MCP config and
