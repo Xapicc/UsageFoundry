@@ -58,7 +58,7 @@ What follows is routing and nothing else: **if you are about to touch anything n
 
 - **The UI says "work cycle", the code says "iteration".** User-facing copy names the unit a first-time user must reason about; `Settings`, `BudgetPolicy`, the API payloads and the `runs` table keep `iteration`/`maxIterations`. Don't rename the internals to match the copy, and don't reintroduce "iteration" into the UI.
 - **Comments explain *why* a decision was made** — usually a correctness or safety trade-off — never what the code does. Match that when editing.
-- **Long-lived module state goes on `globalThis`**, or it silently resets on every request in dev; `grep -rn "globalThis as unknown" src/` finds the thirty-odd keys already there. Never reuse a key whose *shape* changed: `??=` only initialises when absent, so a pre-upgrade value survives a dev hot reload and every call on it throws — the trap `orchestrator.ts:373` records. Take a new key; the cost is one cold rebuild.
+- **Long-lived module state goes on `globalThis`**, or it silently resets on every request in dev; `grep -rn "globalThis as" src/` finds the fifty-odd keys already there. Never reuse a key whose *shape* changed: `??=` only initialises when absent, so a pre-upgrade value survives a dev hot reload and every call on it throws — the trap `orchestrator.ts:373` records. Take a new key; the cost is one cold rebuild.
 - **Schema changes** are idempotent statements in `migrate()` in `db.ts`. A destructive one is the exception and runs inside a single `db.transaction`.
 - **A pure function whose failure mode is silent gets a unit test.** That is the bar the existing suite was built to; `docs/agent/testing.md` records what each one earned.
 
