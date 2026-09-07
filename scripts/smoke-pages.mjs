@@ -184,6 +184,31 @@ function stageStandalone() {
 }
 
 /**
+ * Every key the operator's `.env` sets, so each can be blanked.
+ *
+ * `next build` copies `.env` into `.next/standalone/`, and the standalone server
+ * loads it at boot — which quietly undoes the isolation `serverEnv` is for.
+ * The one that proved it: a seeded run failing under this harness reached
+ * `deliver()` in `notify.ts` and POSTed to the operator's real
+ * `UF_WEBHOOK_URL`, from a smoke test, on their own machine.
+ *
+ * Blanking rather than deleting the file, because the file is somebody else's:
+ * Next's `loadEnvConfig` only fills keys that are `undefined`, so a key already
+ * present as `""` is left alone. Reading the keys off the file rather than
+ * listing them here is what keeps this true of a variable added next year.
+ */
+function envKeysToBlank(serverScript) {
+  const dotenv = path.join(path.dirname(serverScript), ".env");
+  if (!fs.existsSync(dotenv)) return {};
+  const blanked = {};
+  for (const line of fs.readFileSync(dotenv, "utf8").split("\n")) {
+    const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line);
+    if (match !== null) blanked[match[1]] = "";
+  }
+  return blanked;
+}
+
+/**
  * The child's environment is built from nothing rather than inherited.
  *
  * This matters more than it looks. A shell inside a UsageFoundry container
@@ -191,11 +216,12 @@ function stageStandalone() {
  * `CLAUDE_HOME` for the *real* install, and every one of them silently outranks
  * what this function is trying to set — `WORKSPACE_ROOTS` in particular beats
  * `WORKSPACE_ROOT`, so an inherited one points the smoke pass at the operator's
- * own mounts. Starting from `env -i` and naming every variable is the only way
- * this is reproducible off one machine.
+ * own mounts. Naming every variable, and blanking the ones the staged `.env`
+ * would otherwise supply, is the only way this is reproducible off one machine.
  */
-function serverEnv(sandbox, token, port) {
+function serverEnv(sandbox, token, port, serverScript) {
   return {
+    ...envKeysToBlank(serverScript),
     PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
     HOME: sandbox.root,
     TZ: "UTC",
@@ -431,7 +457,7 @@ async function main() {
   const output = [];
   const server = spawn(process.execPath, [serverScript], {
     cwd: path.dirname(serverScript),
-    env: serverEnv(sandbox, token, port),
+    env: serverEnv(sandbox, token, port, serverScript),
     stdio: ["ignore", "pipe", "pipe"],
   });
   server.stdout.on("data", (d) => output.push(d.toString()));
