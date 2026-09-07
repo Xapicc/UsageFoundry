@@ -2025,7 +2025,12 @@ Built and exercised against real transcripts:
 - **The taskboard was driven, in a browser, on 2026-09-07.** A production
   build under `node .next/standalone/server.js`, a throwaway `DATA_DIR`, a
   scratch `UF_AUTH_TOKEN`, rows seeded straight into `tasks` with the repo's own
-  `better-sqlite3`, and Playwright holding the `uf_session` cookie. What was
+  `better-sqlite3`, and Playwright holding the `uf_session` cookie. One trap in
+  that setup, worth a line because it looks like a broken stylesheet rather than
+  a missing step: `next build` rewrites `.next/standalone` and does **not** copy
+  `.next/static` into it, so a server started straight after a build serves every
+  page with no CSS at all — `cp -r .next/static .next/standalone/.next/static`
+  after each build, which is what `smoke-pages` does for itself. What was
   measured rather than assumed:
 
   - **The clipped brief cannot be written back.** The seeded brief was 310
