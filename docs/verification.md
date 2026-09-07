@@ -5792,6 +5792,40 @@ through before trusting this unattended:
     an exhausted credit on a Codex run is still filed under Claude's sentences.
     Exhaust a Codex account and read `stop_reason`.
 
+- **What a migration finds now outlives the stdout it was printed to,
+  2026-09-07.** All four findings — the `downgrade` verdict, the
+  `chat_proposals_old` this build cannot read, the one it can and recovered, and
+  any other `*_old` table — were driven against a real SQLite file by reopening
+  the database, which is what `migrate()` runs against on a restart, and each
+  writes one `ops_events` row under the event `schema.fault` beside the
+  `console.error` it already wrote. The five cases are in
+  `schemaMigration.test.ts` and all five fail with the row-writing line removed
+  and the printing left in place, which was run both ways: `# fail 5` before,
+  `# pass 16` after. What they pin beyond the INSERT is the ordering, which is
+  the part that is silent when it is wrong — the `ops_events` CREATE is the
+  first statement in `migrate()` because the downgrade is found before this file
+  has any other table, and the write takes the caller's connection because
+  `db()` from inside the `open()` that has not returned recurses without end.
+  The de-latching case asserts both halves at once: after the fault is cleared
+  and the database reopened, the row is still there and `schemaFaultsThisBoot()`
+  is empty. `npm run typecheck` is clean, `npm test` is 2294 passing / 0
+  failing, and `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` exits 0.
+
+  **Not yet verified by hand:** **no container was involved.** Docker was not
+  available in the session that wrote this, so what has never been seen is the
+  finding on a real boot — the line in `docker compose logs`, the row surviving
+  the `docker compose restart` that erases those logs, and the `schemaFaults`
+  array on `GET /api/status`. The whole check is three commands against a live
+  install: `docker compose exec app node -e
+  "require('better-sqlite3')('/data/usagefoundry.db').pragma('user_version =
+  99')"`, then `docker compose restart app`, then
+  `curl -s -H "Authorization: Bearer $UF_STATUS_TOKEN"
+  http://127.0.0.1:3000/api/status | jq .schemaFaults` — which should carry one
+  `downgrade` entry naming file version 99 against this build's, and `docker
+  compose logs app | grep schema` the sentence beside it. A second `docker
+  compose restart` clears it, because `migrate()` stamps `SCHEMA_VERSION` on the
+  way out, and that is the de-latching the test asserts in the small.
+
 There is no linter run in this repo, and `npm test` covers a deliberately short
 list: the folder-collision predicate, which queued runs may start, the budget
 policy, how a provider refusal is classified and backed off from, which prompt a
