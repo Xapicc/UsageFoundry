@@ -349,13 +349,13 @@ empty dashboard, which is also what a quiet week looks like.
 | `UF_GITHUB_TOKEN` | no | — | Blank means runs cannot use GitHub. Never reported. |
 | anything else | no | set to the empty string | Warned. A blank value is read as unset and takes the default, which is a value nobody chose. |
 
-`DATA_DIR` refuses because it is the one that decides where your
-only copy of anything lives — a boot that carries on writing to a directory you
-did not name is manufacturing the loss, and in the shipped image the default is
-inside the container's writable layer, which `docker compose up --build`
-destroys. A missing workspace only warns because compose mounts four slots
-unconditionally, a bind source can be temporarily unavailable, and taking the
-dashboard away over an empty folder picker is worse than the empty picker.
+`DATA_DIR` refuses because it decides where your only copy of anything lives —
+a boot that carries on writing to a directory you did not name is manufacturing
+the loss, and in the shipped image the default is inside the container's
+writable layer, which `docker compose up --build` destroys. A missing workspace
+only warns because compose mounts four slots unconditionally, a bind source can
+be temporarily unavailable, and taking the dashboard away over an empty folder
+picker is worse than the empty picker.
 
 Writability is tested by an actual write. `mkdirSync(recursive: true)` reports
 success for a directory it cannot write to, which is why an ownership mismatch
