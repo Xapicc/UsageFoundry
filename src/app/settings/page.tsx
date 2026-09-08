@@ -3258,7 +3258,14 @@ export default function SettingsPage() {
                 <ListRow
                   key={entry.id}
                   label={entry.label}
-                  description={<span className="mono">{entry.id}</span>}
+                  // Nothing when the two are the same string, which is every
+                  // entry an operator typed: the id under the id is the shipped
+                  // rows' second fact, not a second copy of their first.
+                  description={
+                    entry.label === entry.id ? undefined : (
+                      <span className="mono">{entry.id}</span>
+                    )
+                  }
                 >
                   <Switch
                     checked={entry.enabled}

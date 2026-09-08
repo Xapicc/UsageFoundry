@@ -2265,26 +2265,42 @@ through before trusting this unattended:
 > branches both, and the caption's existing "newest N of M" clause is pinned
 > beside it. Nobody has looked at the pane.
 
-> **The model catalogue has not been seen in a browser and no run has been
-> started on a `[1m]` id.** `settings.modelCatalogue`, its Settings fold, the
-> three pickers that replaced free-text model boxes, and the `enum` the MCP
-> tools now publish all typecheck and are unit-tested where the failure is
-> silent (`modelCatalogue.test.ts`, plus the `[1m]` pricing case in
-> `pricing.test.ts` and a `modelCatalogue` probe in the settings route's
-> round-trip census). What has **not** happened, in the container this was
-> written in: `next build` could not be completed — it compiles and generates
-> every page, then fails copying the standalone bundle with an `ENOENT` on a
-> different `mkdir` each run, and the *unmodified* base commit fails the same
-> way — so `npm run smoke-pages` exits 2 and nobody has looked at the fold, the
-> pickers, or the "not enabled" option a switched-off model leaves behind.
-> Docker is unavailable there too. The list, in order: open Settings and check
-> the fold's rows and its Add box, and that the last enabled switch will not
-> flip; save a `defaultModel`, switch that model off in the same press, and
-> check the route refuses by name rather than storing a default nothing will
-> accept; start a run on `claude-opus-5[1m]` and read the spawned argv, because
-> the square brackets are the one thing on this path that could be normalised
-> away without any test failing; then ask the chat for a run and check the
-> orchestrator picks from the enum rather than from memory.
+> **The model catalogue was driven in a browser; no run has yet been started on
+> a `[1m]` id, and the MCP enum has not been read by a model.**
+> `settings.modelCatalogue`, its Settings fold, the three pickers that replaced
+> free-text model boxes, and the `enum` the MCP tools publish all typecheck and
+> are unit-tested where the failure is silent (`modelCatalogue.test.ts`,
+> `modelAdoption.test.ts`, the `[1m]` pricing case in `pricing.test.ts`, and a
+> `modelCatalogue` probe in the settings route's round-trip census).
+>
+> Verified by hand, 2026-09-08, through `next start` on a real build with a
+> throwaway `DATA_DIR` and a `CLAUDE_BIN` that cannot spawn, driven with
+> Playwright: the fold opens and renders all thirty rows with their ids; Add
+> puts a typed `acme-model-9[1m]` on the list with a Remove beside it and no
+> Remove on any seeded row; switching all sixteen enabled entries off leaves
+> exactly one, and that last switch is `disabled` rather than refusing at Save;
+> the new-run form's `#model` is a `<select>` whose first option is Inherit; the
+> agent editor's is too; no console errors on any of the three pages. Over HTTP:
+> `PUT /api/settings` refuses a default naming a disabled model and says
+> *switched off*, refuses a list with nothing enabled, and stores
+> `claude-opus-5[1m]` with its brackets intact; `POST /api/runs` refuses an
+> unknown model and says *not on this install's list*, and admits
+> `gpt-5-codex` on a Codex run untouched.
+>
+> **`npm run build` cannot be completed in that container and it is not this
+> change.** It compiles, typechecks and generates every page, then dies copying
+> the standalone bundle with an `ENOENT` on a different `mkdir` each run
+> (`.next/standalone/node_modules/@img/colour`, `@swc/helpers/cjs`,
+> `caniuse-lite/data/features`, and once on `.next/diagnostics` itself); the
+> **unmodified** base commit fails identically. `.next` is complete enough for
+> `next start`, which is what the browser pass above used, but
+> `npm run smoke-pages` needs `.next/standalone/server.js` and so exits 2.
+> Docker is unavailable there too. What is left, in order: start a real run on
+> `claude-opus-5[1m]` and read the spawned argv, because the square brackets are
+> the one thing on this path that could be normalised away without any test
+> failing; ask the orchestrator chat for a run and check it picks off the enum
+> rather than from memory, and that `"inherit"` reaches the row as null; then
+> `docker compose up --build` and `npm run smoke-pages` somewhere they run.
 
 > **The work cycle's taskboard tools have never been exercised against a real
 > CLI.** The whole path added on 2026-09-07 — `taskboardForRuns`, the third
