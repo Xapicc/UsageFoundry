@@ -2237,6 +2237,43 @@ Built and exercised against real transcripts:
   `api_context_after`, `NettableCut.removalKnown`, and `measuredForkRemoval`
   feeding `ceilingCut`. See `forkCutFromRow`.
 
+- **`npm run build` cannot finish in an agent worktree, and the cause is the
+  mount rather than anything in this repository.** Measured 2026-09-08 in
+  `/workspace/.uf-worktrees/usagefoundry-721638d11c0b-3` at `23a3d45`, on a
+  fresh `NODE_ENV=development npm ci --include=dev`: four consecutive
+  `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` runs each died copying
+  the standalone bundle, on a different path every time —
+  `ENOTDIR .next/standalone/.next`, `ENOENT .next/standalone/node_modules/@swc/helpers/cjs`,
+  `ENOENT .next/diagnostics`, `ENOENT .next/standalone/node_modules/next/dist/compiled`.
+  Pre-creating `.next/diagnostics` and `.next/cache` did not prevent the third.
+  Every failing path's parent existed, and `mkdir -p` of the same path succeeded
+  immediately afterwards.
+
+  The mount is `virtiofs`. What isolates it: 2,400 concurrent recursive
+  `mkdir`s failed **0** times on both that mount and `$TMPDIR` (overlayfs), but
+  `rm -rf` of a tree written moments earlier returned `ENOTEMPTY` on **6 of 40**
+  attempts on the virtiofs mount against **0 of 40** under `$TMPDIR` — a
+  directory cache that outlives an unlink, which is the same stale entry a
+  later `mkdir` trips over as `ENOENT` or `ENOTDIR`. It is also why `npm ci`
+  occasionally dies with `ENOTDIR: mkdir node_modules/@img`.
+
+  `.next` itself completes and carries a `BUILD_ID`. Acted on 2026-09-08:
+  `stageStandalone` in `scripts/smoke-pages.mjs` became `stageServer`, which
+  serves the standalone bundle when there is one and otherwise spawns
+  `next start -H 127.0.0.1 -p <port>` against `.next/`, printing which of the
+  two it took as its first line. All three states measured on that worktree: no
+  `.next` at all still exits 2; a `.next` without a standalone bundle runs the
+  full pass in fallback mode (38/40 page loads clean); a `.next` with one runs
+  it in standalone mode. **The fallback is a weaker check** — it proves nothing
+  about whether the shipped bundle boots or whether its traced `node_modules`
+  are complete, and no run in this container can.
+
+  The `.env` blanking `serverEnv` depends on was re-measured for the new mode,
+  because `next start` loads the repo's own `.env` rather than the copy beside
+  the standalone server: with the repo root passed as the env directory,
+  `UF_GITHUB_TOKEN`, `UF_WEBHOOK_URL`, `DISCORD_WEBHOOK_URL` and `UF_WORKSPACE`
+  all reach the child blank, and all four reach it populated without it.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the
@@ -2332,7 +2369,11 @@ through before trusting this unattended:
 > **unmodified** base commit fails identically. `.next` is complete enough for
 > `next start`, which is what the browser pass above used, but
 > `npm run smoke-pages` needs `.next/standalone/server.js` and so exits 2.
-> Docker is unavailable there too. What is left, in order: start a real run on
+> Docker is unavailable there too. **Corrected 2026-09-08:** the cause is the
+> mount, not the bundle, and `smoke-pages` now falls back to `next start` in
+> exactly this situation rather than exiting 2 — see the entry above. The rest
+> of this paragraph stands.
+> What is left, in order: start a real run on
 > `claude-opus-5[1m]` and read the spawned argv, because the square brackets are
 > the one thing on this path that could be normalised away without any test
 > failing; ask the orchestrator chat for a run and check it picks off the enum
