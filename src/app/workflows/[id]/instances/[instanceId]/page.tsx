@@ -576,7 +576,12 @@ export default function WorkflowInstancePage() {
           unknownHint="no workflow spending limit"
           detail={
             budget.maxInstanceCostUSD === null
-              ? `${fmtUSD(instance.spentUSD)} measured so far`
+              ? // "measured" is a claim, and it is false as soon as one block
+                // reported no cost at all: the figure is then what the rest of
+                // them reported and says nothing about that one.
+                instance.spentUnmeasured > 0
+                ? `${fmtUSD(instance.spentUSD)} reported so far`
+                : `${fmtUSD(instance.spentUSD)} measured so far`
               : `of ${fmtUSD(budget.maxInstanceCostUSD)}; the guard reads ${fmtUSD(
                   instance.spentGuardUSD,
                 )}`
@@ -614,6 +619,13 @@ export default function WorkflowInstancePage() {
             {instance.liveRunCount} block(s) working — a cycle in flight reports
             nothing until it ends, so the measured figure is a floor and the
             guard&rsquo;s is what telemetry has seen so far
+          </Hint>
+        )}
+        {instance.spentUnmeasured > 0 && (
+          <Hint>
+            {instance.spentUnmeasured} block(s) reported no cost — a turn that
+            died before the CLI could say — so what they spent is unknown rather
+            than nothing, and only the guard&rsquo;s figure prices it
           </Hint>
         )}
       </Card>
@@ -699,7 +711,8 @@ export default function WorkflowInstancePage() {
                           label="Spent"
                           className="whitespace-nowrap align-top"
                         >
-                          {b.kind === "orchestrator" || b.kind === "merge"
+                          {(b.kind === "orchestrator" || b.kind === "merge") &&
+                          b.costUSD !== null
                             ? fmtUSD(b.costUSD)
                             : "—"}
                         </Td>

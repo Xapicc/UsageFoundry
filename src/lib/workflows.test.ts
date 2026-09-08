@@ -3,7 +3,10 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import {
+  addBlockSpend,
   blockSettlement,
+  blockSpendReading,
+  blockTurnSpend,
   bootBlockPlan,
   emittedFolderRefusal,
   haltPlan,
@@ -2052,6 +2055,133 @@ describe("blockSettlement — what a finished turn is recorded as", () => {
     // Empty rather than a reassuring line: the page draws every note, and a
     // standing "no problems" would train the eye past the ones that matter.
     assert.deepEqual(settled({ status: "idle", text: "Started one." }, 1).notes, []);
+  });
+});
+
+/**
+ * Which of a settled turn's three cost columns each reading goes in.
+ *
+ * The failure this pins was silent in three places at once. `turnResultOf`
+ * returns a failure shape with no `costUSD` whenever the child produced no
+ * readable `result` event — killed, crashed or timed out — and it carries the
+ * tokens precisely because they were billed. Banking that as `costUSD ?? 0`
+ * put a measurement nobody made in the column `instanceSpend` sums into both
+ * the shown figure and the guard's: the block's Spent cell read `$0.00`, the
+ * instance total omitted the whole of every crashed turn, and
+ * `enforceInstanceBudget` compared `maxInstanceCostUSD` against a number short
+ * by exactly the money the operator set the cap to bound.
+ *
+ * Splitting it is the fix and the split is what has to hold: the measured
+ * column may only ever take a figure a CLI reported, the estimate must reach
+ * the guard, and a turn that reported nothing must stay distinguishable from
+ * one that cost nothing even when both estimates are 0.
+ */
+describe("blockTurnSpend — a turn's cost, measured apart from estimated", () => {
+  it("banks a reported cost as measured, with nothing to estimate", () => {
+    assert.deepEqual(blockTurnSpend({ status: "idle", costUSD: 1.5, tokens: 10 }), {
+      costUSD: 1.5,
+      costGuardUSD: 0,
+      unreported: 0,
+    });
+  });
+
+  it("banks a reported $0 as a measurement, because it is one", () => {
+    // A turn the CLI priced at zero is a reading, not a gap. It must not be
+    // mistaken for the killed turn below or the row would claim an estimate it
+    // has no usage for.
+    assert.deepEqual(blockTurnSpend({ status: "idle", costUSD: 0 }), {
+      costUSD: 0,
+      costGuardUSD: 0,
+      unreported: 0,
+    });
+  });
+
+  it("keeps a killed turn's tokens out of the measured column and in the guard's", () => {
+    // The shape `turnResultOf` returns when no `result` event ever arrived: an
+    // error, the tokens the stream did report, our own price for them, and no
+    // `costUSD` at all.
+    const killed = blockTurnSpend({
+      status: "failed",
+      error: "The chat produced no readable output (exit null).",
+      tokens: 120_000,
+      costGuardUSD: 0.42,
+    });
+    assert.equal(killed.costUSD, 0, "nothing measured this turn");
+    assert.equal(killed.costGuardUSD, 0.42, "the guard prices what it streamed");
+    assert.equal(killed.unreported, 1);
+    assert.ok(
+      killed.costUSD + killed.costGuardUSD > killed.costUSD,
+      "the guard's total exceeds the measured floor",
+    );
+  });
+
+  it("still records a turn that died before its first token as unreported", () => {
+    // Both figures are 0 and neither is a reading. Without the count the row is
+    // bit-for-bit a block that ran and cost nothing, which is the whole reason
+    // `cost_unreported` is a column rather than a test for a zero.
+    const dead = blockTurnSpend({ status: "failed", error: "exit 137", tokens: 0 });
+    assert.equal(dead.costUSD, 0);
+    assert.equal(dead.costGuardUSD, 0);
+    assert.equal(dead.unreported, 1, "the cost is unknown, not zero");
+  });
+});
+
+/**
+ * The other half of the same defect: where those three columns land once they
+ * are summed, and what the cell above them is allowed to say.
+ *
+ * `addBlockSpend` is the line `enforceInstanceBudget` acts on. An estimate that
+ * failed to reach `spentGuardUSD` leaves the cap short by every crashed turn;
+ * one that reached `spentUSD` as well would put our own price in the figure the
+ * page calls measured, which is the failure the whole shown-versus-guard split
+ * exists to prevent. Both typecheck and neither shows on the page.
+ */
+describe("addBlockSpend — which figure a block's columns may reach", () => {
+  const noMembers = { spentUSD: 0, spentGuardUSD: 0, unmeasured: 0 };
+
+  it("puts a killed turn's estimate in the guard's figure and not the shown one", () => {
+    const spend = addBlockSpend(noMembers, { spent: 0, est: 0.42, unreported: 1 });
+    assert.equal(spend.spentUSD, 0, "nothing measured, so nothing to show");
+    assert.ok(
+      spend.spentGuardUSD > spend.spentUSD,
+      "the guard reads more than the measured floor",
+    );
+    assert.equal(spend.spentGuardUSD, 0.42);
+    assert.equal(spend.unmeasured, 1);
+  });
+
+  it("puts a reported cost in both figures", () => {
+    const spend = addBlockSpend(noMembers, { spent: 1.25, est: 0, unreported: 0 });
+    assert.equal(spend.spentUSD, 1.25);
+    assert.equal(spend.spentGuardUSD, 1.25);
+    assert.equal(spend.unmeasured, 0);
+  });
+
+  it("adds to what the members already spent rather than replacing it", () => {
+    const spend = addBlockSpend(
+      { spentUSD: 2, spentGuardUSD: 3, unmeasured: 1 },
+      { spent: 1, est: 0.5, unreported: 2 },
+    );
+    assert.deepEqual(spend, { spentUSD: 3, spentGuardUSD: 4.5, unmeasured: 3 });
+  });
+});
+
+describe("blockSpendReading — what a block's Spent cell may claim", () => {
+  it("has no figure for a block nothing measured", () => {
+    // `$0.00` here is the claim the runs list already refuses to make: a turn
+    // that died before reporting spent money, and the cell must say so by
+    // saying nothing.
+    assert.equal(blockSpendReading({ costUSD: 0, costUnknown: true }), null);
+  });
+
+  it("keeps a measured zero, which is an answer", () => {
+    assert.equal(blockSpendReading({ costUSD: 0, costUnknown: false }), 0);
+  });
+
+  it("keeps what the block's other turns reported", () => {
+    // A floor rather than the bill — `costUnknown` beside it is what says so —
+    // but money that was measured is not thrown away to signal the gap.
+    assert.equal(blockSpendReading({ costUSD: 1.5, costUnknown: true }), 1.5);
   });
 });
 

@@ -1385,6 +1385,27 @@ function migrate(db: Database.Database) {
   addColumn(db, "workflow_instance_blocks", "reply", "TEXT");
   addColumn(db, "workflow_instance_blocks", "notes", "TEXT");
 
+  // What a block turn cost when the CLI never got as far as saying.
+  //
+  // `runs.spent_usd_est` for a block, and held apart from `cost_usd` for the
+  // same reason: a turn whose child was killed, crashed or timed out produces
+  // no `result` event, so `total_cost_usd` never arrives, and the tokens it
+  // burned before dying were still billed. `cost_usd` stays a floor of what a
+  // CLI itself measured; this is our own price for the usage the stream did
+  // report, and only the guard adds the two.
+  //
+  // `cost_unreported` counts those turns rather than deriving the fact from a
+  // zero, because both readings can legitimately be 0: a turn killed before its
+  // first assistant event leaves no usage to price either, and "nothing was
+  // measured" must not read as "it cost nothing".
+  addColumn(db, "workflow_instance_blocks", "cost_usd_est", "REAL NOT NULL DEFAULT 0");
+  addColumn(
+    db,
+    "workflow_instance_blocks",
+    "cost_unreported",
+    "INTEGER NOT NULL DEFAULT 0",
+  );
+
   // Whether this run was closed out because the server went down under it,
   // rather than for any reason of its own.
   //

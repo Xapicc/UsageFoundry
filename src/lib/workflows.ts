@@ -1714,6 +1714,12 @@ export interface WorkflowInstanceBlock {
   finishedAt: number | null;
   /** The turn's own spend. Never a run's, never a meter's. */
   costUSD: number;
+  /**
+   * True when a turn of this block ended without the CLI reporting a cost.
+   * `costUSD` is then a floor over the turns that *did* report, and 0 means
+   * nothing was measured rather than that nothing was spent.
+   */
+  costUnknown: boolean;
   tokens: number;
   /** How many runs it started. 0 is an answer, not "not yet". */
   emitted: number;
@@ -1777,7 +1783,7 @@ export interface WorkflowInstance {
   origin: RunOrigin | null;
   originRef: string | null;
   /** What its blocks have spent: a measured floor and the guard's figure. */
-  spend: InstanceProgress;
+  spend: InstanceSpend;
   nodes: WorkflowInstanceNode[];
   /** Orchestrator turns, and blocks that never became runs. */
   blocks: WorkflowInstanceBlock[];
@@ -1835,6 +1841,66 @@ interface MemberSpendRow {
 }
 
 /**
+ * The two figures a set of member runs adds up to, and how much of the graph
+ * neither of them could account for.
+ *
+ * `unmeasured` is a count of members and blocks whose spend was never measured
+ * at all — not members that spent nothing. Both totals above are complete over
+ * everything that reported and silent about everything that did not, and
+ * without this count those two states are one number.
+ */
+export interface InstanceSpend extends InstanceProgress {
+  unmeasured: number;
+}
+
+/** What one instance's block rows sum to, straight off the three columns. */
+export interface BlockSpendTotals {
+  /** `cost_usd`: what the blocks' own CLIs reported. */
+  spent: number;
+  /** `cost_usd_est`: our price for the turns none of them reported. */
+  est: number;
+  /** How many blocks have a turn that ended without reporting a cost. */
+  unreported: number;
+}
+
+/**
+ * Fold what an instance's blocks spent into what its members did.
+ *
+ * Pure, and separate from the two queries that feed it, because the whole of
+ * the decision is which figure each column may reach and getting it wrong is
+ * invisible: `est` is our own price for a turn that was killed before it could
+ * report, so it belongs in the guard's figure beside `spent_usd_est` and the
+ * telemetry reading, and it must never widen the figure the page calls
+ * measured. `spent` is in both — a turn that reported measured itself.
+ */
+export function addBlockSpend(
+  members: InstanceSpend,
+  blocks: BlockSpendTotals,
+): InstanceSpend {
+  return {
+    spentUSD: members.spentUSD + blocks.spent,
+    spentGuardUSD: members.spentGuardUSD + blocks.spent + blocks.est,
+    unmeasured: members.unmeasured + blocks.unreported,
+  };
+}
+
+/**
+ * What a block's Spent cell may claim, from the two columns behind it.
+ *
+ * `null` is "nothing measured this block", which the cell draws as `—` on the
+ * rule the runs list already states: `$0.00` down a column is a measurement
+ * claim nobody made. A block whose *other* turns reported keeps its figure —
+ * that money was measured — and `costUnknown` beside it is what says the figure
+ * is a floor.
+ */
+export function blockSpendReading(block: {
+  costUSD: number;
+  costUnknown: boolean;
+}): number | null {
+  return block.costUnknown && block.costUSD === 0 ? null : block.costUSD;
+}
+
+/**
  * The two figures a set of member runs adds up to.
  *
  * One summation rather than two, because a loop block asks the same question of
@@ -1842,7 +1908,7 @@ interface MemberSpendRow {
  * "which of these three readings goes in which figure" is a second chance to put
  * a `*Guard*` reading somewhere it must never be.
  */
-function sumMemberSpend(rows: readonly MemberSpendRow[]): InstanceProgress {
+function sumMemberSpend(rows: readonly MemberSpendRow[]): InstanceSpend {
   let spentUSD = 0;
   let spentGuardUSD = 0;
   for (const row of rows) {
@@ -1852,7 +1918,7 @@ function sumMemberSpend(rows: readonly MemberSpendRow[]): InstanceProgress {
       spentGuardUSD += telemetrySpendSince(row.id, row.cycleStartedAt).costUSD;
     }
   }
-  return { spentUSD, spentGuardUSD };
+  return { spentUSD, spentGuardUSD, unmeasured: 0 };
 }
 
 const MEMBER_SPEND_COLUMNS =
@@ -1861,8 +1927,8 @@ const MEMBER_SPEND_COLUMNS =
      FROM workflow_instance_runs w
      JOIN runs r ON r.id = w.run_id`;
 
-export function instanceSpend(instanceId: string): InstanceProgress {
-  const { spentUSD, spentGuardUSD } = sumMemberSpend(
+export function instanceSpend(instanceId: string): InstanceSpend {
+  const members = sumMemberSpend(
     db()
       .prepare(`${MEMBER_SPEND_COLUMNS} WHERE w.instance_id = ?`)
       .all(instanceId) as MemberSpendRow[],
@@ -1870,25 +1936,31 @@ export function instanceSpend(instanceId: string): InstanceProgress {
 
   // What this instance's orchestrator blocks spent deciding.
   //
-  // In **both** figures rather than neither, and that is a deliberate reading of
-  // "a block's spend is not a run's". It is not: it never touches
-  // `runs.spent_usd`, it is never summed into `buildSnapshot()` and no dashboard
-  // meter sees it. But it is money this press of Run spent, measured by the same
-  // `total_cost_usd` the CLI reports for a work cycle, and leaving it out would
-  // give a graph with several deciding blocks a total that quietly understates
-  // itself against the one limit meant to bound the whole thing. It is in the
-  // measured figure as well as the guard's because it *is* measured — a turn
-  // that ended reported its own cost, and the display-versus-guard split exists
-  // for readings that are estimated, not for readings that are inconvenient.
+  // `cost_usd` is in **both** figures rather than neither, and that is a
+  // deliberate reading of "a block's spend is not a run's". It is not: it never
+  // touches `runs.spent_usd`, it is never summed into `buildSnapshot()` and no
+  // dashboard meter sees it. But it is money this press of Run spent, measured
+  // by the same `total_cost_usd` the CLI reports for a work cycle, and leaving
+  // it out would give a graph with several deciding blocks a total that quietly
+  // understates itself against the one limit meant to bound the whole thing.
+  //
+  // `cost_usd_est` is in the guard's figure only, which is the same rule one
+  // step along rather than an exception to it: `cost_usd` is measured because a
+  // turn that *reported* measured it, and a turn killed before its `result`
+  // event reported nothing at all. Our own price for the usage it did stream is
+  // an estimate, and an estimate belongs where every other one does — beside
+  // `spent_usd_est` and the telemetry reading above, in the figure the guard
+  // acts on and in no figure a meter calls measured.
   const blocks = db()
     .prepare(
-      "SELECT COALESCE(SUM(cost_usd), 0) AS spent FROM workflow_instance_blocks WHERE instance_id = ?",
+      `SELECT COALESCE(SUM(cost_usd), 0) AS spent,
+              COALESCE(SUM(cost_usd_est), 0) AS est,
+              COALESCE(SUM(CASE WHEN cost_unreported > 0 THEN 1 ELSE 0 END), 0)
+                AS unreported
+         FROM workflow_instance_blocks WHERE instance_id = ?`,
     )
-    .get(instanceId) as { spent: number };
-  return {
-    spentUSD: spentUSD + blocks.spent,
-    spentGuardUSD: spentGuardUSD + blocks.spent,
-  };
+    .get(instanceId) as BlockSpendTotals;
+  return addBlockSpend(members, blocks);
 }
 
 /** What an instance's members are doing, in the two counts a reading needs. */
@@ -1997,7 +2069,8 @@ export function blocksOf(instanceId: string): WorkflowInstanceBlock[] {
     .prepare(
       `SELECT node_id AS nodeId, node_name AS nodeName, position, kind, status,
               started_at AS startedAt, finished_at AS finishedAt,
-              cost_usd AS costUSD, tokens, emitted_specs AS specs, error,
+              cost_usd AS costUSD, cost_unreported AS unreported,
+              tokens, emitted_specs AS specs, error,
               merge_batch_id AS batchId, reply, notes,
               -- Read back off the queue's own rows rather than counted into the
               -- block as it went: those rows carry git's answer for each branch,
@@ -2013,10 +2086,14 @@ export function blocksOf(instanceId: string): WorkflowInstanceBlock[] {
         WHERE instance_id = ? ORDER BY position`,
     )
     .all(instanceId) as Array<
-    Omit<WorkflowInstanceBlock, "emitted" | "decided" | "notes"> & {
+    Omit<
+      WorkflowInstanceBlock,
+      "emitted" | "decided" | "notes" | "costUnknown"
+    > & {
       specs: string | null;
       batchId: string | null;
       notes: string | null;
+      unreported: number;
     }
   >;
   // A loop block emits nothing — it creates one run per pass — so its count is
@@ -2035,8 +2112,9 @@ export function blocksOf(instanceId: string): WorkflowInstanceBlock[] {
     ).map((r) => [r.nodeId, r.n] as const),
   );
 
-  return rows.map(({ specs, batchId, notes, ...row }) => ({
+  return rows.map(({ specs, batchId, notes, unreported, ...row }) => ({
     ...row,
+    costUnknown: unreported > 0,
     emitted:
       row.kind === "loop"
         ? (passes.get(row.nodeId) ?? 0)
@@ -4292,6 +4370,42 @@ export function blockSettlement(
   };
 }
 
+/** What a settled block turn adds to each of the row's three cost columns. */
+export interface BlockTurnSpend {
+  /** The CLI's own figure. 0 when it never reported one — never a stand-in. */
+  costUSD: number;
+  /** Our price for a turn that reported nothing. Guard-only, and 0 otherwise. */
+  costGuardUSD: number;
+  /** 1 for a turn that ended without a cost, so a zero can be told from a gap. */
+  unreported: number;
+}
+
+/**
+ * What a turn's verdict says it cost, split into the figure that was measured
+ * and the figure that was not.
+ *
+ * `turnResultOf` returns a failure shape with **no** `costUSD` whenever the
+ * child produced no readable `result` event — killed, crashed or timed out —
+ * and banking that as `costUSD ?? 0` wrote a measurement nobody made: the
+ * tokens were real, the money was spent, and both the block's Spent cell and
+ * the instance cap read zero for the whole of it. The run loop has always
+ * reconciled a killed cycle into `runs.spent_usd_est` and left `spent_usd`
+ * alone; this is the same split one level up.
+ *
+ * Pure, and exported for the test that pins it: the three columns it feeds are
+ * summed by two different queries into two different figures, and getting the
+ * split wrong is silent in both.
+ */
+export function blockTurnSpend(result: TurnResult): BlockTurnSpend {
+  if (result.costUSD !== undefined) {
+    return { costUSD: result.costUSD, costGuardUSD: 0, unreported: 0 };
+  }
+  // `costGuardUSD` is itself absent on a turn that died before its first
+  // assistant event: there is no usage to price, and 0 here is "we could not
+  // tell", which is what `unreported` is carried to say.
+  return { costUSD: 0, costGuardUSD: result.costGuardUSD ?? 0, unreported: 1 };
+}
+
 /**
  * Record what a turn said and cost, then start what it asked for.
  *
@@ -4323,13 +4437,15 @@ export function settleBlock(
   // guard `startBlockTurn` could not read. This used to write `error` flat,
   // which wiped that guard note on every turn that did not itself fail.
   const settlement = blockSettlement(result, specs.length, splitNotes(row?.notes ?? null));
+  const spend = blockTurnSpend(result);
   const settled =
     db()
       .prepare(
         `UPDATE workflow_instance_blocks
             SET status=?, finished_at=?, error=?, session_id=COALESCE(?, session_id),
                 reply=?, notes=?,
-                cost_usd = cost_usd + ?, tokens = tokens + ?
+                cost_usd = cost_usd + ?, cost_usd_est = cost_usd_est + ?,
+                cost_unreported = cost_unreported + ?, tokens = tokens + ?
           WHERE instance_id=? AND node_id=? AND status='thinking'`,
       )
       .run(
@@ -4339,7 +4455,9 @@ export function settleBlock(
         result.sessionId ?? null,
         settlement.reply,
         settlement.notes.join("\n") || null,
-        result.costUSD ?? 0,
+        spend.costUSD,
+        spend.costGuardUSD,
+        spend.unreported,
         result.tokens ?? 0,
         instanceId,
         nodeId,
