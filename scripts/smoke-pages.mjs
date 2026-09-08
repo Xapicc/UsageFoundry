@@ -148,16 +148,29 @@ function makeSandbox() {
 }
 
 /**
- * Serve the artifact that actually ships.
+ * Serve the artifact that actually ships, or fall back to `next start`.
  *
- * `next.config.ts` sets `output: "standalone"`, and `next start` warns that it
- * does not work with it. The container runs `.next/standalone/server.js`, so
- * this does too — which means copying the static assets beside it exactly as
- * the `Dockerfile` does. Skipping that copy is not a visible failure: the pages
- * still render, without any CSS, and the sideways-scroll assertion then measures
- * an unstyled document and passes everything.
+ * `next.config.ts` sets `output: "standalone"`. The container runs
+ * `.next/standalone/server.js`, so this does too — which means copying the
+ * static assets beside it exactly as the `Dockerfile` does. Skipping that copy
+ * is not a visible failure: the pages still render, without any CSS, and the
+ * sideways-scroll assertion then measures an unstyled document and passes
+ * everything.
+ *
+ * The fallback is for the agent containers, where `next build` cannot finish:
+ * the worktree sits on a virtiofs mount whose directory cache outlives an
+ * unlink, so the standalone copy dies on a spurious ENOENT/ENOTDIR against a
+ * path whose parent is right there, on a different path every run. `.next`
+ * itself completes, and `next start` serves it — Next warns that `start` does
+ * not work with `output: "standalone"`, but the warning is the whole of it and
+ * the app serves.
+ *
+ * That mode is a strictly weaker check: it proves nothing about whether the
+ * shipped bundle boots or whether the `node_modules` tracing copied into it is
+ * complete, which is exactly the class of defect a standalone-only run catches.
+ * So it is second choice, never silent, and `main` prints which one it took.
  */
-function stageStandalone() {
+function stageServer(port) {
   const standalone = path.join(REPO, ".next", "standalone");
   if (!fs.existsSync(path.join(REPO, ".next", "BUILD_ID"))) {
     skip(
@@ -167,27 +180,55 @@ function stageStandalone() {
         "  __NEXT_PRIVATE_STANDALONE_CONFIG makes next build die in loadConfig.)",
     );
   }
-  if (!fs.existsSync(path.join(standalone, "server.js"))) {
-    skip(`.next/BUILD_ID exists but ${standalone}/server.js does not — the build is not a standalone one.`);
-  }
-  fs.cpSync(path.join(REPO, ".next", "static"), path.join(standalone, ".next", "static"), {
-    recursive: true,
-    force: true,
-  });
-  if (fs.existsSync(path.join(REPO, "public"))) {
-    fs.cpSync(path.join(REPO, "public"), path.join(standalone, "public"), {
+
+  if (fs.existsSync(path.join(standalone, "server.js"))) {
+    fs.cpSync(path.join(REPO, ".next", "static"), path.join(standalone, ".next", "static"), {
       recursive: true,
       force: true,
     });
+    if (fs.existsSync(path.join(REPO, "public"))) {
+      fs.cpSync(path.join(REPO, "public"), path.join(standalone, "public"), {
+        recursive: true,
+        force: true,
+      });
+    }
+    return {
+      banner: "serving .next/standalone/server.js — the artifact the container ships",
+      argv: [path.join(standalone, "server.js")],
+      cwd: standalone,
+      // `next build` copies `.env` in beside the server, and the standalone
+      // server loads it from its own directory rather than from the repo.
+      envDir: standalone,
+    };
   }
-  return path.join(standalone, "server.js");
+
+  const nextBin = path.join(REPO, "node_modules", "next", "dist", "bin", "next");
+  if (!fs.existsSync(nextBin)) {
+    skip(
+      `.next/BUILD_ID exists but neither ${standalone}/server.js nor ${nextBin} does.\n` +
+        "  The build is not a standalone one and there is no next binary to serve it with.",
+    );
+  }
+  return {
+    banner:
+      "serving .next/ via `next start` — FALLBACK, because .next/standalone/server.js\n" +
+      "  is absent. Everything below is a real check of the pages, but nothing here\n" +
+      "  exercises the standalone bundle the container actually runs.",
+    // Explicit rather than via PORT/HOSTNAME: `next start` defaults its host to
+    // 0.0.0.0, which would put a seeded smoke install on the container network
+    // for the length of the run.
+    argv: [nextBin, "start", "-H", "127.0.0.1", "-p", String(port)],
+    cwd: REPO,
+    envDir: REPO,
+  };
 }
 
 /**
  * Every key the operator's `.env` sets, so each can be blanked.
  *
- * `next build` copies `.env` into `.next/standalone/`, and the standalone server
- * loads it at boot — which quietly undoes the isolation `serverEnv` is for.
+ * Whichever directory the server loads its `.env` from — `.next/standalone/`,
+ * which `next build` copies it into, or the repo root under `next start` — it
+ * is loaded at boot, which quietly undoes the isolation `serverEnv` is for.
  * The one that proved it: a seeded run failing under this harness reached
  * `deliver()` in `notify.ts` and POSTed to the operator's real
  * `UF_WEBHOOK_URL`, from a smoke test, on their own machine.
@@ -197,8 +238,8 @@ function stageStandalone() {
  * present as `""` is left alone. Reading the keys off the file rather than
  * listing them here is what keeps this true of a variable added next year.
  */
-function envKeysToBlank(serverScript) {
-  const dotenv = path.join(path.dirname(serverScript), ".env");
+function envKeysToBlank(envDir) {
+  const dotenv = path.join(envDir, ".env");
   if (!fs.existsSync(dotenv)) return {};
   const blanked = {};
   for (const line of fs.readFileSync(dotenv, "utf8").split("\n")) {
@@ -219,9 +260,9 @@ function envKeysToBlank(serverScript) {
  * own mounts. Naming every variable, and blanking the ones the staged `.env`
  * would otherwise supply, is the only way this is reproducible off one machine.
  */
-function serverEnv(sandbox, token, port, serverScript) {
+function serverEnv(sandbox, token, port, envDir) {
   return {
-    ...envKeysToBlank(serverScript),
+    ...envKeysToBlank(envDir),
     PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
     HOME: sandbox.root,
     TZ: "UTC",
@@ -424,7 +465,12 @@ async function main() {
     skip(`${playwrightEntry} exports no \`chromium\` — that is not the Playwright package.`);
   }
 
-  const serverScript = stageStandalone();
+  // Before the sandbox and the browser, because `stageServer` can `skip()` and
+  // both of those would then be left behind; `freePort` moves up with it
+  // because `next start` takes its port on the command line.
+  const port = await freePort();
+  const target = stageServer(port);
+  console.log(`${target.banner}\n`);
 
   let sandbox;
   try {
@@ -451,14 +497,13 @@ async function main() {
   // real install has switched on, rather than against UF_ALLOW_NO_AUTH, whose
   // banner is on every page and would be measured as part of every layout.
   const token = `smoke-${Math.random().toString(36).slice(2)}`;
-  const port = await freePort();
   const baseUrl = `http://127.0.0.1:${port}`;
   const headers = { authorization: `Bearer ${token}` };
 
   const output = [];
-  const server = spawn(process.execPath, [serverScript], {
-    cwd: path.dirname(serverScript),
-    env: serverEnv(sandbox, token, port, serverScript),
+  const server = spawn(process.execPath, target.argv, {
+    cwd: target.cwd,
+    env: serverEnv(sandbox, token, port, target.envDir),
     stdio: ["ignore", "pipe", "pipe"],
   });
   server.stdout.on("data", (d) => output.push(d.toString()));
