@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   commitRefusal,
   conflictRegions,
+  gitFailureLine,
   hasConflictMarkers,
   landRefusal,
   parseMergeTree,
@@ -11,6 +12,7 @@ import {
   purgeRefusal,
   selectBranchCandidates,
   selectProbeTargets,
+  trackedDirt,
   unresolvedFiles,
   type CheckoutState,
   type ConflictFile,
@@ -35,6 +37,14 @@ import {
  * nothing has landed, which is the only action here git cannot undo.
  * `parseStatusZ` is what both of them count, and it is a parser over arbitrary
  * filenames whose first character is significant.
+ *
+ * `gitFailureLine` and `trackedDirt` are the two readings that decide whether a
+ * conflict resolution can start, and both fail silently by producing a
+ * plausible answer. The first reported git's progress line to an operator as
+ * the reason their resolution would not run; the second decides whether the
+ * run's own slot may be merged in, where saying "dirty" about an untracked file
+ * makes resolution permanently impossible and saying "clean" about a tracked
+ * one folds the run's uncommitted work into the merge commit.
  */
 
 /* ------------------------------------------------------------------ */
@@ -945,5 +955,76 @@ describe("selectProbeTargets", () => {
 
   it("probes nothing when the cap is nothing", () => {
     assert.deepEqual(selectProbeTargets(rows("/s/1", "/s/2"), 0), []);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* What a resolution reads before it takes a checkout                  */
+/* ------------------------------------------------------------------ */
+
+describe("gitFailureLine", () => {
+  it("skips the progress git writes to stderr before it fails", () => {
+    // Captured from git 2.50 against a branch a slot already held. Reading
+    // `[0]` here is what put "Preparing worktree" in front of an operator as
+    // the reason a resolution could not start.
+    const stderr =
+      "Preparing worktree (checking out 'uf/repo-1-abc')\n" +
+      "fatal: 'uf/repo-1-abc' is already checked out at '/workspace/.uf-worktrees/repo-1'\n";
+    assert.equal(
+      gitFailureLine(stderr),
+      "fatal: 'uf/repo-1-abc' is already checked out at '/workspace/.uf-worktrees/repo-1'",
+    );
+  });
+
+  it("takes the first diagnosis when git reports more than one", () => {
+    assert.equal(
+      gitFailureLine("error: unable to unlink old 'a.txt'\nfatal: cannot do that\n"),
+      "error: unable to unlink old 'a.txt'",
+    );
+  });
+
+  it("falls back to the last line said when nothing is labelled", () => {
+    // git does not label everything. The last line is the one closest to the
+    // failure; the first is as likely to be the command announcing itself.
+    assert.equal(gitFailureLine("Preparing worktree\nsomething went wrong\n"), "something went wrong");
+  });
+
+  it("has nothing to say about silence", () => {
+    assert.equal(gitFailureLine(""), "");
+    assert.equal(gitFailureLine("\n  \n"), "");
+  });
+});
+
+describe("trackedDirt", () => {
+  it("is empty for a clean tree", () => {
+    assert.deepEqual(trackedDirt(""), []);
+  });
+
+  it("ignores untracked files", () => {
+    // The case that made resolution impossible for a run: zero-byte shell-init
+    // shims a sandbox left in the slot. None of them can reach a merge commit
+    // whose staging is pinned to the conflicted paths.
+    const status = "?? .zshrc\n?? .bashrc\n?? .idea\n";
+    assert.deepEqual(trackedDirt(status), []);
+  });
+
+  it("names worktree and index changes alike", () => {
+    // A staged change is the more dangerous of the two — `commit --no-edit`
+    // writes the index — so both have to count.
+    assert.deepEqual(trackedDirt(" M src/a.ts\nM  src/b.ts\nA  src/c.ts\n D src/d.ts\n"), [
+      "src/a.ts",
+      "src/b.ts",
+      "src/c.ts",
+      "src/d.ts",
+    ]);
+  });
+
+  it("takes the destination of a rename", () => {
+    // The path the operator has to deal with is where the file is now.
+    assert.deepEqual(trackedDirt("R  old/a.ts -> new/a.ts\n"), ["new/a.ts"]);
+  });
+
+  it("separates the tracked from the untracked in one reading", () => {
+    assert.deepEqual(trackedDirt("?? .zshrc\n M src/a.ts\n?? .vscode\n"), ["src/a.ts"]);
   });
 });

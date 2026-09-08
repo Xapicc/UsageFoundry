@@ -1156,6 +1156,54 @@ export function unresolvedFiles(
   return files.filter((f) => f.text === null || hasConflictMarkers(f.text)).map((f) => f.path);
 }
 
+/**
+ * The line of git's stderr that says why it failed.
+ *
+ * `worktree add` announces itself on stderr — `Preparing worktree (checking out
+ * 'x')` — and only then fails, so its first line is progress and the diagnosis
+ * is under it. Taking `[0]`, which is right for every other git call here,
+ * reported "Preparing worktree" to an operator as the reason a resolution could
+ * not start and threw away `fatal: '<branch>' is already checked out at '<slot>'`,
+ * which is the whole answer.
+ *
+ * Exported for its test. Nothing outside this file calls it.
+ */
+export function gitFailureLine(stderr: string): string {
+  const lines = stderr
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  return lines.find((line) => /^(fatal|error):/.test(line)) ?? lines[lines.length - 1] ?? "";
+}
+
+/** How many dirty paths a refusal names before it counts the rest. */
+const DIRT_NAMED = 3;
+
+/**
+ * The tracked paths a `git status --porcelain` reading says are modified.
+ *
+ * The distinction is what decides whether a resolution may run in the run's own
+ * checkout, and only tracked work can be damaged by one. An untracked file
+ * cannot reach the merge commit: the resolution stages the conflicted paths by
+ * name and commits the index, so it is carried through untouched — and where
+ * the merge would actually clobber one, git refuses by name and that refusal is
+ * already reported. A tracked modification is the run's own uncommitted work,
+ * and a staged one would be folded into the merge commit by `commit --no-edit`.
+ * Slots collect untracked files from outside this app — a sandbox's read-only
+ * shell-init shims, an editor directory — so treating the two alike made
+ * resolution permanently impossible for the run that got some.
+ *
+ * The input is `--porcelain` without `--ignored`, whose only untracked marker
+ * is `??`. Exported for its test. Nothing outside this file calls it.
+ */
+export function trackedDirt(porcelain: string): string[] {
+  return porcelain
+    .split("\n")
+    .filter((line) => line.trim() !== "" && !line.startsWith("??"))
+    .map((line) => line.slice(3).split(" -> ").pop()!.trim())
+    .filter((p) => p !== "");
+}
+
 /** Where the resolution happens: never the operator's checkout. */
 interface ResolveCheckout {
   path: string;
@@ -1166,10 +1214,11 @@ interface ResolveCheckout {
 /**
  * A checkout of the run's branch to merge into, outside the operator's tree.
  *
- * Prefers the run's own slot when it still holds that branch and is clean —
- * nothing to create, nothing to delete. Otherwise a dedicated one, because a
- * slot is reused by later runs and taking one that another run is about to
- * adopt is the collision the whole worktree scheme exists to avoid.
+ * The run's own slot when it still holds that branch — nothing to create,
+ * nothing to delete, and no alternative either, since git will not hand the
+ * same branch to a second worktree. Otherwise a dedicated one, because a slot
+ * is reused by later runs and taking one that another run is about to adopt is
+ * the collision the whole worktree scheme exists to avoid.
  *
  * Exported for the test that two runs resolving at once are handed two
  * directories. Nothing else calls it.
@@ -1182,8 +1231,29 @@ export async function resolveCheckout(
   const own = run.worktree_path;
   if (own && fs.existsSync(own)) {
     const head = await git(own, ["rev-parse", "--abbrev-ref", "HEAD"], NO_CLOCK);
-    const status = await git(own, ["status", "--porcelain"], NO_CLOCK);
-    if (head.ok && head.stdout === branch && status.ok && status.stdout === "") {
+    if (head.ok && head.stdout === branch) {
+      // git gives a branch to one worktree at a time, so once the slot holds
+      // this one the `worktree add` below cannot succeed whatever else is true
+      // — falling through on a dirty slot was a guaranteed failure wearing a
+      // fallback's clothes, and it reported itself as `Preparing worktree`.
+      // The choice here is reuse or refuse, never a second checkout.
+      const status = await git(own, ["status", "--porcelain"], NO_CLOCK);
+      if (!status.ok) {
+        throw new Error(
+          `${branch} is checked out in ${path.basename(own)}, whose state could not be read: ` +
+            `${gitFailureLine(status.stderr) || "unknown error"}`,
+        );
+      }
+      const dirt = trackedDirt(status.stdout);
+      if (dirt.length > 0) {
+        const rest = dirt.length - DIRT_NAMED;
+        throw new Error(
+          `${branch} is checked out in ${path.basename(own)}, which has uncommitted changes to ` +
+            `${dirt.slice(0, DIRT_NAMED).join(", ")}${rest > 0 ? ` and ${rest} more` : ""}. ` +
+            "Commit or discard them there and resolve again — merging on top of them would fold " +
+            "them into the merge commit.",
+        );
+      }
       return { path: own, temporary: false };
     }
   }
@@ -1215,7 +1285,9 @@ export async function resolveCheckout(
   // hour it used to be given was the same guess as the merge's two minutes.
   const add = await git(repoRoot, ["worktree", "add", slot, branch], NO_CLOCK);
   if (!add.ok) {
-    throw new Error(`Could not create a checkout to resolve in: ${add.stderr.split("\n")[0]}`);
+    throw new Error(
+      `Could not create a checkout to resolve in: ${gitFailureLine(add.stderr) || "unknown error"}`,
+    );
   }
   return { path: slot, temporary: true };
 }
@@ -1362,7 +1434,7 @@ async function startResolution(runId: string): Promise<LandOutcome> {
   }
 
   // Only where a toolchain can exist. `resolveCheckout` reuses the run's own
-  // worktree when that tree is clean and standing on the branch, and otherwise
+  // worktree when that tree is still standing on the branch, and otherwise
   // cuts a fresh one that has no dependency tree in it — where a check fails for
   // a reason that is not the merge, and an agent reading a missing-module error
   // as its own bad resolution will "fix" code that was right.
