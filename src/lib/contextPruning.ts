@@ -61,10 +61,15 @@ import { getSettings, type Settings } from "./settings";
  *
  * At the boundary between cycle N and cycle N+1 the `2·D` term is **refunded**,
  * because `--resume` was going to rewrite the prefix anyway. That is the one
- * moment the edit is free, and it is why the boundary prune runs unconditionally
- * whenever the feature is on. Ending a cycle *early* to prune manufactures a
- * boundary that was not going to happen, which pays the invalidation in full —
- * so that path is gated on `paybackTurns` rather than run on sight.
+ * moment the edit is free, and it is why the boundary prune used to run
+ * unconditionally whenever the feature is on. It no longer does: the refund is
+ * an argument about the *cost* side only, and `S/D` drifts up every cycle, so a
+ * boundary cut can still need more turns to break even than the run has left.
+ * `boundaryAction` gates it on the same `paybackTurns` prediction, one-sided —
+ * unmeasured resolves to prune, and a decline is retaken every
+ * `BOUNDARY_RECHECK_AFTER` boundaries. Ending a cycle *early* to prune
+ * manufactures a boundary that was not going to happen, which pays the
+ * invalidation in full, so that path is gated harder still.
  *
  * ## The number this reports is computed here, not read from the tool
  *
@@ -446,9 +451,10 @@ export function winnowAvailable(): boolean {
  * `min_bytes`/`keep_newest` here and keeping them in step with a Python module
  * in another repository — a duplication that would still approximate, since
  * `keep_newest` turns on per-request state no transcript records. So the figure
- * carries a known 4% overstatement rather than a guessed correction, and the
- * dashboard never adds it to the filter's own: `docs/verification.md` and
- * `ContextControlAside` both say so on the page.
+ * carries a known 4% overstatement rather than a guessed correction. Where that
+ * is written down: `docs/verification.md`, and `ContextControlAside`'s docblock.
+ * **Not on the page** — the card renders the sum, its span rows and the intake
+ * filter's share, and states the overstatement nowhere.
  *
  * Returns 0 for a file it cannot read, never throws: every caller is on the run
  * loop's path and none of them should end a cycle over a stat.
