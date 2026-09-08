@@ -1,6 +1,14 @@
 /** Presentation helpers. Client-safe — no node builtins in here. */
 
-import type { AgentOriginDTO, RunDependencyDTO, RunDTO } from "./apiTypes";
+import type {
+  AgentOriginDTO,
+  RunDependencyDTO,
+  RunDTO,
+  TaskDTO,
+  TaskOriginDTO,
+  TaskPriorityDTO,
+  TaskStatusDTO,
+} from "./apiTypes";
 
 /**
  * Badges and notices carry *different* vocabularies — a badge can be `accent`
@@ -247,6 +255,68 @@ export function fmtRunOrigin(origin: string | null | undefined): string {
     default:
       return `started by ${origin}`;
   }
+}
+
+/**
+ * Badge tone per task priority.
+ *
+ * `STATUS_TONE`'s reasoning on the other table: the board and a task's own page
+ * both draw this badge, and two copies of the map would be two things to keep
+ * in step the day a word gains a colour.
+ */
+export const TASK_PRIORITY_TONE: Record<TaskPriorityDTO, BadgeTone> = {
+  urgent: "danger",
+  high: "warn",
+  // `normal` and `low` share `neutral` and are told apart by the word rather
+  // than by a colour: a backlog where every row is tinted is a backlog with no
+  // emphasis in it, which is the thing `urgent` is for.
+  normal: "neutral",
+  low: "neutral",
+};
+
+/**
+ * Badge tone per task status.
+ *
+ * The board needs only the closed half — its two open groups say which they are
+ * in a heading above the rows — but a task's own page has no heading to lean on
+ * and must name all four. `claimed` takes `accent` for the reason `running`
+ * does: it is the one status where something is happening right now.
+ */
+export const TASK_STATUS_TONE: Record<TaskStatusDTO, BadgeTone> = {
+  open: "neutral",
+  claimed: "accent",
+  done: "ok",
+  dropped: "neutral",
+};
+
+/** Who put a task on the board, in a phrase rather than a column of enum words. */
+export function fmtTaskOrigin(origin: TaskOriginDTO): string {
+  if (origin === "operator") return "Filed by hand";
+  if (origin === "chat") return "Filed by the orchestrator";
+  if (origin === "block") return "Filed by a workflow block";
+  return "Filed by a run";
+}
+
+/**
+ * Where a task's work is, as both surfaces that draw a task say it.
+ *
+ * Takes the fields rather than the DTO so the board's clipped row and the whole
+ * task read by `GET /api/tasks/[id]` can both be passed without either being
+ * widened into the other.
+ */
+export function fmtTaskPlace(
+  task: Pick<TaskDTO, "folder" | "mountLabel" | "relPath">,
+): string {
+  if (task.folder === null) return "Unassigned";
+  // `describeFolder` answers `mountLabel: null` and the whole stored path when
+  // no configured mount contains the folder — a workspace removed from config
+  // since the task was filed. The `mountId` is *not* a stand-in for the label
+  // there: printing it would name a workspace that is not on this install, and
+  // the path is the only true thing left to say.
+  if (task.mountLabel === null) return task.relPath ?? task.folder;
+  // A task on a mount root has an empty `relPath`, which reads as a missing
+  // value rather than as the root — so the mount's own name stands alone.
+  return task.relPath ? `${task.mountLabel} / ${task.relPath}` : task.mountLabel;
 }
 
 export function fmtDuration(ms: number): string {
