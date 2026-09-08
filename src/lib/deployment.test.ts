@@ -1329,26 +1329,55 @@ describe("the intake filter runs as the agent uid, holding no credential", () =>
 describe("the sandbox ships off, and its switch reaches the container", () => {
   const entrypoint = fs.readFileSync(path.join(root, "docker-entrypoint.sh"), "utf8");
 
-  it("forwards every UF_ variable the entrypoint reads", () => {
-    // Derived from the entrypoint rather than listed here, and widened from the
-    // `UF_SANDBOX` prefix it used to match, because a prefix only covers the
-    // variables somebody already thought of: `UF_LOCK_CLAUDE_HOME` — the other
-    // half of this same sandbox — shipped unforwarded past this assertion and
-    // could not be given a value by any operator until #125. Comment lines are
-    // dropped first, so the `docker compose exec --user "${UF_UID:-1000}"`
-    // advice the entrypoint prints for an operator is not read as a variable
-    // this container is given.
+  it("forwards every variable the entrypoint reads and nothing else supplies", () => {
+    // Derived from the three files rather than listed here, and twice widened.
+    // It matched the `UF_SANDBOX` prefix until `UF_LOCK_CLAUDE_HOME` — the
+    // other half of that same sandbox — shipped unforwarded past it (#125); it
+    // matched `UF_` until `RELAY_PORT`, read by the entrypoint at the line that
+    // tells an operator which URL to point `UF_WEBHOOK_URL` at, did the same
+    // (#186). A prefix only ever covers the variables somebody already thought
+    // of, so there is none left: every name the script reads must come from
+    // somewhere, and the two somewheres that are not compose are the script's
+    // own assignments and the image's `ENV`. Both are derived too, so a new
+    // local or a new `ENV` needs no edit here — only a new *operator* variable
+    // does, which is the one case this exists to catch.
+    const source = entrypoint.replace(/^\s*#.*$/gm, "");
     const read = new Set(
-      [...entrypoint.replace(/^\s*#.*$/gm, "").matchAll(/\$\{?(UF_[A-Z0-9_]+)/g)].map(
-        (m) => m[1],
+      [...source.matchAll(/\$\{?([A-Z][A-Z0-9_]*)/g)].map((m) => m[1]),
+    );
+    assert.ok(read.size > 0, "docker-entrypoint.sh no longer reads any variable");
+
+    // A `NAME=value \` line is one of a command's environment prefixes, not a
+    // variable this script gave itself — the winnow child is launched under
+    // six of them — so a trailing continuation disqualifies the match. Without
+    // that, `WINNOW_FILTER` reads as self-supplied and could be dropped from
+    // compose unnoticed, which is the exact shape of the two bugs above.
+    const assigned = new Set(
+      [...source.matchAll(/^[ \t]*(?:export[ \t]+)?([A-Z][A-Z0-9_]*)=(.*)$/gm)]
+        .filter((m) => !m[2].endsWith("\\"))
+        .map((m) => m[1]),
+    );
+    assert.ok(
+      !assigned.has("WINNOW_FILTER") && read.has("WINNOW_FILTER"),
+      "WINNOW_FILTER is no longer both read by docker-entrypoint.sh and passed " +
+        "to the winnow child as an environment prefix. Either the filter above " +
+        "stopped biting — in which case a variable compose forwards is exempt " +
+        "from this assertion and nothing says so — or winnow's launch changed " +
+        "shape, in which case pick another name that is prefixed and read.",
+    );
+    // `\<newline>` continuations first, or only the first name of a multi-line
+    // `ENV` is seen and `DATA_DIR` reads as an operator variable nobody forwards.
+    const imageEnv = new Set(
+      [...dockerfile.replace(/\\\n/g, " ").matchAll(/^\s*ENV\s+(.*)$/gm)].flatMap((m) =>
+        [...m[1].matchAll(/([A-Z][A-Z0-9_]*)=/g)].map((e) => e[1]),
       ),
     );
-    assert.ok(read.size > 0, "docker-entrypoint.sh no longer reads any UF_ variable");
+    assert.ok(imageEnv.has("DATA_DIR"), "the Dockerfile's ENV block no longer parses");
 
-    const forwarded = new Set(
-      [...compose.matchAll(/^ {6}(UF_[A-Z0-9_]*):/gm)].map((m) => m[1]),
+    const forwarded = new Set(environmentKeys().keys());
+    const dropped = [...read].filter(
+      (name) => !assigned.has(name) && !imageEnv.has(name) && !forwarded.has(name),
     );
-    const dropped = [...read].filter((name) => !forwarded.has(name));
     assert.deepEqual(
       dropped,
       [],
@@ -1356,6 +1385,32 @@ describe("the sandbox ships off, and its switch reaches the container", () => {
         `${dropped.length === 1 ? "it" : "them"} in .env changes nothing at all — ` +
         `an operator would be reading a variable they set against a fleet that ` +
         `never saw it.`,
+    );
+  });
+
+  it("forwards every variable the Discord relay reads", () => {
+    // The relay is a second process with its own configuration, started by the
+    // entrypoint with no environment of its own (`docker-entrypoint.sh`, the
+    // DISCORD_WEBHOOK_URL block), so it inherits exactly this `environment:`
+    // block and nothing else. The assertion above cannot see `RELAY_BIND` at
+    // all — the entrypoint never reads it — and that is the half of #186 that
+    // stayed unforwarded longest.
+    const relay = fs.readFileSync(path.join(root, "scripts", "discord-relay.mjs"), "utf8");
+    const read = new Set(
+      [...relay.matchAll(/\b(?:required|optional)Env\("([A-Z][A-Z0-9_]*)"/g)].map((m) => m[1]),
+    );
+    assert.ok(read.size > 0, "scripts/discord-relay.mjs no longer reads its environment");
+
+    const forwarded = new Set(environmentKeys().keys());
+    const dropped = [...read].filter((name) => !forwarded.has(name));
+    assert.deepEqual(
+      dropped,
+      [],
+      `scripts/discord-relay.mjs reads ${dropped.join(", ")} and ` +
+        `docker-compose.yml forwards ${dropped.length === 1 ? "it" : "them"} ` +
+        `nowhere. The relay then binds its default while UF_WEBHOOK_URL names ` +
+        `what the operator set — a listener that logs a healthy start and ` +
+        `receives nothing, which is what a quiet fleet also looks like.`,
     );
   });
 

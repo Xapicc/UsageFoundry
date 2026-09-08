@@ -385,13 +385,15 @@ const NO_READING_REASON: Record<"weekly" | "session", string> = {
   weekly:
     "A weekly-fraction guard is set but that window has no reading to " +
     "measure against: the provider's own utilisation was not available and " +
-    "no weekly ceiling is configured. Set one in Settings (or run Calibrate), " +
-    "or wait for the provider's reading to come back.",
+    "no weekly ceiling is configured. Set one in Settings, by hand or by " +
+    "estimating one from your own history, or wait for the provider's " +
+    "reading to come back.",
   session:
     "A session-fraction guard is set but the 5-hour window has no reading to " +
     "measure against: the provider's own utilisation was not available and " +
-    "no 5-hour ceiling is configured. Set one in Settings (or run Calibrate), " +
-    "or wait for the provider's reading to come back.",
+    "no 5-hour ceiling is configured. Set one in Settings, by hand or by " +
+    "estimating one from your own history, or wait for the provider's " +
+    "reading to come back.",
 };
 
 /**
@@ -928,8 +930,8 @@ export function evaluateInstanceBudget(
       unreadable ??= block(
         "no_ceiling",
         "This workflow stops at a share of the weekly window, but no weekly " +
-          "ceiling is configured. Set one in Settings (or run Calibrate) " +
-          "before using this guard.",
+          "ceiling is configured. Set one in Settings, by hand or by estimating " +
+          "one from your own history, before using this guard.",
       );
     }
     if (weekly.state === "over") {
@@ -946,8 +948,8 @@ export function evaluateInstanceBudget(
       unreadable ??= block(
         "no_ceiling",
         "This workflow stops at a share of the 5-hour window, but no 5-hour " +
-          "ceiling is configured. Set one in Settings (or run Calibrate) " +
-          "before using this guard.",
+          "ceiling is configured. Set one in Settings, by hand or by estimating " +
+          "one from your own history, before using this guard.",
       );
     }
     if (session.state === "over") {

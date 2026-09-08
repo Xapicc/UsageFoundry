@@ -900,10 +900,10 @@ export default function Dashboard() {
               .
             </>
           )}{" "}
-          Until then a percentage needs a ceiling of your own:{" "}
-          <Link href="/settings">run Calibrate</Link> to derive one from your own
-          peak usage, or enter a value manually. Volumes and costs above are
-          exact regardless.
+          Until then a percentage needs a ceiling of your own: Settings →{" "}
+          <Link href="/settings">Estimate a ceiling from your own history</Link>{" "}
+          derives one from your own peak usage, or enter a value manually.
+          Volumes and costs above are exact regardless.
         </Notice>
       )}
 

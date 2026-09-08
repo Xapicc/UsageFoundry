@@ -336,6 +336,20 @@ services:
       # until somebody looks — the same silence the webhook exists to end.
       # Unset alongside the URL above.
       DISCORD_MENTION_USER_ID: "${DISCORD_MENTION_USER_ID:-}"
+      # Optional: where scripts/discord-relay.mjs listens, blank meaning 8787 on
+      # 127.0.0.1. Forwarded rather than left to the relay's own defaults
+      # because there is no env_file here — a name this block omits is one
+      # compose reads from .env for interpolation and never hands the
+      # container, so an operator who moved the port would have got the default
+      # anyway (#186). UF_WEBHOOK_URL above must name the same port: sender and
+      # listener are separate processes, neither checks the other, and the
+      # mismatch looks like a relay that started fine and receives nothing.
+      #
+      # Blank by default is safe here for the reason UF_LOCK_CLAUDE_HOME's is:
+      # nothing in config.ts reads either name, so neither joins
+      # STRICT_ENV_VARS and neither becomes a permanent dashboard warning.
+      RELAY_PORT: "${RELAY_PORT:-}"
+      RELAY_BIND: "${RELAY_BIND:-}"
       # Optional: how this install is reached from wherever you read the
       # notification, e.g. https://uf.example.com. It is the only absolute URL
       # this app builds, and it exists for the `url` field of that body. Blank

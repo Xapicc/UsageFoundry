@@ -2244,6 +2244,32 @@ standalone bundle), and are covered by the unit tests above, but the following
 have **not** been exercised against a real CLI. They are the list to work
 through before trusting this unattended:
 
+> **`RELAY_PORT` and `RELAY_BIND` have never reached a container.** Both are
+> now in `docker-compose.yml`'s `environment:` block, and `deployment.test.ts`
+> fails without them — it derives the entrypoint's read set from every
+> `${NAME}` outside a comment minus what the script assigns and what the
+> `Dockerfile`'s `ENV` sets, and a second assertion reads the relay's own
+> `requiredEnv`/`optionalEnv` calls, which is the only thing that can see
+> `RELAY_BIND`. That is a static reconciliation of three files. Docker is
+> unavailable in the container that wrote this, so nothing has confirmed that
+> compose substitutes them, that the relay inherits them from the entrypoint's
+> environment, or that a moved port is actually where the notification lands.
+> On a Docker host, with `RELAY_PORT=9000` and
+> `UF_WEBHOOK_URL=http://127.0.0.1:9000/uf` in `.env`:
+>
+> ```bash
+> docker compose config | grep RELAY_        # expect both keys; before: nothing
+> docker compose up -d
+> docker compose exec -T usagefoundry printenv RELAY_PORT RELAY_BIND
+> # expect 9000 and an empty line; before the fix: nothing for either
+> docker compose logs usagefoundry | grep 'discord-relay: listening'
+> # expect 127.0.0.1:9000; before the fix: 127.0.0.1:8787 whatever .env said
+> ```
+>
+> Then take a run to an ending that notifies and check the message arrives,
+> because the listening line is the part that already looked healthy while
+> nothing was delivered.
+
 > **No fork has been written since the API-basis measurement was added.** The
 > two new `fork_attempts` columns, `NettableCut.removalKnown` and
 > `measuredForkRemoval` typecheck, build and are unit-tested at every point
@@ -5185,12 +5211,13 @@ through before trusting this unattended:
   docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c \
     'test -w ~/.claude/settings.json && echo BAD-writable'       # expect BAD-writable
 
-  # then set UF_LOCK_CLAUDE_HOME=1 in .env, add the line docs/install.md names
-  # to docker-compose.yml's environment: block, and restart
+  # then set UF_LOCK_CLAUDE_HOME=1 in .env and restart — compose forwards it,
+  # and there is nothing else to edit
   docker compose up -d
   docker compose exec usagefoundry sh -c 'echo "[$UF_LOCK_CLAUDE_HOME]"'
-  # expect [1]. Compose forwards by name and has no env_file, so a missing line
-  # there is a switch that is set, read by compose, and never seen by the boot
+  # expect [1], and check it anyway: compose forwards by name and has no
+  # env_file, so a variable that did not arrive is indistinguishable from a
+  # switch that is off
   docker compose logs usagefoundry | grep UF_LOCK_CLAUDE_HOME
   # expect "…is root-owned: a run cannot rewrite or replace its settings.json…"
   # a refusal instead names the entry, the owner it wanted and the owner it saw
