@@ -1085,6 +1085,10 @@ export function createProposalReplacing(
 ): ProposalReplacement {
   return db().transaction((): ProposalReplacement => {
     const id = randomUUID();
+    // Inside the transaction, so the row this reads is the row the UPDATE below
+    // decides — the status it reports on a refusal is the one that refused it,
+    // and the label it hands over belongs to the card actually replaced.
+    const target = getProposal(targetId);
     const res = db()
       .prepare(
         "UPDATE chat_proposals SET status='superseded', decided_at=?," +
@@ -1092,19 +1096,30 @@ export function createProposalReplacing(
       )
       .run(Date.now(), id, targetId, chatId);
     if (res.changes === 0) {
-      // Read only now that the write has failed, so the sentence reports the
-      // status that refused it rather than one read a moment earlier.
-      const current = getProposal(targetId);
       return {
         ok: false,
         reason:
-          current && current.chat_id === chatId
-            ? `That proposal was ${current.status} while you were writing this ` +
+          target && target.chat_id === chatId
+            ? `That proposal was ${target.status} while you were writing this ` +
               "one, so it cannot be replaced."
             : "That proposal is no longer in this conversation.",
       };
     }
-    return { ok: true, proposal: insertProposal(id, chatId, input) };
+    return {
+      ok: true,
+      proposal: insertProposal(id, chatId, {
+        ...input,
+        // The label survives the correction. Decided here rather than by the
+        // caller, because it is what a sibling's `dependsOn` resolves against
+        // and the replacement is the only row left that can answer to it: a
+        // caller that forgot to carry it over would turn a correction into a
+        // dependency that fails the sibling by name at the click, and nothing
+        // between here and there would say so. A replacement that names a
+        // label of its own keeps it — that is the model relabelling
+        // deliberately, and the old one is decided either way.
+        specId: input.specId ?? target!.spec_id,
+      }),
+    };
   })();
 }
 

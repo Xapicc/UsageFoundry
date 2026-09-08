@@ -2063,14 +2063,15 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
     mountId: null,
     folder: null,
     graph: JSON.stringify(parsed.value.graph),
-    // This tool has no id argument of its own, so an inherited label is the
-    // only one a workflow proposal ever carries — and it is inherited for
-    // `proposeRun`'s reason: a sibling's dependsOn resolves against the label,
-    // and a correction must not be what breaks a chain nobody touched. It
-    // resolves to a proposal that saves a graph rather than starting a run, so
-    // the sibling is refused by name at the click rather than started with no
-    // dependency at all, which is the direction that fails safe.
-    specId: superseded?.spec_id ?? null,
+    // This tool has no id argument of its own, so the only label a workflow
+    // proposal ever carries is one `createProposalReplacing` hands over from
+    // the card it replaced — for `proposeRun`'s reason: a sibling's dependsOn
+    // resolves against the label, and a correction must not be what breaks a
+    // chain nobody touched. It then resolves to a proposal that saves a graph
+    // rather than starting a run, so the sibling is refused by name at the
+    // click rather than started with no dependency at all, which is the
+    // direction that fails safe.
+    specId: null,
   };
 
   const written = superseded
@@ -2875,9 +2876,16 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
   // person clicking Approve on a list of twenty, and what they are shown then
   // is one proposal failing over a label they never saw.
   const proposals = listProposals(chatId);
-  const labels = new Map(
-    proposals.filter((p) => p.spec_id).map((p) => [p.spec_id!, p]),
-  );
+  const labels = new Map<string, ChatProposalRow>();
+  for (const p of proposals) {
+    if (!p.spec_id) continue;
+    // A replaced card does not hold its label: the replacement inherits it, and
+    // the two can share a `created_at` — so insert order decides this on a uuid
+    // tiebreak, and losing it refuses an edge onto a card that is still
+    // waiting. `approveRunBatch` carries the same line for the same reason.
+    if (p.status === "superseded" && labels.has(p.spec_id)) continue;
+    labels.set(p.spec_id, p);
+  }
 
   // The card this one replaces, resolved before anything below reads a label or
   // counts what is waiting: it frees the label it holds and it does not add a
@@ -2927,12 +2935,12 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
     }
   }
 
-  // A replacement that names no label of its own inherits the one it replaces,
-  // so an edge a sibling already wrote against that label still points at a
-  // card the operator can approve. Inherited rather than re-resolved at the
-  // click, because `dependsOn` holds a label and nothing else: a label with no
-  // undecided row spelling it fails that sibling by name at approval, which is
-  // a correction breaking a chain nobody touched.
+  // What the row will end up labelled: a replacement that names no label of its
+  // own inherits the one it replaces, so an edge a sibling already wrote
+  // against that label still points at a card the operator can approve. The
+  // *write* of it is `createProposalReplacing`'s, which is the only caller-proof
+  // place for it; this is the same value, read here because the checks below
+  // need to know the label before the row exists.
   const specId = ownSpecId ?? superseded?.spec_id ?? null;
 
   const dependsOn: ProposalDependency[] = [];
@@ -3117,7 +3125,9 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
     promptOverride,
     mountId,
     folder,
-    specId,
+    // Only the model's own. Null lets `createProposalReplacing` hand over the
+    // label of the card being replaced, so one function decides it.
+    specId: ownSpecId,
     dependsOn,
   };
 
