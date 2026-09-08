@@ -50,7 +50,7 @@ const CHAT_PROPOSALS_TABLE = `
       -- answer here as it is on a template — the mount root.
       mount_id    TEXT,
       folder      TEXT,
-      -- 'pending' | 'approved' | 'rejected' | 'failed'
+      -- 'pending' | 'approved' | 'rejected' | 'failed' | 'superseded'
       status      TEXT NOT NULL DEFAULT 'pending',
       run_id      TEXT,
       decided_at  INTEGER,
@@ -1205,6 +1205,28 @@ function migrate(db: Database.Database) {
   //
   // Deliberately not in PROPOSAL_BASE_COLUMNS, for `guards_json`' reason above.
   addColumn(db, "chat_proposals", "task_id", "TEXT");
+
+  // The proposal that replaced this one, by id, and null on every other row.
+  //
+  // The state it records is `chat_questions.status = 'superseded'` one table
+  // over, and for that column's reason: the orchestrator wrote a card that
+  // turned out to be wrong, and the correction is one tool call rather than a
+  // rejection, a sentence and another turn. Kept rather than deleted, so the
+  // thread still reads as what happened — a card that vanished reads as one
+  // nobody was ever shown.
+  //
+  // It carries no capability and cannot start anything. `superseded` is not
+  // `pending`, so every door that offers a proposal for decision — the route's
+  // `pendingProposals`, `planProposal`'s first refusal — already refuses it,
+  // and the replacement it names went through the same `createProposal` and the
+  // same guard freeze as any other proposal.
+  //
+  // Not a foreign key, `task_id`'s and `template_id`'s rule: the row it names
+  // is in the same chat and dies with it by cascade, but a dangling id must
+  // read as "the replacement is gone" rather than taking this row with it.
+  //
+  // Deliberately not in PROPOSAL_BASE_COLUMNS, for `guards_json`' reason above.
+  addColumn(db, "chat_proposals", "superseded_by", "TEXT");
 
   // The order a chat's messages were written in, because `ts` does not decide
   // it: `finishTurn` appends the reply, an error and a denial note inside one

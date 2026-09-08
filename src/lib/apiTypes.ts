@@ -3017,10 +3017,26 @@ export interface ChatProposalDTO {
   dependsOn: Array<{ label: string; edge: "on-success" | "on-finish"; continueBranch: boolean }>;
   /** A workflow proposal's blocks. Empty on a run proposal. */
   blocks: ProposedBlockDTO[];
-  status: "pending" | "approved" | "rejected" | "failed";
+  /**
+   * `superseded` is the chat having replaced this card with a corrected one,
+   * and — like a superseded question — it is not a failure and should not read
+   * as one. It is decided: approval refuses it, and `supersededBy` is the card
+   * that took its place.
+   */
+  status: "pending" | "approved" | "rejected" | "failed" | "superseded";
   runId: string | null;
   /** The workflow an approved workflow proposal saved. Never a run. */
   workflowId: string | null;
+  /**
+   * The proposal that replaced this one, by id, or null where none did.
+   *
+   * Both directions are carried rather than one, for the reason `list_proposals`
+   * reports both: a replaced card on its own reads as work that never happened,
+   * and the card that reads as its answer is the one that replaced it.
+   */
+  supersededBy: string | null;
+  /** The proposal this one replaced, by id, or null where it replaced none. */
+  supersedes: string | null;
   error: string | null;
 }
 

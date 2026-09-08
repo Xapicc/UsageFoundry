@@ -122,6 +122,10 @@ const PROPOSAL_TONE = {
   pending: "accent",
   approved: "ok",
   rejected: "neutral",
+  // Neutral beside `rejected` and never `danger`: the chat replaced its own
+  // card with a corrected one, which is not a failure and must not be drawn as
+  // one — the same reading a superseded question gets below.
+  superseded: "neutral",
   failed: "danger",
 } as const;
 

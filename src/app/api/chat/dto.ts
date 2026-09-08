@@ -136,7 +136,16 @@ function proposalDTOs(
   const known = rows.some((p) => p.kind === "workflow")
     ? currentKnowledge()
     : null;
-  return rows.map((p) => proposalDTO(p, untemplated, known));
+  // The replaced-by link, read backwards. Built here rather than in the row
+  // projection because it is the one field on a card that is a fact about
+  // another row: only the replaced proposal records the link, so the card that
+  // replaced it can learn of it only from the set.
+  const replaced = new Map(
+    rows.flatMap((p) => (p.superseded_by ? [[p.superseded_by, p.id]] : [])),
+  );
+  return rows.map((p) =>
+    proposalDTO(p, untemplated, known, replaced.get(p.id) ?? null),
+  );
 }
 
 /**
@@ -165,6 +174,8 @@ function proposalDTO(
   p: ReturnType<typeof listProposals>[number],
   untemplated: string,
   known: WorkflowKnowledge | null,
+  /** The proposal this one replaced, which only the *other* row records. */
+  supersedes: string | null,
 ): ChatProposalDTO {
   const template = p.template_id ? getTemplate(p.template_id) : null;
   // Resolved here rather than on the client for the template's reason: the name
@@ -244,6 +255,12 @@ function proposalDTO(
     status: p.status,
     runId: p.run_id,
     workflowId: p.workflow_id,
+    supersededBy: p.superseded_by,
+    // Read backwards out of the thread rather than off this row, because only
+    // one of the two directions is a column: the card that replaced another
+    // holds nothing saying so, and a panel drawing it as an ordinary new
+    // proposal is what makes one correction look like two pieces of work.
+    supersedes,
     error: p.error,
   };
 }
