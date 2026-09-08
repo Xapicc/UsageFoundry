@@ -85,14 +85,14 @@ const POLL_MS = 10_000;
 /** Every status group the board draws, in the order it draws them. */
 const OPEN_GROUPS = [
   {
-    status: "open" as const,
-    title: "Open",
-    empty: "Nothing open",
-  },
-  {
     status: "claimed" as const,
     title: "Claimed",
     empty: "No task is being worked",
+  },
+  {
+    status: "open" as const,
+    title: "Open",
+    empty: "Nothing open",
   },
 ];
 
