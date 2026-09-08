@@ -72,7 +72,8 @@ export function RecentBlocksCard({ blocks }: { blocks: SessionBlockDTO[] }) {
                       b.agg.tokens.output +
                       b.agg.tokens.cacheRead +
                       b.agg.tokens.cacheWrite5m +
-                      b.agg.tokens.cacheWrite1h,
+                      b.agg.tokens.cacheWrite1h +
+                      b.agg.tokens.cacheWriteUnattributed,
                   )}
                 </Td>
                 <Td num label="Cost">

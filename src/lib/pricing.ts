@@ -199,6 +199,23 @@ export interface TokenCounts {
   cacheRead: number;
   cacheWrite5m: number;
   cacheWrite1h: number;
+  /**
+   * Cache creation the record declared no TTL for.
+   *
+   * A transcript written before the split shipped — or copied from a machine
+   * whose CLI predates it — carries only the aggregate
+   * `cache_creation_input_tokens`, and the two classes it could be are 1.25x
+   * and 2.00x input. This is that volume kept **out of both**: charging all of
+   * it to the cheaper class is not "not inventing a distribution", it is
+   * choosing one, and choosing the one that flatters the bill on a term
+   * measured at 48% of it.
+   *
+   * `costOf` prices it at 1.25x, which is the floor and the honest thing to
+   * show; `guardCostOf` prices it at 2.00x, which is the ceiling and the only
+   * thing a limit may safely act on. The dashboard's existing hatched band is
+   * the gap between them, so the ambiguity is drawn without a new UI concept.
+   */
+  cacheWriteUnattributed: number;
 }
 
 export const ZERO_TOKENS: TokenCounts = {
@@ -207,6 +224,7 @@ export const ZERO_TOKENS: TokenCounts = {
   cacheRead: 0,
   cacheWrite5m: 0,
   cacheWrite1h: 0,
+  cacheWriteUnattributed: 0,
 };
 
 export function addTokens(a: TokenCounts, b: TokenCounts): TokenCounts {
@@ -216,7 +234,21 @@ export function addTokens(a: TokenCounts, b: TokenCounts): TokenCounts {
     cacheRead: a.cacheRead + b.cacheRead,
     cacheWrite5m: a.cacheWrite5m + b.cacheWrite5m,
     cacheWrite1h: a.cacheWrite1h + b.cacheWrite1h,
+    cacheWriteUnattributed:
+      a.cacheWriteUnattributed + b.cacheWriteUnattributed,
   };
+}
+
+/**
+ * Every cache-creation token, whatever class it was billed at.
+ *
+ * One definition, because the volume is now in three fields and every place
+ * that wants "how much did this write" wants all three. A site that summed the
+ * two declared classes and left the third out would under-report by exactly the
+ * volume nothing declared, which is 100% of it on a pre-split transcript.
+ */
+export function cacheWriteTokens(t: TokenCounts): number {
+  return t.cacheWrite5m + t.cacheWrite1h + t.cacheWriteUnattributed;
 }
 
 /**
@@ -225,12 +257,12 @@ export function addTokens(a: TokenCounts, b: TokenCounts): TokenCounts {
  * they are cheap in dollar terms.
  */
 export function totalTokens(t: TokenCounts): number {
-  return t.input + t.output + t.cacheRead + t.cacheWrite5m + t.cacheWrite1h;
+  return t.input + t.output + t.cacheRead + cacheWriteTokens(t);
 }
 
 /** Tokens excluding cache reads — a closer proxy for "real" work done. */
 export function billableWeightedTokens(t: TokenCounts): number {
-  return t.input + t.output + t.cacheWrite5m + t.cacheWrite1h;
+  return t.input + t.output + cacheWriteTokens(t);
 }
 
 /**
@@ -246,12 +278,24 @@ export function billableWeightedTokens(t: TokenCounts): number {
  *
  * Only `evaluateBudget` reads this. The dashboard keeps reporting the $0 floor
  * and naming the model, so no figure shown to a user is ever a guess.
+ *
+ * The same asymmetry applies a second time, to cache creation the record
+ * declared no TTL for: `costOf` charges it at 1.25x and this charges the 2.00x
+ * it might equally have been. A guard bounded from below is not a guard, and
+ * an install whose transcripts predate the TTL split would otherwise have every
+ * ceiling computed against up to 37.5% less than the writes may have cost.
  */
 export function guardCostOf(
   tokens: TokenCounts,
   price: ModelPrice | null,
 ): number {
-  return costOf(tokens, price ?? UNKNOWN_MODEL_PRICE);
+  const used = price ?? UNKNOWN_MODEL_PRICE;
+  return (
+    costOf(tokens, used) +
+    tokens.cacheWriteUnattributed *
+      (used.input / 1_000_000) *
+      (CACHE_WRITE_1H_MULTIPLIER - CACHE_WRITE_5M_MULTIPLIER)
+  );
 }
 
 export function costOf(tokens: TokenCounts, price: ModelPrice | null): number {
@@ -263,7 +307,11 @@ export function costOf(tokens: TokenCounts, price: ModelPrice | null): number {
     tokens.output * outPerToken +
     tokens.cacheRead * perToken * cacheReadMultiplierOf(price) +
     tokens.cacheWrite5m * perToken * CACHE_WRITE_5M_MULTIPLIER +
-    tokens.cacheWrite1h * perToken * CACHE_WRITE_1H_MULTIPLIER
+    tokens.cacheWrite1h * perToken * CACHE_WRITE_1H_MULTIPLIER +
+    // The cheaper of the two classes it could have been. This is the shown
+    // figure, so it understates rather than guesses; `guardCostOf` carries the
+    // other end and the meter draws the gap between them.
+    tokens.cacheWriteUnattributed * perToken * CACHE_WRITE_5M_MULTIPLIER
   );
 }
 
@@ -313,11 +361,14 @@ export function costSplitOf(
     input: tokens.input * perToken,
     output: tokens.output * (price.output / 1_000_000),
     cacheRead: tokens.cacheRead * perToken * cacheReadMultiplierOf(price),
-    // The two write classes are one line on a receipt: an operator cannot
-    // choose between them and the distinction is the API's, not theirs.
+    // The write classes are one line on a receipt: an operator cannot choose
+    // between them and the distinction is the API's, not theirs. The
+    // unattributed volume is on the same line at the floor rate, so this stays
+    // `costOf`'s own arithmetic broken out rather than a second opinion.
     cacheWrite:
       tokens.cacheWrite5m * perToken * CACHE_WRITE_5M_MULTIPLIER +
-      tokens.cacheWrite1h * perToken * CACHE_WRITE_1H_MULTIPLIER,
+      tokens.cacheWrite1h * perToken * CACHE_WRITE_1H_MULTIPLIER +
+      tokens.cacheWriteUnattributed * perToken * CACHE_WRITE_5M_MULTIPLIER,
   };
   // `costOf`, not a re-sum of the four terms above. Adding them again gives a
   // number that differs from it in the last bits of a float, and a receipt that

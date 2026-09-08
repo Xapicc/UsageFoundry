@@ -45,6 +45,7 @@ function window(guardFraction: number | null, endsAt = 0): WindowState {
         cacheRead: 0,
         cacheWrite5m: 0,
         cacheWrite1h: 0,
+        cacheWriteUnattributed: 0,
       },
       costUSD: 0,
       costGuardUSD: 0,

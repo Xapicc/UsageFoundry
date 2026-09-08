@@ -11,6 +11,13 @@ export interface TokenCountsDTO {
   cacheRead: number;
   cacheWrite5m: number;
   cacheWrite1h: number;
+  /**
+   * Cache creation the record declared no TTL for — see `TokenCounts`. Its own
+   * member because it is neither class: the shown cost prices it at 1.25x and
+   * the guard's at 2.00x, and a volume folded into either would have lost that.
+   * Any sum over this shape is wrong without it.
+   */
+  cacheWriteUnattributed: number;
 }
 
 export interface AggregateDTO {

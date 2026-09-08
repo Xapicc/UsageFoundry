@@ -1,4 +1,4 @@
-import { type TokenCounts } from "./pricing";
+import { billableWeightedTokens, type TokenCounts } from "./pricing";
 
 /**
  * What is *in* the contexts this machine paid for, read out of the same
@@ -234,8 +234,9 @@ export interface ToolComposition {
   /**
    * Every token that *entered* a context in this window, counted once.
    *
-   * `input` (fresh and uncached), `cacheWrite5m` + `cacheWrite1h` (fresh and
-   * cached) and `output` (generated, and part of the context from the next turn
+   * `input` (fresh and uncached), every cache write whatever class billed it —
+   * `cacheWriteTokens`, three fields since a record may declare no TTL at all —
+   * and `output` (generated, and part of the context from the next turn
    * on) are the three ways a token gets into a conversation, and the provider
    * reports them disjointly. `cacheRead` is deliberately absent: it is the same
    * token being read again, which is the whole point of the ratio below.
@@ -312,8 +313,10 @@ export function buildToolComposition(
     }))
     .sort((a, b) => b.resultChars - a.resultChars);
 
-  const placedTokens =
-    tokens.input + tokens.output + tokens.cacheWrite5m + tokens.cacheWrite1h;
+  // `billableWeightedTokens`, not a fourth spelling of it: cache creation with
+  // no declared TTL is a third write field, and a sum naming only the two
+  // classes leaves it out entirely on a pre-split transcript.
+  const placedTokens = billableWeightedTokens(tokens);
 
   return {
     from,

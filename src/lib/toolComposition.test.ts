@@ -267,6 +267,7 @@ describe("buildToolComposition — a share of characters, never of money", () =>
       cacheRead: 900_000,
       cacheWrite5m: 40_000,
       cacheWrite1h: 30_000,
+      cacheWriteUnattributed: 0,
     }, 30);
 
     assert.equal(composition.placedTokens, 100_000);
