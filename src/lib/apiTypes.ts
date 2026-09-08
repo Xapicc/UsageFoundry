@@ -2839,8 +2839,6 @@ export interface StorageReportDTO {
     telemetry: number;
     /** Absent on a sweep recorded before `context_samples` was swept at all. */
     samples?: number;
-    /** Absent on a sweep recorded before `prune_decisions` was swept at all. */
-    decisions?: number;
     /** Absent on a sweep recorded before `context_compositions` was swept at all. */
     compositions?: number;
     checkouts: number;

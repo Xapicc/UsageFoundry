@@ -1990,6 +1990,14 @@ function migrate(db: Database.Database) {
   // nothing worth removing, a fork refusal, a missing tool -- were one absent
   // section on two screens, and an absent section reads as "the feature never
   // ran". Four of the five left no durable trace anywhere at all.
+  //
+  // **Never swept by retention.ts, on prune_receipts' rule and for its reason.**
+  // /api/usage reads this table span-scoped and slices it into the dashboard's
+  // session and weekly windows, so it answers a weekly KPI. It was on the
+  // run_events horizon until 2026-09-08, which meant an install with
+  // eventRetentionDays below 7 -- accepted, the settings route clamps only at 1
+  // -- printed a weekly boundary count covering fewer days than the savings
+  // figure beside it, with nothing on the card saying so.
   db.exec(`
     CREATE TABLE IF NOT EXISTS prune_decisions (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -153,6 +153,12 @@ export async function GET(req: Request) {
     // Read once over the widest span and sliced, exactly as the receipts above
     // are, so a card can never print a boundary count over one window beside a
     // figure over another. Bounded at the same `pruneFrom` for the same reason.
+    //
+    // That the span is *available* to read is `prune_decisions`' retention rule,
+    // which is `prune_receipts`': `sweepRunEvents` does not touch either table.
+    // `pruneFrom` is a floor on what is asked for and says nothing about which
+    // rows survived a sweep, so bounding the read here was never enough on its
+    // own — see the schema comment on the table in `db.ts`.
     const decisions = readPruneDecisions({ from: pruneFrom, to: now });
     const activityWithin = (from: number, to: number) =>
       sumPruneActivity(decisions.filter((d) => d.ts >= from && d.ts <= to));

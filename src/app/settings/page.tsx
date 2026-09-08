@@ -935,11 +935,6 @@ function StorageFigures({
               {/* Conditional rather than defaulted to 0: a sweep recorded
                   before this store was swept knew nothing about it, which is
                   not the same claim as having found none. */}
-              {lastSweep.decisions !== undefined && (
-                <>
-                  {lastSweep.decisions.toLocaleString()} boundary decisions,{" "}
-                </>
-              )}
               {lastSweep.samples !== undefined && (
                 <>{lastSweep.samples.toLocaleString()} context samples, </>
               )}

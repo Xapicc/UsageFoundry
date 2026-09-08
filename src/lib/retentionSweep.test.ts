@@ -35,6 +35,7 @@ import type Database from "better-sqlite3";
 let retention: typeof import("./retention");
 let dbMod: typeof import("./db");
 let settings: typeof import("./settings");
+let pruning: typeof import("./contextPruning");
 let root: string;
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -59,6 +60,7 @@ before(async () => {
   retention = await import("./retention");
   dbMod = await import("./db");
   settings = await import("./settings");
+  pruning = await import("./contextPruning");
 });
 
 after(() => {
@@ -186,7 +188,6 @@ describe("run_events retention", () => {
       events: 0,
       telemetry: 0,
       samples: 0,
-      decisions: 0,
       compositions: 0,
     });
     assert.equal(eventCount("no-horizon"), 4);
@@ -199,6 +200,64 @@ describe("run_events retention", () => {
     assert.equal(result.at, NOW);
     assert.equal(result.events, 4, "the run seeded under a blank horizon");
     assert.deepEqual(retention.lastSweep(), result);
+  });
+});
+
+/**
+ * The one store on the read side of this sweep that is not run-scoped.
+ *
+ * `prune_decisions` is read by `/api/usage` over a span and sliced into the
+ * dashboard's session and weekly windows, so it answers a weekly KPI exactly as
+ * `prune_receipts` does. It rode the `run_events` horizon anyway, which made the
+ * weekly boundary count a figure whose evidence a shorter horizon could delete
+ * out from under it — and there is nothing on the card that would say so. The
+ * failure is a *smaller number*, beside a savings figure over the full week,
+ * reading as pruning having stopped happening.
+ */
+describe("prune_decisions is not on the run-log horizon", () => {
+  before(() => {
+    // Accepted by the settings route, which clamps at `Math.max(1, …)`.
+    settings.saveSettings({ eventRetentionDays: 1 });
+    dbMod
+      .db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, created_at)
+         VALUES ('pruned-run', '/workspace/repo', 'task', 'completed', '{}', ?)`,
+      )
+      .run(NOW - 90 * DAY);
+    const decision = dbMod
+      .db()
+      .prepare(
+        `INSERT INTO prune_decisions (ts, run_id, trigger, engine, outcome)
+         VALUES (?, 'pruned-run', 'boundary', 'legacy', 'cut')`,
+      );
+    // One a day across the window the card prints, so all but the newest are
+    // past a one-day horizon.
+    for (let day = 0; day < 7; day++) decision.run(NOW - day * DAY);
+  });
+
+  it("keeps a week of boundaries under a one-day horizon", () => {
+    retention.sweepRunEvents(NOW);
+
+    const weekly = pruning.pruneActivity({ from: NOW - 7 * DAY, to: NOW });
+    assert.equal(
+      weekly?.boundaries,
+      7,
+      "the weekly count now covers fewer days than the savings figure beside it",
+    );
+    assert.equal(weekly?.cut, 7);
+  });
+
+  it("does not report a count for a store it no longer sweeps", () => {
+    // Deep-equal for the reason the blank-horizon case above uses one: a store
+    // added back to this sweep has to be named here, and a `decisions` key
+    // reappearing is this table being put back on the run-log horizon.
+    assert.deepEqual(Object.keys(retention.sweepRunEvents(NOW)).sort(), [
+      "compositions",
+      "events",
+      "samples",
+      "telemetry",
+    ]);
   });
 });
 

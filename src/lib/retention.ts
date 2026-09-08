@@ -86,15 +86,6 @@ export interface RetentionSweep {
    */
   samples?: number;
   /**
-   * Rows removed from `prune_decisions`.
-   *
-   * Absent on a sweep recorded before this table was swept at all, on
-   * `samples`' reasoning — the reader renders it conditionally rather than as
-   * a `0`, because a sweep that predates the column did not remove none of
-   * these, it did not know about them.
-   */
-  decisions?: number;
-  /**
    * Rows removed from the composition store — rows rather than readings, since
    * that is what a `DELETE` can report and a reading is several of them.
    *
@@ -160,12 +151,11 @@ export function sweepRunEvents(now = Date.now()): {
   events: number;
   telemetry: number;
   samples: number;
-  decisions: number;
   compositions: number;
 } {
   const cutoff = retentionCutoff(getSettings().eventRetentionDays, now);
   if (cutoff === null) {
-    return { events: 0, telemetry: 0, samples: 0, decisions: 0, compositions: 0 };
+    return { events: 0, telemetry: 0, samples: 0, compositions: 0 };
   }
 
   const settled = TERMINAL_STATUSES.map(() => "?").join(",");
@@ -202,18 +192,17 @@ export function sweepRunEvents(now = Date.now()): {
     )
     .run(cutoff, ...TERMINAL_STATUSES).changes;
 
-  // Boundary decisions go on exactly the samples clause, and for exactly its
-  // reason: this is evidence for a sentence on the run's own page, beside the
-  // log it explains, and it must not outlive that log. Deliberately not
-  // `prune_receipts`' treatment — a receipt answers a weekly KPI and has to
-  // outlive its run; a decision is read only while somebody is reading the run.
-  const decisions = db()
-    .prepare(
-      `DELETE FROM prune_decisions
-        WHERE ts < ?
-          AND run_id IN (SELECT id FROM runs WHERE status IN (${settled}))`,
-    )
-    .run(cutoff, ...TERMINAL_STATUSES).changes;
+  // **`prune_decisions` is deliberately absent from this sweep**, and used to be
+  // in it on the samples clause above. That was the wrong reading of what the
+  // table is for: `/api/usage` reads it *span-scoped* and slices the result into
+  // the dashboard's session and weekly windows, so these rows answer a weekly
+  // KPI exactly as `prune_receipts` does and not a question about one run's
+  // page. On an install that shortened `eventRetentionDays` below 7 — the
+  // settings route clamps only at 1 — the weekly prune-activity counts would
+  // silently cover fewer days than the savings figure printed beside them, which
+  // reads as pruning having stopped happening. That is the failure
+  // `prune_receipts`' own schema comment says its table exists to avoid, and one
+  // row per cycle boundary is the same order of growth a receipt already has.
 
   // The composition series rides the samples clause, because it is the other
   // half of the same picture: it is drawn on the same axis, on the same card,
@@ -242,7 +231,7 @@ export function sweepRunEvents(now = Date.now()): {
       )
       .run(cutoff, ...TERMINAL_STATUSES).changes;
 
-  return { events, telemetry, samples, decisions, compositions };
+  return { events, telemetry, samples, compositions };
 }
 
 /* ------------------------------------------------------------------ */
