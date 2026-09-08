@@ -4,7 +4,10 @@
 # `commitPending`'s `git add -A` would put a link pointing outside the
 # repository onto the run's branch.
 node_modules
-.next/
+# Without a trailing slash for the same reason as node_modules above: when the
+# build output is redirected off the bind mount, `.next` is a symlink, and git
+# does not match a symlink against a directory-only pattern.
+.next
 .data/
 
 # Every .env variant is ignored, so a later .env.production or .env.local

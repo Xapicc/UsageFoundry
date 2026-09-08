@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node scripts/redirect-dist-dir.mjs && next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "rm -rf .test-build && tsc -p tsconfig.test.json && node --test \".test-build/**/*.test.js\"",
