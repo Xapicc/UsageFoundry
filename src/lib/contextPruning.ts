@@ -1440,12 +1440,27 @@ function pruneEnv(): NodeJS.ProcessEnv {
  *
  * Never a shell. Argv array, `security.md`'s rule, and the transcript path
  * reaches the child as one element however it is spelled.
+ *
+ * The probe and the child are injected on `restoreTranscriptOwnership`'s
+ * grounds. What has to be pinned here is the backup sweep, whose rule is a
+ * difference between two directory listings taken around the child, and neither
+ * end of that difference exists on a machine where winnow is not installed — so
+ * the only test that could run at all would be the one that proves nothing.
  */
 export async function pruneTranscript(
   transcriptPath: string,
   tier: PruneTier,
+  deps: {
+    available?: () => boolean;
+    spawn?: (
+      transcriptPath: string,
+      tier: PruneTier,
+    ) => Promise<{ ok: true } | { ok: false; reason: string }>;
+  } = {},
 ): Promise<PruneResult> {
-  if (!winnowAvailable()) {
+  const available = deps.available ?? winnowAvailable;
+  const spawnChild = deps.spawn ?? spawnPrune;
+  if (!available()) {
     return { kind: "unavailable", reason: WINNOW_MISSING_REASON };
   }
 
@@ -1469,19 +1484,34 @@ export async function pruneTranscript(
   // `usage` frame this reads is one of the things a prune can take away.
   const apiTokensBefore = apiContextTokens(transcriptPath);
 
-  const startedAt = Date.now();
-  const run = await spawnPrune(transcriptPath, tier);
-  if (!run.ok) return { kind: "failed", reason: run.reason };
+  // Listed *before* the child, because the sweep below is the difference between
+  // this reading and the one taken after it. Nothing else can identify the copy:
+  // winnow does not write its backup, it takes it with `shutil.copy2`, which
+  // carries the **source's** mtime — the moment the CLI last appended to the
+  // transcript, necessarily earlier than anything this prune did — so a filter
+  // against this prune's own clock could only ever match it through the grace it
+  // was given, and `~/.claude` is a bind mount whose `utime` lands on whole
+  // seconds, spending most of that grace before the child starts. Nine backups
+  // leaked past that filter on the install this was measured on, against 53
+  // receipts.
+  const backupsBefore = listBackups(transcriptPath);
 
-  // Deleted rather than kept, and this is not tidiness. `save_messages` is
-  // called with `create_backup=True` at all three of winnow's call sites with no
-  // flag in front of it, so every prune drops a copy of the *pre-prune*
-  // transcript beside the original — inside `~/.claude`, which is a bind mount
-  // of the operator's own disk. A 2 MB transcript pruned once per cycle would
-  // leave 2 MB behind per cycle, on their machine, with nothing in this app
-  // sweeping it: `retention.ts` expires transcripts by asking the database what
-  // is live, and these files are not rows.
-  removeBackups(transcriptPath, startedAt);
+  const startedAt = Date.now();
+  const run = await spawnChild(transcriptPath, tier);
+
+  // Swept before the failure branch rather than after it, and this is not
+  // tidiness. `save_messages` is called with `create_backup=True` at all three
+  // of winnow's call sites with no flag in front of it, so every prune drops a
+  // copy of the *pre-prune* transcript beside the original — inside `~/.claude`,
+  // which is a bind mount of the operator's own disk. A 2 MB transcript pruned
+  // once per cycle would leave 2 MB behind per cycle, on their machine, with
+  // nothing in this app sweeping it: `retention.ts` expires transcripts by
+  // asking the database what is live, and these files are not rows. The copy is
+  // written before the child can fail, so a child that copied and then exited
+  // non-zero — or was killed at `PRUNE_TIMEOUT_MS` — used to leave it for ever.
+  removeBackups(transcriptPath, backupsBefore);
+
+  if (!run.ok) return { kind: "failed", reason: run.reason };
 
   const tokensAfter = contextTokens(transcriptPath);
   const tokensRemoved = Math.max(0, tokensBefore - tokensAfter);
@@ -3365,30 +3395,66 @@ export function markForkResumed(
 }
 
 /**
- * Remove the `.bak` winnow just wrote beside the transcript.
+ * The backups sitting beside a transcript right now, by name.
  *
- * Matched on winnow's own naming — `<stem>.<YYYYmmdd_HHMMSS>.jsonl.bak` — and
- * filtered by mtime against the moment this prune started, so a backup left by
- * something else, or by an operator running the tool by hand, is not swept up by
- * this app. Best-effort and silent: a backup that could not be removed is disk,
- * where a throw here would be a cycle lost after the prune had already
- * succeeded.
+ * Matched on winnow's own naming — `<stem>.<YYYYmmdd_HHMMSS>.jsonl.bak`. Its own
+ * function because the sweep is a difference between two of these readings and
+ * both ends must ask the same question; a match spelled out twice is one that
+ * drifts, and either direction of drift is silent — a backup left on the
+ * operator's own disk for ever, or one they took by hand deleted under them.
+ *
+ * `null` and not an empty set when the directory cannot be read, because the two
+ * are opposite instructions to the sweep: nothing seen here is not a licence to
+ * delete everything that appears later, and the sweep must decline rather than
+ * guess.
  */
-function removeBackups(transcriptPath: string, since: number): void {
+function listBackups(transcriptPath: string): Set<string> | null {
+  const dir = path.dirname(transcriptPath);
+  const stem = path.basename(transcriptPath, ".jsonl");
   try {
-    const dir = path.dirname(transcriptPath);
-    const stem = path.basename(transcriptPath, ".jsonl");
-    for (const entry of fs.readdirSync(dir)) {
-      if (!entry.startsWith(`${stem}.`) || !entry.endsWith(".jsonl.bak")) continue;
-      const full = path.join(dir, entry);
-      try {
-        if (fs.statSync(full).mtimeMs >= since - 1_000) fs.unlinkSync(full);
-      } catch {
-        // Next sweep, or never. Not worth a line in the run's log.
-      }
-    }
+    return new Set(
+      fs
+        .readdirSync(dir)
+        .filter((e) => e.startsWith(`${stem}.`) && e.endsWith(".jsonl.bak")),
+    );
   } catch {
     // The directory is the CLI's, not ours. Unreadable is not this app's problem.
+    return null;
+  }
+}
+
+/**
+ * Remove the backups this prune's own child wrote, and nothing else.
+ *
+ * Decided by name against a listing taken before the child started, with no
+ * clock anywhere in it. The backup is a `shutil.copy2` of the transcript and so
+ * carries the source's mtime, which is earlier than every instant this prune
+ * could compare it against — an mtime filter cannot identify it at all, and the
+ * one that used to be here missed 17% of the time. A name that was already in
+ * the directory is an operator's or another tool's, and is never touched.
+ *
+ * Best-effort and silent: a backup that could not be removed is disk, where a
+ * throw here would be a cycle lost after the prune had already succeeded.
+ */
+function removeBackups(
+  transcriptPath: string,
+  before: ReadonlySet<string> | null,
+): void {
+  // Either reading missing means this app cannot tell its own child's copy from
+  // somebody else's, and unlinking a file on the operator's disk is not a guess
+  // worth making.
+  if (!before) return;
+  const after = listBackups(transcriptPath);
+  if (!after) return;
+
+  const dir = path.dirname(transcriptPath);
+  for (const entry of after) {
+    if (before.has(entry)) continue;
+    try {
+      fs.unlinkSync(path.join(dir, entry));
+    } catch {
+      // Next sweep, or never. Not worth a line in the run's log.
+    }
   }
 }
 

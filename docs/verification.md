@@ -913,7 +913,18 @@ Built and exercised against real transcripts:
   `.bak` beside the transcript — `create_backup=True` is hardcoded at all three
   of winnow's call sites with no flag in front of it — which lands inside the
   bind-mounted `~/.claude`; `removeBackups` deletes it, matched on winnow's own
-  naming and filtered by mtime so a backup left by anything else survives.
+  naming against a directory listing taken before the child started, so a backup
+  left by anything else survives.
+
+  **The mtime filter that used to do that matching could not work, measured
+  2026-09-08.** winnow takes the backup with `shutil.copy2`, which carries the
+  *source's* mtime, so it is always stamped earlier than the moment the prune
+  started; only a one-second grace ever matched it, and `~/.claude`'s `utime`
+  lands on whole seconds, spending most of that grace before the child runs.
+  Eleven full copies had survived here, 18.8 MB. Driven against the real winnow
+  child on a 1,289,032-byte transcript last written 999 ms into a second two
+  seconds earlier — a prune that removed 48,846 of 167,153 tokens — the old sweep
+  left `…20260908_163706.jsonl.bak` behind and the listing sweep left nothing.
 
   **Verified against four real prunes, 2026-08-24.** All four fired from the
   early-end path at `aggressive`, at 167,326-169,283 tokens, removing 29.1-52.8%.
