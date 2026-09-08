@@ -347,6 +347,7 @@ empty dashboard, which is also what a quiet week looks like.
 | `UF_AUTH_TOKEN` | **yes**, unless `UF_ALLOW_NO_AUTH=1` | blank with `UF_ALLOW_NO_AUTH` unset | **The container exits.** With `UF_ALLOW_NO_AUTH=1` it starts with auth off, logs a block at boot and banners every page. |
 | `ANTHROPIC_ADMIN_KEY` | no | — | Blank means the API-account page says "not configured". Never reported. |
 | `UF_GITHUB_TOKEN` | no | — | Blank means runs cannot use GitHub. Never reported. |
+| the other eleven in `BLANK_MEANINGFUL_ENV_VARS` | no | — | Blank is a deliberate answer for each — off, a default taken, or (for `UF_UNMOUNTED_WORKSPACES`) the success case compose itself computes. Never reported; README's "blank *is* an answer" paragraph says what each one means. |
 | anything else | no | set to the empty string | Warned. A blank value is read as unset and takes the default, which is a value nobody chose. |
 
 `DATA_DIR` refuses because it decides where your only copy of anything lives —

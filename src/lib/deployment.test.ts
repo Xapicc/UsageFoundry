@@ -814,6 +814,51 @@ describe("compose's blank-by-default variables and config.ts's own env split", (
     );
   });
 
+  it("names every one of them in README, with the right count", () => {
+    // A third half of the same drift: README's "blank *is* an answer"
+    // paragraph names the list for a human rather than a machine, and it is
+    // no more typechecked against BLANK_MEANINGFUL_ENV_VARS than the other
+    // two are against each other. It already drifted once — the paragraph
+    // said "Eight" and named eight while the list had grown to thirteen.
+    const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
+    const start = readme.indexOf("variables are where blank *is* an answer");
+    assert.notEqual(
+      start,
+      -1,
+      'README no longer has the "variables are where blank *is* an answer" sentence.',
+    );
+    const end = readme.indexOf("is the list.", start);
+    assert.notEqual(
+      end,
+      -1,
+      'README\'s "blank *is* an answer" paragraph no longer ends at "is the list."',
+    );
+    const sentenceStart = readme.lastIndexOf(".", start) + 1;
+    const paragraph = readme.slice(sentenceStart, end + "is the list.".length);
+
+    const NUMBER_WORDS = [
+      "zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
+      "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+      "sixteen", "seventeen", "eighteen", "nineteen", "twenty",
+    ];
+    const countWord = /(\w+) variables are where blank/.exec(paragraph)?.[1]?.toLowerCase();
+    assert.equal(
+      NUMBER_WORDS.indexOf(countWord ?? ""),
+      BLANK_MEANINGFUL_ENV_VARS.length,
+      `README says "${countWord}" variables but BLANK_MEANINGFUL_ENV_VARS has ` +
+        `${BLANK_MEANINGFUL_ENV_VARS.length} entries — the count drifts the moment ` +
+        "the list grows and nothing else pins it.",
+    );
+
+    const missing = BLANK_MEANINGFUL_ENV_VARS.filter((name) => !paragraph.includes(`\`${name}\``));
+    assert.deepEqual(
+      missing,
+      [],
+      `README's paragraph does not name ${missing.join(", ")}, though ` +
+        `BLANK_MEANINGFUL_ENV_VARS carries ${missing.length === 1 ? "it" : "them"}.`,
+    );
+  });
+
   it("forwards every variable of its own that config.ts reads", () => {
     // There is no `env_file:` in docker-compose.yml, so the `environment:` block
     // is the whole of what reaches the container: a name added to `config.ts`
