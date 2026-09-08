@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { resolveChatGid, resolveChildCredentials } from "./privsep";
+import type { ChildCredentials, McpConfigOwnership } from "./privsep";
+import {
+  resolveChatGid,
+  resolveChildCredentials,
+  resolveMcpConfigOwnership,
+} from "./privsep";
 
 /**
  * The decision behind every spawn in this app, and both ways of getting it
@@ -172,3 +177,95 @@ describe("resolveChatGid", () => {
   });
 });
 
+/**
+ * What that group then buys, judged the way the kernel judges it.
+ *
+ * `resolveChatGid` above settles *which* group; this settles the mode pair, and
+ * it is the last decision before `writeMcpConfig` writes the bytes — that
+ * function applies whatever it is handed and re-checks none of it. The
+ * assertions are access questions rather than two octal literals because a
+ * literal is not what has to hold: `0640` reads as tighter than `0710` and hands
+ * the file to its owner, and `0044` reads as tighter than `0040` and hands it to
+ * every agent on the box. What must hold is that the agents' credentials are
+ * refused and the turn's own child is not.
+ *
+ * The refusal itself is not observable from here: a unit test is one process
+ * under one uid and cannot be turned away by a mode it wrote. That is what the
+ * `docker compose exec` form in `docs/verification.md` watches happen.
+ */
+describe("resolveMcpConfigOwnership", () => {
+  const agents: ChildCredentials = { uid: 1000, gid: 1000 };
+  const chatGid = 65533;
+  const READ = 0o4;
+  const TRAVERSE = 0o1;
+
+  /**
+   * Which of the three permission classes a set of credentials is judged by.
+   *
+   * POSIX takes the first class that matches and never falls through to a later
+   * one, which is the whole of why a group works here: an agent is neither the
+   * owner nor in the group, so it is left with "other" however generous the
+   * group bits are.
+   */
+  function bitsFor(
+    mode: number,
+    owner: ChildCredentials,
+    by: ChildCredentials,
+  ): number {
+    if (by.uid === owner.uid) return (mode >> 6) & 0o7;
+    if (by.gid === owner.gid) return (mode >> 3) & 0o7;
+    return mode & 0o7;
+  }
+
+  function ownership(): McpConfigOwnership {
+    const own = resolveMcpConfigOwnership({ separated: agents, chatGid });
+    if (!own) {
+      throw new Error("a uid split with a chat gid must hand the config to it");
+    }
+    return own;
+  }
+
+  /**
+   * Who owns the directory and the file. The server writes both and
+   * `chownToGroup` leaves the owner alone, and a separated server is root —
+   * `resolveChildCredentials` refuses to start on any other arrangement.
+   */
+  function ownerOf(own: McpConfigOwnership): ChildCredentials {
+    return { uid: 0, gid: own.gid };
+  }
+
+  it("refuses a work-cycle agent that already knows the path", () => {
+    // The defect, written as the thing that has to stay false. `--mcp-config
+    // <path>` is an argv element and /proc/<pid>/cmdline is world-readable, so
+    // knowing the path is assumed rather than defended against: moving the file
+    // out of /tmp closed enumeration and nothing else. These two bits are the
+    // whole of what stands between a concurrent agent and a live capability.
+    const own = ownership();
+    const owner = ownerOf(own);
+    assert.equal(bitsFor(own.fileMode, owner, agents) & READ, 0);
+    assert.equal(bitsFor(own.dirMode, owner, agents) & TRAVERSE, 0);
+  });
+
+  it("still lets the turn's own child open what was written for it", () => {
+    // Not a formality: a config the chat child cannot read is a turn with no
+    // tools at all, which reads as a model that chose to call none.
+    // `chatChildCredentials` is what puts that child in this group and no
+    // work cycle in it.
+    const own = ownership();
+    const owner = ownerOf(own);
+    const chatChild: ChildCredentials = { uid: agents.uid, gid: own.gid };
+    assert.equal(bitsFor(own.fileMode, owner, chatChild) & READ, READ);
+    assert.equal(bitsFor(own.dirMode, owner, chatChild) & TRAVERSE, TRAVERSE);
+  });
+
+  it("asks for nothing when there is no group to hand it to", () => {
+    // Both fall back whole rather than half-applying a boundary: `chat.ts` then
+    // chowns to the agents' uid at 0700/0600, which is what every install had
+    // before the group existed and what `describeSeparation()` says out loud.
+    assert.equal(resolveMcpConfigOwnership({ separated: null, chatGid }), null);
+    assert.equal(
+      resolveMcpConfigOwnership({ separated: agents, chatGid: null }),
+      null,
+    );
+  });
+});

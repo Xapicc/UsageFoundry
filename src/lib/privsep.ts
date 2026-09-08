@@ -296,15 +296,36 @@ export interface McpConfigOwnership {
 /**
  * The ownership a turn's MCP config takes, or null for "as the agents own it".
  *
+ * Pure and unit-tested for the third time in this file, and the sharpest of the
+ * three: this is where the two file modes are chosen, `writeMcpConfig` applies
+ * whatever it is handed without re-checking it, and a mode granting one bit too
+ * many is invisible from everywhere except inside a process that was supposed
+ * not to have it. `0710`/`0040` decide by group alone — an agent is neither the
+ * owner (root) nor in that group, so POSIX leaves it the "other" bits, and those
+ * are zero. Widen either by `0o004` and the defect this arrangement exists for
+ * is back, with every test but that one still green.
+ *
  * Null in two cases that are one case: no uid split (nothing to defend against
  * — a sibling is this process's own uid), and a uid split with no chat gid
  * (`UF_CHAT_GID` cleared, which `describeSeparation()` states). Both leave
  * `chat.ts` on its previous behaviour rather than half-applying a boundary.
+ *
+ * @param chatGid what `resolveChatGid` decided, or null.
  */
+export function resolveMcpConfigOwnership(o: {
+  separated: ChildCredentials | null;
+  chatGid: number | null;
+}): McpConfigOwnership | null {
+  if (!o.separated || o.chatGid === null) return null;
+  return { gid: o.chatGid, dirMode: 0o710, fileMode: 0o040 };
+}
+
+/** The same, against this process's own environment. */
 export function mcpConfigOwnership(): McpConfigOwnership | null {
-  if (!separation()) return null;
-  const gid = chatSeparation();
-  return gid === null ? null : { gid, dirMode: 0o710, fileMode: 0o040 };
+  return resolveMcpConfigOwnership({
+    separated: separation(),
+    chatGid: chatSeparation(),
+  });
 }
 
 /**
