@@ -2274,6 +2274,43 @@ Built and exercised against real transcripts:
   `UF_GITHUB_TOKEN`, `UF_WEBHOOK_URL`, `DISCORD_WEBHOOK_URL` and `UF_WORKSPACE`
   all reach the child blank, and all four reach it populated without it.
 
+- **`/knowledge` was the smoke pass's one failing page, and it was the check
+  that was wrong rather than the page.** Measured 2026-09-08 in
+  `/workspace/.uf-worktrees/usagefoundry-721638d11c0b-2`: both of the two loads
+  missing from the 38/40 above were `/knowledge`, at 390px and at 1280px, each
+  failing on `console error: Failed to load resource: the server responded with
+  a status of 409 (Conflict)`. Not an artefact of the fallback mode added the
+  same day — it reproduced identically in standalone mode and on a second, older
+  build (`BUILD_ID -ZLYjjw166q7Y7bZfY-zS`), so it predates that change and was
+  invisible only while the script exited 2.
+
+  `makeSandbox` configured no knowledge base, so `resolveKnowledgeRoot` returned
+  `configured: false` and every `/api/knowledge/*` handler answered 409.
+  `KnowledgeGraphView` asks for `/api/knowledge/graph` before the status call
+  has come back and the page has had the chance to draw its unconfigured state
+  instead, and Chromium logs any non-2xx response as a failed resource however
+  the page then handles it. The page itself rendered correctly throughout:
+  **there was no interface defect.**
+
+  Acted on 2026-09-08: `seedVault` in `scripts/smoke-pages.mjs` writes three
+  notes into the sandbox workspace and PUTs `knowledgeBaseMountId` /
+  `knowledgeBaseSubpath` through `/api/settings`, so the page is exercised in
+  its configured state — the note list, the backlinks, the health rows and the
+  graph — rather than in the four lines of copy it shows without a vault. The
+  alternative, letting this route opt out of the console-error assertion for one
+  expected status, was refused: it would have gone green while checking strictly
+  less. Measured after, at `e5bbcec` in standalone mode under `$TMPDIR`, where
+  the build completes: **44/44 page loads clean, 0 of 22 pages failed.** The
+  denominator moved from 40 because `f5e9bd7` added `/tasks/new` and
+  `/tasks/[id]`, not because anything stopped being checked.
+
+  The vault is read rather than merely resolved, which is the failure this
+  would otherwise hide — a wrong subpath also silences the 409.
+  `/api/knowledge/status` answers `noteCount: 3, orphanCount: 1,
+  brokenLinkCount: 1, tagCount: 1`; `/api/knowledge/health` returns exactly one
+  row in each of its three lists; and the rendered graph draws all three notes,
+  the edge between two of them, and the unwritten `[[Missing note]]` target.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the
