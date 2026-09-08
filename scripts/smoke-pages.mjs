@@ -157,13 +157,17 @@ function makeSandbox() {
  * sideways-scroll assertion then measures an unstyled document and passes
  * everything.
  *
- * The fallback is for the agent containers, where `next build` cannot finish:
- * the worktree sits on a virtiofs mount whose directory cache outlives an
- * unlink, so the standalone copy dies on a spurious ENOENT/ENOTDIR against a
- * path whose parent is right there, on a different path every run. `.next`
- * itself completes, and `next start` serves it — Next warns that `start` does
- * not work with `output: "standalone"`, but the warning is the whole of it and
- * the app serves.
+ * The fallback was written for the agent containers, where `next build` could
+ * not finish: the worktree sits on a virtiofs mount whose directory cache
+ * outlives an unlink, so the standalone copy died on a spurious ENOENT/ENOTDIR
+ * against a path whose parent is right there, on a different path every run.
+ * `scripts/redirect-dist-dir.mjs` moves the output off that mount and those
+ * containers now reach the standalone branch, so this is no longer their only
+ * road — it is kept because a `.next` without a bundle beside it is still a
+ * state this can be handed, and half a check beats refusing to run. `next
+ * start` serves such a build — Next warns that `start` does not work with
+ * `output: "standalone"`, but the warning is the whole of it and the app
+ * serves.
  *
  * That mode is a strictly weaker check: it proves nothing about whether the
  * shipped bundle boots or whether the `node_modules` tracing copied into it is

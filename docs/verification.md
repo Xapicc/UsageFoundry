@@ -2266,7 +2266,8 @@ Built and exercised against real transcripts:
   full pass in fallback mode (38/40 page loads clean); a `.next` with one runs
   it in standalone mode. **The fallback is a weaker check** — it proves nothing
   about whether the shipped bundle boots or whether its traced `node_modules`
-  are complete, and no run in this container can.
+  are complete. That was every mode available in this container until the
+  entry below.
 
   The `.env` blanking `serverEnv` depends on was re-measured for the new mode,
   because `next start` loads the repo's own `.env` rather than the copy beside
@@ -2274,12 +2275,52 @@ Built and exercised against real transcripts:
   `UF_GITHUB_TOKEN`, `UF_WEBHOOK_URL`, `DISCORD_WEBHOOK_URL` and `UF_WORKSPACE`
   all reach the child blank, and all four reach it populated without it.
 
+  Acted on 2026-09-08, on the same worktree: `npm run build` finishes there now,
+  and the standalone bundle it writes serves. `scripts/redirect-dist-dir.mjs`
+  runs ahead of `next build` and points `.next` at a scratch directory under
+  `$TMPDIR`, keyed on the checkout so concurrent worktrees do not share one.
+  **2 of 2** in-place runs failed first, with the signature above — `ENOENT` from
+  `mkdir .next/standalone/node_modules/react` whose parent is in the listing
+  taken at the failure. With the redirect, **7 consecutive runs** exited 0 with a
+  `.next/standalone/server.js` and not one filesystem error; four of those came
+  after a `npm ci` that rebuilt `node_modules` under it. `npm run smoke-pages`
+  then printed `serving .next/standalone/server.js`, the first standalone-mode
+  pass this container has had, at 42/44 page loads clean. The same build with
+  `.next/standalone` deleted, forced back into fallback mode, reported 42/44 and
+  the identical single failure — `/knowledge`, whose API answers 409 `No
+  knowledge base is configured.` under the throwaway `DATA_DIR`. So the bundle is
+  measured no weaker than the fallback, and that page's failure is the fixture
+  rather than either mode.
+
+  Two nearer approaches were measured and rejected, and the rejection is the
+  useful half. Pointing `distDir` outside the project has Next rewrite the
+  tracked `tsconfig.json`'s `include` to climb back in through `../../..`, after
+  which the route types generated out there cannot resolve `next`: the build
+  fails at "Checking validity of types", twice out of two, having dirtied a file
+  nobody edited. Symlinking `.next` with nothing beside it fails one stage later,
+  at page-data collection, on `Cannot find module 'react/jsx-runtime'` — Node
+  resolves the real path of what it requires and then walks up from the scratch
+  directory. The `node_modules` link the script writes next to the scratch
+  `.next` is what answers that walk, and is load-bearing rather than tidiness.
+  Two properties of the script itself were measured directly: on `overlayfs` it
+  exits 0 having printed nothing and created nothing, which is what makes it
+  inert in the image build; and `rm -rf .next` still means a clean build,
+  because an absent link is what tells it to discard the scratch.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the
 standalone bundle), and are covered by the unit tests above, but the following
 have **not** been exercised against a real CLI. They are the list to work
 through before trusting this unattended:
+
+> **The image build has not been run since `npm run build` gained a wrapper.**
+> `scripts/redirect-dist-dir.mjs` was measured to do nothing on `overlayfs`,
+> which is what `/app` is on, so the builder stage should reach `next build` on
+> the same real `.next` directory `COPY --from=builder /app/.next/standalone`
+> has always read. That is an argument, not a measurement: there is no docker
+> client in this container, so `docker compose up --build` could not be run to
+> confirm it. It is the first thing to check on a machine that has one.
 
 > **`RELAY_PORT` and `RELAY_BIND` have never reached a container.** Both are
 > now in `docker-compose.yml`'s `environment:` block, and `deployment.test.ts`
