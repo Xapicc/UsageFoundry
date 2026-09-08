@@ -67,6 +67,26 @@ export interface IterationResult {
    * as "no reading" rather than as "small".
    */
   contextTokens: number;
+  /**
+   * The same reading taken at the **first** billed turn of the cycle instead of
+   * the last, which is what a resume carried before this cycle added anything.
+   *
+   * It exists for one question and is not a general-purpose figure: after a
+   * boundary fork, did the edit reach the wire? The transcript cannot answer it
+   * — `winnow fork` removes `message.content` and leaves `toolUseResult`, so
+   * bytes leave the file whether or not they leave the request — and the first
+   * request the resumed session makes is the only place the answer exists.
+   * `markForkResumed` writes it onto the `fork_attempts` row.
+   *
+   * **First, not last**, which is the opposite of `contextTokens` above and for
+   * the same underlying reason: this is a reading of what the cut left, and by
+   * the end of the cycle the run has said tens of thousands of tokens more.
+   *
+   * Main thread only and zero when nothing was billed, on `contextTokens`'
+   * rules — a cycle that reported no usage has taken no reading, and 0 must
+   * never be written down as a window that was carried.
+   */
+  firstContextTokens: number;
   sessionId: string | null;
   finalText: string;
   isError: boolean;

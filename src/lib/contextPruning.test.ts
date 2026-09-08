@@ -1371,6 +1371,10 @@ describe("netReceipt", () => {
     tokensBefore: 250_000,
     tokensAfter: 180_000,
     tokensRemoved: 70_000,
+    // The in-place engine's own reading. It strips `toolUseResult` with the
+    // content and the run keeps the same session, so what left the file left
+    // the request too — the property the fork engine cannot claim.
+    removalKnown: true,
     model: "claude-opus-5",
   };
 
@@ -1610,6 +1614,7 @@ describe("sumPruneSavings", () => {
       tokensBefore: 100_000,
       tokensAfter: 60_000,
       tokensRemoved: 40_000,
+      removalKnown: true,
       model: "claude-opus-5",
     };
     const summed = sumPruneSavings([
@@ -1637,6 +1642,7 @@ describe("groupPruneSavingsByRun", () => {
     tokensBefore: 100_000,
     tokensAfter: 100_000 - tokensRemoved,
     tokensRemoved,
+    removalKnown: true,
     model: "claude-opus-5",
   });
 
@@ -1805,6 +1811,7 @@ describe("ceilingDeclineMessage — a run left alone still says so", () => {
     removedTokens: 17_594,
     turnsNeeded: 209,
     engine: "winnow" as const,
+    measuredForks: 3,
   };
 
   it("explains itself the first time, numbers and cadence included", () => {
@@ -1854,6 +1861,7 @@ describe("ceilingDeclineMessage — a run left alone still says so", () => {
       removedTokens: 15_600,
       turnsNeeded: 307,
       engine: "legacy" as const,
+      measuredForks: null,
       repeat: true,
     });
     assert.match(later, /255\.4k tokens/);
@@ -1875,6 +1883,7 @@ describe("ceilingDeclineMessage — a run left alone still says so", () => {
       removedTokens: 0,
       turnsNeeded: null,
       engine: "legacy",
+      measuredForks: null,
       repeat: false,
     });
     assert.match(nothingToCut, /pruner in use \(edit in place\) found nothing/);
@@ -1884,10 +1893,41 @@ describe("ceilingDeclineMessage — a run left alone still says so", () => {
       removedTokens: 0,
       turnsNeeded: null,
       engine: null,
+      measuredForks: null,
       repeat: false,
     });
     assert.match(unmeasured, /nothing here could be measured/);
     assert.notEqual(nothingToCut, unmeasured);
+  });
+
+  it("does not tell a fork's operator there was nothing worth removing", () => {
+    // Under the fork engine that sentence is flatly false: there is plenty
+    // worth removing, winnow removes it, and the request still carries it —
+    // `winnow fork` rewrites `message.content` and leaves `toolUseResult`, from
+    // which the resumed CLI rebuilds the tool results. An operator who switched
+    // this engine on and watched it never fire is owed that, and the two
+    // reasons for a zero here are not the same fact.
+    const noEvidence = ceilingDeclineMessage({
+      contextTokens: 240_000,
+      removedTokens: 0,
+      turnsNeeded: null,
+      engine: "winnow",
+      measuredForks: 0,
+      repeat: false,
+    });
+    assert.match(noEvidence, /no fork on this install has been measured/);
+    assert.doesNotMatch(noEvidence, /found nothing here worth removing/);
+
+    const measuredZero = ceilingDeclineMessage({
+      contextTokens: 240_000,
+      removedTokens: 0,
+      turnsNeeded: null,
+      engine: "winnow",
+      measuredForks: 5,
+      repeat: false,
+    });
+    assert.match(measuredZero, /last 5 forks measured here took nothing off/);
+    assert.notEqual(noEvidence, measuredZero);
   });
 
   it("says so plainly when nothing could be priced", () => {
@@ -1897,6 +1937,7 @@ describe("ceilingDeclineMessage — a run left alone still says so", () => {
         removedTokens: 0,
         turnsNeeded: null,
         engine: null,
+        measuredForks: null,
         repeat,
       });
       assert.match(m, /nothing here could be measured/);
@@ -2123,16 +2164,24 @@ describe("forkCutFromRow", () => {
   /**
    * A fork, converted into the terms the netting prices.
    *
-   * Both conversions here are silent when wrong. The basis change turns bytes
-   * — what `winnow plan`/`fork` report, because SPEC section 6 measures `len()`
-   * of the content string — into the tokens the price table is denominated in.
-   * And `suffix_bytes` feeds the counterfactual read that decides whether a
-   * fork taken over a warm cache shows a loss, which is the one thing this
-   * whole panel exists to be able to say.
+   * **The removal is the API's figure or it is nothing**, and that is what the
+   * first cases here are about. `net_bytes` is a measurement of the file, and
+   * `winnow fork` rewrites `message.content` while leaving `toolUseResult`
+   * bit-identical — from which the resumed CLI rebuilds the very tool results
+   * the pointers replaced. On all five forks this install wrote, the API window
+   * after the resume was 1,153 to 5,238 tokens *higher* than before the cut
+   * while `net_bytes` claimed 4,678 to 17,594 tokens had gone. Dividing bytes
+   * by `BYTES_PER_TOKEN` does not turn one into the other, and pricing the
+   * result as cache reads avoided is what this suite now refuses.
    *
-   * The figures are from a real `winnow fork --write --json` over a transcript
-   * on this install: 24,029 bytes out, 22,725 net after pointers, against a
-   * 122,902-byte suffix.
+   * `suffix_bytes` stays a byte measurement and is used as one: it feeds the
+   * counterfactual read that decides whether a fork taken over a warm cache
+   * shows a loss, which is the one thing this whole panel exists to say.
+   *
+   * The byte figures are from a real `winnow fork --write --json` over a
+   * transcript on this install: 24,029 bytes out, 22,725 net after pointers,
+   * against a 122,902-byte suffix. The API pair is run `3da14af4`'s, measured
+   * from the two session transcripts either side of its fork.
    */
   const REAL = {
     ts: 1_000,
@@ -2143,22 +2192,65 @@ describe("forkCutFromRow", () => {
     model: "claude-opus-5",
     trigger: "boundary" as const,
     contextTokensAfter: null,
+    apiContextBefore: null,
+    apiContextAfter: null,
   };
 
-  it("counts the net of the cut, not the gross", () => {
-    // The pointers winnow writes back are really in the fork. Counting the
-    // gross would claim a saving on bytes the conversation still carries.
-    const cut = forkCutFromRow(REAL);
-    assert.equal(cut.tokensRemoved, Math.round(22_725 / BYTES_PER_TOKEN));
-    assert.notEqual(cut.tokensRemoved, Math.round(24_029 / BYTES_PER_TOKEN));
+  it("credits a fork with what the API stopped carrying, not with bytes", () => {
+    // The defect. 22,725 bytes really did leave the file — 6,313 tokens by the
+    // conversion this used to make — and the request went on carrying all of
+    // it. A saving is a claim about the request, so it is measured there.
+    const measured = forkCutFromRow({
+      ...REAL,
+      apiContextBefore: 200_964,
+      apiContextAfter: 195_000,
+    });
+    assert.equal(measured.tokensRemoved, 5_964);
+    assert.equal(measured.removalKnown, true);
+    assert.notEqual(measured.tokensRemoved, Math.round(22_725 / BYTES_PER_TOKEN));
   });
 
-  it("puts a fork on the same basis a prune is already on", () => {
-    // `BYTES_PER_TOKEN` rather than winnow's own ÷4, deliberately: a fork and a
-    // prune are added together in one figure, and the comparison is only
-    // meaningful if both carry the same estimate. Neither is better; they have
-    // to match.
-    assert.equal(forkCutFromRow(REAL).tokensRemoved, 6_313);
+  it("reads a fork the API grew across as having removed nothing", () => {
+    // Run `3da14af4`, exactly as measured: 200,964 before the cut, 202,117 on
+    // the first request after the resume. The honest reading of a negative is
+    // "the cut removed nothing" — the growth belongs to the next turn, not to
+    // the edit — and never a credit, and never a negative removal that would
+    // flip the sign of everything downstream.
+    const grew = forkCutFromRow({
+      ...REAL,
+      apiContextBefore: 200_964,
+      apiContextAfter: 202_117,
+    });
+    assert.equal(grew.tokensRemoved, 0);
+    assert.equal(grew.removalKnown, true, "a zero that was measured is a finding");
+  });
+
+  it("says unknown, not nothing, for a row with no reading on both sides", () => {
+    // Every fork written before the two columns existed, and any fork whose
+    // resume has not billed a turn yet. Both are $0 on the panel and they are
+    // not the same fact: one is a finished argument about whether the engine
+    // earns its keep, the other is a row still waiting.
+    assert.equal(forkCutFromRow(REAL).removalKnown, false);
+    assert.equal(forkCutFromRow(REAL).tokensRemoved, 0);
+    assert.equal(
+      forkCutFromRow({ ...REAL, apiContextBefore: 200_000 }).removalKnown,
+      false,
+      "one side of a subtraction is not a measurement",
+    );
+    assert.equal(
+      forkCutFromRow({ ...REAL, apiContextAfter: 200_000 }).removalKnown,
+      false,
+    );
+  });
+
+  it("keeps the byte figures out of the netting's removal entirely", () => {
+    // A guard against the fix being undone by a plausible-looking fallback.
+    // Doubling what came out of the file must not move a figure denominated in
+    // requests — if it does, some conversion has crept back in.
+    const small = forkCutFromRow(REAL);
+    const large = forkCutFromRow({ ...REAL, netBytes: 900_000, removedBytes: 950_000 });
+    assert.equal(large.tokensRemoved, small.tokensRemoved);
+    assert.equal(large.removalKnown, small.removalKnown);
   });
 
   it("takes the suffix as it stands, because S is already the pre-cut figure", () => {
@@ -2170,11 +2262,15 @@ describe("forkCutFromRow", () => {
     // read by 18% on this real fork and understating the invalidation with it.
     const cut = forkCutFromRow(REAL);
     assert.equal(cut.tokensBefore, Math.round(122_902 / BYTES_PER_TOKEN));
-    assert.ok(
-      cut.tokensBefore > cut.tokensRemoved,
-      "the suffix contains the cut, so it cannot be smaller than it",
+    // The **byte** figure on both sides of this one. `tokensBefore` and
+    // `tokensAfter` are sizes of conversation, which is the question
+    // `contextTokens` answers everywhere in this app; only `tokensRemoved`
+    // moved onto the API's basis, and mixing the two here is exactly the
+    // subtraction across bases that this issue was about.
+    assert.equal(
+      cut.tokensAfter,
+      cut.tokensBefore - Math.round(22_725 / BYTES_PER_TOKEN),
     );
-    assert.equal(cut.tokensAfter, cut.tokensBefore - cut.tokensRemoved);
   });
 
   it("falls back conservatively for a row written before the column existed", () => {
@@ -2183,7 +2279,7 @@ describe("forkCutFromRow", () => {
     // wrong in on a number that decides whether to keep a feature switched on.
     const old = forkCutFromRow({ ...REAL, suffixBytes: 0 });
     const now = forkCutFromRow(REAL);
-    assert.equal(old.tokensBefore, old.tokensRemoved);
+    assert.equal(old.tokensBefore, Math.round(22_725 / BYTES_PER_TOKEN));
     assert.ok(old.tokensBefore < now.tokensBefore);
   });
 
@@ -2263,5 +2359,59 @@ describe("forkCutFromRow", () => {
       Math.round((90_000 * perToken * 2.0 - cut.tokensBefore * perToken * 0.1) * 1e4) / 1e4,
     );
     assert.ok(net.netUSD < 0, "a fork over a warm cache must be able to report a loss");
+  });
+
+  it("reports a loss for a large fork the API's window never noticed", () => {
+    // The regression this whole change exists for, in the shape the five forks
+    // on this install had. `net_bytes` is large — 63,337 bytes, the biggest of
+    // the five — and the API carried 199,807 tokens before the cut and 205,045
+    // on the first request after the resume. Nothing came out; a cold rewrite
+    // of 183,187 tokens was paid for.
+    //
+    // The old arithmetic credited 17,594 tokens of avoided cache reads for this
+    // and reported a saving. What it must report is a zero saving beside a
+    // charged invalidation — which is to say a loss, which is the only thing
+    // that can ever get an engine switched off.
+    const cut = forkCutFromRow({
+      ...REAL,
+      trigger: "early-end",
+      netBytes: 63_337,
+      removedBytes: 65_221,
+      contextTokensAfter: 183_187,
+      apiContextBefore: 199_807,
+      apiContextAfter: 205_045,
+    });
+    assert.equal(cut.tokensRemoved, 0, "the window did not fall, so nothing came out");
+    assert.equal(cut.removalKnown, true);
+
+    const net = netReceipt(cut, 40, {
+      cacheRead: 16_000,
+      cacheWrite5m: 0,
+      cacheWrite1h: 183_187,
+    });
+    assert.equal(net.cacheSavedUSD, 0, "no credit for a cut that removed nothing");
+    assert.ok(net.invalidationUSD > 1.5, "and the rewrite is still charged in full");
+    assert.ok(net.netUSD < 0, "which is a loss, and has to be reportable as one");
+  });
+
+  it("credits nothing for a fork whose removal was never measured", () => {
+    // Same large `net_bytes`, no reading on either side — every fork written
+    // before the two columns existed, and any fork whose resume has not billed
+    // a turn yet. The saving may not be estimated from the file; it is unknown
+    // until the wire says otherwise, and `removalKnown` is what says so.
+    const cut = forkCutFromRow({
+      ...REAL,
+      trigger: "early-end",
+      netBytes: 63_337,
+      contextTokensAfter: 183_187,
+    });
+    const net = netReceipt(cut, 40, {
+      cacheRead: 16_000,
+      cacheWrite5m: 0,
+      cacheWrite1h: 183_187,
+    });
+    assert.equal(net.removalKnown, false);
+    assert.equal(net.cacheSavedUSD, 0);
+    assert.ok(net.netUSD < 0);
   });
 });

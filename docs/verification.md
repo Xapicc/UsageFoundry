@@ -2187,12 +2187,83 @@ Built and exercised against real transcripts:
   vault root configured* against the harness's throwaway `DATA_DIR`, it is not
   reached by anything on this path, and it was left alone.
 
+- **A written fork removes nothing from the API's window, measured on all five
+  forks this install has ever written (2026-08-28 export, re-derived from the
+  session transcripts under `~/.claude/projects`).** "Before" is the last
+  main-thread `usage` frame in the source session; "after" is the first one the
+  resumed process wrote. Both are `input_tokens + cache_creation_input_tokens +
+  cache_read_input_tokens`, which is exactly what `apiContextTokens` sums.
+
+  | run | `net_bytes` | recorded removed (÷3.6) | API before | API after | measured change | resume's `cache_creation` |
+  |---|---|---|---|---|---|---|
+  | 3da14af4 | 16,839 | 4,678 | 200,964 | 202,117 | **+1,153** | 180,259 |
+  | 07f9e442 | 31,962 | 8,878 | 199,751 | 201,908 | **+2,157** | 178,675 |
+  | 7f361068 | 63,337 | 17,594 | 199,807 | 205,045 | **+5,238** | 183,187 |
+  | fc491479 | 60,911 | 16,920 | 204,471 | 207,102 | **+2,631** | 185,244 |
+  | c939c07a | 35,756 | 9,932 | 281,628 | 285,194 | **+3,566** | 259,881 |
+
+  Recorded removal across the five: 58,002 tokens. Measured change in the API
+  window: **+14,745 tokens**. Nothing came out and five cold rewrites of
+  178k–260k tokens — about $1.80 each at the one-hour class — were paid for.
+
+  The `message`-byte arithmetic itself is not wrong: winnow really did remove
+  17,153 / 32,175 / 65,221 / 62,251 / 36,433 bytes of `message` content. It
+  removed **0** bytes of `toolUseResult` on every one of the five (370,002 →
+  370,002 on `c939c07a`; 371,631, 428,492, 956,077, 359,319 unchanged on the
+  other four), from a uuid-keyed record-by-record diff of each source against
+  its fork. The bytes left the file; they did not leave the request. The
+  in-place engine is not affected and was measured separately: it strips
+  `toolUseResult` too, and its `message`-basis figure of 108,534 tokens on run
+  `115c617d` sat against a measured API fall of 114,350.
+
+  **Assumed, not measured:** that the resumed CLI rebuilding tool results from
+  the untouched `toolUseResult` is *why* the edit does not reach the wire. The
+  measurement that it does not reach the wire is direct on all five pairs; the
+  mechanism is the one structural difference between the two engines and is
+  offered as the most likely cause rather than as a second measurement.
+
+  Acted on 2026-09-07: `fork_attempts.api_context_before` /
+  `api_context_after`, `NettableCut.removalKnown`, and `measuredForkRemoval`
+  feeding `ceilingCut`. See `forkCutFromRow`.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the
 standalone bundle), and are covered by the unit tests above, but the following
 have **not** been exercised against a real CLI. They are the list to work
 through before trusting this unattended:
+
+> **No fork has been written since the API-basis measurement was added.** The
+> two new `fork_attempts` columns, `NettableCut.removalKnown` and
+> `measuredForkRemoval` typecheck, build and are unit-tested at every point
+> whose failure is silent — that a row with a reading on only one side is
+> unknown rather than zero, that a resume which grew reads as having removed
+> nothing rather than as a negative, that the byte columns cannot move
+> `tokensRemoved` at all, that `netReceipt` credits nothing for an unmeasured
+> fork while still charging its rewrite, and that `measuredForkRemoval` floors
+> per row before it means. What has **not** happened is a real
+> `winnow … fork --write` under this build, so nothing has yet confirmed that
+> `apiContextSample` returns the `api` basis at the fork site on a live
+> transcript, or that `IterationResult.firstContextTokens` picks up the resumed
+> cycle's first billed turn rather than a `<synthetic>` zero. Docker is
+> unavailable in the container that wrote this. The list, in order: set
+> `contextPruningEngine` to the fork engine and run to a natural boundary; check
+> the row has both `api_context_before` and `api_context_after`; check the run
+> page prints no saving for it unless the window actually fell; then let a run
+> cross the context ceiling and check the decline line names the measurement
+> rather than saying nothing was worth removing.
+>
+> **The composition stack's re-read after a cut has been driven only through
+> `checkContextCeilings`.** `contextCeilingRace.test.ts` drives the real tick,
+> writes the real interrupt and reads the real `context_compositions` rows, and
+> the case fails without the clear. What it cannot reach is `pruneAtBoundary`'s
+> own clear, on the natural-boundary path, because nothing in this repository
+> runs the run loop. That one is an argument from the code.
+>
+> **The stack's new age line has not been seen rendered.** The copy is pinned in
+> `ContextOccupancy.test.tsx` against `renderToStaticMarkup`, live and finished
+> branches both, and the caption's existing "newest N of M" clause is pinned
+> beside it. Nobody has looked at the pane.
 
 > **The work cycle's taskboard tools have never been exercised against a real
 > CLI.** The whole path added on 2026-09-07 — `taskboardForRuns`, the third

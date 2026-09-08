@@ -6,6 +6,9 @@ import {
   accountedShare,
   compositionRows,
 } from "./ContextOccupancy";
+// The component's own formatter, so a case about a clock time cannot drift from
+// what is rendered by asserting against a second spelling of the same instant.
+import { fmtClock } from "../lib/format";
 import type {
   ContextCheckDTO,
   ContextCompositionDTO,
@@ -709,4 +712,55 @@ test("the stack is not sighted-only", () => {
   // `kind` reaches a reader here and nowhere else: no fill can carry whether a
   // figure was read, subtracted or estimated.
   assert.match(html, /residual/);
+});
+
+test("the stack dates its own reading, with no band picked", () => {
+  // The pane's one age line — "read 40s ago" — is `lastCheck`, and it belongs
+  // to the figure and the sparkline above. The stack is paced differently: by
+  // distance, or by a cut. So the two are the same age only by coincidence, and
+  // six current-looking figures under someone else's timestamp is the defect.
+  // The age used to exist only inside `CompositionDetail`, behind a click that
+  // no reader has made on first sight.
+  const html = render(
+    series({
+      composition: [reading({ ts: NOW - 14 * 60_000 })],
+      compositionCount: 1,
+      compositionAbsence: null,
+    }),
+  );
+  assert.doesNotMatch(html, /at the one reading/, "no band is picked");
+  assert.match(html, /Shape taken 14m ago/);
+  // The verb is what separates it from the line above, which says "read".
+  assert.match(html, /read 0s ago|read just now|read now/);
+});
+
+test("a finished run's shape is given a clock time, not an age", () => {
+  // `CompositionDetail`'s existing split, and for its reason: a relative age on
+  // a series that will never gain another point reads as a stalled poll.
+  const ts = NOW - 14 * 60_000;
+  const html = render(
+    series({
+      composition: [reading({ ts })],
+      compositionCount: 1,
+      compositionAbsence: null,
+    }),
+    false,
+  );
+  assert.match(html, new RegExp(`Shape taken at ${fmtClock(ts)}`));
+  assert.doesNotMatch(html, /Shape taken 14m ago/);
+});
+
+test("the tail clause still says which end of a longer series is drawn", () => {
+  // The caption used to be this clause alone and rendered nothing without it.
+  // It now always carries the age, so the clause has to survive beside it
+  // rather than be replaced by it.
+  const html = render(
+    series({
+      composition: [reading()],
+      compositionCount: 40,
+      compositionAbsence: null,
+    }),
+  );
+  assert.match(html, /Shape taken/);
+  assert.match(html, /The newest 1 of 40 readings/);
 });

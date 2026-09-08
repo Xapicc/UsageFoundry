@@ -527,17 +527,42 @@ describe("contextOccupancy", () => {
     // that grew and was never cut, which is the opposite of what happened.
     const file = transcript("fork-marks.jsonl", [turn("m1", { input: 10, read: 90_000 })]);
     pruningMod.sampleContext("r1", 1, file);
-    insertFork({ ts: Date.now(), netBytes: 36_000, trigger: "boundary" });
+    insertFork({
+      ts: Date.now(),
+      netBytes: 36_000,
+      trigger: "boundary",
+      apiBefore: 200_000,
+      apiAfter: 194_500,
+    });
 
     const view = pruningMod.contextOccupancy("r1")!;
     assert.equal(view.prunes.length, 1);
     assert.equal(view.prunes[0].trigger, "boundary");
-    // 36,000 net bytes over `BYTES_PER_TOKEN`, which is 3.6 — the one basis a
-    // fork is ever converted on, and the one `forkCutFromRow` prices it on. The
-    // bytes reaching the wire as if they were a receipt's `tokens_removed`
-    // would overstate the mark 3.6-fold and nothing downstream could tell.
-    assert.equal(view.prunes[0].tokensRemoved, 10_000);
+    // The API window's own fall, and never `net_bytes` in any conversion. The
+    // mark used to be 36,000 bytes over 3.6, which said 10,000 tokens came out
+    // of a request that had not moved — `winnow fork` leaves `toolUseResult` in
+    // place and the resumed CLI rebuilds the tool results from it, so bytes
+    // leave the file without leaving the wire. Both figures are on the row here
+    // and they disagree, so the assertion can tell which one was read.
+    assert.equal(view.prunes[0].tokensRemoved, 5_500);
+    assert.notEqual(view.prunes[0].tokensRemoved, Math.round(36_000 / 3.6));
     assert.equal(view.pruneCount, 1);
+  });
+
+  it("marks an unmeasured fork without inventing a size for it", () => {
+    // A fork whose resume has not billed a turn yet, and every fork written
+    // before the API columns existed. The cut happened and the mark belongs on
+    // the axis; what it removed from the request is unknown, and the bytes
+    // beside it are not an answer to that question in any unit.
+    const file = transcript("fork-unmeasured.jsonl", [
+      turn("m1", { input: 10, read: 90_000 }),
+    ]);
+    pruningMod.sampleContext("r1", 1, file);
+    insertFork({ ts: Date.now(), netBytes: 36_000, trigger: "boundary" });
+
+    const view = pruningMod.contextOccupancy("r1")!;
+    assert.equal(view.prunes.length, 1, "the cut still happened, so it is still marked");
+    assert.equal(view.prunes[0].tokensRemoved, 0);
   });
 
   it("counts both engines' cuts and puts them on one axis in order", async () => {
@@ -604,14 +629,22 @@ function insertFork(row: {
   netBytes: number;
   trigger: string | null;
   written?: number;
+  /**
+   * The API window either side of the cut. Omitted is a fork nobody measured —
+   * every row written before the two columns existed — and the mark such a row
+   * draws must not be derived from the bytes beside it.
+   */
+  apiBefore?: number;
+  apiAfter?: number;
 }): void {
   dbMod
     .db()
     .prepare(
       `INSERT INTO fork_attempts
          (ts, run_id, new_session_id, written, removed_bytes, net_bytes,
-          suffix_bytes, trigger, context_tokens_after)
-       VALUES (?, 'r1', 's-forked', ?, ?, ?, 300000, ?, 286894)`,
+          suffix_bytes, trigger, context_tokens_after,
+          api_context_before, api_context_after)
+       VALUES (?, 'r1', 's-forked', ?, ?, ?, 300000, ?, 286894, ?, ?)`,
     )
     .run(
       row.ts,
@@ -622,5 +655,7 @@ function insertFork(row: {
       Math.round(row.netBytes * 1.2),
       row.netBytes,
       row.trigger,
+      row.apiBefore ?? null,
+      row.apiAfter ?? null,
     );
 }

@@ -626,6 +626,17 @@ const LEGEND_ROW: Record<"picked" | "idle", string> = {
  * selection, where six panels each opening under their own row and closing each
  * other is the accordion `docs/agent/conventions.md` forbids. So the legend rows
  * are `aria-pressed` toggles rather than `aria-expanded` headers.
+ *
+ * ## Why the stack dates itself
+ *
+ * The pane has one age line and it is not this reading's: "read 40s ago" is
+ * `lastCheck`, the guard tick, which paces the figure and the sparkline. This
+ * reading is paced by distance instead — 40,000 tokens of movement, or a cut —
+ * so the two coincide only by accident and this one is routinely many minutes
+ * older. Six current-looking figures under someone else's timestamp is a dated
+ * reading rendered as an undated one, and the age used to be reachable only
+ * inside `CompositionDetail`, behind a click no reader makes on first sight.
+ * "Shape taken" rather than "read": the verb is what tells the two apart.
  */
 function CompositionStack({
   readings,
@@ -895,11 +906,14 @@ function CompositionStack({
         </Table>
       </div>
 
-      {readingCount > readings.length && (
-        <p className="mt-1.5 max-w-[68ch] text-xs leading-snug text-ink-muted">
-          The newest {readings.length} of {readingCount} readings.
-        </p>
-      )}
+      {/* Its own age and not the pane's; see "Why the stack dates itself". */}
+      <p className="mt-1.5 max-w-[68ch] text-xs leading-snug text-ink-muted">
+        Shape taken{" "}
+        {live ? fmtRelative(latest.ts, now) : `at ${fmtClock(latest.ts)}`}.
+        {readingCount > readings.length && (
+          <> The newest {readings.length} of {readingCount} readings.</>
+        )}
+      </p>
     </>
   );
 }
