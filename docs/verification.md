@@ -535,7 +535,7 @@ Built and exercised against real transcripts:
   What that leaves unchecked: the **amd64** branch of the arch case and its
   digest, since the build ran on Apple silicon; and a real agent mid-cycle
   building a Go repository, as opposed to a shell in the same image.
-- **A sandbox that could not start, on this install, unnoticed for thirteen
+- **A sandbox that could not start, on this install, unnoticed for fifteen
   hours.** Not a probe: a production failure, and the only end-to-end reading of
   `UF_SANDBOX=1` anything here has. `UF_SANDBOX=1` and
   `UF_SANDBOX_ENFORCEMENT=refuse` were set, `docker-entrypoint.sh` wrote
@@ -4858,7 +4858,7 @@ through before trusting this unattended:
   `sandboxRefusal` and `sandboxArrangement` are unit-tested in both directions
   and `npm run typecheck`, `npm test` and `next build` all pass. One provenance
   changed on 2026-08-19 and only one: the three `bwrap:` markers were read off
-  this install's own `run_events` after the thirteen-hour failure in *Verified*
+  this install's own `run_events` after the fifteen-hour failure in *Verified*
   above, so those three are transcribed rather than guessed. The CLI's own six
   were **read out of the pinned binary with `strings` and have still never been
   executed** (`proposals/Sandboxing/10-validation.md`, "What this validation did
@@ -4897,7 +4897,7 @@ through before trusting this unattended:
   **Whether the event reaches the two places it is supposed to.** The emit is on
   the same path as `tool_error` and the rendering is a case in the same switch,
   so both are ordinary — but neither has been watched, and the one chance this
-  install had at it went by: across the thirteen-hour window above, `run_events`
+  install had at it went by: across the fifteen-hour window above, `run_events`
   took 484 `tool_error` rows and **zero** `sandbox` rows. That is a matcher with
   no `bwrap:` needle in it at the time rather than an emit path that failed, and
   the three needles are what closes it *next* time — but no `sandbox` row has
@@ -5072,7 +5072,7 @@ through before trusting this unattended:
   **What the boot line and the Settings row say once there is something to
   report.** Only the `none` reading has ever been *read*, which is every stock
   install and is why it is the one that had to be right. An install with
-  `/etc/claude-code/managed-settings.json` present has since run for thirteen
+  `/etc/claude-code/managed-settings.json` present has since run for fifteen
   hours (*Verified*), so the other readings were reachable — but nobody recorded
   what its boot line or its Settings row said, which leaves this exactly as
   unmeasured as it was and is the cheapest of the gaps here to close. The other
