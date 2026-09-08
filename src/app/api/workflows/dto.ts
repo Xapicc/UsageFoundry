@@ -140,6 +140,7 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
     spentUSD: instance.spend.spentUSD,
     spentGuardUSD: instance.spend.spentGuardUSD,
     spentUnmeasured: instance.spend.unmeasured,
+    spentSubjects: instance.spend.subjects,
     nodes,
     blocks,
   };

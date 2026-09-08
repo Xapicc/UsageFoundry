@@ -8,6 +8,8 @@ import {
   blockSpendReading,
   blockTurnSpend,
   bootBlockPlan,
+  memberSpendReading,
+  sumMemberSpend,
   emittedFolderRefusal,
   haltPlan,
   instanceStatus,
@@ -28,6 +30,7 @@ import {
   type LoopDecision,
   type LoopPass,
   type LoopPassInput,
+  type MemberSpendRow,
   type WorkflowEdge,
   type WorkflowGraph,
   type WorkflowInstanceStatus,
@@ -35,6 +38,7 @@ import {
   type WorkflowNode,
 } from "./workflows";
 import { topologicalOrder, type RunStatus } from "./orchestrator";
+import type { RunProviderDTO } from "./apiTypes";
 import type { TurnResult } from "./chat";
 import type { RunGuards } from "./settings";
 import type { RunTemplate } from "./templates";
@@ -2137,10 +2141,15 @@ describe("blockTurnSpend — a turn's cost, measured apart from estimated", () =
  * exists to prevent. Both typecheck and neither shows on the page.
  */
 describe("addBlockSpend — which figure a block's columns may reach", () => {
-  const noMembers = { spentUSD: 0, spentGuardUSD: 0, unmeasured: 0 };
+  const noMembers = { spentUSD: 0, spentGuardUSD: 0, subjects: 0, unmeasured: 0 };
 
   it("puts a killed turn's estimate in the guard's figure and not the shown one", () => {
-    const spend = addBlockSpend(noMembers, { spent: 0, est: 0.42, unreported: 1 });
+    const spend = addBlockSpend(noMembers, {
+      spent: 0,
+      est: 0.42,
+      unreported: 1,
+      paying: 1,
+    });
     assert.equal(spend.spentUSD, 0, "nothing measured, so nothing to show");
     assert.ok(
       spend.spentGuardUSD > spend.spentUSD,
@@ -2151,7 +2160,12 @@ describe("addBlockSpend — which figure a block's columns may reach", () => {
   });
 
   it("puts a reported cost in both figures", () => {
-    const spend = addBlockSpend(noMembers, { spent: 1.25, est: 0, unreported: 0 });
+    const spend = addBlockSpend(noMembers, {
+      spent: 1.25,
+      est: 0,
+      unreported: 0,
+      paying: 1,
+    });
     assert.equal(spend.spentUSD, 1.25);
     assert.equal(spend.spentGuardUSD, 1.25);
     assert.equal(spend.unmeasured, 0);
@@ -2159,10 +2173,80 @@ describe("addBlockSpend — which figure a block's columns may reach", () => {
 
   it("adds to what the members already spent rather than replacing it", () => {
     const spend = addBlockSpend(
-      { spentUSD: 2, spentGuardUSD: 3, unmeasured: 1 },
-      { spent: 1, est: 0.5, unreported: 2 },
+      { spentUSD: 2, spentGuardUSD: 3, subjects: 4, unmeasured: 1 },
+      { spent: 1, est: 0.5, unreported: 2, paying: 3 },
     );
-    assert.deepEqual(spend, { spentUSD: 3, spentGuardUSD: 4.5, unmeasured: 3 });
+    assert.deepEqual(spend, {
+      spentUSD: 3,
+      spentGuardUSD: 4.5,
+      subjects: 7,
+      unmeasured: 3,
+    });
+  });
+});
+
+/**
+ * The same rule on the other half of an instance: a member whose CLI reports no
+ * cost at all.
+ *
+ * `codex exec` returns token counts and no money, so the run loop deliberately
+ * withholds its `+=` and `runs.spent_usd` stays at 0 — a null in disguise, and
+ * every other surface in this app already refuses to print it: the runs list
+ * draws `—`, the run page says the provider does not report spend, the MCP
+ * tools answer `null`. `sumMemberSpend` read the column raw, so an instance of
+ * Codex members reported `$0.00` as a total it had measured, and the count is
+ * the only thing that separates that from a graph which genuinely cost nothing.
+ */
+describe("sumMemberSpend — a member whose provider reports no cost", () => {
+  const member = (
+    provider: RunProviderDTO | null,
+    spent: number,
+    est = 0,
+  ): MemberSpendRow => ({
+    id: `run-${provider}-${spent}`,
+    status: "completed",
+    provider,
+    spent,
+    est,
+    cycleStartedAt: null,
+  });
+
+  it("counts a Codex member as unmeasured rather than adding its zero", () => {
+    const spend = sumMemberSpend([member("claude", 2), member("codex", 0)]);
+    assert.equal(spend.spentUSD, 2, "only the member that reported is in the total");
+    assert.equal(spend.spentGuardUSD, 2, "and the guard has nothing more to add");
+    assert.equal(spend.unmeasured, 1, "the Codex member is flagged, not summed");
+    assert.equal(spend.subjects, 2);
+  });
+
+  it("tells that apart from two members that genuinely cost nothing", () => {
+    // The defect in one line: both instances used to return 2.00 with no way to
+    // ask which of them had been measured.
+    const spend = sumMemberSpend([member("claude", 2), member("claude", 0)]);
+    assert.equal(spend.spentUSD, 2);
+    assert.equal(spend.unmeasured, 0);
+  });
+
+  it("treats a row from before the column as the Claude run it must be", () => {
+    const spend = sumMemberSpend([member(null, 1.5, 0.25)]);
+    assert.equal(spend.spentUSD, 1.5);
+    assert.equal(spend.spentGuardUSD, 1.75, "its estimate still reaches the guard");
+    assert.equal(spend.unmeasured, 0);
+  });
+});
+
+describe("memberSpendReading — what a member's Spent cell may claim", () => {
+  it("has no figure for a provider that reports none", () => {
+    assert.equal(memberSpendReading({ provider: "codex", spent_usd: 0 }), null);
+  });
+
+  it("keeps a measured zero from a provider that does", () => {
+    assert.equal(memberSpendReading({ provider: "claude", spent_usd: 0 }), 0);
+    assert.equal(memberSpendReading({ provider: null, spent_usd: 0 }), 0);
+  });
+
+  it("keeps a measured figure", () => {
+    assert.equal(memberSpendReading({ provider: "claude", spent_usd: 2 }), 2);
   });
 });
 

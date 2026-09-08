@@ -90,6 +90,8 @@ import {
   MAX_LOOP_PASSES,
   MAX_WORKFLOW_NAME,
   MAX_WORKFLOW_NODES,
+  providerReportsSpend,
+  type RunProviderDTO,
   type WorkflowNodeKind,
 } from "./apiTypes";
 
@@ -1832,9 +1834,15 @@ interface InstanceRow {
  * still name a cycle that ended hours ago.
  */
 /** What one member row contributes to a spend figure, and nothing else. */
-interface MemberSpendRow {
+export interface MemberSpendRow {
   id: string;
   status: string;
+  /**
+   * Which CLI this member ran as, because `spent` alone cannot say whether its
+   * zero is a reading. Null is a row that predates the column, and those are
+   * all Claude runs by construction.
+   */
+  provider: RunProviderDTO | null;
   spent: number;
   est: number;
   cycleStartedAt: number | null;
@@ -1850,6 +1858,13 @@ interface MemberSpendRow {
  * without this count those two states are one number.
  */
 export interface InstanceSpend extends InstanceProgress {
+  /**
+   * Members and blocks that could have reported a cost at all — the
+   * denominator, so a count of gaps can be read as coverage rather than as a
+   * bare number the operator has nothing to size against.
+   */
+  subjects: number;
+  /** How many of those reported none. */
   unmeasured: number;
 }
 
@@ -1861,6 +1876,8 @@ export interface BlockSpendTotals {
   est: number;
   /** How many blocks have a turn that ended without reporting a cost. */
   unreported: number;
+  /** Blocks that pay for a turn of their own, reported or not. */
+  paying: number;
 }
 
 /**
@@ -1880,6 +1897,7 @@ export function addBlockSpend(
   return {
     spentUSD: members.spentUSD + blocks.spent,
     spentGuardUSD: members.spentGuardUSD + blocks.spent + blocks.est,
+    subjects: members.subjects + blocks.paying,
     unmeasured: members.unmeasured + blocks.unreported,
   };
 }
@@ -1901,6 +1919,25 @@ export function blockSpendReading(block: {
 }
 
 /**
+ * What a member's Spent cell may claim, from the row behind it.
+ *
+ * `blockSpendReading` one column over, and the same rule: `runs.spent_usd`
+ * holds 0 for a provider whose CLI reports no cost, because the run loop
+ * withholds its `+=` rather than adding an unmeasured zero, and every other
+ * surface in this app — the runs list, the run page, the MCP tools — already
+ * answers `null` for it. This page was the last one formatting it as `$0.00`.
+ *
+ * A null `provider` is a row that predates the column and is a Claude run by
+ * construction, which is `providerReportsSpend`'s own reading of it.
+ */
+export function memberSpendReading(run: {
+  provider: RunProviderDTO | null;
+  spent_usd: number;
+}): number | null {
+  return providerReportsSpend(run.provider) ? run.spent_usd : null;
+}
+
+/**
  * The two figures a set of member runs adds up to.
  *
  * One summation rather than two, because a loop block asks the same question of
@@ -1908,21 +1945,34 @@ export function blockSpendReading(block: {
  * "which of these three readings goes in which figure" is a second chance to put
  * a `*Guard*` reading somewhere it must never be.
  */
-function sumMemberSpend(rows: readonly MemberSpendRow[]): InstanceSpend {
+export function sumMemberSpend(rows: readonly MemberSpendRow[]): InstanceSpend {
   let spentUSD = 0;
   let spentGuardUSD = 0;
+  let unmeasured = 0;
   for (const row of rows) {
+    // Skipped rather than added, and the arithmetic being identical is the
+    // whole reason this has to be explicit. `codex exec` reports token counts
+    // and no money, so the run loop withholds its `+=` and `runs.spent_usd`
+    // stays at 0 — a null in disguise, which every other surface already
+    // refuses to print as `$0.00`. Adding it here would put that null into two
+    // figures the page calls a total, and counting it is what lets the page say
+    // the total is missing a member instead.
+    if (!providerReportsSpend(row.provider)) {
+      unmeasured += 1;
+      continue;
+    }
     spentUSD += row.spent;
     spentGuardUSD += row.spent + row.est;
     if (row.status === "running" && row.cycleStartedAt !== null) {
       spentGuardUSD += telemetrySpendSince(row.id, row.cycleStartedAt).costUSD;
     }
   }
-  return { spentUSD, spentGuardUSD, unmeasured: 0 };
+  return { spentUSD, spentGuardUSD, subjects: rows.length, unmeasured };
 }
 
 const MEMBER_SPEND_COLUMNS =
-  `SELECT r.id AS id, r.status AS status, r.spent_usd AS spent,
+  `SELECT r.id AS id, r.status AS status, r.provider AS provider,
+          r.spent_usd AS spent,
           r.spent_usd_est AS est, r.active_started_at AS cycleStartedAt
      FROM workflow_instance_runs w
      JOIN runs r ON r.id = w.run_id`;
@@ -1956,7 +2006,14 @@ export function instanceSpend(instanceId: string): InstanceSpend {
       `SELECT COALESCE(SUM(cost_usd), 0) AS spent,
               COALESCE(SUM(cost_usd_est), 0) AS est,
               COALESCE(SUM(CASE WHEN cost_unreported > 0 THEN 1 ELSE 0 END), 0)
-                AS unreported
+                AS unreported,
+              -- The two kinds that pay a model for a turn of their own, which
+              -- is the same list the Spent column draws a figure for. A loop
+              -- block spends nothing — every pass is a run, counted above — so
+              -- including it would size the coverage against blocks that were
+              -- never going to report anything.
+              COALESCE(SUM(CASE WHEN kind IN ('orchestrator', 'merge')
+                                THEN 1 ELSE 0 END), 0) AS paying
          FROM workflow_instance_blocks WHERE instance_id = ?`,
     )
     .get(instanceId) as BlockSpendTotals;
@@ -5485,7 +5542,7 @@ export function runStateOf(runId: string): {
   startedAt: number | null;
   mountLabel: string | null;
   relPath: string;
-  spentUSD: number;
+  spentUSD: number | null;
 } | null {
   const run = getRun(runId);
   if (!run) return null;
@@ -5499,6 +5556,6 @@ export function runStateOf(runId: string): {
     startedAt: run.started_at,
     mountLabel,
     relPath,
-    spentUSD: run.spent_usd,
+    spentUSD: memberSpendReading(run),
   };
 }

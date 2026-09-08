@@ -1885,7 +1885,12 @@ export interface WorkflowInstanceNodeDTO {
     /** Null for a mount that has since been removed; `relPath` is then absolute. */
     mountLabel: string | null;
     relPath: string;
-    spentUSD: number;
+    /**
+     * Null for a member spawned as a provider that reports no cost — see
+     * `providerReportsSpend`. `runs.spent_usd` holds 0 for those and it is a
+     * null in disguise; the cell draws `—`.
+     */
+    spentUSD: number | null;
   } | null;
   /** Node ids this block was told to start after, from the instance's graph. */
   waitsFor: string[];
@@ -2040,6 +2045,12 @@ export interface WorkflowInstanceDTO {
    * one; a graph that spent nothing still reads 0 here.
    */
   spentUnmeasured: number;
+  /**
+   * How many members and blocks could have reported a cost at all. The
+   * denominator for the one above, so "three reported nothing" can be read as
+   * coverage rather than as a number with nothing to size it against.
+   */
+  spentSubjects: number;
   nodes: WorkflowInstanceNodeDTO[];
   /** Blocks that are not runs: orchestrator turns, and blocks never created. */
   blocks: WorkflowInstanceBlockDTO[];

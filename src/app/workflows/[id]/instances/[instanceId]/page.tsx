@@ -187,7 +187,10 @@ function RunRows({
               {n.run ? fmtCycles(n.run.iterations, n.run.maxIterations) : "—"}
             </Td>
             <Td num label="Spent" className="whitespace-nowrap align-top">
-              {n.run ? fmtUSD(n.run.spentUSD) : "—"}
+              {/* Null is a provider that reports no cost, not a member that
+                  spent nothing — the runs list draws the same dash for the
+                  same reason. */}
+              {n.run && n.run.spentUSD !== null ? fmtUSD(n.run.spentUSD) : "—"}
             </Td>
             <Td
               num
@@ -623,9 +626,10 @@ export default function WorkflowInstancePage() {
         )}
         {instance.spentUnmeasured > 0 && (
           <Hint>
-            {instance.spentUnmeasured} block(s) reported no cost — a turn that
-            died before the CLI could say — so what they spent is unknown rather
-            than nothing, and only the guard&rsquo;s figure prices it
+            Money covers {instance.spentSubjects - instance.spentUnmeasured} of{" "}
+            {instance.spentSubjects} block(s) — the rest reported no cost, because a turn
+            died before the CLI could say or the provider never says, so what
+            they spent is unknown rather than nothing
           </Hint>
         )}
       </Card>
