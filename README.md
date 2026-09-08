@@ -276,9 +276,14 @@ line**, beside the existing `[usagefoundry] …` prose:
 {"ts":"2026-08-14T09:12:03.114Z","level":"info","event":"run.cycle_finished","run_id":"…","subtype":"success","cost_usd":0.42,"duration_ms":183422}
 ```
 
-Ten events in all: `run.status`, `run.cycle_started`, `run.cycle_finished`,
-`run.guard_tripped`, `run.error`, `run.sandbox_refusal`, `sweep.failed`,
-`live_guard_tick.failed`, `boot.reconciled`, `http.mutation`. The
+Eleven events in all: `run.status`, `run.cycle_started`, `run.cycle_finished`,
+`run.guard_tripped`, `run.guard_unreadable`, `run.error`, `run.sandbox_refusal`,
+`sweep.failed`, `live_guard_tick.failed`, `boot.reconciled`, `http.mutation`.
+`run.guard_unreadable` is the guard that refused nothing — a fraction guard with
+no reading to measure against, which the run is not ended on — and it is `info`
+under its own name rather than a `run.guard_tripped` at `warn`, so an alert on
+guards firing is not an alert on the provider's percentage being unavailable.
+The
 noisy kinds — the agent's own output, every tool call, every log line — are
 deliberately **not** on stdout; they are in `run_events` and on the run page,
 where they are readable. `run.sandbox_refusal` is the one tool failure that
