@@ -5542,6 +5542,20 @@ export function sandboxArgsFor(scope: SandboxScope): string[] {
  *   files as the agent crashing. Withheld, a child keeps the default it has
  *   always had.
  *
+ *   `__NEXT_*` — this process is a Next standalone server, and Next hands its
+ *   own resolved configuration to the children it spawns through
+ *   `__NEXT_PRIVATE_STANDALONE_CONFIG`. Inherited by an agent, `loadConfig()`
+ *   returns that JSON verbatim and never reads the repository's own
+ *   `next.config.ts`; a JSON round trip cannot carry a function, so
+ *   `generateBuildId` is absent and `next build` dies in
+ *   `generate-build-id.js` with `TypeError: generate is not a function` — an
+ *   error that names nothing an agent could act on, which is why this cost two
+ *   runs before it was found. Measured against a scratch Next app with no
+ *   `next.config.*` at all, so it is every Next repository an agent is pointed
+ *   at rather than one of them. The whole prefix rather than the one name, on
+ *   the `UF_` rule above: these are Next's private channel to its own
+ *   children, and nothing this app spawns is one of them.
+ *
  *   `OPENAI_API_KEY`, `CODEX_API_KEY` — a second provider's credential, which
  *   no child this app spawns has any use for: all five of them are `CLAUDE_BIN`.
  *   Withheld because a denylist fails open, and this one fails open on a key an
@@ -5630,6 +5644,7 @@ export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
     if (
       key.startsWith("UF_") ||
       key.startsWith("OTEL_") ||
+      key.startsWith("__NEXT_") ||
       key === "ANTHROPIC_ADMIN_KEY" ||
       key === "OPENAI_API_KEY" ||
       key === "CODEX_API_KEY" ||

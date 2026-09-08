@@ -3393,6 +3393,7 @@ function chatEnv(): NodeJS.ProcessEnv {
     if (
       key.startsWith("UF_") ||
       key.startsWith("OTEL_") ||
+      key.startsWith("__NEXT_") ||
       key === "ANTHROPIC_ADMIN_KEY" ||
       key === "OPENAI_API_KEY" ||
       key === "CODEX_API_KEY" ||

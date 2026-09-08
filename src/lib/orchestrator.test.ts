@@ -4168,6 +4168,40 @@ describe("childEnv — a credential class the app has no use for", () => {
   });
 });
 
+describe("childEnv — Next's private channel to its own children", () => {
+  // This process is a Next standalone server, so `__NEXT_PRIVATE_STANDALONE_CONFIG`
+  // is set on it in production and carries *this* app's resolved config.
+  // Inherited, `loadConfig()` in the child returns that JSON verbatim instead
+  // of reading the repository's `next.config.ts`, and `next build` dies on the
+  // `generateBuildId` a JSON round trip could not carry — in every Next
+  // repository an agent is given, wearing an error that names none of this.
+  // Pinned because nothing in this app reads the variable: if the strip goes,
+  // the only thing that reports it is an agent losing an hour to a build.
+  const previous = process.env.__NEXT_PRIVATE_STANDALONE_CONFIG;
+  after(() => {
+    if (previous === undefined) delete process.env.__NEXT_PRIVATE_STANDALONE_CONFIG;
+    else process.env.__NEXT_PRIVATE_STANDALONE_CONFIG = previous;
+  });
+
+  it("withholds this server's own Next config from a work cycle", () => {
+    // Set on this process rather than passed in, for the reason the sibling
+    // above gives: reading `process.env` is the whole of what the function does.
+    process.env.__NEXT_PRIVATE_STANDALONE_CONFIG = JSON.stringify({
+      output: "standalone",
+      outputFileTracingRoot: "/app",
+    });
+    const env = childEnv();
+    assert.equal(env.__NEXT_PRIVATE_STANDALONE_CONFIG, undefined);
+    for (const [key, value] of Object.entries(env)) {
+      assert.equal(
+        value?.includes("outputFileTracingRoot"),
+        false,
+        `${key} carries this server's Next config under another name`,
+      );
+    }
+  });
+});
+
 describe("telemetryEnv — what the exporter authenticates with", () => {
   // The app's master credential used to be here, as
   // `OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer $UF_AUTH_TOKEN`, merged
