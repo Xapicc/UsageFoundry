@@ -328,6 +328,26 @@ export interface PruneOutcome {
 
 export type PruneResult =
   | { kind: "pruned"; outcome: PruneOutcome }
+  /**
+   * The child rewrote the transcript and no prompt tokens came out of it.
+   *
+   * Its own kind because the two questions a prune answers are separate and were
+   * being answered by one subtraction. `contextTokens` is deliberately narrow —
+   * it sums `JSON.stringify(message)` and nothing else — and winnow demonstrably
+   * edits records outside `message`: every record surviving a prune on this
+   * install lost its `version`, `gitBranch` and `userType` keys with `message`
+   * byte-identical, 461 of them on one session. A rewrite of that shape earns
+   * nothing and still breaks the cached prefix, so the next `--resume` pays a
+   * full cache write — ~$1.80 on this install — and on an `early-end` trigger a
+   * whole work cycle was spent manufacturing the boundary as well.
+   *
+   * `netReceipt` can only charge an invalidation against a `prune_receipts` row,
+   * so folding this into `nothing` dropped exactly the cuts that earned nothing
+   * and kept the ones that earned something. The bias is one-directional and it
+   * flatters the install's own net figure, which is the one number this feature
+   * exists to report honestly.
+   */
+  | { kind: "rewritten"; outcome: PruneOutcome }
   | { kind: "nothing"; tokensBefore: number }
   | { kind: "unavailable"; reason: string }
   | { kind: "failed"; reason: string };
@@ -1495,6 +1515,7 @@ export async function pruneTranscript(
   // leaked past that filter on the install this was measured on, against 53
   // receipts.
   const backupsBefore = listBackups(transcriptPath);
+  const stampBefore = transcriptStamp(transcriptPath);
 
   const startedAt = Date.now();
   const run = await spawnChild(transcriptPath, tier);
@@ -1513,12 +1534,21 @@ export async function pruneTranscript(
 
   if (!run.ok) return { kind: "failed", reason: run.reason };
 
+  const stampAfter = transcriptStamp(transcriptPath);
   const tokensAfter = contextTokens(transcriptPath);
   const tokensRemoved = Math.max(0, tokensBefore - tokensAfter);
-  if (tokensRemoved === 0) return { kind: "nothing", tokensBefore };
+
+  // Two questions, and they are not the same question. "Did anything leave the
+  // prompt" is the subtraction; "was the file rewritten" is the pair of stamps.
+  // A child that answered yes to the second and no to the first still broke the
+  // cached prefix, and the cost of that lands nowhere unless a receipt carries
+  // it.
+  const rewritten =
+    stampBefore !== null && stampAfter !== null && stampBefore !== stampAfter;
+  if (tokensRemoved === 0 && !rewritten) return { kind: "nothing", tokensBefore };
 
   return {
-    kind: "pruned",
+    kind: tokensRemoved === 0 ? "rewritten" : "pruned",
     outcome: {
       tier,
       tokensBefore,
@@ -3391,6 +3421,31 @@ export function markForkResumed(
       .run(resumed ? 1 : 0, apiContextAfter, rowId);
   } catch (err) {
     noteBookkeepingFailure("markForkResumed", err);
+  }
+}
+
+/**
+ * Enough of a transcript's identity to tell whether something replaced it.
+ *
+ * The inode carries it, and that is why this is not a size check: winnow saves
+ * through a temporary file and `os.replace`, so a transcript that was rewritten
+ * is a *different* inode however few bytes moved. `size` and `mtimeMs` ride
+ * along for a build that one day writes in place; neither could settle it alone,
+ * since an edit outside `message` can leave the length untouched and the
+ * `~/.claude` bind mount records whole seconds, which a fast prune fits inside.
+ *
+ * `null` when the file could not be stat'ed. A reading missing at one end cannot
+ * answer the question, and the caller reads that as "no rewrite" rather than
+ * inventing a cost — by the time this is reached `contextTokens` has already
+ * read the file, so a failure here means it has gone, which the token difference
+ * reports as a prune of everything.
+ */
+function transcriptStamp(transcriptPath: string): string | null {
+  try {
+    const stat = fs.statSync(transcriptPath);
+    return `${stat.ino}:${stat.size}:${stat.mtimeMs}`;
+  } catch {
+    return null;
   }
 }
 

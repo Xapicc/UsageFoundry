@@ -6359,6 +6359,26 @@ async function prune(
       recordPruneDecision(id, trigger, "legacy", "cut");
       return result.outcome;
     }
+    case "rewritten": {
+      // A receipt with `tokens_removed = 0`, and it has to be written from here:
+      // `netReceipt` can only charge an invalidation against a row, so a rewrite
+      // that earned nothing had its whole cost fall through the floor while the
+      // rewrites that earned something kept theirs. That drops exactly the cuts
+      // which lose money, in one direction, out of the figure this feature
+      // exists to report.
+      recordPrune(id, trigger, result.outcome, getRun(id)?.model ?? null);
+      log(
+        id,
+        `Nothing worth removing from this run's conversation, but the ` +
+          `transcript was rewritten, so the next request pays a full cache write.`,
+      );
+      recordPruneDecision(id, trigger, "legacy", "nothing");
+      // The outcome and not `null`, because the caller reads a null as a
+      // boundary nothing touched and files the resume after it as a *clean*
+      // one — the control group `netReceipt` prices every boundary prune
+      // against. This resume is not clean: the prefix it reads was replaced.
+      return result.outcome;
+    }
     case "nothing":
       // A result and not an absence, winnow's own rule for its hook lines: a
       // cycle whose conversation held nothing worth removing has to be

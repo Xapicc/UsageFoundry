@@ -106,6 +106,31 @@ const backupsIn = (transcript: string) =>
 
 const always = () => true;
 
+/**
+ * A rewrite that touches only what `contextTokens` cannot see.
+ *
+ * Through a temporary file and a rename, because that is what winnow's
+ * `save_messages` does — `os.replace` over a temp — and the inode moving is what
+ * the app reads the rewrite off. The keys dropped are the ones measured going
+ * missing from every record surviving a prune on this install: `message` is
+ * byte-identical, so not one token leaves the prompt.
+ */
+function rewriteOutsideMessage(transcript: string): void {
+  const rewritten = fs
+    .readFileSync(transcript, "utf8")
+    .split("\n")
+    .map((line) => {
+      const parsed = JSON.parse(line) as Record<string, unknown>;
+      delete parsed.version;
+      delete parsed.gitBranch;
+      return JSON.stringify(parsed);
+    })
+    .join("\n");
+  const temp = `${transcript}.tmp`;
+  fs.writeFileSync(temp, rewritten);
+  fs.renameSync(temp, transcript);
+}
+
 describe("pruneTranscript's backup sweep", () => {
   it("removes the copy its own child made, whatever mtime that copy carries", async () => {
     const transcript = fixture("swept", [
@@ -168,5 +193,65 @@ describe("pruneTranscript's backup sweep", () => {
 
     assert.deepEqual(result, { kind: "failed", reason: "winnow exited 1" });
     assert.deepEqual(backupsIn(transcript), []);
+  });
+});
+
+describe("pruneTranscript's two questions", () => {
+  it("reports a rewrite that removed no prompt tokens, so the cost is charged", async () => {
+    const transcript = fixture("rewritten", [
+      record("a".repeat(4_000)),
+      record("b".repeat(4_000)),
+    ]);
+    const before = pruning.contextTokens(transcript);
+
+    const result = await pruning.pruneTranscript(transcript, "standard", {
+      available: always,
+      spawn: async () => {
+        rewriteOutsideMessage(transcript);
+        return { ok: true };
+      },
+    });
+
+    // Not `nothing`. The child replaced the file, so the cached prefix is gone
+    // and the next `--resume` pays a full cache write whether or not anything
+    // came out of the prompt — but `contextTokens` sums `message` and nothing
+    // else, so the subtraction that used to decide this alone reads zero.
+    assert.equal(result.kind, "rewritten");
+    assert.equal(result.kind === "rewritten" && result.outcome.tokensRemoved, 0);
+    assert.equal(pruning.contextTokens(transcript), before, "no tokens left the prompt");
+
+    // And the receipt that carries it. `netReceipt` can only charge an
+    // invalidation against a row, so a zero-token rewrite with no row is a cost
+    // that lands nowhere — dropped in exactly the direction that flatters the
+    // net figure, since the rewrites which *did* earn something keep theirs.
+    if (result.kind !== "rewritten") return;
+    pruning.recordPrune("rewritten-run", "early-end", result.outcome, "claude-opus-5");
+    const receipts = pruning.readReceipts({ runId: "rewritten-run" });
+    assert.equal(receipts.length, 1);
+    assert.equal(receipts[0].tokensRemoved, 0);
+    assert.equal(receipts[0].trigger, "early-end");
+
+    const net = pruning.netReceipt(receipts[0], 20);
+    assert.equal(net.cacheSavedUSD, 0, "nothing was removed, so nothing was saved");
+    assert.ok(net.netUSD < 0, "the rewrite it did perform has to be able to show a loss");
+  });
+
+  it("still reports nothing when the child left the file alone", async () => {
+    const transcript = fixture("untouched", [record("c".repeat(4_000))]);
+
+    const result = await pruning.pruneTranscript(transcript, "standard", {
+      available: always,
+      spawn: async () => ({ ok: true }),
+    });
+
+    // The control, and the reason the rewrite is read off the file rather than
+    // assumed from the child having exited 0: a boundary that cost nothing must
+    // not start writing receipts, or every cycle on a quiet run carries an
+    // invalidation that never happened.
+    assert.deepEqual(result, {
+      kind: "nothing",
+      tokensBefore: pruning.contextTokens(transcript),
+    });
+    assert.deepEqual(pruning.readReceipts({ runId: "untouched-run" }), []);
   });
 });
