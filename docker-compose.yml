@@ -276,6 +276,23 @@ services:
       # keeps the uid split and drops this one boundary, which the boot log
       # states — it is not silent either way.
       UF_CHAT_GID: "${UF_CHAT_GID:-65533}"
+      # How many workers a work cycle's `vitest run` may fork. Vitest sizes its
+      # pool from the CPU count rather than from the memory this cgroup gives
+      # it, so an uncapped run on a 12-core host forks 12 Node processes at
+      # ~550 MB each — 6+ GiB out of a single `npm test`, four times the 1.5 GiB
+      # per-cycle budget the `mem_limit` arithmetic below is built on. With
+      # `mem_limit` set above the VM's own RAM the cgroup ceiling never fires,
+      # so that overshoot lands as a VM-wide OOM instead: on 2026-09-07 it chose
+      # this container's `next-server` and took the UI down while the tests that
+      # caused it kept running.
+      #
+      # Deliberately not `UF_`-prefixed. `childEnv` in orchestrator.ts strips
+      # every UF_* key from an agent's environment, so a prefixed name would
+      # read as configured here and reach nothing. Vitest 4 applies this after
+      # the project's own config resolves, so it wins over a repo that sets
+      # `maxWorkers` itself; vitest 3 does not read it at all and has to take
+      # the value in its `vitest.config` by hand.
+      VITEST_MAX_WORKERS: "${UF_VITEST_MAX_WORKERS:-3}"
       # Optional: where this container POSTs when a run reaches an ending that
       # needs a person — needs-review, a guard that stopped it, a crash, the
       # first rung of the 429 ladder. Blank is off and is the shipped state.
