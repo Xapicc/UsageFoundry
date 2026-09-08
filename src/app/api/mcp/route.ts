@@ -3,6 +3,7 @@ import {
   appendMessage,
   chatOwnsRun,
   createProposal,
+  createProposalReplacing,
   createQuestions,
   listProposals,
   MAX_OPEN_QUESTIONS,
@@ -11,10 +12,13 @@ import {
   normalizeChoices,
   pendingProposals,
   pendingQuestions,
+  proposalByReference,
   proposalDeps,
   subjectForCapability,
   type CapabilitySubject,
+  type ChatProposalRow,
   type ProposalDependency,
+  type ProposalInput,
   type QuestionInput,
 } from "@/lib/chat";
 import {
@@ -805,6 +809,22 @@ const CHAT_TOOLS = [
             additionalProperties: false,
           },
         },
+        supersedes: {
+          type: "string",
+          description:
+            "A proposal in this conversation that this one replaces — the id " +
+            "you gave it, or the proposalId that came back when you made it. " +
+            "Use it when a card you already wrote is still waiting and turned " +
+            "out to be wrong: the old card is marked replaced, this one takes " +
+            "its place, and the operator decides once instead of rejecting one " +
+            "card and reading another. Give this one no id of its own and it " +
+            "inherits the old one's, so anything already ordered behind that " +
+            "label still is. It may name a workflow proposal as well as a run. " +
+            "Only a proposal still waiting can be replaced: if the operator " +
+            "approved or rejected it while you were writing this, the whole " +
+            "call is refused and nothing is proposed — say what happened and " +
+            "propose the correction as a new run if it is still worth doing.",
+        },
       },
       required: ["title", "task"],
       additionalProperties: false,
@@ -940,6 +960,17 @@ const CHAT_TOOLS = [
             required: ["id", "name"],
             additionalProperties: false,
           },
+        },
+        supersedes: {
+          type: "string",
+          description:
+            "A proposal in this conversation that this one replaces — the id " +
+            "you gave it, or the proposalId that came back. Use it to correct " +
+            "a graph that is still waiting rather than leaving two cards for " +
+            "one job. It may name a run proposal as well as a workflow. Only a " +
+            "proposal still waiting can be replaced: if the operator decided it " +
+            "while you were writing this, the whole call is refused and nothing " +
+            "is proposed.",
         },
       },
       required: ["name", "blocks"],
@@ -1584,6 +1615,16 @@ async function callTool(
       if (proposals.length === 0) {
         return text("Nothing has been proposed in this conversation yet.");
       }
+      // The replaced-by link, read backwards. Both directions are reported
+      // because the model reads this list to decide what is left to do, and
+      // one direction alone answers half of that: `supersededBy` says a card
+      // it wrote is no longer the live one, and `supersedes` says the card in
+      // front of it already *is* the correction — without which the ordinary
+      // reading of a `superseded` row is "that work never happened", and the
+      // work gets proposed a third time.
+      const replaced = new Map(
+        proposals.flatMap((p) => (p.superseded_by ? [[p.superseded_by, p.id]] : [])),
+      );
       return text(
         JSON.stringify(
           proposals.map((p) => ({
@@ -1599,6 +1640,11 @@ async function callTool(
             runId: p.run_id,
             workflowId: p.workflow_id,
             dependsOn: proposalDeps(p).map((d) => `${d.specId} (${d.edge})`),
+            // By proposalId in both directions, never by label: a replacement
+            // usually inherits the one it replaced, so a label here would name
+            // both rows and say nothing about which is which.
+            supersededBy: p.superseded_by,
+            supersedes: replaced.get(p.id) ?? null,
             error: p.error,
             task: p.task.slice(0, 200),
           })),
@@ -1990,12 +2036,25 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
   const missing = folderRefusal(parsed.value.graph);
   if (missing) return text(missing, true);
 
-  const pending = pendingProposals(chatId);
+  // The card this one replaces, on `proposeRun`'s reasoning and with its rules:
+  // refused by name, freeing the label it held, and counting against nothing.
+  // Cross-kind on purpose — what is being recorded is only that this card
+  // replaced that one, and a run the operator asked to see as a workflow is
+  // exactly the correction this argument is for.
+  const supersedesRef = String(args.supersedes ?? "").trim() || null;
+  let superseded: ChatProposalRow | null = null;
+  if (supersedesRef !== null) {
+    const found = supersedeTarget(listProposals(chatId), supersedesRef);
+    if (!found.ok) return text(found.message, true);
+    superseded = found.target;
+  }
+
+  const pending = pendingProposals(chatId).filter((p) => p.id !== superseded?.id);
   if (pending.length >= MAX_PENDING_PROPOSALS) {
     return text(pendingLimitMessage(pending.length), true);
   }
 
-  const proposal = createProposal(chatId, {
+  const input: ProposalInput = {
     kind: "workflow",
     templateId: null,
     title: name,
@@ -2004,7 +2063,27 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
     mountId: null,
     folder: null,
     graph: JSON.stringify(parsed.value.graph),
-  });
+    // This tool has no id argument of its own, so an inherited label is the
+    // only one a workflow proposal ever carries — and it is inherited for
+    // `proposeRun`'s reason: a sibling's dependsOn resolves against the label,
+    // and a correction must not be what breaks a chain nobody touched. It
+    // resolves to a proposal that saves a graph rather than starting a run, so
+    // the sibling is refused by name at the click rather than started with no
+    // dependency at all, which is the direction that fails safe.
+    specId: superseded?.spec_id ?? null,
+  };
+
+  const written = superseded
+    ? createProposalReplacing(chatId, input, superseded.id)
+    : { ok: true as const, proposal: createProposal(chatId, input) };
+  if (!written.ok) {
+    return text(
+      `${written.reason} You named "${supersedesRef}", and nothing was ` +
+        "proposed — not this workflow, and no change to that one.",
+      true,
+    );
+  }
+  const proposal = written.proposal;
 
   const deciding = parsed.value.graph.nodes.filter(
     (n) => n.kind === "orchestrator",
@@ -2014,6 +2093,9 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
       `${parsed.value.graph.nodes.length} block(s). Approving it **saves** the ` +
       "workflow; it starts nothing, and the operator presses Run on it " +
       "themselves." +
+      (superseded
+        ? ` It replaces “${superseded.title}”, which is no longer waiting.`
+        : "") +
       (deciding.length > 0
         ? ` ${deciding.length} block(s) decide what to run and may start up to ` +
           `${deciding.reduce((n, d) => n + (d.fanOut ?? 0), 0)} run(s) between ` +
@@ -2543,6 +2625,33 @@ function askOperator(args: Record<string, unknown>, chatId: string) {
   );
 }
 
+/**
+ * What a `supersedes` argument names, refusing it by name where it names
+ * nothing. Shared by both proposal tools, because the argument is shared.
+ *
+ * Refused rather than dropped, which is `agentId`'s rule and matters more here:
+ * a supersede the model believes it made and this route quietly ignored is the
+ * corrected card written *beside* the wrong one, which is two cards for one job
+ * and the exact outcome the argument exists to remove. The sentence names both
+ * spellings, because the model holds two — its own label and the proposalId
+ * that came back — and a refusal that names one sends it to guess the other.
+ */
+function supersedeTarget(
+  proposals: readonly ChatProposalRow[],
+  reference: string,
+): { ok: true; target: ChatProposalRow } | { ok: false; message: string } {
+  const target = proposalByReference(proposals, reference);
+  if (target) return { ok: true, target };
+  return {
+    ok: false,
+    message:
+      `Nothing in this conversation is called "${reference}", so there is ` +
+      "nothing to replace and nothing was proposed. Call list_proposals: " +
+      "supersedes takes either the id you gave a proposal or the proposalId " +
+      "that came back when you made it.",
+  };
+}
+
 /** One sentence, shared by both proposal tools, because the limit is shared. */
 function pendingLimitMessage(count: number): string {
   return (
@@ -2760,11 +2869,6 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
     );
   }
 
-  const pending = pendingProposals(chatId);
-  if (pending.length >= MAX_PENDING_PROPOSALS) {
-    return text(pendingLimitMessage(pending.length), true);
-  }
-
   // The chat's own label, and what it says this run starts after. Checked here
   // rather than only at approval for the reason everything else in this
   // function is: a chain that cannot be wired is otherwise discovered by a
@@ -2775,26 +2879,61 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
     proposals.filter((p) => p.spec_id).map((p) => [p.spec_id!, p]),
   );
 
-  const specId = String(args.id ?? "").trim() || null;
-  if (specId !== null) {
-    if (!SPEC_ID.test(specId)) {
+  // The card this one replaces, resolved before anything below reads a label or
+  // counts what is waiting: it frees the label it holds and it does not add a
+  // card to the panel. The write itself is `createProposalReplacing`, at the
+  // bottom, and only there is its status decided — everything here is read.
+  const supersedesRef = String(args.supersedes ?? "").trim() || null;
+  let superseded: ChatProposalRow | null = null;
+  if (supersedesRef !== null) {
+    const found = supersedeTarget(proposals, supersedesRef);
+    if (!found.ok) return text(found.message, true);
+    superseded = found.target;
+  }
+
+  // The limit counts cards waiting for a decision, and a replacement does not
+  // add one — the same transaction that writes it decides the one it replaces.
+  // Counting it would make a chat at the ceiling unable to correct its own
+  // cards, and the refusal would tell it to propose fewer, which is the one
+  // thing it was already doing.
+  const pending = pendingProposals(chatId).filter((p) => p.id !== superseded?.id);
+  if (pending.length >= MAX_PENDING_PROPOSALS) {
+    return text(pendingLimitMessage(pending.length), true);
+  }
+
+  const ownSpecId = String(args.id ?? "").trim() || null;
+  if (ownSpecId !== null) {
+    if (!SPEC_ID.test(ownSpecId)) {
       return text(
-        `"${specId}" is not a usable id. An id is 1–64 letters, digits, ` +
+        `"${ownSpecId}" is not a usable id. An id is 1–64 letters, digits, ` +
           "hyphens or underscores.",
         true,
       );
     }
     // Only against what is still undecided: a label reused after the first one
     // has become a run is unambiguous, because a dependency resolves against
-    // the batch first and only then against what already started.
-    if (labels.get(specId)?.status === "pending") {
+    // the batch first and only then against what already started. The card
+    // being replaced is undecided as this is read and decided by the time the
+    // row is written, so it is excluded here — otherwise re-proposing the same
+    // work under the same label, which is the ordinary correction, refuses
+    // itself.
+    const holder = labels.get(ownSpecId);
+    if (holder && holder.id !== superseded?.id && holder.status === "pending") {
       return text(
         "Another proposal waiting for approval in this chat is already " +
-          `labelled "${specId}". Give this one a different id.`,
+          `labelled "${ownSpecId}". Give this one a different id.`,
         true,
       );
     }
   }
+
+  // A replacement that names no label of its own inherits the one it replaces,
+  // so an edge a sibling already wrote against that label still points at a
+  // card the operator can approve. Inherited rather than re-resolved at the
+  // click, because `dependsOn` holds a label and nothing else: a label with no
+  // undecided row spelling it fails that sibling by name at approval, which is
+  // a correction breaking a chain nobody touched.
+  const specId = ownSpecId ?? superseded?.spec_id ?? null;
 
   const dependsOn: ProposalDependency[] = [];
   for (const raw of Array.isArray(args.dependsOn) ? args.dependsOn : []) {
@@ -2812,10 +2951,35 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
         true,
       );
     }
+    // The card this call is replacing, named as something to wait for. Refused
+    // here rather than left to approval, where it arrives as "superseded and
+    // never became a run" about a row this same call decided: the label either
+    // belongs to this proposal by inheritance — which is starting after itself
+    // — or belongs to a card that is about to stop existing as a run.
+    if (superseded && target.id === superseded.id) {
+      return text(
+        `This replaces "${on}", so it cannot also start after it. Drop it from ` +
+          "dependsOn, or propose the two separately.",
+        true,
+      );
+    }
     if (target.status === "rejected" || target.status === "failed") {
       return text(
         `"${on}" was ${target.status} and never became a run, so nothing can ` +
           "start after it.",
+        true,
+      );
+    }
+    // A card that was replaced never becomes a run of its own, so an edge onto
+    // it is one the operator's click would fail by name. The replacement
+    // usually inherits the label, in which case `labels` resolved to the
+    // replacement and this never fires; what reaches here is an edge onto a
+    // label the correction deliberately dropped.
+    if (target.status === "superseded") {
+      return text(
+        `"${on}" was replaced by another proposal and never became a run, so ` +
+          "nothing can start after it. Name the proposal that replaced it — " +
+          "call list_proposals for its id.",
         true,
       );
     }
@@ -2943,7 +3107,7 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
     if (problem) return text(problem, true);
   }
 
-  const proposal = createProposal(chatId, {
+  const input: ProposalInput = {
     templateId: template ? template.id : null,
     agentId,
     model,
@@ -2955,7 +3119,21 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
     folder,
     specId,
     dependsOn,
-  });
+  };
+
+  const written = superseded
+    ? createProposalReplacing(chatId, input, superseded.id)
+    : { ok: true as const, proposal: createProposal(chatId, input) };
+  if (!written.ok) {
+    return text(
+      `${written.reason} You named "${supersedesRef}", and nothing was ` +
+        "proposed — not this run, and no change to that one. Say what " +
+        "happened; if the work is still worth doing, propose it as a new run " +
+        "saying what you would have changed.",
+      true,
+    );
+  }
+  const proposal = written.proposal;
 
   const guards = template
     ? `template "${template.name}"${promptOverride ? ", with a prompt you rewrote" : ""}`
@@ -2991,8 +3169,19 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
           )
           .join(" and ")} — say so, because both have to be approved in the ` +
         "same click unless the earlier one has already started.";
+  // Said back because the operator sees one card where the model wrote two, and
+  // the model's reply is the only place the *first* one is accounted for at all
+  // — a reply that describes this as a new proposal reads as work added rather
+  // than work corrected. The inherited label is named for `after`'s reason: it
+  // is what a sibling's dependsOn resolves against.
+  const replacing = superseded
+    ? ` It replaces “${superseded.title}”, which is no longer waiting` +
+      (ownSpecId === null && specId !== null
+        ? ` and whose id "${specId}" this one now carries.`
+        : ".")
+    : "";
   return text(
-    `Proposed "${title}" (id ${proposal.id}) under ${guards}.${asAgent}${onModel}${forTask}${after} ` +
+    `Proposed "${title}" (id ${proposal.id}) under ${guards}.${asAgent}${onModel}${forTask}${replacing}${after} ` +
       "It is waiting for the operator to approve it; nothing is running.",
   );
 }
