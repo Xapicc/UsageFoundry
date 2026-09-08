@@ -1,17 +1,39 @@
 "use client";
 
+// Relative, not "@/…": tsconfig.test.json emits plain CommonJS and nothing
+// rewrites the path alias at runtime, so a tested component has to import the
+// way `Meter` and `RecentBlocksCard` already do.
 import type {
   FilterSavingsDTO,
   FilterWindowDTO,
   PruneSavingsDTO,
-} from "@/lib/apiTypes";
-import { fmtDate, fmtTokens, fmtUSD, signedUSD } from "@/lib/format";
-import { Card, CardTitle, Stat, StatSub } from "@/components/ui/Card";
-import { TBody, Table, Td, Tr } from "@/components/ui/Table";
+} from "../lib/apiTypes";
+import { fmtDate, fmtTokens, fmtUSD, signedUSD } from "../lib/format";
+import { Card, CardTitle, Stat, StatSub } from "./ui/Card";
+import { TBody, Table, Td, Tr } from "./ui/Table";
 
 /** "All time", or the date the figures start on. */
 function spanLabel(totalFrom: number | null): string {
   return totalFrom === null ? "All time" : `Since ${fmtDate(totalFrom)}`;
+}
+
+/**
+ * A span's label, marked when the figure beside it is a ceiling rather than a
+ * measurement.
+ *
+ * `unsettledPrunes` are priced prunes whose invalidation cost has not been
+ * charged yet: they are already in the saving and not yet in what buying it
+ * cost, so the net can only come down. `PruneSavingsRows` says "Net, at most"
+ * on exactly this condition, and a tile printing the same `netUSD` bare is the
+ * upper bound wearing a net's clothes that panel exists to refuse.
+ *
+ * An *unpriced* prune is a different fault and deliberately not this one — it
+ * is missing from both halves, which makes the figure incomplete rather than
+ * high, and it gets the coverage line at the foot of the card instead.
+ */
+function spanCaption(label: string, pruning: PruneSavingsDTO): string {
+  const ceiling = pruning.prunes > 0 && pruning.unsettledPrunes > 0;
+  return ceiling ? `${label}, at most` : label;
 }
 
 /**
@@ -190,7 +212,7 @@ export function ContextControlAside({
       <Stat>{weeklyNet === null ? "—" : signedUSD(weeklyNet)}</Stat>
       <StatSub>
         <span className="tabular-nums">
-          This week ·{" "}
+          {spanCaption("This week", weekly)} ·{" "}
           {weeklyShare !== null ? (
             <>{signedUSD(weeklyShare)} of it from the intake filter</>
           ) : (
@@ -208,17 +230,31 @@ export function ContextControlAside({
           worth of figures. */}
       <div className="mt-3 space-y-1.5 border-t border-line pt-2.5 text-sm">
         <SpanRow
-          label="This 5-hour window"
+          label={spanCaption("This 5-hour window", session)}
           usd={combinedUSD(session, sessionShare)}
         />
         {sessionShare !== null && <ShareRow usd={sessionShare} />}
         <SpanRow
-          label={spanLabel(pruningFrom)}
+          label={spanCaption(spanLabel(pruningFrom), pruning)}
           usd={combinedUSD(pruning, totalShare)}
         />
       </div>
 
       <div className="mt-3 space-y-1 text-xs text-ink-muted">
+        {/* Keyed on the total span rather than on each of the three, because
+            the sub-spans are subsets of it: a prune this app cannot price in
+            the week is an unpriced prune in the total too, so one line here
+            answers "is this money complete" for every figure above it. The
+            same qualification `FilterSavingsRows` and `PruneSavingsRows` both
+            print — a total that silently omits part of its own subject is
+            worse than one that says how much it omits. */}
+        {pruning.pricedPrunes < pruning.prunes && (
+          <div>
+            Money covers {pruning.pricedPrunes} of {pruning.prunes} prunes; the
+            rest ran on a model with no price here, so what they saved is
+            unknown rather than nothing.
+          </div>
+        )}
         {/* Only when the adjacency would otherwise mislead. A history read off a
             ledger nothing is appending to is still worth reading, but it is not
             a reading of now. */}
