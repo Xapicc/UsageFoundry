@@ -3982,25 +3982,30 @@ through before trusting this unattended:
   # expect "on: children run as 1000:1000, chat and block turns as 1000:65533,
   # server as 0" — a line naming no chat gid is the capability boundary absent
 
+  # uid out of the container: a UF_UID default written here would expand in
+  # your own shell, which .env never reaches (#147). Shape corrected
+  # 2026-09-08; the check itself was not re-taken.
+  uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
+
   # #79 — the server's environment
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c \
+  docker compose exec --user "$uid" usagefoundry sh -c \
     'tr "\0" "\n" < /proc/$(pgrep -f "next-server" | head -1)/environ | grep -c UF_'
   # expect a permission error, not a count
 
   # #80 — the database, on a fresh volume and on an upgraded one
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c \
+  docker compose exec --user "$uid" usagefoundry sh -c \
     'test -w /data/usagefoundry.db && echo BAD-writable || echo ok'
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c \
+  docker compose exec --user "$uid" usagefoundry sh -c \
     'test -w /data/server.lock && echo BAD-writable || echo ok'
 
   # #87 — a capability in flight, with a run working and a chat turn sent
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c \
+  docker compose exec --user "$uid" usagefoundry sh -c \
     'ls /tmp/uf-mcp-* 2>/dev/null; ls /run/uf-mcp 2>/dev/null; echo "exit=$?"'
   # expect nothing from the first and a permission error from the second
 
   # #87 — and the read itself, which the group is what refuses. Prints modes
   # and a byte count only: the file carries a live bearer token.
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c '
+  docker compose exec --user "$uid" usagefoundry sh -c '
     for p in $(ls /proc | grep "^[0-9][0-9]*$"); do
       cfg=$(tr "\0" "\n" < /proc/$p/cmdline 2>/dev/null |
             grep -A1 -x -- --mcp-config | tail -1)
@@ -4870,8 +4875,13 @@ through before trusting this unattended:
   capture the real text before trusting the table:
 
   ```sh
+  # uid out of the container: a UF_UID default written here would expand in
+  # your own shell, which .env never reaches (#147). Shape corrected
+  # 2026-09-08; the check itself was not re-taken.
+  uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
+
   # A command the policy refuses, read off the wire rather than off a page.
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c '
+  docker compose exec --user "$uid" usagefoundry sh -c '
     claude -p "run: touch /etc/uf-probe" --output-format stream-json --verbose' \
     | jq -r 'select(.type=="user") | .message.content[]?
              | select(.is_error == true) | .content'
@@ -4953,12 +4963,16 @@ through before trusting this unattended:
 
   # 2. Phase 2's own four, from proposals/Sandboxing/09-implementation-sketch.md
   docker compose up --build
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+  # uid out of the container: a UF_UID default written here would expand in
+  # your own shell, which .env never reaches (#147). Shape corrected
+  # 2026-09-08; the check itself was not re-taken.
+  uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
+  docker compose exec --user "$uid" usagefoundry \
     sh -c 'echo x >> /etc/claude-code/managed-settings.json'   # expect denied
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+  docker compose exec --user "$uid" usagefoundry \
     sh -c 'echo x >> ~/.claude/settings.json; rm -f ~/.claude/settings.json'
                                                                # expect both denied
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+  docker compose exec --user "$uid" usagefoundry \
     sh -c 'ls ~/.claude/projects >/dev/null && touch ~/.claude/projects/.probe'
                                                                # expect BOTH to work
   docker compose logs usagefoundry | grep -i sandbox           # expect the boot line
@@ -4993,10 +5007,14 @@ through before trusting this unattended:
   the binary:
 
   ```sh
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+  # uid out of the container: a UF_UID default written here would expand in
+  # your own shell, which .env never reaches (#147). Shape corrected
+  # 2026-09-08; the check itself was not re-taken.
+  uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
+  docker compose exec --user "$uid" usagefoundry \
     sh -c 'cat ~/.claude/.credentials.json'   # expect denied, with the session
                                               # still billing on the next cycle
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+  docker compose exec --user "$uid" usagefoundry \
     sh -c 'cat /data/usagefoundry.db > /dev/null'          # expect denied
   ```
 
@@ -5125,7 +5143,11 @@ through before trusting this unattended:
   lines and costs no billed cycle:
 
   ```sh
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c \
+  # uid out of the container: a UF_UID default written here would expand in
+  # your own shell, which .env never reaches (#147). Shape corrected
+  # 2026-09-08; the check itself was not re-taken.
+  uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
+  docker compose exec --user "$uid" usagefoundry sh -c \
     'echo "{\"sandbox\":{\"filesystem\":{\"allowWrite\":[\"/tmp/uf-probe\"]}}}" \
        >> ~/.claude/settings.json'                  # expect denied only with
                                                     # UF_LOCK_CLAUDE_HOME=1
@@ -5249,7 +5271,11 @@ through before trusting this unattended:
   # 0. the shipped state first — with UF_LOCK_CLAUDE_HOME unset, nothing changes
   docker compose up -d --build
   docker compose logs usagefoundry | grep UF_LOCK_CLAUDE_HOME    # expect nothing
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c \
+  # uid out of the container: a UF_UID default written here would expand in
+  # your own shell, which .env never reaches (#147). Shape corrected
+  # 2026-09-08; the check itself was not re-taken.
+  uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
+  docker compose exec --user "$uid" usagefoundry sh -c \
     'test -w ~/.claude/settings.json && echo BAD-writable'       # expect BAD-writable
 
   # then set UF_LOCK_CLAUDE_HOME=1 in .env and restart — compose forwards it,
@@ -5264,22 +5290,22 @@ through before trusting this unattended:
   # a refusal instead names the entry, the owner it wanted and the owner it saw
 
   # 1 + 2. the two the sketch names (09-implementation-sketch.md:274–283)
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+  docker compose exec --user "$uid" usagefoundry \
     sh -c 'echo x >> ~/.claude/settings.json'                    # expect denied
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+  docker compose exec --user "$uid" usagefoundry \
     sh -c 'rm -f ~/.claude/settings.json; ls ~/.claude/settings.json'
                                               # expect denied, and still listed
   # if the append *succeeds*, the lock is not in force and your settings.json is
   # no longer valid JSON — remove the stray line before the next session reads it
 
   # 3. and the half that is not a permission check — the metering path
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+  docker compose exec --user "$uid" usagefoundry \
     sh -c 'ls ~/.claude/projects >/dev/null && touch ~/.claude/projects/.probe'
                                                           # expect BOTH to work
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+  docker compose exec --user "$uid" usagefoundry \
     sh -c 'cat ~/.claude/settings.json >/dev/null'   # expect it to work: hooks,
                                      # permission rules and env are in that file
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+  docker compose exec --user "$uid" usagefoundry \
     sh -c 'rm -f ~/.claude/projects/.probe'                  # tidy up after it
   ```
 

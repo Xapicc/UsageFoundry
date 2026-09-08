@@ -53,19 +53,24 @@ uid. Both cannot be it, so the privileged half is the one process running code
 from this repository rather than the unattended agents whose prompts came out of
 repositories nobody here reviewed.
 
-Verify it on a running container:
+Verify it on a running container. Take the uid out of the container rather than
+naming it with a `UF_UID` default in the command: your own shell expands that,
+and `.env` is compose's input rather than an exported environment, so it
+resolves to 1000 whatever the file says (#147).
 
 ```sh
-docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c \
+uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
+
+docker compose exec --user "$uid" usagefoundry sh -c \
   'tr "\0" "\n" < /proc/$(pgrep -f "next-server" | head -1)/environ | grep -c UF_'
 # expect a permission error, not a count
 
-docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c \
+docker compose exec --user "$uid" usagefoundry sh -c \
   'test -w /data/usagefoundry.db && echo BAD-writable || echo ok'
 
 # and, with a run working and a chat turn sent at the same time — the config
 # a live turn is using, found the way an agent would find it
-docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c \
+docker compose exec --user "$uid" usagefoundry sh -c \
   'for p in $(pgrep -x claude); do
      tr "\0" "\n" < /proc/$p/cmdline | grep -A1 -x -- --mcp-config | tail -1
    done | while read -r cfg; do
@@ -114,7 +119,10 @@ read — reaches something that is not this run's business.
   one you are asking about:
 
   ```sh
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c \
+  # uid out of the container: a UF_UID default written here would expand in
+  # your own shell, which .env never reaches (#147).
+  uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
+  docker compose exec --user "$uid" usagefoundry sh -c \
     'test -w /workspace/.uf-worktrees/<another-run>/ && echo BAD-writable || echo ok'
   # expect BAD-writable, today: this is a gap, not a check you are confirming
   ```
