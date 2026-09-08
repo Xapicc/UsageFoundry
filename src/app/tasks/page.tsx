@@ -325,18 +325,15 @@ export default function TasksPage() {
             >
               {task.title}
             </Link>
-            {/* One line, clipped by the cell, on the rule the runs board's
-                prompt and folder already follow — and unlike those two it
-                carries no `title`, because `TaskListItemDTO.body` is the brief
-                already cut to `MAX_LIST_TASK_BODY`. A tooltip here would offer
-                the whole brief and hand back two hundred characters of it.
-                Whole, it is on the task's own page, which the title above
-                links to. */}
-            {task.body && (
-              <span className="mt-0.5 block max-w-[80ch] truncate text-ink-muted">
-                {task.body}
-              </span>
-            )}
+            {/* No brief here at all, which is a measurement rather than a
+                preference. This cell is `w-full` over a table whose other six
+                columns are min-widths, so it is whatever they leave: about
+                190px on a 1280px window with the shell beside it. The brief
+                wrapped to two muted lines under every title, and clipped to one
+                it showed twenty-odd characters of two hundred — texture, not a
+                sentence, and still a line per row. It is on the task's own page,
+                which the title links to, and the width it gives up is the width
+                the title reads in. */}
             {task.parentTaskId && (
               <span className="mt-0.5 block text-xs text-ink-faint">
                 Filed under{" "}
@@ -492,11 +489,14 @@ export default function TasksPage() {
               {/* Two columns rather than one, so neither has to stack: "From"
                   is who filed the task and "Runs" is what has acted on it
                   since, and one column holding both was a cell taller than the
-                  brief beside it. */}
-              <Th scope="col" className="min-w-[124px]">
+                  title beside it. Both floors are set to their own longest
+                  reading and no wider — "Orchestrator" and "Closed by" with a
+                  short id — because the Task column is `w-full` over these and
+                  every pixel written here is one taken off the title. */}
+              <Th scope="col" className="min-w-[104px]">
                 From
               </Th>
-              <Th scope="col" className="min-w-[148px]">
+              <Th scope="col" className="min-w-[128px]">
                 Runs
               </Th>
               <Th scope="col" className="min-w-[92px]">
