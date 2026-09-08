@@ -1347,8 +1347,23 @@ describe("the sandbox ships off, and its switch reaches the container", () => {
     );
     assert.ok(read.size > 0, "docker-entrypoint.sh no longer reads any variable");
 
+    // A `NAME=value \` line is one of a command's environment prefixes, not a
+    // variable this script gave itself — the winnow child is launched under
+    // six of them — so a trailing continuation disqualifies the match. Without
+    // that, `WINNOW_FILTER` reads as self-supplied and could be dropped from
+    // compose unnoticed, which is the exact shape of the two bugs above.
     const assigned = new Set(
-      [...source.matchAll(/^\s*(?:export\s+)?([A-Z][A-Z0-9_]*)=/gm)].map((m) => m[1]),
+      [...source.matchAll(/^[ \t]*(?:export[ \t]+)?([A-Z][A-Z0-9_]*)=(.*)$/gm)]
+        .filter((m) => !m[2].endsWith("\\"))
+        .map((m) => m[1]),
+    );
+    assert.ok(
+      !assigned.has("WINNOW_FILTER") && read.has("WINNOW_FILTER"),
+      "WINNOW_FILTER is no longer both read by docker-entrypoint.sh and passed " +
+        "to the winnow child as an environment prefix. Either the filter above " +
+        "stopped biting — in which case a variable compose forwards is exempt " +
+        "from this assertion and nothing says so — or winnow's launch changed " +
+        "shape, in which case pick another name that is prefixed and read.",
     );
     // `\<newline>` continuations first, or only the first name of a multi-line
     // `ENV` is seen and `DATA_DIR` reads as an operator variable nobody forwards.
