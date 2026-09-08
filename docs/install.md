@@ -635,6 +635,14 @@ nowhere else — not from your LAN, not from the host — and its port is not
 published. It verifies `X-UF-Signature` against the same `UF_WEBHOOK_SECRET` the
 app signs with, reshapes the six fields into a Discord message, and forwards it.
 
+`RELAY_PORT` and `RELAY_BIND` move that listener — 8787 on `127.0.0.1` when both
+are blank, which is the shipped state and the one worth keeping. Change the port
+only if something else in the container already holds 8787, and change it in
+`UF_WEBHOOK_URL` at the same time: the sender and the listener are separate
+processes, neither checks the other, and a port set in one place and not the
+other is a relay that logs a healthy `listening on` line and never receives
+anything.
+
 `UF_WEBHOOK_URL` still has to name the relay. Blank means notifications are off
 everywhere else in this app and the entrypoint will not quietly change that, so
 setting only `DISCORD_WEBHOOK_URL` starts a relay nothing sends to. The boot log

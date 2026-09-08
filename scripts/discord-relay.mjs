@@ -42,6 +42,12 @@
 //   UF_WEBHOOK_SECRET        the same value the app signs with (required)
 //   DISCORD_MENTION_USER_ID  who to ping, or no ping at all
 //   RELAY_PORT, RELAY_BIND   default 8787 on 127.0.0.1
+//
+// Inside the container every one of those arrives through
+// `docker-compose.yml`'s `environment:` block and nowhere else — there is no
+// `env_file`, so a name this list gains and that block does not is a key an
+// operator can write in `.env`, read back in this comment, and never give a
+// value to. `deployment.test.ts` pins the two files against each other.
 
 import crypto from "node:crypto";
 import http from "node:http";
