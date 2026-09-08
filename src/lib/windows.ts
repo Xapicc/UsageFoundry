@@ -305,6 +305,35 @@ export function weekStart(now: number, anchor: WeeklyAnchor | null): number {
   return cur.getTime();
 }
 
+/**
+ * The instant this install's weekly window rolls over, or null when nothing
+ * names one and the week is a trailing total.
+ *
+ * The provider's instant outranks the operator's for the reason
+ * `sessionResetOverrideAt` is outranked one window over: the anchor exists only
+ * as a way to hand-correct a boundary this app could not observe.
+ */
+export function effectiveWeeklyReset(
+  planWeekly: PlanWindow | null,
+  weeklyAnchor: WeeklyAnchor | null,
+  now: number,
+): number | null {
+  const named = planWeekly?.resetsAt ?? null;
+  if (named === null) {
+    return weeklyAnchor ? weekStart(now, weeklyAnchor) + WEEK_MS : null;
+  }
+  if (named > now) return named;
+
+  // A reset instant recurs every seven days, so one that has already passed
+  // still names where the *current* week opened — and `planUsage` re-serves the
+  // last good reading on an age test alone, so the minutes after a rollover
+  // routinely hold one. Rolling it forward rather than dropping it is what
+  // keeps the old week out of the total: falling back to a trailing seven days
+  // here would sum the whole of the week that just ended plus everything since.
+  // The *percentage* does not roll forward with it — see `buildSnapshot`.
+  return named + (Math.floor((now - named) / WEEK_MS) + 1) * WEEK_MS;
+}
+
 export interface LimitConfig {
   /** Primary: cost ceiling (USD) for one 5-hour block. */
   sessionCostLimit: number | null;
@@ -962,17 +991,13 @@ export function buildSnapshot(
   // no `weeklyAnchor` configured this window has no reset instant at all and
   // reports a trailing total, which is a different window from the one the
   // provider is enforcing. Its reset instant makes them the same window.
-  const planWeeklyReset = plan?.weekly?.resetsAt ?? null;
-  const wkStart =
-    planWeeklyReset !== null
-      ? planWeeklyReset - WEEK_MS
-      : weekStart(now, limits.weeklyAnchor);
-  const wkEnd =
-    planWeeklyReset !== null
-      ? planWeeklyReset
-      : limits.weeklyAnchor
-        ? wkStart + WEEK_MS
-        : now;
+  const weeklyReset = effectiveWeeklyReset(
+    plan?.weekly ?? null,
+    limits.weeklyAnchor,
+    now,
+  );
+  const wkStart = weeklyReset !== null ? weeklyReset - WEEK_MS : now - WEEK_MS;
+  const wkEnd = weeklyReset ?? now;
   // When this week's consumed figure goes back to zero, or null when it never
   // does — the horizon the exhaustion projection below is bounded by.
   //
@@ -982,9 +1007,42 @@ export function buildSnapshot(
   // trailing total has no reset instant, it decays turn by turn as the oldest
   // ones fall out of the window, so there is no moment at which a projection
   // past it stops describing the window it was computed from.
-  const weeklyResetsAt =
-    planWeeklyReset !== null || limits.weeklyAnchor ? wkStart + WEEK_MS : null;
+  const weeklyResetsAt = weeklyReset;
   const weekEntries = entries.filter((e) => e.ts >= wkStart);
+
+  // The reset instant rolls forward across a rollover; the percentage beside it
+  // does not. It describes the week that ended at `resetsAt`, so re-serving it
+  // against the week that opened there reports a nearly-full allowance on a
+  // window that has spent nothing — and `evaluateBudget` refuses runs on that
+  // same figure while the card shows it. `planUsage`'s cache makes this the
+  // ordinary case rather than a rare one: it re-serves the last good reading on
+  // an age test alone, so a reading fetched at 05:58 naming 06:00 is still
+  // served at 06:03 with no provider failure anywhere.
+  //
+  // A reading that named no instant at all is a different thing — an absence,
+  // not a rollover — and it stands: the whole point of this source is that it
+  // sees the surfaces that share the allowance and write nothing to this disk.
+  const isCurrentWeekly = (w: PlanWindow) =>
+    w.resetsAt === null || w.resetsAt > now;
+  const planWeekly = plan?.weekly && isCurrentWeekly(plan.weekly) ? plan.weekly : null;
+  // Same rule for the model-scoped walls, which roll over with the week they
+  // scope: `makeWindow` stands the worst of them up as `fraction` when the
+  // provider named no top-level figure, so a stale one left unfiltered would
+  // put a closed week's percentage back on the meter by the other door.
+  const scopedWeekly = (plan?.scopedWeekly ?? []).filter((s) =>
+    isCurrentWeekly(s.window),
+  );
+
+  // The 5-hour reading is retired by the test that already retires
+  // `sessionStart`: it describes the window ending at the instant it names, and
+  // past that instant the window being reported is a different one — one that
+  // starts now and has spent nothing, which is where a stale 88% used to land.
+  // `anchorIsCurrent` is false for a reading that named no instant too, so only
+  // a named one may retire a reading, on `isCurrentWeekly`'s reasoning.
+  const planSession =
+    plan?.session && (plan.session.resetsAt === null || anchorIsCurrent)
+      ? plan.session
+      : null;
   const weeklyAgg = aggregate(weekEntries);
 
   // What each window has spent since the provider's reading was taken. Each
@@ -1038,23 +1096,21 @@ export function buildSnapshot(
     sessionAgg,
     limits.sessionCostLimit,
     limits.sessionTokenLimit,
-    plan?.session ?? null,
+    planSession,
     null,
     sessionSinceFetch,
   );
 
   const weekly = makeWindow(
-    planWeeklyReset !== null || limits.weeklyAnchor
-      ? "Weekly quota"
-      : "Trailing 7 days",
+    weeklyReset !== null ? "Weekly quota" : "Trailing 7 days",
     wkStart,
     wkEnd,
     weeklyAgg,
     limits.weeklyCostLimit,
     limits.weeklyTokenLimit,
-    plan?.weekly ?? null,
-    plan && plan.scopedWeekly.length > 0
-      ? Math.max(...plan.scopedWeekly.map((s) => s.window.utilization))
+    planWeekly,
+    scopedWeekly.length > 0
+      ? Math.max(...scopedWeekly.map((s) => s.window.utilization))
       : null,
     weeklySinceFetch,
   );

@@ -581,6 +581,95 @@ describe("provider-reported utilisation", () => {
     assert.equal(snap.session.costUSD, 2);
   });
 
+  /**
+   * A reading that has outlived the window it describes, which is the ordinary
+   * case rather than a rare one: `planUsage` re-serves the last good value on
+   * an age test alone — five minutes before it refreshes, an hour before it
+   * stops being shown — so with no provider failure anywhere a reading fetched
+   * at 05:58 naming `resets_at = 06:00` is still served at 06:03.
+   *
+   * Kept, it bounds the meter with a span that closed in the past, prints the
+   * pre-reset utilisation, and sums the whole of the old week plus everything
+   * since the rollover. `evaluateBudget` reads the same fraction and refuses
+   * every run on it, and none of that looks wrong on the card.
+   */
+  it("retires a weekly reading whose reset has already passed", () => {
+    const rolledOver = now - 60_000;
+    const snap = buildSnapshot(
+      [entry(rolledOver - HOUR, 40), entry(rolledOver + 30_000, 2)],
+      NO_LIMITS,
+      now,
+      null,
+      plan(null, { utilization: 0.95, resetsAt: rolledOver }, [], now - 3 * 60_000),
+    );
+
+    // The window reported is the one that opened at the rollover, not the one
+    // that closed a minute ago. The instant recurs every seven days, so it
+    // still names where this week began — dropping it outright would put the
+    // whole of the old week back in the total by another door.
+    assert.ok(snap.weekly.endsAt > now);
+    assert.equal(snap.weekly.startsAt, rolledOver);
+    assert.equal(snap.weekly.endsAt, rolledOver + WEEK_MS);
+    assert.equal(snap.weekly.label, "Weekly quota");
+    // $40 of the $42 on disk belongs to the week that closed.
+    assert.equal(snap.weekly.costUSD, 2);
+
+    // The percentage does not roll forward with the instant — it described the
+    // week that ended — so the meter reads unknown and the guard takes the
+    // `no_ceiling` path it already has for an unreadable fraction.
+    assert.notEqual(snap.weekly.fraction, 0.95);
+    assert.equal(snap.weekly.fraction, null);
+    assert.equal(snap.weekly.guardFraction, null);
+  });
+
+  it("retires a model-scoped wall that rolled over with its week", () => {
+    // `makeWindow` stands the worst wall up as `fraction` when the provider
+    // named no top-level weekly figure, so a stale one left unfiltered puts a
+    // closed week's percentage back on the meter past the check above it.
+    const rolledOver = now - 60_000;
+    const snap = buildSnapshot(spend, NO_LIMITS, now, null, plan(null, null, [
+      { label: "Opus", window: { utilization: 0.93, resetsAt: rolledOver } },
+    ]));
+    assert.equal(snap.weekly.fraction, null);
+    assert.equal(snap.weekly.guardFraction, null);
+  });
+
+  /**
+   * The same rollover on the 5-hour window. `anchorIsCurrent` already retires
+   * `sessionStart` here and says why; it has to retire the percentage beside it
+   * as well, or the card reads 88% over a window that starts now and has spent
+   * nothing while `evaluateBudget` refuses runs on the same figure.
+   */
+  it("retires a 5-hour reading whose window has already rolled over", () => {
+    const rolledOver = now - 60_000;
+    const snap = buildSnapshot(
+      [entry(rolledOver - 3 * HOUR, 12)],
+      NO_LIMITS,
+      now,
+      null,
+      plan({ utilization: 0.88, resetsAt: rolledOver }),
+    );
+
+    // No block is open, so what is reported is the window the next turn would
+    // open: it starts now and has spent nothing.
+    assert.equal(snap.session.startsAt, now);
+    assert.equal(snap.session.costUSD, 0);
+    assert.equal(snap.session.fraction, null);
+    assert.equal(snap.session.guardFraction, null);
+  });
+
+  it("keeps a reading that named no reset instant at all", () => {
+    // An absence is not a rollover. This source exists to see the surfaces that
+    // share the allowance and write nothing to this disk, and a session opened
+    // in the web app is exactly a percentage with no local block under it.
+    const snap = buildSnapshot([], NO_LIMITS, now, null, plan(
+      { utilization: 0.4, resetsAt: null },
+      { utilization: 0.6, resetsAt: null },
+    ));
+    assert.equal(snap.session.fraction, 0.4);
+    assert.equal(snap.weekly.fraction, 0.6);
+  });
+
   it("measures the week against the provider's reset instead of a trailing 7 days", () => {
     const weeklyReset = now + 2 * 24 * HOUR;
     const snap = buildSnapshot(spend, NO_LIMITS, now, null, plan(null, {
