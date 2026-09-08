@@ -13,8 +13,9 @@ import { after, before, describe, it } from "node:test";
  * bind mount of the operator's machine — with nothing in the tree that will ever
  * come back for it. `retention.ts` expires transcripts by asking the database
  * what is live and these files are not rows, so `grep -rn '\.bak' src/` returns
- * exactly one deletion in the whole codebase. Nine of them survived on the
- * install this was measured on, 11.3 MB, against 53 receipts.
+ * exactly one deletion in the whole codebase. Eleven of them survived on the
+ * install this was measured on, 18.8 MB, every one with a live transcript still
+ * beside it.
  *
  * Both ways of getting it wrong are silent and they are not symmetric. Deleting
  * too little is the leak above. Deleting too much reaches a file an operator
