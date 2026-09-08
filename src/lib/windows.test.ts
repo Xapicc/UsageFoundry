@@ -886,6 +886,68 @@ describe("calendar periods", () => {
     assert.equal(current.endsAt, current.startsAt + WEEK_MS);
   });
 
+  /**
+   * The half of the same word the anchor test above does not cover.
+   *
+   * `settings.ts` ships `weeklyAnchor` as null, so on a stock install that
+   * branch is skipped and the buckets fall through to ISO-Monday local
+   * midnights — while the weekly meter directly above them on the page is
+   * bounded by the provider's reset. Two different seven-day totals on one
+   * page, both labelled "week", and neither of them looks wrong.
+   */
+  it("cuts week buckets on the provider's reset, not on Monday", () => {
+    // Friday 17:43 UTC: nowhere near a local Monday midnight in any zone.
+    const weekly = { utilization: 0.3, resetsAt: Date.UTC(2026, 7, 14, 17, 43) };
+    const reading = {
+      session: null,
+      weekly,
+      scopedWeekly: [],
+      fetchedAt: berlinNow,
+    };
+    const snap = buildSnapshot([], NO_LIMITS, berlinNow, null, reading);
+    const current = buildPeriods(
+      [entry(berlinNow - HOUR)],
+      "week",
+      NO_LIMITS,
+      berlinNow,
+      BERLIN,
+      null,
+      weekly,
+    ).buckets[0];
+
+    assert.equal(current.startsAt, snap.weekly.startsAt);
+    assert.equal(current.endsAt, snap.weekly.endsAt);
+    assert.equal(current.isCurrent, true);
+  });
+
+  it("follows the meter's window across a rollover the reading outlived", () => {
+    // Once a stale `resetsAt` no longer defines the meter's window it must not
+    // define the buckets' either — both read it through the same function, so
+    // the newest bucket rolls forward with the meter rather than staying on the
+    // week that closed.
+    const rolledOver = berlinNow - 60_000;
+    const weekly = { utilization: 0.95, resetsAt: rolledOver };
+    const snap = buildSnapshot([], NO_LIMITS, berlinNow, null, {
+      session: null,
+      weekly,
+      scopedWeekly: [],
+      fetchedAt: berlinNow - 3 * 60_000,
+    });
+    const current = buildPeriods(
+      [entry(berlinNow - 30_000)],
+      "week",
+      NO_LIMITS,
+      berlinNow,
+      BERLIN,
+      null,
+      weekly,
+    ).buckets[0];
+
+    assert.equal(current.startsAt, rolledOver);
+    assert.equal(current.startsAt, snap.weekly.startsAt);
+    assert.equal(current.endsAt, snap.weekly.endsAt);
+  });
+
   it("drops buckets that closed before the first recorded turn", () => {
     const firstTurn = Date.UTC(2026, 7, 10, 12, 0);
     const series = buildPeriods(

@@ -309,6 +309,13 @@ export function weekStart(now: number, anchor: WeeklyAnchor | null): number {
  * The instant this install's weekly window rolls over, or null when nothing
  * names one and the week is a trailing total.
  *
+ * One function because two surfaces have to agree on it: the weekly meter and
+ * the "week" buckets on the history card directly beneath it. `buildPeriods`
+ * used to consult `weeklyAnchor` alone, which `settings.ts` ships as null — so
+ * a stock install drew ISO-Monday buckets under a meter bounded by the
+ * provider's reset, and put two different seven-day totals on one page under
+ * one word.
+ *
  * The provider's instant outranks the operator's for the reason
  * `sessionResetOverrideAt` is outranked one window over: the anchor exists only
  * as a way to hand-correct a boundary this app could not observe.
@@ -990,7 +997,9 @@ export function buildSnapshot(
   // Same precedence as the session reset, and it retires the same guess: with
   // no `weeklyAnchor` configured this window has no reset instant at all and
   // reports a trailing total, which is a different window from the one the
-  // provider is enforcing. Its reset instant makes them the same window.
+  // provider is enforcing. Its reset instant makes them the same window — and
+  // `buildPeriods` is handed the same reading so the buckets under this meter
+  // cover the same seven days it does.
   const weeklyReset = effectiveWeeklyReset(
     plan?.weekly ?? null,
     limits.weeklyAnchor,
@@ -1404,14 +1413,19 @@ function periodBoundaries(
   count: number,
   now: number,
   timeZone: string,
-  weeklyAnchor: WeeklyAnchor | null,
+  /**
+   * When this install's week rolls over, from `effectiveWeeklyReset`, or null
+   * when nothing names an instant and the week is a trailing total.
+   */
+  weeklyReset: number | null,
 ): number[] {
-  // With an anchor configured the operator has said when their week rolls over,
-  // and the newest bucket has to be the same seven hours-to-the-minute as the
-  // weekly meter directly above it on the page — a calendar Monday would put a
-  // different total under the same word.
-  if (granularity === "week" && weeklyAnchor) {
-    const current = weekStart(now, weeklyAnchor);
+  // Something names when this week rolls over — the provider's own reading, or
+  // failing that the anchor the operator configured — and the newest bucket has
+  // to be the same seven hours-to-the-minute as the weekly meter directly above
+  // it on the page. A calendar Monday would put a different total under the
+  // same word.
+  if (granularity === "week" && weeklyReset !== null) {
+    const current = weeklyReset - WEEK_MS;
     const out: number[] = [];
     for (let i = count - 1; i >= 0; i--) out.push(current - i * WEEK_MS);
     out.push(current + WEEK_MS);
@@ -1523,6 +1537,15 @@ export function buildPeriods(
   now = Date.now(),
   timeZone = "UTC",
   completeFrom: number | null = null,
+  /**
+   * The provider's weekly reading, or null to fall back to `weeklyAnchor`.
+   *
+   * An argument because this module reads nothing: the one caller that renders
+   * the answer is the same route that already fetched it for `buildSnapshot`,
+   * and handing both the same reading is the whole of what keeps the newest
+   * week bucket and the weekly meter over it describing one span.
+   */
+  planWeekly: PlanWindow | null = null,
 ): PeriodSeries {
   const count = PERIOD_COUNT[granularity];
   const bounds = periodBoundaries(
@@ -1530,7 +1553,7 @@ export function buildPeriods(
     count,
     now,
     timeZone,
-    limits.weeklyAnchor,
+    effectiveWeeklyReset(planWeekly, limits.weeklyAnchor, now),
   );
 
   // Entries arrive time-sorted (`scanUsage` sorts them), so one cursor walks
