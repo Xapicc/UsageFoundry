@@ -309,11 +309,11 @@ async function postJSON(baseUrl, pathname, headers, body) {
 /**
  * Seed through the app's own API, never by writing to its database.
  *
- * Six of the twenty pages are addressed by an id, and a page fetching an id
- * that does not exist logs a console error for the 404 — so the ids have to be
- * real or a third of the pass measures the wrong thing. The app permits exactly
- * one writer to a data directory and says so at boot, which rules out opening
- * the SQLite file from here while the server holds it.
+ * Seven of the twenty-two pages are addressed by an id, and a page fetching an
+ * id that does not exist logs a console error for the 404 — so the ids have to
+ * be real or a third of the pass measures the wrong thing. The app permits
+ * exactly one writer to a data directory and says so at boot, which rules out
+ * opening the SQLite file from here while the server holds it.
  */
 async function seed(baseUrl, headers, workspace) {
   const run = await postJSON(baseUrl, "/api/runs", headers, {
@@ -338,15 +338,25 @@ async function seed(baseUrl, headers, workspace) {
     },
   });
   const instance = await postJSON(baseUrl, `/api/workflows/${workflow.workflow.id}/run`, headers, {});
+  // Carries a project, because the task page's folder picker draws a second
+  // select from it — an unassigned task would load the same page with half of
+  // the widest row on it never rendered.
+  const task = await postJSON(baseUrl, "/api/tasks", headers, {
+    title: "Seeded by the smoke pass",
+    body: "Nothing picks this up: no run is started for a task by filing it.",
+    mountId: "workspace",
+    folder: "project",
+  });
   return {
     runId: run.run.id,
     workflowId: workflow.workflow.id,
     instanceId: instance.instance.id,
+    taskId: task.task.id,
   };
 }
 
-/** Every `src/app/**\/page.tsx`, with the six dynamic ones bound to the seeds. */
-function routes({ runId, workflowId, instanceId }) {
+/** Every `src/app/**\/page.tsx`, with the seven dynamic ones bound to seeds. */
+function routes({ runId, workflowId, instanceId, taskId }) {
   return [
     "/",
     "/account",
@@ -363,6 +373,8 @@ function routes({ runId, workflowId, instanceId }) {
     `/runs/${runId}/conflicts`,
     "/settings",
     "/tasks",
+    "/tasks/new",
+    `/tasks/${taskId}`,
     "/workflows",
     "/workflows/new",
     `/workflows/${workflowId}`,
@@ -376,7 +388,8 @@ function label(route, seeds) {
   return route
     .replace(seeds.instanceId, "[instanceId]")
     .replace(seeds.workflowId, "[id]")
-    .replace(seeds.runId, "[id]");
+    .replace(seeds.runId, "[id]")
+    .replace(seeds.taskId, "[id]");
 }
 
 /**

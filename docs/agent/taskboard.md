@@ -493,18 +493,33 @@ and the board is re-read either way. The in-flight state is keyed on the *edge*
 (`id:status`) and not on the row: keyed on the row, pressing Done lit Release
 and Drop too, which reads as three presses having been made.
 
+**The editor is a route, not a card the board opens above itself.** A task title
+is a link to `tasks/[id]` and New task is a link to `tasks/new`, both drawing
+`src/components/TaskEditor.tsx`, on `runs/[id]`'s precedent. The brief is the
+field with something to read in it and it used to be a seven-line box wedged
+above a table that went on polling and moving underneath it. Two consequences
+worth knowing before editing either file. The board is a list again — it draws
+rows, narrows them, counts them and offers the moves, and holds no draft — so
+nothing on it can be lost by a poll. And `tasks/[id]` is the one page here that
+**does not** poll: it is a form with unsaved text in it, and a poll could
+neither re-seed the draft without throwing away what is being typed nor leave it
+alone without drawing a heading that disagrees with the field below it. It reads
+the row on arrival and again after every press that changed it, and claims
+nothing about what another door did meanwhile.
+
 **The editor is never filled from a list row.** `TaskListItemDTO` carries the
 brief clipped to `MAX_LIST_TASK_BODY` with an ellipsis on it, so a form seeded
 from the board and saved writes two hundred characters and a `…` over the whole
 brief — the one field a future agent is handed with nothing else to go on,
 destroyed by an edit to the title, silently, with the row still looking right
-afterwards. So opening a task fetches `GET /api/tasks/[id]` first, the draft is
-set only from that, and Save is gated until it lands; a failed read leaves the
-editor open saying why, with no path that writes the clip. The folder select
-carries the same shape of guard for a different reason: a stored folder the
-workspace scan does not currently offer stays in the list as its own option,
-since a `<select>` whose value is absent resolves to the first option and an
-unrelated save would then move the task to a folder nobody picked.
+afterwards. So the detail page fetches `GET /api/tasks/[id]` and does not mount
+the form until it holds the answer, the draft is seeded once from that and never
+re-seeded from the prop, and a failed read draws the reason instead of a form —
+there is no path that writes the clip. The folder select carries the same shape
+of guard for a different reason: a stored folder the workspace scan does not
+currently offer stays in the list as its own option, since a `<select>` whose
+value is absent resolves to the first option and an unrelated save would then
+move the task to a folder nobody picked.
 
 **The three ways of having nothing are three different screens, and none of them
 is an empty list.** A board with nothing on it says a task is a brief anybody —
