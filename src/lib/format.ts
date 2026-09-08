@@ -298,6 +298,24 @@ export function fmtTaskOrigin(origin: TaskOriginDTO): string {
 }
 
 /**
+ * The same four origins as the noun alone, for a column rather than a line.
+ *
+ * The phrase above is written for a task's own page, where a line has the width
+ * for a verb. In a table column already headed "From" the verb is the header's
+ * word, and "Filed by a run" set above the filing run's id spent two lines of a
+ * 150px column saying "run" twice — which is how that cell came to be the
+ * tallest thing in the row. Both spellings live here and are typed against the
+ * same union, so a fifth origin cannot reach one of them without failing the
+ * typecheck on the other.
+ */
+export const TASK_ORIGIN_WORD: Record<TaskOriginDTO, string> = {
+  operator: "Operator",
+  chat: "Orchestrator",
+  block: "Workflow",
+  run: "Run",
+};
+
+/**
  * Where a task's work is, as both surfaces that draw a task say it.
  *
  * Takes the fields rather than the DTO so the board's clipped row and the whole

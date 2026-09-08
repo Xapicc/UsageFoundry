@@ -10,10 +10,10 @@ import {
   type TaskStatusDTO,
 } from "@/lib/apiTypes";
 import {
+  TASK_ORIGIN_WORD,
   TASK_PRIORITY_TONE,
   TASK_STATUS_TONE,
   fmtRelative,
-  fmtTaskOrigin,
   fmtTaskPlace,
   pollFailureMessage,
   shortId,
@@ -137,6 +137,35 @@ function RunLink({ label, runId }: { label: string; runId: string }) {
       </Link>
     </span>
   );
+}
+
+/**
+ * The one run a row names — the run that acted on *this* task — or nothing.
+ *
+ * Three records used to compete for a single 150px column and stacked four deep
+ * in it: the holder, the closer, and every run `runs.task_id` points at. They
+ * are not equally worth a row. The holder and the closer each say what happened
+ * to the task; a run merely started for it can have ended without touching it,
+ * which is exactly why nothing closes a task when a run ends. So the row draws
+ * the one that acted and the count stands in for the rest, and the whole list is
+ * on the task's own page — which the count links to, and the title beside it
+ * already does.
+ *
+ * "Held by" is gated on the status rather than on the column alone, because a
+ * re-open is the only thing that clears `claimed_by_run_id`: a task closed by
+ * hand keeps the id of the run that last held it, and drawing that on a Done row
+ * reports finished work as work in progress.
+ */
+function actingRun(
+  task: TaskListItemDTO,
+): { label: string; runId: string } | null {
+  if (task.completedByRunId) {
+    return { label: "Closed by", runId: task.completedByRunId };
+  }
+  if (task.status === "claimed" && task.claimedByRunId) {
+    return { label: "Held by", runId: task.claimedByRunId };
+  }
+  return null;
 }
 
 export default function TasksPage() {
@@ -280,151 +309,167 @@ export default function TasksPage() {
   }
 
   function taskRows(rows: TaskListItemDTO[], withStatus: boolean) {
-    return rows.map((task) => (
-      <Tr key={task.id}>
-        <Td className="w-full max-w-0 align-top max-md:max-w-none">
-          {/* The task's own page, rather than a card this page opened above
-              itself. A link and not a button: the row is a destination, so
-              ⌘-click opens the brief beside the board instead of replacing
-              it. */}
-          <Link
-            href={`/tasks/${task.id}`}
-            className="font-medium text-ink no-underline hover:text-accent max-md:inline-flex max-md:min-h-11 max-md:items-center"
-          >
-            {task.title}
-          </Link>
-          {task.body && (
-            <span className="mt-0.5 block max-w-[80ch] text-ink-muted">
-              {task.body}
-            </span>
-          )}
-          {task.parentTaskId && (
-            <span className="mt-0.5 block text-xs text-ink-faint">
-              Filed under{" "}
-              {parentTitle(task.parentTaskId) ? (
-                `“${parentTitle(task.parentTaskId)}”`
-              ) : (
-                <span className="mono">{shortId(task.parentTaskId)}</span>
-              )}
-            </span>
-          )}
-        </Td>
-        <Td
-          label="Project"
-          labelPlacement="above"
-          className="align-top text-ink-muted"
-        >
-          {task.folder === null ? (
-            <span className="text-ink-faint">Unassigned</span>
-          ) : (
-            <span className="block max-w-[36ch] max-md:break-all">
-              {fmtTaskPlace(task)}
-            </span>
-          )}
-        </Td>
-        <Td
-          label="From"
-          labelPlacement="above"
-          className="align-top text-ink-muted"
-        >
-          <span className="block">{fmtTaskOrigin(task.origin)}</span>
-          {task.createdByRunId && (
-            <RunLink label="by run" runId={task.createdByRunId} />
-          )}
-          {task.claimedByRunId && (
-            <RunLink label="held by run" runId={task.claimedByRunId} />
-          )}
-          {task.completedByRunId && (
-            <RunLink label="closed by run" runId={task.completedByRunId} />
-          )}
-          {/* Runs started *for* this task, which is the one link here the board
-              did not write about itself — the three above are records this page
-              keeps and this is `runs.task_id` read back. Drawn last and worded
-              "started for", because none of them says the work happened: a run
-              named here can have completed without doing the thing, which is
-              exactly why nothing closes this task when one ends. */}
-          {task.runIds.map((runId) => (
-            <RunLink key={runId} label="started for it" runId={runId} />
-          ))}
-          {/* Named rather than left to be inferred from a list that stops at
-              `MAX_TASK_RUN_LINKS`, the rule a shortened diff follows: a row
-              showing three of eleven and saying nothing reports a task worked
-              eleven times as one worked three times. */}
-          {task.runCount > task.runIds.length && (
-            <span className="block text-ink-faint">
-              and {task.runCount - task.runIds.length} more
-            </span>
-          )}
-        </Td>
-        <Td label="Priority" className="align-top">
-          <span className="flex flex-wrap gap-1.5">
-            <Badge tone={TASK_PRIORITY_TONE[task.priority]}>
-              {task.priority}
-            </Badge>
-            {withStatus &&
-              task.status !== "open" &&
-              task.status !== "claimed" && (
-                <Badge tone={TASK_STATUS_TONE[task.status]}>
-                  {task.status}
-                </Badge>
-              )}
-          </span>
-        </Td>
-        <Td
-          label="Updated"
-          className="align-top whitespace-nowrap text-ink-muted tabular-nums"
-        >
-          {fmtRelative(task.updatedAt, fetchedAt)}
-        </Td>
-        <Td label="Move" className="align-top">
-          {/* No `gap` of its own: `ButtonRow` states `gap-2` and Tailwind emits
-              a numeric utility's values ascending, so a caller's smaller gap on
-              the same element is a no-op that reads as a decision. */}
-          <ButtonRow className="justify-end">
-            {task.status === "claimed" && (
-              <Button
-                variant="ghost"
-                size="compact"
-                onClick={() => void move(task, "open", "release")}
-                busy={moving === `${task.id}:open`}
-              >
-                Release
-              </Button>
+    return rows.map((task) => {
+      const acted = actingRun(task);
+      const hasRunFact = acted !== null || task.runCount > 0;
+      return (
+        <Tr key={task.id}>
+          <Td className="w-full max-w-0 align-top max-md:max-w-none">
+            {/* The task's own page, rather than a card this page opened above
+                itself. A link and not a button: the row is a destination, so
+                ⌘-click opens the brief beside the board instead of replacing
+                it. */}
+            <Link
+              href={`/tasks/${task.id}`}
+              className="font-medium text-ink no-underline hover:text-accent max-md:inline-flex max-md:min-h-11 max-md:items-center"
+            >
+              {task.title}
+            </Link>
+            {/* One line, clipped by the cell, on the rule the runs board's
+                prompt and folder already follow — and unlike those two it
+                carries no `title`, because `TaskListItemDTO.body` is the brief
+                already cut to `MAX_LIST_TASK_BODY`. A tooltip here would offer
+                the whole brief and hand back two hundred characters of it.
+                Whole, it is on the task's own page, which the title above
+                links to. */}
+            {task.body && (
+              <span className="mt-0.5 block max-w-[80ch] truncate text-ink-muted">
+                {task.body}
+              </span>
             )}
-            {(task.status === "open" || task.status === "claimed") && (
-              <>
-                <Button
-                  variant="secondary"
-                  size="compact"
-                  onClick={() => void move(task, "done", "complete")}
-                  busy={moving === `${task.id}:done`}
-                >
-                  Done
-                </Button>
+            {task.parentTaskId && (
+              <span className="mt-0.5 block text-xs text-ink-faint">
+                Filed under{" "}
+                {parentTitle(task.parentTaskId) ? (
+                  `“${parentTitle(task.parentTaskId)}”`
+                ) : (
+                  <span className="mono">{shortId(task.parentTaskId)}</span>
+                )}
+              </span>
+            )}
+          </Td>
+          <Td
+            label="Project"
+            labelPlacement="above"
+            className="align-top text-ink-muted"
+          >
+            {task.folder === null ? (
+              <span className="text-ink-faint">Unassigned</span>
+            ) : (
+              <span className="block max-w-[36ch] max-md:break-all">
+                {fmtTaskPlace(task)}
+              </span>
+            )}
+          </Td>
+          {/* Who filed it, and only that: one noun, and the filing run's id
+              after it when there is one. The verb the sentence on a task's own
+              page carries is this column's heading here. `labelPlacement` goes
+              back to the default with the stack — `above` is for a value that is
+              prose or a list, and this is a reading again. */}
+          <Td label="From" className="align-top whitespace-nowrap text-ink-muted">
+            {task.createdByRunId ? (
+              <RunLink
+                label={TASK_ORIGIN_WORD[task.origin]}
+                runId={task.createdByRunId}
+              />
+            ) : (
+              TASK_ORIGIN_WORD[task.origin]
+            )}
+          </Td>
+          <Td
+            // No value, no field name. `Td` draws its label only below the
+            // breakpoint, so a task nothing has run against would otherwise
+            // carry a "Runs" heading over an empty line where the desktop column
+            // is simply blank. The alternative — a faint "None" on every open
+            // row — is a column of the word none.
+            label={hasRunFact ? "Runs" : undefined}
+            className="align-top whitespace-nowrap text-ink-muted"
+          >
+            {acted ? (
+              <RunLink label={acted.label} runId={acted.runId} />
+            ) : (
+              task.runCount > 0 && (
+                // The count rather than the ids: `runs.task_id` is unbounded and
+                // its links are what stacked this column, and `runCount` is the
+                // true total where `runIds` stops at `MAX_TASK_RUN_LINKS`. A
+                // link and not a figure, so the runs behind it stay one press
+                // away — on the page that lists every one of them.
+                <Link href={`/tasks/${task.id}`} className="block">
+                  {task.runCount} {task.runCount === 1 ? "run" : "runs"}
+                </Link>
+              )
+            )}
+          </Td>
+          <Td label="Priority" className="align-top">
+            <span className="flex flex-wrap gap-1.5">
+              <Badge tone={TASK_PRIORITY_TONE[task.priority]}>
+                {task.priority}
+              </Badge>
+              {withStatus &&
+                task.status !== "open" &&
+                task.status !== "claimed" && (
+                  <Badge tone={TASK_STATUS_TONE[task.status]}>
+                    {task.status}
+                  </Badge>
+                )}
+            </span>
+          </Td>
+          <Td
+            label="Updated"
+            className="align-top whitespace-nowrap text-ink-muted tabular-nums"
+          >
+            {fmtRelative(task.updatedAt, fetchedAt)}
+          </Td>
+          <Td label="Move" className="align-top">
+            {/* No `gap` of its own: `ButtonRow` states `gap-2` and Tailwind emits
+                a numeric utility's values ascending, so a caller's smaller gap on
+                the same element is a no-op that reads as a decision. */}
+            <ButtonRow className="justify-end">
+              {task.status === "claimed" && (
                 <Button
                   variant="ghost"
                   size="compact"
-                  onClick={() => void move(task, "dropped", "drop")}
-                  busy={moving === `${task.id}:dropped`}
+                  onClick={() => void move(task, "open", "release")}
+                  busy={moving === `${task.id}:open`}
                 >
-                  Drop
+                  Release
                 </Button>
-              </>
-            )}
-            {(task.status === "done" || task.status === "dropped") && (
-              <Button
-                variant="ghost"
-                size="compact"
-                onClick={() => void move(task, "open", "re-open")}
-                busy={moving === `${task.id}:open`}
-              >
-                Re-open
-              </Button>
-            )}
-          </ButtonRow>
-        </Td>
-      </Tr>
-    ));
+              )}
+              {(task.status === "open" || task.status === "claimed") && (
+                <>
+                  <Button
+                    variant="secondary"
+                    size="compact"
+                    onClick={() => void move(task, "done", "complete")}
+                    busy={moving === `${task.id}:done`}
+                  >
+                    Done
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="compact"
+                    onClick={() => void move(task, "dropped", "drop")}
+                    busy={moving === `${task.id}:dropped`}
+                  >
+                    Drop
+                  </Button>
+                </>
+              )}
+              {(task.status === "done" || task.status === "dropped") && (
+                <Button
+                  variant="ghost"
+                  size="compact"
+                  onClick={() => void move(task, "open", "re-open")}
+                  busy={moving === `${task.id}:open`}
+                >
+                  Re-open
+                </Button>
+              )}
+            </ButtonRow>
+          </Td>
+        </Tr>
+      );
+    });
   }
 
   function taskTable(
@@ -444,8 +489,15 @@ export default function TasksPage() {
               <Th scope="col" className="min-w-[160px]">
                 Project
               </Th>
-              <Th scope="col" className="min-w-[150px]">
+              {/* Two columns rather than one, so neither has to stack: "From"
+                  is who filed the task and "Runs" is what has acted on it
+                  since, and one column holding both was a cell taller than the
+                  brief beside it. */}
+              <Th scope="col" className="min-w-[124px]">
                 From
+              </Th>
+              <Th scope="col" className="min-w-[148px]">
+                Runs
               </Th>
               <Th scope="col" className="min-w-[92px]">
                 Priority
