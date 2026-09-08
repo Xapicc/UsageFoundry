@@ -5369,7 +5369,7 @@ through before trusting this unattended:
   # expect "…is root-owned: a run cannot rewrite or replace its settings.json…"
   # a refusal instead names the entry, the owner it wanted and the owner it saw
 
-  # 1 + 2. the two the sketch names (09-implementation-sketch.md:274–283)
+  # 1 + 2. the two the sketch names (09-implementation-sketch.md:274–284)
   docker compose exec --user "$uid" usagefoundry \
     sh -c 'echo x >> ~/.claude/settings.json'                    # expect denied
   docker compose exec --user "$uid" usagefoundry \
