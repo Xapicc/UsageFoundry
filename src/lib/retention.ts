@@ -13,6 +13,7 @@ import {
   TERMINAL_STATUSES,
   worktreeStores,
 } from "./orchestrator";
+import { mayWriteDataDir } from "./serverLock";
 import { getSettings } from "./settings";
 import { forgetDreamingFiles } from "./dreaming";
 import { forgetTranscriptFiles } from "./transcripts";
@@ -1219,7 +1220,38 @@ export function startRetentionSweeper(): void {
   void tick();
 }
 
+/**
+ * Drop the timer, so a process that has lost the directory never sweeps again.
+ *
+ * Exported for `sweepPaused`'s reason and no other: nothing arms this from
+ * outside `startRetentionSweeper`, but a stand-down has to be able to disarm it.
+ */
+export function stopRetentionSweeper(): void {
+  if (!timer.handle) return;
+  clearInterval(timer.handle);
+  timer.handle = null;
+}
+
 async function tick(): Promise<void> {
+  // **Re-asked here rather than trusted from boot**, and this is the one sweep
+  // in the app that deletes rather than reconciles. The only ownership gate on
+  // it used to be `instrumentation.ts`'s `ownsDataDir()`, taken once, and the
+  // answer moves after that: `heartbeat` returns `lost` when the directory
+  // changes hands, and a `writeLock` that throws stands the process down too. In
+  // either case the interval kept its handle, and six hours later a stood-down
+  // process ran the full sweep — `DELETE`s, `git worktree remove` on checkouts,
+  // `unlink` on transcripts — against a database and mounts another process now
+  // owns, beside that owner's own sweeper. `timer.running` is a module variable
+  // and cannot see the other process at all.
+  //
+  // The timer is stopped rather than the tick skipped, on `sweepPaused`'s rule:
+  // nothing here will ever be this process's to decide again, and a refusal it
+  // re-asks every six hours is a refusal nobody reads.
+  if (!mayWriteDataDir()) {
+    stopRetentionSweeper();
+    return;
+  }
+
   if (timer.running) return;
   timer.running = true;
   try {

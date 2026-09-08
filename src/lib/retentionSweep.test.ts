@@ -273,6 +273,95 @@ describe("retentionCutoff", () => {
 });
 
 /**
+ * The one sweep in this app that deletes, against a directory it may not own.
+ *
+ * `startRetentionSweeper` was gated on ownership once, at boot, inside
+ * `instrumentation.ts`'s `if (ownsDataDir())`. The answer moves after that:
+ * `heartbeat` returns `lost` when the directory changes hands and a `writeLock`
+ * that throws stands the process down as well, and in both cases the interval
+ * kept its handle. Six hours later a stood-down process ran the whole sweep —
+ * `DELETE FROM run_events`, `git worktree remove` on checkouts in the mounts,
+ * `unlink` on transcripts in `~/.claude/projects`, `UPDATE runs SET session_id =
+ * NULL` — against a database and mounts another process now owns, beside that
+ * owner's own sweeper. The single-flight latch is a module variable and cannot
+ * see the other process at all.
+ *
+ * There is nothing to observe when it goes wrong: the rows are gone, and the
+ * owner's next sweep would have taken most of them anyway.
+ *
+ * Refused for real rather than through a stubbed `mayWriteDataDir`, on
+ * `shutdown.test.ts`'s grounds — a lock file naming a live pid that is not ours,
+ * then `claimDataDir()`. What has to be distinguished is `held` from the
+ * `unclaimed` every other case in this file runs under, and a stub proves only
+ * that a branch exists.
+ */
+describe("the retention sweeper's ownership", () => {
+  let lockFile: string;
+
+  before(async () => {
+    lockFile = path.join(process.env.DATA_DIR as string, "server.lock");
+    settings.saveSettings({ eventRetentionDays: 30 });
+    seed({ id: "not-ours", status: "completed", oldEvents: 6, freshEvents: 0 });
+
+    // `process.ppid` because it is alive and can never be our own pid — which
+    // `lockVerdict` reads as this server's predecessor across a restart and
+    // claims outright.
+    fs.writeFileSync(
+      lockFile,
+      JSON.stringify({
+        pid: process.ppid,
+        ownerId: "the-process-that-owns-this-directory",
+        startedAt: Date.now(),
+        heartbeatAt: Date.now(),
+      }),
+    );
+    assert.equal(
+      await (await import("./serverLock")).claimDataDir(),
+      false,
+      "the fixture must leave this process refused, or the case proves nothing",
+    );
+  });
+
+  after(() => retention.stopRetentionSweeper());
+
+  it("deletes nothing once the directory has changed hands", async () => {
+    const sweepBefore = retention.lastSweep();
+
+    retention.startRetentionSweeper();
+    // `sweepRunEvents` is the first statement of `runRetentionSweep` and runs
+    // synchronously off the tick, so an ungated sweeper has already deleted by
+    // here. The wait is for `LAST_SWEEP_KEY`, which is two awaits further on.
+    assert.equal(eventCount("not-ours"), 6);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    assert.equal(eventCount("not-ours"), 6, "a stood-down process deleted rows");
+    assert.deepEqual(retention.lastSweep(), sweepBefore, "it recorded a sweep");
+  });
+
+  it("stops its own timer rather than refusing every six hours", async () => {
+    // `sweepPaused`'s rule: nothing here will ever be this process's to decide
+    // again, so a boot hook arming it a second time under a standing refusal
+    // must not leave a timer behind either.
+    retention.startRetentionSweeper();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(eventCount("not-ours"), 6);
+  });
+
+  it("leaves the owner's sweep exactly as it was", async () => {
+    fs.rmSync(lockFile, { force: true });
+    assert.equal(
+      await (await import("./serverLock")).claimDataDir(),
+      true,
+      "this process has to own the directory for the control to mean anything",
+    );
+
+    retention.startRetentionSweeper();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(eventCount("not-ours"), 0, "the owner's own sweep did not run");
+  });
+});
+
+/**
  * The one store here nothing in this app writes.
  *
  * Its failure mode is the silent kind: an unreadable directory reported as a
