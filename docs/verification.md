@@ -535,7 +535,7 @@ Built and exercised against real transcripts:
   What that leaves unchecked: the **amd64** branch of the arch case and its
   digest, since the build ran on Apple silicon; and a real agent mid-cycle
   building a Go repository, as opposed to a shell in the same image.
-- **A sandbox that could not start, on this install, unnoticed for thirteen
+- **A sandbox that could not start, on this install, unnoticed for fifteen
   hours.** Not a probe: a production failure, and the only end-to-end reading of
   `UF_SANDBOX=1` anything here has. `UF_SANDBOX=1` and
   `UF_SANDBOX_ENFORCEMENT=refuse` were set, `docker-entrypoint.sh` wrote
@@ -2290,7 +2290,9 @@ Built and exercised against real transcripts:
   the identical single failure — `/knowledge`, whose API answers 409 `No
   knowledge base is configured.` under the throwaway `DATA_DIR`. So the bundle is
   measured no weaker than the fallback, and that page's failure is the fixture
-  rather than either mode.
+  rather than either mode. Both runs predate the `seedVault` fixture in the
+  `/knowledge` entry below, which is what removes that failure; no pass on a tree
+  carrying both changes is recorded here.
 
   Two nearer approaches were measured and rejected, and the rejection is the
   useful half. Pointing `distDir` outside the project has Next rewrite the
@@ -2306,6 +2308,43 @@ Built and exercised against real transcripts:
   exits 0 having printed nothing and created nothing, which is what makes it
   inert in the image build; and `rm -rf .next` still means a clean build,
   because an absent link is what tells it to discard the scratch.
+
+- **`/knowledge` was the smoke pass's one failing page, and it was the check
+  that was wrong rather than the page.** Measured 2026-09-08 in
+  `/workspace/.uf-worktrees/usagefoundry-721638d11c0b-2`: both of the two loads
+  missing from the 38/40 above were `/knowledge`, at 390px and at 1280px, each
+  failing on `console error: Failed to load resource: the server responded with
+  a status of 409 (Conflict)`. Not an artefact of the fallback mode added the
+  same day — it reproduced identically in standalone mode and on a second, older
+  build (`BUILD_ID -ZLYjjw166q7Y7bZfY-zS`), so it predates that change and was
+  invisible only while the script exited 2.
+
+  `makeSandbox` configured no knowledge base, so `resolveKnowledgeRoot` returned
+  `configured: false` and every `/api/knowledge/*` handler answered 409.
+  `KnowledgeGraphView` asks for `/api/knowledge/graph` before the status call
+  has come back and the page has had the chance to draw its unconfigured state
+  instead, and Chromium logs any non-2xx response as a failed resource however
+  the page then handles it. The page itself rendered correctly throughout:
+  **there was no interface defect.**
+
+  Acted on 2026-09-08: `seedVault` in `scripts/smoke-pages.mjs` writes three
+  notes into the sandbox workspace and PUTs `knowledgeBaseMountId` /
+  `knowledgeBaseSubpath` through `/api/settings`, so the page is exercised in
+  its configured state — the note list, the backlinks, the health rows and the
+  graph — rather than in the four lines of copy it shows without a vault. The
+  alternative, letting this route opt out of the console-error assertion for one
+  expected status, was refused: it would have gone green while checking strictly
+  less. Measured after, at `e5bbcec` in standalone mode under `$TMPDIR`, where
+  the build completes: **44/44 page loads clean, 0 of 22 pages failed.** The
+  denominator moved from 40 because `f5e9bd7` added `/tasks/new` and
+  `/tasks/[id]`, not because anything stopped being checked.
+
+  The vault is read rather than merely resolved, which is the failure this
+  would otherwise hide — a wrong subpath also silences the 409.
+  `/api/knowledge/status` answers `noteCount: 3, orphanCount: 1,
+  brokenLinkCount: 1, tagCount: 1`; `/api/knowledge/health` returns exactly one
+  row in each of its three lists; and the rendered graph draws all three notes,
+  the edge between two of them, and the unwritten `[[Missing note]]` target.
 
 ## Not yet verified by hand
 
@@ -4023,25 +4062,30 @@ through before trusting this unattended:
   # expect "on: children run as 1000:1000, chat and block turns as 1000:65533,
   # server as 0" — a line naming no chat gid is the capability boundary absent
 
+  # uid out of the container: a UF_UID default written here would expand in
+  # your own shell, which .env never reaches (#147). Shape corrected
+  # 2026-09-08; the check itself was not re-taken.
+  uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
+
   # #79 — the server's environment
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c \
+  docker compose exec --user "$uid" usagefoundry sh -c \
     'tr "\0" "\n" < /proc/$(pgrep -f "next-server" | head -1)/environ | grep -c UF_'
   # expect a permission error, not a count
 
   # #80 — the database, on a fresh volume and on an upgraded one
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c \
+  docker compose exec --user "$uid" usagefoundry sh -c \
     'test -w /data/usagefoundry.db && echo BAD-writable || echo ok'
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c \
+  docker compose exec --user "$uid" usagefoundry sh -c \
     'test -w /data/server.lock && echo BAD-writable || echo ok'
 
   # #87 — a capability in flight, with a run working and a chat turn sent
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c \
+  docker compose exec --user "$uid" usagefoundry sh -c \
     'ls /tmp/uf-mcp-* 2>/dev/null; ls /run/uf-mcp 2>/dev/null; echo "exit=$?"'
   # expect nothing from the first and a permission error from the second
 
   # #87 — and the read itself, which the group is what refuses. Prints modes
   # and a byte count only: the file carries a live bearer token.
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c '
+  docker compose exec --user "$uid" usagefoundry sh -c '
     for p in $(ls /proc | grep "^[0-9][0-9]*$"); do
       cfg=$(tr "\0" "\n" < /proc/$p/cmdline 2>/dev/null |
             grep -A1 -x -- --mcp-config | tail -1)
@@ -4894,7 +4938,7 @@ through before trusting this unattended:
   `sandboxRefusal` and `sandboxArrangement` are unit-tested in both directions
   and `npm run typecheck`, `npm test` and `next build` all pass. One provenance
   changed on 2026-08-19 and only one: the three `bwrap:` markers were read off
-  this install's own `run_events` after the thirteen-hour failure in *Verified*
+  this install's own `run_events` after the fifteen-hour failure in *Verified*
   above, so those three are transcribed rather than guessed. The CLI's own six
   were **read out of the pinned binary with `strings` and have still never been
   executed** (`proposals/Sandboxing/10-validation.md`, "What this validation did
@@ -4911,8 +4955,13 @@ through before trusting this unattended:
   capture the real text before trusting the table:
 
   ```sh
+  # uid out of the container: a UF_UID default written here would expand in
+  # your own shell, which .env never reaches (#147). Shape corrected
+  # 2026-09-08; the check itself was not re-taken.
+  uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
+
   # A command the policy refuses, read off the wire rather than off a page.
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c '
+  docker compose exec --user "$uid" usagefoundry sh -c '
     claude -p "run: touch /etc/uf-probe" --output-format stream-json --verbose' \
     | jq -r 'select(.type=="user") | .message.content[]?
              | select(.is_error == true) | .content'
@@ -4928,7 +4977,7 @@ through before trusting this unattended:
   **Whether the event reaches the two places it is supposed to.** The emit is on
   the same path as `tool_error` and the rendering is a case in the same switch,
   so both are ordinary — but neither has been watched, and the one chance this
-  install had at it went by: across the thirteen-hour window above, `run_events`
+  install had at it went by: across the fifteen-hour window above, `run_events`
   took 484 `tool_error` rows and **zero** `sandbox` rows. That is a matcher with
   no `bwrap:` needle in it at the time rather than an emit path that failed, and
   the three needles are what closes it *next* time — but no `sandbox` row has
@@ -4994,12 +5043,16 @@ through before trusting this unattended:
 
   # 2. Phase 2's own four, from proposals/Sandboxing/09-implementation-sketch.md
   docker compose up --build
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+  # uid out of the container: a UF_UID default written here would expand in
+  # your own shell, which .env never reaches (#147). Shape corrected
+  # 2026-09-08; the check itself was not re-taken.
+  uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
+  docker compose exec --user "$uid" usagefoundry \
     sh -c 'echo x >> /etc/claude-code/managed-settings.json'   # expect denied
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+  docker compose exec --user "$uid" usagefoundry \
     sh -c 'echo x >> ~/.claude/settings.json; rm -f ~/.claude/settings.json'
                                                                # expect both denied
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+  docker compose exec --user "$uid" usagefoundry \
     sh -c 'ls ~/.claude/projects >/dev/null && touch ~/.claude/projects/.probe'
                                                                # expect BOTH to work
   docker compose logs usagefoundry | grep -i sandbox           # expect the boot line
@@ -5034,10 +5087,14 @@ through before trusting this unattended:
   the binary:
 
   ```sh
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+  # uid out of the container: a UF_UID default written here would expand in
+  # your own shell, which .env never reaches (#147). Shape corrected
+  # 2026-09-08; the check itself was not re-taken.
+  uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
+  docker compose exec --user "$uid" usagefoundry \
     sh -c 'cat ~/.claude/.credentials.json'   # expect denied, with the session
                                               # still billing on the next cycle
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+  docker compose exec --user "$uid" usagefoundry \
     sh -c 'cat /data/usagefoundry.db > /dev/null'          # expect denied
   ```
 
@@ -5095,7 +5152,7 @@ through before trusting this unattended:
   **What the boot line and the Settings row say once there is something to
   report.** Only the `none` reading has ever been *read*, which is every stock
   install and is why it is the one that had to be right. An install with
-  `/etc/claude-code/managed-settings.json` present has since run for thirteen
+  `/etc/claude-code/managed-settings.json` present has since run for fifteen
   hours (*Verified*), so the other readings were reachable — but nobody recorded
   what its boot line or its Settings row said, which leaves this exactly as
   unmeasured as it was and is the cheapest of the gaps here to close. The other
@@ -5166,7 +5223,11 @@ through before trusting this unattended:
   lines and costs no billed cycle:
 
   ```sh
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c \
+  # uid out of the container: a UF_UID default written here would expand in
+  # your own shell, which .env never reaches (#147). Shape corrected
+  # 2026-09-08; the check itself was not re-taken.
+  uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
+  docker compose exec --user "$uid" usagefoundry sh -c \
     'echo "{\"sandbox\":{\"filesystem\":{\"allowWrite\":[\"/tmp/uf-probe\"]}}}" \
        >> ~/.claude/settings.json'                  # expect denied only with
                                                     # UF_LOCK_CLAUDE_HOME=1
@@ -5290,7 +5351,11 @@ through before trusting this unattended:
   # 0. the shipped state first — with UF_LOCK_CLAUDE_HOME unset, nothing changes
   docker compose up -d --build
   docker compose logs usagefoundry | grep UF_LOCK_CLAUDE_HOME    # expect nothing
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry sh -c \
+  # uid out of the container: a UF_UID default written here would expand in
+  # your own shell, which .env never reaches (#147). Shape corrected
+  # 2026-09-08; the check itself was not re-taken.
+  uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
+  docker compose exec --user "$uid" usagefoundry sh -c \
     'test -w ~/.claude/settings.json && echo BAD-writable'       # expect BAD-writable
 
   # then set UF_LOCK_CLAUDE_HOME=1 in .env and restart — compose forwards it,
@@ -5305,22 +5370,22 @@ through before trusting this unattended:
   # a refusal instead names the entry, the owner it wanted and the owner it saw
 
   # 1 + 2. the two the sketch names (09-implementation-sketch.md:274–283)
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+  docker compose exec --user "$uid" usagefoundry \
     sh -c 'echo x >> ~/.claude/settings.json'                    # expect denied
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+  docker compose exec --user "$uid" usagefoundry \
     sh -c 'rm -f ~/.claude/settings.json; ls ~/.claude/settings.json'
                                               # expect denied, and still listed
   # if the append *succeeds*, the lock is not in force and your settings.json is
   # no longer valid JSON — remove the stray line before the next session reads it
 
   # 3. and the half that is not a permission check — the metering path
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+  docker compose exec --user "$uid" usagefoundry \
     sh -c 'ls ~/.claude/projects >/dev/null && touch ~/.claude/projects/.probe'
                                                           # expect BOTH to work
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+  docker compose exec --user "$uid" usagefoundry \
     sh -c 'cat ~/.claude/settings.json >/dev/null'   # expect it to work: hooks,
                                      # permission rules and env are in that file
-  docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+  docker compose exec --user "$uid" usagefoundry \
     sh -c 'rm -f ~/.claude/projects/.probe'                  # tidy up after it
   ```
 

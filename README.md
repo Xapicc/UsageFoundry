@@ -108,17 +108,26 @@ in **[docs/install.md](docs/install.md)**.
 
 ### The configuration is checked before the server serves
 
-Exactly one variable is **required** and refuses to start when it is wrong:
-`DATA_DIR`, which decides where the only copy of your runs, settings, workflows
-and schedules lives. It is set to `/data` by `docker-compose.yml`, and the
-container exits with a message naming the path and the uid if it is blank, is
-not a directory, or cannot be written:
+Four variables **refuse to start** when they are wrong, each on its own path:
 
-```
-[usagefoundry] Refusing to start. DATA_DIR is set to the empty string, which is
-read as unset — so the database would be created at /app/.data … destroyed by
-the next `docker compose up --build`.
-```
+- **`UF_AUTH_TOKEN`**, blank with `UF_ALLOW_NO_AUTH` not set — the refusal
+  described above.
+- **`DATA_DIR`**, which decides where the only copy of your runs, settings,
+  workflows and schedules lives; `docker-compose.yml` sets it to `/data`. The
+  container exits if it is blank, is not a directory, or cannot be written. All
+  three name the path; only the not-writable one also names the uid whose test
+  write failed, because that is the one you fix with `UF_UID`/`UF_GID`.
+- **`UF_UNMOUNTED_WORKSPACES`**, non-blank — it names the workspace variables
+  you set in `.env` that no bind mount backs, and a bind mount cannot be added
+  from `.env`. This one throws while `src/lib/config.ts` is being imported, so
+  it lands before any of the checks below run.
+- **`UF_CHAT_GID`**, when privilege separation is on and it is `0` or the gid
+  the agents already run as — either hands the MCP capability file to a group
+  it is being kept from.
+
+`UF_WORKSPACE` and `HOME` are refused earlier still and not by the app:
+`docker-compose.yml` marks them `:?`, so `docker compose up` aborts before a
+container exists.
 
 Everything else is **reported and kept running**, on stdout at boot and in a
 banner on the dashboard: a workspace whose path is not a directory (Docker

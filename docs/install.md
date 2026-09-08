@@ -60,9 +60,23 @@ work cycle can open — every run then fails with `Not logged in`, which is the
 symptom of not having signed in at all, so the obvious response is to do it
 again the same way.
 
-An API key in the environment outranks all of this. With `ANTHROPIC_API_KEY`
-set, that key is what runs bill against and the subscription login is ignored;
-the Settings row says so rather than reporting an account nothing uses.
+An API key in the environment outranks all of this. Set `ANTHROPIC_API_KEY` in
+`.env` — `docker-compose.yml` forwards it — and that key is what runs bill
+against, the subscription login is ignored, and the Settings row says so rather
+than reporting an account nothing uses. It reaches every work cycle, so the
+account it bills is the one you will see charges on; blank means the login.
+
+Until 2026-09-08 compose did not forward it, so on a stock install there was no
+way to act on this paragraph. If you are on an older `docker-compose.yml` and
+would rather not change it, a `docker-compose.override.yml` beside it does the
+same job:
+
+```yaml
+services:
+  usagefoundry:
+    environment:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+```
 
 One thing the mount also cannot carry is `~/.claude.json` — it sits *next to*
 the directory, not inside it — so user-scoped MCP servers are not available to
@@ -327,21 +341,21 @@ empty dashboard, which is also what a quiet week looks like.
 
 | Variable | Required | Wrong value | What happens |
 |---|---|---|---|
-| `DATA_DIR` | **yes** | blank, not a directory, or not writable | **The container exits**, naming the path and the uid. Compose sets it to `/data`. |
+| `DATA_DIR` | **yes** | blank, not a directory, or not writable | **The container exits**, naming the path. The not-writable message also names the uid whose test write failed; the other two do not. Compose sets it to `/data`. |
 | `WORKSPACE_ROOTS` | yes (compose composes it) | an entry whose path is not a directory | Warned at boot and on the dashboard. That workspace's folder picker is empty and no run can start in it. |
 | `CLAUDE_HOME` | yes | no `projects/` directory under it | Warned. Every usage figure reads zero; runs, workflows and the merge queue still work. |
-| `UF_AUTH_TOKEN` | no | — | Blank means **auth off**. Never reported. |
+| `UF_AUTH_TOKEN` | **yes**, unless `UF_ALLOW_NO_AUTH=1` | blank with `UF_ALLOW_NO_AUTH` unset | **The container exits.** With `UF_ALLOW_NO_AUTH=1` it starts with auth off, logs a block at boot and banners every page. |
 | `ANTHROPIC_ADMIN_KEY` | no | — | Blank means the API-account page says "not configured". Never reported. |
 | `UF_GITHUB_TOKEN` | no | — | Blank means runs cannot use GitHub. Never reported. |
 | anything else | no | set to the empty string | Warned. A blank value is read as unset and takes the default, which is a value nobody chose. |
 
-`DATA_DIR` is the one that refuses because it is the one that decides where your
-only copy of anything lives — a boot that carries on writing to a directory you
-did not name is manufacturing the loss, and in the shipped image the default is
-inside the container's writable layer, which `docker compose up --build`
-destroys. A missing workspace only warns because compose mounts four slots
-unconditionally, a bind source can be temporarily unavailable, and taking the
-dashboard away over an empty folder picker is worse than the empty picker.
+`DATA_DIR` refuses because it decides where your only copy of anything lives —
+a boot that carries on writing to a directory you did not name is manufacturing
+the loss, and in the shipped image the default is inside the container's
+writable layer, which `docker compose up --build` destroys. A missing workspace
+only warns because compose mounts four slots unconditionally, a bind source can
+be temporarily unavailable, and taking the dashboard away over an empty folder
+picker is worse than the empty picker.
 
 Writability is tested by an actual write. `mkdirSync(recursive: true)` reports
 success for a directory it cannot write to, which is why an ownership mismatch

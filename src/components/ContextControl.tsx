@@ -126,11 +126,15 @@ function combinedUSD(
  * write yet.
  *
  * So the sum is wrong by a bounded, measured, known-sign amount, and the choice
- * is between a figure that is a few per cent high with the overstatement
- * printed under it and two figures nobody can combine — which is the question
- * this card exists to answer. It leads with the sum and names the error. The
- * split stays on the card, as a share under each span, because an operator
- * deciding whether to leave *either* mechanism on needs the halves.
+ * is between a figure that is a few per cent high and two figures nobody can
+ * combine — which is the question this card exists to answer. It leads with the
+ * sum. The split stays on the card, as a share under each span, because an
+ * operator deciding whether to leave *either* mechanism on needs the halves.
+ *
+ * The overstatement itself is **not** printed here, and this comment used to
+ * claim it was. It is recorded in `docs/verification.md` and in `contextTokens`
+ * (`contextPruning.ts`); whether it belongs on the card is a copy decision
+ * nobody has taken, not something that was taken and then lost.
  *
  * ## Why the week leads and the filter's share follows
  *

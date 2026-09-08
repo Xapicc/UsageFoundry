@@ -100,6 +100,21 @@ services:
       UF_COOKIE_SECURE: "${UF_COOKIE_SECURE:-}"
       # Optional: enables the API-account panel. Needs an org Admin key.
       ANTHROPIC_ADMIN_KEY: "${ANTHROPIC_ADMIN_KEY:-}"
+      # Optional: bill runs to the API rather than to the mounted subscription
+      # login. Set, it outranks that login entirely — `childEnv` passes it to
+      # every work cycle on purpose, and the Settings row reports the key
+      # instead of an account nothing would use.
+      #
+      # Forwarded rather than left to an override file, on RELAY_PORT's
+      # reasoning below: there is no env_file here, so a name this block omits
+      # is one compose reads from .env for interpolation and never hands the
+      # container. docs/install.md said this key outranked the login while
+      # nothing on a stock install could set it (#186's shape again).
+      #
+      # Blank is safe: nothing in config.ts reads this name, so it joins
+      # neither STRICT_ENV_VARS nor the dashboard's warnings, and blank is
+      # exactly "use the subscription login".
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       # Optional: what a run uses to push, open a PR, or read an issue. The
       # mounted ~/.claude carries Claude's login and nothing else — no
       # ~/.gitconfig, no ~/.ssh, no ~/.config/gh — so without this every
@@ -143,11 +158,11 @@ services:
       # UF_GH_EXTENSIONS and UF_SANDBOX_ENFORCEMENT have.
       WINNOW_FILTER: "${WINNOW_FILTER:-}"
       # Where the winnow checkout is, as this container sees it. Only consulted
-      # when the switch above is on. Defaulted to the conventional location
-      # under the first workspace mount, so an operator who cloned it beside
-      # their other projects sets nothing.
-      # Blank lets the entrypoint choose: a workspace checkout if there is
-      # one, else the winnow this image already vendors at /opt/winnow/src.
+      # when the switch above is on, and there is no default here: blank lets
+      # the entrypoint choose, in this order — /workspace/winnow if that is a
+      # checkout, else the winnow this image vendors at /opt/winnow/src. An
+      # operator who cloned it beside their other projects sets nothing, and one
+      # tracking a different ref sets this and outranks both.
       WINNOW_FILTER_PATH: "${WINNOW_FILTER_PATH:-}"
       # Loopback port for the filter. Not 8787: the Discord relay binds that
       # inside this same container, and the second process to want a port gets

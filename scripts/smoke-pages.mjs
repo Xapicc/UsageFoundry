@@ -24,6 +24,21 @@
  *      this project has actually recorded (the `w-auto`/`w-full` ordering in
  *      `RunLand.tsx`) and the reason a *browser* was bought rather than jsdom.
  *
+ * Assertion 2 has no exception list, and `/knowledge` is why it does not need
+ * one. That page is the only one here whose interesting half — the note list,
+ * the backlinks, the health rows, the graph — exists only once a knowledge base
+ * is configured, and with none configured its client fetches answer 409 before
+ * the status call has come back, which Chromium logs as a failed resource
+ * however correctly the page then handles it. The cheap fix is to let this route
+ * opt out of assertion 2 for that one expected status; it buys a green run and
+ * checks strictly less, because the unconfigured page is a warning and a link
+ * and every path worth a browser is on the other side of it. So `seedVault`
+ * gives the sandbox a vault instead. The three notes are not arbitrary: one
+ * links to a note that exists and to one that does not, and one carries no
+ * frontmatter, so each of the health pane's three lists has a row in it and gets
+ * drawn rather than skipped. An exception list would have been the first entry
+ * in an exception list.
+ *
  * No accessibility engine, deliberately. `proposals/OperatorInterface/` refused
  * `axe-core` on two grounds, and only the first — that no harness existed — is
  * answered by this file. The second stands: its yield here is unmeasurable in
@@ -297,17 +312,56 @@ async function waitForHealth(baseUrl, headers, log) {
   );
 }
 
-async function postJSON(baseUrl, pathname, headers, body) {
+async function sendJSON(method, baseUrl, pathname, headers, body) {
   const response = await fetch(`${baseUrl}${pathname}`, {
-    method: "POST",
+    method,
     headers: { ...headers, "content-type": "application/json" },
     body: JSON.stringify(body),
   });
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(`POST ${pathname} answered ${response.status}: ${text}`);
+    throw new Error(`${method} ${pathname} answered ${response.status}: ${text}`);
   }
   return JSON.parse(text);
+}
+
+/**
+ * A vault on disk, then the two settings that point the install at it.
+ *
+ * The files are written straight into the sandbox workspace because they are not
+ * the app's to create — it reads a directory somebody else keeps, and there is no
+ * API for putting a note in it. The *settings* still go through the app's own
+ * door, which is where the mount id is validated and the subpath is refused for
+ * escaping the mount.
+ *
+ * Basenames rather than titles: a `[[wikilink]]` resolves against the file's own
+ * name, so `[[Second note]]` needs `Second note.md` and nothing else will do.
+ */
+async function seedVault(baseUrl, headers, workspace) {
+  const vault = path.join(workspace, "vault");
+  fs.mkdirSync(vault, { recursive: true });
+  fs.writeFileSync(
+    path.join(vault, "Smoke pass index.md"),
+    "---\ntitle: Smoke pass index\ntags: [smoke]\n---\n\n" +
+      "Seeded by the smoke pass. Links to [[Second note]], which exists, and to\n" +
+      "[[Missing note]], which does not.\n",
+  );
+  fs.writeFileSync(
+    path.join(vault, "Second note.md"),
+    "---\ntitle: Second note\ntags: [smoke]\n---\n\n" +
+      "Linked from [[Smoke pass index]], so the backlinks pane has a row.\n",
+  );
+  // No frontmatter, deliberately: it is the third of the three things the health
+  // pane counts, and an all-tidy vault renders none of them.
+  fs.writeFileSync(
+    path.join(vault, "Unfiled note.md"),
+    "A note nobody linked and nobody filed.\n",
+  );
+
+  await sendJSON("PUT", baseUrl, "/api/settings", headers, {
+    knowledgeBaseMountId: "workspace",
+    knowledgeBaseSubpath: "vault",
+  });
 }
 
 /**
@@ -320,13 +374,13 @@ async function postJSON(baseUrl, pathname, headers, body) {
  * opening the SQLite file from here while the server holds it.
  */
 async function seed(baseUrl, headers, workspace) {
-  const run = await postJSON(baseUrl, "/api/runs", headers, {
+  const run = await sendJSON("POST", baseUrl, "/api/runs", headers, {
     folder: path.join(workspace, "project"),
     prompt: "Seeded by the smoke pass. Nothing spawns: CLAUDE_BIN exits 1.",
     maxIterations: 1,
     budget: {},
   });
-  const workflow = await postJSON(baseUrl, "/api/workflows", headers, {
+  const workflow = await sendJSON("POST", baseUrl, "/api/workflows", headers, {
     name: "Smoke pass workflow",
     graph: {
       nodes: [
@@ -341,16 +395,17 @@ async function seed(baseUrl, headers, workspace) {
       edges: [],
     },
   });
-  const instance = await postJSON(baseUrl, `/api/workflows/${workflow.workflow.id}/run`, headers, {});
+  const instance = await sendJSON("POST", baseUrl, `/api/workflows/${workflow.workflow.id}/run`, headers, {});
   // Carries a project, because the task page's folder picker draws a second
   // select from it — an unassigned task would load the same page with half of
   // the widest row on it never rendered.
-  const task = await postJSON(baseUrl, "/api/tasks", headers, {
+  const task = await sendJSON("POST", baseUrl, "/api/tasks", headers, {
     title: "Seeded by the smoke pass",
     body: "Nothing picks this up: no run is started for a task by filing it.",
     mountId: "workspace",
     folder: "project",
   });
+  await seedVault(baseUrl, headers, workspace);
   return {
     runId: run.run.id,
     workflowId: workflow.workflow.id,
