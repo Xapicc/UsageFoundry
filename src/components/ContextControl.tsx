@@ -153,10 +153,20 @@ function combinedUSD(
  * sum. The split stays on the card, as a share under each span, because an
  * operator deciding whether to leave *either* mechanism on needs the halves.
  *
- * The overstatement itself is **not** printed here, and this comment used to
- * claim it was. It is recorded in `docs/verification.md` and in `contextTokens`
- * (`contextPruning.ts`); whether it belongs on the card is a copy decision
- * nobody has taken, not something that was taken and then lost.
+ * So the sum ships with the overstatement printed under it, which is the
+ * condition `docs/agent/conventions.md` puts on adding these two at all: a
+ * reader cannot add two figures whose overlap is unstated, and the alternative
+ * this card exists to refuse is two figures nobody can combine. The footnote
+ * names it rather than the derivation — 4.06% is corpus-weighted across this
+ * install's ten largest transcripts, 3.07% unweighted, 0.00–9.92% across them,
+ * and itself an upper bound, so the line says "a few per cent" and gives the
+ * one figure it was measured at. `docs/verification.md` carries the spread.
+ *
+ * The overlap clause is conditional on there being an overlap: with the
+ * filter's half absent from the total — not running, unreadable, or every
+ * result on a model with no price here — the sum is one mechanism's figure and
+ * is not high. Printing it anyway would be the mirror of the fault above it,
+ * a caveat asserting an error that is not there.
  *
  * ## Why the week leads and the filter's share follows
  *
@@ -204,6 +214,9 @@ export function ContextControlAside({
   // `extends` there is for — the whole reading and one window inside it are the
   // same arithmetic over different spans.
   const totalShare = filterShareUSD(filter, filter);
+  // Both halves are in the sum, which is the only state the overstatement is
+  // an overstatement of.
+  const overlaps = totalShare !== null && pruning.prunes > 0;
 
   return (
     <Card>
@@ -261,6 +274,15 @@ export function ContextControlAside({
         {!filter.running && filter.ledger === "read" && (
           <div>The intake filter is not running now; this is its history.</div>
         )}
+        {/* The card's footnote, and the condition under which its two halves
+            may be added at all — see the docblock. Last, and one line: the
+            derivation of either half is a band lower down, and this says what
+            the sum is rather than how it was reached. */}
+        <div>
+          Not spend, and added to nothing beside it.
+          {overlaps &&
+            " The two mechanisms overlap, so the sum is a few per cent high — 4% where it was measured."}
+        </div>
       </div>
     </Card>
   );
