@@ -175,6 +175,20 @@ function approvalRefused(proposal: ChatProposalDTO): boolean {
 }
 
 /**
+ * The DOM id a proposal card carries, in either list.
+ *
+ * Only the "Replaced by" line on a superseded card reads it, and it exists
+ * because the two cards are almost never in the same list: a replacement is
+ * still waiting and the card it replaced is decided, so naming the replacement
+ * without a way to reach it leaves the operator matching a title across a tab
+ * switch by hand. Not a general anchor scheme — nothing else on this page links
+ * to a proposal, and `dependsOn` deliberately names a sibling by label instead.
+ */
+function proposalAnchorId(id: string): string {
+  return `proposal-${id}`;
+}
+
+/**
  * The leading edge of a question card, per state. Complete class strings, the
  * kit's rule — an interpolated one emits nothing at all and does it silently.
  *
@@ -801,8 +815,18 @@ export default function ChatPage() {
     setDecideError(null);
     try {
       const result = await chatRequest(`/api/chat/${chatId}/proposals`, { action, ids });
-      if (!result.ok) setDecideError(result.error ?? "That could not be applied.");
-      else {
+      if (!result.ok) {
+        setDecideError(result.error ?? "That could not be applied.");
+        // The refusal is about the page's picture of what is pending being
+        // stale — a proposal decided in another tab, or one the chat itself
+        // replaced while this list was on screen — and the route answers a
+        // refusal with the error alone. Without this the card the message is
+        // about goes on reading as pending for up to a poll, so the sentence
+        // under the button contradicts the row above it and pressing Approve
+        // again earns the same refusal. Not awaited: the message is already up
+        // and the row it corrects can arrive a moment later.
+        void load(chatId);
+      } else {
         setSelected(new Set());
         if (result.chat) setChat(result.chat);
       }
@@ -827,6 +851,10 @@ export default function ChatPage() {
       }
       setChat(data.chat);
       setSelected(new Set());
+      // Same rule the thread list's own switch follows: a refusal names a
+      // proposal of the thread being left. It outlives an empty proposals list
+      // now that the sentence is drawn without one, so this has to say so.
+      setDecideError(null);
       void load(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -942,6 +970,25 @@ export default function ChatPage() {
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
+    });
+  };
+
+  /**
+   * Put a proposal on screen, whichever of the two lists holds it.
+   *
+   * Scrolled from the click rather than from an effect keyed on the id, because
+   * pressing the same link twice has to move the list both times and an effect
+   * whose dependency did not change does nothing the second time.
+   * `requestAnimationFrame` because the card is usually on the *other* tab and
+   * does not exist in the DOM until React has committed the switch above it; a
+   * frame that somehow arrives early costs the scroll and not the tab.
+   */
+  const showProposal = (proposal: ChatProposalDTO) => {
+    setSide(proposal.status === "pending" ? "proposals" : "decided");
+    requestAnimationFrame(() => {
+      document
+        .getElementById(proposalAnchorId(proposal.id))
+        ?.scrollIntoView({ block: "nearest" });
     });
   };
 
@@ -1479,9 +1526,24 @@ export default function ChatPage() {
                   {decided
                     .slice()
                     .reverse()
-                    .map((p) => (
-                      <Decided key={p.id} proposal={p} />
-                    ))}
+                    .map((p) => {
+                      // Resolved here rather than carried on the DTO: the row
+                      // holds an id, and the card it names is already in this
+                      // thread's own list. Null where it is not — a swept row,
+                      // or a `superseded_by` pointing outside what was sent.
+                      const replacement =
+                        proposals.find((q) => q.id === p.supersededBy) ?? null;
+                      return (
+                        <Decided
+                          key={p.id}
+                          proposal={p}
+                          replacement={replacement}
+                          onShowReplacement={() => {
+                            if (replacement) showProposal(replacement);
+                          }}
+                        />
+                      );
+                    })}
                 </div>
               )}
 
@@ -1628,7 +1690,25 @@ export default function ChatPage() {
                     {selected.size > 0 ? `Approve ${selected.size}` : "Approve"}
                   </Button>
                 </ButtonRow>
-                {decideError && <Hint tone="danger">{decideError}</Hint>}
+              </div>
+            )}
+
+            {/* The row goes when there is nothing left to decide and the refusal
+                must not go with it. Approving the last pending card and being
+                refused — it was decided in another tab, or the chat replaced it
+                while this list was on screen — empties `pending` on the answer
+                that follows, and drawn inside the row above the sentence was
+                unmounted by the very refresh it was about: the operator pressed
+                Approve, watched the card disappear and was told nothing. So it is
+                gated on itself, and takes the rule and the gap the row would have
+                had when the row is not there to give it one. */}
+            {activeSide === "proposals" && decideError && (
+              <div
+                className={`shrink-0 ${
+                  pending.length > 0 ? "mt-1" : "mt-3 border-t border-line pt-3"
+                }`}
+              >
+                <Hint tone="danger">{decideError}</Hint>
               </div>
             )}
           </Card>
@@ -2081,6 +2161,7 @@ function Proposal({
 
   return (
     <label
+      id={proposalAnchorId(proposal.id)}
       // `mb-0 font-normal` for the same reason ChatRow names a background: the
       // legacy sheet still gives every `label` a bottom margin and 500 weight.
       // The end rows take the group's corners, because the wash would otherwise
@@ -2403,8 +2484,27 @@ function ProposedGraph({ proposal }: { proposal: ChatProposalDTO }) {
   );
 }
 
-/** What happened to a proposal, and no buttons: it is not a decision any more. */
-function Decided({ proposal }: { proposal: ChatProposalDTO }) {
+/**
+ * What happened to a proposal, and no buttons: it is not a decision any more.
+ *
+ * A superseded one is drawn here rather than dropped, which is the whole of what
+ * `superseded` costs the panel. The card leaves the list it was waiting in — it
+ * is not waiting any more, and leaving it there would offer a tick the route
+ * refuses — but it must still be *somewhere*, for the reason a superseded
+ * question stays in the transcript: a card that vanished under the operator
+ * mid-read reads as one the chat never made, and the correction that replaced it
+ * then has nothing to be a correction *of*.
+ */
+function Decided({
+  proposal,
+  replacement,
+  onShowReplacement,
+}: {
+  proposal: ChatProposalDTO;
+  /** The card that replaced this one, where this one was superseded. */
+  replacement: ChatProposalDTO | null;
+  onShowReplacement: () => void;
+}) {
   // A workflow proposal settles onto a workflow, never a run, so the link goes
   // where the thing it made actually is — and where the press of Run it still
   // needs lives. Reading it off `runId` would leave an approved graph as the
@@ -2416,7 +2516,10 @@ function Decided({ proposal }: { proposal: ChatProposalDTO }) {
       : null;
 
   return (
-    <div className="flex items-start gap-2 py-2 first:pt-0 last:pb-0">
+    <div
+      id={proposalAnchorId(proposal.id)}
+      className="flex items-start gap-2 py-2 first:pt-0 last:pb-0"
+    >
       <Badge tone={PROPOSAL_TONE[proposal.status]}>{proposal.status}</Badge>
       <div className="min-w-0 flex-1">
         {href ? (
@@ -2435,6 +2538,47 @@ function Decided({ proposal }: { proposal: ChatProposalDTO }) {
             {proposal.title}
           </div>
         )}
+        {/* The direction that matters, and only that direction: from the card
+            that is gone to the card that answers it. The replacement carries the
+            *same* `specId` — `createProposalReplacing` hands the label over on
+            purpose, so a sibling's `dependsOn` still resolves — so the label is
+            no use for telling the two apart here and the title is what is
+            drawn. What it is now comes with it, because "still waiting" is the
+            other tab and every other status is this list.
+
+            Written from the row's own `supersededBy` rather than gated on the
+            status, so a `superseded` row whose replacement has since been swept
+            says what happened to it instead of nothing at all.
+
+            Two lines rather than one sentence with the title inside it, and the
+            reason is the element: Chromium blockifies a `button`, so
+            `display: inline` on it is ignored and the trailing clause landed on
+            a line of its own under a centred title. What is on the second line
+            is exactly what the link is *for*, which is the arrangement to keep
+            even if that ever changes. */}
+        {proposal.status === "superseded" &&
+          (replacement ? (
+            <>
+              <p className="mt-1 text-2xs leading-normal text-ink-muted">
+                Replaced by a proposal{" "}
+                {replacement.status === "pending"
+                  ? "still waiting"
+                  : `now ${replacement.status}`}
+                :
+              </p>
+              <button
+                type="button"
+                onClick={onShowReplacement}
+                className="block cursor-pointer text-left text-2xs leading-normal text-accent hover:underline"
+              >
+                “{replacement.title}”
+              </button>
+            </>
+          ) : (
+            <p className="mt-1 text-2xs leading-normal text-ink-muted">
+              Replaced by a later proposal.
+            </p>
+          ))}
         {proposal.error && <Hint tone="danger">{proposal.error}</Hint>}
       </div>
     </div>
