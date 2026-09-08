@@ -4,30 +4,27 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   MAX_TASK_PAGE,
-  type FoldersResponse,
   type TaskDTO,
   type TaskListDTO,
   type TaskListItemDTO,
-  type TaskPriorityDTO,
   type TaskStatusDTO,
-  type WorkspaceFolderDTO,
-  type WorkspaceMountDTO,
 } from "@/lib/apiTypes";
 import {
+  TASK_PRIORITY_TONE,
+  TASK_STATUS_TONE,
   fmtRelative,
+  fmtTaskOrigin,
+  fmtTaskPlace,
   pollFailureMessage,
   shortId,
-  type BadgeTone,
 } from "@/lib/format";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
 import { Badge } from "@/components/ui/Badge";
-import { Button, ButtonRow } from "@/components/ui/Button";
+import { Button, ButtonLink, ButtonRow } from "@/components/ui/Button";
 import { Card, CardTitle, Empty, SkeletonText } from "@/components/ui/Card";
 import { Disclosure } from "@/components/ui/Disclosure";
-import { Field, Input, Select, Textarea } from "@/components/ui/Field";
-import { Hint } from "@/components/ui/Hint";
+import { Field, Select } from "@/components/ui/Field";
 import { Notice } from "@/components/ui/Notice";
-import { Sheet } from "@/components/ui/Sheet";
 import {
   TBody,
   THead,
@@ -54,6 +51,13 @@ import {
  * operator is not a run. A row that moved under the page between a poll and a
  * press is exactly when the server's sentence matters, and it is shown rather
  * than swallowed.
+ *
+ * **The editor is not here.** Opening a task is a route — `tasks/[id]`, and
+ * `tasks/new` for filing one — on `runs/[id]`'s precedent, because the brief is
+ * the field with something to read in it and it used to be a seven-line box in
+ * a card wedged above a table that went on polling and moving underneath it.
+ * What is left on this page is a list: it draws rows, narrows them, counts them
+ * and offers the moves.
  *
  * **The whole board arrives in one request and the narrowing happens here**,
  * which is the one place this page departs from `docs/agent/conventions.md`'s
@@ -102,33 +106,6 @@ const CLOSED_GROUPS = [
 ];
 
 /**
- * The four words, with the two that mean "get to it" carrying a tone.
- *
- * `normal` and `low` share `neutral` and are told apart by the word rather than
- * by a colour: a backlog where every row is tinted is a backlog with no
- * emphasis in it, which is the thing `urgent` is for.
- */
-const PRIORITY_TONE: Record<TaskPriorityDTO, BadgeTone> = {
-  urgent: "danger",
-  high: "warn",
-  normal: "neutral",
-  low: "neutral",
-};
-
-const PRIORITIES: readonly TaskPriorityDTO[] = [
-  "urgent",
-  "high",
-  "normal",
-  "low",
-];
-
-/** What a closed row's status is called where the group heading cannot say it. */
-const CLOSED_TONE: Record<"done" | "dropped", BadgeTone> = {
-  done: "ok",
-  dropped: "neutral",
-};
-
-/**
  * The project filter's two special values. Neither can collide with a real key:
  * `placeKey` below encodes a pair as JSON, so every project's key begins `["`.
  */
@@ -150,28 +127,6 @@ function placeKey(task: TaskListItemDTO): string {
     : JSON.stringify([task.mountId, task.folder]);
 }
 
-/** What a row says about where its work is. */
-function placeLabel(task: TaskListItemDTO): string {
-  if (task.folder === null) return "Unassigned";
-  // `describeFolder` answers `mountLabel: null` and the whole stored path when
-  // no configured mount contains the folder — a workspace removed from config
-  // since the task was filed. The `mountId` is *not* a stand-in for the label
-  // there: printing it would name a workspace that is not on this install, and
-  // the path is the only true thing left to say.
-  if (task.mountLabel === null) return task.relPath ?? task.folder;
-  // A task on a mount root has an empty `relPath`, which reads as a missing
-  // value rather than as the root — so the mount's own name stands alone.
-  return task.relPath ? `${task.mountLabel} / ${task.relPath}` : task.mountLabel;
-}
-
-/** Who put this on the board, in a phrase rather than a column of enum words. */
-function originPhrase(origin: TaskListItemDTO["origin"]): string {
-  if (origin === "operator") return "Filed by hand";
-  if (origin === "chat") return "Filed by the orchestrator";
-  if (origin === "block") return "Filed by a workflow block";
-  return "Filed by a run";
-}
-
 /** A run id as a link to the run, which is the only handle the board can give. */
 function RunLink({ label, runId }: { label: string; runId: string }) {
   return (
@@ -183,24 +138,6 @@ function RunLink({ label, runId }: { label: string; runId: string }) {
     </span>
   );
 }
-
-/** A form's whole state, which is the DTO's editable half and nothing else. */
-interface TaskDraft {
-  title: string;
-  body: string;
-  priority: TaskPriorityDTO;
-  mountId: string;
-  /** Relative to the mount, which is what the folder picker offers. */
-  folder: string;
-}
-
-const EMPTY_DRAFT: TaskDraft = {
-  title: "",
-  body: "",
-  priority: "normal",
-  mountId: "",
-  folder: "",
-};
 
 export default function TasksPage() {
   const [tasks, setTasks] = useState<TaskListItemDTO[]>([]);
@@ -227,24 +164,8 @@ export default function TasksPage() {
     label: "",
   });
 
-  const [mounts, setMounts] = useState<WorkspaceMountDTO[]>([]);
-  const [folders, setFolders] = useState<WorkspaceFolderDTO[]>([]);
-
-  // `null` is the editor closed; an id is an edit and `null` inside it a
-  // creation, which is what the two routes differ by and nothing else.
-  // `ready` is the second half and it is load-bearing — see `openEdit`.
-  const [editing, setEditing] = useState<{
-    id: string | null;
-    ready: boolean;
-  } | null>(null);
-  const [draft, setDraft] = useState<TaskDraft>(EMPTY_DRAFT);
-  const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<TaskListItemDTO | null>(
-    null,
-  );
-  const [deleting, setDeleting] = useState(false);
   // The edge in flight, `id:status`, rather than the row: keyed on the row,
   // pressing Done lit Release and Drop as well, which reads as three presses.
   const [moving, setMoving] = useState<string | null>(null);
@@ -276,24 +197,12 @@ export default function TasksPage() {
     return () => clearInterval(poll);
   }, [load]);
 
-  // The picker's own list, read once: a mount going away does not move a task,
-  // and a board that stopped listing because a mount is briefly unavailable is
-  // the failure the list route refuses on the same grounds.
-  useEffect(() => {
-    void (async () => {
-      const res = await jsonRequest<FoldersResponse>("/api/folders");
-      if (!res.ok) return;
-      setMounts(res.data.mounts ?? []);
-      setFolders(res.data.folders ?? []);
-    })();
-  }, []);
-
   /** Every project the board actually names, newest label wins. */
   const places = useMemo(() => {
     const seen = new Map<string, string>();
     for (const task of tasks) {
       if (task.folder === null) continue;
-      seen.set(placeKey(task), placeLabel(task));
+      seen.set(placeKey(task), fmtTaskPlace(task));
     }
     return [...seen].sort((a, b) => a[1].localeCompare(b[1]));
   }, [tasks]);
@@ -323,94 +232,6 @@ export default function TasksPage() {
 
   const truncated = total > tasks.length;
 
-  function openNew() {
-    setEditing({ id: null, ready: true });
-    setDraft(EMPTY_DRAFT);
-    setActionError(null);
-    setNote(null);
-  }
-
-  /**
-   * Open one task for editing, reading the *whole* brief first.
-   *
-   * **The form is never filled from the row.** The list clips the body at
-   * `MAX_LIST_TASK_BODY` and marks the clip with an ellipsis, so a form seeded
-   * from a row and saved writes 200 characters and a `…` over the brief — the
-   * one field a future agent is handed with nothing else to go on, destroyed by
-   * an edit to the title. So the draft is set only from the route that has the
-   * whole task, `ready` gates Save until it lands, and a failed read leaves the
-   * editor open with the reason and no way to write the clip.
-   */
-  async function openEdit(row: TaskListItemDTO) {
-    setEditing({ id: row.id, ready: false });
-    setActionError(null);
-    setNote(null);
-
-    const res = await jsonRequest<{ task: TaskDTO }>(`/api/tasks/${row.id}`);
-    if (!res.ok) {
-      setActionError(
-        actionFailureMessage(res, "Could not read the whole brief."),
-      );
-      return;
-    }
-    const task = res.data.task;
-    setDraft({
-      title: task.title,
-      body: task.body,
-      priority: task.priority,
-      mountId: task.mountId ?? "",
-      folder: task.relPath ?? "",
-    });
-    setEditing({ id: row.id, ready: true });
-  }
-
-  function closeEditor() {
-    setEditing(null);
-    setActionError(null);
-  }
-
-  /** The pair travels together, which is what the door refuses half of. */
-  function projectPayload(next: TaskDraft) {
-    return next.mountId && next.folder
-      ? { mountId: next.mountId, folder: next.folder }
-      : { mountId: null, folder: null };
-  }
-
-  async function save() {
-    if (!editing || !editing.ready || saving) return;
-    setSaving(true);
-    setActionError(null);
-
-    const body = {
-      title: draft.title,
-      body: draft.body,
-      priority: draft.priority,
-      ...projectPayload(draft),
-    };
-    const res = await jsonRequest<{ task: TaskDTO }>(
-      editing.id ? `/api/tasks/${editing.id}` : "/api/tasks",
-      { method: editing.id ? "PATCH" : "POST", body },
-    );
-    setSaving(false);
-
-    if (!res.ok) {
-      // Whatever the server said, verbatim: every refusal on this path names a
-      // field or a mount and says what would have been stored, and replacing
-      // that with "Could not save" sends the operator back to the same form
-      // with the same text in it.
-      setActionError(actionFailureMessage(res, "Could not save the task."));
-      return;
-    }
-
-    setNote(
-      editing.id
-        ? `Updated “${res.data.task.title}”`
-        : `Filed “${res.data.task.title}”`,
-    );
-    setEditing(null);
-    await load();
-  }
-
   /**
    * One move, decided by the server.
    *
@@ -437,25 +258,6 @@ export default function TasksPage() {
     await load();
   }
 
-  async function remove() {
-    const task = confirmDelete;
-    if (!task || deleting) return;
-    setDeleting(true);
-    const res = await jsonRequest<{ ok: true }>(`/api/tasks/${task.id}`, {
-      method: "DELETE",
-    });
-    setDeleting(false);
-    setConfirmDelete(null);
-
-    if (!res.ok) {
-      setActionError(actionFailureMessage(res, "Could not delete the task."));
-      return;
-    }
-    setNote(`Deleted “${task.title}”`);
-    setEditing(null);
-    await load();
-  }
-
   const parentTitle = (id: string) =>
     tasks.find((t) => t.id === id)?.title ?? null;
 
@@ -477,26 +279,20 @@ export default function TasksPage() {
     });
   }
 
-  const folderOptions = folders.filter((f) => f.mountId === draft.mountId);
-  // A stored folder the scan no longer offers — a deleted directory, a mount
-  // that is not there today — would otherwise be dropped by the select on the
-  // next render and saved away without anybody pressing anything.
-  const folderMissing =
-    draft.mountId !== "" &&
-    draft.folder !== "" &&
-    !folderOptions.some((f) => f.path === draft.folder);
-
   function taskRows(rows: TaskListItemDTO[], withStatus: boolean) {
     return rows.map((task) => (
       <Tr key={task.id}>
         <Td className="w-full max-w-0 align-top max-md:max-w-none">
-          <button
-            type="button"
-            onClick={() => void openEdit(task)}
-            className="cursor-pointer text-left font-medium text-ink hover:text-accent max-md:inline-flex max-md:min-h-11 max-md:items-center"
+          {/* The task's own page, rather than a card this page opened above
+              itself. A link and not a button: the row is a destination, so
+              ⌘-click opens the brief beside the board instead of replacing
+              it. */}
+          <Link
+            href={`/tasks/${task.id}`}
+            className="font-medium text-ink no-underline hover:text-accent max-md:inline-flex max-md:min-h-11 max-md:items-center"
           >
             {task.title}
-          </button>
+          </Link>
           {task.body && (
             <span className="mt-0.5 block max-w-[80ch] text-ink-muted">
               {task.body}
@@ -522,7 +318,7 @@ export default function TasksPage() {
             <span className="text-ink-faint">Unassigned</span>
           ) : (
             <span className="block max-w-[36ch] max-md:break-all">
-              {placeLabel(task)}
+              {fmtTaskPlace(task)}
             </span>
           )}
         </Td>
@@ -531,7 +327,7 @@ export default function TasksPage() {
           labelPlacement="above"
           className="align-top text-ink-muted"
         >
-          <span className="block">{originPhrase(task.origin)}</span>
+          <span className="block">{fmtTaskOrigin(task.origin)}</span>
           {task.createdByRunId && (
             <RunLink label="by run" runId={task.createdByRunId} />
           )}
@@ -562,11 +358,15 @@ export default function TasksPage() {
         </Td>
         <Td label="Priority" className="align-top">
           <span className="flex flex-wrap gap-1.5">
-            <Badge tone={PRIORITY_TONE[task.priority]}>{task.priority}</Badge>
+            <Badge tone={TASK_PRIORITY_TONE[task.priority]}>
+              {task.priority}
+            </Badge>
             {withStatus &&
               task.status !== "open" &&
               task.status !== "claimed" && (
-                <Badge tone={CLOSED_TONE[task.status]}>{task.status}</Badge>
+                <Badge tone={TASK_STATUS_TONE[task.status]}>
+                  {task.status}
+                </Badge>
               )}
           </span>
         </Td>
@@ -681,11 +481,9 @@ export default function TasksPage() {
             the work is a separate press.
           </p>
         </div>
-        {!editing && (
-          <Button variant="primary" onClick={openNew}>
-            New task
-          </Button>
-        )}
+        <ButtonLink href="/tasks/new" variant="primary">
+          New task
+        </ButtonLink>
       </div>
 
       <div role="alert">
@@ -702,188 +500,6 @@ export default function TasksPage() {
           Showing {tasks.length} of {total} tasks — the newest {MAX_TASK_PAGE}{" "}
           by priority. The groups and the project filter below reach only these.
         </Notice>
-      )}
-
-      {editing && (
-        <>
-          <CardTitle>{editing.id ? "Edit task" : "New task"}</CardTitle>
-          {/* The one thing the page is about while it is open, so it takes the
-              emphasis and the board below gives it up. */}
-          <Card emphasis="primary" className="mb-6">
-            {!editing.ready ? (
-              <div aria-busy="true">
-                <span className="sr-only">Reading the whole brief…</span>
-                <SkeletonText lines={5} />
-                <ButtonRow className="mt-4 justify-end">
-                  <Button variant="secondary" onClick={closeEditor}>
-                    Cancel
-                  </Button>
-                </ButtonRow>
-              </div>
-            ) : (
-              <>
-                <Field
-                  label="Title"
-                  htmlFor="task-title"
-                  hint="What the work is, in a line"
-                >
-                  <Input
-                    id="task-title"
-                    value={draft.title}
-                    autoFocus
-                    onChange={(e) =>
-                      setDraft({ ...draft, title: e.target.value })
-                    }
-                  />
-                </Field>
-
-                <Field
-                  label="Brief"
-                  htmlFor="task-body"
-                  hint="What an agent picking this up is handed, and nothing else"
-                >
-                  <Textarea
-                    id="task-body"
-                    value={draft.body}
-                    rows={7}
-                    onChange={(e) =>
-                      setDraft({ ...draft, body: e.target.value })
-                    }
-                  />
-                </Field>
-
-                <Field label="Priority" htmlFor="task-priority">
-                  <div className="w-48">
-                    <Select
-                      id="task-priority"
-                      value={draft.priority}
-                      onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          priority: e.target.value as TaskPriorityDTO,
-                        })
-                      }
-                    >
-                      {PRIORITIES.map((priority) => (
-                        <option key={priority} value={priority}>
-                          {priority}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-                </Field>
-
-                <Field
-                  label="Workspace"
-                  htmlFor="task-mount"
-                  hint="A mount and a folder together, or neither"
-                >
-                  <div className="w-64">
-                    <Select
-                      id="task-mount"
-                      value={draft.mountId}
-                      onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          mountId: e.target.value,
-                          folder: "",
-                        })
-                      }
-                    >
-                      <option value="">— no project —</option>
-                      {mounts.map((mount) => (
-                        <option key={mount.id} value={mount.id}>
-                          {mount.label}
-                          {mount.available ? "" : "  (not mounted)"}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-                </Field>
-
-                <Field
-                  label="Folder"
-                  htmlFor="task-folder"
-                  hint={
-                    draft.mountId
-                      ? "Proved against the mount when the task is saved"
-                      : "Pick a workspace first"
-                  }
-                >
-                  <div className="w-72">
-                    <Select
-                      id="task-folder"
-                      value={draft.folder}
-                      disabled={!draft.mountId}
-                      onChange={(e) =>
-                        setDraft({ ...draft, folder: e.target.value })
-                      }
-                    >
-                      <option value="">— pick a folder —</option>
-                      {/* A stored folder the scan does not offer stays selectable,
-                      or the select would silently resolve to the first option
-                      and an unrelated save would move the task to it. */}
-                      {folderMissing && (
-                        <option value={draft.folder}>{draft.folder}</option>
-                      )}
-                      {folderOptions.map((folder) => (
-                        <option key={folder.path} value={folder.path}>
-                          {folder.path}
-                          {folder.isGitRepo ? "  (git)" : ""}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-                </Field>
-                {folderMissing && (
-                  // On a wrapper, because `Hint` states its own `mt-1.5` and
-                  // Tailwind emits a numeric utility ascending — a `-mt-2` on the
-                  // component itself loses to the larger value it wrote.
-                  <div className="-mt-2">
-                    <Hint tone="warn" className="mb-3.5">
-                      This folder is not in the workspace scan right now. Saving
-                      re-proves it, and an absent mount refuses the save rather
-                      than clearing the task’s project
-                    </Hint>
-                  </div>
-                )}
-
-                <ButtonRow className="justify-between">
-                  <div>
-                    {editing.id && (
-                      <Button
-                        variant="danger"
-                        onClick={() =>
-                          setConfirmDelete(
-                            tasks.find((t) => t.id === editing.id) ?? null,
-                          )
-                        }
-                      >
-                        Delete
-                      </Button>
-                    )}
-                  </div>
-                  <ButtonRow>
-                    <Button
-                      variant="secondary"
-                      onClick={closeEditor}
-                      disabled={saving}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      variant="primary"
-                      onClick={() => void save()}
-                      busy={saving}
-                    >
-                      {editing.id ? "Save changes" : "File task"}
-                    </Button>
-                  </ButtonRow>
-                </ButtonRow>
-              </>
-            )}
-          </Card>
-        </>
       )}
 
       {loaded && !unreadable && total > 0 && (
@@ -960,9 +576,9 @@ export default function TasksPage() {
               and so can you.
             </div>
             <div className="mt-3">
-              <Button variant="secondary" onClick={openNew}>
+              <ButtonLink href="/tasks/new" variant="secondary">
                 File one
-              </Button>
+              </ButtonLink>
             </div>
           </Empty>
         </Card>
@@ -996,14 +612,9 @@ export default function TasksPage() {
                   <Badge tone="neutral">{rows.length}</Badge>
                 </CardTitle>
                 {/* One `primary` per screen: the first group with anything in
-                    it leads, and the editor above outranks both while it is
-                    open. */}
+                    it leads. */}
                 <Card
-                  emphasis={
-                    !editing && index === 0 && rows.length > 0
-                      ? "primary"
-                      : "default"
-                  }
+                  emphasis={index === 0 && rows.length > 0 ? "primary" : "default"}
                   className="mb-6"
                 >
                   {rows.length === 0 ? (
@@ -1029,7 +640,7 @@ export default function TasksPage() {
                     <div key={group.status}>
                       <CardTitle>
                         {group.title}
-                        <Badge tone={CLOSED_TONE[group.status]}>
+                        <Badge tone={TASK_STATUS_TONE[group.status]}>
                           {rows.length}
                         </Badge>
                       </CardTitle>
@@ -1047,26 +658,6 @@ export default function TasksPage() {
           )}
         </>
       )}
-
-      <Sheet
-        open={confirmDelete !== null}
-        onDismiss={() => setConfirmDelete(null)}
-        title={`Delete “${confirmDelete?.title ?? ""}”?`}
-        confirmLabel="Delete"
-        confirmVariant="danger"
-        busy={deleting}
-        onConfirm={() => void remove()}
-      >
-        <p>
-          The brief goes with it and there is no undo. Nothing running is
-          affected — a task holds no folder, no concurrency slot and no child
-          process.
-        </p>
-        <p className="mt-2">
-          If the work should simply not happen, drop it instead: a dropped task
-          stays on the board where somebody can disagree with it.
-        </p>
-      </Sheet>
     </>
   );
 }

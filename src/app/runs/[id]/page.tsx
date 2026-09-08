@@ -1130,15 +1130,12 @@ export default function RunDetail({
             gate authorised the run, this says what prompted it — and it is a
             record rather than a state: this run finishing does not close the
             task, so nothing here reports on it. A task deleted since says so
-            rather than linking, because the row it would open is not there.
-            The link is to the board and not to the row: the board has no
-            deep-link for one task, and inventing one here would be a URL that
-            silently lands on an unfiltered board. */}
+            rather than linking, because the row it would open is not there. */}
         {run.task && (
           <>
             {" · for "}
             {run.task.title ? (
-              <Link href="/tasks">{run.task.title}</Link>
+              <Link href={`/tasks/${run.task.id}`}>{run.task.title}</Link>
             ) : (
               "a task since deleted"
             )}
