@@ -1,5 +1,9 @@
 import { getJSON, setJSON } from "./db";
 import { normalizePolicy, type BudgetPolicy } from "./budget";
+import {
+  SEEDED_MODEL_CATALOGUE,
+  type ModelCatalogueEntry,
+} from "./modelCatalogue";
 import type { LimitConfig, WeeklyAnchor } from "./windows";
 import type { PruneTier } from "./apiTypes";
 
@@ -83,8 +87,30 @@ export interface Settings {
   planUsageFromApi: boolean;
   /** Default permission mode for new runs. */
   defaultPermissionMode: PermissionMode;
-  /** Default model passed to Claude Code, or null to use its own default. */
+  /**
+   * Default model passed to Claude Code, or null to use its own default.
+   *
+   * Since `modelCatalogue` this is a choice over the enabled entries rather
+   * than free text, and `PUT /api/settings` refuses one that is not among them
+   * — `defaultAgentId`'s rule, refusing where the person is.
+   */
   defaultModel: string | null;
+  /**
+   * Which models this install may start work on, in picker order.
+   *
+   * The one list every field that names a model reads. Seeded from
+   * `pricing.ts`' table so there is no second answer to which models exist,
+   * and operator-editable so a model that ships next week needs a settings
+   * edit rather than a release — which is the whole of what made the free text
+   * it replaces defensible. Empty means no list and refuses nothing; see
+   * `modelCatalogue.ts` for why that, and not "no model is allowed", is what
+   * empty has to mean.
+   *
+   * It carries an id, a label and a switch, and may never grow a field that
+   * decides what a run is *allowed* to do: a model moves cost, never
+   * capability.
+   */
+  modelCatalogue: ModelCatalogueEntry[];
   /**
    * The saved agent the new-run form starts on, or null for none.
    *
@@ -900,6 +926,7 @@ export const DEFAULTS: Settings = {
   planUsageFromApi: true,
   defaultPermissionMode: "acceptEdits",
   defaultModel: null,
+  modelCatalogue: SEEDED_MODEL_CATALOGUE,
   defaultAgentId: null,
   continuationPrompt: DEFAULT_CONTINUATION_PROMPT,
   includeSidechains: true,

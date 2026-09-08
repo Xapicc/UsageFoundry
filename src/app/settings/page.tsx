@@ -36,6 +36,9 @@ import {
 } from "@/lib/format";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+// Safe from a client file: `modelCatalogue.ts` imports only `pricing.ts`, which
+// imports nothing — no route back to `node:fs`.
+import { SEEDED_MODEL_CATALOGUE } from "@/lib/modelCatalogue";
 import { Card, CardTitle, Empty } from "@/components/ui/Card";
 import { Disclosure } from "@/components/ui/Disclosure";
 import { Field, Input, Select, Switch, Textarea } from "@/components/ui/Field";
@@ -1874,6 +1877,9 @@ export default function SettingsPage() {
   // one is a vault that could not be read, the other a switch that was refused.
   const [skillBusy, setSkillBusy] = useState(false);
   const [skillError, setSkillError] = useState<string | null>(null);
+
+  /** The id being typed into the model list's Add box, before it is a row. */
+  const [modelDraft, setModelDraft] = useState("");
   const standalone = useStandalone();
   const [sectionHash, setSectionHash] = useSectionHash();
 
@@ -2281,6 +2287,27 @@ export default function SettingsPage() {
 
   const numOrEmpty = (v: number | null) => (v === null ? "" : String(v));
   const isEdited = (p: string) => changed.has(p);
+
+  // Bound once per render rather than read through `effective` inside the
+  // handler below, which TypeScript will not narrow across a closure.
+  const catalogue = effective.modelCatalogue;
+  const enabledModels = catalogue.filter((e) => e.enabled);
+
+  /**
+   * Add a typed id to the list, enabled, and clear the box.
+   *
+   * Nothing is stored until Save, like every other control on this page — so a
+   * duplicate is silently the row that is already there rather than an error to
+   * dismiss, and the label is the id itself because that is the only true thing
+   * known about a model this build has never heard of.
+   */
+  function addModel() {
+    const id = modelDraft.trim();
+    if (!id) return;
+    setModelDraft("");
+    if (catalogue.some((e) => e.id === id)) return;
+    patch({ modelCatalogue: [...catalogue, { id, label: id, enabled: true }] });
+  }
   /**
    * How many of a fold's settings this install has moved off the shipped
    * default, and whether it had any when the page loaded.
@@ -3036,21 +3063,33 @@ export default function SettingsPage() {
             htmlFor="model"
             edited={isEdited("defaultModel")}
             label="Default model"
-            description={
-              <>
-                e.g. <span className="mono">claude-opus-5</span> or{" "}
-                <span className="mono">claude-sonnet-5</span>
-              </>
-            }
+            description="Where a run falls through to when neither it nor its template nor its agent names one"
           >
             <div className="w-64">
-              <Input
+              <Select
                 id="model"
-                type="text"
-                placeholder="Claude Code's own default"
                 value={effective.defaultModel ?? ""}
                 onChange={(e) => patch({ defaultModel: e.target.value || null })}
-              />
+              >
+                <option value="">Claude Code&apos;s own default</option>
+                {enabledModels.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.label}
+                  </option>
+                ))}
+                {/* A default naming a model this install has since switched
+                    off. Kept as an option rather than reverting the picker,
+                    which would look like the setting had never been made — and
+                    Save then refuses it by name. `defaultAgentId`'s rule, and
+                    the same cost: until the picker is changed, this refuses any
+                    settings edit, because one Save commits every field. */}
+                {effective.defaultModel !== null &&
+                  !enabledModels.some((e) => e.id === effective.defaultModel) && (
+                    <option value={effective.defaultModel}>
+                      {effective.defaultModel} — no longer enabled
+                    </option>
+                  )}
+              </Select>
             </div>
           </SettingRow>
 
@@ -3178,6 +3217,114 @@ export default function SettingsPage() {
             </div>
           </SettingRow>
         </ListGroup>
+
+        {/* Folded, because the shipped list is right for nearly everyone and
+            what is behind it is thirty rows. It is *not* a fact any decision
+            on this page is approved against — the picker above spells out
+            what it offers — so folding it is the ordinary move rather than
+            hiding something load-bearing.
+
+            What this list is and is not: it decides which model ids may be
+            typed, picked or proposed anywhere in this app, and nothing else.
+            A model moves what a run costs, never what it may do, so there is
+            no row here that touches a budget, a work-cycle limit, a
+            permission mode or an isolation choice, and there must never be
+            one. */}
+        <Disclosure
+          className="mb-3.5 last:mb-0"
+          summaryClassName={FOLD_SUMMARY}
+          summary={
+            <SettingName
+              label="Models this install may use"
+              edited={isEdited("modelCatalogue")}
+            />
+          }
+          count={movedCount(["modelCatalogue"])}
+          defaultOpen={false}
+        >
+          <div className={`${FOLD_BODY} ${FLUSH}`}>
+            {/* Longer than the seven-row rule of thumb, and the length is the
+                price table's rather than a choice: this is one list of one
+                kind of thing, and splitting it by whether the switch is on
+                would move a row every time somebody flipped one. */}
+            <ListGroup label="Show on model pickers">
+              {/* `ListRow` and not `SettingRow`: the fold's summary already
+                  carries this setting's one searchable name, and thirty rows
+                  each planting another would put every model id into the
+                  field search and move the "n of m" count the header reads,
+                  for one setting. The rail and the unsaved-edit suffix belong
+                  to the summary for the same reason. */}
+              {catalogue.map((entry) => (
+                <ListRow
+                  key={entry.id}
+                  label={entry.label}
+                  description={<span className="mono">{entry.id}</span>}
+                >
+                  <Switch
+                    checked={entry.enabled}
+                    // Disabled on the last one standing rather than refused
+                    // at Save: the route refuses a list with nothing enabled,
+                    // and a switch that flips and then loses the whole page's
+                    // Save is a worse way to learn that than a switch that
+                    // will not flip.
+                    disabled={entry.enabled && enabledModels.length === 1}
+                    onChange={(on) =>
+                      patch({
+                        modelCatalogue: catalogue.map((e) =>
+                          e.id === entry.id ? { ...e, enabled: on } : e,
+                        ),
+                      })
+                    }
+                    label={entry.label}
+                  />
+                  {/* Only on a row this build did not seed. An id typed into
+                      the box below and saved with a typo would otherwise be
+                      on every picker for ever with no way to take it off,
+                      where a seeded one is retired with the switch — which is
+                      the difference: the seed comes back on the next release
+                      and an operator's own entry never does. */}
+                  {!SEEDED_MODEL_CATALOGUE.some((e) => e.id === entry.id) && (
+                    <Button
+                      variant="ghost"
+                      size="compact"
+                      onClick={() =>
+                        patch({
+                          modelCatalogue: catalogue.filter(
+                            (e) => e.id !== entry.id,
+                          ),
+                        })
+                      }
+                    >
+                      Remove
+                    </Button>
+                  )}
+                </ListRow>
+              ))}
+            </ListGroup>
+
+            <Field label="Add a model" htmlFor="model-add">
+              <div className="flex flex-wrap items-start gap-2">
+                <div className="w-64">
+                  <Input
+                    id="model-add"
+                    type="text"
+                    placeholder="claude-opus-6[1m]"
+                    value={modelDraft}
+                    onChange={(e) => setModelDraft(e.target.value)}
+                  />
+                </div>
+                <Button variant="secondary" onClick={addModel}>
+                  Add
+                </Button>
+              </div>
+              <Hint>
+                Exactly as the CLI takes it, square brackets included. A model
+                released after this build is added here rather than in a
+                release
+              </Hint>
+            </Field>
+          </div>
+        </Disclosure>
 
         {/* Folded: four settings decided once per repository. The group's label
             is gone rather than repeated under a summary that is the same two

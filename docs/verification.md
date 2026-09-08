@@ -2265,6 +2265,27 @@ through before trusting this unattended:
 > branches both, and the caption's existing "newest N of M" clause is pinned
 > beside it. Nobody has looked at the pane.
 
+> **The model catalogue has not been seen in a browser and no run has been
+> started on a `[1m]` id.** `settings.modelCatalogue`, its Settings fold, the
+> three pickers that replaced free-text model boxes, and the `enum` the MCP
+> tools now publish all typecheck and are unit-tested where the failure is
+> silent (`modelCatalogue.test.ts`, plus the `[1m]` pricing case in
+> `pricing.test.ts` and a `modelCatalogue` probe in the settings route's
+> round-trip census). What has **not** happened, in the container this was
+> written in: `next build` could not be completed — it compiles and generates
+> every page, then fails copying the standalone bundle with an `ENOENT` on a
+> different `mkdir` each run, and the *unmodified* base commit fails the same
+> way — so `npm run smoke-pages` exits 2 and nobody has looked at the fold, the
+> pickers, or the "not enabled" option a switched-off model leaves behind.
+> Docker is unavailable there too. The list, in order: open Settings and check
+> the fold's rows and its Add box, and that the last enabled switch will not
+> flip; save a `defaultModel`, switch that model off in the same press, and
+> check the route refuses by name rather than storing a default nothing will
+> accept; start a run on `claude-opus-5[1m]` and read the spawned argv, because
+> the square brackets are the one thing on this path that could be normalised
+> away without any test failing; then ask the chat for a run and check the
+> orchestrator picks from the enum rather than from memory.
+
 > **The work cycle's taskboard tools have never been exercised against a real
 > CLI.** The whole path added on 2026-09-07 — `taskboardForRuns`, the third
 > capability subject, the per-run token, the per-cycle MCP config and

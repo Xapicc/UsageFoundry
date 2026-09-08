@@ -247,11 +247,14 @@ export function normalizeTemplateInput(
 
   // Blank is "this template names no model", the way every optional string here
   // is, and whitespace is blank rather than a value — `--model "  "` is a spawn
-  // the CLI refuses where a template naming none is a run that starts. Not
-  // narrowed against a list of models, unlike the permission mode above and for
-  // the opposite reason: this reaches `--model`, which decides what a run costs
-  // and never what it may do, so refusing a value this build does not recognise
-  // would only refuse whatever ships next week.
+  // the CLI refuses where a template naming none is a run that starts. Still
+  // not narrowed against a list of models, unlike the permission mode above,
+  // and `settings.modelCatalogue` did not change that: the reason was never
+  // that no list could exist, it was that a template outlives the build that
+  // wrote it and the operator who switches a model off has not asked for their
+  // saved prompts to start refusing. The catalogue is read at the doors that
+  // start work — `POST /api/runs` and the chat's two tools — in front of the
+  // person who can act on the refusal.
   const rawModel =
     o.model === null || o.model === undefined ? "" : String(o.model).trim();
   const model = rawModel === "" ? null : rawModel;

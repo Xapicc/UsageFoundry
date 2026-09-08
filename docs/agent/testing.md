@@ -368,6 +368,42 @@ with their own tests and their own grounds, and the thing that keeps them honest
 is that there is one function to read the rate from rather than a constant each
 of them could hold a stale copy of.
 
+A fifth case joined them with `settings.modelCatalogue`: **a `[1m]` id prices at
+its base model's rate**. `[1m]` is Claude Code's name for the 1M-context
+deployment of a model, the suffix falls after the table's key, so
+`claude-opus-5[1m]` already prefix-matches `claude-opus-5` — and that is the
+right rate rather than a near-miss, because the current models carry a 1M window
+natively and Anthropic charges no long-context premium for it. It is pinned
+because both ways of "fixing" it are silent. Strip the suffix in
+`canonicalModelId` and every figure stays right while a normalisation of a
+CLI-shaped id sits one refactor from the path to `--model`, where the brackets
+have to survive; add a `[1m]` key to `PRICES` *after* its base and
+longest-prefix-first never reaches it. The case also runs `claude-fable-5[1m]`
+through the 5.1-versus-5 trap above, where the wrong answer is again 4× on the
+invisible column.
+
+**`modelCatalogue.test.ts` covers the list every model field is now validated
+against**, and each of its cases is a wrong answer that renders as a plausible
+page rather than an error. The seed is walked against `knownModelIds()` in both
+directions, because `pricing.ts` is the one answer to which models exist and a
+seed that drifted either way is silent — a missing entry is a picker one option
+short for no stated reason, an invented one is an id nothing can price showing
+as $0.00 rather than as a mistake. `modelRefusal` is pinned on the four values
+that must **not** refuse (null, undefined, `""`, whitespace: every way of naming
+none, and a refusal on any of them takes away all three fallback rungs from the
+ordinary run), on an empty catalogue meaning *no catalogue* rather than *no
+model allowed*, on matching exactly rather than by prefix or provider decoration
+— the question is "may this string reach `--model`", not "which model is this",
+which is `pricing.ts`' question and has its own canonicalisation — and on saying
+*switched off* rather than *unknown* for a disabled entry, because one fix is a
+switch and the other is typing an id. `normalizeModelCatalogue` is pinned on
+refusing a list with nothing enabled, which would refuse every run on the
+install. `adoptModelIds` is pinned on being idempotent, which is the only thing
+that makes it safe to run from `migrate()` on every boot, and on adding rather
+than replacing — an operator running on a model this build never heard of keeps
+it, and dropping one would reset a working configuration under a feature whose
+whole claim is that it protects one.
+
 `repoLock.test.ts` is a mutual exclusion tested for the failure that it excludes nothing, which is what every wrong promise-chained lock does: chain onto the wrong promise and two bodies run side by side, and the only symptom is two callers overlapping on a live install months later. The case that carries the file asserts an *ordering* — the second body has not started while the first is still open — driven with explicit deferreds rather than timers, because a test that establishes an ordering by sleeping asserts the sleep. Two of the others are the opposite direction and matter as much: two repositories must still work at once, or a lock keyed on the process would serialise every install-wide run start behind one repository's registry work; and a body that threw must not wedge its key, because one of the four callers is the run loop and a wedged key is every isolated run in that repository never starting again — which is worse than not having the lock at all. The last two are about the map: it must forget a repository once the queue drains, and must **not** forget one while somebody is still queued behind the holder, since a third caller then chains onto nothing and runs beside the second. The second of those needed both bodies held open to be observable at all; the first version of it passed for the wrong reason, because the queued body returned inside the same tick.
 
 `findChats` earns its four cases on the two ways a search fails silently in opposite directions. The operator's text goes into a `LIKE`, and unescaped a `%` anywhere in it matches every thread in the install — a search that returns everything reads exactly like a search that found everything, and the operator concludes their conversation is one of two hundred rather than that their query was ignored; `_` is the likelier accident, being in half the identifiers anybody would paste in. The other is that the page and the total come from two statements: a `LIMIT`/`OFFSET` beside a separate `COUNT(*)` computed from a different predicate shows "30 of 214" over a list with nothing more to give, which is a More button that does nothing. The case for matching message text rather than only titles is pinned as well, because it is the whole point of the feature — a title is written by the model from the opening line, so searching titles alone finds only the conversations somebody already remembers.

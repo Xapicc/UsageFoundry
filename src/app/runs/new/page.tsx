@@ -1573,40 +1573,77 @@ export default function NewRunPage() {
                 row in among the guards would claim it bounds something. Settings
                 puts its own model field beside its agent for the same reason.
 
-                Free-form rather than a picker, as the agents page is: an alias,
-                a full id, or a model released after this build are all valid,
-                and a list this build knows would refuse next week's. An
-                unrecognised value fails at the spawn, inside the CLI, which is
-                where the set is actually known. */}
+                A picker since `settings.modelCatalogue`, and the objection it
+                answers is the one that kept this free text: a list *this build*
+                knows would refuse next week's model, so the list it offers is
+                the operator's own and a new model is a settings edit rather
+                than a release. Blank still means inherit, so the fallback rungs
+                are untouched.
+
+                Free text for a Codex run, because the catalogue is seeded from
+                a table of Anthropic prices and holds Claude Code's own id
+                spellings — offering them for a run that will not spawn Claude
+                Code would be a picker that is confidently wrong, and the door
+                scopes its refusal the same way. */}
             <ListRow
               htmlFor="model"
               label="Model"
               description={
-                <>
-                  An alias like <span className="mono">sonnet</span> or a full id
-                  like <span className="mono">claude-opus-5</span>. Blank takes
-                  the default in Settings, read when the run starts
-                </>
+                provider === "codex"
+                  ? "A model id this provider's CLI takes. Blank takes the default in Settings, read when the run starts"
+                  : "Blank takes the default in Settings, read when the run starts"
               }
             >
               {mark("model")}
               <div className="w-64">
-                <Input
-                  id="model"
-                  type="text"
-                  value={model}
-                  // What blank resolves to, shown rather than filled in: a value
-                  // in the box is a value that gets posted, and a posted one is
-                  // frozen onto `runs.model` where it stops following Settings.
-                  // Empty until the read lands, so it cannot say "Claude Code's
-                  // own" about an install that has named a default.
-                  placeholder={
-                    settings === null
-                      ? ""
-                      : (settings.defaultModel ?? "Claude Code's own default")
-                  }
-                  onChange={(e) => setModel(e.target.value)}
-                />
+                {provider === "codex" ? (
+                  <Input
+                    id="model"
+                    type="text"
+                    value={model}
+                    // What blank resolves to, shown rather than filled in: a
+                    // value in the box is a value that gets posted, and a posted
+                    // one is frozen onto `runs.model` where it stops following
+                    // Settings. Empty until the read lands, so it cannot say
+                    // "Claude Code's own" about an install that named a default.
+                    placeholder={
+                      settings === null
+                        ? ""
+                        : (settings.defaultModel ?? "Claude Code's own default")
+                    }
+                    onChange={(e) => setModel(e.target.value)}
+                  />
+                ) : (
+                  <Select
+                    id="model"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                  >
+                    <option value="">
+                      {settings === null
+                        ? "Inherit"
+                        : `Inherit — ${settings.defaultModel ?? "Claude Code's own default"}`}
+                    </option>
+                    {(settings?.modelCatalogue ?? [])
+                      .filter((entry) => entry.enabled)
+                      .map((entry) => (
+                        <option key={entry.id} value={entry.id}>
+                          {entry.label}
+                        </option>
+                      ))}
+                    {/* A model a template or a copied run named, that the
+                        operator has since switched off. Kept as an option
+                        rather than reverting the picker to Inherit, which would
+                        start the run on a different model than the seed asked
+                        for and look like nothing had happened — and the door
+                        then refuses it by name. `defaultAgentId`'s rule. */}
+                    {settings !== null &&
+                      model !== "" &&
+                      !settings.modelCatalogue.some(
+                        (entry) => entry.enabled && entry.id === model,
+                      ) && <option value={model}>{model} — not enabled</option>}
+                  </Select>
+                )}
               </div>
             </ListRow>
 

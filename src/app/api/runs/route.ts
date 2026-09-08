@@ -25,7 +25,12 @@ import {
   type RunListItemDTO,
   type RunProviderDTO,
 } from "../../../lib/apiTypes";
-import { PERMISSION_MODES, type PermissionMode } from "../../../lib/settings";
+import {
+  getSettings,
+  PERMISSION_MODES,
+  type PermissionMode,
+} from "../../../lib/settings";
+import { modelRefusal } from "../../../lib/modelCatalogue";
 import { resolveAgentForRun, runAgentDTO } from "../../../lib/agents";
 import {
   ENFORCEMENT_MODES,
@@ -270,6 +275,22 @@ async function postHandler(req: Request) {
     provider = candidate as RunProviderDTO;
   }
 
+  // Refused here rather than at the spawn, `defaultAgentId`'s rule: this is the
+  // door with a person behind it, and a model id this machine does not have is
+  // a run that dies at its first cycle with the operator's prompt already
+  // written. Trimmed first because `--model "  "` is a spawn the CLI refuses and
+  // a blank has to keep meaning "named none" so the fallback rungs still run.
+  //
+  // Scoped to the Claude provider on purpose. The catalogue is seeded from a
+  // table of Anthropic prices and holds Claude Code's own id spellings; a Codex
+  // run names something else entirely, and refusing it against this list would
+  // be this build claiming to know a set it has never been told.
+  const model = body.model ? String(body.model).trim() || null : null;
+  if (provider !== "codex") {
+    const refusal = modelRefusal(getSettings().modelCatalogue, model);
+    if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
+  }
+
   // Narrowed against the registry the way the mode above is narrowed against
   // its four literals, and refused rather than dropped when it names nothing:
   // the operator started the run that said "and hand the review to the reviewer
@@ -357,7 +378,7 @@ async function postHandler(req: Request) {
       folder: String(body.folder ?? ""),
       mountId: body.mountId ? String(body.mountId) : null,
       prompt: String(body.prompt ?? ""),
-      model: body.model ? String(body.model) : null,
+      model,
       provider: provider ?? null,
       permissionMode,
       isolate: body.isolate === undefined ? undefined : body.isolate !== false,

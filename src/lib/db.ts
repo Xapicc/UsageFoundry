@@ -6,6 +6,10 @@ import { DATA_DIR, DB_PATH } from "./config";
 // reports on it.
 import type { OpsFields, OpsLevel } from "./ops";
 import { heldByAnotherProcess } from "./serverLock";
+// A value import, and safe to be one: `modelCatalogue.ts` imports only
+// `pricing.ts`, which imports nothing at all. `settings.ts` imports both this
+// module and that one, so the seed has to live where neither can reach back.
+import { adoptModelIds, SEEDED_MODEL_CATALOGUE } from "./modelCatalogue";
 
 /**
  * SQLite persistence. Single-writer, single-process — matching the fact that
@@ -2210,6 +2214,8 @@ function migrate(db: Database.Database) {
       ON tasks(mount_id, folder);
   `);
 
+  adoptModelsInUse(db);
+
   // Anything still wearing the rebuild suffix after the one rebuild above has
   // run. Last, so a leftover this boot has just completed is not reported as
   // one it left behind.
@@ -2412,6 +2418,81 @@ export function relaxProposalTemplate(db: Database.Database) {
   db.transaction(() => {
     for (const sql of steps) db.exec(sql);
   })();
+}
+
+/**
+ * Every model this install already runs on, onto the catalogue it now validates
+ * against.
+ *
+ * `settings.modelCatalogue` arrived after four surfaces had been storing model
+ * ids as free text for as long as they had existed, and the seed is what
+ * *this build* knows — so an operator running on something it has never heard
+ * of would find their own configuration refused by the door that was supposed
+ * to protect it. Their working setup is not this migration's to reset, so it is
+ * adopted instead: every model a template or a saved agent names, plus the
+ * install's own default, becomes an enabled entry.
+ *
+ * Three sources and not four. `runs.model` is deliberately absent: a run is a
+ * record of work that happened rather than a thing that starts more of it, and
+ * adopting from it would refill the list with every model the install has ever
+ * touched. `chat_proposals.model` is absent for a different reason — approval
+ * does not consult this list at all (see `docs/agent/chat.md`), so a pending
+ * proposal has nothing to be refused by.
+ *
+ * Runs at most once per install, gated on the blob not carrying the key at all
+ * rather than on the adoption being a no-op — the difference matters, because an
+ * operator who later switches a model off, or removes an entry they added, has a
+ * template or an agent still naming it, and a pass that ran every boot would put
+ * it back by morning. Writing at all pins the list into the stored blob, which
+ * costs this install `DEFAULTS`' future seed additions: the trade `saveSettings`
+ * describes, taken deliberately here because a silently-dropped model is the
+ * worse half of it. An install with nothing to adopt writes nothing and keeps
+ * following the shipped seed.
+ */
+function adoptModelsInUse(db: Database.Database) {
+  const raw = db
+    .prepare("SELECT value FROM settings WHERE key = 'settings'")
+    .get() as { value: string } | undefined;
+
+  let stored: Record<string, unknown> = {};
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw.value) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        stored = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // An unparseable blob is `getSettings()`' problem and it answers it by
+      // falling back to the defaults. Adding a key to something this cannot
+      // read would be writing over whatever is in there.
+      return;
+    }
+  }
+
+  // The whole of what makes this run-once. An install that has stored a list has
+  // an operator who owns it, and re-adopting from the templates and agents on
+  // every boot would switch a model back on the morning after they switched it
+  // off — silently, and for exactly the models they were most deliberate about.
+  // Absent means pre-catalogue, which is the one state this exists for.
+  if (stored.modelCatalogue !== undefined) return;
+
+  const inUse = [
+    typeof stored.defaultModel === "string" ? stored.defaultModel : "",
+    ...(db
+      .prepare("SELECT DISTINCT model FROM agents WHERE model IS NOT NULL")
+      .all() as { model: string }[]).map((row) => row.model),
+    ...(db
+      .prepare("SELECT DISTINCT model FROM run_templates WHERE model IS NOT NULL")
+      .all() as { model: string }[]).map((row) => row.model),
+  ];
+
+  const adopted = adoptModelIds(SEEDED_MODEL_CATALOGUE, inUse);
+  if (adopted.length === SEEDED_MODEL_CATALOGUE.length) return;
+
+  db.prepare(
+    `INSERT INTO settings (key, value) VALUES ('settings', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  ).run(JSON.stringify({ ...stored, modelCatalogue: adopted }));
 }
 
 /**

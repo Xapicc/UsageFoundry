@@ -76,6 +76,17 @@ const PROBES: Record<keyof Settings, Probe> = {
   planUsageFromApi: { send: false },
   defaultPermissionMode: { send: "plan" },
   defaultModel: { send: "claude-sonnet-5" },
+  // Two entries rather than one: a list that differs from the seed, keeps the
+  // model `defaultModel`'s probe names enabled — these probes share a database
+  // and the route judges that default against whatever list is stored — and
+  // carries a `[1m]` id, which is the spelling square brackets could be
+  // normalized out of anywhere between the form and the row.
+  modelCatalogue: {
+    send: [
+      { id: "claude-sonnet-5", label: "Claude Sonnet 5", enabled: true },
+      { id: "claude-opus-5[1m]", label: "Claude Opus 5 (1M)", enabled: false },
+    ],
+  },
   // Filled in by the hook below: the route refuses an id that names no usable
   // agent, so this is the one probe whose value has to exist in the database
   // before it can be sent.

@@ -6,6 +6,8 @@ import {
   MAX_AGENT_NAME,
   type AgentDTO,
   type AmbientAgentDTO,
+  type ModelCatalogueEntryDTO,
+  type SettingsDTO,
 } from "@/lib/apiTypes";
 import {
   EMPTY_AGENT_DRAFT,
@@ -20,7 +22,7 @@ import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonRow } from "@/components/ui/Button";
 import { Card, CardTitle, Empty, SkeletonText } from "@/components/ui/Card";
-import { Field, Input, Textarea } from "@/components/ui/Field";
+import { Field, Input, Select, Textarea } from "@/components/ui/Field";
 import { Hint } from "@/components/ui/Hint";
 import { Notice } from "@/components/ui/Notice";
 import { Sheet } from "@/components/ui/Sheet";
@@ -80,6 +82,14 @@ export default function AgentsPage() {
   const [confirmDelete, setConfirmDelete] = useState<AgentDTO | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // What the model field may offer. Empty is every way of not having a list —
+  // the read failed, or the operator cleared it — and the field falls back to
+  // free text rather than to a picker with one option, because an empty picker
+  // is a page telling somebody they may not do a thing this app never refused.
+  const [models, setModels] = useState<ModelCatalogueEntryDTO[]>([]);
+
+  const enabledModels = models.filter((entry) => entry.enabled);
+
   const load = useCallback(async () => {
     const res = await jsonRequest<{ agents?: AgentDTO[]; ambient?: AmbientAgentDTO[] }>(
       "/api/agents",
@@ -98,6 +108,13 @@ export default function AgentsPage() {
     setAmbient(res.data.ambient ?? []);
     setLoadError(null);
     setLoaded(true);
+
+    // After the registry and never blocking it: a settings read that fails
+    // costs this page one picker, and the registry is what it is for.
+    const settings = await jsonRequest<{ settings?: SettingsDTO }>("/api/settings");
+    setModels(
+      settings.ok ? (settings.data.settings?.modelCatalogue ?? []) : [],
+    );
   }, []);
 
   useEffect(() => {
@@ -279,16 +296,43 @@ export default function AgentsPage() {
             <Field
               label="Model"
               htmlFor="agent-model"
-              hint="What the delegated turn runs on — an alias or a full id. Blank inherits the run’s. It moves cost, not capability: the spend lands on the run like any other turn"
+              hint="What the delegated turn runs on. Inherit takes the run’s own. It moves cost, not capability: the spend lands on the run like any other turn"
             >
-              <Input
-                id="agent-model"
-                value={draft.model}
-                maxLength={MAX_AGENT_NAME}
-                placeholder="inherit"
-                className="max-w-sm"
-                onChange={(e) => setDraft({ ...draft, model: e.target.value })}
-              />
+              {enabledModels.length === 0 ? (
+                <Input
+                  id="agent-model"
+                  value={draft.model}
+                  maxLength={MAX_AGENT_NAME}
+                  placeholder="inherit"
+                  className="max-w-sm"
+                  onChange={(e) => setDraft({ ...draft, model: e.target.value })}
+                />
+              ) : (
+                <div className="max-w-sm">
+                  <Select
+                    id="agent-model"
+                    value={draft.model}
+                    onChange={(e) => setDraft({ ...draft, model: e.target.value })}
+                  >
+                    <option value="">Inherit</option>
+                    {enabledModels.map((entry) => (
+                      <option key={entry.id} value={entry.id}>
+                        {entry.label}
+                      </option>
+                    ))}
+                    {/* A model this agent already names that has since been
+                        switched off. Kept rather than reverted to Inherit,
+                        which would move a saved agent onto a different model
+                        the next time somebody opened it to fix a typo. */}
+                    {draft.model !== "" &&
+                      !enabledModels.some((entry) => entry.id === draft.model) && (
+                        <option value={draft.model}>
+                          {draft.model} — not enabled
+                        </option>
+                      )}
+                  </Select>
+                </div>
+              )}
             </Field>
 
             <div role="alert">

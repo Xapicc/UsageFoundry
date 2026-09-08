@@ -72,6 +72,36 @@ describe("the cache read rate is a property of the model", () => {
     }
   });
 
+  it("prices a [1m] id at its base model's rate, discount included", () => {
+    // `[1m]` is a Claude Code construct — the CLI's name for the 1M-context
+    // deployment of a model — and Anthropic charges no long-context premium for
+    // that window, so the base rate *is* the right answer here. The suffix falls
+    // after the table's key, so `canonicalModelId` leaves it alone and the
+    // prefix match already lands correctly.
+    //
+    // Pinned because both ways of getting it wrong are silent. Strip the suffix
+    // in `canonicalModelId` and every figure below stays right while a
+    // normalisation of a CLI-shaped id sits one refactor from the path to
+    // `--model`, where the brackets have to survive. Add a `[1m]` key to
+    // `PRICES` *after* its base and longest-prefix-first would never reach it.
+    for (const [variant, base] of [
+      ["claude-opus-5[1m]", "claude-opus-5"],
+      ["claude-fable-5[1m]", "claude-fable-5"],
+      ["claude-sonnet-4-5-20250929[1m]", "claude-sonnet-4-5"],
+    ]) {
+      const price = resolvePrice(variant);
+      assert.ok(price, `${variant} did not resolve`);
+      assert.deepEqual(price, resolvePrice(base), variant);
+    }
+
+    // The 5.1 pair through the same door: `claude-fable-5[1m]` must not reach
+    // the longer `claude-fable-5-1` key, which shares its $10/$50 and would be
+    // 4× wrong on the cache read nobody sees.
+    const fable5 = resolvePrice("claude-fable-5[1m]");
+    assert.ok(fable5);
+    assert.equal(cacheReadMultiplierOf(fable5), CACHE_READ_MULTIPLIER);
+  });
+
   it("does not let the unknown-model rate inherit the discount", () => {
     // `UNKNOWN_MODEL_PRICE` shares the 5.1 pair's $10/$50 and must not share
     // its cache read rate: the whole point of that entry is to be the dearest

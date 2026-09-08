@@ -113,10 +113,16 @@ export interface SavedAgent {
    * it. It is worth knowing that a run with no model of its own, started as an
    * agent that names one, runs on the agent's.
    *
-   * Free-form, like `settings.defaultModel`: an alias (`sonnet`), a full id
-   * (`claude-opus-5`) and the literal `inherit` are all accepted by the CLI, and
-   * narrowing to a list this build knows would refuse the model that ships next
-   * week. An unrecognised one fails inside the CLI rather than here.
+   * Free-form **here**, and narrowed at the doors that start work.
+   * `normalizeAgentInput` still refuses nothing but a length, because the
+   * objection that kept every model field free text was that a list *this
+   * build* knows would refuse the model that ships next week — and a row can
+   * outlive the build that wrote it, so degrading a stored one would silently
+   * move a saved agent onto something other than what the operator picked.
+   * `settings.modelCatalogue` answers that objection without touching either:
+   * the list is the operator's own, and it is `POST /api/runs`, `PUT
+   * /api/settings` and the chat's two tools that read it. The agents page
+   * offers it as a picker; what it stores is still whatever it is given.
    */
   model: string | null;
   createdAt: number;

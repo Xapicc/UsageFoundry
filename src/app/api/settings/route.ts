@@ -17,6 +17,10 @@ import { jsonMaybeGzipped } from "../../../lib/http";
 import { normalizeSubpath } from "../../../lib/knowledge";
 import { agentKnowledgeOf, agentRefusal, getAgent } from "../../../lib/agents";
 import {
+  modelRefusal,
+  normalizeModelCatalogue,
+} from "../../../lib/modelCatalogue";
+import {
   authEnabled,
   hasAdminKey,
   hasGithubToken,
@@ -223,9 +227,31 @@ async function putHandler(req: Request) {
     if (allowed.includes(v)) patch.defaultPermissionMode = v as Settings["defaultPermissionMode"];
   }
 
+  // Ahead of `defaultModel`, and read back by it below, because one Save
+  // commits every field: a page that switches a model off and moves the default
+  // off it in the same press must be judged against the list it is sending, not
+  // the one already stored, or the only way to retire a model would be two
+  // saves in an order nothing tells the operator.
+  if ("modelCatalogue" in body) {
+    const result = normalizeModelCatalogue(body.modelCatalogue);
+    if ("error" in result) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
+    }
+    patch.modelCatalogue = result.catalogue;
+  }
+
   if ("defaultModel" in body) {
     const v = body.defaultModel;
-    patch.defaultModel = typeof v === "string" && v.trim() ? v.trim() : null;
+    const model = typeof v === "string" && v.trim() ? v.trim() : null;
+    // `defaultAgentId`'s rule: refuse where the person is. A default naming a
+    // model this install has switched off pre-fills a run form with a value
+    // every other door would then refuse.
+    const refusal = modelRefusal(
+      patch.modelCatalogue ?? getSettings().modelCatalogue,
+      model,
+    );
+    if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
+    patch.defaultModel = model;
   }
 
   if ("defaultAgentId" in body) {

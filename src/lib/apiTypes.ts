@@ -2578,6 +2578,21 @@ export interface AccountResponse {
  */
 export type PruneTier = "standard" | "aggressive";
 
+/**
+ * One model this install may start work on.
+ *
+ * Mirrors `ModelCatalogueEntry`, `RunGuardsDTO`'s rule — this file imports
+ * nothing, so a client can read it without dragging a module that opens a
+ * database. It carries an id, a label and a switch and may never carry a
+ * fourth field: a model decides what a run costs and never what it may do.
+ */
+export interface ModelCatalogueEntryDTO {
+  /** As the CLI takes it, `[1m]` suffix and square brackets included. */
+  id: string;
+  label: string;
+  enabled: boolean;
+}
+
 export interface SettingsDTO {
   sessionCostLimit: number | null;
   weeklyCostLimit: number | null;
@@ -2590,7 +2605,15 @@ export interface SettingsDTO {
   /** Read the account's own utilisation from Anthropic rather than deriving it. */
   planUsageFromApi: boolean;
   defaultPermissionMode: string;
+  /** One of the enabled `modelCatalogue` ids, or null for the CLI's own default. */
   defaultModel: string | null;
+  /**
+   * Which models this install may start work on, in picker order.
+   *
+   * The one list every field naming a model is validated against. Empty means
+   * no list and refuses nothing — see `modelCatalogue.ts`.
+   */
+  modelCatalogue: ModelCatalogueEntryDTO[];
   /**
    * The saved agent the new-run form starts on. An id, never a definition, and
    * it carries no capability — see `settings.defaultAgentId`.

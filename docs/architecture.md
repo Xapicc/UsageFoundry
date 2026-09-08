@@ -20,6 +20,11 @@ src/lib/
                    already rewritten, so this money is already absent from every
                    figure beside it
   pricing.ts       per-model rates, cache-TTL multipliers, fast mode
+  modelCatalogue.ts  which model ids this install may start work on: the
+                   operator's list, seeded from the table above so there is
+                   no second answer to which models exist. Validation and
+                   never a guard — it reaches the doors that start work and
+                   no budget, mode or isolation choice
   adminApi.ts      Admin API client (rate limits, usage, cost) w/ pagination
   budget.ts        policy evaluation
   orchestrator.ts  run loop, process spawn, stream-json parsing, SSE bus;

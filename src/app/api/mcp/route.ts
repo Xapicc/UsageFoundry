@@ -72,7 +72,8 @@ import {
 } from "@/lib/orchestrator";
 import { diffAsText, runDiff } from "@/lib/diff";
 import { rivalContinuation } from "@/lib/proposalContinuation";
-import { chatGuards } from "@/lib/settings";
+import { chatGuards, getSettings } from "@/lib/settings";
+import { enabledModels, modelRefusal } from "@/lib/modelCatalogue";
 import {
   MAX_REMOTES_READ,
   folderKey,
@@ -575,15 +576,14 @@ const CHAT_TOOLS = [
         model: {
           type: "string",
           description:
-            "The model runs from this template start on: an alias " +
-            "(\"sonnet\", \"opus\", \"haiku\"), a full id " +
-            "(\"claude-sonnet-5\"), or \"inherit\". Omit it and an existing " +
-            "template keeps whatever model it already names while a new one " +
-            "names none and falls back to the operator's default — which is " +
-            "the right answer unless the operator asked for a model or the " +
-            "work is plainly cheap or plainly hard. Send \"\" to clear one. " +
-            "It moves what runs from this template cost and never what they " +
-            "may do.",
+            "The model runs from this template start on. Pick one of the " +
+            "listed ids, or \"inherit\". Omit it and an existing template " +
+            "keeps whatever model it already names while a new one names " +
+            "none and falls back to the operator's default — which is the " +
+            "right answer unless the operator asked for a model or the work " +
+            "is plainly cheap or plainly hard. Send \"\" or \"inherit\" to " +
+            "clear one. It moves what runs from this template cost and never " +
+            "what they may do.",
         },
       },
       required: ["prompt"],
@@ -718,17 +718,17 @@ const CHAT_TOOLS = [
         model: {
           type: "string",
           description:
-            "The model this run is started on: an alias (\"sonnet\", " +
-            "\"opus\", \"haiku\"), a full id (\"claude-sonnet-5\"), or " +
-            "\"inherit\". Omit it and the run takes the template's model, or " +
-            "the operator's default when the template names none — which is " +
-            "the right answer unless the operator asked for a model or the " +
-            "job is plainly cheap or plainly hard. It moves what the run " +
+            "The model this run is started on. Pick one of the listed ids, " +
+            "or \"inherit\". Omit it and the run takes the template's model, " +
+            "or the operator's default when the template names none — which " +
+            "is the right answer unless the operator asked for a model or " +
+            "the job is plainly cheap or plainly hard. It moves what the run " +
             "COSTS and never what it may do, so it is not a way to widen " +
             "anything: the budget, the work-cycle limit, the permission mode " +
             "and the isolation choice are unaffected and are still not " +
-            "settable here. Do not invent a name — an id this machine does " +
-            "not have is a run that fails when it starts.",
+            "settable here. The list is the operator's own — anything not on " +
+            "it is refused, because an id this machine does not have is a " +
+            "run that fails when it starts.",
         },
         title: {
           type: "string",
@@ -1079,6 +1079,68 @@ function toolsFor(subject: CapabilitySubject) {
     : [...SHARED_TOOLS, ...BLOCK_TOOLS];
 }
 
+/** The shape `withModelChoices` needs, which every tool above satisfies. */
+type ToolSpec = {
+  name: string;
+  description: string;
+  inputSchema: {
+    type: string;
+    properties: Record<string, unknown>;
+    required?: string[];
+    additionalProperties: boolean;
+  };
+};
+
+/**
+ * A `model` argument as "named none" or a name.
+ *
+ * `"inherit"` is the sentinel both tool descriptions have always offered and
+ * neither handler had ever read: `String("inherit").trim() || null` is the
+ * string, so a model that followed the instruction got `--model inherit` on the
+ * argv and a spawn the CLI refuses. Now that the enum publishes the value there
+ * is one place it stops being one.
+ */
+function modelArgument(raw: unknown): string | null {
+  const value = String(raw ?? "").trim();
+  return !value || value === "inherit" ? null : value;
+}
+
+/**
+ * The enabled model ids onto the schema of every tool that takes one.
+ *
+ * Injected at `tools/list` rather than written into the static schemas above,
+ * because the list is the operator's and moves without a deploy. It is an
+ * `enum` rather than a longer sentence for the reason the sentence failed: a
+ * `model` described only in prose left the orchestrator picking an id out of
+ * memory, and an id this machine does not have is a run that dies at its first
+ * spawn. A schema a model cannot read wrong beats a description it can.
+ *
+ * `"inherit"` leads the list. It is the only member that is not an id, means
+ * exactly what omitting the argument means, and is what the handlers turn back
+ * into "named none" — a plain `--model inherit` is a spawn the CLI refuses.
+ *
+ * An empty catalogue injects nothing: with no list there is nothing to refuse,
+ * and an enum holding only `"inherit"` would say the opposite in the one place
+ * a model is most likely to believe it.
+ */
+function withModelChoices(tools: ToolSpec[], enabledIds: string[]): ToolSpec[] {
+  if (enabledIds.length === 0) return tools;
+  return tools.map((tool) => {
+    const model = tool.inputSchema.properties.model;
+    if (model === undefined) return tool;
+    return {
+      ...tool,
+      inputSchema: {
+        ...tool.inputSchema,
+        properties: {
+          ...tool.inputSchema.properties,
+          model: { ...(model as object), enum: ["inherit", ...enabledIds] },
+        },
+      },
+    };
+  });
+}
+
 /**
  * Why this subject may not call this tool.
  *
@@ -1269,7 +1331,12 @@ async function handle(
       return ok({});
 
     case "tools/list":
-      return ok({ tools: toolsFor(subject) });
+      return ok({
+        tools: withModelChoices(
+          toolsFor(subject),
+          enabledModels(getSettings().modelCatalogue).map((entry) => entry.id),
+        ),
+      });
 
     case "tools/call": {
       const name = String(msg.params?.name ?? "");
@@ -2525,6 +2592,23 @@ function saveTemplate(args: Record<string, unknown>, chatId: string) {
 
   const name = String(args.name ?? "").trim() || existing?.name || "";
   const guards = existing ?? chatGuards();
+
+  // Refused in the model's own turn, `agentRefusal`'s rule: this is the moment
+  // it can act on the sentence, and a template that names a model no door will
+  // accept is a run refused weeks later with nothing on the page to explain it.
+  //
+  // Only what the *argument* names. A model carried off the row is a field this
+  // tool is preserving rather than writing — the update replaces the template
+  // wholesale, so every untouched field passes through here — and refusing a
+  // prompt rewrite over a model somebody else chose and an operator has since
+  // switched off would be this check deciding something it was told not to.
+  // That one is the run door's to refuse, in front of the person starting it.
+  const model =
+    args.model === undefined ? (existing?.model ?? null) : modelArgument(args.model);
+  if (args.model !== undefined) {
+    const refusal = modelRefusal(getSettings().modelCatalogue, model);
+    if (refusal) return text(refusal, true);
+  }
   const input = {
     name,
     prompt,
@@ -2546,10 +2630,7 @@ function saveTemplate(args: Record<string, unknown>, chatId: string) {
     // template wholesale, so a forgotten field is one the chat silently
     // deletes — and the empty string is a real answer that clears it, since
     // `normalizeTemplateInput` reads blank as "names no model".
-    model:
-      args.model === undefined
-        ? (existing?.model ?? null)
-        : String(args.model).trim() || null,
+    model,
     budget: guards.budget,
   };
 
@@ -2825,15 +2906,27 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
 
   const promptOverride = String(args.promptOverride ?? "").trim() || null;
 
-  // Not checked against a list of models, unlike the template and the agent
-  // above it, and for `run_templates.model`'s reason: this reaches `--model`,
-  // which decides what the run costs and nothing about what it may do, so
-  // refusing a name this build has not heard of would only refuse whatever
-  // ships next month. A name the CLI does not know fails at the spawn, loudly,
-  // where a guard this route let through would fail silently — which is the
-  // difference the whole division rests on. Blank is "named none": whitespace
-  // must not become `--model "  "`.
-  const model = String(args.model ?? "").trim() || null;
+  // Checked against a list of models, unlike every version of this route before
+  // `settings.modelCatalogue` existed. The objection that kept it free text was
+  // that a list *this build* knows would refuse whatever ships next month, and
+  // it stood for as long as the list would have been this build's; the one it
+  // reads now is the operator's, and an id they have not got is a card that
+  // starts a run which dies at its first spawn. What has not changed is what
+  // this can refuse *for*: the model reaches `--model` and nothing else, so
+  // this is validation and never a guard.
+  //
+  // Refused here and **not** again at the click. `docs/agent/chat.md` sorts a
+  // proposal's fields by whether they decide something about the run: a model
+  // switched off between the write and the press changes what the run costs,
+  // which every guard on the card already measures rather than being set by,
+  // and nothing about what it may do — so it sits with `task_id` on the side
+  // that never refuses an approval, not with `template_id` on the side that
+  // does. Refusing there would be terminal for every member of the batch.
+  //
+  // Blank is "named none": whitespace must not become `--model "  "`.
+  const model = modelArgument(args.model);
+  const modelProblem = modelRefusal(getSettings().modelCatalogue, model);
+  if (modelProblem) return text(modelProblem, true);
 
   // The board row this run is for, refused here for the template's and the
   // agent's reason and gating nothing at the click, unlike either of them: a

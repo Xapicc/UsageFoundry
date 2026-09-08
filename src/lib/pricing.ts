@@ -137,6 +137,21 @@ const PREFIXES = Object.keys(PRICES).sort((a, b) => b.length - a.length);
  * Note what is deliberately absent: no short catch-all keys like
  * `claude-opus-4`, because those would price an unreleased `claude-opus-4-9`
  * at a confident wrong number instead of surfacing it as unknown.
+ *
+ * **`[1m]` is deliberately neither stripped nor special-cased.** Claude Code
+ * takes `claude-opus-5[1m]` for the 1M-context deployment of a model, and the
+ * suffix falls after the table's key, so a `[1m]` id already prefix-matches its
+ * base and prices at the base rate. That is the correct rate rather than a
+ * near-miss: the current models carry a 1M window natively and Anthropic
+ * charges no long-context premium for it — "1M context window at standard API
+ * pricing (no long-context premium)", the bundled `claude-api` skill's own
+ * words about the Opus 4.7/4.8 generation these variants belong to. Left
+ * written down because the shape invites a fix that would break it: stripping
+ * the suffix here would change nothing about the price and would put a
+ * normalisation of a CLI-shaped id one refactor away from the path to `--model`,
+ * where the brackets must survive. Should a premium ever appear, it belongs in
+ * `PRICES` as its own `claude-…[1m]` key — listed before its base, the way the
+ * 5.1 pair already is — and never in this function.
  */
 function canonicalModelId(model: string): string {
   return model
