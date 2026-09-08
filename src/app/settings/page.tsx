@@ -198,8 +198,10 @@ const MAX_FIELD_HITS = 8;
  * Every field whose name or help text contains `query`, in page order.
  *
  * Reads the rendered page rather than a declared index, for the reason
- * `SettingName` records. Nine sections are anchors on one long page, so all of
- * them are in the DOM at once and a walk over it is the whole corpus.
+ * `SettingName` records. Every `SECTIONS` entry is an anchor on one long page,
+ * so all of them are in the DOM at once and a walk over it is the whole corpus.
+ * Not a count: this said "Nine" while `SECTIONS` held ten, and the argument
+ * needs *all* of them rather than any particular number of them.
  */
 function findFields(query: string): FieldHit[] {
   const hits: FieldHit[] = [];

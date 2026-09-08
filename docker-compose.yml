@@ -143,11 +143,11 @@ services:
       # UF_GH_EXTENSIONS and UF_SANDBOX_ENFORCEMENT have.
       WINNOW_FILTER: "${WINNOW_FILTER:-}"
       # Where the winnow checkout is, as this container sees it. Only consulted
-      # when the switch above is on. Defaulted to the conventional location
-      # under the first workspace mount, so an operator who cloned it beside
-      # their other projects sets nothing.
-      # Blank lets the entrypoint choose: a workspace checkout if there is
-      # one, else the winnow this image already vendors at /opt/winnow/src.
+      # when the switch above is on, and there is no default here: blank lets
+      # the entrypoint choose, in this order — /workspace/winnow if that is a
+      # checkout, else the winnow this image vendors at /opt/winnow/src. An
+      # operator who cloned it beside their other projects sets nothing, and one
+      # tracking a different ref sets this and outranks both.
       WINNOW_FILTER_PATH: "${WINNOW_FILTER_PATH:-}"
       # Loopback port for the filter. Not 8787: the Discord relay binds that
       # inside this same container, and the second process to want a port gets
