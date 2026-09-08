@@ -84,8 +84,11 @@ export function RunPruning({
           )}
           {savings.pricedPrunes < savings.prunes && (
             <p className="mt-2 text-xs leading-snug text-ink-muted">
-              The rest ran on a model with no price here, so what they saved is
-              unknown rather than nothing.
+              {/* Names its own subject rather than saying "the rest": the count
+                  it refers back to is three lines up, past two other
+                  qualifications. */}
+              The prunes the money does not cover ran on a model with no price
+              here, so what they saved is unknown rather than nothing.
             </p>
           )}
         </>

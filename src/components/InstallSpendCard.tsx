@@ -67,8 +67,8 @@ export function InstallSpendCard({ install }: { install: InstallSpendDTO }) {
       <Hint>
         Runs, workflow blocks and chat turns together. A run still going, or one
         that finished inside the window, counts its whole spend towards the
-        guard&rsquo;s figure — which over-counts rather than under-counts,
-        because that figure is a limit rather than a report.{" "}
+        guard&rsquo;s figure — which over-counts rather than under-counts, the
+        safe direction for a ceiling and the wrong one for a report.{" "}
         {limitUSD === null ? (
           <>
             Every guard in this app bounds one run, one workflow or one chat
