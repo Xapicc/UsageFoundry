@@ -4168,6 +4168,41 @@ describe("childEnv — a credential class the app has no use for", () => {
   });
 });
 
+describe("childEnv — the agent's home, which is not its checkout", () => {
+  // A work cycle leaves eleven empty `0444` files at the root of its checkout —
+  // `.bashrc`, `.profile`, `.zshrc`, `.gitconfig` — and the obvious reading of
+  // that list is that this app hands the child a `HOME` pointing at the
+  // worktree. It does not, and never did: they are the paths Claude Code's
+  // sandbox binds `/dev/null` over, `sandboxMountPoints.ts` has the measurement
+  // and the sweep that clears them.
+  //
+  // Pinned because the obvious *fix* for that symptom is a `HOME` set here, and
+  // that would be much worse than the symptom: the agent's credentials, its
+  // transcripts and its whole configuration directory would then be written
+  // inside the tree it is told to commit, on a branch the merge queue lands.
+  const previous = process.env.HOME;
+  after(() => {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  });
+
+  it("passes this server's HOME through rather than the working directory", () => {
+    // Set on this process rather than passed in, for the reason the siblings
+    // above give: reading `process.env` is the whole of what the function does.
+    process.env.HOME = "/home/node";
+    const env = childEnv();
+    assert.equal(env.HOME, "/home/node");
+
+    for (const cwd of [
+      "/workspace/repo",
+      "/workspace/.uf-worktrees/repo-1",
+      "/workspace/.uf-worktrees/usagefoundry-721638d11c0b-3",
+    ]) {
+      assert.notEqual(env.HOME, cwd, "HOME points at a run's checkout");
+    }
+  });
+});
+
 describe("childEnv — Next's private channel to its own children", () => {
   // This process is a Next standalone server, so `__NEXT_PRIVATE_STANDALONE_CONFIG`
   // is set on it in production and carries *this* app's resolved config.

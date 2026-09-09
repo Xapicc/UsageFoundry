@@ -1,17 +1,39 @@
 "use client";
 
+// Relative, not "@/…": tsconfig.test.json emits plain CommonJS and nothing
+// rewrites the path alias at runtime, so a tested component has to import the
+// way `Meter` and `RecentBlocksCard` already do.
 import type {
   FilterSavingsDTO,
   FilterWindowDTO,
   PruneSavingsDTO,
-} from "@/lib/apiTypes";
-import { fmtDate, fmtTokens, fmtUSD, signedUSD } from "@/lib/format";
-import { Card, CardTitle, Stat, StatSub } from "@/components/ui/Card";
-import { TBody, Table, Td, Tr } from "@/components/ui/Table";
+} from "../lib/apiTypes";
+import { fmtDate, fmtTokens, fmtUSD, signedUSD } from "../lib/format";
+import { Card, CardTitle, Stat, StatSub } from "./ui/Card";
+import { TBody, Table, Td, Tr } from "./ui/Table";
 
 /** "All time", or the date the figures start on. */
 function spanLabel(totalFrom: number | null): string {
   return totalFrom === null ? "All time" : `Since ${fmtDate(totalFrom)}`;
+}
+
+/**
+ * A span's label, marked when the figure beside it is a ceiling rather than a
+ * measurement.
+ *
+ * `unsettledPrunes` are priced prunes whose invalidation cost has not been
+ * charged yet: they are already in the saving and not yet in what buying it
+ * cost, so the net can only come down. `PruneSavingsRows` says "Net, at most"
+ * on exactly this condition, and a tile printing the same `netUSD` bare is the
+ * upper bound wearing a net's clothes that panel exists to refuse.
+ *
+ * An *unpriced* prune is a different fault and deliberately not this one — it
+ * is missing from both halves, which makes the figure incomplete rather than
+ * high, and it gets the coverage line at the foot of the card instead.
+ */
+function spanCaption(label: string, pruning: PruneSavingsDTO): string {
+  const ceiling = pruning.prunes > 0 && pruning.unsettledPrunes > 0;
+  return ceiling ? `${label}, at most` : label;
 }
 
 /**
@@ -131,10 +153,20 @@ function combinedUSD(
  * sum. The split stays on the card, as a share under each span, because an
  * operator deciding whether to leave *either* mechanism on needs the halves.
  *
- * The overstatement itself is **not** printed here, and this comment used to
- * claim it was. It is recorded in `docs/verification.md` and in `contextTokens`
- * (`contextPruning.ts`); whether it belongs on the card is a copy decision
- * nobody has taken, not something that was taken and then lost.
+ * So the sum ships with the overstatement printed under it, which is the
+ * condition `docs/agent/conventions.md` puts on adding these two at all: a
+ * reader cannot add two figures whose overlap is unstated, and the alternative
+ * this card exists to refuse is two figures nobody can combine. The footnote
+ * names it rather than the derivation — 4.06% is corpus-weighted across this
+ * install's ten largest transcripts, 3.07% unweighted, 0.00–9.92% across them,
+ * and itself an upper bound, so the line says "a few per cent" and gives the
+ * one figure it was measured at. `docs/verification.md` carries the spread.
+ *
+ * The overlap clause is conditional on there being an overlap: with the
+ * filter's half absent from the total — not running, unreadable, or every
+ * result on a model with no price here — the sum is one mechanism's figure and
+ * is not high. Printing it anyway would be the mirror of the fault above it,
+ * a caveat asserting an error that is not there.
  *
  * ## Why the week leads and the filter's share follows
  *
@@ -182,6 +214,9 @@ export function ContextControlAside({
   // `extends` there is for — the whole reading and one window inside it are the
   // same arithmetic over different spans.
   const totalShare = filterShareUSD(filter, filter);
+  // Both halves are in the sum, which is the only state the overstatement is
+  // an overstatement of.
+  const overlaps = totalShare !== null && pruning.prunes > 0;
 
   return (
     <Card>
@@ -190,7 +225,7 @@ export function ContextControlAside({
       <Stat>{weeklyNet === null ? "—" : signedUSD(weeklyNet)}</Stat>
       <StatSub>
         <span className="tabular-nums">
-          This week ·{" "}
+          {spanCaption("This week", weekly)} ·{" "}
           {weeklyShare !== null ? (
             <>{signedUSD(weeklyShare)} of it from the intake filter</>
           ) : (
@@ -208,23 +243,46 @@ export function ContextControlAside({
           worth of figures. */}
       <div className="mt-3 space-y-1.5 border-t border-line pt-2.5 text-sm">
         <SpanRow
-          label="This 5-hour window"
+          label={spanCaption("This 5-hour window", session)}
           usd={combinedUSD(session, sessionShare)}
         />
         {sessionShare !== null && <ShareRow usd={sessionShare} />}
         <SpanRow
-          label={spanLabel(pruningFrom)}
+          label={spanCaption(spanLabel(pruningFrom), pruning)}
           usd={combinedUSD(pruning, totalShare)}
         />
       </div>
 
       <div className="mt-3 space-y-1 text-xs text-ink-muted">
+        {/* Keyed on the total span rather than on each of the three, because
+            the sub-spans are subsets of it: a prune this app cannot price in
+            the week is an unpriced prune in the total too, so one line here
+            answers "is this money complete" for every figure above it. The
+            same qualification `FilterSavingsRows` and `PruneSavingsRows` both
+            print — a total that silently omits part of its own subject is
+            worse than one that says how much it omits. */}
+        {pruning.pricedPrunes < pruning.prunes && (
+          <div>
+            Money covers {pruning.pricedPrunes} of {pruning.prunes} prunes; the
+            rest ran on a model with no price here, so what they saved is
+            unknown rather than nothing.
+          </div>
+        )}
         {/* Only when the adjacency would otherwise mislead. A history read off a
             ledger nothing is appending to is still worth reading, but it is not
             a reading of now. */}
         {!filter.running && filter.ledger === "read" && (
           <div>The intake filter is not running now; this is its history.</div>
         )}
+        {/* The card's footnote, and the condition under which its two halves
+            may be added at all — see the docblock. Last, and one line: the
+            derivation of either half is a band lower down, and this says what
+            the sum is rather than how it was reached. */}
+        <div>
+          Not spend, and added to nothing beside it.
+          {overlaps &&
+            " The two mechanisms overlap, so the sum is a few per cent high — 4% where it was measured."}
+        </div>
       </div>
     </Card>
   );

@@ -61,9 +61,12 @@ export interface UsageEntry {
   tokens: TokenCounts;
   costUSD: number;
   /**
-   * Same cost, but an unpriced model is charged the fallback rate instead of
-   * $0. Read only by the budget guard — never displayed. Identical to
-   * `costUSD` whenever the model is priced, which is the normal case.
+   * Same cost, but every figure the record left ambiguous takes its dearest
+   * reading: an unpriced model is charged the fallback rate instead of $0, and
+   * a cache write with no declared lifetime is charged at the 1h rate rather
+   * than the 5m one. What the budget guard spends against; the dashboard draws
+   * it as the upper end of a meter's span, never as a dollar figure of its own.
+   * Identical to `costUSD` only when neither of those is in play.
    */
   costGuardUSD: number;
   /** Absolute path of the project the session ran in. */

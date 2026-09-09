@@ -60,7 +60,7 @@ export interface SandboxRefusal {
  *
  * **The table has two provenances now, and the comment on each entry says
  * which.** The CLI's own messages were read out of the pinned binary with
- * `strings` and have never been executed (`proposals/Sandboxing/10-validation.md`,
+ * `strings` and have never been executed (`proposals/implemented - Sandboxing/10-validation.md`,
  * "What this validation did not check"). The `bwrap:` entries below were read
  * off this install's own `run_events` after a sandbox that could not start went
  * unnoticed for fifteen hours — which is the measurement the paragraph above

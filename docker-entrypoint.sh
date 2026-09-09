@@ -522,7 +522,7 @@ CLAUDE_HOME_DIR="${CLAUDE_CONFIG_DIR:-/home/node/.claude}"
 # guard and every spend figure, and a `projects/` the CLI cannot write is a
 # dashboard of zeros rather than an error anybody sees.
 #
-# The first six are the list `proposals/Sandboxing/09-implementation-sketch.md`
+# The first six are the list `proposals/implemented - Sandboxing/09-implementation-sketch.md`
 # names. `.claude.json` and `backups` are added from a measurement rather than
 # from the sketch: run against a throwaway `CLAUDE_CONFIG_DIR`, CLI 2.1.226
 # creates `.claude.json`, `backups/`, `projects/` and `sessions/` at the top

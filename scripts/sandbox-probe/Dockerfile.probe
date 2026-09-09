@@ -6,7 +6,7 @@
 # Nothing here ships. `docker-compose.yml` does not know it exists, the real
 # `Dockerfile` is untouched, and no sandbox is enabled anywhere by building it.
 # It exists so one person can execute the nine questions in
-# `proposals/Sandboxing/09-implementation-sketch.md:134`-`200` once, against the
+# `proposals/implemented - Sandboxing/09-implementation-sketch.md:134`-`200` once, against the
 # CLI this repository actually pins, and write the answers down.
 #
 # Derived from `Dockerfile` rather than copied from it: same base
@@ -66,7 +66,7 @@ RUN apt-get update \
       git ripgrep ca-certificates curl procps less
 
 # Same pin as the shipped `Dockerfile`, and it has to stay the same one. Every
-# claim in `proposals/Sandboxing/02x-option-cli-sandbox.md` was read out of
+# claim in `proposals/implemented - Sandboxing/02x-option-cli-sandbox.md` was read out of
 # *this* build's strings, so a probe run against a different CLI measures a
 # different program and answers a different question. The build prints the
 # version it got.

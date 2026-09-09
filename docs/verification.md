@@ -1849,6 +1849,28 @@ Built and exercised against real transcripts:
   after the next `docker compose up --build`: it should go to zero for project
   trees and keep the handful in the config directory and the one `.idea`.
 
+- **The sandbox's *other* list — the eleven shell, git, editor, MCP and ripgrep
+  dotfiles it binds at the root of the working directory — measured on
+  2026-09-09 inside an isolated cycle in
+  `.uf-worktrees/usagefoundry-721638d11c0b-7`.** In a live session
+  `/proc/self/mountinfo` carries one entry per name against the cwd, each a
+  character device `1,3` from the container's `/dev` tmpfs, and `git status
+  --porcelain` lists all eleven as `??`; `git add -A` there does not commit
+  them, it dies with `error: .bash_profile: can only add regular files,
+  symbolic links or git-directories`. None of the eleven is bound at
+  `/workspace`, an exposed ancestor that *does* get the `.claude` list, nor at
+  `/workspace2`, an added directory — the list follows the working directory
+  and nothing else. They outlive the session: six of the 47 checkouts under
+  `.uf-worktrees` with nothing running in them carried all eleven as regular
+  empty `0444` files, `.idea` and `.vscode` among them as files where a
+  checkout wants directories. `sweepSandboxTreeRoot` was run against a scratch
+  tree holding all eleven plus a `.gitconfig` with content and a `.vscode`
+  directory: nine removed, those two left. **Not verified by hand:** the
+  orchestrator's call to it after a cycle's child exits. No sandboxed cycle has
+  been spawned since the change, so the log line, the `EBUSY` branch for a
+  grandchild still holding a mount, and the interaction with `trackedDirt`'s
+  slot-reuse workaround in `land.ts` are all reasoned rather than seen.
+
 - **The Codex sign-in panel, driven end to end against `codex-cli 0.153.4`** on
   2026-09-05, on a built server (`npm start`) with a scratch `DATA_DIR` and a
   scratch `CODEX_HOME`, and separately in a browser through Playwright. Every
@@ -2108,12 +2130,13 @@ Built and exercised against real transcripts:
   `npm run smoke-pages` agrees on the load half — `/tasks` clean at both widths,
   a 200, no console error, no sideways scroll — after `/tasks` was added to that
   script's route list, which is **hand-written rather than discovered**, so the
-  next page to land has to add itself the same way. The run as a whole still
-  exits 1, on `/knowledge` at both widths, for a reason that predates this page:
-  the smoke sandbox configures no vault root, so that pane's own fetch answers
-  409 and the browser logs it as a failed resource. That is a gap between the
-  harness's environment and one page's requirements rather than a defect in
-  either.
+  next page to land has to add itself the same way. The run as a whole exited 1
+  that day, on `/knowledge` at both widths, for a reason that predates this page:
+  the smoke sandbox configured no vault root, so that pane's own fetch answered
+  409 and the browser logged it as a failed resource. **That was never a standing
+  property of the check and it no longer holds** — the condition is the harness's
+  own fixture, which `66e71c0` changed on 2026-09-08; the pass exits 0 on the
+  tree as it stands. See the `/knowledge` entry below.
 
 - **The board's three MCP tools were driven in-process on 2026-09-07, against
   the real route handler and both capability subjects.** Not through a browser
@@ -2291,8 +2314,8 @@ Built and exercised against real transcripts:
   knowledge base is configured.` under the throwaway `DATA_DIR`. So the bundle is
   measured no weaker than the fallback, and that page's failure is the fixture
   rather than either mode. Both runs predate the `seedVault` fixture in the
-  `/knowledge` entry below, which is what removes that failure; no pass on a tree
-  carrying both changes is recorded here.
+  `/knowledge` entry below, which is what removes that failure; a pass on a tree
+  carrying both changes is recorded at the end of that entry.
 
   Two nearer approaches were measured and rejected, and the rejection is the
   useful half. Pointing `distDir` outside the project has Next rewrite the
@@ -2346,6 +2369,30 @@ Built and exercised against real transcripts:
   row in each of its three lists; and the rendered graph draws all three notes,
   the edge between two of them, and the unwritten `[[Missing note]]` target.
 
+  **Re-measured both ways on one build, 2026-09-09 at `3e59699`: the condition is
+  the harness's own fixture and not anything about this container.** The two
+  readings taken on 2026-09-08 — 42/44 with `/knowledge` failing at both widths,
+  and 44/44 with it clean — describe the same machine on either side of
+  `66e71c0`, so neither is conditional on host state. One
+  `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build`
+  (`BUILD_ID g3KBoWoJFodxMmqBw8O5M`), two passes minutes apart, both printing
+  `serving .next/standalone/server.js`:
+
+  | fixture | `/knowledge` at 390 / 1280 | result | exit |
+  |---|---|---|---|
+  | `seedVault` runs — the tree as it stands | `ok` / `ok` | 44/44 clean, 0 of 22 pages failed | **0** |
+  | its one call site removed | `FAIL` / `FAIL`, on `console error: Failed to load resource: the server responded with a status of 409 (Conflict)` | 42/44 clean, 1 of 22 failed | **1** |
+
+  The second was a scratch copy of the script with `await seedVault(...)` taken
+  out, which is the whole behavioural half of `66e71c0`; nothing was committed
+  for it. **No host state can move this reading.** The vault root is a settings
+  field with no environment override, and `serverEnv` hands the child a
+  `DATA_DIR` made for the run, so neither this container's mounts nor the
+  operator's own vault is reachable from the pass — a claim that the check "can
+  never exit 0 here" was true of a script version rather than of here. This is
+  also the first pass recorded on a tree carrying both `redirect-dist-dir.mjs`
+  and `seedVault`, which the entry above leaves open.
+
 - **A superseded proposal, and the stale click that races it, driven in a real
   browser.** 2026-09-08, against `.next/standalone/server.js` — the artifact the
   container ships — on a throwaway `DATA_DIR` with a `CLAUDE_BIN` that cannot
@@ -2367,6 +2414,26 @@ Built and exercised against real transcripts:
   model wrote either proposal — both rows were seeded — so nothing here exercises
   `propose_run`'s `supersedes` argument end to end, which is covered by the unit
   tests in `chat.test.ts` and not by a browser.
+
+- **The unsplit-cache-write notice and the meter span it points at, drawn in a
+  real browser.** 2026-09-09, against a `next start` build on a throwaway
+  `DATA_DIR` and a `CLAUDE_HOME` holding one synthetic assistant turn:
+  `claude-sonnet-4-5-20250929`, 120 input / 800 output / 50,000 cache read and
+  `cache_creation_input_tokens: 100000` with no `cache_creation` breakdown — the
+  shape `readTokens` cannot attribute. The dashboard drew the notice ("Cache
+  writes with no declared lifetime: 100.0k…"), and with `sessionCostLimit` at $1
+  seeded into the settings row the 5-hour meter read **40.2% – 62.7%**: a solid
+  bar to the shown figure and a hatched span from there to the guard figure, so
+  the notice's "hatched span on the meters above" names something that is
+  actually on screen. Both ends were checked by hand against the price table —
+  $0.4024 with the 100k at the 5m write rate ($3.75/MTok) and $0.6274 with it at
+  the 1h rate ($6.00/MTok), the rest of the turn identical — which is the
+  floor/ceiling split `costOf` and `guardCostOf` are supposed to produce. What is
+  **not** verified: this was `next start` against `.next/`, not the standalone
+  bundle; the settings row was written in SQL because the scratch server did not
+  hold the data directory's lock and refuses writes without it; and no real
+  transcript from a CLI that omits the breakdown has been through this, so
+  nothing here confirms which turns in the wild take this path.
 
 ## Not yet verified by hand
 
@@ -2586,7 +2653,7 @@ through before trusting this unattended:
 > `handleStreamLine` parses, the OTLP records `otlp.ts` reads, the compaction
 > threshold `readCompactions` keys on, the "Available agents" refusals in
 > `docs/agent/agents-and-templates.md`, and the sandbox answers in
-> `proposals/Sandboxing`. Those readings stand as history and are not claims
+> `proposals/implemented - Sandboxing`. Those readings stand as history and are not claims
 > about what the image now installs. What **was** checked before the bump, and
 > it is the cheap half: every flag `buildArgs` and `sessionAgentArgs` emit is
 > still in `claude --help` on 2.1.260 — `--output-format`, `--verbose`,
@@ -4977,7 +5044,7 @@ through before trusting this unattended:
   this install's own `run_events` after the fifteen-hour failure in *Verified*
   above, so those three are transcribed rather than guessed. The CLI's own six
   were **read out of the pinned binary with `strings` and have still never been
-  executed** (`proposals/Sandboxing/10-validation.md`, "What this validation did
+  executed** (`proposals/implemented - Sandboxing/10-validation.md`, "What this validation did
   not check"). Three separate things are unverified, and the first is the one
   that matters:
 
@@ -4986,7 +5053,7 @@ through before trusting this unattended:
   did not change that: what it produced was `bwrap`'s own stderr, from a `bwrap`
   the CLI spawned and which exited before doing anything, and not a single
   sandbox message written by the CLI itself. The rest of Phase 2 of
-  `proposals/Sandboxing/09-implementation-sketch.md` — bubblewrap, `socat`, the
+  `proposals/implemented - Sandboxing/09-implementation-sketch.md` — bubblewrap, `socat`, the
   seccomp `security_opt` and a managed policy — now exists and has been started;
   capture the real text before trusting the table:
 
@@ -5077,7 +5144,7 @@ through before trusting this unattended:
   docker compose exec usagefoundry \
     bwrap --unshare-user --ro-bind / / --dev /dev true && echo BWRAP-OK
 
-  # 2. Phase 2's own four, from proposals/Sandboxing/09-implementation-sketch.md
+  # 2. Phase 2's own four, from proposals/implemented - Sandboxing/09-implementation-sketch.md
   docker compose up --build
   # uid out of the container: a UF_UID default written here would expand in
   # your own shell, which .env never reaches (#147). Shape corrected
@@ -5206,7 +5273,7 @@ through before trusting this unattended:
   throwaway checkout, the chat's every mount — and `CLAUDE_CONFIG_DIR` in all
   four, because that is the metering path. They are unit-tested in
   `orchestrator.test.ts` for the three assertions
-  `proposals/Sandboxing/09-implementation-sketch.md` names (the run's own
+  `proposals/implemented - Sandboxing/09-implementation-sketch.md` names (the run's own
   checkout writable, a **sibling run's** not, `CLAUDE_CONFIG_DIR` writable) plus
   the two ways the overlay can be a boundary that is not there — a path the
   CLI's Linux filter would drop as a glob, and a set that resolved to nothing —
@@ -5503,7 +5570,7 @@ through before trusting this unattended:
   all. Both are worth an hour against a live binary before anyone calls the
   policy surface closed.
 - **The CLI's own sandbox — read out of the binary, and executed in exactly two
-  places.** `proposals/Sandboxing/02x-option-cli-sandbox.md` establishes that the
+  places.** `proposals/implemented - Sandboxing/02x-option-cli-sandbox.md` establishes that the
   pinned CLI (2.1.226) implements a bubblewrap sandbox configured by `sandbox.*`
   settings keys, and `08-recommendation.md` recommends adopting it. All of that
   was read out of the binary's strings with `strings`, and until 2026-08-19 not
@@ -5523,7 +5590,7 @@ through before trusting this unattended:
   The harness is `scripts/sandbox-probe/` — a throwaway image on the same base
   and the same CLI pin, a seccomp profile that is Docker's default plus user
   namespaces, and one script that runs questions 0-8 of
-  `proposals/Sandboxing/09-implementation-sketch.md:134`-`200` and prints one
+  `proposals/implemented - Sandboxing/09-implementation-sketch.md:134`-`200` and prints one
   transcribable line each. `scripts/sandbox-probe/RUNBOOK.md` is the ordered
   list of what to run, on which machine, and what each answer decides; steps 4
   and 5 are billed. Its own answer logic is exercised against stubs by
