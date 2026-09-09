@@ -7,6 +7,7 @@ import { InstallSpendCard } from "@/components/InstallSpendCard";
 import { LiveTelemetry } from "@/components/LiveTelemetry";
 import { Meter } from "@/components/Meter";
 import { RecentBlocksCard } from "@/components/RecentBlocksCard";
+import { InstallSpendCard } from "@/components/InstallSpendCard";
 import { RepoSpendCard } from "@/components/RepoSpendCard";
 import { PruneSavingsRows } from "@/components/PruneSavings";
 import {

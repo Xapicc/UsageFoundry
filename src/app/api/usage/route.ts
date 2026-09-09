@@ -110,10 +110,16 @@ export async function GET(req: Request) {
     // *shorter* rather than wrong; this is the sentence for the one bucket the
     // cutoff falls inside. Read from the same setting `sweepTranscripts` reads.
     const completeFrom = retentionCutoff(settings.transcriptRetentionDays, now);
+    // The same weekly reading `buildSnapshot` was given, so the newest week
+    // bucket covers the identical seven hours-to-the-minute as the meter
+    // directly above it on the page. Without it the buckets fell back to
+    // `weeklyAnchor`, which a stock install ships as null, and drew ISO-Monday
+    // weeks under a meter bounded by the provider's reset.
+    const planWeekly = plan?.weekly ?? null;
     const periods = {
-      day: buildPeriods(entries, "day", limits, now, timeZone, completeFrom),
-      week: buildPeriods(entries, "week", limits, now, timeZone, completeFrom),
-      month: buildPeriods(entries, "month", limits, now, timeZone, completeFrom),
+      day: buildPeriods(entries, "day", limits, now, timeZone, completeFrom, planWeekly),
+      week: buildPeriods(entries, "week", limits, now, timeZone, completeFrom, planWeekly),
+      month: buildPeriods(entries, "month", limits, now, timeZone, completeFrom, planWeekly),
     };
 
     // Bounded by the snapshot's own window so the card describes the same five

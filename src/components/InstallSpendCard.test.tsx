@@ -1,37 +1,50 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { InstallSpendCard } from "./InstallSpendCard";
 import type { InstallSpendDTO } from "../lib/apiTypes";
+import { InstallSpendCard } from "./InstallSpendCard";
 
 /**
  * One card, two figures, and the whole risk is that they are not the same one.
  *
- * `spentUSD` is the measured floor — every figure a CLI itself reported — and
- * `spentGuardUSD` adds killed cycles' reconciled estimates and what telemetry
- * says the cycles in flight have cost so far. The bar is drawn from the first
- * and the hatched band out to the second, which is the split every other meter
- * here makes; the dollar line under the bar was printing the second on its own,
- * so the card said "18.0%" above "$18.00 of $100.00" while the bar stood at
- * 12%. Nothing throws, nothing fails a typecheck, and both numbers are real —
- * they are just answers to different questions, and an operator reconciling the
- * card against Settings has no way to tell which one they are reading.
+ * The card drew its bar from `spentUSD` and printed `spentGuardUSD` under it,
+ * so the head and the line beneath it were two different readings of the same
+ * window with nothing saying which was which: at $5 measured, $8 guarded and a
+ * $10 ceiling the head read "50.0% – 80.0%" over "$8.00 of $10.00", and a
+ * reader dividing the two printed dollar figures landed on the upper band.
  *
- * The assertions are on the *pair*: the amount the line leads with, over the
- * ceiling it names, must be the fraction the bar was given. A test that only
- * pinned the string would pass again the next time the two are wired apart.
+ * The second fault is in the branch this app ships in. With no limit set the
+ * line read "$X spent" — `spentGuardUSD`, which `installBudget.ts` calls the
+ * safe direction for a ceiling and the wrong one for a report — while the
+ * sentence explaining the over-count rendered only in the *other* branch.
+ *
+ * Both are silent: every figure is present and right, both branches typecheck,
+ * and the only symptom is a number that means something other than what it
+ * says.
+ *
+ * The first fault is pinned on the *pair* rather than on either string: the
+ * amount the line leads with, over the ceiling it names, must be the fraction
+ * the bar was given. A test that only pinned the string would pass again the
+ * next time the two are wired apart.
  */
 
 function install(over: Partial<InstallSpendDTO> = {}): InstallSpendDTO {
+  // Far enough apart that every wrong pairing lands on a different string:
+  // 5/10 is 50.0% and 8/10 is 80.0%.
   return {
-    // Far enough apart that every wrong pairing lands on a different string:
-    // 12/100 is 12.0% and 18/100 is 18.0%.
-    spentUSD: 12,
-    spentGuardUSD: 18,
-    limitUSD: 100,
+    spentUSD: 5,
+    spentGuardUSD: 8,
+    limitUSD: 10,
     windowHours: 24,
     ...over,
   };
+}
+
+/** React writes `<!-- -->` between adjacent text nodes; the copy is one string. */
+function render(over: Partial<InstallSpendDTO> = {}): string {
+  return renderToStaticMarkup(
+    <InstallSpendCard install={install(over)} />,
+  ).replaceAll("<!-- -->", "");
 }
 
 /** The percentage `aria-valuenow` claims, which is what the bar is drawn to. */
@@ -50,60 +63,85 @@ function printedUSD(html: string): number {
 }
 
 test("the drawn fraction and the printed amount are the same figure", () => {
-  const html = renderToStaticMarkup(<InstallSpendCard install={install()} />);
-  const limit = 100;
+  const html = render();
+  const limit = 10;
   assert.equal(
     printedUSD(html) / limit,
     drawnPercent(html) / 100,
     "the amount under the bar must be the amount the bar was drawn to",
   );
-  assert.equal(printedUSD(html), 12, "the measured figure, not the guard's");
+  assert.equal(printedUSD(html), 5, "the measured figure, not the guard's");
 });
 
-test("with no ceiling set the line still leads with the drawn figure", () => {
+test("the line under the bar prints the measured figure, not the guard's", () => {
+  const html = render();
+  assert.match(html, /\$5\.00 of \$10\.00/);
+  // The guard's figure is named rather than dropped: the hatched band out to
+  // 80% has to be explicable, and a run refused above the visible bar is what
+  // `Meter`'s upper reading exists for.
+  assert.match(html, /the guard reads \$8\.00/);
+});
+
+test("the head's two percentages are the two figures the line names", () => {
+  const html = render();
+  assert.match(html, /50\.0%/);
+  assert.match(html, /80\.0%/);
+});
+
+test("with no limit the line says what each figure is", () => {
+  // The shipped default. "$8.00 spent" was an over-count wearing a
+  // measurement's label, on the one branch whose caveat had been left behind
+  // in the other.
+  const html = render({ limitUSD: null });
+  assert.match(html, /\$5\.00 measured/);
+  assert.match(html, /up to \$8\.00 counting cycles in flight/);
+  assert.doesNotMatch(html, /\$8\.00 spent/);
   // No denominator, so no percentage to disagree with — but the same figure
-  // feeds the line, or switching the limit off silently changes what "spent"
-  // means.
-  const html = renderToStaticMarkup(
-    <InstallSpendCard install={install({ limitUSD: null })} />,
-  );
-  assert.equal(printedUSD(html), 12);
+  // still leads the line, or switching the limit off silently changes which
+  // reading "spent" means.
+  assert.equal(printedUSD(html), 5);
 });
 
-test("the guard's higher figure is named as the guard's, never as spend", () => {
-  // It is drawn as a hatched band past the fill, so it has to be sayable in
-  // money too — a run refused at a threshold the visible bar has not reached is
-  // otherwise unexplainable from this card.
-  const html = renderToStaticMarkup(<InstallSpendCard install={install()} />);
-  assert.match(html, /guard reads \$18\.00/);
+test("a fully settled window names no second figure", () => {
+  // Nothing running and nothing killed, which is what an idle install reads:
+  // `Meter` draws no band for an equal upper reading, so a second amount here
+  // would be money with nothing on the bar to explain it — two measurements
+  // that happen to agree rather than one.
+  const capped = render({ spentGuardUSD: 5 });
+  assert.doesNotMatch(capped, /guard reads/);
+  assert.match(capped, /\$5\.00 of \$10\.00/);
+
+  const uncapped = render({ spentGuardUSD: 5, limitUSD: null });
+  assert.doesNotMatch(uncapped, /up to/);
+  assert.match(uncapped, /\$5\.00 measured/);
 });
 
-test("a fully settled window says nothing about a guard figure", () => {
-  // The ordinary case. A second amount equal to the first is noise, and reads
-  // as two measurements that happen to agree rather than as one.
-  const html = renderToStaticMarkup(
-    <InstallSpendCard install={install({ spentGuardUSD: 12 })} />,
-  );
-  assert.doesNotMatch(html, /guard reads/);
-  assert.match(html, /\$12\.00 of \$100\.00/);
-});
-
-test("the whole-run over-count is stated whether or not a limit is set", () => {
-  // A run alive inside the window contributes its *whole* spend, because
-  // `runs.spent_usd` is one figure per run and this app records no per-hour
-  // breakdown of it. That makes every amount on this card an upper bound on the
-  // window rather than the window's own share, and the caveat used to live only
-  // in the branch that has a ceiling — while the branch without one printed a
-  // dollar figure just the same.
-  for (const limitUSD of [100, null]) {
-    const html = renderToStaticMarkup(
-      <InstallSpendCard install={install({ limitUSD })} />,
-    );
+test("the over-count caveat renders in both branches", () => {
+  // A run alive inside the window contributes its *whole* spend to both
+  // figures, because `runs.spent_usd` is one figure per run and this app
+  // records no per-hour breakdown of it.
+  for (const limitUSD of [10, null]) {
+    const html = render({ limitUSD });
     assert.match(
       html,
       /counts its whole spend/,
-      `limit ${limitUSD}: the over-count must be stated`,
+      `limitUSD=${limitUSD}: the over-count must be stated`,
     );
-    assert.match(html, /upper bound/, `limit ${limitUSD}: named as a bound`);
+    assert.match(
+      html,
+      /upper bound/,
+      `limitUSD=${limitUSD}: named as a bound on the window`,
+    );
+    assert.match(
+      html,
+      /over-counts rather than under-counts/,
+      `limitUSD=${limitUSD}: the caveat belongs to the figure, not to the branch`,
+    );
   }
+});
+
+test("no limit still draws the hatch rather than a reading", () => {
+  const html = render({ limitUSD: null });
+  assert.match(html, /no install limit set/);
+  assert.doesNotMatch(html, /aria-valuenow/);
 });
