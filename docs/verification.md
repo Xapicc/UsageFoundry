@@ -6772,7 +6772,7 @@ through before trusting this unattended:
      all present.
 
 - **The class of every interface defect found from here on is recorded here, and
-  the running list has three entries.** This is a measurement rather than a
+  the running list has four entries.** This is a measurement rather than a
   convention for its own sake, and it exists because the argument it settles is
   currently resting on a sample of size one. `proposals/UIChecks/` recommends
   reaching for a real engine — the expensive class — and its whole case for
@@ -6843,6 +6843,18 @@ through before trusting this unattended:
     gives it the full 328px on its own line below the breakpoint and leaves
     every wider window pixel-identical. Measured after the fix: 43px rows at
     390px, 22px at 1280px, no sideways scroll at either.
+
+  - **`Meter`'s head joined a dollar amount and a percentage with an en dash —
+    class B.** A caller may replace the head's percentage with `value` (money,
+    or a pair like "2/5"), and a caller may add a second, higher `upperFraction`
+    reading for the guard's figure; the second was formatted as a percentage
+    whatever the first was, so the two money-shaped meters that do both read
+    `$12.40 - 18.9%`, two units presented as one range. `aria-valuetext` had it
+    the other way round and spoke two percentages, neither of them the figure on
+    screen. Decidable from the static markup of one component, which is what
+    `Meter.test.tsx` now asserts; the fix makes the band undrawable rather than
+    mis-spelled, so a future caller that overrides `value` and says nothing
+    about the band loses the band instead of gaining a wrong one.
 
   **And this is not "the interface is now checked".** Even with the pass above
   written down and the smoke pass `proposals/UIChecks/09-recommendation.md`

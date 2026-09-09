@@ -124,7 +124,14 @@ test("an unknown reading is announced as unknown, not as a bare bar", () => {
  * assertion. They are named by file and label rather than by line because the
  * point of the row is that a reviewer can go and read the call site.
  */
-const ANNOUNCEMENTS: Array<{ site: string; hint: string; says: string }> = [
+const ANNOUNCEMENTS: Array<{
+  site: string;
+  hint: string;
+  says: string;
+  /** Set at the sites that override the head's readings, spelled as they are. */
+  value?: string;
+  upperValue?: string;
+}> = [
   {
     site: "src/app/page.tsx — Session consumed",
     hint: "once unpriced models are charged",
@@ -155,16 +162,20 @@ const ANNOUNCEMENTS: Array<{ site: string; hint: string; says: string }> = [
   {
     site: "src/app/workflows/[id]/instances/[instanceId]/page.tsx — Spent across blocks",
     hint: "including work still running and work that stopped before reporting its cost",
+    value: "$12.40",
+    upperValue: "$18.90",
     says:
-      "40.0%, up to 80.0% including work still running and work that stopped" +
+      "$12.40, up to $18.90 including work still running and work that stopped" +
       " before reporting its cost",
   },
   {
     site: "src/app/runs/[id]/page.tsx — Spend",
     hint: "including work cycles that stopped before reporting their cost",
+    value: "$3.20",
+    upperValue: "$4.50 / $10.00",
     says:
-      "40.0%, up to 80.0% including work cycles that stopped before reporting" +
-      " their cost",
+      "$3.20, up to $4.50 / $10.00 including work cycles that stopped before" +
+      " reporting their cost",
   },
 ];
 
@@ -174,9 +185,16 @@ function announced(html: string): string | null {
 }
 
 test("each meter announces the band its own caller can explain", () => {
-  for (const { site, hint, says } of ANNOUNCEMENTS) {
+  for (const { site, hint, says, value, upperValue } of ANNOUNCEMENTS) {
     const html = renderToStaticMarkup(
-      <Meter label="w" fraction={0.4} upperFraction={0.8} upperHint={hint} />,
+      <Meter
+        label="w"
+        fraction={0.4}
+        upperFraction={0.8}
+        upperHint={hint}
+        value={value}
+        upperValue={upperValue}
+      />,
     );
     assert.equal(announced(html), says, site);
   }
@@ -220,6 +238,56 @@ test("a supplied value is suppressed when the fraction is unknown", () => {
   );
   assert.doesNotMatch(html, /2\/5/);
   assert.match(html, /no ceiling set/);
+});
+
+/**
+ * The head's dash joins two ends of one range, so both ends have to be the same
+ * kind of quantity.
+ *
+ * A caller that overrides `value` is naming something that is not a percentage,
+ * and the band's reading used to be formatted as one regardless — so the two
+ * money-shaped meters that also draw a band read `$12.40 – 18.9%`, a dollar
+ * amount and a percentage presented as one span. It is the failure this repo
+ * tests for: nothing throws, nothing fails a typecheck, and the number on the
+ * right is a plausible figure for the number on the left to run to.
+ */
+test("a value-headed meter spells its band in the same quantity", () => {
+  const html = renderToStaticMarkup(
+    <Meter
+      label="Spent across blocks"
+      fraction={0.248}
+      upperFraction={0.378}
+      value="$12.40"
+      upperValue="$18.90"
+    />,
+  );
+  assert.match(html, /\$12\.40/);
+  assert.match(html, /\$18\.90/);
+  // Anchored on the dash rather than on "37.8%", because the band's *width*
+  // is a percentage too and always will be.
+  assert.doesNotMatch(
+    html,
+    /–\s*[\d.]+%/,
+    "no percentage may sit across the dash from a value the caller spelled",
+  );
+  assert.equal(
+    announced(html),
+    "$12.40, up to $18.90 counting what this app estimated as well as what it measured",
+    "the spoken sentence quotes the head rather than re-deriving percentages",
+  );
+});
+
+test("a band a value-headed meter cannot spell is not drawn at all", () => {
+  // There is no fallback: only the caller knows how its own quantity is
+  // spelled. Dropping the band from the head but leaving it on the track would
+  // be the same defect one step quieter — a hatch with nothing to explain it.
+  const html = renderToStaticMarkup(
+    <Meter label="Spend" fraction={0.4} upperFraction={0.8} value="$3.20" />,
+  );
+  assert.match(html, /\$3\.20/);
+  assert.doesNotMatch(html, /80\.0%/, "the band must not print as a percentage");
+  assert.doesNotMatch(html, /hatched/, "an unexplained band must not be drawn");
+  assert.equal(announced(html), null);
 });
 
 test("a tiny non-zero reading is drawn, a zero one is not", () => {
