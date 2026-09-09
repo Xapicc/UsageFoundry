@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Execute questions 0 through 8 of proposals/Sandboxing/09-implementation-sketch.md
+# Execute questions 0 through 8 of proposals/implemented - Sandboxing/09-implementation-sketch.md
 # (lines 134-200) against the pinned Claude CLI, and print one machine-readable
 # line per question so the answers can be transcribed without interpretation.
 #
@@ -141,7 +141,7 @@ ONLY=""
 
 usage() {
   cat <<'TXT'
-probe.sh — questions 0-8 of proposals/Sandboxing/09-implementation-sketch.md
+probe.sh — questions 0-8 of proposals/implemented - Sandboxing/09-implementation-sketch.md
 
   --free               questions 0, 1 and 8a-8c. Costs nothing.
   --billed             questions 2-7 and 8d. SPENDS REAL MONEY: up to seven
@@ -1061,7 +1061,7 @@ Run nothing else.")
 # ===========================================================================
 
 printf 'UsageFoundry sandbox probe — image variant: %s\n' "$VARIANT"
-printf 'Questions 0-8 of proposals/Sandboxing/09-implementation-sketch.md:134-200.\n'
+printf 'Questions 0-8 of proposals/implemented - Sandboxing/09-implementation-sketch.md:134-200.\n'
 printf 'Nothing here enables a sandbox in this app. Answers are the "Q<n>:" lines.\n'
 
 selected 0 && question_0

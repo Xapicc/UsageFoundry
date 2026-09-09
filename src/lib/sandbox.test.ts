@@ -21,7 +21,7 @@ import {
  * have to be distinguishable from a working sandbox and from a stock install.
  *
  * Most of the literals below were read out of the pinned CLI binary in
- * `proposals/Sandboxing/` and have never been executed. The `bwrap:` ones are
+ * `proposals/implemented - Sandboxing/` and have never been executed. The `bwrap:` ones are
  * the exception and the reason the rest are worth having: they are copied out
  * of this install's own `run_events`, where a sandbox that could not start
  * produced 214 failed tool calls and no `sandbox` row at all. What this pins

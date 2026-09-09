@@ -2628,7 +2628,7 @@ through before trusting this unattended:
 > `handleStreamLine` parses, the OTLP records `otlp.ts` reads, the compaction
 > threshold `readCompactions` keys on, the "Available agents" refusals in
 > `docs/agent/agents-and-templates.md`, and the sandbox answers in
-> `proposals/Sandboxing`. Those readings stand as history and are not claims
+> `proposals/implemented - Sandboxing`. Those readings stand as history and are not claims
 > about what the image now installs. What **was** checked before the bump, and
 > it is the cheap half: every flag `buildArgs` and `sessionAgentArgs` emit is
 > still in `claude --help` on 2.1.260 — `--output-format`, `--verbose`,
@@ -5019,7 +5019,7 @@ through before trusting this unattended:
   this install's own `run_events` after the fifteen-hour failure in *Verified*
   above, so those three are transcribed rather than guessed. The CLI's own six
   were **read out of the pinned binary with `strings` and have still never been
-  executed** (`proposals/Sandboxing/10-validation.md`, "What this validation did
+  executed** (`proposals/implemented - Sandboxing/10-validation.md`, "What this validation did
   not check"). Three separate things are unverified, and the first is the one
   that matters:
 
@@ -5028,7 +5028,7 @@ through before trusting this unattended:
   did not change that: what it produced was `bwrap`'s own stderr, from a `bwrap`
   the CLI spawned and which exited before doing anything, and not a single
   sandbox message written by the CLI itself. The rest of Phase 2 of
-  `proposals/Sandboxing/09-implementation-sketch.md` — bubblewrap, `socat`, the
+  `proposals/implemented - Sandboxing/09-implementation-sketch.md` — bubblewrap, `socat`, the
   seccomp `security_opt` and a managed policy — now exists and has been started;
   capture the real text before trusting the table:
 
@@ -5119,7 +5119,7 @@ through before trusting this unattended:
   docker compose exec usagefoundry \
     bwrap --unshare-user --ro-bind / / --dev /dev true && echo BWRAP-OK
 
-  # 2. Phase 2's own four, from proposals/Sandboxing/09-implementation-sketch.md
+  # 2. Phase 2's own four, from proposals/implemented - Sandboxing/09-implementation-sketch.md
   docker compose up --build
   # uid out of the container: a UF_UID default written here would expand in
   # your own shell, which .env never reaches (#147). Shape corrected
@@ -5248,7 +5248,7 @@ through before trusting this unattended:
   throwaway checkout, the chat's every mount — and `CLAUDE_CONFIG_DIR` in all
   four, because that is the metering path. They are unit-tested in
   `orchestrator.test.ts` for the three assertions
-  `proposals/Sandboxing/09-implementation-sketch.md` names (the run's own
+  `proposals/implemented - Sandboxing/09-implementation-sketch.md` names (the run's own
   checkout writable, a **sibling run's** not, `CLAUDE_CONFIG_DIR` writable) plus
   the two ways the overlay can be a boundary that is not there — a path the
   CLI's Linux filter would drop as a glob, and a set that resolved to nothing —
@@ -5545,7 +5545,7 @@ through before trusting this unattended:
   all. Both are worth an hour against a live binary before anyone calls the
   policy surface closed.
 - **The CLI's own sandbox — read out of the binary, and executed in exactly two
-  places.** `proposals/Sandboxing/02x-option-cli-sandbox.md` establishes that the
+  places.** `proposals/implemented - Sandboxing/02x-option-cli-sandbox.md` establishes that the
   pinned CLI (2.1.226) implements a bubblewrap sandbox configured by `sandbox.*`
   settings keys, and `08-recommendation.md` recommends adopting it. All of that
   was read out of the binary's strings with `strings`, and until 2026-08-19 not
@@ -5565,7 +5565,7 @@ through before trusting this unattended:
   The harness is `scripts/sandbox-probe/` — a throwaway image on the same base
   and the same CLI pin, a seccomp profile that is Docker's default plus user
   namespaces, and one script that runs questions 0-8 of
-  `proposals/Sandboxing/09-implementation-sketch.md:134`-`200` and prints one
+  `proposals/implemented - Sandboxing/09-implementation-sketch.md:134`-`200` and prints one
   transcribable line each. `scripts/sandbox-probe/RUNBOOK.md` is the ordered
   list of what to run, on which machine, and what each answer decides; steps 4
   and 5 are billed. Its own answer logic is exercised against stubs by
