@@ -5603,6 +5603,69 @@ describe("what a lifecycle event says on stdout", () => {
     assert.equal(line.retrying, false, "a park is not a retry, and false is not absent");
   });
 
+  it("does not file a guard that stopped nothing as a tripped guard", () => {
+    // `no_ceiling`: a real refusal, `enforceable: false`, and the run starts its
+    // next cycle regardless. `run.guard_tripped` at `warn` is what a shipper
+    // pages somebody on and what an alert counts, so emitting it here is a
+    // stopped fleet reported once per cycle for as long as the provider's
+    // percentage is unreadable — against a fleet that is working.
+    const line = one(
+      event("budget", {
+        allowed: false,
+        code: "no_ceiling",
+        disposition: "stop",
+        enforceable: false,
+        reason: "A weekly-fraction guard is set but that window has no reading.",
+      }),
+    );
+    assert.notEqual(line.event, "run.guard_tripped");
+    assert.equal(line.level, "info");
+    assert.ok(
+      !("disposition" in line),
+      "a disposition nothing acted on is not a field to project",
+    );
+  });
+
+  it("still files an enforceable refusal at warn, field for field", () => {
+    // Both directions: a guard that stops being routed at `warn` is an ending
+    // nobody is woken for, and the field set is what an alert matches on.
+    const line = one(
+      event("budget", {
+        allowed: false,
+        code: "run_cost",
+        disposition: "stop",
+        enforceable: true,
+        reason: "This run has spent $5.00 of its $5.00 ceiling.",
+      }),
+    );
+    assert.equal(line.event, "run.guard_tripped");
+    assert.equal(line.level, "warn");
+    assert.deepEqual(Object.keys(line).sort(), [
+      "code",
+      "disposition",
+      "event",
+      "level",
+      "reason",
+      "run_id",
+      "ts",
+    ]);
+  });
+
+  it("reads a stop emit that carries no `enforceable` as one to act on", () => {
+    // Two of the three stop emits omit the field. Reading absent as false would
+    // silence every guard that has ever ended a run.
+    const line = one(
+      event("budget", {
+        allowed: false,
+        code: "install_cost",
+        disposition: "stop",
+        reason: "This install has spent its rolling 24-hour ceiling.",
+      }),
+    );
+    assert.equal(line.event, "run.guard_tripped");
+    assert.equal(line.level, "warn");
+  });
+
   it("distinguishes absent from false on an error that is not a refusal at all", () => {
     // A spawn failure carries neither field. `null` is what the two accessors
     // beside it already mean by absent, and reading it as `false` would file

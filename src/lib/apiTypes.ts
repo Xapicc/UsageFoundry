@@ -2420,6 +2420,15 @@ export interface BranchSummaryDTO {
    * a claim that it is clean.
    */
   uncommitted: number | null;
+  /**
+   * Whether a checkout held this branch when the row was read.
+   *
+   * Read beside `uncommitted` and never on its own: it is what tells the two
+   * halves of a null apart. False is "nothing to ask git about"; true with a
+   * null count is "asked and unanswered" — the probe cap or a failed `git
+   * status` — which is the state the page must not draw as an empty checkout.
+   */
+  heldByCheckout: boolean;
   exists: boolean;
   /** The producing run can still commit to it. */
   active: boolean;

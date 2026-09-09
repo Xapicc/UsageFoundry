@@ -247,11 +247,13 @@ export const LIVE_ENFORCEABLE_CODES: readonly BudgetStopCode[] = [
  * outage into a stopped fleet is a worse failure than the one the refusal
  * exists to prevent, and recovery is one manual reopen per run.
  *
- * It is not silently ignored either. The run whose check found it logs that the
- * guard has nothing to read — once per segment, the same answer this app
- * already gives for a live spending limit whose telemetry never arrived and for
- * an instance limit that could not be read — and carries on under its remaining
- * guards, which are per-run and still bind.
+ * It is not silently ignored either. The `budget` event the check writes carries
+ * `enforceable: false`, and both consumers read it: the run's feed says the
+ * guard could not be read and the run carried on, and stdout gets
+ * `run.guard_unreadable` at `info` rather than a tripped guard at `warn`. The
+ * same answer this app already gives for a live spending limit whose telemetry
+ * never arrived and for an instance limit that could not be read — and the run
+ * carries on under its remaining guards, which are per-run and still bind.
  *
  * `no_terminus` stays on this list and is not a second configuration code to
  * treat the same way: it says nothing would ever end the run, so ignoring it

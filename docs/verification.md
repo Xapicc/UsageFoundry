@@ -2361,6 +2361,20 @@ through before trusting this unattended:
 > client in this container, so `docker compose up --build` could not be run to
 > confirm it. It is the first thing to check on a machine that has one.
 
+> **Neither three-valued reading has been seen on a real install.** The branch
+> row's unread checkout and the `run.guard_unreadable` line are covered by
+> `BranchWork.test.tsx`, `logLine.test.ts` and `orchestrator.test.ts`, and
+> `npm run smoke-pages` loads `/branches` clean off the standalone bundle at
+> both widths — but that run has a throwaway `DATA_DIR` with no branches in it,
+> so the new row was never drawn, and no run has hit a `no_ceiling` verdict
+> here. What is unmeasured is that `heldByCheckout` is true on exactly the rows
+> `MAX_PENDING_PROBES` skipped: it is `p.slot !== null`, the same predicate
+> `selectProbeTargets` picks on, so the two agree by construction rather than by
+> observation. To exercise it, start more than `MAX_PENDING_PROBES` isolated
+> runs against one repository, leave a file uncommitted in a late one's
+> checkout, and open `/branches`: the rows past the cap must say "checkout could
+> not be read" and must still offer Commit.
+
 > **`RELAY_PORT` and `RELAY_BIND` have never reached a container.** Both are
 > now in `docker-compose.yml`'s `environment:` block, and `deployment.test.ts`
 > fails without them — it derives the entrypoint's read set from every

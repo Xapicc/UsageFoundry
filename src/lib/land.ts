@@ -2332,9 +2332,19 @@ export interface BranchSummary {
   /**
    * Uncommitted paths in the checkout still holding this branch. Null when no
    * checkout holds it, when its status could not be read, or when the probe cap
-   * below was reached — all of which mean "nothing to offer here", never "clean".
+   * below was reached — never "clean".
    */
   uncommitted: number | null;
+  /**
+   * Whether a checkout held this branch when the row was read.
+   *
+   * It is what separates the two halves of a null `uncommitted`: false is
+   * "there was nothing to ask git about", true is "we asked and have no
+   * answer" — a probe the cap did not reach, or a `git status` that failed.
+   * Without it the page cannot tell a branch with no checkout from a run whose
+   * work it could not see, and reads both as a run that wrote nothing.
+   */
+  heldByCheckout: boolean;
   exists: boolean;
   active: boolean;
   landedAt: number | null;
@@ -2810,7 +2820,7 @@ async function mapWithLimit<T, R>(
  * answer, or on anything the collecting loop writes.
  */
 interface PendingBranch extends ProbeCandidate {
-  summary: Omit<BranchSummary, "ahead" | "uncommitted">;
+  summary: Omit<BranchSummary, "ahead" | "uncommitted" | "heldByCheckout">;
   repoRoot: string;
   /** `<target>..<branch>`, or null when there is nothing to count. */
   aheadRange: string | null;
@@ -2962,6 +2972,7 @@ export async function branchInventory(
     // A row nothing probed stays null, which the page reads as "not asked" —
     // the same answer a failed probe gives, and never a claim of clean.
     uncommitted: uncommittedByRow.get(i) ?? null,
+    heldByCheckout: p.slot !== null,
   }));
 
   // Back into the order the selection listed them in, rather than re-sorted by

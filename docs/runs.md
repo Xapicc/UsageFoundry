@@ -514,8 +514,8 @@ can do something about it. It never ends a run that is already going: on a stock
 install that reading is the account's own percentage, which is discarded after an
 hour without a fresh answer, so acting on its absence would turn an unreachable
 host into every fraction-guarded run in the install stopping at its next cycle
-boundary. The run logs, once, that the guard cannot be enforced and carries on
-under its remaining guards — and *every* guard that can be read is evaluated
+boundary. Every cycle records that the guard could not be read and that the run
+carried on under its remaining guards — and *every* guard that can be read is evaluated
 before that verdict is returned. That ordering is the whole of it: the
 unenforceable weekly guard used to answer first, so a run at 97% of a 50%
 5-hour guard spawned another cycle anyway, under a log line about the weekly one.
