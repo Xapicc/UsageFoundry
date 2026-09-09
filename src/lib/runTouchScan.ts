@@ -84,6 +84,12 @@ const TOUCH_ROWS = `
     FROM run_events e
     JOIN runs r ON r.id = e.run_id
     WHERE e.run_id = ? AND e.kind = 'tool'
+      -- An assist's calls are on this run's log and are not this run's work.
+      -- A check reads the branch to judge it and a reviewer reads it to write
+      -- about it; neither is the agent touching a file, and counting them here
+      -- would put files nobody edited on the Files tab and into the
+      -- touched-versus-changed reconciliation as reads the run never made.
+      AND json_extract(e.payload, '$.assist') IS NULL
   )
   WHERE raw IS NOT NULL AND raw <> ''
 `;

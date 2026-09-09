@@ -2435,6 +2435,31 @@ Built and exercised against real transcripts:
   transcript from a CLI that omits the breakdown has been through this, so
   nothing here confirms which turns in the wild take this path.
 
+- **What an assist's stdout looks like now that it streams, 2026-09-09.** The
+  flag set `spawnAssist` sends was run whole against the pinned CLI in the
+  running container — `2.1.260`, `-p … --output-format stream-json --verbose
+  --permission-mode plan --max-budget-usd 0.30 --allowedTools Grep Glob Read`,
+  in `/workspace/UsageFoundry` — and it exited 0 having printed eight lines:
+  three `system`, two `assistant`, one `rate_limit_event`, one `user` and one
+  `result`. That is the measurement the change needed, because the failure it
+  guards against is silent in the expensive direction: an output format the pin
+  did not accept would leave every review, resolution and validation recorded
+  `failed` at $0 with the money already spent, and nothing in this app reads a
+  run's own stdout to notice. The `tool_use` block arrived on an `assistant`
+  event in the shape `assistToolUses` reads — `Read`, with its `file_path` and
+  `limit` — and `parseReviewOutput` took the `result` event off the whole
+  stream: `completed`, **$0.206351**, 64,437 tokens summed across the usage
+  buckets, and the reply text. Both were run over the captured stdout rather
+  than asserted about a fixture. The probe cost $0.206351 of real subscription
+  spend, and it was the second attempt: the first was piped into `head`, whose
+  exit killed the child through `tee` after two `system` lines — worth
+  recording only because a truncated stream is exactly what a killed assist
+  leaves, and it is the case `resultObject` refuses to read as a result. What
+  is **not** verified: no real validation, review or conflict resolution has
+  been run end to end since the change, so nothing here has exercised
+  `logAssistTools` writing rows or the `check ›` prefix rendering on a run
+  page.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the
@@ -6747,7 +6772,7 @@ through before trusting this unattended:
      all present.
 
 - **The class of every interface defect found from here on is recorded here, and
-  the running list has two entries.** This is a measurement rather than a
+  the running list has three entries.** This is a measurement rather than a
   convention for its own sake, and it exists because the argument it settles is
   currently resting on a sample of size one. `proposals/UIChecks/` recommends
   reaching for a real engine — the expensive class — and its whole case for
@@ -6805,6 +6830,19 @@ through before trusting this unattended:
     `spentGuardUSD` is, which is E. Either way it is not D, and the list's first
     entry was D. Verified by assertion on the rendered `aria-valuetext` and by
     nothing else: no screen reader has been run over any of these meters.
+  - **2026-09-09, class D.** The live tool strip (`src/components/RunActivity.tsx`)
+    put the call's name, its command, a retry sentence and a duration on one
+    wrapping row. At 1280px that reads; at the 358px a 390px phone leaves inside
+    the pane, the flex row squeezed the command to 63px — six characters of a
+    path — while `retrying, attempt 2 of 3` kept its full 132px, because a
+    `truncate`d `flex-1` child yields to siblings that cannot shrink. Nothing
+    overflowed and nothing scrolled sideways, so the defect was a legible row
+    that had silently stopped saying anything. Found by measuring the rendered
+    row at both widths against a scripted `CLAUDE_BIN` holding two tool calls
+    open; fixed with `max-md:order-last max-md:basis-full` on the command, which
+    gives it the full 328px on its own line below the breakpoint and leaves
+    every wider window pixel-identical. Measured after the fix: 43px rows at
+    390px, 22px at 1280px, no sideways scroll at either.
 
   **And this is not "the interface is now checked".** Even with the pass above
   written down and the smoke pass `proposals/UIChecks/09-recommendation.md`

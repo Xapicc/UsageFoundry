@@ -128,6 +128,7 @@ const {
   selectPromotable,
   sweepPaused,
   telemetryEnv,
+  toolProgressReading,
   toolResultFailures,
   worktreeSlug,
   MAX_PAUSES_PER_RUN,
@@ -4708,6 +4709,204 @@ describe("failed tool results", () => {
 
     assert.equal(failure.text.length, 600);
     assert.equal(failure.text.endsWith("…"), true);
+  });
+});
+
+/**
+ * `tool_progress`, which is the only thing this app has that says a cycle is
+ * working rather than wedged.
+ *
+ * Every failure here is silent and reads as a healthy run: a strip that says a
+ * twelve-minute build started eleven seconds ago, a duration that walks
+ * backwards every half minute, or a row per heartbeat where there should be one
+ * row per call. The shapes below were measured against Claude Code 2.1.266 —
+ * a 95-second foreground `Bash` produced heartbeats at 30, 60 and 90 seconds,
+ * each carrying the call's own id under `parent_tool_use_id` and a fresh
+ * `<id>-heartbeat-<n>` of its own.
+ */
+describe("tool heartbeats", () => {
+  const calls = new Map([
+    ["toolu_01", { name: "Bash", command: "npm run build" }],
+    // What a `Task` call is recorded as. The heartbeat for the same call names
+    // it `Agent`, which is why the reading prefers this one.
+    ["toolu_02", { name: "Task", command: "typescript: fix the failing test" }],
+  ]);
+
+  const heartbeat = (
+    id: string,
+    elapsed: number,
+    extra: Record<string, unknown> = {},
+  ) => ({
+    type: "tool_progress",
+    tool_use_id: `${id}-heartbeat-0`,
+    tool_name: "Bash",
+    parent_tool_use_id: id,
+    elapsed_time_seconds: elapsed,
+    heartbeat: true,
+    session_id: "s1",
+    uuid: "u1",
+    ...extra,
+  });
+
+  it("dates the start from the CLI's own elapsed figure", () => {
+    // The whole point. The frame says how long the tool has been running and
+    // the strip counts up from when it started, so a page that joins a build
+    // eight minutes in must show eight minutes and not zero.
+    const now = 1_700_000_000_000;
+    const entry = toolProgressReading(
+      heartbeat("toolu_01", 480),
+      calls,
+      new Map(),
+      now,
+    );
+
+    assert.notEqual(entry, null);
+    assert.equal(entry?.startedAt, now - 480_000);
+    assert.equal(entry?.seenAt, now);
+  });
+
+  it("keys on the call and not on the heartbeat's own id", () => {
+    // A new `tool_use_id` arrives every 30 seconds. Keyed on that, a
+    // twenty-minute build is forty rows on a strip that has room for two.
+    const entry = toolProgressReading(
+      heartbeat("toolu_01", 30),
+      calls,
+      new Map(),
+      1_700_000_000_000,
+    );
+
+    assert.equal(entry?.toolUseId, "toolu_01");
+  });
+
+  it("holds the first start against every later heartbeat", () => {
+    // `elapsed_time_seconds` is whole seconds off the CLI's clock and each
+    // frame crosses a pipe, so a start recomputed every 30 seconds walks the
+    // operator's duration backwards and forwards for as long as the tool runs.
+    const now = 1_700_000_000_000;
+    const first = toolProgressReading(
+      heartbeat("toolu_01", 30),
+      calls,
+      new Map(),
+      now,
+    );
+    const live = new Map([[first!.toolUseId, first!]]);
+
+    // 30 seconds later, and the CLI's own figure has drifted by a second.
+    const second = toolProgressReading(
+      heartbeat("toolu_01", 59),
+      calls,
+      live,
+      now + 30_000,
+    );
+
+    assert.equal(second?.startedAt, first?.startedAt);
+    assert.equal(second?.seenAt, now + 30_000);
+  });
+
+  it("takes the name the log already gave the call", () => {
+    // The CLI calls the `Task` tool `Agent` on the heartbeat. One page must not
+    // have two names for one call — the strip would name a delegation the log
+    // four lines above does not mention.
+    const entry = toolProgressReading(
+      heartbeat("toolu_02", 30, { tool_name: "Agent" }),
+      calls,
+      new Map(),
+      1_700_000_000_000,
+    );
+
+    assert.equal(entry?.name, "Task");
+    assert.equal(entry?.command, "typescript: fix the failing test");
+  });
+
+  it("falls back to the CLI's name for a call it never saw", () => {
+    // A stream joined mid-conversation. The name is still worth drawing; the
+    // command is not available and says so with null rather than an empty
+    // string, which the strip would render as a call with no arguments.
+    const entry = toolProgressReading(
+      heartbeat("toolu_99", 30, { tool_name: "WebFetch" }),
+      calls,
+      new Map(),
+      1_700_000_000_000,
+    );
+
+    assert.equal(entry?.name, "WebFetch");
+    assert.equal(entry?.command, null);
+  });
+
+  it("reads a sub-agent retry as a retry and an ordinary frame as neither", () => {
+    // The one variant that is not "still working": the CLI is waiting out an
+    // API error rather than running a tool, and a run whose sub-agent is on its
+    // third attempt may be about to park.
+    const retrying = toolProgressReading(
+      heartbeat("toolu_02", 0, {
+        heartbeat: undefined,
+        subagent_type: "typescript",
+        subagent_retry: {
+          agent_id: "a1",
+          attempt: 2,
+          max_retries: 3,
+          retry_delay_ms: 4_000,
+          error_status: 529,
+          error_category: "overloaded",
+        },
+      }),
+      calls,
+      new Map(),
+      1_700_000_000_000,
+    );
+
+    assert.deepEqual(retrying?.retry, { attempt: 2, maxRetries: 3 });
+    assert.equal(
+      toolProgressReading(
+        heartbeat("toolu_01", 30),
+        calls,
+        new Map(),
+        1_700_000_000_000,
+      )?.retry,
+      null,
+    );
+  });
+
+  it("refuses a frame with no call to key on", () => {
+    // An entry under an empty id is a row per heartbeat, each of them
+    // anonymous — worse than drawing nothing, which is what this returns.
+    assert.equal(
+      toolProgressReading(
+        { type: "tool_progress", elapsed_time_seconds: 30 },
+        calls,
+        new Map(),
+        1_700_000_000_000,
+      ),
+      null,
+    );
+  });
+
+  it("dates an unreadable elapsed figure from now rather than from 1970", () => {
+    // The direction matters: a missing figure costs the strip the minutes
+    // before this page joined, where `Number(undefined)` taken at face value
+    // would say the tool has been running since the epoch.
+    const now = 1_700_000_000_000;
+    for (const elapsed of [undefined, null, -5, "soon", Number.NaN]) {
+      const entry = toolProgressReading(
+        { ...heartbeat("toolu_01", 0), elapsed_time_seconds: elapsed },
+        calls,
+        new Map(),
+        now,
+      );
+      assert.equal(entry?.startedAt, now);
+    }
+
+    // A figure that arrives as a string is still a figure, and losing eight
+    // minutes of a build's age to a field that changed type would be silent.
+    assert.equal(
+      toolProgressReading(
+        { ...heartbeat("toolu_01", 0), elapsed_time_seconds: "480" },
+        calls,
+        new Map(),
+        now,
+      )?.startedAt,
+      now - 480_000,
+    );
   });
 });
 

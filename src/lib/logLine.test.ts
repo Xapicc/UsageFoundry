@@ -149,6 +149,47 @@ describe("describeEvent — what is not a plugin", () => {
  * `RunEventDTO["kind"]`, so a kind added later cannot quietly belong to
  * nothing.
  */
+/** A `tool` event, as a work cycle's stream reader or `review.ts` hands one over. */
+function toolEvent(payload: Record<string, unknown>): RunEventDTO {
+  return { id: 1, runId: "r", ts: 0, kind: "tool", payload };
+}
+
+/**
+ * Who made a tool call, which the row has to say when it was not the run.
+ *
+ * The same judgement the plugin cases above are about, on the one kind where
+ * getting it wrong is silent in the expensive direction: an assist's calls land
+ * *interleaved* with the run's own — a check reads the branch while the run
+ * that asked for it is still mid-cycle — so an unattributed `Grep` does not
+ * look like a missing label, it looks like the run reading a file it never
+ * opened. Nothing else in the feed distinguishes the two.
+ */
+describe("describeEvent — a tool call somebody else made", () => {
+  it("names the assist that made it, by the word the log already uses", () => {
+    for (const [assist, word] of [
+      ["validate", "check"],
+      ["review", "review"],
+      ["resolve", "resolve"],
+    ] as const) {
+      const entry = describeEvent(
+        toolEvent({ name: "Grep", input: { pattern: "readBullets" }, assist }),
+      );
+      assert.equal(entry?.label, `${word} › Grep`);
+      assert.equal(entry?.voice, "tool");
+    }
+  });
+
+  it("leaves the run's own call unlabelled and keeps a sub-agent's name", () => {
+    assert.equal(describeEvent(toolEvent({ name: "Grep", input: {} }))?.label, "Grep");
+    assert.equal(
+      describeEvent(
+        toolEvent({ name: "Grep", input: {}, parentToolUseId: "t1", subagent: "Explore" }),
+      )?.label,
+      "Explore › Grep",
+    );
+  });
+});
+
 describe("matchesLogFilter", () => {
   const toolCall: RunEventDTO = {
     id: 1,

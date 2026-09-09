@@ -13,6 +13,7 @@ import type {
   RunEventDTO,
   PruneSavingsDTO,
   RunTelemetryDTO,
+  RunToolActivityDTO,
 } from "@/lib/apiTypes";
 import { pruneStatement } from "@/lib/pruneStatement";
 import {
@@ -57,6 +58,7 @@ import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
 import { RunAgentCost } from "@/components/RunAgentCost";
 import { RunPruning } from "@/components/RunPruning";
 import { RunDiff } from "@/components/RunDiff";
+import { RunActivity } from "@/components/RunActivity";
 import { RunHandoff } from "@/components/RunHandoff";
 import { RunLand } from "@/components/RunLand";
 import { RunOutput } from "@/components/RunOutput";
@@ -572,6 +574,14 @@ export default function RunDetail({
   const [context, setContext] = useState<ContextOccupancyDTO | null>(null);
   const [events, setEvents] = useState<RunEventDTO[]>([]);
   const [connected, setConnected] = useState(false);
+  /**
+   * The tool calls the run has not come back from, as the last live frame said.
+   *
+   * Replaced whole rather than merged: the frame carries the entire open set,
+   * so a dropped one corrects itself on the next rather than leaving a call on
+   * screen that has already answered.
+   */
+  const [liveTools, setLiveTools] = useState<readonly RunToolActivityDTO[]>([]);
   const [pollError, setPollError] = useState<string | null>(null);
   const [stopNote, setStopNote] = useState<string | null>(null);
   // Held apart from `stopNote` rather than folded into it: that one renders in
@@ -702,6 +712,16 @@ export default function RunDetail({
       try {
         const e = JSON.parse(msg.data) as RunEventDTO;
         if (e.kind === "replay-complete") return;
+        // Live state, not history: it never joins `events`, because everything
+        // downstream of that array — the feed, the filter's counts, the report
+        // tabs, the background-task panel — is a projection of what the run
+        // *did*, and this is a statement about what it is doing that will be
+        // false in a minute.
+        if (e.kind === "tool-activity") {
+          const tools = e.payload?.tools;
+          setLiveTools(Array.isArray(tools) ? (tools as RunToolActivityDTO[]) : []);
+          return;
+        }
         setEvents((prev) => [...prev, e]);
         // An event on a run this page had written off means somebody picked it
         // up. Guarded on the ref rather than sent unconditionally: while the
@@ -841,6 +861,15 @@ export default function RunDetail({
     if (!active) return;
     const t = setInterval(() => setNowTick(Date.now()), 1000);
     return () => clearInterval(t);
+  }, [active]);
+
+  // A finished run is inside nothing. The orchestrator clears the set at the
+  // end of every cycle and the page would normally be told — this is for the
+  // case where it is not, a container that went down mid-call under a page that
+  // stayed open, where the last frame received says a tool was running and
+  // nothing will ever contradict it.
+  useEffect(() => {
+    if (!active) setLiveTools([]);
   }, [active]);
 
   // Whether a guard ended this run, read off the budget event's own payload
@@ -1841,6 +1870,14 @@ export default function RunDetail({
 
           {activeTab === "log" && (
             <>
+              {/* Above the background tasks and outside the log's scroll
+                  container, for the reason they are: this is the log's header
+                  rather than a line in it, so Find/Show narrows the feed below
+                  and leaves it alone. First of the two because it is the only
+                  thing on the page that is true *now* — a task panel describes
+                  what was started, this says what has not come back. */}
+              <RunActivity tools={liveTools} active={active} now={nowTick} />
+
               {/* Above the filter and outside the log's scroll container, both
                   deliberately: the tasks are the log's header rather than lines
                   in it, so Find/Show narrows the feed below and leaves this

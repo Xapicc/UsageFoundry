@@ -5,8 +5,11 @@ import {
   getRun,
   runEvents,
   subscribe,
+  subscribeToolActivity,
+  toolActivity,
   type PersistedRunEvent,
 } from "../../../../../lib/orchestrator";
+import type { RunToolActivityDTO } from "../../../../../lib/apiTypes";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -145,6 +148,26 @@ export async function GET(req: Request, ctx: Ctx) {
       for (const encoded of frames) write(encoded);
       send({ kind: "replay-complete", runId: id, ts: Date.now(), payload: {} });
 
+      //    What the run is inside *now*, which no amount of replay can supply:
+      //    the tool heartbeats these are made of are never rows, and the next
+      //    one is up to 30 seconds away. Without this a page opened during a
+      //    long build shows nothing at all until then, which is precisely the
+      //    stretch it was opened to ask about. Sent only when there is
+      //    something open — an empty set is what the client already holds.
+      const sendTools = (tools: RunToolActivityDTO[]) =>
+        send({
+          kind: "tool-activity",
+          runId: id,
+          ts: Date.now(),
+          // **No event id, deliberately.** These frames are not rows in
+          // `run_events`, so an `id:` line would advance the client's
+          // Last-Event-ID past events that are — and the next reconnect would
+          // replay from a number no row has, silently skipping the log.
+          payload: { tools },
+        });
+      const openTools = toolActivity(id);
+      if (openTools.length > 0) sendTools(openTools);
+
       // 2. Tail live events, each carrying the id of the row `emit()` just
       //    wrote — the same id the replay above sends. `EventSource` advances
       //    its Last-Event-ID only on a frame that has an `id:` line, so a live
@@ -152,6 +175,9 @@ export async function GET(req: Request, ctx: Ctx) {
       //    event however many hours of tail follow, and the next reconnect
       //    replays the whole live portion of the log on top of itself.
       const unsubscribe = subscribe(id, (e: PersistedRunEvent) => send(e, e.id));
+      // The live-only half, on its own topic: a whole set per frame rather than
+      // a delta, so a dropped frame corrects itself on the next one.
+      const unsubscribeTools = subscribeToolActivity(id, sendTools);
 
       // Proxies drop idle connections; a periodic comment keeps it warm
       // without appearing as an event to the client.
@@ -166,6 +192,7 @@ export async function GET(req: Request, ctx: Ctx) {
         writable = false;
         clearInterval(heartbeat);
         unsubscribe();
+        unsubscribeTools();
         try {
           controller.close();
         } catch {

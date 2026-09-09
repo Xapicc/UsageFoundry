@@ -298,6 +298,19 @@ function pluginLine(message: string): { plugin: string; text: string } | null {
   return null;
 }
 
+/**
+ * What an out-of-cycle child is called on the log, from its `assist` field.
+ *
+ * One mapping for the two places that name one — the row saying it started and
+ * finished, and the prefix on every tool call it made — because a check whose
+ * own calls are filed under a different word is two children as far as anyone
+ * reading the log is concerned. `review` is the fallback rather than a fourth
+ * word: that kind predates the field and its rows carry none.
+ */
+function assistWord(assist: unknown): string {
+  return assist === "resolve" ? "resolve" : assist === "validate" ? "check" : "review";
+}
+
 /** How loudly a hand-driven transition should read. */
 function statusTone(status: unknown): LogTone {
   if (status === "failed") return "danger";
@@ -384,9 +397,18 @@ export function describeEvent(e: RunEventDTO): LogEntry | null {
         // from the `Task` call that opened it; a delegation whose call was not
         // seen falls back to the bare word rather than to nothing, since "some
         // sub-agent" is the true statement and "the main thread" is not.
-        label: p.parentToolUseId
-          ? `${String(p.subagent ?? "sub-agent")} › ${tool}`
-          : tool,
+        //
+        // An assist's call is attributed the same way and ahead of it, because
+        // it is the further-away speaker of the two: a check reads the branch
+        // while the run that asked for it is still mid-cycle, so its lines land
+        // *interleaved* with the run's own rather than after them. The two
+        // cannot both be set — an assist is a `-p` child of this app and its
+        // calls arrive with no `Task` above them.
+        label: p.assist
+          ? `${assistWord(p.assist)} › ${tool}`
+          : p.parentToolUseId
+            ? `${String(p.subagent ?? "sub-agent")} › ${tool}`
+            : tool,
         text: shortened
           ? [args, "input shortened for storage"].filter(Boolean).join(" · ")
           : args,
@@ -587,12 +609,7 @@ export function describeEvent(e: RunEventDTO): LogEntry | null {
       // The same event kind carries all three — a read-only review, a conflict
       // resolution and a validation — because they are the same billed,
       // out-of-cycle spawn.
-      const label =
-        p.assist === "resolve"
-          ? "resolve"
-          : p.assist === "validate"
-            ? "check"
-            : "review";
+      const label = assistWord(p.assist);
 
       // A settled validation says what it decided rather than what it cost,
       // and it says it in a tone that is **never** `danger`. A verdict is a
@@ -682,6 +699,14 @@ export function describeEvent(e: RunEventDTO): LogEntry | null {
     // Consumed by the stream reader as a marker; never a line.
     case "replay-complete":
       return null;
+
+    // Live state, drawn by its own surface above the log and deliberately not
+    // in it: the CLI restates a running tool every 30 seconds, so a line per
+    // frame would bury a quiet cycle's real output under forty repetitions of
+    // "still running" — and every one of them would still be there tomorrow,
+    // saying it about a tool that finished.
+    case "tool-activity":
+      return null;
   }
 }
 
@@ -756,6 +781,7 @@ const EVENT_GROUP: Record<RunEventDTO["kind"], "agent" | "tool" | "app"> = {
   // would be in is moot. Named anyway, because the point of the map is that
   // adding a kind is a compile error.
   "replay-complete": "app",
+  "tool-activity": "app",
 };
 
 /** Whether a filter narrows anything, which is what decides the copy around it. */

@@ -146,6 +146,7 @@ import {
   providerReportsSpend,
   type RunDependencyDTO,
   type RunProviderDTO,
+  type RunToolActivityDTO,
   type SandboxStateDTO,
 } from "./apiTypes";
 import {
@@ -6229,6 +6230,13 @@ export function runIteration(
       procs.delete(runId);
       if (stdoutBuf.trim())
         adapter.parseLine(runId, stdoutBuf.trim(), result, onSession);
+      // Whatever the child was inside, it is not inside it any more. A cycle
+      // killed mid-call never sends the result that would have cleared it, so
+      // without this the run page would keep counting up against a tool whose
+      // process is gone. **After the residual line above and not before it**:
+      // that line is whatever the child had not terminated with a newline, and
+      // a heartbeat there would re-open a call nothing would ever close.
+      clearToolProgress(runId);
       result.exitCode = code ?? -1;
       // The last message the CLI wrote, for a CLI that was asked to write one.
       // It outranks whatever the stream reported for the same reason `buildArgs`
@@ -7300,6 +7308,206 @@ function noteUnknownStreamEvent(
   recordOpsEvent("warn", "stream.unknown_event", { cli, type, runId });
 }
 
+/* ------------------------------------------------------------------ */
+/* What a cycle is still inside                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Tool calls the running cycle has not come back from, per run.
+ *
+ * **Held here and never persisted, which is the whole design.** Claude Code
+ * restates a running tool every 30 seconds for as long as it runs — measured
+ * against 2.1.266, a 95-second `Bash` produced heartbeats at 30, 60 and 90 and
+ * then its result — so a twenty-minute build is forty statements of one fact
+ * with a 30-day retention on them. `run_events` already carries one
+ * high-frequency type this app had to start dropping by name, and the
+ * `thinking_tokens` note in `handleStreamLine` has the measurement: 64% of the
+ * rows on this install. A row per heartbeat would be that defect with a second
+ * cause, in exchange for a fact worth nothing once the tool has answered.
+ *
+ * It leaves by the bus on a topic of its own rather than through `emit()`,
+ * because `emit()` is persist-then-publish and its one subscriber may assume
+ * every frame it is handed is a row with an id it can reconnect from.
+ * `subscribeToolActivity` is the second door and `toolActivity` is the way a
+ * page that joined mid-call learns what is open without waiting up to 30
+ * seconds for the next heartbeat.
+ *
+ * `globalThis`-pinned under its own key, for the reason every long-lived
+ * singleton here is: module state resets on every request under `next dev`.
+ */
+const liveTools = ((globalThis as unknown as {
+  __ufLiveToolsV1?: Map<string, Map<string, RunToolActivityDTO>>;
+}).__ufLiveToolsV1 ??= new Map<string, Map<string, RunToolActivityDTO>>());
+
+/**
+ * One `tool_progress` frame read as "this call is still open".
+ *
+ * Pure and exported for its test, because every way of getting the arithmetic
+ * wrong is silent: a strip that says a build has been running for eleven
+ * seconds when it has been running for eleven minutes reads as a healthy cycle,
+ * which is the one reading this exists to correct.
+ *
+ * **The first heartbeat decides `startedAt` and no later one moves it.**
+ * `elapsed_time_seconds` is whole seconds measured on the CLI's clock and each
+ * frame crosses a pipe, so recomputing the start every 30 seconds would walk
+ * the operator's duration backwards and forwards by a second or two forever.
+ * What the later frames carry is `seenAt`.
+ *
+ * Null for a frame with no call to key on, rather than an entry under an empty
+ * id — a strip that draws one anonymous row per heartbeat is worse than one
+ * that draws nothing.
+ */
+export function toolProgressReading(
+  ev: Record<string, unknown>,
+  calls: ReadonlyMap<string, ToolCall>,
+  live: ReadonlyMap<string, RunToolActivityDTO>,
+  now: number,
+): RunToolActivityDTO | null {
+  // `parent_tool_use_id` is the running call's own id and `tool_use_id` is the
+  // heartbeat's, `<id>-heartbeat-<n>`, minted afresh every 30 seconds. Keying
+  // on the second would put one row per half minute on the strip, each of them
+  // the same tool. The suffix strip is the fallback for the same reason the
+  // parser prefers a flag to a heuristic everywhere else: it is what to do when
+  // the field this reads moves, not the first thing to try.
+  const parent =
+    typeof ev.parent_tool_use_id === "string" ? ev.parent_tool_use_id : "";
+  const own = typeof ev.tool_use_id === "string" ? ev.tool_use_id : "";
+  const toolUseId = parent || own.replace(/-heartbeat-\d+$/, "");
+  if (!toolUseId) return null;
+
+  // The call this cycle already logged, which is where the command comes from:
+  // a heartbeat carries a tool's name and never its arguments, and "Bash" alone
+  // says less than the log line four screens up already said.
+  const call = calls.get(toolUseId);
+
+  // `Number` rather than a `typeof` test, which is the leniency the rest of
+  // this parser deliberately refuses elsewhere: there, a coerced value would
+  // change what a run is *recorded* as having cost or said. Here the only thing
+  // downstream is a duration on a strip, and the two ways of being wrong are
+  // not equal — a figure that arrives as a string still dates the call
+  // correctly, where refusing it silently loses however long the tool had
+  // already been running before this page was told about it.
+  const elapsed = Number(ev.elapsed_time_seconds);
+  const startedAt =
+    live.get(toolUseId)?.startedAt ??
+    now - (Number.isFinite(elapsed) && elapsed > 0 ? elapsed * 1_000 : 0);
+
+  // A retry is the CLI waiting on a wall rather than a tool doing work, and it
+  // is the one variant of this event that is not simply "still going". Read
+  // defensively and dropped whole when either half is missing: half a retry
+  // drawn as a retry is a claim about how many attempts are left.
+  const r = ev.subagent_retry as Record<string, unknown> | undefined;
+  const attempt = Number(r?.attempt);
+  const maxRetries = Number(r?.max_retries);
+  const retry =
+    Number.isFinite(attempt) && Number.isFinite(maxRetries)
+      ? { attempt, maxRetries }
+      : null;
+
+  return {
+    toolUseId,
+    // The log's name first. A `Task` call arrives here as `Agent` — the CLI's
+    // internal name for that tool — and one page must not have two names for
+    // one call. The CLI's word is the fallback for a stream this app joined
+    // after the call was made.
+    name: call?.name ?? (typeof ev.tool_name === "string" ? ev.tool_name : "tool"),
+    command: call?.command || null,
+    startedAt,
+    seenAt: now,
+    retry,
+  };
+}
+
+/** Record one heartbeat and tell whoever is watching. */
+function noteToolProgress(
+  runId: string,
+  ev: Record<string, unknown>,
+  acc: IterationResult,
+): void {
+  const open = liveTools.get(runId) ?? new Map<string, RunToolActivityDTO>();
+  const entry = toolProgressReading(ev, acc.toolCalls, open, Date.now());
+  if (entry === null) return;
+  open.set(entry.toolUseId, entry);
+  liveTools.set(runId, open);
+  publishToolActivity(runId);
+}
+
+/**
+ * Forget the calls that have answered, or all of them when a cycle ends.
+ *
+ * The cycle-end sweep is not belt and braces: a cycle killed mid-call never
+ * sends the result that would clear it, and an entry nothing removes is a strip
+ * that says a run which stopped an hour ago is still inside `npm test`.
+ */
+function clearToolProgress(runId: string, answered?: readonly string[]): void {
+  const open = liveTools.get(runId);
+  if (open === undefined) return;
+  if (answered === undefined) {
+    liveTools.delete(runId);
+  } else {
+    let removed = false;
+    for (const id of answered) removed = open.delete(id) || removed;
+    if (!removed) return;
+    if (open.size === 0) liveTools.delete(runId);
+  }
+  publishToolActivity(runId);
+}
+
+/**
+ * Every call a `user` event answers, whether it worked or not.
+ *
+ * Deliberately not `toolResultFailures`, which is about the half of these that
+ * the log records: a successful result is still the end of a call, and reading
+ * only the failures would leave every call that worked on the strip until the
+ * cycle ended.
+ */
+function answeredToolUseIds(ev: Record<string, unknown>): string[] {
+  const message = ev.message as
+    | (Record<string, unknown> & { content?: unknown })
+    | undefined;
+  const blocks = Array.isArray(message?.content) ? message.content : [];
+  const ids: string[] = [];
+  for (const block of blocks) {
+    const b = block as Record<string, unknown> | null;
+    if (b?.type === "tool_result" && typeof b.tool_use_id === "string") {
+      ids.push(b.tool_use_id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * What this run is inside right now, longest-running first.
+ *
+ * The order is the point: one strip may carry several calls — the CLI runs up
+ * to ten tools at once — and the one an operator is deciding about is the one
+ * that has been going longest.
+ */
+export function toolActivity(runId: string): RunToolActivityDTO[] {
+  return [...(liveTools.get(runId)?.values() ?? [])].sort(
+    (a, b) => a.startedAt - b.startedAt,
+  );
+}
+
+/**
+ * The live-only half of the run stream, on its own bus topic.
+ *
+ * The suffix cannot collide with a run's own topic: run ids are UUIDs and carry
+ * no colon.
+ */
+export function subscribeToolActivity(
+  runId: string,
+  fn: (tools: RunToolActivityDTO[]) => void,
+): () => void {
+  const topic = `${runId}:tools`;
+  bus.on(topic, fn);
+  return () => void bus.off(topic, fn);
+}
+
+function publishToolActivity(runId: string): void {
+  bus.emit(`${runId}:tools`, toolActivity(runId));
+}
+
 /** Interpret one line of Claude Code's `stream-json` output. */
 function handleStreamLine(
   runId: string,
@@ -7488,7 +7696,25 @@ function handleStreamLine(
   // which latches on first sight; and the `assistant` kind, which
   // `cycleOutputs` takes the last of as the cycle's report. It has its own
   // kind, like a delegated turn, rather than a flag on `tool`.
+  // A tool the CLI has not come back from, restated every 30 seconds for as
+  // long as that is true. Held in memory and published live rather than logged
+  // — `liveTools` has the measurement and the reason — so this branch writes
+  // no row and the feed below gains no line.
+  //
+  // Named here rather than left to `noteUnknownStreamEvent`, which is what used
+  // to answer it: an event whose whole content is "still working" is the one
+  // kind of event that must not be filed as a vocabulary the app has lost.
+  if (type === "tool_progress") {
+    noteToolProgress(runId, ev, acc);
+    return;
+  }
+
   if (type === "user") {
+    // Before the failures and over all of them: a call that answered is a call
+    // that is no longer running, and the successful ones are the majority the
+    // log deliberately does not record.
+    clearToolProgress(runId, answeredToolUseIds(ev));
+
     for (const failure of toolResultFailures(ev, acc)) {
       emit({
         runId,

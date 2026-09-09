@@ -7,6 +7,7 @@ import { git } from "./git";
 import { childCredentials } from "./privsep";
 import { diffAsText, runDiff, type RunDiff } from "./diff";
 import { agentsArgs, type AgentDefinition } from "./agents";
+import { clipToolInput } from "./logLine";
 import { dataDirRefusal } from "./serverLock";
 import { getSettings } from "./settings";
 import {
@@ -662,6 +663,68 @@ export function settleOnExit(
   child.on("close", (code) => once(code));
 }
 
+/**
+ * The tool calls one `stream-json` line carries, or nothing — which is most
+ * lines.
+ *
+ * Pure, and separated from the spawn for the reason every other reader of this
+ * stream is: its failure mode is silence. A shape it stops recognising is an
+ * assist whose work simply does not appear in the log, which reads exactly like
+ * an assist that read nothing before deciding — and that is the reading this
+ * exists to make possible.
+ *
+ * Only `tool_use` blocks. The assistant's *text* is deliberately not taken: an
+ * assist's reply belongs in `run_reviews.text`, where the page draws it as a
+ * verdict or a review, and the same words on the run's own log would read as
+ * the run's report about itself.
+ */
+export function assistToolUses(line: string): { name: string; input: unknown }[] {
+  let ev: Record<string, unknown>;
+  try {
+    ev = JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    return [];
+  }
+  if (!ev || typeof ev !== "object" || ev.type !== "assistant") return [];
+  const message = ev.message as { content?: unknown } | undefined;
+  const blocks = Array.isArray(message?.content) ? message.content : [];
+  const calls: { name: string; input: unknown }[] = [];
+  for (const block of blocks) {
+    const b = block as Record<string, unknown> | null;
+    if (b?.type === "tool_use") calls.push({ name: String(b.name ?? "tool"), input: b.input });
+  }
+  return calls;
+}
+
+/**
+ * Put what an assist is doing on the run's own log, attributed to the assist.
+ *
+ * The same `tool` kind and the same clipping a work cycle's calls get, plus the
+ * one field that says who made the call — `assist`, which `describeEvent` turns
+ * into the `check ›` / `review ›` / `resolve ›` prefix. Attribution is not
+ * optional here for the reason a sub-agent's calls carry it: an unlabelled
+ * `Grep` between two of the run's own lines reads as the run's, and these
+ * arrive while the run is still mid-cycle and still writing its own.
+ */
+function logAssistTools(runId: string, kind: AssistKind, line: string): void {
+  for (const call of assistToolUses(line)) {
+    const stored = clipToolInput(call.input);
+    emitRunEvent({
+      runId,
+      ts: Date.now(),
+      kind: "tool",
+      payload: {
+        name: call.name,
+        input: stored.input,
+        ...(stored.truncatedFrom !== undefined
+          ? { truncatedFrom: stored.truncatedFrom }
+          : {}),
+        assist: kind,
+      },
+    });
+  }
+}
+
 /** Spawn one, and record what it cost whatever happened. */
 function spawnAssist(id: string, req: AssistRequest): Promise<void> {
   const { run, kind, cwd, prompt, permissionMode, allowedTools } = req;
@@ -670,8 +733,20 @@ function spawnAssist(id: string, req: AssistRequest): Promise<void> {
     const args = [
       "-p",
       prompt,
+      // Line-delimited events rather than one object at exit, `chat.ts`'s
+      // reason and one of its own. A validation is the only child this app
+      // starts without being asked, and under `json` the whole of what it did
+      // was invisible until it was over: the run's log showed the tool call
+      // that claimed the task, then a minute of nothing, then a verdict. What
+      // the operator could not see is the half they need to decide whether to
+      // believe it — which files it read before deciding the work was there.
+      //
+      // `--verbose` is not optional beside it: the CLI gates streaming output
+      // on the pair, and without it this prints nothing until the end exactly
+      // as before, which would be the same defect with a different flag on it.
       "--output-format",
-      "json",
+      "stream-json",
+      "--verbose",
       "--permission-mode",
       permissionMode,
     ];
@@ -729,11 +804,36 @@ function spawnAssist(id: string, req: AssistRequest): Promise<void> {
       detached: getSettings().killProcessGroup && process.platform !== "win32",
     });
 
+    // The whole of stdout is still kept: `parseReviewOutput` reads the result
+    // object out of it at the end, and a child killed mid-line leaves whatever
+    // it managed to print for the failure path. `pending` is the same bytes
+    // being consumed a line at a time on the way past.
     let stdout = "";
+    let pending = "";
     let stderr = "";
+    const drain = (upToNewlineOnly: boolean) => {
+      for (;;) {
+        const nl = pending.indexOf("\n");
+        if (nl === -1) break;
+        const line = pending.slice(0, nl).trim();
+        pending = pending.slice(nl + 1);
+        if (line) logAssistTools(run.id, kind, line);
+      }
+      if (upToNewlineOnly) return;
+      // The CLI terminates its `result` event, but a child that was killed does
+      // not terminate whatever it was writing — and a complete last line with
+      // no newline after it is a tool call this would otherwise drop.
+      const tail = pending.trim();
+      pending = "";
+      if (tail) logAssistTools(run.id, kind, tail);
+    };
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (c: string) => (stdout += c));
+    child.stdout.on("data", (c: string) => {
+      stdout += c;
+      pending += c;
+      drain(true);
+    });
     child.stderr.on("data", (c: string) => (stderr += c.slice(0, 4_096)));
 
     let timedOut = false;
@@ -792,6 +892,7 @@ function spawnAssist(id: string, req: AssistRequest): Promise<void> {
     });
 
     settleOnExit(child, (code) => {
+      drain(false);
       if (timedOut) {
         void land({
           status: "failed",
@@ -859,23 +960,57 @@ export interface AssistResult {
 }
 
 /**
- * Read the CLI's `--output-format json` object.
+ * The CLI's own result object, out of whatever it printed.
  *
- * Same field names the `stream-json` `result` event carries, from the same
- * pinned CLI build — `total_cost_usd` is the authoritative per-invocation cost
- * and is never re-derived from token counts, exactly as in the run loop.
+ * `stream-json` writes one `result` event at the end of many lines, and the
+ * `json` format writes that same object alone — same field names, same pinned
+ * build — so this reads both and neither call site has to know which it got.
+ *
+ * The `type` test is what makes it exact rather than "the last line that
+ * parsed": an assist killed mid-stream has an `assistant` event as its last
+ * complete line, and reading that as the result would report a turn that never
+ * finished as one that finished with no text and cost nothing. Falling through
+ * to the whole string only when *no* result event arrived is what keeps the
+ * `json` shape readable, including one that carries no `type` at all.
+ */
+function resultObject(stdout: string): Record<string, unknown> | null {
+  const object = (text: string): Record<string, unknown> | null => {
+    try {
+      const ev = JSON.parse(text) as unknown;
+      return ev && typeof ev === "object" ? (ev as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  };
+  for (const line of stdout.split("\n").reverse()) {
+    const text = line.trim();
+    if (!text) continue;
+    const ev = object(text);
+    if (ev && ev.type === "result") return ev;
+  }
+  const whole = object(stdout.trim());
+  // A stream event is never the answer, even when it is the only thing that
+  // was printed: one `assistant` line is what a killed child leaves behind, and
+  // taken as a result it reports a turn that never finished as one that
+  // finished with no text and cost nothing — with the stderr saying why
+  // dropped. Anything else, including an object carrying no `type` at all, is
+  // the one-object shape and is read as it always was.
+  if (whole && typeof whole.type === "string" && whole.type !== "result") return null;
+  return whole;
+}
+
+/**
+ * Read what the child said it did.
+ *
+ * `total_cost_usd` is the authoritative per-invocation cost and is never
+ * re-derived from token counts, exactly as in the run loop.
  */
 export function parseReviewOutput(
   stdout: string,
   stderr: string,
   code: number | null,
 ): AssistResult {
-  let parsed: Record<string, unknown> | null = null;
-  try {
-    parsed = JSON.parse(stdout.trim()) as Record<string, unknown>;
-  } catch {
-    parsed = null;
-  }
+  const parsed = resultObject(stdout);
 
   if (!parsed) {
     return {

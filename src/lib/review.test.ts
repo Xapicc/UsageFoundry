@@ -5,10 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
-import { parseReviewOutput, settleOnExit } from "./review";
+import { assistToolUses, parseReviewOutput, settleOnExit } from "./review";
 
 /**
- * Covers reading the CLI's own result object and `settleOnExit`, and only those.
+ * Covers the two readings of an assist's output — the CLI's own result object
+ * and the tool calls on the way to it — and `settleOnExit`, and only those.
  *
  * `parseReviewOutput`'s failure mode is the same one `spent_usd` guards against
  * elsewhere: a review that was billed and recorded at $0. Cost is read from
@@ -74,6 +75,88 @@ describe("parseReviewOutput", () => {
     const r = parseReviewOutput(empty, "", 0);
     assert.equal(r.status, "failed");
     assert.equal(r.costUSD, 0.5);
+  });
+
+  it("reads the result event out of a stream, not the last line that parsed", () => {
+    const stream = [
+      JSON.stringify({ type: "system", subtype: "init", session_id: "s1" }),
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "tool_use", name: "Read", input: { file_path: "/w/a.ts" } }] },
+      }),
+      ok,
+      "",
+    ].join("\n");
+    const r = parseReviewOutput(stream, "", 0);
+    assert.equal(r.status, "completed");
+    assert.equal(r.costUSD, 0.0421);
+    assert.match(r.text ?? "", /renamed a file/);
+  });
+
+  it("reports a stream that stopped before its result as unreadable", () => {
+    // The failure this splits from the one above: a killed child's last
+    // complete line is an ordinary event, and reading it as the result would
+    // record a turn that never finished as one that finished for $0.
+    const cut = JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "still thinking" }] },
+    });
+    const r = parseReviewOutput(`${cut}\n`, "boom\n", 137);
+    assert.equal(r.status, "failed");
+    assert.match(r.error ?? "", /boom/);
+  });
+});
+
+/**
+ * What an assist did, on the run's own log.
+ *
+ * Its failure mode is silence in both directions and neither throws. A shape
+ * this stops recognising is a check that appears to have decided a task was
+ * finished without reading anything — which is precisely the doubt the lines
+ * were added to answer. A shape it recognises too eagerly puts the assist's
+ * *text* on the run's log, where it reads as the run's own report.
+ */
+describe("assistToolUses", () => {
+  it("reads every tool call on one assistant event", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          { type: "text", text: "Looking at the branch." },
+          { type: "tool_use", name: "Grep", input: { pattern: "readBullets" } },
+          { type: "tool_use", name: "Read", input: { file_path: "/w/tools/handoff.js" } },
+        ],
+      },
+    });
+    assert.deepEqual(assistToolUses(line), [
+      { name: "Grep", input: { pattern: "readBullets" } },
+      { name: "Read", input: { file_path: "/w/tools/handoff.js" } },
+    ]);
+  });
+
+  it("takes nothing from a result, a tool result or a line that is not JSON", () => {
+    assert.deepEqual(assistToolUses(ok), []);
+    assert.deepEqual(
+      assistToolUses(
+        JSON.stringify({
+          type: "user",
+          message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "…" }] },
+        }),
+      ),
+      [],
+    );
+    assert.deepEqual(assistToolUses("Claude Code v2.1.0"), []);
+    assert.deepEqual(assistToolUses(""), []);
+  });
+
+  it("names an unnamed call rather than dropping it", () => {
+    // A block with no `name` is still a call the assist made, and a log that
+    // silently omits it is the reading this exists to prevent.
+    const line = JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", input: {} }] },
+    });
+    assert.deepEqual(assistToolUses(line), [{ name: "tool", input: {} }]);
   });
 });
 

@@ -348,6 +348,11 @@ export function readCountsFor(folder: string, now = Date.now()): Map<string, num
            AND e.ts >= ?
            AND r.folder = ?
            AND json_extract(e.payload, '$.name') = 'Read'
+           -- Work cycles only. An assist's reads are on the same log since
+           -- review.ts began streaming them, and this figure is handed to an
+           -- agent as what agents here keep re-reading — a reviewer's one pass
+           -- over a file is not a habit the next run should be warned about.
+           AND json_extract(e.payload, '$.assist') IS NULL
        )
        WHERE rel IS NOT NULL
        GROUP BY rel`,

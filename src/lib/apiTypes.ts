@@ -2063,6 +2063,49 @@ export interface WorkflowInstanceDTO {
   blocks: WorkflowInstanceBlockDTO[];
 }
 
+/**
+ * A tool call this run has not come back from, as of the CLI's last word on it.
+ *
+ * **Live only — no row in `run_events` corresponds to one of these.** Claude
+ * Code says a tool is still running every 30 seconds for as long as it is, so a
+ * build that ran for twenty minutes is forty statements of the same fact, and
+ * an hour later every one of them is worthless. What the operator wants from it
+ * — that the cycle which has printed nothing for eight minutes is inside
+ * something rather than wedged — expires the moment the tool answers.
+ */
+export interface RunToolActivityDTO {
+  /**
+   * The id of the call itself, never the heartbeat's own — the CLI spells that
+   * `<tool_use_id>-heartbeat-<n>` and mints a new one every 30 seconds.
+   */
+  toolUseId: string;
+  /**
+   * The name the log already used for this call where the cycle saw it made,
+   * and the CLI's own word otherwise. The two disagree: a `Task` call arrives
+   * on the heartbeat as `Agent`, and one page must not have two names for one
+   * call.
+   */
+  name: string;
+  /** What the call was about, as `toolArgs` renders it. Null if it was unseen. */
+  command: string | null;
+  /**
+   * When the tool started, derived once from the first heartbeat's own elapsed
+   * figure and never recomputed — see `toolProgressReading`.
+   */
+  startedAt: number;
+  /**
+   * When the last heartbeat arrived. A reading, not a claim: this app learns
+   * that a tool ended from the result that answers it, and a cycle killed
+   * mid-call never sends one.
+   */
+  seenAt: number;
+  /**
+   * Set while the CLI is retrying a sub-agent's API call rather than working.
+   * Null on an ordinary heartbeat, which is every one this app has measured.
+   */
+  retry: { attempt: number; maxRetries: number } | null;
+}
+
 export interface RunEventDTO {
   id?: number;
   runId: string;
@@ -2115,7 +2158,17 @@ export interface RunEventDTO {
     | "deliver"
     | "review"
     | "error"
-    | "replay-complete";
+    | "replay-complete"
+    /**
+     * What the run is inside right now, as a whole set rather than a delta.
+     *
+     * A frame the SSE route makes up, like `replay-complete`, and the second
+     * one that is never a row: it carries `RunToolActivityDTO[]` under `tools`
+     * and it is sent without an `id:` line, so it cannot advance a client's
+     * replay cursor past events that *are* rows. The set is whole on every
+     * frame because a page that joins late has no deltas to catch up on.
+     */
+    | "tool-activity";
   payload: Record<string, unknown>;
 }
 
