@@ -6,7 +6,7 @@ lets bubblewrap create a user namespace. Docker's default profile does not: the
 whole namespace-and-mount family is allowed only for a container that holds
 CAP_SYS_ADMIN, and this one deliberately holds none, so `unshare` fails with
 EPERM before the kernel is ever asked (measured in the shipped container —
-`proposals/Sandboxing/10-validation.md`: plain `unshare -U`, which needs no
+`proposals/implemented - Sandboxing/10-validation.md`: plain `unshare -U`, which needs no
 capability at all, fails the same way, `Seccomp: 2` with one filter loaded, and
 the kernel's own `max_user_namespaces` is 31734).
 
