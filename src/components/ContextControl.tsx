@@ -131,10 +131,13 @@ function combinedUSD(
  * sum. The split stays on the card, as a share under each span, because an
  * operator deciding whether to leave *either* mechanism on needs the halves.
  *
- * The overstatement itself is **not** printed here, and this comment used to
- * claim it was. It is recorded in `docs/verification.md` and in `contextTokens`
- * (`contextPruning.ts`); whether it belongs on the card is a copy decision
- * nobody has taken, not something that was taken and then lost.
+ * The overstatement itself is **not** printed here. A footnote under the figure
+ * used to say it, and `6a78ef9` deleted that footnote from the rendered card in
+ * the same pass that took the coverage caveat off the window meters — so its
+ * absence is a copy decision taken against this dashboard, not an oversight,
+ * and putting it back is reverting that pass rather than finishing this
+ * comment. The bound stays in `docs/verification.md` and in `contextTokens`
+ * (`contextPruning.ts`), which is where a reader who wants it goes.
  *
  * ## Why the week leads and the filter's share follows
  *
@@ -151,10 +154,11 @@ function combinedUSD(
  *
  * ## What it may not do up here
  *
- * `default` against the meters' `primary`, and the footnote, are the two things
- * keeping this away from the money it sits next to. Neither half is spend:
- * the meters are priced from `usage` frames, which report the request the
- * filter had already rewritten, so both of these are counterfactuals whose
+ * `default` against the meters' `primary` is what keeps this away from the
+ * money it sits next to, and since the footnote went it is the only thing doing
+ * that — which is the reason not to reach for a louder tone. Neither half is
+ * spend: the meters are priced from `usage` frames, which report the request
+ * the filter had already rewritten, so both of these are counterfactuals whose
  * value is already absent from every number beside them.
  *
  * The derivation of both stays in a band lower down. A net is three or four
