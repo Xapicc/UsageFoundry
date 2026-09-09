@@ -8,9 +8,11 @@ import type { SessionBlockDTO } from "../lib/apiTypes";
  * The Tokens column is a sum this card does itself, and the sum is the whole
  * risk.
  *
- * `TokenCountsDTO` has five members and a window's volume is all five. Dropping
- * one — `cacheWrite1h` is the one that arrived last and is easiest to forget —
- * understates every row against the meter this table exists to break down, and
+ * `TokenCountsDTO` has six members and a window's volume is all six. Dropping
+ * one — `cacheWriteUnattributed` is the one that arrived last and is easiest to
+ * forget, and it is 100% of the write volume on a transcript written before the
+ * TTL split shipped — understates every row against the meter this table exists
+ * to break down, and
  * it fails nothing: the column still holds a plausible number, the typecheck is
  * green, and no total on the page is drawn across these rows to disagree with.
  *
@@ -31,13 +33,14 @@ function block(over: Partial<SessionBlockDTO> = {}): SessionBlockDTO {
     isActive: false,
     agg: {
       // Doubling, and every member far enough above `fmtTokens`' 0.01M step
-      // that dropping any one of the five lands on a different string.
+      // that dropping any one of the six lands on a different string.
       tokens: {
         input: 100_000,
         output: 200_000,
         cacheRead: 400_000,
         cacheWrite5m: 800_000,
         cacheWrite1h: 1_600_000,
+        cacheWriteUnattributed: 3_200_000,
       },
       costUSD: 12.5,
       costGuardUSD: 12.5,
@@ -49,11 +52,12 @@ function block(over: Partial<SessionBlockDTO> = {}): SessionBlockDTO {
   };
 }
 
-test("the token column is every one of the five counts", () => {
+test("the token column is every one of the six counts", () => {
   const html = renderToStaticMarkup(<RecentBlocksCard blocks={[block()]} />);
-  // 3.1M is all five. Dropping one gives 3.00M, 2.90M, 2.70M, 2.30M or 1.50M —
-  // every omission is visible, which is what makes this assertion worth having.
-  assert.match(html, /3\.10M/);
+  // 6.30M is all six. Dropping one gives 6.20M, 6.10M, 5.90M, 5.50M, 4.70M or
+  // 3.10M — every omission is visible, which is what makes this assertion worth
+  // having.
+  assert.match(html, /6\.30M/);
 });
 
 test("the claude- prefix is stripped from every model, not only the first", () => {

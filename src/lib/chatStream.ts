@@ -73,8 +73,11 @@ function usageOf(message: Record<string, unknown> | undefined): TokenCounts {
   const creation = (usage.cache_creation ?? {}) as Record<string, unknown>;
   // The 1h bucket is only ever present when the caller asked for it, and the
   // flat `cache_creation_input_tokens` is the sum of both when the breakdown is
-  // not there. Preferring the breakdown and falling back to the flat figure is
-  // what keeps a 1h write from being priced as a 5m one.
+  // not there. `readTokens` in `transcripts.ts` reads the same fields the same
+  // way and for the same reason: what neither bucket declared goes in its own
+  // field, priced at the floor for display and at the 1h class for the guard,
+  // rather than into `cacheWrite5m` where a 2.00x write would be billed at
+  // 1.25x with nothing anywhere saying so.
   const write5m = n(creation.ephemeral_5m_input_tokens);
   const write1h = n(creation.ephemeral_1h_input_tokens);
   const flat = n(usage.cache_creation_input_tokens);
@@ -82,8 +85,10 @@ function usageOf(message: Record<string, unknown> | undefined): TokenCounts {
     input: n(usage.input_tokens),
     output: n(usage.output_tokens),
     cacheRead: n(usage.cache_read_input_tokens),
-    cacheWrite5m: write5m || write1h ? write5m : flat,
+    cacheWrite5m: write5m,
     cacheWrite1h: write1h,
+    cacheWriteUnattributed:
+      write5m || write1h ? Math.max(0, flat - write5m - write1h) : flat,
   };
 }
 

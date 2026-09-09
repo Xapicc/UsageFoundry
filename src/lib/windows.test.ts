@@ -1148,6 +1148,7 @@ describe("tool composition on the snapshot", () => {
         cacheRead: 900_000,
         cacheWrite5m: 0,
         cacheWrite1h: 90_000,
+        cacheWriteUnattributed: 0,
       },
     };
     const snap = buildSnapshot([rich], NO_LIMITS, now, null, null, null, [

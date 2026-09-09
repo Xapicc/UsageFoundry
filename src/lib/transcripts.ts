@@ -326,7 +326,8 @@ function flattenWalk(
  * in `readdir` order and `flattenWalk` reassembles them rather than the walk
  * emitting files in whatever order the levels happen to finish.
  *
- * Exported for `transcripts.test.ts`, which has no other way to see that order.
+ * Exported for `transcriptWalk.test.ts`, which has no other way to see that
+ * order.
  */
 export async function listTranscriptFiles(
   root: string,
@@ -343,7 +344,16 @@ export async function listTranscriptFiles(
   return { files, failures };
 }
 
-function readTokens(usage: Record<string, unknown>): TokenCounts {
+/**
+ * One `usage` block as this app counts tokens.
+ *
+ * Exported for `transcripts.test.ts` on the footing `listTranscriptFiles` has:
+ * every caller reaches it through a directory walk, and the one decision worth
+ * pinning — where cache creation with no declared TTL goes — is invisible from
+ * the outside, since a record whose whole write volume was mispriced by a third
+ * still parses, still totals and still renders.
+ */
+export function readTokens(usage: Record<string, unknown>): TokenCounts {
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
   const cacheCreation = (usage.cache_creation ?? {}) as Record<string, unknown>;
 
@@ -352,9 +362,20 @@ function readTokens(usage: Record<string, unknown>): TokenCounts {
   const totalCreate = num(usage.cache_creation_input_tokens);
 
   // Older records carry only the aggregate `cache_creation_input_tokens` with
-  // no TTL split. Attribute those to the 5m bucket: it is the cheaper of the
-  // two, so an unsplit record understates rather than overstates cost, and the
-  // UI flags the ambiguity instead of inventing a distribution.
+  // no TTL split, and so does any `~/.claude` tree copied from a machine whose
+  // CLI predates it. That volume is carried in its own field rather than folded
+  // into either class: 5m writes cost 1.25x input and 1h writes 2.00x, cache
+  // writes are ~48% of the bill, and putting all of it in the cheaper bucket is
+  // a distribution chosen for its direction, not the absence of one.
+  //
+  // `costOf` still prices it at 1.25x — the shown figure understates rather
+  // than guesses — while `guardCostOf` prices it at 2.00x, so a ceiling is
+  // bounded from above and the meters' hatched span draws the gap. The
+  // dashboard names the volume in a banner beside the unpriced-models one,
+  // which is what a hatch on its own cannot say. Said here because the previous
+  // comment claimed that flag while no field carried the volume as far as a
+  // page, and a comment asserting a safeguard that does not exist is how this
+  // stayed invisible.
   const split = declared5m + declared1h;
   const unattributed = Math.max(0, totalCreate - split);
 
@@ -362,8 +383,9 @@ function readTokens(usage: Record<string, unknown>): TokenCounts {
     input: num(usage.input_tokens),
     output: num(usage.output_tokens),
     cacheRead: num(usage.cache_read_input_tokens),
-    cacheWrite5m: declared5m + unattributed,
+    cacheWrite5m: declared5m,
     cacheWrite1h: declared1h,
+    cacheWriteUnattributed: unattributed,
   };
 }
 

@@ -2427,8 +2427,20 @@ export interface TurnResult {
   status: "idle" | "failed";
   text?: string;
   error?: string;
+  /**
+   * What the CLI itself said the turn cost. **Absent means it never said** —
+   * the child died before its `result` event — not that the turn was free, and
+   * a caller that banks `costUSD ?? 0` has written a measurement nobody made.
+   */
   costUSD?: number;
   tokens?: number;
+  /**
+   * Our own price for the usage the stream did report, carried only when
+   * `costUSD` is absent. A guard figure and never a shown one, for
+   * `guardCostOf`'s reason: it is what a ceiling may act on when the measured
+   * figure is missing, not a second opinion about a turn that reported.
+   */
+  costGuardUSD?: number;
   sessionId?: string | null;
   denials?: string[];
 }
@@ -2963,6 +2975,11 @@ export function turnResultOf(
       // caller can record what the turn cost rather than losing it with the
       // answer, which is the whole of what the old shape did.
       tokens: totalTokens(acc.tokens),
+      // And what they cost, at our own price — the reconciliation a killed
+      // work cycle gets in `orchestrator.ts`, which the block path had no
+      // equivalent of. `costUSD` is deliberately still absent: nothing measured
+      // this turn, and the two must not be confused by whoever banks them.
+      costGuardUSD: acc.costGuardUSD,
       sessionId: acc.sessionId,
     };
   }

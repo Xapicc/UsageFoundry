@@ -11,6 +11,13 @@ export interface TokenCountsDTO {
   cacheRead: number;
   cacheWrite5m: number;
   cacheWrite1h: number;
+  /**
+   * Cache creation the record declared no TTL for — see `TokenCounts`. Its own
+   * member because it is neither class: the shown cost prices it at 1.25x and
+   * the guard's at 2.00x, and a volume folded into either would have lost that.
+   * Any sum over this shape is wrong without it.
+   */
+  cacheWriteUnattributed: number;
 }
 
 export interface AggregateDTO {
@@ -1885,7 +1892,12 @@ export interface WorkflowInstanceNodeDTO {
     /** Null for a mount that has since been removed; `relPath` is then absolute. */
     mountLabel: string | null;
     relPath: string;
-    spentUSD: number;
+    /**
+     * Null for a member spawned as a provider that reports no cost — see
+     * `providerReportsSpend`. `runs.spent_usd` holds 0 for those and it is a
+     * null in disguise; the cell draws `—`.
+     */
+    spentUSD: number | null;
   } | null;
   /** Node ids this block was told to start after, from the instance's graph. */
   waitsFor: string[];
@@ -1914,8 +1926,21 @@ export interface WorkflowInstanceBlockDTO {
   status: "waiting" | "thinking" | "looping" | "emitted" | "failed" | "blocked";
   startedAt: number | null;
   finishedAt: number | null;
-  /** The turn's own cost. Never added to a run's spend or to a meter. */
-  costUSD: number;
+  /**
+   * The turn's own cost. Never added to a run's spend or to a meter.
+   *
+   * **Null when nothing measured it** — a turn killed, crashed or timed out
+   * before its `result` event never reported a cost, and the tokens it burned
+   * first were still billed. The cell renders `—` for that, on the rule the
+   * runs list already follows: `$0.00` is a measurement claim nobody made.
+   */
+  costUSD: number | null;
+  /**
+   * True when a turn of this block ended without reporting a cost. Set even
+   * when `costUSD` is non-null, which is a block whose other turns reported:
+   * the figure is then a floor rather than the block's bill.
+   */
+  costUnknown: boolean;
   /**
    * How many runs this block started — passes, for a loop block. 0 is a real
    * answer, not "not yet".
@@ -2011,11 +2036,28 @@ export interface WorkflowInstanceDTO {
    * acts on: that, plus reconciled estimates for killed cycles, plus what
    * telemetry says the cycles in flight have cost so far. Neither is ever added
    * to a dashboard meter or to `runs.spent_usd`. Both include what this
-   * instance's orchestrator blocks spent deciding, which is measured the same
-   * way a run's is and belongs to the same press of Run.
+   * instance's orchestrator blocks spent deciding, which belongs to the same
+   * press of Run — the part of it a CLI reported in the first figure, our own
+   * price for the part none did in the second.
    */
   spentUSD: number;
   spentGuardUSD: number;
+  /**
+   * Members and blocks whose spend was never measured at all, and which
+   * therefore appear in neither figure as themselves.
+   *
+   * Non-zero means `spentUSD` is not the instance's bill and the page must not
+   * call it one — a block whose turn died before reporting, or a member on a
+   * provider that reports no cost. Zero is a complete reading, not an absent
+   * one; a graph that spent nothing still reads 0 here.
+   */
+  spentUnmeasured: number;
+  /**
+   * How many members and blocks could have reported a cost at all. The
+   * denominator for the one above, so "three reported nothing" can be read as
+   * coverage rather than as a number with nothing to size it against.
+   */
+  spentSubjects: number;
   nodes: WorkflowInstanceNodeDTO[];
   /** Blocks that are not runs: orchestrator turns, and blocks never created. */
   blocks: WorkflowInstanceBlockDTO[];

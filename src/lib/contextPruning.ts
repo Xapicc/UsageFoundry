@@ -13,6 +13,7 @@ import {
   CACHE_WRITE_1H_MULTIPLIER,
   CACHE_WRITE_5M_MULTIPLIER,
   cacheReadMultiplierOf,
+  cacheWriteTokens,
   resolvePrice,
 } from "./pricing";
 import { scanUsage, type UsageEntry } from "./transcripts";
@@ -4085,14 +4086,18 @@ function firstBilledTurn(
   for (const e of bySession.get(sessionId) ?? []) {
     if (e.ts <= after) continue;
     const billed =
-      e.tokens.cacheRead + e.tokens.cacheWrite5m + e.tokens.cacheWrite1h;
+      e.tokens.cacheRead + cacheWriteTokens(e.tokens);
     if (billed <= 0) continue;
     if (!best || e.ts < best.ts) best = e;
   }
   return best
     ? {
         cacheRead: best.tokens.cacheRead,
-        cacheWrite5m: best.tokens.cacheWrite5m,
+        // Cache creation the record declared no TTL for goes on the 5m
+        // field, which is the class `observedWriteUSD` prices this row at:
+        // the floor, the same end `costOf` shows, and the alternative is
+        // dropping the volume out of the figure entirely.
+        cacheWrite5m: best.tokens.cacheWrite5m + best.tokens.cacheWriteUnattributed,
         cacheWrite1h: best.tokens.cacheWrite1h,
       }
     : null;
@@ -4536,14 +4541,15 @@ export async function priceReceipts(
     // zero, and taking that one reports the invalidation as nothing at all.
     const firstBilled = following.find(
       (e) =>
-        e.tokens.cacheRead > 0 ||
-        e.tokens.cacheWrite5m > 0 ||
-        e.tokens.cacheWrite1h > 0,
+        e.tokens.cacheRead > 0 || cacheWriteTokens(e.tokens) > 0,
     );
     const resumeWrite: ResumeWrite | null = firstBilled
       ? {
           cacheRead: firstBilled.tokens.cacheRead,
-          cacheWrite5m: firstBilled.tokens.cacheWrite5m,
+          // The 5m field for the reason above.
+          cacheWrite5m:
+            firstBilled.tokens.cacheWrite5m +
+            firstBilled.tokens.cacheWriteUnattributed,
           cacheWrite1h: firstBilled.tokens.cacheWrite1h,
         }
       : null;
