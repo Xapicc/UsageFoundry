@@ -1,9 +1,9 @@
 # Sandbox probe — runbook
 
 [← Verification log](../../docs/verification.md) ·
-[the proposal this measures](../../proposals/Sandboxing/09-implementation-sketch.md)
+[the proposal this measures](<../../proposals/implemented - Sandboxing/09-implementation-sketch.md>)
 
-`proposals/Sandboxing/` recommends letting the pinned Claude CLI sandbox itself
+`proposals/implemented - Sandboxing/` recommends letting the pinned Claude CLI sandbox itself
 with bubblewrap (Option B). **Every claim about that mechanism was read out of
 the pinned binary's strings.** A narrow slice has since been executed by hand —
 `bwrap` under and without the seccomp profile, and three `claude -p` calls, two

@@ -575,6 +575,10 @@ export default function WorkflowInstancePage() {
               ? null
               : instance.spentGuardUSD / budget.maxInstanceCostUSD
           }
+          // Said in the comment above and now said to a screen reader too: the
+          // band here is reconciled and telemetry-derived spend, not the
+          // unpriced-model gap the window meters draw.
+          upperHint="including work still running and work that stopped before reporting its cost"
           value={fmtUSD(instance.spentUSD)}
           unknownHint="no workflow spending limit"
           detail={

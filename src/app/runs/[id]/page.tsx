@@ -14,7 +14,7 @@ import type {
   PruneSavingsDTO,
   RunTelemetryDTO,
 } from "@/lib/apiTypes";
-import { pruneStatement, prunerLine } from "@/lib/pruneStatement";
+import { pruneStatement } from "@/lib/pruneStatement";
 import {
   STATUS_TONE,
   fmtClock,
@@ -55,6 +55,7 @@ import {
 } from "@/lib/logLine";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
 import { RunAgentCost } from "@/components/RunAgentCost";
+import { RunPruning } from "@/components/RunPruning";
 import { RunDiff } from "@/components/RunDiff";
 import { RunHandoff } from "@/components/RunHandoff";
 import { RunLand } from "@/components/RunLand";
@@ -378,6 +379,8 @@ function guardBars(run: RunDTO, now: number) {
     label: string;
     fraction: number;
     upperFraction?: number | null;
+    /** What the band means, said to a screen reader; see `Meter`. */
+    upperHint?: string;
     value: string;
   }> = [];
 
@@ -405,6 +408,10 @@ function guardBars(run: RunDTO, now: number) {
       fraction: run.spent_usd / costCap,
       upperFraction:
         estimated > 0 ? (run.spent_usd + estimated) / costCap : null,
+      // `spent_usd_est` is only ever a killed cycle's reconciled spend, so this
+      // is the one thing the band can mean here — not the unpriced-model gap
+      // the dashboard's window meters draw under the same hatch.
+      upperHint: "including work cycles that stopped before reporting their cost",
       value: `${fmtUSD(run.spent_usd)} / ${fmtUSD(costCap)}`,
     });
   }
@@ -1442,6 +1449,7 @@ export default function RunDetail({
                       label={b.label}
                       fraction={b.fraction}
                       upperFraction={b.upperFraction}
+                      upperHint={b.upperHint}
                       value={b.value}
                     />
                   ))}
@@ -1650,50 +1658,11 @@ export default function RunDetail({
                 of their own below. */}
             {(pruning || pruneActivity || pruner) && (
               <Section title="Context pruning">
-                {pruning && (
-                  <>
-                    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                      <Stat>
-                        {pruning.netUSD >= 0 ? "+" : "−"}
-                        {fmtUSD(Math.abs(pruning.netUSD))}
-                      </Stat>
-                      <div className="text-xs tabular-nums text-ink-muted">
-                        {fmtTokens(pruning.tokensRemoved)} tokens removed over{" "}
-                        {pruning.prunes}{" "}
-                        {pruning.prunes === 1 ? "prune" : "prunes"}
-                      </div>
-                    </div>
-                    <p className="mt-2 text-xs leading-snug text-ink-muted">
-                      What later turns did not have to re-read, less what the
-                      edits cost. Not spend, and never added to the figures
-                      above.
-                    </p>
-                  </>
-                )}
-                {/* `quiet` here against full strength on the dashboard: by the
-                    time a finished run is being read this is history, and the
-                    place a rebuild is prompted is the install-wide card. */}
-                {/* What this run's own boundaries did, where they did
-                    anything but cut. */}
-                {runStatement?.severity === "warn" ? (
-                  <Notice tone="warn" quiet className="mt-2">
-                    {runStatement.text}
-                  </Notice>
-                ) : (
-                  runStatement && (
-                    <p className="mt-2 text-xs leading-snug text-ink-muted">
-                      {runStatement.text}
-                    </p>
-                  )
-                )}
-                {/* And what is switched on, always — the figures above name
-                    neither the engine nor whether the tool is still there, so
-                    a run page without this line left both unanswerable. */}
-                {pruner && (
-                  <p className="mt-2 text-xs leading-snug text-ink-muted">
-                    {prunerLine(pruner)}
-                  </p>
-                )}
+                <RunPruning
+                  savings={pruning}
+                  statement={runStatement}
+                  pruner={pruner}
+                />
               </Section>
             )}
           </Region>

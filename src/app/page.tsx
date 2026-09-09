@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { InstallSpendCard } from "@/components/InstallSpendCard";
 import { LiveTelemetry } from "@/components/LiveTelemetry";
 import { Meter } from "@/components/Meter";
 import { RecentBlocksCard } from "@/components/RecentBlocksCard";
@@ -726,6 +727,7 @@ export default function Dashboard() {
             label="Session consumed"
             fraction={s.session.fraction}
             upperFraction={s.session.guardFraction}
+            upperHint="once unpriced models are charged"
             detail={ceilingDetail(
               s.session,
               s.session.fractionMetric === "tokens"
@@ -814,6 +816,7 @@ export default function Dashboard() {
               label="Weekly consumed"
               fraction={s.weekly.fraction}
               upperFraction={s.weekly.guardFraction}
+              upperHint="once unpriced models are charged"
               detail={ceilingDetail(
                 s.weekly,
                 s.weekly.fractionMetric === "tokens"
@@ -1347,51 +1350,7 @@ export default function Dashboard() {
         heading="What this app spent"
         statement="Money runs this app started reported spending."
       >
-        {/* The one ceiling on this page that is about the *install* rather than
-            about a window Anthropic enforces, so it sits outside the meters: its
-            span is a rolling 24 hours, its figures are money this app recorded
-            spending rather than our price table over every transcript on the
-            machine, and the two must never be added. Always shown — with no
-            ceiling configured the meter is the hatched indeterminate one, which
-            is this app's standing answer to a reading with no denominator, and
-            the hint is where the operator finds out the limit exists at all. */}
-        <Card className="mb-4">
-          <CardTitle>This install, last {install.windowHours} hours</CardTitle>
-          <Meter
-            label="Spent by everything this app runs"
-            fraction={
-              install.limitUSD === null ? null : install.spentUSD / install.limitUSD
-            }
-            upperFraction={
-              install.limitUSD === null
-                ? null
-                : install.spentGuardUSD / install.limitUSD
-            }
-            unknownHint="no install limit set"
-            detail={
-              install.limitUSD === null
-                ? `${fmtUSD(install.spentGuardUSD)} spent`
-                : `${fmtUSD(install.spentGuardUSD)} of ${fmtUSD(install.limitUSD)}`
-            }
-          />
-          <Hint>
-            {install.limitUSD === null ? (
-              <>
-                Every guard in this app bounds one run, one workflow or one chat
-                turn. Nothing bounds the total until you{" "}
-                <Link href="/settings">set an install limit</Link>.
-              </>
-            ) : (
-              <>
-                Runs, workflow blocks and chat turns together. A run still going,
-                or one that finished inside the window, counts its whole spend —
-                which over-counts rather than under-counts, because this is a
-                limit. Not comparable with the meters above: those measure every
-                transcript on this machine against Anthropic&rsquo;s windows.
-              </>
-            )}
-          </Hint>
-        </Card>
+        <InstallSpendCard install={install} />
 
         {/* A different question with a different source: the cards above
             slice the transcript window by what produced it, this one says what

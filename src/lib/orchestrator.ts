@@ -23,7 +23,7 @@ import { withRepoAdmin } from "./repoLock";
 import { dataDirRefusal, mayWriteDataDir, requireDataDir } from "./serverLock";
 import { childCredentials, chownForChild } from "./privsep";
 import { currentSandbox, sandboxRefusal } from "./sandbox";
-import { ensureSandboxMountPoints } from "./sandboxMountPoints";
+import { ensureSandboxMountPoints, sweepSandboxTreeRoot } from "./sandboxMountPoints";
 import { baselineFrom, taskSignature, type CostBaseline } from "./costBaseline";
 import { db } from "./db";
 import {
@@ -6229,6 +6229,26 @@ export function runIteration(
       // then what stands.
       const written = readLastMessageFile(args);
       if (written) result.finalText = written;
+      // What the sandbox left at the root of the checkout, cleared now that the
+      // child which made it is gone. The mirror of `ensureSandboxMountPoints`
+      // above and deliberately the other way round: that list is created before
+      // the spawn so bwrap does not fail on it, this one is removed after the
+      // exit because bwrap succeeds and the empty files it makes outlive the
+      // namespace. `sandboxMountPoints.ts` has both lists and the measurement.
+      const swept = sweepSandboxTreeRoot(cwd);
+      if (swept.removed.length > 0) {
+        // Counted rather than named, as above: the paths are on the event for
+        // anyone who wants them, and eleven of them is a wall of log.
+        log(
+          runId,
+          `Removed ${swept.removed.length} empty file(s) the sandbox left at the ` +
+            `root of ${cwd}, which no agent wrote`,
+          { sandboxMountPointsRemoved: swept.removed },
+        );
+      }
+      for (const problem of swept.problems) {
+        log(runId, `Could not remove a file the sandbox left behind: ${problem}`);
+      }
       resolve(result);
     };
 

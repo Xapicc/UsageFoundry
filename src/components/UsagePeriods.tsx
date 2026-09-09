@@ -208,6 +208,7 @@ export function UsagePeriods({
         label={`${HEADING[series.granularity]} consumed`}
         fraction={current.fraction}
         upperFraction={current.guardFraction}
+        upperHint="once unpriced models are charged"
         unknownHint="no weekly ceiling set"
         detail={ceilingDetail(
           series,

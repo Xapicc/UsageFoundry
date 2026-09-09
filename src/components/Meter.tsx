@@ -12,12 +12,18 @@ import { fmtPct, severityFor, type Severity } from "../lib/format";
  * indeterminate bar rather than an empty one — an empty bar reads as "0% used,
  * plenty left", which is the opposite of "we don't know".
  *
- * `upperFraction` is an optional second, higher reading for the same window:
- * what the total *could* be once models with no known price are charged a
- * fallback rate. It is drawn as a hatched band extending past the solid fill,
+ * `upperFraction` is an optional second, higher reading for the same reading's
+ * subject: the figure the guard acts on, where the solid fill is what was
+ * measured. It is drawn as a hatched band extending past the solid fill,
  * because that span is precisely the part we cannot put a number on. Without
  * it the budget guard would refuse a run at a threshold the visible meter has
  * not reached, with nothing on screen to explain why.
+ *
+ * *What* widens it differs by call site — an unpriced model charged a fallback
+ * rate on a window meter, a work cycle that stopped before reporting on a spend
+ * one — so the sentence a screen reader hears comes from the caller as
+ * `upperHint`. It used to be one guess made here, and that guess was false at
+ * three of this component's call sites.
  */
 
 export type MeterSize = "compact" | "default" | "hero";
@@ -110,10 +116,24 @@ const MIN_VISIBLE_PX = 3;
 const FILL_MOTION =
   "transition-[width] duration-[var(--motion-slow)] ease-standard";
 
+/**
+ * What the hatched band is announced as when a caller names nothing.
+ *
+ * The one thing true at every call site is the split itself: the solid fill is
+ * a floor of what was measured and the band is this app's own estimate on top
+ * of it. Anything more specific — which is to say any *mechanism* — is a claim
+ * about a particular meter, and a default that named one would go on being
+ * spoken at the meters where it is false, which is exactly the defect this
+ * replaced.
+ */
+const UPPER_HINT_DEFAULT =
+  "counting what this app estimated as well as what it measured";
+
 export function Meter({
   label,
   fraction,
   upperFraction,
+  upperHint = UPPER_HINT_DEFAULT,
   detail,
   value,
   unknownHint = "no ceiling set",
@@ -122,6 +142,17 @@ export function Meter({
   label: string;
   fraction: number | null;
   upperFraction?: number | null;
+  /**
+   * Completes the spoken sentence "…, up to 80.0% ___", saying what the band
+   * past the solid fill is. Announced only — the sighted reading of the band is
+   * the second percentage in the head and the hatch on the track, and this
+   * string is never drawn.
+   *
+   * Required in practice rather than by the type, because only the caller knows
+   * what widens its own reading; `UPPER_HINT_DEFAULT` is what a caller that
+   * supplies nothing promises, and it is deliberately mechanism-free.
+   */
+  upperHint?: string;
   detail?: string;
   /**
    * Replaces the percentage in the head, for readings where the raw pair says
@@ -181,12 +212,15 @@ export function Meter({
         aria-valuemax={100}
         // Spoken instead of the bare percentage in the two cases where the
         // number alone misleads: no ceiling at all, and a guard reading that
-        // sits above the visible bar.
+        // sits above the visible bar. The second reads its explanation off the
+        // caller — a sighted reader has the hatch, the two percentages and the
+        // card's own prose to tell the bands apart, and this sentence is all a
+        // screen reader gets.
         aria-valuetext={
           !known
             ? unknownHint
             : hasUpper
-              ? `${fmtPct(fraction)}, up to ${fmtPct(upperFraction)} once unpriced models are charged`
+              ? `${fmtPct(fraction)}, up to ${fmtPct(upperFraction)} ${upperHint}`
               : undefined
         }
         aria-label={label}
