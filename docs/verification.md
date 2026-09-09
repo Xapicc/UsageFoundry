@@ -2108,12 +2108,13 @@ Built and exercised against real transcripts:
   `npm run smoke-pages` agrees on the load half — `/tasks` clean at both widths,
   a 200, no console error, no sideways scroll — after `/tasks` was added to that
   script's route list, which is **hand-written rather than discovered**, so the
-  next page to land has to add itself the same way. The run as a whole still
-  exits 1, on `/knowledge` at both widths, for a reason that predates this page:
-  the smoke sandbox configures no vault root, so that pane's own fetch answers
-  409 and the browser logs it as a failed resource. That is a gap between the
-  harness's environment and one page's requirements rather than a defect in
-  either.
+  next page to land has to add itself the same way. The run as a whole exited 1
+  that day, on `/knowledge` at both widths, for a reason that predates this page:
+  the smoke sandbox configured no vault root, so that pane's own fetch answered
+  409 and the browser logged it as a failed resource. **That was never a standing
+  property of the check and it no longer holds** — the condition is the harness's
+  own fixture, which `66e71c0` changed on 2026-09-08; the pass exits 0 on the
+  tree as it stands. See the `/knowledge` entry below.
 
 - **The board's three MCP tools were driven in-process on 2026-09-07, against
   the real route handler and both capability subjects.** Not through a browser
@@ -2291,8 +2292,8 @@ Built and exercised against real transcripts:
   knowledge base is configured.` under the throwaway `DATA_DIR`. So the bundle is
   measured no weaker than the fallback, and that page's failure is the fixture
   rather than either mode. Both runs predate the `seedVault` fixture in the
-  `/knowledge` entry below, which is what removes that failure; no pass on a tree
-  carrying both changes is recorded here.
+  `/knowledge` entry below, which is what removes that failure; a pass on a tree
+  carrying both changes is recorded at the end of that entry.
 
   Two nearer approaches were measured and rejected, and the rejection is the
   useful half. Pointing `distDir` outside the project has Next rewrite the
@@ -2345,6 +2346,30 @@ Built and exercised against real transcripts:
   brokenLinkCount: 1, tagCount: 1`; `/api/knowledge/health` returns exactly one
   row in each of its three lists; and the rendered graph draws all three notes,
   the edge between two of them, and the unwritten `[[Missing note]]` target.
+
+  **Re-measured both ways on one build, 2026-09-09 at `3e59699`: the condition is
+  the harness's own fixture and not anything about this container.** The two
+  readings taken on 2026-09-08 — 42/44 with `/knowledge` failing at both widths,
+  and 44/44 with it clean — describe the same machine on either side of
+  `66e71c0`, so neither is conditional on host state. One
+  `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build`
+  (`BUILD_ID g3KBoWoJFodxMmqBw8O5M`), two passes minutes apart, both printing
+  `serving .next/standalone/server.js`:
+
+  | fixture | `/knowledge` at 390 / 1280 | result | exit |
+  |---|---|---|---|
+  | `seedVault` runs — the tree as it stands | `ok` / `ok` | 44/44 clean, 0 of 22 pages failed | **0** |
+  | its one call site removed | `FAIL` / `FAIL`, on `console error: Failed to load resource: the server responded with a status of 409 (Conflict)` | 42/44 clean, 1 of 22 failed | **1** |
+
+  The second was a scratch copy of the script with `await seedVault(...)` taken
+  out, which is the whole behavioural half of `66e71c0`; nothing was committed
+  for it. **No host state can move this reading.** The vault root is a settings
+  field with no environment override, and `serverEnv` hands the child a
+  `DATA_DIR` made for the run, so neither this container's mounts nor the
+  operator's own vault is reachable from the pass — a claim that the check "can
+  never exit 0 here" was true of a script version rather than of here. This is
+  also the first pass recorded on a tree carrying both `redirect-dist-dir.mjs`
+  and `seedVault`, which the entry above leaves open.
 
 - **A superseded proposal, and the stale click that races it, driven in a real
   browser.** 2026-09-08, against `.next/standalone/server.js` — the artifact the
