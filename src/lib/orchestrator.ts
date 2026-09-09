@@ -760,6 +760,24 @@ export function logLifecycle(e: PersistedRunEvent): void {
       return;
     case "budget":
       if (p.allowed === true) return; // an allowed guard is the ordinary case
+      // A refusal nothing ended the run on. `warn` and `run.guard_tripped` are
+      // what a shipper routes to a person and what an alert counts, and this
+      // one stopped nothing: the run's next cycle started. On a stock install
+      // whose provider percentage is unavailable it fires every cycle, so left
+      // as a tripped guard it is a stopped fleet reported for as long as the
+      // outage lasts, against a fleet that is working. Its own name rather than
+      // a level change, so the two are separable by an alert rule; and no
+      // `disposition`, because there was no disposition anything acted on.
+      // `!== false` rather than `=== true` for `notifiableEvent`'s reason: two
+      // of the three stop emits omit the field entirely.
+      if (p.enforceable === false) {
+        opsLog("info", "run.guard_unreadable", {
+          run_id: e.runId,
+          code: str("code"),
+          reason: str("reason"),
+        });
+        return;
+      }
       opsLog("warn", "run.guard_tripped", {
         run_id: e.runId,
         code: str("code"),
@@ -8118,8 +8136,6 @@ export async function startRun(id: string): Promise<void> {
    * keeps a twenty-cycle run from writing the same line twenty times.
    */
   let saidUnenforceable = false;
-  /** The same, for this run's *own* guard having nothing to read. */
-  let saidGuardUnreadable = false;
 
   /**
    * Take a session id as the run's own, and record it immediately.
@@ -8310,23 +8326,20 @@ export async function startRun(id: string): Promise<void> {
       // A refusal this run may not be ended on — `no_ceiling`, and only that:
       // the fraction guard's reading has gone, which on a stock install means
       // the provider's percentage was not readable this minute rather than the
-      // operator having failed to configure anything. Logged and carried past,
-      // the answer this app already gives an instance limit it cannot read and
-      // a live spending limit whose telemetry never arrived, because ending
-      // the run instead turns one endpoint's outage into a stopped fleet. Once
-      // per segment, not once per cycle. The condition is refused where there
-      // is a person: `POST /api/runs` and the reopen route both call
-      // `windowGuardRefusal` before anything is created.
-      if (!verdict.allowed && !enforceableForRun(verdict)) {
-        if (!saidGuardUnreadable) {
-          saidGuardUnreadable = true;
-          log(
-            id,
-            `A guard on this run cannot be enforced right now: ${verdict.reason} ` +
-              "The run carries on under its remaining guards.",
-          );
-        }
-      } else if (!verdict.allowed) {
+      // operator having failed to configure anything. Carried past, the answer
+      // this app already gives an instance limit it cannot read and a live
+      // spending limit whose telemetry never arrived, because ending the run
+      // instead turns one endpoint's outage into a stopped fleet. The condition
+      // is refused where there is a person: `POST /api/runs` and the reopen
+      // route both call `windowGuardRefusal` before anything is created.
+      //
+      // Not silent, and no longer a second sentence beside the record: the
+      // event above carries `enforceable`, and both consumers read it — the
+      // feed row says the guard could not be read and the run carried on, and
+      // stdout gets `run.guard_unreadable` at `info`. That is per cycle and
+      // true per cycle, which is what the latch here used to be protecting the
+      // operator from writing twenty times.
+      if (!verdict.allowed && enforceableForRun(verdict)) {
         stopReason = verdict.reason;
         if (verdict.disposition === "pause") {
           // The ordinary path for a well-behaved live-resume run: the cycle

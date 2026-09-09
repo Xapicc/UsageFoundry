@@ -131,9 +131,18 @@ describe("readChatEvent", () => {
     );
     // The 1h rate is 2× against the 5m's 1.25×, so reading the flat field when
     // a breakdown exists under-charges the guard by a third.
-    assert.equal(flat.tokens.cacheWrite5m, 1_000);
     assert.equal(split.tokens.cacheWrite1h, 1_000);
-    assert.ok(split.costGuardUSD > flat.costGuardUSD);
+    assert.equal(split.tokens.cacheWriteUnattributed, 0);
+    // With no breakdown the volume is neither class, and it is kept in its own
+    // field rather than folded into the cheaper one: 5m and 1h are 1.25× and
+    // 2×, and a distribution chosen for its direction is still a distribution.
+    assert.equal(flat.tokens.cacheWrite5m, 0);
+    assert.equal(flat.tokens.cacheWriteUnattributed, 1_000);
+    // Which is what closes the gap this test was written for from the other
+    // side: the guard prices the unattributed volume at the 1h class it might
+    // equally have been, so a transcript with no breakdown can no longer buy a
+    // third off every ceiling in the app.
+    assert.equal(flat.costGuardUSD, split.costGuardUSD);
   });
 
   it("takes the session id from the init event, before any answer", () => {

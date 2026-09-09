@@ -50,7 +50,7 @@ const CHAT_PROPOSALS_TABLE = `
       -- answer here as it is on a template — the mount root.
       mount_id    TEXT,
       folder      TEXT,
-      -- 'pending' | 'approved' | 'rejected' | 'failed'
+      -- 'pending' | 'approved' | 'rejected' | 'failed' | 'superseded'
       status      TEXT NOT NULL DEFAULT 'pending',
       run_id      TEXT,
       decided_at  INTEGER,
@@ -1206,6 +1206,28 @@ function migrate(db: Database.Database) {
   // Deliberately not in PROPOSAL_BASE_COLUMNS, for `guards_json`' reason above.
   addColumn(db, "chat_proposals", "task_id", "TEXT");
 
+  // The proposal that replaced this one, by id, and null on every other row.
+  //
+  // The state it records is `chat_questions.status = 'superseded'` one table
+  // over, and for that column's reason: the orchestrator wrote a card that
+  // turned out to be wrong, and the correction is one tool call rather than a
+  // rejection, a sentence and another turn. Kept rather than deleted, so the
+  // thread still reads as what happened — a card that vanished reads as one
+  // nobody was ever shown.
+  //
+  // It carries no capability and cannot start anything. `superseded` is not
+  // `pending`, so every door that offers a proposal for decision — the route's
+  // `pendingProposals`, `planProposal`'s first refusal — already refuses it,
+  // and the replacement it names went through the same `createProposal` and the
+  // same guard freeze as any other proposal.
+  //
+  // Not a foreign key, `task_id`'s and `template_id`'s rule: the row it names
+  // is in the same chat and dies with it by cascade, but a dangling id must
+  // read as "the replacement is gone" rather than taking this row with it.
+  //
+  // Deliberately not in PROPOSAL_BASE_COLUMNS, for `guards_json`' reason above.
+  addColumn(db, "chat_proposals", "superseded_by", "TEXT");
+
   // The order a chat's messages were written in, because `ts` does not decide
   // it: `finishTurn` appends the reply, an error and a denial note inside one
   // synchronous block, so they routinely share a millisecond, and the primary
@@ -1384,6 +1406,27 @@ function migrate(db: Database.Database) {
   // the model.
   addColumn(db, "workflow_instance_blocks", "reply", "TEXT");
   addColumn(db, "workflow_instance_blocks", "notes", "TEXT");
+
+  // What a block turn cost when the CLI never got as far as saying.
+  //
+  // `runs.spent_usd_est` for a block, and held apart from `cost_usd` for the
+  // same reason: a turn whose child was killed, crashed or timed out produces
+  // no `result` event, so `total_cost_usd` never arrives, and the tokens it
+  // burned before dying were still billed. `cost_usd` stays a floor of what a
+  // CLI itself measured; this is our own price for the usage the stream did
+  // report, and only the guard adds the two.
+  //
+  // `cost_unreported` counts those turns rather than deriving the fact from a
+  // zero, because both readings can legitimately be 0: a turn killed before its
+  // first assistant event leaves no usage to price either, and "nothing was
+  // measured" must not read as "it cost nothing".
+  addColumn(db, "workflow_instance_blocks", "cost_usd_est", "REAL NOT NULL DEFAULT 0");
+  addColumn(
+    db,
+    "workflow_instance_blocks",
+    "cost_unreported",
+    "INTEGER NOT NULL DEFAULT 0",
+  );
 
   // Whether this run was closed out because the server went down under it,
   // rather than for any reason of its own.

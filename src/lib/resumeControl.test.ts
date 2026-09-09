@@ -42,6 +42,7 @@ function entry(
       cacheRead: 0,
       cacheWrite5m: 0,
       cacheWrite1h: 0,
+      cacheWriteUnattributed: 0,
       ...tokens,
     },
   } as UsageEntry;

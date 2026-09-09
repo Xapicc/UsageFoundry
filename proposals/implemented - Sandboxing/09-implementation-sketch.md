@@ -272,15 +272,23 @@ up as a dashboard of zeros rather than an error. Treat it as the riskiest step i
 this phase, not a footnote to it.
 
     docker compose up --build
-    docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+    uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
+    docker compose exec --user "$uid" usagefoundry \
       sh -c 'echo x >> /etc/claude-code/managed-settings.json'   # expect denied
-    docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+    docker compose exec --user "$uid" usagefoundry \
       sh -c 'echo x >> ~/.claude/settings.json; rm -f ~/.claude/settings.json'
                                                                  # expect both denied
-    docker compose exec --user "${UF_UID:-1000}" usagefoundry \
+    docker compose exec --user "$uid" usagefoundry \
       sh -c 'ls ~/.claude/projects >/dev/null && touch ~/.claude/projects/.probe'
                                                                  # expect BOTH to work
     docker compose logs usagefoundry | grep -i sandbox           # expect the boot line
+
+    <!-- Command shape corrected 2026-09-08 (board 360c87b7): `${UF_UID:-1000}`
+    is expanded by the caller's shell, not by compose's own `.env`
+    interpolation, so it resolved to 1000 regardless of what `.env` set — the
+    same defect #147 fixed at docs/install.md and docs/verification.md. Only
+    the command shape changed here; nothing above was re-run. -->
+
 
 At the end of this phase every run is sandboxed by one install-wide policy — the
 network allowlist and the credential deny apply, and only per-run filesystem

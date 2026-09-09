@@ -134,14 +134,17 @@ banner on the dashboard: a workspace whose path is not a directory (Docker
 creates a missing bind source rather than refusing, so a typo in `UF_WORKSPACE`
 looks exactly like an empty one), a `CLAUDE_HOME` with no `projects/` under it
 (every usage figure reads zero), and any variable set to the empty string where
-blank is not an answer. Eight variables are where blank *is* an answer, and none
-of them is ever reported: `UF_AUTH_TOKEN`, `ANTHROPIC_ADMIN_KEY`,
+blank is not an answer. Thirteen variables are where blank *is* an answer, and
+none of them is ever reported: `UF_AUTH_TOKEN`, `ANTHROPIC_ADMIN_KEY`,
 `UF_GITHUB_TOKEN` and `UF_GITHUB_TOKENS`, where it means *off*;
 `UF_ALLOW_NO_AUTH`, `UF_COOKIE_SECURE` and `UF_TRANSCRIPT_CACHE_MAX_ENTRIES`,
-where it means *take the default*; and `UF_UNMOUNTED_WORKSPACES`, which compose
-computes rather than you, and where blank is the success case — a non-blank
-value there refuses the boot. `BLANK_MEANINGFUL_ENV_VARS` in `src/lib/config.ts`
-is the list.
+where it means *take the default*; `UF_WEBHOOK_URL`, `UF_WEBHOOK_SECRET`,
+`UF_PUBLIC_URL` and `UF_INSTALL_LABEL`, where it means the whole outbound
+notification channel is off, and `UF_NOTIFY_ON_SUCCESS`, where it means only
+the run endings that need a person raise one; and `UF_UNMOUNTED_WORKSPACES`,
+which compose computes rather than you, and where blank is the success case —
+a non-blank value there refuses the boot. `BLANK_MEANINGFUL_ENV_VARS` in
+`src/lib/config.ts` is the list.
 
 Two of those are ones the Quick start above tells you to set, so read the silence
 carefully: a blank `UF_ALLOW_NO_AUTH` or `UF_COOKIE_SECURE` is *taken as the
@@ -276,9 +279,14 @@ line**, beside the existing `[usagefoundry] …` prose:
 {"ts":"2026-08-14T09:12:03.114Z","level":"info","event":"run.cycle_finished","run_id":"…","subtype":"success","cost_usd":0.42,"duration_ms":183422}
 ```
 
-Ten events in all: `run.status`, `run.cycle_started`, `run.cycle_finished`,
-`run.guard_tripped`, `run.error`, `run.sandbox_refusal`, `sweep.failed`,
-`live_guard_tick.failed`, `boot.reconciled`, `http.mutation`. The
+Eleven events in all: `run.status`, `run.cycle_started`, `run.cycle_finished`,
+`run.guard_tripped`, `run.guard_unreadable`, `run.error`, `run.sandbox_refusal`,
+`sweep.failed`, `live_guard_tick.failed`, `boot.reconciled`, `http.mutation`.
+`run.guard_unreadable` is the guard that refused nothing — a fraction guard with
+no reading to measure against, which the run is not ended on — and it is `info`
+under its own name rather than a `run.guard_tripped` at `warn`, so an alert on
+guards firing is not an alert on the provider's percentage being unavailable.
+The
 noisy kinds — the agent's own output, every tool call, every log line — are
 deliberately **not** on stdout; they are in `run_events` and on the run page,
 where they are readable. `run.sandbox_refusal` is the one tool failure that

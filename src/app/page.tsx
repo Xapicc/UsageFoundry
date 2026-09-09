@@ -567,6 +567,14 @@ export default function Dashboard() {
     meta.configuredCeilings.weeklyTokens === null;
   const cacheShare =
     s.weekly.tokens > 0 ? s.weekly.agg.tokens.cacheRead / s.weekly.tokens : null;
+  // Read off the two windows the meters draw rather than off the scan, so the
+  // notice appears exactly when a figure on this page is affected. A record
+  // that never declared a cache TTL could have been billed at either class, and
+  // the two are 1.25× and 2.00× input.
+  const unattributedCacheWrite = Math.max(
+    s.session.agg.tokens.cacheWriteUnattributed,
+    s.weekly.agg.tokens.cacheWriteUnattributed,
+  );
   const current = breakdowns[dimension];
   const breakdownOmitted = Math.max(0, current.rows.length - MAX_BREAKDOWN_ROWS);
   // The column and the sentence under the table are one decision: a second
@@ -917,6 +925,22 @@ export default function Dashboard() {
           it charges these models a conservative rate instead, which is the
           hatched span on the meters above. A run can therefore be stopped
           before the solid bar looks full.
+        </Notice>
+      )}
+
+      {/* The same shape as the banner above and for the same reason: the
+          hatched span says a guard is charging more than the solid bar shows,
+          and nothing else on the page says why. Transcripts written before the
+          cache TTL split — and any ~/.claude copied from a machine whose CLI
+          predates it — record a write volume without saying which class billed
+          it. */}
+      {unattributedCacheWrite > 0 && (
+        <Notice tone="warn">
+          <strong>Cache writes with no declared lifetime:</strong>{" "}
+          {fmtTokens(unattributedCacheWrite)}. They were billed at either 1.25×
+          or 2× input and the records do not say which, so the dollar figures
+          here take the cheaper rate and are a floor. The budget guard takes the
+          dearer one, which is the hatched span on the meters above.
         </Notice>
       )}
 

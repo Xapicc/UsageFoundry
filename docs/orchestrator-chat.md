@@ -58,6 +58,16 @@ with nothing in front of it. That last part is the point — a run told to wait 
 started immediately is indistinguishable from a run that was never told, and both
 agents then work in the same checkout in whatever order the queue felt like.
 
+**It can correct a card it has already proposed.** If the chat gets something
+wrong and notices — the wrong folder, a task that reads badly, a dependency it
+meant the other way round — it can replace the card in one move rather than
+waiting for you to reject it and asking again. The replaced card does not
+disappear: it moves to **Decided**, marked `superseded`, with a line naming the
+card that took its place, so scrolling back shows what was proposed and what
+happened to it. It cannot be approved, and it is not counted anywhere as
+waiting. If you press Approve on one anyway — your screen was a few seconds
+old — the click is refused and says so, and nothing starts.
+
 **It can propose a whole workflow, and approving one saves it.** For work with a
 shape worth keeping — a nightly sweep, a fix/review/land chain, a per-repository
 routine — the chat can write a [workflow](workflows.md)

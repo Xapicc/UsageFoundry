@@ -447,26 +447,41 @@ export function describeEvent(e: RunEventDTO): LogEntry | null {
     case "budget":
       // A guard is not a fault and must not be dressed as one, so a stop is
       // `warn` rather than `danger` — the same call the run state card makes.
-      return p.allowed
-        ? {
-            voice: "system",
-            tone: "neutral",
-            label: "budget",
-            text: `clear · weekly ${fmtPct(
-              typeof p.weeklyFraction === "number" ? p.weeklyFraction : null,
-            )}`,
-          }
-        : {
-            voice: "system",
-            tone: "warn",
-            label: "budget",
-            // `scope` says whose limit this was. Without it a workflow-wide
-            // stop reads as this run's own guard, which sends the operator to
-            // the wrong form to change it.
-            text: `${p.disposition === "pause" ? "pause" : "stop"}${
-              p.live ? ", mid-cycle" : ""
-            }${p.scope === "workflow" ? ", workflow-wide" : ""} — ${p.reason}`,
-          };
+      if (p.allowed)
+        return {
+          voice: "system",
+          tone: "neutral",
+          label: "budget",
+          text: `clear · weekly ${fmtPct(
+            typeof p.weeklyFraction === "number" ? p.weeklyFraction : null,
+          )}`,
+        };
+      // A refusal the run was not ended on: `no_ceiling`, the fraction guard
+      // with nothing to read, which the loop records and carries past. Neutral and
+      // never "stop", because the cycle after this row is one that ran — and
+      // this is the ordinary state of a stock install whose provider reading is
+      // unavailable, so a `warn` here is a warning about nothing, once a cycle,
+      // for as long as the outage lasts. `!== false` rather than `=== true` for
+      // `notifiableEvent`'s reason: the emits that really do end a run omit the
+      // field, and reading absent as unenforceable would mute every real guard.
+      if (p.enforceable === false)
+        return {
+          voice: "system",
+          tone: "neutral",
+          label: "budget",
+          text: `could not be read, run carried on — ${p.reason}`,
+        };
+      return {
+        voice: "system",
+        tone: "warn",
+        label: "budget",
+        // `scope` says whose limit this was. Without it a workflow-wide stop
+        // reads as this run's own guard, which sends the operator to the wrong
+        // form to change it.
+        text: `${p.disposition === "pause" ? "pause" : "stop"}${
+          p.live ? ", mid-cycle" : ""
+        }${p.scope === "workflow" ? ", workflow-wide" : ""} — ${p.reason}`,
+      };
 
     case "result":
       return {
