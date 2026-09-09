@@ -27,6 +27,19 @@ import { fmtUSD } from "../lib/format";
  * page whose every reading arrives over a fetch.
  */
 export function InstallSpendCard({ install }: { install: InstallSpendDTO }) {
+  // The bar and the line under it are one figure — `spentUSD`, the measured
+  // floor. `spentGuardUSD` is the guard's own reading and is drawn as the
+  // hatched band past the fill, so where it is higher it is named here in money
+  // too: a run refused at a threshold the visible bar has not reached is
+  // otherwise unexplainable from this card. Never folded into the amount, and
+  // never printed in its place, which is what this line used to do — the same
+  // display-versus-guard split `InstallSpendDTO` and the workflow instance
+  // card make, said the same way.
+  const guardReading =
+    install.spentGuardUSD > install.spentUSD
+      ? `; the guard reads ${fmtUSD(install.spentGuardUSD)}`
+      : "";
+
   return (
     <Card className="mb-4">
       <CardTitle>This install, last {install.windowHours} hours</CardTitle>
@@ -43,11 +56,22 @@ export function InstallSpendCard({ install }: { install: InstallSpendDTO }) {
         unknownHint="no install limit set"
         detail={
           install.limitUSD === null
-            ? `${fmtUSD(install.spentGuardUSD)} spent`
-            : `${fmtUSD(install.spentGuardUSD)} of ${fmtUSD(install.limitUSD)}`
+            ? `${fmtUSD(install.spentUSD)} spent${guardReading}`
+            : `${fmtUSD(install.spentUSD)} of ${fmtUSD(
+                install.limitUSD,
+              )}${guardReading}`
         }
       />
+      {/* The over-count is stated in both branches, because both print money.
+          It used to be conditional on a ceiling being set, on the reasoning
+          that over-counting is the safe direction *for a limit* — but the
+          figure is on screen either way, and with no limit configured the card
+          printed a dollar amount with nothing anywhere saying it covers spend
+          from before the window. */}
       <Hint>
+        Runs, workflow blocks and chat turns together. A run still going, or one
+        that finished inside the window, counts its whole spend, so this is an
+        upper bound on the window rather than the window&rsquo;s own share.{" "}
         {install.limitUSD === null ? (
           <>
             Every guard in this app bounds one run, one workflow or one chat
@@ -56,11 +80,8 @@ export function InstallSpendCard({ install }: { install: InstallSpendDTO }) {
           </>
         ) : (
           <>
-            Runs, workflow blocks and chat turns together. A run still going, or
-            one that finished inside the window, counts its whole spend — which
-            over-counts rather than under-counts, because this is a limit. Not
-            comparable with the meters above: those measure every transcript on
-            this machine against Anthropic&rsquo;s windows.
+            Not comparable with the meters above: those measure every transcript
+            on this machine against Anthropic&rsquo;s windows.
           </>
         )}
       </Hint>
