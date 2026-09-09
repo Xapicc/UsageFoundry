@@ -6623,7 +6623,7 @@ through before trusting this unattended:
      all present.
 
 - **The class of every interface defect found from here on is recorded here, and
-  the running list has one entry.** This is a measurement rather than a
+  the running list has two entries.** This is a measurement rather than a
   convention for its own sake, and it exists because the argument it settles is
   currently resting on a sample of size one. `proposals/UIChecks/` recommends
   reaching for a real engine — the expensive class — and its whole case for
@@ -6664,6 +6664,23 @@ through before trusting this unattended:
     so the `w-auto` written beside it lost silently and neither the markup nor
     the type checker could say so. Found by a person at a narrow window; fixed
     by moving the width onto a wrapper (`src/components/RunLand.tsx:623-636`).
+  - **2026-09-09, `ea1c65c`, class E, arguably A.** `Meter` composed one
+    explanation for its hatched upper band — "once unpriced models are charged"
+    — and announced it at every meter drawing one. That is what the band is at
+    four of the seven call sites; at the install meter, the workflow instance's
+    "Spent across blocks" and the run page's "Spend" bar it is spend reconciled
+    for a work cycle that stopped before reporting, plus telemetry for the ones
+    still going. A screen reader was given a fluent, specific reason that does
+    not hold on the meter it was reading. Found by reading the component against
+    its call sites; fixed by taking the sentence from the caller as `upperHint`,
+    with a mechanism-free default (`src/components/Meter.tsx`). **The letter is
+    genuinely arguable and both halves are worth saying.** Nothing had to be
+    rendered — the component and its seven call sites are the whole of the
+    evidence, which is A's cheapness — but no instrument decides that a sentence
+    is *false about a figure*; that needs somebody who knows what
+    `spentGuardUSD` is, which is E. Either way it is not D, and the list's first
+    entry was D. Verified by assertion on the rendered `aria-valuetext` and by
+    nothing else: no screen reader has been run over any of these meters.
 
   **And this is not "the interface is now checked".** Even with the pass above
   written down and the smoke pass `proposals/UIChecks/09-recommendation.md`
