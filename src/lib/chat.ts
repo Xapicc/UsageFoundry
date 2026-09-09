@@ -51,6 +51,10 @@ import {
   type DependencyEdge,
   type RunDependencyInput,
 } from "./orchestrator";
+import {
+  ensureSandboxMountPoints,
+  sweepSandboxTreeRoot,
+} from "./sandboxMountPoints";
 import { getTemplate, type RunTemplate } from "./templates";
 import {
   agentDefinition,
@@ -2880,10 +2884,61 @@ export function runOrchestratorChild(o: OrchestratorChildOptions): void {
     args.push("--max-budget-usd", String(o.maxBudgetUSD));
   }
 
+  // Resolved once rather than inside the spawn call, because the sandbox pass
+  // below and the sweep after the child exits both have to name the directory
+  // the child was actually given — an `existsSync` asked a second time can
+  // answer differently, and a sweep aimed at the other answer silently leaves
+  // the placeholders where they fell.
+  const cwd = o.cwd && fs.existsSync(o.cwd) ? o.cwd : chatCwd();
+
+  /**
+   * The same sandbox preparation a work cycle gets, minus the git half — and
+   * the omission is a decision rather than a gap.
+   *
+   * `sandboxMountPoints.ts` holds both of the CLI's lists and the measurement
+   * behind them. The fill is here for the reason it is in `runIteration`: bwrap
+   * creates a bind target wherever it finds nothing, and a create it is refused
+   * aborts the whole sandbox **before the command runs**, which arrives as a
+   * `Bash` call that failed naming a settings file the command never touched.
+   * Every tree the child is handed, since the CLI applies that list to the
+   * working directory and to each `--add-dir` alike; immediately before the
+   * spawn rather than once per install, because what has to be true is the
+   * state of each tree at the moment *this* child constructs its sandbox.
+   *
+   * **`core.excludesFile` is deliberately not part of it, and the difference is
+   * whose repositories these are.** A cycle works in a checkout this app seeded
+   * under `.uf-worktrees`, it is ordered to commit, and its `git add -A` dies on
+   * the eleven placeholders the sandbox leaves at the root — so an ignore rule
+   * there hides names that could not legitimately be in that tree and rescues a
+   * commit that would otherwise fail. Neither half holds here. This turn is told
+   * to look and not to build, so there is no `git add -A` to rescue; and it
+   * roams every mount by design, which is the same fact that makes `chatEnv`
+   * hand it the install-wide GitHub token rather than one scoped to a folder.
+   * `GIT_CONFIG_*` has no scope narrower than the process, so the rule would
+   * follow the turn into the operator's **own** checkouts, where an untracked
+   * `.vscode`, `.idea` or `.mcp.json` at the root is an ordinary thing to have.
+   * The one thing this child exists to do is look and report to a person who is
+   * trusting it to have looked, and a `git status` that quietly under-reports is
+   * that trust broken in the direction nobody checks. The failure not having the
+   * rule leaves — `error: .bash_profile: can only add regular files, symbolic
+   * links or git-directories` — lands on a turn that was staging files it was
+   * told not to stage, and lands loudly.
+   *
+   * Never throws, so nothing here can cost a turn: every failure leaves the
+   * install where it was, with bwrap trying the create itself exactly as before.
+   * Silent when it worked — the chat has no run log, container stdout is the
+   * only sink, and a line per turn for work that succeeded is noise — and a
+   * warning when it did not, because that is placeholders left in a tree the
+   * operator works in and nothing else will mention them.
+   */
+  for (const problem of ensureSandboxMountPoints([cwd, ...addDirs]).problems) {
+    opsLog("warn", "chat.sandbox_mount_point_failed", { message: problem });
+  }
+
   // No shell, as everywhere else: the prompt is operator text and whatever a
   // GitHub issue body happens to contain.
   const child = spawn(CLAUDE_BIN, args, {
-    cwd: o.cwd && fs.existsSync(o.cwd) ? o.cwd : chatCwd(),
+    cwd,
     env: chatEnv(),
     // Dropped like every other child, and this is the one that most needs it:
     // it runs `bypassPermissions` with no allowlist, so the only thing between
@@ -2974,6 +3029,24 @@ export function runOrchestratorChild(o: OrchestratorChildOptions): void {
     // with the turn, and the file that carried it does not outlive it either.
     revokeCapability(token);
     removeMcpConfig(configPath);
+    // What the sandbox left at the root of `cwd`, cleared now the child that
+    // made it is gone. The mirror of the fill above and deliberately the other
+    // way round: that list is created *before* the spawn so bwrap does not fail
+    // on it, this one is removed *after* the exit because bwrap succeeds and the
+    // empty `0444` files it makes outlive the namespace — the mount is in a
+    // namespace, the inode is on the disk. It buys more here than it does for a
+    // cycle: a cycle leaves them in a checkout this app is about to throw away,
+    // where the chat's cwd is a mount the operator works in, and `.idea` and
+    // `.vscode` arrive there as files where a checkout wants directories.
+    //
+    // Here rather than beside the exit, so no ending can miss it — the spawn
+    // failure lands here too, where there is nothing to find and the pass costs
+    // eleven `lstat`s. Before `onSettle`, which is what makes the answer
+    // visible: the operator reading a settled turn should not be able to see the
+    // tree in the state the turn left it.
+    for (const problem of sweepSandboxTreeRoot(cwd).problems) {
+      opsLog("warn", "chat.sandbox_sweep_failed", { message: problem });
+    }
     o.onSettle(result);
   };
 

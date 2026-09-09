@@ -1871,6 +1871,77 @@ Built and exercised against real transcripts:
   grandchild still holding a mount, and the interaction with `trackedDirt`'s
   slot-reuse workaround in `land.ts` are all reasoned rather than seen.
 
+- **The chat and workflow-block child's half of the same two lists, wired and
+  counted on 2026-09-09.** `ensureSandboxMountPoints` and `sweepSandboxTreeRoot`
+  had exactly one caller, `runIteration`. `runOrchestratorChild` in `chat.ts`
+  now calls both — the fill on `[cwd, ...addDirs]` before the spawn, the sweep on
+  `cwd` inside `land`, so no ending can miss it — and `cwd` is resolved once
+  above the spawn so both are handed the directory the child actually got.
+  `core.excludesFile` is deliberately **not** given to this child; the argument
+  is in the docblock at the spawn site and in `docs/agent/chat.md`, and its short
+  form is that `GIT_CONFIG_*` has no scope narrower than the process, so the
+  ignore rule would follow a turn that roams every mount into the operator's own
+  checkouts, where an untracked `.vscode`, `.idea` or `.mcp.json` at the root is
+  an ordinary thing to have.
+
+  **The before-count for chat turns, off the CLI's own transcripts.**
+  `~/.claude/projects/-workspace/` is `chatCwd()`, so a session starting there is
+  a chat turn unless somebody pointed a run at the mount root itself: **192**
+  sessions, **53** of them carrying at least one errored `tool_result` of the
+  shape `bwrap: Can't create file at <path>: Permission denied`, **118** such
+  results over 11 days, 2026-08-25 to 2026-09-08. Counted from `tool_result`
+  blocks rather than by grepping the transcripts, because agents working on this
+  very fix quote the string in prose and a raw match is roughly twice the truth.
+  By list: **67** name the `.claude` list inside a project tree — 30
+  `/workspace/.claude/settings.local.json`, 16 `settings.json`, 8 `skills`, 6
+  `hooks`, and the rest — which is the half the fill covers; **35** name the
+  config directory, which `sandboxMountPoints.ts` deliberately leaves alone; and
+  **16** name the *tree-root* list at `/workspace` itself (`.gitconfig` 3,
+  `.zprofile` 3, `.profile` 3, `.gitmodules` 3, `.zshrc` 2, `.mcp.json` 1,
+  `.bashrc` 1). So the expected count after this change is **51 rather than
+  zero**, and those 16 are a gap it does not close: the module's stated reason
+  for never pre-creating that list is that "the working directory is writable, so
+  bwrap's create succeeds", which holds for a cycle's checkout under
+  `.uf-worktrees` and does not hold for the chat's `/workspace`, whose root the
+  child's uid cannot write. Filed on the board rather than widened into this
+  change.
+
+  **What was exercised by hand:** a scratch tree standing in for the cwd and a
+  second for an `--add-dir`, seeded with what a chat turn's sandbox leaves — the
+  eleven at the root as 0-byte `0444` files — beside an operator's real
+  `.gitconfig` with content and a real `.vscode/` directory. The fill created 24
+  placeholders across the two trees with no problems and left `git status
+  --porcelain` unchanged, the generated `.claude/.gitignore` holding; the sweep
+  removed **9** and left the operator's two, so `git status --porcelain`
+  afterwards is `?? .gitconfig` and `?? .vscode/` and nothing else — which is
+  also the concrete thing `core.excludesFile` would have hidden from a turn asked
+  what is uncommitted. A second fill created nothing. `npm run typecheck` is exit
+  0 and `npm test` is 2597 pass, 0 fail.
+
+  **That both halves are live rather than historical** was seen twice while doing
+  this. This worktree, held by a sandboxed session, carries all eleven at its
+  root as character devices, `git status --porcelain` lists them `??`, and a
+  `git add -A` here died with `error: .bash_profile: can only add regular files,
+  symbolic links or git-directories`. And across `/workspace` and `/workspace2`
+  one abandoned placeholder outlived its session: `/workspace2/.mcp.json`, a
+  0-byte `0444` file at the root of the operator's own Obsidian vault, which is a
+  mount and not a checkout — left where it was found rather than swept by hand.
+
+  **Not verified by hand:** no chat turn has run with this change, and this
+  container cannot host one. `bwrap` refuses to nest inside the sandbox every
+  Bash call here already runs in (`bwrap: open /proc/<pid>/ns/ns failed`), no
+  server or `DATA_DIR` is reachable from an agent worktree, and driving a real
+  turn would spawn a billed child with nobody present. So the after-count, bwrap
+  binding over the placeholders this child now creates, the sweep's `EBUSY`
+  branch for a grandchild still holding a mount, and both `opsLog` warnings are
+  reasoned rather than seen. What settles it, after a `docker compose up
+  --build`: send a chat message that runs a `Bash` call, re-run the transcript
+  count above over `~/.claude/projects/-workspace/` — the 67 `.claude`-list
+  failures should go to zero while the 35 config-directory and 16
+  `/workspace`-root ones remain — and run `git status --porcelain` in the mount
+  the turn's cwd was, which must name none of the eleven
+  `SANDBOX_TREE_ROOT_NAMES`.
+
 - **The Codex sign-in panel, driven end to end against `codex-cli 0.153.4`** on
   2026-09-05, on a built server (`npm start`) with a scratch `DATA_DIR` and a
   scratch `CODEX_HOME`, and separately in a browser through Playwright. Every

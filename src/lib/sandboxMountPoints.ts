@@ -209,6 +209,12 @@ function fillOneTree(dir: string, result: MountPointResult): void {
  * left. It costs a dozen `open(O_CREAT|O_EXCL)` calls per tree on the first
  * cycle and a dozen `EEXIST`s afterwards.
  *
+ * Two callers, and the second is not a work cycle: `runOrchestratorChild` in
+ * `chat.ts` prepares its turn's working directory and every `--add-dir` the same
+ * way, because the failure this prevents is a property of the sandbox rather
+ * than of the run loop. Its docblock carries what that child gets and what it
+ * deliberately does not.
+ *
  * Never throws. Every failure here leaves the install exactly where it was —
  * bwrap tries the create itself and the run behaves as it did before — so
  * refusing to spawn over one would trade a recoverable tool-call failure for an
@@ -361,6 +367,11 @@ export function sweepAbandonedMountPoints(
  * which is the opposite of `ensureSandboxMountPoints` and for the opposite
  * reason: the last cycle of a run has no next spawn, and the state that has to
  * be right is the checkout the operator reviews and the merge queue lands.
+ *
+ * The chat and workflow-block child in `chat.ts` calls it on the same terms and
+ * gets more out of it: a cycle leaves these in a checkout under `.uf-worktrees`
+ * that is about to be thrown away, where that child roams every mount by design
+ * and leaves them in the operator's own.
  *
  * A grandchild that outlived the child can still hold one of these mounted, and
  * the unlink then answers `EBUSY`. That is recorded and left alone rather than
