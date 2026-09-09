@@ -1906,17 +1906,35 @@ Built and exercised against real transcripts:
   child's uid cannot write. Filed on the board rather than widened into this
   change.
 
-  **What was exercised by hand:** a scratch tree standing in for the cwd and a
-  second for an `--add-dir`, seeded with what a chat turn's sandbox leaves — the
-  eleven at the root as 0-byte `0444` files — beside an operator's real
-  `.gitconfig` with content and a real `.vscode/` directory. The fill created 24
-  placeholders across the two trees with no problems and left `git status
-  --porcelain` unchanged, the generated `.claude/.gitignore` holding; the sweep
-  removed **9** and left the operator's two, so `git status --porcelain`
-  afterwards is `?? .gitconfig` and `?? .vscode/` and nothing else — which is
-  also the concrete thing `core.excludesFile` would have hidden from a turn asked
-  what is uncommitted. A second fill created nothing. `npm run typecheck` is exit
-  0 and `npm test` is 2597 pass, 0 fail.
+  **What was exercised by hand, through `runOrchestratorChild` itself rather
+  than through the module.** Two scratch mounts under `WORKSPACE_ROOTS`, the
+  first a git repository holding one tracked file and an operator's own untracked
+  `.vscode/settings.json`, and a `CLAUDE_BIN` stub standing in for bwrap: it
+  creates the eleven `SANDBOX_TREE_ROOT_NAMES` at the root of its cwd as 0-byte
+  `0444` files, exactly as `create_file(path, 0444)` leaves them, and exits. The
+  same script was run against `chat.ts` at `HEAD~1` and at `HEAD`.
+
+  Before: no `.claude` in either tree, ten placeholders left at the root — ten
+  rather than eleven because `.vscode` was already the operator's directory and
+  the stub skipped it — and `git status --porcelain` reading `?? .bash_profile |
+  ?? .bashrc | ?? .gitconfig | ?? .gitmodules | ?? .idea | ?? .mcp.json | ??
+  .profile | ?? .ripgreprc | ?? .vscode/ | ?? .zprofile | ?? .zshrc`. After: the
+  cwd's `.claude` holds the twelve mount points and the generated `.gitignore`,
+  the `--add-dir` mount's holds the same thirteen entries, no placeholder
+  survives, and `git status --porcelain` is `?? .vscode/` and nothing else, with
+  the operator's `.vscode/settings.json` untouched. That last line is also the
+  concrete thing `core.excludesFile` would have hidden from a turn asked what is
+  uncommitted.
+
+  The stub's output is not a turn's, so both runs settle `failed` — which
+  exercises the placement for free: the sweep is in `land` rather than beside the
+  exit, so a turn that ended badly still hands the tree back clean.
+
+  Against the module alone, on a third scratch tree: 24 placeholders created
+  across two trees with no problems and `git status --porcelain` unchanged by the
+  fill, the sweep removing 9 while leaving a real `.gitconfig` with content and a
+  real `.vscode/` directory, and a second fill creating nothing. `npm run
+  typecheck` is exit 0 and `npm test` is 2597 pass, 0 fail.
 
   **That both halves are live rather than historical** was seen twice while doing
   this. This worktree, held by a sandboxed session, carries all eleven at its
@@ -1927,20 +1945,22 @@ Built and exercised against real transcripts:
   0-byte `0444` file at the root of the operator's own Obsidian vault, which is a
   mount and not a checkout — left where it was found rather than swept by hand.
 
-  **Not verified by hand:** no chat turn has run with this change, and this
-  container cannot host one. `bwrap` refuses to nest inside the sandbox every
-  Bash call here already runs in (`bwrap: open /proc/<pid>/ns/ns failed`), no
-  server or `DATA_DIR` is reachable from an agent worktree, and driving a real
-  turn would spawn a billed child with nobody present. So the after-count, bwrap
-  binding over the placeholders this child now creates, the sweep's `EBUSY`
-  branch for a grandchild still holding a mount, and both `opsLog` warnings are
-  reasoned rather than seen. What settles it, after a `docker compose up
-  --build`: send a chat message that runs a `Bash` call, re-run the transcript
-  count above over `~/.claude/projects/-workspace/` — the 67 `.claude`-list
-  failures should go to zero while the 35 config-directory and 16
-  `/workspace`-root ones remain — and run `git status --porcelain` in the mount
-  the turn's cwd was, which must name none of the eleven
-  `SANDBOX_TREE_ROOT_NAMES`.
+  **Not verified by hand:** no chat turn has run with this change against a real
+  CLI, and this container cannot host one. `bwrap` refuses to nest inside the
+  sandbox every Bash call here already runs in (`bwrap: open /proc/<pid>/ns/ns
+  failed: No such file or directory`), so nothing here can construct a real
+  sandbox; no server or `DATA_DIR` is reachable from an agent worktree; and
+  driving a live turn would spawn a billed child with nobody present. The stub
+  above stands in for bwrap's *effect* and cannot stand in for bwrap. So the
+  after-count, bwrap finding the placeholders this child now creates and binding
+  over them rather than failing, the sweep's `EBUSY` branch for a grandchild
+  still holding a mount, and both `opsLog` warnings are reasoned rather than
+  seen. What settles it, after a `docker compose up --build`: send a chat message
+  that runs a `Bash` call, re-run the transcript count above over
+  `~/.claude/projects/-workspace/` — the 67 `.claude`-list failures should go to
+  zero while the 35 config-directory and 16 `/workspace`-root ones remain — and
+  run `git status --porcelain` in the mount the turn's cwd was, which must name
+  none of the eleven `SANDBOX_TREE_ROOT_NAMES`.
 
 - **The Codex sign-in panel, driven end to end against `codex-cli 0.153.4`** on
   2026-09-05, on a built server (`npm start`) with a scratch `DATA_DIR` and a
