@@ -486,7 +486,16 @@ export function ensureSandboxExcludesFile(): SandboxExcludesFile {
   const file = path.join(dir, "sandbox-root-excludes");
   const tmp = `${file}.tmp-${randomBytes(6).toString("hex")}`;
   try {
-    fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
+    try {
+      fs.mkdirSync(dir, { recursive: false, mode: 0o755 });
+    } catch (err) {
+      // Every cycle after the first finds it already there, which is the
+      // ordinary answer and not a problem. Not `recursive`, because the only
+      // parent this would ever create is a missing `/run` or a `TMPDIR` naming
+      // a directory that is not there — a misconfiguration to report rather
+      // than one to quietly invent a directory for.
+      if ((err as NodeJS.ErrnoException)?.code !== "EEXIST") throw err;
+    }
     // `mkdir` masks the mode through the umask and does nothing at all when the
     // directory already exists, so both modes are set rather than requested — a
     // directory the agent's uid cannot enter, or a file it cannot read, is a
