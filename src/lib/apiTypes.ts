@@ -2742,6 +2742,12 @@ export interface SettingsDTO {
   telemetryForRuns: boolean;
   /** Whether a work cycle may reach the taskboard. Off unless switched on. */
   taskboardForRuns: boolean;
+  /** Whether a run's claim to have finished a task is checked. Off by default. */
+  validateTaskCompletion: boolean;
+  /** Hard ceiling on one validation. Null means no cap. */
+  validationBudgetUSD: number | null;
+  /** How many cycles an unfinished verdict may buy one run. Never null. */
+  maxValidationCycles: number;
   donePushbackPrompt: string;
   liveGuardIntervalSeconds: number;
   /** How long a work cycle may print nothing before it is ended. Never null. */

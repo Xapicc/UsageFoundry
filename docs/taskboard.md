@@ -79,6 +79,38 @@ run's status — completion is the run saying so in its own name, or your press.
 Deleting a task a run was started for does not disturb the run. It goes on
 saying it was started for *a task since deleted*.
 
+## Checking the work before the task closes
+
+*Check a task before a run closes it*, in Settings, is off by default. Switch it
+on and a run marking its task complete no longer closes it outright: what that
+run has committed to its own branch is read against what the task asks for, by a
+separate agent that is shown the task and the diff and nothing else, and the task
+closes only if that reading finds the work there.
+
+If something the task names is missing, the task **stays open and stays that
+run's**, the run is told what was not found, and it gets another work cycle to
+finish it — including when it had already used up the work cycles you gave it.
+That extra cycle is bounded by *Extra work cycles a check may buy*, and it is the
+only limit a check can move: the time limit, the run's spending limit, both
+window guards and the daily ceiling still end the run exactly as they would
+have. Set the number to zero and the task is still held open and you are still
+told why, but nothing is bought.
+
+Everything else closes the task exactly as it does today: a run working in a
+shared folder rather than on its own branch, no free slot to run the check in, a
+check that fails or times out, and a reading that cannot tell — which is a real
+answer and a common one, because plenty of tasks have deliverables a diff cannot
+show. **The check can only ever delay a close the run could have made.** It never
+closes a task the run does not hold, and if you take the task back, drop it or
+close it yourself while a check is running, your decision stands.
+
+Two things worth knowing before you switch it on. It costs money on its own,
+once per task a run tries to close, with nobody pressing anything — *Limit per
+check* is a hard stop inside the CLI and the spend counts against your daily
+ceiling. And it is a second model reading a diff, not a test suite: it can say
+the change is *present*, never that it works, and it is wrong in both directions.
+`docs/verification.md` records what has and has not been measured about it.
+
 ## Filtering
 
 The board draws every status group at once and filters by project in the

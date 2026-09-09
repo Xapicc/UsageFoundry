@@ -47,8 +47,17 @@ import {
  *     run's own spend, and these requests would corrupt that comparison.
  */
 
-/** What a `run_reviews` row is. */
-export type AssistKind = "review" | "resolve";
+/**
+ * What a `run_reviews` row is.
+ *
+ * The third one is the odd member and the docblock at the top of this file is
+ * where its accounting is written down: a review and a resolution are started
+ * by a person pressing something, and a **validation** is started by a run
+ * asking to close a task. That is the only automatic spender in this app, which
+ * is why it is the only kind that carries `--max-budget-usd` and why
+ * `installSpend` had to be widened to see this table at all.
+ */
+export type AssistKind = "review" | "resolve" | "validate";
 
 /** Diff bytes sent to the reviewer. Bounded by argv, not by context. */
 const REVIEW_DIFF_BYTES = 60_000;
@@ -76,6 +85,10 @@ const REVIEW_TIMEOUT_MS = 10 * 60_000;
  * timer's: stopping the queue's batch, and the process ending.
  */
 const assistTimeoutMs = (kind: AssistKind): number =>
+  // A validation is bounded for the review's reason and more sharply: a run is
+  // waiting at its cycle boundary for the answer, holding its folder and one of
+  // `maxConcurrentRuns`, so a verdict that never arrives is a slot that never
+  // comes back. The measured median is 49.5s against this ten minutes.
   kind === "resolve" ? 0 : REVIEW_TIMEOUT_MS;
 
 export interface ReviewRow {
@@ -97,6 +110,22 @@ export interface ReviewRow {
   resolved_commit: string | null;
   /** The files it was handed, as a JSON array. Null for a review. */
   resolved_paths: string | null;
+  /**
+   * What a validation decided, or null.
+   *
+   * **Null is a real value and never a default.** A validation that was refused,
+   * crashed, timed out, is still running, or answered something unparseable has
+   * no verdict, and every reader must render that as its own state rather than
+   * folding it into either answer — `validation.ts` closes the task on all of
+   * them, so a null here reads as "closed unchecked" and not as "checked and
+   * passed".
+   */
+  verdict: string | null;
+  /** The task a validation was judging. Null for the other two kinds. */
+  task_id: string | null;
+  /** What was judged, so the opinion outlives the checkout and the branch. */
+  base_sha: string | null;
+  head_sha: string | null;
 }
 
 /**
@@ -297,6 +326,24 @@ export interface AssistRequest {
    * and to commit the merge itself.
    */
   after?: (r: AssistResult) => Promise<Partial<AssistResult> | void>;
+  /**
+   * `--max-budget-usd`, or null for no ceiling inside the CLI.
+   *
+   * **Null for the two kinds a person starts, and a number for the one that
+   * starts itself.** A review and a resolution are one press each, with an
+   * operator watching the row they produce; a validation fires whenever a run
+   * asks to close a task, which on a fleet is per finished piece of work with
+   * nobody present. `chatTurnBudgetUSD` is the precedent for the shape and for
+   * the reason the default is a number rather than null: this bounds *this
+   * app's own behaviour* rather than guessing at an allowance Anthropic
+   * publishes nowhere.
+   */
+  maxBudgetUSD?: number | null;
+  /** The task a validation is judging, recorded on the row. */
+  taskId?: string | null;
+  /** The two commits it read, recorded so the verdict stays re-checkable. */
+  baseSha?: string | null;
+  headSha?: string | null;
 }
 
 /**
@@ -315,8 +362,8 @@ export function startAssist(req: AssistRequest): ReviewOutcome {
     .prepare(
       `INSERT INTO run_reviews
          (id, run_id, kind, created_at, status, model, diff_files, diff_shown,
-          truncated, resolved_paths)
-       VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)`,
+          truncated, resolved_paths, task_id, base_sha, head_sha)
+       VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -328,6 +375,13 @@ export function startAssist(req: AssistRequest): ReviewOutcome {
       counts.shown,
       counts.truncated ? 1 : 0,
       req.paths ? JSON.stringify(req.paths) : null,
+      req.taskId ?? null,
+      // Written at the start rather than at the settle, because what they
+      // record is what the child was *shown*: a branch that moved while the
+      // validation ran would otherwise be recorded as the thing that was
+      // judged, which is the one claim these columns exist to support.
+      req.baseSha ?? null,
+      req.headSha ?? null,
     );
 
   emitRunEvent({
@@ -622,6 +676,14 @@ function spawnAssist(id: string, req: AssistRequest): Promise<void> {
       permissionMode,
     ];
     if (run.model) args.push("--model", run.model);
+    if (req.maxBudgetUSD !== null && req.maxBudgetUSD !== undefined) {
+      // A hard stop inside the CLI, and the only money bound an automatic
+      // assist has: `windowRefusal` is read once at the door, so without this a
+      // validation admitted at 99% of a window could spend arbitrarily. The
+      // work cycle and the chat turn have carried the flag for longer; this is
+      // the path that had none.
+      args.push("--max-budget-usd", String(req.maxBudgetUSD));
+    }
     // One encoder for all four spawn sites — every way of getting this shape
     // wrong is silent, so there is one place that knows it.
     args.push(...agentsArgs(req.agents ?? []));
@@ -785,6 +847,15 @@ export interface AssistResult {
   tokens?: number;
   /** Set by `after` on a conflict resolution: the merge commit it made. */
   resolvedCommit?: string;
+  /**
+   * Set by `after` on a validation: what it decided.
+   *
+   * It arrives through `after` rather than being parsed here, because reading a
+   * verdict out of the reply is `validation.ts`'s job and this module knows
+   * nothing about what a verdict means. Absent is **no verdict**, which is a
+   * state of its own — see `ReviewRow.verdict`.
+   */
+  verdict?: string;
 }
 
 /**
@@ -851,7 +922,7 @@ function finish(
   db()
     .prepare(
       "UPDATE run_reviews SET status=?, finished_at=?, text=?, error=?," +
-        " cost_usd=?, tokens=?, resolved_commit=? WHERE id=?",
+        " cost_usd=?, tokens=?, resolved_commit=?, verdict=? WHERE id=?",
     )
     .run(
       r.status,
@@ -861,6 +932,7 @@ function finish(
       r.costUSD ?? 0,
       r.tokens ?? 0,
       r.resolvedCommit ?? null,
+      r.verdict ?? null,
       id,
     );
 
@@ -873,6 +945,7 @@ function finish(
       assist: kind,
       status: r.status,
       costUSD: r.costUSD ?? 0,
+      ...(r.verdict ? { verdict: r.verdict } : {}),
       ...(r.error ? { error: r.error } : {}),
     },
   });

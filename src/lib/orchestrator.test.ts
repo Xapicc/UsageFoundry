@@ -884,6 +884,7 @@ describe("prompt for the next work cycle", () => {
     continuedWork: "READ-FIRST",
     continuation: "CONTINUE",
     donePushback: "PUSHBACK",
+    validation: null as string | null,
     // Off in the base so every case below reads as it did before the completion
     // notice existed; the cases that are *about* it turn it on by name.
     endsOnDone: false,

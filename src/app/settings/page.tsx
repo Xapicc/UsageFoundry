@@ -374,6 +374,9 @@ const EDITABLE_PATHS = [
   "resumeGraceHours",
   "telemetryForRuns",
   "taskboardForRuns",
+  "validateTaskCompletion",
+  "validationBudgetUSD",
+  "maxValidationCycles",
   "readGuard",
   "readGuardMaxTokens",
   "contextPruning",
@@ -3827,6 +3830,82 @@ export default function SettingsPage() {
               checked={effective.taskboardForRuns}
               onChange={(v) => patch({ taskboardForRuns: v })}
             />
+          </SettingRow>
+
+          {/* Three rows rather than one, because this is the only thing in the
+              app that spends money without being asked *and* can extend a
+              limit the operator set. The copy has to say both. It deliberately
+              does not promise the check is right: it says what happens when it
+              cannot decide, which is the half an operator needs to predict the
+              bill. */}
+          <SettingRow
+            htmlFor="validate"
+            edited={isEdited("validateTaskCompletion")}
+            label="Check a task before a run closes it"
+            description={
+              <>
+                When a run marks its task complete, what it committed to its
+                branch is read against what the task asks for, and the task
+                closes only if that reading finds the work there. If something
+                is missing the task stays open and the run gets another work
+                cycle to finish it. Anything else &mdash; a run without its own
+                branch, no slot free, a check that fails, or a reading that
+                cannot tell &mdash; closes the task exactly as it does today.
+                Off by default: it is the one child this app starts without
+                being asked
+              </>
+            }
+          >
+            <Switch
+              id="validate"
+              checked={effective.validateTaskCompletion}
+              onChange={(v) => patch({ validateTaskCompletion: v })}
+            />
+          </SettingRow>
+
+          <SettingRow
+            htmlFor="validatebudget"
+            edited={isEdited("validationBudgetUSD")}
+            label="Limit per check"
+            description="A hard stop inside the CLI, and the only money bound on a check — it fires by itself, so it cannot be left to the window guard that is read once at the door. Measured at about 12c a check on an upper bound. Blank removes it"
+          >
+            <div className="w-36">
+              <Input
+                id="validatebudget"
+                type="number"
+                inputMode="decimal"
+                step="0.5"
+                min={0}
+                value={effective.validationBudgetUSD ?? ""}
+                onChange={(e) =>
+                  patch({
+                    validationBudgetUSD:
+                      e.target.value === "" ? null : Number(e.target.value),
+                  })
+                }
+              />
+            </div>
+          </SettingRow>
+
+          <SettingRow
+            htmlFor="validatecycles"
+            edited={isEdited("maxValidationCycles")}
+            label="Extra work cycles a check may buy"
+            description="How many further cycles one run may be given when a check finds something missing, past the cycle limit it was started with. Every other limit still ends it — time, run spend, both windows and the daily ceiling — so this extends one bound and not the rest. Zero means the task is still held open and you are still told why, and nothing is bought. There is no blank: a limit that could be removed would be a run nothing ends"
+          >
+            <div className="w-36">
+              <Input
+                id="validatecycles"
+                type="number"
+                inputMode="numeric"
+                step="1"
+                min={0}
+                value={effective.maxValidationCycles}
+                onChange={(e) =>
+                  patch({ maxValidationCycles: Math.max(0, Number(e.target.value) || 0) })
+                }
+              />
+            </div>
           </SettingRow>
         </ListGroup>
       </Section>

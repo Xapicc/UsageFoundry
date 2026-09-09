@@ -60,7 +60,10 @@ without being listed in it, which read as an operator page nobody had indexed:
   settles — `docs/agent/conventions.md` cites it as the reasoning behind the
   closed grouping vocabulary.
 - The **external validator** pitch and the baseline measurement it rests on are
-  [`proposals/ExternalValidator/`](../proposals/ExternalValidator/README.md).
-  Nothing in them shipped: no run is validated today. `proposals/` is where an
-  argument lives until it becomes a decision, and that framing is the point of
-  the move.
+  [`proposals/ExternalValidator/`](../proposals/ExternalValidator/README.md). A
+  validator has since shipped, in a shape that pitch argues against — the
+  operator's half is *Checking the work before the task closes* in
+  [`taskboard.md`](taskboard.md) and the reasoning is in
+  `docs/agent/taskboard.md`. Both documents are kept as they were written: they
+  are the argument the decision was taken against, and its README says where the
+  two diverge.

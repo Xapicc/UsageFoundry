@@ -288,6 +288,17 @@ export interface RunRow {
    */
   reported_done: number;
   /**
+   * Work cycles a validator has bought this run past its own cycle cap.
+   *
+   * Only ever increases, and is compared against `maxValidationCycles` rather
+   * than against anything the model can move — `validation.ts` carries why the
+   * bound has to exist at all: `maxIterations` and `maxDurationMinutes` are the
+   * only two monotone termini, so an extension with no ceiling is a run nothing
+   * ends. Read off the row and never off a local, so a run picked up after a
+   * restart meets the ceiling it was already under.
+   */
+  validation_cycles: number;
+  /**
    * What the agent said when it reported it could not finish, clipped to
    * `MAX_NEEDS_REVIEW_REASON`.
    *
@@ -8124,6 +8135,18 @@ export async function startRun(id: string): Promise<void> {
   let earlyEnds = 0;
   /** The operator's message for the first cycle of this segment, if any. */
   let followUp: string | null = run.follow_up ?? null;
+  /**
+   * What a validator found missing, for the cycle its verdict just bought.
+   *
+   * In the loop's frame and never on the row, unlike `follow_up`, and the
+   * difference is what each survives: an operator's note is written before the
+   * run is picked up and has to outlive a restart, where this is produced at a
+   * boundary and consumed at the very next spawn. A restart in between drops the
+   * text, and dropping it is right — the run comes back through `reopenRun`,
+   * which starts a fresh segment, and a sentence about a cycle that never
+   * happened would be delivered into a conversation that has moved on.
+   */
+  let pendingPushback: string | null = null;
   let stopReason = "";
   let finalStatus: RunStatus = "completed";
   /** Set only by the needs-review branch, so any other ending clears the row. */
@@ -8526,6 +8549,10 @@ export async function startRun(id: string): Promise<void> {
         continuedWork: settings.continuedWorkPrompt,
         continuation: settings.continuationPrompt,
         donePushback: settings.donePushbackPrompt,
+        // Consumed here and cleared below, exactly as `followUp` is: a verdict
+        // buys one cycle and says its piece into that cycle, and a run that
+        // parks or crashes after this point has already had it delivered.
+        validation: pendingPushback,
         // Read off the same policy the loop's own exits read, so the promise
         // the opening prompt makes and the rule that ends the run cannot drift:
         // `continueAfterDone` is the flag at 6862 that sends a DONE agent back
@@ -8540,6 +8567,7 @@ export async function startRun(id: string): Promise<void> {
       // killed from here on has already had it delivered, and replaying it on
       // the next pick-up would say the same thing twice into a conversation
       // that has already acted on it.
+      pendingPushback = null;
       if (followUp !== null) {
         followUp = null;
         db().prepare("UPDATE runs SET follow_up = NULL WHERE id = ?").run(id);
@@ -9416,13 +9444,44 @@ export async function startRun(id: string): Promise<void> {
         break;
       }
 
+      // A verdict on this run's own claim to have finished its task, if it made
+      // one this cycle. Waited out rather than polled at the next boundary,
+      // because the boundary *is* the decision: a run that called
+      // `complete_task` in its last few seconds would otherwise end with the
+      // verdict still in flight and no cycle left to act on it.
+      //
+      // Placed **below** `needs-review` and above everything else, and both
+      // halves of that are deliberate. Below, because `needs-review` is the
+      // agent saying it could not finish and that ending belongs to the agent —
+      // sending a run back into a cycle it has just said it cannot complete is
+      // the one shape this must never take. Above the two `completed` endings,
+      // because those are the two the validator exists to question: the agent's
+      // own DONE, and a run that merely used up its cycle cap.
+      //
+      // Imported here rather than at the top of the file, `enforceInstanceBudget`'s
+      // reason: `validation.ts` imports this module for `getRun` and
+      // `emitRunEvent`, and a static import back would make the pair a cycle.
+      // This call is inside an async function, past the point where both
+      // modules are fully evaluated.
+      const { validationAtBoundary, recordValidationCycle } = await import(
+        "./validation"
+      );
+      const heldBack = await validationAtBoundary(id, cycleStartedAt, () =>
+        interrupts.has(id),
+      );
+
       // Completion signal from the continuation protocol. Recorded even when it
       // is absent, because "the agent said the task was finished" is the only
       // thing that separates a `completed` run from one that simply ran out of
       // work cycles below, and the answer is gone by the time the run is picked
       // up again.
+      //
+      // **Written from the agent's reply and never from the verdict.** That
+      // column means one thing — the agent replied DONE — and it is the sole
+      // input to `reopenPrompt`'s pushback branch. A machine's opinion about
+      // the claim is not the claim.
       reportedDone = ending === "done";
-      if (reportedDone) {
+      if (reportedDone && !heldBack) {
         if (!policy.continueAfterDone) {
           stopReason =
             doneRetriggers > 0
@@ -9444,12 +9503,37 @@ export async function startRun(id: string): Promise<void> {
         );
       }
 
-      if (policy.maxIterations !== null && iterations >= policy.maxIterations) {
+      // The one guard a verdict may extend, and it extends only this one.
+      // `evaluateBudget` at the top of the next pass still reads duration, run
+      // spend, both window fractions and the install's own ceiling exactly as it
+      // did, so a granted cycle is permission to *ask* for another cycle rather
+      // than permission to have one. `validation.ts` carries why the grant has
+      // to be counted on the row and ceilinged: `maxIterations` and
+      // `maxDurationMinutes` are the only two monotone termini, and one that can
+      // be extended without bound is a run nothing ends.
+      if (
+        !heldBack &&
+        policy.maxIterations !== null &&
+        iterations >= policy.maxIterations
+      ) {
         stopReason = `Used all ${policy.maxIterations} work ${
           policy.maxIterations === 1 ? "cycle" : "cycles"
         } allowed for this run.`;
         finalStatus = "completed";
         break;
+      }
+
+      if (heldBack) {
+        // Written to the row before the cycle it pays for opens, `iterations`'
+        // rule on the refund path: a run picked up after a restart has to meet
+        // the ceiling it was already under, or the bound resets every time the
+        // container does.
+        recordValidationCycle(id);
+        pendingPushback = heldBack.pushback;
+        log(
+          id,
+          `The task this run holds was checked and is not closed: ${heldBack.reason}. Giving it another work cycle to finish what is missing.`,
+        );
       }
 
       // The boundary prune, and its position in this loop is the whole of why

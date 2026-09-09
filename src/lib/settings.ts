@@ -494,6 +494,56 @@ export interface Settings {
    */
   taskboardForRuns: boolean;
   /**
+   * Whether a run asking to close a task has that claim checked first.
+   *
+   * Off by default, `taskboardForRuns`' reason one step further again. That one
+   * gives an unattended agent a write path into this app's database; this one
+   * spends money on its own, every time a run says it has finished something,
+   * and can buy that run further work cycles past the cap the operator set. This
+   * app does not ship spenders switched on.
+   *
+   * It is read at the `complete_task` call rather than fixed when the run
+   * starts, the read guard's rule: an operator who has just decided this should
+   * stop gets it at the next claim rather than at the next restart.
+   *
+   * Inert while off, and inert in the strong sense: no child is spawned, no
+   * `run_reviews` row is written, and `complete_task` closes the task exactly as
+   * it did before this existed — same statement, same actor, same wording.
+   */
+  validateTaskCompletion: boolean;
+  /**
+   * Hard ceiling on what one validation may spend. Null removes it.
+   *
+   * `chatTurnBudgetUSD`'s shape and its reason: not a guess at a limit Anthropic
+   * knows and we do not, but a cap on this app's own behaviour, enforced
+   * *inside* the CLI through `--max-budget-usd`. It needs a default more than
+   * that one does, because a chat turn is a person typing and this fires by
+   * itself — on a fleet, once per finished piece of work with nobody present.
+   * The spike measured a median of $0.125 a verdict on an upper-bound
+   * transport, so $1 is roughly eight times the observed median and is a
+   * runaway bound rather than a budget.
+   */
+  validationBudgetUSD: number | null;
+  /**
+   * How many further work cycles an unfinished verdict may buy one run.
+   *
+   * **This is a terminus, and that is why it cannot be null.**
+   * `budgets-and-guards.md`: `maxIterations` and `maxDurationMinutes` are the
+   * only two monotone termini and a run must have one, so a verdict able to
+   * extend the first without bound would be a run nothing ends — the absence of
+   * a ceiling is the defect, so there must be no way to type one. Zero is the
+   * off switch and means a verdict never buys a cycle: the task is still held
+   * open and the operator still sees why, which is the pitch's own notify-only
+   * design arrived at through a number.
+   *
+   * Two rather than one because the first extra cycle is the one a run spends
+   * re-reading what it did, and rather than five because every one of them is
+   * billed on the say-so of a judge whose false-alarm rate on this install is
+   * still unmeasured. It bounds one run: a fleet multiplies it, exactly as it
+   * multiplies `maxRunCostUSD`.
+   */
+  maxValidationCycles: number;
+  /**
    * Sent when an agent reports DONE and the run is set to carry on regardless.
    *
    * Cannot be `continuationPrompt`: that one says "if it is fully complete,
@@ -577,8 +627,9 @@ export interface Settings {
    * this app's own behaviour, and unlike every other guard here it is enforced
    * *inside* the CLI (`--max-budget-usd`) rather than between cycles. It needs a
    * default because a chat turn passes through no `evaluateBudget` at all — the
-   * only other thing bounding it is the wall-clock timeout, and "read every
-   * issue in the repository" can spend a lot inside ten minutes.
+   * only other thing bounding it is a bound on *silence* rather than on work,
+   * so a turn that keeps producing output keeps going, and "read every issue in
+   * the repository" can spend a lot while producing output the whole time.
    */
   chatTurnBudgetUSD: number | null;
   /**
@@ -948,6 +999,9 @@ export const DEFAULTS: Settings = {
   continuedWorkPrompt: DEFAULT_CONTINUED_WORK_PROMPT,
   telemetryForRuns: false,
   taskboardForRuns: false,
+  validateTaskCompletion: false,
+  validationBudgetUSD: 1,
+  maxValidationCycles: 2,
   donePushbackPrompt: DEFAULT_DONE_PUSHBACK_PROMPT,
   liveGuardIntervalSeconds: 60,
   maxCycleSilenceMinutes: 120,

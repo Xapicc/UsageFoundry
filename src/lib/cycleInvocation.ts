@@ -238,6 +238,17 @@ export function nextPrompt(o: {
   continuation: string;
   donePushback: string;
   /**
+   * What a validator found missing, when a verdict bought this cycle.
+   *
+   * `donePushback`'s shape and its reason — a cycle whose prompt is a *reply* —
+   * with one difference that decides where it sits below: that one is a
+   * standing setting the operator wrote once, and this is produced at the
+   * boundary immediately above about this run's own work. So it outranks both
+   * the continuation and the pushback, and is the only thing that can be the
+   * whole of a resumed turn besides the operator's own note.
+   */
+  validation: string | null;
+  /**
    * Whether replying DONE can actually end this run.
    *
    * False for `maxIterations === 1`, where the cycle cap ends it either way and
@@ -262,6 +273,10 @@ export function nextPrompt(o: {
       o.priorCycles > 0 ? priorWorkNotice(o.priorCycles, o.worktreeBranch) : null,
       o.task,
       o.followUp,
+      // After the task and before the completion notice: a run restarting
+      // without a session has to read what it was asked for before it reads
+      // what a reader could not find in what it did.
+      o.validation,
       // Last, so it is the most recent thing in the opening context and so it
       // reads as a statement about the task above rather than a preamble to it.
       o.endsOnDone ? COMPLETION_NOTICE : null,
@@ -276,7 +291,17 @@ export function nextPrompt(o: {
   // promises are sent verbatim as the next turn. A run whose operator wrote a
   // note already has the person this ending exists to reach, and the contract is
   // restated on the very next cycle by the branch below.
+  //
+  // It also outranks the validator's pushback, which is the rarest corner here
+  // and still the right way round: a person who typed a note into a run while a
+  // verdict was landing is the one deciding what that run does next. What the
+  // verdict said is on the run's own log and the task is still open in
+  // `list_my_tasks`, so nothing is lost that the agent cannot see.
   if (o.followUp) return o.followUp;
+  // Above the pushback and the continuation, because it is the most specific
+  // thing this app knows about the cycle it is opening: "carry on" and "you said
+  // DONE, carry on anyway" are both true and neither says what is missing.
+  if (o.validation) return `${o.validation}\n\n${NEEDS_REVIEW_NOTICE}`;
   // On both, not on cycle 1 alone. `COMPLETION_NOTICE`'s own docblock names the
   // failure this avoids: an agent on cycle 5 that has been re-told about DONE
   // four times and about this once, on a turn that has scrolled out of reach,

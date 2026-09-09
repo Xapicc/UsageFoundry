@@ -584,9 +584,40 @@ export function describeEvent(e: RunEventDTO): LogEntry | null {
     }
 
     case "review": {
-      // The same event kind carries both — a read-only review and a conflict
-      // resolution — because they are the same billed, out-of-cycle spawn.
-      const label = p.assist === "resolve" ? "resolve" : "review";
+      // The same event kind carries all three — a read-only review, a conflict
+      // resolution and a validation — because they are the same billed,
+      // out-of-cycle spawn.
+      const label =
+        p.assist === "resolve"
+          ? "resolve"
+          : p.assist === "validate"
+            ? "check"
+            : "review";
+
+      // A settled validation says what it decided rather than what it cost,
+      // and it says it in a tone that is **never** `danger`. A verdict is a
+      // reading of a diff, not a fault the run committed: red here would draw
+      // an opinion the same way this log draws a crash. `unjudgeable` is drawn
+      // apart from both answers for the reason the column keeps it apart — a
+      // shrug that renders as agreement is the one misreading that matters,
+      // because it is the one that closed the task.
+      if (p.assist === "validate" && p.status === "completed") {
+        const verdict = typeof p.verdict === "string" ? p.verdict : null;
+        return {
+          voice: "system",
+          tone: verdict === "not-finished" ? "warn" : "neutral",
+          label,
+          text:
+            verdict === "finished"
+              ? `the work the task asks for is on the branch — ${fmtUSD(Number(p.costUSD ?? 0))}`
+              : verdict === "not-finished"
+                ? `something the task asks for is missing — ${fmtUSD(Number(p.costUSD ?? 0))}`
+                : verdict === "unjudgeable"
+                  ? `could not tell from the branch; the task was closed unchecked — ${fmtUSD(Number(p.costUSD ?? 0))}`
+                  : `no verdict; the task was closed unchecked — ${fmtUSD(Number(p.costUSD ?? 0))}`,
+        };
+      }
+
       if (p.status === "running") {
         return {
           voice: "system",

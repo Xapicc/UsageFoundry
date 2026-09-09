@@ -972,6 +972,17 @@ function migrate(db: Database.Database) {
   // see `targetOf` in land.ts.
   addColumn(db, "runs", "worktree_base_branch", "TEXT");
   addColumn(db, "runs", "landed_at", "INTEGER");
+
+  // Work cycles a validator has bought this run past its own cycle cap.
+  //
+  // A counter rather than a flag, and it is what keeps the terminus rule
+  // intact: `maxIterations` and `maxDurationMinutes` are the only two monotone
+  // termini, so a verdict that could extend the first without bound would be a
+  // run nothing ends. This only ever increases, it is compared against a
+  // ceiling the operator sets, and every other guard stays exactly as terminal
+  // as it was. `MAX_EARLY_ENDS_PER_RUN` bounds the context ceiling's refund for
+  // the same reason and is the precedent.
+  addColumn(db, "runs", "validation_cycles", "INTEGER NOT NULL DEFAULT 0");
   addColumn(db, "runs", "landed_into", "TEXT");
   addColumn(db, "runs", "landed_strategy", "TEXT");
   // The branch tip at the moment it was landed. A squash does not make the
@@ -1077,6 +1088,28 @@ function migrate(db: Database.Database) {
   // is the resolution rather than everything the merge brought across.
   addColumn(db, "run_reviews", "resolved_commit", "TEXT");
   addColumn(db, "run_reviews", "resolved_paths", "TEXT");
+
+  // What a validation decided, and what it decided about.
+  //
+  // `text` already holds the prose; this is the machine-readable half, because
+  // a verdict that has to be re-parsed out of a paragraph by every reader is a
+  // verdict each of them can read differently. Three values and no default —
+  // NULL is the fourth state and it is a real one: a validation that was
+  // refused, crashed, timed out or is still running has **no verdict**, which
+  // must never be defaulted to either answer.
+  addColumn(db, "run_reviews", "verdict", "TEXT");
+
+  // Which claim it was judging. A validation is started by a run asking to
+  // close a task, and the close it authorises has to name the same row it was
+  // asked about — a verdict that landed while the operator moved the task on is
+  // a verdict about work nobody is waiting for.
+  addColumn(db, "run_reviews", "task_id", "TEXT");
+
+  // What was judged, on `resolved_commit`'s precedent. A verdict outlives the
+  // checkout by 23 days and the branch possibly for ever, and one that cannot
+  // name the commits it read is an opinion nobody can re-check.
+  addColumn(db, "run_reviews", "base_sha", "TEXT");
+  addColumn(db, "run_reviews", "head_sha", "TEXT");
 
   // A proposal may now name no template at all, which the column above was
   // declared NOT NULL to forbid. SQLite cannot relax that with ALTER, so the

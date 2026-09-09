@@ -388,6 +388,26 @@ async function putHandler(req: Request) {
     patch.taskboardForRuns = Boolean(body.taskboardForRuns);
   }
 
+  if ("validateTaskCompletion" in body) {
+    patch.validateTaskCompletion = Boolean(body.validateTaskCompletion);
+  }
+
+  if ("validationBudgetUSD" in body) {
+    // Blank means "no cap", the reading every switchable budget rule here
+    // takes. It is the only money bound on the one child this app starts
+    // without being asked, so removing it is the operator's explicit act.
+    patch.validationBudgetUSD = optionalNumber(body.validationBudgetUSD);
+  }
+
+  if ("maxValidationCycles" in body) {
+    // Floored at zero and **never null**, unlike every budget above it: this is
+    // half of a terminus, so there must be no way to type "no limit". Zero is
+    // the off switch and is a real answer — the task is still held open and the
+    // operator still sees the verdict; nothing buys a cycle.
+    const n = optionalNumber(body.maxValidationCycles);
+    patch.maxValidationCycles = n === null ? 0 : Math.max(0, Math.floor(n));
+  }
+
   if ("planUsageFromApi" in body) {
     patch.planUsageFromApi = Boolean(body.planUsageFromApi);
     // The cached reading outlives the setting otherwise: switching this off

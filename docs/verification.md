@@ -4658,6 +4658,42 @@ through before trusting this unattended:
   that the count under *Runs* on the workflow page moves as the block emits — it
   is the number of runs the instance holds, which for a graph with an
   orchestrator block in it is not the number of blocks.
+- **The external validator, end to end. Nothing about it has been run against a
+  real `claude`.** The four pure decisions are unit tested and the rest
+  typechecks and builds; no verdict has ever been produced by the pinned CLI
+  through `spawnAssist` on this install, and `docs/verification.md` already
+  records that **no real `claude` has been run through the assist path at all** —
+  this is the first thing to make that path automatic, which raises the stakes of
+  that line rather than settling it. What the design rests on is
+  `scripts/validator-spike/RESULT.md`: 34 of 37 on a held-out set with zero
+  false-finished, judged through the harness's own subagent transport, one sample
+  per case, on 40 `completed` runs judged against `runs.task` rather than against
+  a board task. Six things to watch, in the order they would bite.
+  **Does a verdict parse at all** — the whole gate turns on one fenced JSON block
+  arriving at the end of a `--permission-mode plan` reply, and every failure to
+  read one closes the task silently, so the first real check is a `run_reviews`
+  row with a non-null `verdict`. **Does the task actually close on `finished`**,
+  and does the close carry `completed_by_run_id` — the close goes through
+  `updateTask` with the run as the actor, so a run whose claim has lapsed is
+  refused by `taskTransitionRefusal` and the sentence lands on the run's log
+  rather than in a tool result. **Does the boundary wait, and for how long** — the
+  measured median is 49.5s and this holds the run's folder and slot for it;
+  anything approaching the eleven-minute bound means the row stopped being
+  written rather than that the child was slow. **Does an unfinished verdict buy
+  exactly one cycle** — `validation_cycles` should read 1 after the first grant
+  and the run should end at the ceiling, and the shape that would show a defect is
+  a run whose counter climbs on a verdict it was already granted a cycle for.
+  **Is the re-tuned preference section doing what the untuned one did** — the
+  spike's numbers are numbers about a prompt whose "be suspicious rather than
+  generous" paragraph this change replaced, deliberately and under
+  `external-validator.md` §7's rule, so the agreement figure is inherited rather
+  than re-measured and the honest statement is that **the shipped prompt has never
+  been scored**. Re-running `scripts/validator-spike/score.mjs` against the
+  shipped text is the measurement that would settle it. And **what the ceiling
+  now counts**: `installSpend` reads `run_reviews.cost_usd` for the first time, so
+  an install with a daily limit and a history of reviews will read higher against
+  that limit than it did before this change, immediately and with no run having
+  spent anything new.
 - **Stopping a chat turn, in either of its two forms.** `staleTurn` is unit
   tested and the rest typechecks, but no real CLI child has been signalled by
   `cancelChatTurn` and no sweep has fired against a live row. Two things to

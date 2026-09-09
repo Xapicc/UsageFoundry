@@ -49,6 +49,7 @@ import {
   type TaskOrigin,
   type TaskStatus,
 } from "@/lib/tasks";
+import { completeTaskWithValidation } from "@/lib/validation";
 import {
   createTemplate,
   getTemplate,
@@ -1103,8 +1104,44 @@ const BLOCK_TOOLS = [
  * and need to see the install to do it, where a run is already doing one piece
  * of work in one folder. `RUN_TOOLS`' docblock carries what that leaves out.
  */
+/**
+ * What `complete_task` says when a claim is checked before it is honoured.
+ *
+ * Swapped in rather than appended to the constant, so an install with the check
+ * off sends the byte-identical description it always did — the appended
+ * prompt's price rule one surface along, for the same reason: a cached prefix
+ * that gains a sentence about a feature that is not on is paid for by every
+ * cycle of every run.
+ *
+ * It states the mechanism and not a promise about the answer. The last two
+ * sentences are the ones that earn their tokens: commit before calling, because
+ * the branch is what gets read and uncommitted work is invisible to it, and
+ * there is nothing to poll — a model told "this is being checked" and not told
+ * to stop looking will call `list_my_tasks` in a loop until its budget runs out.
+ */
+const CHECKED_COMPLETE_TASK =
+  "Mark a task this run holds as done. You can complete only a task already " +
+  "recorded against this run — the one list_my_tasks returns as held — and " +
+  "naming any other is refused. Call it when the work the task asked for is " +
+  "actually finished, not when you have decided to stop. What you have " +
+  "committed to this run's branch is then read against what the task asks " +
+  "for, and the task closes only if that reading finds the work there; if " +
+  "something is missing you will be told what, in your next turn, and the " +
+  "task stays yours. So commit your work before you call this — anything " +
+  "uncommitted is not on the branch and cannot be seen. Do not call this " +
+  "again to find out what happened, and do not wait for it. If you could not " +
+  "finish the task, leave it and say why in your reply.";
+
 function toolsFor(subject: CapabilitySubject) {
-  if (subject.kind === "run") return [...RUN_TOOLS];
+  if (subject.kind === "run") {
+    return getSettings().validateTaskCompletion
+      ? RUN_TOOLS.map((tool) =>
+          tool.name === "complete_task"
+            ? { ...tool, description: CHECKED_COMPLETE_TASK }
+            : tool,
+        )
+      : [...RUN_TOOLS];
+  }
   return subject.kind === "chat"
     ? [...SHARED_TOOLS, ...CHAT_TOOLS]
     : [...SHARED_TOOLS, ...BLOCK_TOOLS];
@@ -1678,7 +1715,7 @@ async function callTool(
       if (subject.kind !== "run") return text(subjectRefusal(subject, name), true);
       return name === "list_my_tasks"
         ? listMyTasks(subject.runId)
-        : completeTaskForRun(args, subject.runId);
+        : await completeTaskForRun(args, subject.runId);
     }
 
     case "ask_operator":
@@ -2438,7 +2475,23 @@ function listMyTasks(runId: string) {
  * does not hold could close the whole board, and every refusal below is that
  * function's sentence rather than one written here.
  */
-function completeTaskForRun(args: Record<string, unknown>, runId: string) {
+/**
+ * Close a task this run holds, or start the check that decides whether it may
+ * be closed.
+ *
+ * **The authority is unchanged and that is deliberate.** `updateTask` with this
+ * run as the actor is still the only door, so `taskTransitionRefusal` is still
+ * the whole of the board’s authority model: a validation can *delay* a close
+ * this run could have made and can never make one it could not. The refusals
+ * below are the same two, in the same words, whether or not the check is on.
+ *
+ * **What the model is told when the check starts is a fact and not a
+ * promise.** It is not told that a verdict will re-open anything, and it is not
+ * told to wait: it is told the task is not closed yet, and what to do about a
+ * reading it disagrees with. A tool result that said "this will be confirmed
+ * shortly" would have the model call `list_my_tasks` in a loop to find out.
+ */
+async function completeTaskForRun(args: Record<string, unknown>, runId: string) {
   const taskId = String(args.taskId ?? "").trim();
   if (!taskId) {
     return text(
@@ -2448,21 +2501,33 @@ function completeTaskForRun(args: Record<string, unknown>, runId: string) {
     );
   }
 
-  const done = updateTask(taskId, { status: "done" }, { kind: "run", runId });
-  if (!done.ok) {
+  const outcome = await completeTaskWithValidation(taskId, runId);
+
+  if (outcome.kind === "refused") {
     // `missing` and `refused` are told apart by `tasks.ts` and both are the
     // model's own error to read: an id that is not there is a mistyped id, and a
     // refusal names the run that actually holds the task.
+    return text(outcome.error, true);
+  }
+
+  if (outcome.kind === "checking") {
     return text(
-      done.kind === "missing"
-        ? `No task with id ${taskId}. list_my_tasks returns the ones this run holds.`
-        : done.error,
-      true,
+      `“${outcome.task.title}” is **not closed yet**. What this run has ` +
+        "committed to its branch is being read against what the task asks for, " +
+        "and the task closes by itself if that reading finds everything there.\n\n" +
+        "Two things follow. Anything you have changed but not committed is not " +
+        "on the branch and cannot be seen, so commit it now if it is part of " +
+        "the work. And if the reading comes back saying something is missing, " +
+        "you will be told what, and the task stays yours — you do not need to " +
+        "call this tool again to find out.",
     );
   }
 
   return text(
-    `Marked “${done.task.title}” done. It is recorded as completed by this run. ` +
+    `Marked “${outcome.task.title}” done. It is recorded as completed by this run. ` +
+      (outcome.note
+        ? `It was closed without being checked, because ${outcome.note}. `
+        : "") +
       "If it turns out not to be finished, say so in your reply — you cannot " +
       "re-open it, and only the operator can.",
   );

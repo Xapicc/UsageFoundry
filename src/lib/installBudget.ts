@@ -71,6 +71,17 @@ function windowStart(now: number): number {
  *   the same statement, so nothing live is dropped by this and the case it
  *   bounds is the one where a settled block is put back to `waiting` with its
  *   `finished_at` cleared and its accumulated cost kept.
+ * - An assist: `finished_at`, or `created_at` while it has none. A review and a
+ *   resolution are one press each and sat outside this reading for as long as
+ *   that was true of every row in the table — defensible while a person is there
+ *   for each one, and wrong the moment something fires by itself. A
+ *   **validation** does: one per run asking to close a task, with nobody
+ *   present, which on a fleet is one per finished piece of work. Left out, a
+ *   ceiling that says "this install may spend $N a day" would not have counted
+ *   the one spender the operator never triggered. All three kinds are counted
+ *   rather than validations alone, because what this reading is is *money this
+ *   app recorded spending inside the window* and a reviewed run's money is no
+ *   less spent for having been asked for.
  * - A chat: the `ts` of each `chat_turn_spend` row. `chat_sessions.cost_usd` is
  *   a running total over the life of a thread and summing it bounded on
  *   `updated_at` charged that whole history to whichever window the latest
@@ -157,7 +168,19 @@ export function installSpend(now = Date.now()): InstallProgress {
     )
     .get() as { est: number };
 
-  const other = blocks.spent + chats.measured;
+  // Every `claude` this app ran about a run outside its work cycles. The cost
+  // is the CLI's own `total_cost_usd`, so it is a **measured** figure and goes
+  // into both readings — `run_reviews` has no estimated half, unlike a run and
+  // unlike a chat turn: a child that was killed before it reported leaves the
+  // row `failed` with whatever it had said, and this app prices nothing for it.
+  const assists = db()
+    .prepare(
+      "SELECT COALESCE(SUM(cost_usd), 0) AS spent FROM run_reviews" +
+        " WHERE COALESCE(finished_at, created_at) >= ?",
+    )
+    .get(since) as { spent: number };
+
+  const other = blocks.spent + chats.measured + assists.spent;
   return {
     spentUSD: spentUSD + other,
     spentGuardUSD: spentGuardUSD + other + chats.est + live.est,
