@@ -2346,6 +2346,28 @@ Built and exercised against real transcripts:
   row in each of its three lists; and the rendered graph draws all three notes,
   the edge between two of them, and the unwritten `[[Missing note]]` target.
 
+- **A superseded proposal, and the stale click that races it, driven in a real
+  browser.** 2026-09-08, against `.next/standalone/server.js` — the artifact the
+  container ships — on a throwaway `DATA_DIR` with a `CLAUDE_BIN` that cannot
+  spawn, so nothing here was a real agent. The panel was opened with one pending
+  proposal, its checkbox ticked, and its `GET /api/chat*` polls then aborted at
+  the browser so the render could go stale; the server was stopped, the row
+  superseded by a second one through `createProposalReplacing`'s own statement,
+  and the server restarted. **13 of 13 assertions passed.** The page still
+  offered `Approve 1`; the click was refused with "Nothing was approved. 1
+  proposal(s) had already been decided and were left alone."; `GET /api/runs`
+  returned zero runs; and `POST /api/chat/<id>/proposals` for the same id
+  answered 400 with that sentence. After the poll was released the replacement
+  was the only card with a checkbox and the badge read `1 waiting`, so no count
+  on the panel sees a superseded row. On **Decided** the card read `SUPERSEDED`
+  and named its replacement, and its link switched the tab to **Proposals** with
+  the replacement on screen. The refusal placement was measured both ways on the
+  same harness: drawn inside the approve row it is **gone** when the refused
+  click empties `pending`, and outside it survives. What is **not** verified: no
+  model wrote either proposal — both rows were seeded — so nothing here exercises
+  `propose_run`'s `supersedes` argument end to end, which is covered by the unit
+  tests in `chat.test.ts` and not by a browser.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the
@@ -2360,6 +2382,20 @@ through before trusting this unattended:
 > has always read. That is an argument, not a measurement: there is no docker
 > client in this container, so `docker compose up --build` could not be run to
 > confirm it. It is the first thing to check on a machine that has one.
+
+> **Neither three-valued reading has been seen on a real install.** The branch
+> row's unread checkout and the `run.guard_unreadable` line are covered by
+> `BranchWork.test.tsx`, `logLine.test.ts` and `orchestrator.test.ts`, and
+> `npm run smoke-pages` loads `/branches` clean off the standalone bundle at
+> both widths — but that run has a throwaway `DATA_DIR` with no branches in it,
+> so the new row was never drawn, and no run has hit a `no_ceiling` verdict
+> here. What is unmeasured is that `heldByCheckout` is true on exactly the rows
+> `MAX_PENDING_PROBES` skipped: it is `p.slot !== null`, the same predicate
+> `selectProbeTargets` picks on, so the two agree by construction rather than by
+> observation. To exercise it, start more than `MAX_PENDING_PROBES` isolated
+> runs against one repository, leave a file uncommitted in a late one's
+> checkout, and open `/branches`: the rows past the cap must say "checkout could
+> not be read" and must still offer Commit.
 
 > **`RELAY_PORT` and `RELAY_BIND` have never reached a container.** Both are
 > now in `docker-compose.yml`'s `environment:` block, and `deployment.test.ts`
@@ -5369,7 +5405,7 @@ through before trusting this unattended:
   # expect "…is root-owned: a run cannot rewrite or replace its settings.json…"
   # a refusal instead names the entry, the owner it wanted and the owner it saw
 
-  # 1 + 2. the two the sketch names (09-implementation-sketch.md:274–283)
+  # 1 + 2. the two the sketch names (09-implementation-sketch.md:274–284)
   docker compose exec --user "$uid" usagefoundry \
     sh -c 'echo x >> ~/.claude/settings.json'                    # expect denied
   docker compose exec --user "$uid" usagefoundry \

@@ -8,6 +8,7 @@ import type {
 } from "../../../lib/apiTypes";
 import { getSchedule, scheduleView, type ScheduleView } from "../../../lib/schedules";
 import {
+  blockSpendReading,
   lastRunAt,
   liveBlocksOf,
   liveRunsOf,
@@ -111,7 +112,8 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
     status: b.status,
     startedAt: b.startedAt,
     finishedAt: b.finishedAt,
-    costUSD: b.costUSD,
+    costUSD: blockSpendReading(b),
+    costUnknown: b.costUnknown,
     emitted: b.emitted,
     decided: b.decided,
     reply: b.reply,
@@ -137,6 +139,8 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
     instanceBudget: instance.instanceBudget,
     spentUSD: instance.spend.spentUSD,
     spentGuardUSD: instance.spend.spentGuardUSD,
+    spentUnmeasured: instance.spend.unmeasured,
+    spentSubjects: instance.spend.subjects,
     nodes,
     blocks,
   };

@@ -187,7 +187,10 @@ function RunRows({
               {n.run ? fmtCycles(n.run.iterations, n.run.maxIterations) : "—"}
             </Td>
             <Td num label="Spent" className="whitespace-nowrap align-top">
-              {n.run ? fmtUSD(n.run.spentUSD) : "—"}
+              {/* Null is a provider that reports no cost, not a member that
+                  spent nothing — the runs list draws the same dash for the
+                  same reason. */}
+              {n.run && n.run.spentUSD !== null ? fmtUSD(n.run.spentUSD) : "—"}
             </Td>
             <Td
               num
@@ -576,7 +579,12 @@ export default function WorkflowInstancePage() {
           unknownHint="no workflow spending limit"
           detail={
             budget.maxInstanceCostUSD === null
-              ? `${fmtUSD(instance.spentUSD)} measured so far`
+              ? // "measured" is a claim, and it is false as soon as one block
+                // reported no cost at all: the figure is then what the rest of
+                // them reported and says nothing about that one.
+                instance.spentUnmeasured > 0
+                ? `${fmtUSD(instance.spentUSD)} reported so far`
+                : `${fmtUSD(instance.spentUSD)} measured so far`
               : `of ${fmtUSD(budget.maxInstanceCostUSD)}; the guard reads ${fmtUSD(
                   instance.spentGuardUSD,
                 )}`
@@ -614,6 +622,14 @@ export default function WorkflowInstancePage() {
             {instance.liveRunCount} block(s) working — a cycle in flight reports
             nothing until it ends, so the measured figure is a floor and the
             guard&rsquo;s is what telemetry has seen so far
+          </Hint>
+        )}
+        {instance.spentUnmeasured > 0 && (
+          <Hint>
+            Money covers {instance.spentSubjects - instance.spentUnmeasured} of{" "}
+            {instance.spentSubjects} block(s) — the rest reported no cost, because a turn
+            died before the CLI could say or the provider never says, so what
+            they spent is unknown rather than nothing
           </Hint>
         )}
       </Card>
@@ -699,7 +715,8 @@ export default function WorkflowInstancePage() {
                           label="Spent"
                           className="whitespace-nowrap align-top"
                         >
-                          {b.kind === "orchestrator" || b.kind === "merge"
+                          {(b.kind === "orchestrator" || b.kind === "merge") &&
+                          b.costUSD !== null
                             ? fmtUSD(b.costUSD)
                             : "—"}
                         </Td>

@@ -28,6 +28,7 @@ const tokens = (over: Partial<TokenCounts> = {}): TokenCounts => ({
   cacheRead: 0,
   cacheWrite5m: 0,
   cacheWrite1h: 0,
+  cacheWriteUnattributed: 0,
   ...over,
 });
 

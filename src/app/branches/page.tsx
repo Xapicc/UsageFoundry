@@ -24,6 +24,7 @@ import {
   type BadgeTone,
 } from "@/lib/format";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
+import { UncommittedNote, offersCommit } from "@/components/BranchWork";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonRow } from "@/components/ui/Button";
 import {
@@ -1505,12 +1506,10 @@ function BranchTable({
                           paths", and both are about the same checkout this is.
                           C10 cut three wordings to two and this must not make
                           it three again, so anything reworded here is reworded
-                          in all of them. */}
-                      {!!b.uncommitted && (
-                        <div className="mt-1 text-2xs font-semibold uppercase tracking-wide text-warn">
-                          {b.uncommitted} uncommitted in the checkout
-                        </div>
-                      )}
+                          in all of them. The unread state is a fourth *state*
+                          and not a fourth wording: it borrows "could not be
+                          read" off the storage table above. */}
+                      <UncommittedNote branch={b} />
                     </Td>
 
                     <Td className="align-top">
@@ -1561,7 +1560,7 @@ function BranchTable({
                         {/* Puts what the agent wrote onto the branch, under the
                             run's own task as the subject. Also what frees the
                             checkout slot: one with work in it is not reusable. */}
-                        {b.exists && !b.active && !!b.uncommitted && (
+                        {offersCommit(b) && (
                           <Button
                             variant="secondary"
                             className="min-w-[92px]"

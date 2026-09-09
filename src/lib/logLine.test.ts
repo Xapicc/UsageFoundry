@@ -232,3 +232,65 @@ describe("matchesLogFilter", () => {
     assert.equal(keeps(toolCall, { query: "   ", kind: "all" }), true);
   });
 });
+
+/** A `budget` event as the guard sites in `orchestrator.ts` emit one. */
+function budgetEvent(payload: Record<string, unknown>): RunEventDTO {
+  return { id: 2, runId: "r", ts: 0, kind: "budget", payload };
+}
+
+/**
+ * The one refusal this app records and then carries past.
+ *
+ * `no_ceiling` is the ordinary state of a stock install while the provider's
+ * percentage is unreadable: the verdict is a real refusal, `enforceable` is
+ * false, and the run starts its next cycle anyway. Reading the row off
+ * `disposition` alone puts "budget · stop" in the feed beside cycles that then
+ * ran to completion — a sentence about the run that is not true, in the tone
+ * reserved for what went wrong, once per cycle for as long as the outage lasts.
+ * Nothing throws and the page renders, which is why it needs pinning here.
+ */
+describe("describeEvent — a guard verdict the run may not be ended on", () => {
+  const unreadable = {
+    allowed: false,
+    code: "no_ceiling",
+    disposition: "stop",
+    enforceable: false,
+    reason:
+      "A weekly-fraction guard is set but that window has no reading to " +
+      "measure against: the provider's own utilisation was not available.",
+  };
+
+  it("does not say a run was stopped by a guard that stopped nothing", () => {
+    const entry = describeEvent(budgetEvent(unreadable));
+    assert.ok(entry, "an unenforceable refusal is still a row");
+    assert.doesNotMatch(entry.text, /stop/i, "nothing was stopped");
+    assert.notEqual(entry.tone, "warn", "a non-event is not a warning");
+    assert.match(entry.text, /could not be read/i);
+    assert.match(entry.text, /carried on/i);
+  });
+
+  it("keeps it out of the reader's warnings-and-failures view", () => {
+    const entry = describeEvent(budgetEvent(unreadable));
+    assert.ok(entry);
+    assert.equal(
+      matchesLogFilter("budget", entry, { query: "", kind: "problem" }),
+      false,
+      "an operator asking what went wrong is not asking about this",
+    );
+  });
+
+  it("still reads as a stop when the field says so, and when it is absent", () => {
+    // `!== false` rather than `=== true`, for the reason `notifiableEvent` gives:
+    // the two emit sites that really do end a run omit the field entirely, and
+    // reading absent as unenforceable would silence every guard that ever fired.
+    for (const payload of [
+      { ...unreadable, code: "run_cost", enforceable: true },
+      { allowed: false, code: "run_cost", disposition: "stop", reason: unreadable.reason },
+    ]) {
+      const entry = describeEvent(budgetEvent(payload));
+      assert.ok(entry);
+      assert.equal(entry.tone, "warn");
+      assert.match(entry.text, /^stop — /);
+    }
+  });
+});
