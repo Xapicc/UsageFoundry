@@ -241,3 +241,145 @@ export function ensureSandboxMountPoints(cwds: readonly string[]): MountPointRes
 
   return result;
 }
+
+/**
+ * The *other* list the same sandbox applies, and the one it leaves behind.
+ *
+ * `SANDBOX_MOUNT_POINT_NAMES` above is what gets bound inside `.claude/`. At
+ * the **root of the working directory itself** the CLI binds `/dev/null` over a
+ * second list: the shell profiles, the git and editor configuration and the MCP
+ * and ripgrep files a repository could otherwise use to steer a command running
+ * inside the sandbox. bwrap creates a missing bind target the same way it does
+ * for the twelve above, `create_file(path, 0444)`, and that empty file outlives
+ * the sandbox — the mount is in a namespace, the inode is on the disk.
+ *
+ * Measured on this install 2026-09-09: in a live session all eleven are
+ * character devices with `rdev=1,3` at the root of the checkout and `git status`
+ * lists all eleven as untracked, and six of the 47 checkouts under
+ * `.uf-worktrees` with no session holding them carried all eleven as regular
+ * empty `0444` files. `.idea` and `.vscode` are left as *files* where a checkout
+ * wants directories, which is the harm the `skills` placeholder above names.
+ *
+ * Unlike the `.claude` list this one must **not** be created ahead of time.
+ * There is no failure to prevent — the working directory is writable, so
+ * bwrap's create succeeds — and creating them is precisely the mess. What this
+ * app owes here is the clearing away.
+ *
+ * The working directory only, and that is measured rather than assumed: a
+ * session whose cwd was `.uf-worktrees/usagefoundry-721638d11c0b-7` had all
+ * eleven bound there, none at `/workspace` — an exposed ancestor that does get
+ * the `.claude` list — and none at `/workspace2`, an added directory. This list
+ * follows the cwd and nothing else.
+ */
+export const SANDBOX_TREE_ROOT_NAMES: readonly string[] = [
+  ".bash_profile",
+  ".bashrc",
+  ".gitconfig",
+  ".gitmodules",
+  ".idea",
+  ".mcp.json",
+  ".profile",
+  ".ripgreprc",
+  ".vscode",
+  ".zprofile",
+  ".zshrc",
+];
+
+/** The three things the decision below reads off an `fs.Stats`. */
+export interface PlaceholderStats {
+  isFile(): boolean;
+  size: number;
+  mode: number;
+}
+
+/**
+ * Is this bwrap's abandoned bind target, or a file somebody meant to have?
+ *
+ * All three conditions together, because deleting the wrong file is the failure
+ * here that cannot be taken back. bwrap creates a missing target with
+ * `create_file(path, 0444)` and never writes to it, so the signature is exactly
+ * a regular file, zero bytes, mode `0444`. A real `.bashrc` or `.gitconfig` is
+ * neither empty nor read-only, and `.idea`/`.vscode` in a checkout that has
+ * them are directories, which `isFile` refuses.
+ *
+ * `lstat` at the call site rather than `stat`: a symlink named `.bashrc` is
+ * somebody's, and following one would let a repository aim this at a file
+ * outside the tree.
+ *
+ * The one way this can still be wrong is a repository that *tracks* an empty
+ * `0444` file at one of the eleven names — and that is a loud way to be wrong,
+ * because git then reports a deletion in the checkout the operator reviews,
+ * rather than the silent kind this module's other half guards against.
+ */
+export function isAbandonedMountPoint(stats: PlaceholderStats | null): boolean {
+  if (!stats) return false;
+  return stats.isFile() && stats.size === 0 && (stats.mode & 0o777) === 0o444;
+}
+
+/** What one sweep did, for the run's log. */
+export interface SweptMountPoints {
+  /** Absolute paths removed, empty when the sandbox left nothing behind. */
+  removed: string[];
+  /** What could not be removed, as `<path>: <reason>`. */
+  problems: string[];
+}
+
+/**
+ * Take the working directory back once a cycle's sandboxes are gone.
+ *
+ * Pure, with the two filesystem calls passed in, for `sandboxMountPointDirs`'
+ * reason: both ways of being wrong are silent. Sweep too little and the run
+ * hands back a checkout holding eleven files no agent wrote, which is what a
+ * reviewer sees and what the next `git add -A` trips over; sweep too much and
+ * this app deletes a file out of somebody's repository.
+ */
+export function sweepAbandonedMountPoints(
+  dir: string,
+  lstat: (target: string) => PlaceholderStats | null,
+  unlink: (target: string) => void,
+): SweptMountPoints {
+  const swept: SweptMountPoints = { removed: [], problems: [] };
+
+  for (const name of SANDBOX_TREE_ROOT_NAMES) {
+    const target = path.join(dir, name);
+    if (!isAbandonedMountPoint(lstat(target))) continue;
+    try {
+      unlink(target);
+      swept.removed.push(target);
+    } catch (err) {
+      swept.problems.push(`${target}: ${(err as Error).message}`);
+    }
+  }
+
+  return swept;
+}
+
+/**
+ * `sweepAbandonedMountPoints` against the real filesystem.
+ *
+ * Called when the cycle's child has exited rather than before the next spawn,
+ * which is the opposite of `ensureSandboxMountPoints` and for the opposite
+ * reason: the last cycle of a run has no next spawn, and the state that has to
+ * be right is the checkout the operator reviews and the merge queue lands.
+ *
+ * A grandchild that outlived the child can still hold one of these mounted, and
+ * the unlink then answers `EBUSY`. That is recorded and left alone rather than
+ * retried — fighting a live sandbox for an empty file is not worth a cycle's
+ * settling, and the next cycle's sweep gets it.
+ *
+ * Never throws, for `ensureSandboxMountPoints`' reason: a cycle that already
+ * produced its result must not be lost to tidying up after it.
+ */
+export function sweepSandboxTreeRoot(dir: string): SweptMountPoints {
+  return sweepAbandonedMountPoints(
+    dir,
+    (target) => {
+      try {
+        return fs.lstatSync(target);
+      } catch {
+        return null;
+      }
+    },
+    (target) => fs.unlinkSync(target),
+  );
+}

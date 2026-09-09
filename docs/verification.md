@@ -1849,6 +1849,28 @@ Built and exercised against real transcripts:
   after the next `docker compose up --build`: it should go to zero for project
   trees and keep the handful in the config directory and the one `.idea`.
 
+- **The sandbox's *other* list — the eleven shell, git, editor, MCP and ripgrep
+  dotfiles it binds at the root of the working directory — measured on
+  2026-09-09 inside an isolated cycle in
+  `.uf-worktrees/usagefoundry-721638d11c0b-7`.** In a live session
+  `/proc/self/mountinfo` carries one entry per name against the cwd, each a
+  character device `1,3` from the container's `/dev` tmpfs, and `git status
+  --porcelain` lists all eleven as `??`; `git add -A` there does not commit
+  them, it dies with `error: .bash_profile: can only add regular files,
+  symbolic links or git-directories`. None of the eleven is bound at
+  `/workspace`, an exposed ancestor that *does* get the `.claude` list, nor at
+  `/workspace2`, an added directory — the list follows the working directory
+  and nothing else. They outlive the session: six of the 47 checkouts under
+  `.uf-worktrees` with nothing running in them carried all eleven as regular
+  empty `0444` files, `.idea` and `.vscode` among them as files where a
+  checkout wants directories. `sweepSandboxTreeRoot` was run against a scratch
+  tree holding all eleven plus a `.gitconfig` with content and a `.vscode`
+  directory: nine removed, those two left. **Not verified by hand:** the
+  orchestrator's call to it after a cycle's child exits. No sandboxed cycle has
+  been spawned since the change, so the log line, the `EBUSY` branch for a
+  grandchild still holding a mount, and the interaction with `trackedDirt`'s
+  slot-reuse workaround in `land.ts` are all reasoned rather than seen.
+
 - **The Codex sign-in panel, driven end to end against `codex-cli 0.153.4`** on
   2026-09-05, on a built server (`npm start`) with a scratch `DATA_DIR` and a
   scratch `CODEX_HOME`, and separately in a browser through Playwright. Every
