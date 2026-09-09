@@ -14,6 +14,7 @@ import { planUsage } from "@/lib/planUsage";
 import { telemetryWindow } from "@/lib/otlp";
 import { retentionCutoff } from "@/lib/retention";
 import { installSpendReport } from "@/lib/installBudget";
+import { latestRateLimitReading } from "@/lib/rateLimitEvent";
 import {
   pricedCuts,
   prunerState,
@@ -202,6 +203,18 @@ export async function GET(req: Request) {
       // key rather than a field on `snapshot`, because it is a fourth reading
       // over a different span and must never be summed with the meters.
       install: installSpendReport(now),
+      // The provider's own percentage, as the last running work cycle saw it
+      // go past on its own stream. A property read off an in-memory slot, so it
+      // is not in the `Promise.all` above and costs this heartbeat nothing.
+      //
+      // Its own key and never folded into `snapshot`, on `install`'s rule and
+      // one that is sharper here: `snapshot` is what `evaluateBudget` is handed
+      // before every work cycle, and this figure exists only when a cycle
+      // happened to be streaming recently — a guard reading its absence as 0%
+      // would run an account through its ceiling. `rateLimitEvent.ts` has the
+      // argument. The same `now` the meters were built against, so the age the
+      // page prints is measured from the instant the rest of the response is.
+      rateLimit: latestRateLimitReading(now),
       // What context pruning has been worth: the two windows the meters above
       // already draw — so a reader comparing them is comparing the same span,
       // not this app's idea of "recently" — and the whole of what can still be

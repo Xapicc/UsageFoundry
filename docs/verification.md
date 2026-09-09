@@ -2459,6 +2459,40 @@ Built and exercised against real transcripts:
   been run end to end since the change, so nothing here has exercised
   `logAssistTools` writing rows or the `check ›` prefix rendering on a run
   page.
+- **`rate_limit_event`'s shape, read off the pinned binary rather than off a
+  live stream — 2026-09-09.** The one event above was sighted arriving; what
+  `handleStreamLine` now does with it was built against
+  `@anthropic-ai/claude-code`'s own schema, read out of `bin/claude.exe` with
+  `grep -ao`. `status` is declared
+  `["allowed","allowed_warning","rejected"]`; `unifiedWindows` carries
+  `five_hour`, `seven_day` and `seven_day_overage_included`, each
+  `{utilization: number, resetsAt: int}`; and its `@internal` describe string
+  says the windows are "as read from the `anthropic-ratelimit-unified-*`
+  response headers", that `utilization` is "the fraction of the window used
+  (usually 0-1)" with values above 1 occurring, that `resetsAt` is unix epoch
+  **seconds**, that an event is emitted when a rounded percentage or a reset
+  instant *moves* rather than on a cadence, and that the field is absent until
+  a response carrying those headers has been seen and always absent on
+  API-key, Bedrock and Vertex sessions. That last pair is what `metering.md`
+  rests the "no guard may read it" decision on, and the header provenance is
+  what settles that `0.15` means 15% here while `planUsage.ts`'s `5.0` means
+  5%. The path was then driven end to end against the **standalone bundle** —
+  `CLAUDE_BIN` pointed at a stub emitting the event above verbatim, a real run
+  created through `POST /api/runs`, and the dashboard opened at 1280px and
+  390px with no console error. `/api/usage` answered `rateLimit` with
+  `utilization` 0.15/0.06 undivided, resets converted to epoch ms, the overage
+  fields and the session id; the card drew "5-hour 15.0% · resets in 1h 0m",
+  "Weekly 6.0% · resets in 96h 0m" and "Overage rejected ·
+  org_level_disabled". The same run with `status` set to `allowed_warning`
+  drew "Claude Code reported a rate-limit status this app does not handle" with
+  no percentage on it and filed one `stream.rate_limit_status` ops row at
+  `warn`. What is **not** verified: the event was canned, so nothing here has
+  read one off a real Claude Code process against a real account; nothing has
+  been observed on any `status` other than `allowed`; no
+  `seven_day_overage_included` window has been seen on this account; and the
+  card is inside the block `FirstRun` replaces, so on a machine with no local
+  transcripts the provider's reading is suppressed along with the meters it
+  would otherwise be the only alternative to.
 
 ## Not yet verified by hand
 

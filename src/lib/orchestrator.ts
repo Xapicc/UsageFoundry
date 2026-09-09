@@ -57,6 +57,7 @@ import {
 import { totalTokens } from "./pricing";
 import { buildSnapshot, type UsageSnapshot } from "./windows";
 import { planUsage } from "./planUsage";
+import { rateLimitReading, recordRateLimitReading } from "./rateLimitEvent";
 import {
   ingestTokenFor,
   revokeIngestTokens,
@@ -7308,6 +7309,69 @@ function noteUnknownStreamEvent(
   recordOpsEvent("warn", "stream.unknown_event", { cli, type, runId });
 }
 
+/**
+ * Keep one `rate_limit_event`, and say so when it cannot be kept.
+ *
+ * Three outcomes and none of them is silence, because every way this can go
+ * wrong looks on screen exactly like an account with plenty of allowance left.
+ *
+ *  - Readable and `allowed`: stored, and nothing is logged. It arrives on every
+ *    turn whose rounded percentage moved, so a line per reading would be the
+ *    flood `tool_progress` is kept out of `run_events` to avoid.
+ *  - Readable and some other `status`: stored as `unhandled` — so the surface
+ *    can say the provider reported something this build will not read a
+ *    percentage out of — and reported on both of `noteUnknownStreamEvent`'s
+ *    sinks with its own lifetimes. `status` is the one field on this event that
+ *    could mean the account has *stopped* being served, so an unhandled member
+ *    of it is a durable ops row, not a log line that ages out with the run.
+ *  - Not readable at all: handed to `noteUnknownStreamEvent` under the type
+ *    itself. The type is one this app knows and the *shape under it* has moved,
+ *    which is the same fact that function exists to record and is bounded the
+ *    same way.
+ */
+function noteRateLimit(
+  runId: string,
+  ev: Record<string, unknown>,
+  acc: IterationResult,
+): void {
+  const reading = rateLimitReading(ev, Date.now());
+  if (reading === null) {
+    noteUnknownStreamEvent(runId, "Claude Code", "rate_limit_event", ev, acc);
+    return;
+  }
+
+  recordRateLimitReading(reading);
+  if (reading.status === "allowed") return;
+
+  // Keyed on the status and not on the type, so a second unhandled member is
+  // reported rather than swallowed by the first — and so this cannot suppress
+  // the plain unknown-type report for `rate_limit_event` above, which answers a
+  // different question.
+  const key = `rate_limit_status:${reading.reported}`;
+  if (acc.unknownEventTypes.has(key)) return;
+  acc.unknownEventTypes.add(key);
+
+  log(
+    runId,
+    `Claude Code reported a rate-limit status this app does not handle: ` +
+      `"${reading.reported}". Only "allowed" is read as a usage figure, so no ` +
+      `percentage is being taken from this event — and it is not being read as ` +
+      `"fine" either. Reported once per status per cycle.`,
+    { stream: "stdout", raw: ev },
+  );
+
+  const seen = `Claude Code:${key}`;
+  if (unknownEventTypesReported.has(seen)) return;
+  unknownEventTypesReported.add(seen);
+  // The status and nothing else, on `noteUnknownStreamEvent`'s rule: the body
+  // of this event is the provider's, not ours, and `ops.ts` forbids handing
+  // this a payload object.
+  recordOpsEvent("warn", "stream.rate_limit_status", {
+    status: reading.reported,
+    runId,
+  });
+}
+
 /* ------------------------------------------------------------------ */
 /* What a cycle is still inside                                        */
 /* ------------------------------------------------------------------ */
@@ -7709,6 +7773,16 @@ function handleStreamLine(
     return;
   }
 
+  // The provider's own reading of the two windows this app otherwise estimates
+  // from local transcripts. Like `tool_progress` it is held in memory and never
+  // written to `run_events`, and unlike it the reading is about the *account*
+  // rather than about this run — `rateLimitEvent.ts` has all four decisions,
+  // including why nothing on this path may reach a guard.
+  if (type === "rate_limit_event") {
+    noteRateLimit(runId, ev, acc);
+    return;
+  }
+
   if (type === "user") {
     // Before the failures and over all of them: a call that answered is a call
     // that is no longer running, and the successful ones are the majority the
@@ -7890,7 +7964,8 @@ function handleStreamLine(
     return;
   }
 
-  // A fifth top-level type. `assistant`, `user`, `result` and `system` are what
+  // A type none of the branches above claimed. `assistant`, `user`, `result`,
+  // `system`, `tool_progress` and `rate_limit_event` are what
   // `--output-format stream-json` was measured to write, so anything here means
   // the pin has moved — and the symptom of missing that is a cycle with no cost,
   // no session id and no stop reason, which every page in this app renders as a

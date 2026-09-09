@@ -25,6 +25,9 @@ transcripts.ts  scan + dedupe → UsageEntry[]      (incremental byte-offset rea
 pricing.ts      per-model rates, cache multipliers → costUSD per entry
 settings.ts     limitConfig() applies reserved headroom → LimitConfig
 planUsage.ts    GET /api/oauth/usage → the account's own utilisation, cached
+rateLimitEvent.ts the same quantity off a running cycle's own stream, held in
+                memory — drawn beside the meters, summed with nothing, and
+                reaching no guard: it exists only while something is streaming
 windows.ts      buildSnapshot() → 5-hour blocks, weekly rollup, burn, projection
                 buildPeriods()  → calendar day/week/month history, display only
 budget.ts       evaluateBudget(policy, snapshot, progress) → allow / block + code

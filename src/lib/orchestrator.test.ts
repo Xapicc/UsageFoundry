@@ -149,6 +149,8 @@ const { revokeIngestTokens, runForIngestToken } =
   require("./otlp") as typeof import("./otlp");
 const { db } = require("./db") as typeof import("./db");
 const { recentOpsEvents } = require("./ops") as typeof import("./ops");
+const { clearRateLimitReading, latestRateLimitReading } =
+  require("./rateLimitEvent") as typeof import("./rateLimitEvent");
 const { saveSettings } = require("./settings") as typeof import("./settings");
 const { priceFiles, renderFileCostNotice } =
   require("./fileCostNotice") as typeof import("./fileCostNotice");
@@ -3655,6 +3657,77 @@ describe("handleStreamLine on an unrecognised event type", () => {
     assert.equal(filed.length, 1);
     assert.equal(filed[0].level, "warn");
     assert.equal(filed[0].detail.cli, "Claude Code");
+  });
+
+  // `rate_limit_event` used to land here, and the cost of that was not a log
+  // line: it is the provider's own reading of the two windows this whole app
+  // estimates, dropped. The branch is what these two pin — remove it and the
+  // reading silently stops arriving while every page still renders.
+  it("does not file the rate-limit event as a vocabulary it has lost", () => {
+    clearRateLimitReading();
+    // Reset instants relative to now, in epoch *seconds* as the wire carries
+    // them: a literal would make this test pass until that instant and then
+    // start failing, because a window whose reset has passed is dropped.
+    const inAnHour = Math.floor(Date.now() / 1000) + 3600;
+    const { acc, logs } = run([
+      {
+        type: "rate_limit_event",
+        session_id: "sess-rl",
+        rate_limit_info: {
+          status: "allowed",
+          rateLimitType: "five_hour",
+          unifiedWindows: {
+            five_hour: { utilization: 0.15, resetsAt: inAnHour },
+            seven_day: { utilization: 0.06, resetsAt: inAnHour + 86_400 },
+          },
+        },
+      },
+    ]);
+    assert.deepEqual([...acc.unknownEventTypes], []);
+    assert.equal(logs.filter((l) => l.includes("does not recognise")).length, 0);
+
+    const held = latestRateLimitReading(Date.now());
+    assert.equal(held?.status === "allowed" && held.fiveHour?.utilization, 0.15);
+    clearRateLimitReading();
+  });
+
+  it("says so out loud when the status is one it will not read", () => {
+    clearRateLimitReading();
+    const { acc, logs } = run([
+      {
+        type: "rate_limit_event",
+        session_id: "sess-rl",
+        rate_limit_info: { status: "uf_test_novel_status" },
+      },
+      // Twice, because this arrives on every turn: the report is bounded the
+      // same way an unrecognised type's is.
+      {
+        type: "rate_limit_event",
+        session_id: "sess-rl",
+        rate_limit_info: { status: "uf_test_novel_status" },
+      },
+    ]);
+
+    assert.deepEqual(
+      [...acc.unknownEventTypes],
+      ["rate_limit_status:uf_test_novel_status"],
+    );
+    assert.equal(
+      logs.filter((l) => l.includes("does not handle")).length,
+      1,
+    );
+    const filed = recentOpsEvents(50, "stream.rate_limit_status").filter(
+      (e) => e.detail.status === "uf_test_novel_status",
+    );
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].level, "warn");
+
+    // Stored rather than dropped, so the dashboard can say the provider is
+    // saying something this build will not read a percentage out of — and so
+    // the last good reading is not left on screen as if it were current.
+    const held = latestRateLimitReading(Date.now());
+    assert.equal(held?.status, "unhandled");
+    clearRateLimitReading();
   });
 });
 
