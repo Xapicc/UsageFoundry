@@ -2368,6 +2368,26 @@ Built and exercised against real transcripts:
   `propose_run`'s `supersedes` argument end to end, which is covered by the unit
   tests in `chat.test.ts` and not by a browser.
 
+- **The unsplit-cache-write notice and the meter span it points at, drawn in a
+  real browser.** 2026-09-09, against a `next start` build on a throwaway
+  `DATA_DIR` and a `CLAUDE_HOME` holding one synthetic assistant turn:
+  `claude-sonnet-4-5-20250929`, 120 input / 800 output / 50,000 cache read and
+  `cache_creation_input_tokens: 100000` with no `cache_creation` breakdown — the
+  shape `readTokens` cannot attribute. The dashboard drew the notice ("Cache
+  writes with no declared lifetime: 100.0k…"), and with `sessionCostLimit` at $1
+  seeded into the settings row the 5-hour meter read **40.2% – 62.7%**: a solid
+  bar to the shown figure and a hatched span from there to the guard figure, so
+  the notice's "hatched span on the meters above" names something that is
+  actually on screen. Both ends were checked by hand against the price table —
+  $0.4024 with the 100k at the 5m write rate ($3.75/MTok) and $0.6274 with it at
+  the 1h rate ($6.00/MTok), the rest of the turn identical — which is the
+  floor/ceiling split `costOf` and `guardCostOf` are supposed to produce. What is
+  **not** verified: this was `next start` against `.next/`, not the standalone
+  bundle; the settings row was written in SQL because the scratch server did not
+  hold the data directory's lock and refuses writes without it; and no real
+  transcript from a CLI that omits the breakdown has been through this, so
+  nothing here confirms which turns in the wild take this path.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the
