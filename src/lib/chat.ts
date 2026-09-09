@@ -412,16 +412,48 @@ export const MAX_PENDING_PROPOSALS = 25;
 const THREAD_REPLAY_MESSAGES = 20;
 const THREAD_REPLAY_BYTES = 20_000;
 
-/** A chat turn that has not finished in this long is not going to. */
-export const CHAT_TIMEOUT_MS = 10 * 60_000;
+/**
+ * How long a turn may go **silent** before it is stopped. Not how long it may
+ * run.
+ *
+ * This was a wall clock — ten minutes from the claim, whatever the child was
+ * doing — and what that measured was the wrong thing. A turn asked to read four
+ * repositories and propose work across them is a long turn rather than a stuck
+ * one, and the ten-minute bound killed it at its most expensive moment: the
+ * answer discarded, the money spent, and the operator's only move to ask again
+ * and buy the same ten minutes. The failures the bound exists for do not look
+ * like that at all — a child wedged on a socket, a `close` that never comes, a
+ * turn nothing in this process can still hear from — and every one of them is
+ * *silence*, which is what this now measures. The timer in
+ * `runOrchestratorChild` is re-armed on every byte the child produces, so a
+ * turn that is working runs for as long as it keeps working, and a turn that
+ * has stopped talking is still stopped.
+ *
+ * Fifteen rather than ten because a single tool call is silent for the whole
+ * time it runs and the CLI's own `Bash` allows ten minutes of one: `Optional
+ * timeout in milliseconds (default 30000, max 600000)`, read out of the shipped
+ * binary (2.1.266 on the host, against a 2.1.260 pin) rather than guessed. A
+ * bound at or under the longest legitimate silence is the old defect with a new
+ * name on it — it would kill the turns doing the most work, and it would do it
+ * on the tool call rather than on the clock. Five minutes of headroom over a
+ * measured maximum, and the number is worth re-reading if that one moves.
+ *
+ * What is *not* here is a ceiling on the whole turn, and that is deliberate:
+ * `chatTurnBudgetUSD` bounds a turn in the unit that actually costs something,
+ * enforced inside the CLI by `--max-budget-usd`, and the install's rolling
+ * ceiling is re-asked while the turn runs (`CEILING_CHECK_MS`). Money is the
+ * bound; the clock only says whether anything is still there.
+ */
+export const CHAT_IDLE_TIMEOUT_MS = 15 * 60_000;
 
 /**
  * How long past that bound the sweeper waits before failing a row out.
  *
- * The in-closure timer above fires at exactly `CHAT_TIMEOUT_MS` and then gives
- * the child five seconds to die, so a turn that is being stopped properly
- * settles well inside this margin. What is left over when the margin expires is
- * a turn whose `close` is not coming — the case this whole path exists for.
+ * The in-closure timer above fires at exactly `CHAT_IDLE_TIMEOUT_MS` of silence
+ * and then gives the child five seconds to die, so a turn that is being stopped
+ * properly settles well inside this margin. What is left over when the margin
+ * expires is a turn whose `close` is not coming — the case this whole path
+ * exists for.
  */
 export const STALE_TURN_MARGIN_MS = 60_000;
 
@@ -784,8 +816,9 @@ export interface AnsweredQuestion {
  *
  * An unanswered question is named too, rather than left out. Left out, it is
  * indistinguishable from a question that was never asked, and the model's next
- * move is to ask it again — which is a second turn, a second ten-minute window
- * and a second card, for a question the operator has already declined once.
+ * move is to ask it again — which is a second turn, a second billed
+ * window and a second card, for a question the operator has already declined
+ * once.
  */
 export function answerMessage(entries: readonly AnsweredQuestion[]): string {
   const lines = ["Answers to your questions:"];
@@ -829,8 +862,8 @@ export type QuestionSettlement =
  *
  * **Every open question is in `entries`, answered or not.** A question left out
  * is indistinguishable from one that was never asked, and the model's next move
- * is to ask it again — a second turn and a second ten-minute window for
- * something the operator has already declined once.
+ * is to ask it again — a second turn and a second billed window for something
+ * the operator has already declined once.
  *
  * What is deliberately *not* here is the supersede rule. Nothing an operator
  * sends leaves a question open, and that is enforced by a single
@@ -2067,9 +2100,27 @@ interface Capability {
 const caps = ((globalThis as unknown as { __ufChatCaps?: Map<string, Capability> })
   .__ufChatCaps ??= new Map<string, Capability>());
 
+/**
+ * `Infinity` and revocation rather than a clock, which is `mintRunCapability`'s
+ * pair one function down and is now this one's too.
+ *
+ * It used to expire on the wall-clock bound plus a minute, which was sound only
+ * while a turn could not outlive that bound. It can: `CHAT_IDLE_TIMEOUT_MS`
+ * measures silence, so a turn that keeps working keeps going — and a lifetime
+ * of eleven minutes on its credential would be a turn whose tools start
+ * answering 401 part-way through, which reads as a model that chose not to call
+ * any and is exactly the failure `mcpConfigOwnership()` returning null is
+ * written to avoid.
+ *
+ * What replaces the clock is that every ending revokes: `land` in
+ * `runOrchestratorChild` runs on the spawn failure, on the exit and on the
+ * kill, the idle timer revokes at the moment it decides the turn is over rather
+ * than waiting for the corpse, and the map is in this process's memory, so it
+ * dies with the process either way.
+ */
 export function mintCapability(subject: CapabilitySubject): string {
   const token = randomBytes(32).toString("base64url");
-  caps.set(token, { subject, expiresAt: Date.now() + CHAT_TIMEOUT_MS + 60_000 });
+  caps.set(token, { subject, expiresAt: Infinity });
   return token;
 }
 
@@ -2080,14 +2131,14 @@ export function revokeCapability(token: string): void {
 /**
  * The token a work cycle calls the taskboard with, minted once per run.
  *
- * `ingestTokenFor` in `otlp.ts` is the shape this follows rather than
- * `mintCapability` above, and the difference is the clock. A chat turn's
- * capability expires on `CHAT_TIMEOUT_MS` because a turn that has not finished
- * by then is not going to; a run has no such bound — it is hours of work cycles
- * with parks and resumes in between — so a lifetime here would be a run whose
- * tools stop existing partway through, which reads as a model that chose not to
- * call any. `Infinity` and `revokeRunCapabilities` is the pair, exactly as the
- * exporter's credential is.
+ * `ingestTokenFor` in `otlp.ts` is the shape this follows, and it is the shape
+ * `mintCapability` above now takes too: no clock, and an explicit revocation on
+ * every path the thing it belongs to can end on. A lifetime here would be a run
+ * whose tools stop existing partway through — it is hours of work cycles with
+ * parks and resumes in between — which reads as a model that chose not to call
+ * any. `Infinity` and `revokeRunCapabilities` is the pair, exactly as the
+ * exporter's credential is. What still separates this from a turn's is only
+ * *what* revokes it: a turn's dies with its child, a run's with its loop.
  *
  * Idempotent for the same reason the exporter's is: every cycle of a run writes
  * a fresh config file naming this token, and a token per cycle would be one more
@@ -2243,32 +2294,49 @@ const sweeper = ((globalThis as unknown as {
 const CANCELLED_REASON =
   "You stopped this message while it was being answered.";
 const TIMED_OUT_REASON =
-  `The chat did not answer within ${CHAT_TIMEOUT_MS / 60_000} minutes and was stopped.`;
+  `The chat produced nothing for ${CHAT_IDLE_TIMEOUT_MS / 60_000} minutes and was stopped. ` +
+  "There is no limit on how long a turn may run — only on how long it may go silent.";
 /** `reconcileChatsOnBoot`'s, hoisted so the row and the thread cannot drift. */
 const RESTARTED_REASON =
   "The server restarted while this message was being answered.";
 
 /**
- * Whether a turn has outlived the bound on one, given the row and the clock.
+ * Whether a turn has gone silent for longer than one may, given the row and the
+ * clock.
  *
  * Pure and unit-tested, for the reason `landRefusal` and `planItem` are: every
- * way of getting it wrong is silent. Too eager and a legitimate three-minute
- * turn is failed out from under a live child; never true and the ten-minute
- * bound quietly stops existing, which is the state this issue started from —
- * a thread that says "Thinking…" for ever with nothing in the process able to
- * move it.
+ * way of getting it wrong is silent. Too eager and a legitimate turn is failed
+ * out from under a live child; never true and the bound quietly stops existing,
+ * which is the state this issue started from — a thread that says "Thinking…"
+ * for ever with nothing in the process able to move it.
+ *
+ * **It measures the same thing the in-closure timer does, or it is not a
+ * backstop.** That timer re-arms on every byte the child produces; this reads
+ * `partial_at`, which `recordProgress` stamps on every event that arrives, so
+ * the two disagree only by the pacing between them and the margin covers it. A
+ * row still on the wall clock here would fail out exactly the long working
+ * turns the timer was changed to keep — and it would do it from a different
+ * file, which is the kind of disagreement that takes an afternoon to find.
+ *
+ * `partial_at` and not `updated_at`, which is the same distinction the old
+ * bound drew for its start instant: a turn writes into its own thread —
+ * `save_template` appends a note mid-turn — so `updated_at` moves for reasons
+ * that are not the child still being there.
  */
 export function staleTurn(
-  chat: Pick<ChatRow, "status" | "turn_started_at" | "updated_at">,
+  chat: Pick<ChatRow, "status" | "turn_started_at" | "updated_at" | "partial_at">,
   now: number,
 ): boolean {
   if (chat.status !== "thinking") return false;
-  // A row that was already `thinking` when this column was added has no start
+  // Nothing heard from yet is measured from the claim: a child that never
+  // reached its first event is the failure this catches most often.
+  //
+  // A row that was already `thinking` when these columns were added has neither
   // instant. `updated_at` is the conservative stand-in — mid-turn writes only
   // ever move it forward, so the fallback waits longer than the real deadline
   // rather than ending a turn early.
-  const startedAt = chat.turn_started_at ?? chat.updated_at;
-  return now - startedAt >= CHAT_TIMEOUT_MS + STALE_TURN_MARGIN_MS;
+  const heardAt = chat.partial_at ?? chat.turn_started_at ?? chat.updated_at;
+  return now - heardAt >= CHAT_IDLE_TIMEOUT_MS + STALE_TURN_MARGIN_MS;
 }
 
 /**
@@ -2414,7 +2482,7 @@ export function cancelChatTurn(chatId: string): CancelOutcome {
  * that timer signals the child and then waits for `close`, so it rescues
  * nothing when `close` is what went missing, and it does not exist at all for a
  * turn whose child was never spawned. This reads the row instead, so the
- * ten-minute bound holds however the turn was lost.
+ * silence bound holds however the turn was lost.
  *
  * Nothing is resumed or re-asked — same rule `reconcileChatsOnBoot` follows,
  * and for the same reason: a chat turn is a question somebody put minutes ago,
@@ -2641,8 +2709,16 @@ export interface OrchestratorChildOptions {
   agent?: AgentDefinition | null;
   /** `--max-budget-usd`, the only thing bounding the spend inside the CLI. */
   maxBudgetUSD: number | null;
-  timeoutMs: number;
-  /** What the row says when the timeout is what ended it. */
+  /**
+   * How long the child may produce **nothing** before it is killed.
+   *
+   * A silence bound and not a duration: the timer is re-armed on every chunk
+   * either pipe delivers, so a turn that is working is never interrupted and a
+   * turn nothing is left of is still ended. What bounds the turn itself is
+   * `maxBudgetUSD` above, which is the unit an overrun actually costs in.
+   */
+  idleTimeoutMs: number;
+  /** What the row says when that silence is what ended it. */
   timedOutMessage: string;
   /** Called with the child the moment it exists, so a caller can signal it. */
   onSpawn?: (child: ChatProcess) => void;
@@ -2652,10 +2728,16 @@ export interface OrchestratorChildOptions {
    * Optional, and only the chat passes one: a workflow's orchestrator block has
    * no surface anybody watches while it runs and nothing to recover from a
    * crash — its runs are what it produces, and they are created after it
-   * settles. The flags say what moved, so a caller can persist on the events
-   * that changed something rather than on every line: a turn reading a large
-   * file produces hundreds of `user` events carrying tool output and the
-   * operator is waiting on none of them.
+   * settles.
+   *
+   * **Called on every event, including the ones that moved nothing**, which it
+   * was not: the flags used to gate the call and now only describe it. That
+   * gate was right while the row's deadline was a wall clock and wrong the
+   * moment it became a silence bound, because the row is where `staleTurn`
+   * reads that silence from — and a turn working through a hundred `user`
+   * events carrying tool output, none of which the operator is waiting to see,
+   * is a turn that is very much still there. The caller decides what to write
+   * for each kind and paces both.
    */
   onProgress?: (
     acc: ChatTurnAccumulator,
@@ -2825,34 +2907,69 @@ export function runOrchestratorChild(o: OrchestratorChildOptions): void {
   const acc = newChatTurnAccumulator();
   let stdoutBuf = "";
   let stderr = "";
+
+  /**
+   * The silence bound, re-armed by everything the child says.
+   *
+   * A wall clock here killed turns for the crime of being long — and the turns
+   * that are long are the ones that read four repositories before proposing
+   * anything, which is the work this child exists to do. What it was meant to
+   * catch was a child that has stopped: wedged on a socket, waiting on a
+   * connection that will not close, holding a slot and a credential and
+   * producing nothing. That is silence, so silence is what is measured.
+   *
+   * The token is revoked here rather than left to `land`, which cannot run
+   * until the child is actually gone: the turn is over the moment this fires,
+   * and a credential that outlives that decision by the SIGTERM/SIGKILL pair
+   * below is a credential a dying child can still spend. It is what replaces
+   * the clock `mintCapability` used to carry, which was the old bound plus a
+   * minute and could not survive a turn that may now run for an hour.
+   */
+  let timedOut = false;
+  // Declared up here rather than beside `land`, which is where it is used: the
+  // re-arm below reads it, and a `let` referenced before its own declaration
+  // has run is a ReferenceError rather than an undefined.
+  let settled = false;
+  let idleTimer: NodeJS.Timeout | null = null;
+  const armIdleTimer = () => {
+    // A settled turn re-arming would leave a timer to fire fifteen minutes
+    // later and signal a process id nothing here owns any more.
+    if (timedOut || settled) return;
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      timedOut = true;
+      revokeCapability(token);
+      signalTree(child, "SIGTERM");
+      setTimeout(() => signalTree(child, "SIGKILL"), 5_000).unref?.();
+    }, o.idleTimeoutMs);
+    idleTimer.unref?.();
+  };
+  armIdleTimer();
+
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
+    armIdleTimer();
     stdoutBuf += chunk;
     let nl: number;
     while ((nl = stdoutBuf.indexOf("\n")) !== -1) {
       const line = stdoutBuf.slice(0, nl).trim();
       stdoutBuf = stdoutBuf.slice(nl + 1);
       if (!line) continue;
-      const moved = readChatEvent(acc, line);
-      if (moved.textGrew || moved.spendGrew) o.onProgress?.(acc, moved);
+      o.onProgress?.(acc, readChatEvent(acc, line));
     }
   });
-  child.stderr.on("data", (c: string) => (stderr += c.slice(0, 4_096)));
+  child.stderr.on("data", (c: string) => {
+    // Progress too, and the half that is easiest to forget: a child printing
+    // only warnings is one this process can plainly still hear from.
+    armIdleTimer();
+    stderr += c.slice(0, 4_096);
+  });
 
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    signalTree(child, "SIGTERM");
-    setTimeout(() => signalTree(child, "SIGKILL"), 5_000).unref?.();
-  }, o.timeoutMs);
-  timer.unref?.();
-
-  let settled = false;
   const land = (result: TurnResult) => {
     if (settled) return;
     settled = true;
-    clearTimeout(timer);
+    if (idleTimer) clearTimeout(idleTimer);
     // Both of these are why the token is worth having: the credential dies
     // with the turn, and the file that carried it does not outlive it either.
     revokeCapability(token);
@@ -2883,7 +3000,22 @@ export function runOrchestratorChild(o: OrchestratorChildOptions): void {
     }
 
     if (timedOut) {
-      land({ status: "failed", error: o.timedOutMessage });
+      land({
+        status: "failed",
+        // What the child last said went wrong, ahead of the sentence saying
+        // what this process then did about it. A turn that goes quiet after an
+        // overloaded upstream and one that goes quiet with nothing to say are
+        // different things to do next, and only the first can be waited out.
+        error: acc.apiError
+          ? `${acc.apiError.trim()} ${o.timedOutMessage}`
+          : o.timedOutMessage,
+        // Real and billed however the turn ended. `costUSD` stays absent —
+        // nothing measured this turn — and the two must not be confused by
+        // whoever banks them.
+        tokens: totalTokens(acc.tokens),
+        costGuardUSD: acc.costGuardUSD,
+        sessionId: acc.sessionId,
+      });
       return;
     }
     land(turnResultOf(acc, stderr, code));
@@ -2940,7 +3072,7 @@ function runTurn(chat: ChatRow, prompt: string): void {
     appendSystemPrompt: systemPrompt(),
     resumeSessionId: chat.session_id,
     maxBudgetUSD: settings.chatTurnBudgetUSD,
-    timeoutMs: CHAT_TIMEOUT_MS,
+    idleTimeoutMs: CHAT_IDLE_TIMEOUT_MS,
     timedOutMessage: TIMED_OUT_REASON,
     onSpawn: (child) => {
       spawned = child;
@@ -3007,7 +3139,18 @@ const progress = ((globalThis as unknown as {
  * moved. `chatTurnBudgetUSD` bounds *this* turn inside the CLI and always did;
  * what nothing bounded was the install while this turn was going. The estimate
  * this function has just written is what `installSpend` reads for it, so the
- * check includes the turn asking it.
+ * check includes the turn asking it. It is no longer "ten minutes past" that
+ * the ceiling is overrun by, which makes this the *only* thing that ends a turn
+ * the install can no longer afford, rather than the thing that shortens the
+ * wait for a clock.
+ *
+ * **`partial_at` is a heartbeat as well as a timestamp, and that is the third
+ * half.** `staleTurn` measures silence against it, so it has to move on every
+ * event rather than only on the ones that changed the answer — a turn working
+ * through tool output is producing nothing an operator wants to read and is
+ * plainly still there. The stamp is written on its own when nothing else moved,
+ * because the alternative is re-writing tens of kilobytes of unchanged
+ * `partial_text` twice a second for the whole of a long turn.
  */
 function recordProgress(
   chat: ChatRow,
@@ -3023,20 +3166,29 @@ function recordProgress(
     // Guarded on `turn_seq` for `finishTurn`'s reason: a turn cancelled and
     // re-sent while the old child is still dying must not write the corpse's
     // text into the live turn's row.
-    db()
-      .prepare(
-        `UPDATE chat_sessions
-            SET partial_text=?, partial_at=?, turn_tokens=?, turn_cost_est=?
-          WHERE id=? AND status='thinking' AND turn_seq=?`,
-      )
-      .run(
-        acc.text || null,
-        now,
-        totalTokens(acc.tokens),
-        acc.costGuardUSD,
-        chat.id,
-        chat.turn_seq,
-      );
+    if (moved.textGrew || moved.spendGrew) {
+      db()
+        .prepare(
+          `UPDATE chat_sessions
+              SET partial_text=?, partial_at=?, turn_tokens=?, turn_cost_est=?
+            WHERE id=? AND status='thinking' AND turn_seq=?`,
+        )
+        .run(
+          acc.text || null,
+          now,
+          totalTokens(acc.tokens),
+          acc.costGuardUSD,
+          chat.id,
+          chat.turn_seq,
+        );
+    } else {
+      db()
+        .prepare(
+          `UPDATE chat_sessions SET partial_at=?
+            WHERE id=? AND status='thinking' AND turn_seq=?`,
+        )
+        .run(now, chat.id, chat.turn_seq);
+    }
   }
 
   if (!moved.spendGrew || now - pace.checkedAt < CEILING_CHECK_MS) return;
@@ -3061,7 +3213,7 @@ function recordProgress(
  * it fires only once every inherited pipe has shut, and the CLI's own children
  * hold those. A `claude` that leaves a grandchild behind has *exited* and will
  * never *close*, so a turn wired to `close` alone sits at "Thinking…" until the
- * ten-minute timeout kills the group and throws the answer away — and for ever
+ * silence bound kills the group and throws the answer away — and for ever
  * when `killProcessGroup` is off, because then there is no group to kill and
  * nothing else reaps the grandchild.
  *
@@ -3131,7 +3283,16 @@ export function turnResultOf(
   if (!parsed) {
     return {
       status: "failed",
+      // What the CLI said went wrong, ahead of what this process could infer
+      // from the wreckage. Claude Code writes a provider refusal — a 429, an
+      // overloaded upstream, a connection that dropped mid-response — as a
+      // `<synthetic>` assistant turn and then, if it cannot recover, exits
+      // without a `result`. Both of the fallbacks below describe that as a
+      // child that printed nothing useful, which is true and useless: the
+      // operator's next move for an overloaded upstream is to wait, and for a
+      // revoked credential it is not, and only this sentence tells them apart.
       error:
+        acc.apiError?.trim() ||
         stderr.trim().split("\n").slice(-3).join(" ") ||
         `The chat produced no readable output (exit ${code ?? "?"}).`,
       // Even with no verdict the tokens are real and were billed. Carried so a
@@ -3219,6 +3380,14 @@ function finishTurn(chatId: string, turnSeq: number, r: TurnResult): void {
   // and it is the only figure there is if the CLI never reported a cost.
   const estimate = getChat(chatId)?.turn_cost_est ?? 0;
 
+  // And what it had said, for the same reason one line up. `keepPartialTurn`
+  // does this for the three endings that go through `endTurn`; this is the
+  // fourth, and it had nothing — the in-closure timer kills the child, the exit
+  // lands *here* rather than there, and the UPDATE below clears `partial_text`
+  // with nobody having read it. Fourteen minutes of work discarded because the
+  // fifteenth was quiet is the failure this whole change is about.
+  const partial = (getChat(chatId)?.partial_text ?? "").trim();
+
   const changed =
     db()
       .prepare(
@@ -3289,7 +3458,13 @@ function finishTurn(chatId: string, turnSeq: number, r: TurnResult): void {
     );
   }
 
+  // The half-answer first and the note about the ending second, which is
+  // `keepPartialTurn`'s order and its reason: the note reads as a footnote to
+  // the text above it, and the other way round it reads as an answer that
+  // arrived after the failure. Only when the result brought none of its own — a
+  // turn that answered has already said everything the partial holds.
   if (r.text) appendMessage(chatId, "assistant", r.text);
+  else if (partial) appendMessage(chatId, "assistant", partial);
   if (r.error) appendMessage(chatId, "system", r.error);
 
   // A denial is the difference between "there are no open issues" and "I was

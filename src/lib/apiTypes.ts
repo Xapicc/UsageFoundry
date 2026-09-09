@@ -3168,15 +3168,31 @@ export interface ChatDTO {
    */
   turnStartedAt: number | null;
   /**
-   * `CHAT_TIMEOUT_MS`, carried rather than imported.
+   * When the turn in flight was last heard from, null when there is none.
+   *
+   * The instant `staleTurn` measures the silence bound against — the row's
+   * `partial_at`, falling back to the claim before the first event arrives —
+   * and it is sent for the same reason `turnStartedAt` is: the page states the
+   * deadline, so it must read the figure the server acts on rather than one it
+   * derived. The two are different questions and the page asks both: how long
+   * this has been going, and whether anything is still coming.
+   */
+  turnHeardAt: number | null;
+  /**
+   * `CHAT_IDLE_TIMEOUT_MS`, carried rather than imported.
    *
    * The page says the ceiling in words, so the number has to be the one the
    * server enforces rather than a copy that can drift from it — and the
    * constant lives in `chat.ts`, which reaches SQLite and
    * `node:child_process`, so a `"use client"` file may not import it even for
    * a plain number.
+   *
+   * It bounds **silence and not duration**, which is a difference the page has
+   * to draw in words: a turn may run for as long as it keeps working, so "of
+   * up to 15 min" beside a rising clock would be the one number on this surface
+   * that is simply false.
    */
-  turnTimeoutMs: number;
+  turnIdleTimeoutMs: number;
   messages: ChatMessageDTO[];
   /**
    * The cursor this read started after. Zero means `messages` is the thread.

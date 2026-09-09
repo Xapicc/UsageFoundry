@@ -2410,10 +2410,10 @@ describe("planInstanceStep — what an instance may do next", () => {
 
   it("blocks what is behind a turn that failed, carrying its reason", () => {
     const step = stepOf({
-      pick: decided("failed", [], "The chat did not answer within 10 minutes."),
+      pick: decided("failed", [], "This block produced nothing for 15 minutes and was stopped."),
     });
     assert.match(step.block[0].reason, /could not decide what to start/);
-    assert.match(step.block[0].reason, /did not answer within 10 minutes/);
+    assert.match(step.block[0].reason, /produced nothing for 15 minutes/);
   });
 
   it("blocks what is behind a run that ended without qualifying", () => {

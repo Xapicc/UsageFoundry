@@ -2,7 +2,7 @@
 // rewrites the path alias at runtime, so a module a test loads has to import
 // the way src/lib and Meter.tsx already do.
 import {
-  CHAT_TIMEOUT_MS,
+  CHAT_IDLE_TIMEOUT_MS,
   listChats,
   listMessages,
   listProposals,
@@ -65,7 +65,14 @@ export function chatDTO(chat: ChatRow, afterSeq = 0): ChatDTO {
     tokens: chat.tokens,
     error: chat.error,
     turnStartedAt: chat.turn_started_at,
-    turnTimeoutMs: CHAT_TIMEOUT_MS,
+    // The same fallback `staleTurn` applies, resolved here so the page and the
+    // sweeper cannot disagree about when a turn last said anything: nothing
+    // heard from yet is measured from the claim.
+    turnHeardAt:
+      chat.status === "thinking"
+        ? (chat.partial_at ?? chat.turn_started_at)
+        : null,
+    turnIdleTimeoutMs: CHAT_IDLE_TIMEOUT_MS,
     // What the turn in flight has said so far, and only while one is. The row
     // is cleared at the settle, so a value surviving a status change would be
     // the last turn's half-answer drawn under the finished one.

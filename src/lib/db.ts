@@ -779,11 +779,12 @@ function migrate(db: Database.Database) {
     -- it. A question is a sentence and an answer is a sentence, so there is
     -- deliberately no column here a model could route a budget through.
     --
-    -- It is a table at all because a turn cannot wait. CHAT_TIMEOUT_MS kills an
-    -- overrunning child and throws its answer away, so a tool that blocked
-    -- until the operator clicked would burn ten minutes and lose the turn that
-    -- asked. Asking therefore *ends* the turn, and the answer arrives as the
-    -- next turn's user message against the same resumed session.
+    -- It is a table at all because a turn cannot wait. CHAT_IDLE_TIMEOUT_MS
+    -- kills a child that has gone silent and throws its answer away, and a tool
+    -- blocked on a click is exactly that: silent, for as long as nobody is
+    -- looking, and then dead with the turn that asked. Asking therefore *ends*
+    -- the turn, and the answer arrives as the next turn's user message against
+    -- the same resumed session.
     CREATE TABLE IF NOT EXISTS chat_questions (
       id          TEXT PRIMARY KEY,
       chat_id     TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
@@ -1264,12 +1265,14 @@ function migrate(db: Database.Database) {
       " ON chat_messages(chat_id, seq)",
   );
 
-  // When the turn now in flight began, so the ten-minute bound on a chat turn
-  // is enforceable by something outside the closure that spawned it. Not
-  // `updated_at`, which looks like the same instant and is not: the chat's own
-  // `save_template` tool appends a system message mid-turn, and every such
-  // append would push the deadline out by however long the turn has already
-  // run. Null whenever no turn is in flight.
+  // When the turn now in flight began, so a bound on a chat turn is enforceable
+  // by something outside the closure that spawned it. Not `updated_at`, which
+  // looks like the same instant and is not: the chat's own `save_template` tool
+  // appends a system message mid-turn, and every such append would push a
+  // deadline out by however long the turn has already run. Null whenever no turn
+  // is in flight. Since the bound became silence rather than duration this is
+  // the page's elapsed clock and `staleTurn`'s fallback until the child's first
+  // event lands in `partial_at`.
   addColumn(db, "chat_sessions", "turn_started_at", "INTEGER");
 
   // Which turn the row is in, so a settle can say which turn it belongs to.

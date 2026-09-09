@@ -44,8 +44,8 @@ page marks such a block in red before you press anything.
 The blocks above are fixed: you write the task, and that task is what runs. An
 **orchestrator block** is the other kind. It holds a *brief* rather than a task,
 and when the workflow reaches it the server spawns one short agent turn —
-Claude Code, headless, ten-minute bound, the same child the orchestrator chat
-uses — which looks at the folder and decides which runs should happen next. What
+Claude Code, headless, stopped only after fifteen minutes of producing
+nothing, the same child the orchestrator chat uses — which looks at the folder and decides which runs should happen next. What
 it emits **starts**. No proposal, no card, nothing to click.
 
 That is the one place in this tool where an agent's answer becomes a billed

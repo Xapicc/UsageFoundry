@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { db } from "./db";
 import {
+  CHAT_IDLE_TIMEOUT_MS,
   composeTask,
   getProposal,
   markProposal,
@@ -3536,16 +3537,20 @@ function guardInstance(
 /* ------------------------------------------------------------------ */
 
 /**
- * A block turn that has not answered in this long is not going to.
+ * A block turn that has produced nothing for this long is not going to.
  *
  * The chat's bound, not a second one: it is the same child doing the same kind
  * of work, and a separate number here would be a second thing to keep in step
- * with a timeout that already exists.
+ * with a bound that already exists. That includes what the number now
+ * *measures* — silence rather than duration — and the argument carries over
+ * whole: a block asked to decide across a repository is a long turn rather than
+ * a stuck one, and there is nobody watching this one to notice it was killed
+ * for being thorough.
  */
-const BLOCK_TIMEOUT_MS = 10 * 60_000;
+const BLOCK_IDLE_TIMEOUT_MS = CHAT_IDLE_TIMEOUT_MS;
 
 const BLOCK_TIMED_OUT =
-  `This block did not decide within ${BLOCK_TIMEOUT_MS / 60_000} minutes and was stopped.`;
+  `This block produced nothing for ${BLOCK_IDLE_TIMEOUT_MS / 60_000} minutes and was stopped.`;
 
 /**
  * The block turns this process can still signal.
@@ -4344,7 +4349,7 @@ async function startBlockTurn(instanceId: string, nodeId: string): Promise<void>
     // `promptOverride` and stays that way.
     agent: own ? agentDefinition(own) : null,
     maxBudgetUSD: settings.chatTurnBudgetUSD,
-    timeoutMs: BLOCK_TIMEOUT_MS,
+    idleTimeoutMs: BLOCK_IDLE_TIMEOUT_MS,
     timedOutMessage: BLOCK_TIMED_OUT,
     onSpawn: (child) => blockTurns.set(key, child),
     onSettle: (result) => {

@@ -89,7 +89,7 @@ import type { RegistryAgent } from "./agents";
  *    answer is already sitting in the buffer reads as "Thinking…" for ten
  *    minutes and then as a timeout — or for ever, with no error recorded.
  *  - `staleTurn` is what is left when even that does not fire: the only thing
- *    enforcing the ten-minute bound on a turn whose child this process can no
+ *    enforcing the silence bound on a turn whose child this process can no
  *    longer hear from at all. Wrong in one direction it kills a live turn
  *    mid-answer; wrong in the other it never fires, and the bound quietly stops
  *    existing — a thread that says "Thinking…" for ever, refusing every
@@ -127,7 +127,7 @@ process.env.CLAUDE_BIN = path.join(tmp, "no-such-claude");
 // `config.ts` fixes `DATA_DIR` and `CLAUDE_HOME` at load. Same reason
 // `orchestrator.test.ts` does it.
 const {
-  CHAT_TIMEOUT_MS,
+  CHAT_IDLE_TIMEOUT_MS,
   MAX_QUESTION_CHOICES,
   STALE_TURN_MARGIN_MS,
   answerChatQuestions,
@@ -1011,15 +1011,19 @@ describe("chatPrompt", () => {
 
 describe("staleTurn", () => {
   const NOW = 1_700_000_000_000;
-  const deadline = CHAT_TIMEOUT_MS + STALE_TURN_MARGIN_MS;
+  const deadline = CHAT_IDLE_TIMEOUT_MS + STALE_TURN_MARGIN_MS;
 
   const row = (over: Partial<ChatRow> = {}) =>
     ({
       status: "thinking",
       turn_started_at: NOW - 60_000,
       updated_at: NOW - 60_000,
+      partial_at: null,
       ...over,
-    }) as Pick<ChatRow, "status" | "turn_started_at" | "updated_at">;
+    }) as Pick<
+      ChatRow,
+      "status" | "turn_started_at" | "updated_at" | "partial_at"
+    >;
 
   it("leaves a turn inside the bound alone", () => {
     // Turns legitimately run for minutes: the sweeper must not be a shorter
@@ -1031,10 +1035,43 @@ describe("staleTurn", () => {
     );
   });
 
-  it("fails out a turn that has run past it", () => {
+  it("fails out a turn nothing has been heard from past it", () => {
     assert.equal(staleTurn(row({ turn_started_at: NOW - deadline }), NOW), true);
     assert.equal(
       staleTurn(row({ turn_started_at: NOW - deadline * 4 }), NOW),
+      true,
+    );
+  });
+
+  it("bounds silence and not duration", () => {
+    // The whole of the change: a turn that has been running for an hour and
+    // said something a second ago is working, and killing it discards an hour
+    // of billed work for the crime of being long. The old rule read the claim
+    // instant and would fail this out four times over.
+    assert.equal(
+      staleTurn(
+        row({
+          turn_started_at: NOW - 60 * 60_000,
+          partial_at: NOW - 1_000,
+        }),
+        NOW,
+      ),
+      false,
+    );
+  });
+
+  it("fails out a long turn that has gone quiet", () => {
+    // And the other direction, which is what the bound is for: the child is
+    // still registered, the row still says `thinking`, and nothing has arrived
+    // from it since. Wrong here and the thread says "Thinking…" for ever.
+    assert.equal(
+      staleTurn(
+        row({
+          turn_started_at: NOW - 60 * 60_000,
+          partial_at: NOW - deadline,
+        }),
+        NOW,
+      ),
       true,
     );
   });
@@ -1051,27 +1088,49 @@ describe("staleTurn", () => {
     }
   });
 
-  it("falls back to updated_at for a row written before the column existed", () => {
-    // Not "never stale": a null start instant read as no deadline is exactly
-    // the stuck thread this exists to clear, and it would be silent.
+  it("measures from the claim until the first event arrives", () => {
+    // `partial_at` is null for the whole of a turn that never produced
+    // anything, which is the failure this catches most often — a child that
+    // could not start, or one wedged before its first line of output. Read as
+    // "nothing to measure" it would be the stuck thread, silently.
     assert.equal(
-      staleTurn(row({ turn_started_at: null, updated_at: NOW - deadline }), NOW),
+      staleTurn(row({ partial_at: null, turn_started_at: NOW - deadline }), NOW),
+      true,
+    );
+  });
+
+  it("falls back to updated_at for a row written before the columns existed", () => {
+    // Not "never stale": a null instant read as no deadline is exactly the
+    // stuck thread this exists to clear, and it would be silent.
+    assert.equal(
+      staleTurn(
+        row({ partial_at: null, turn_started_at: null, updated_at: NOW - deadline }),
+        NOW,
+      ),
       true,
     );
     assert.equal(
-      staleTurn(row({ turn_started_at: null, updated_at: NOW - 60_000 }), NOW),
+      staleTurn(
+        row({ partial_at: null, turn_started_at: null, updated_at: NOW - 60_000 }),
+        NOW,
+      ),
       false,
     );
   });
 
-  it("prefers the turn's own start over updated_at", () => {
+  it("prefers what the child said over what the thread did", () => {
     // `save_template` appends a system message mid-turn, which moves
-    // `updated_at`. Reading that as the turn's start would push the deadline
-    // out every time the chat used the tool — the bound would come off exactly
-    // on the longest turns.
+    // `updated_at`. Reading that as a sign of life would push the deadline out
+    // every time the chat used the tool — the bound would come off exactly on
+    // the longest turns, which is the same trap the old rule avoided by
+    // reading the claim instant rather than this one.
     assert.equal(
       staleTurn(
-        row({ turn_started_at: NOW - deadline, updated_at: NOW - 1_000 }),
+        row({
+          turn_started_at: NOW - deadline * 2,
+          partial_at: NOW - deadline,
+          updated_at: NOW - 1_000,
+        }),
         NOW,
       ),
       true,

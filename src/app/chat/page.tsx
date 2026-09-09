@@ -208,8 +208,8 @@ const QUESTION_EDGE: Record<"open" | "settled", string> = {
  *
  * `Message`'s docblock argues that what the app did must not be drawn as though
  * the model said it; the same argument separates what the app *did* from what
- * went *wrong*. "The chat saved a new template" and "the chat did not answer
- * within 10 minutes and was stopped" are the same grey today, and only one of
+ * went *wrong*. "The chat saved a new template" and "the chat produced nothing
+ * for 15 minutes and was stopped" are the same grey today, and only one of
  * them is something to act on.
  *
  * **The page infers which is which, because the row does not say.**
@@ -932,7 +932,7 @@ export default function ChatPage() {
     Date.now();
   // `thinking` implies a chat, but nothing here narrows the optional, and a
   // ceiling nobody sent is one the page must not state.
-  const turnLimitMs = chat?.turnTimeoutMs ?? null;
+  const turnIdleLimitMs = chat?.turnIdleTimeoutMs ?? null;
 
   // What the click does, counted, above the button that does it. "Approve"
   // alone is a word; this is the sentence a person needs before pressing it.
@@ -1052,8 +1052,8 @@ export default function ChatPage() {
                 the turn the operator is most likely watching: the CLI reports a
                 cost only with its final event, so a turn in flight has spent
                 money this number cannot yet see. Unsaid, a total that does not
-                move for ten minutes reads as a turn that is not costing
-                anything. */}
+                move for the length of a long turn reads as a turn that is not
+                costing anything. */}
             {chat && chat.costUSD > 0 && (
               <span className="text-xs tabular-nums text-ink-muted">
                 {fmtUSD(chat.costUSD)} this chat, settled turns only
@@ -1222,7 +1222,8 @@ export default function ChatPage() {
                   {thinking && (
                     <Waiting
                       since={waitingSince}
-                      limitMs={turnLimitMs}
+                      heardAt={chat?.turnHeardAt ?? null}
+                      idleLimitMs={turnIdleLimitMs}
                       stale={pollError !== null}
                     />
                   )}
@@ -1825,27 +1826,37 @@ function Speaker({ name, ts }: { name: string; ts: number }) {
  * turn is, because nothing does; the elapsed time is the only real progress
  * there is, and a bar would be an invention.
  *
- * **The ceiling is not that bar by another name.** A bar invents a completion
- * fraction; this reports a constant the server enforces — the turn will not run
- * past it, which is a fact about the deadline and says nothing about how near
- * the answer is. It is stated from the first second rather than past a
- * threshold, because it is the operator's whole basis for deciding whether to
- * wait and it is worth least at the moment they have already waited. Past it
- * the clause stops being a ceiling and becomes what is being done about the
- * turn: the sweeper runs every 30s against a 60s margin, so an overrun is a
- * state this page reaches rather than a limit case.
+ * **The ceiling is not that bar by another name, and it is no longer a ceiling
+ * on the clock beside it.** The server bounds *silence* rather than duration:
+ * a turn may run for as long as it keeps producing something, and what gets
+ * stopped is a turn nothing is left of. So the clause reports the quiet, which
+ * is a fact the operator can act on — a turn that answered four seconds ago is
+ * working, and one that has said nothing for eleven minutes is the reason this
+ * bound exists. "of up to 15 min" against the elapsed time would be the one
+ * number on this page that is simply false.
  *
- * `role="status"` holds the word alone — the clock beside it is hidden from
- * assistive tech, or the turn would be announced once a second. The ceiling is
- * not hidden: it changes once in ten minutes.
+ * Two figures rather than one, and they answer different questions: how long
+ * this has been going, and whether anything is still coming. The second is
+ * stated from the first second rather than past a threshold, because it is the
+ * operator's whole basis for deciding whether to wait and it is worth least at
+ * the moment they have already waited. Past the bound the clause stops being a
+ * ceiling and becomes what is being done about the turn: the sweeper runs every
+ * 30s against a 60s margin, so an overrun is a state this page reaches rather
+ * than a limit case.
+ *
+ * `role="status"` holds the word alone — the clocks beside it are hidden from
+ * assistive tech, or the turn would be announced once a second.
  */
 function Waiting({
   since,
-  limitMs,
+  heardAt,
+  idleLimitMs,
   stale,
 }: {
   since: number;
-  limitMs: number | null;
+  /** When the turn last said anything, which is what the bound is measured on. */
+  heardAt: number | null;
+  idleLimitMs: number | null;
   stale: boolean;
 }) {
   const [now, setNow] = useState(() => Date.now());
@@ -1866,7 +1877,8 @@ function Waiting({
   }
 
   const elapsed = Math.max(0, now - since);
-  const limitMin = limitMs === null ? null : Math.round(limitMs / 60_000);
+  const quiet = Math.max(0, now - (heardAt ?? since));
+  const limitMin = idleLimitMs === null ? null : Math.round(idleLimitMs / 60_000);
 
   return (
     <div className="mt-5 flex flex-wrap items-center gap-2">
@@ -1877,11 +1889,11 @@ function Waiting({
       <span aria-hidden="true" className="text-2xs tabular-nums text-ink-faint">
         {fmtDuration(elapsed)}
       </span>
-      {limitMs !== null && (
+      {idleLimitMs !== null && (
         <span className="text-2xs text-ink-faint">
-          {elapsed < limitMs
-            ? `of up to ${limitMin} min`
-            : `past the ${limitMin}-minute limit; being stopped`}
+          {quiet < idleLimitMs
+            ? `last output ${fmtDuration(quiet)} ago; stopped after ${limitMin} min of silence`
+            : `silent for ${fmtDuration(quiet)}, past the ${limitMin}-minute limit; being stopped`}
         </span>
       )}
     </div>

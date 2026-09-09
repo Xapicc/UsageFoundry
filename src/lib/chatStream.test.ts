@@ -171,6 +171,43 @@ describe("readChatEvent", () => {
     assert.deepEqual([...acc.unknownTypes].sort(), ["(no type)", "stream_event"]);
   });
 
+  it("latches the first provider refusal and keeps it in the text", () => {
+    const acc = newChatTurnAccumulator();
+    readChatEvent(acc, assistant({ text: "looking", model: "claude-opus-5" }));
+    readChatEvent(
+      acc,
+      assistant({ text: "API Error: 529 overloaded_error", model: "<synthetic>" }),
+    );
+    assert.equal(acc.apiError, "API Error: 529 overloaded_error");
+    // In the text as well: the operator watching a turn stall is owed the
+    // sentence that says why, and the row's partial is where they can see it
+    // while it is still going.
+    assert.ok(acc.text.includes("API Error: 529"));
+  });
+
+  it("keeps the first refusal when the CLI retries and fails again", () => {
+    const acc = newChatTurnAccumulator();
+    readChatEvent(
+      acc,
+      assistant({ text: "API Error: 429 rate_limit_error", model: "<synthetic>" }),
+    );
+    readChatEvent(acc, assistant({ text: "Retrying…", model: "<synthetic>" }));
+    // Last-write-wins would leave the turn reporting the retry notice, which
+    // says nothing about what went wrong — and this string is what the operator
+    // is told when the child dies without a `result`.
+    assert.equal(acc.apiError, "API Error: 429 rate_limit_error");
+  });
+
+  it("does not read an ordinary model's text as a refusal", () => {
+    const acc = newChatTurnAccumulator();
+    // A turn quoting an error it found in a log is a turn that is working.
+    readChatEvent(
+      acc,
+      assistant({ text: "The log says API Error: 500", model: "claude-opus-5" }),
+    );
+    assert.equal(acc.apiError, null);
+  });
+
   it("counts a line that is not JSON at all", () => {
     const acc = newChatTurnAccumulator();
     readChatEvent(acc, "Warning: something happened");

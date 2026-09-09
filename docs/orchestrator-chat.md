@@ -139,13 +139,25 @@ again immediately. It is a way to *end* a turn, never a way to send around one:
 the chat still refuses a second message while a turn is in flight, which is what
 stops two billed children on one conversation.
 
-There is a deadline under it as well. A turn that has been in flight for more
-than ten minutes is failed out by a sweeper that reads the row rather than
-waiting on the child, so the bound holds even when the child dies in a way that
-never reports back — the case where the only recovery used to be restarting the
-server, which stops every run in flight to clear one thread. Nothing is resumed
-or re-asked either way: a chat turn is a question you put minutes ago, and
-re-asking it unattended is spend nobody is present to want.
+There is a deadline under it as well, and it is on **silence** rather than on
+how long the turn takes. A turn may run for as long as it keeps producing
+something; one that has produced nothing for fifteen minutes is stopped, by the
+process watching it and, failing that, by a sweeper that reads the row rather
+than waiting on the child — so the bound holds even when the child dies in a way
+that never reports back, the case where the only recovery used to be restarting
+the server and stopping every run in flight to clear one thread. The line beside
+"Thinking…" says how long ago the turn last said anything, which is the figure
+worth watching: a turn that answered four seconds ago is working, however long it
+has been going. What bounds a long turn is money — the per-turn limit in
+Settings, and the install's own ceiling, which is re-asked while the turn runs.
+
+An API error the turn hits — an overloaded upstream, a rate limit, a dropped
+connection — is Claude Code's to retry, and most clear by themselves. If one
+ends the turn, the error is what the thread reports, because waiting is the
+right answer to an overloaded upstream and it is not the right answer to an
+expired credential. Nothing is resumed or re-asked automatically either way: a
+chat turn is a question you put minutes ago, and re-asking it unattended is
+spend nobody is present to want.
 
 **It costs money, and the cost is shown apart.** A chat turn spends against the
 same 5-hour window as everything else. It is refused outright when that window is

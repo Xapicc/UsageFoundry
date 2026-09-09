@@ -3644,7 +3644,7 @@ export default function SettingsPage() {
             htmlFor="chatbudget"
             edited={isEdited("chatTurnBudgetUSD")}
             label="Orchestrator chat limit"
-            description="A chat is not a run and has no guards of its own, so this and a ten-minute timeout are the only two things that stop one message. It is spent on the conversation, never added to a run"
+            description="A chat is not a run and has no guards of its own, so this is the only thing that bounds one message — a turn runs for as long as it keeps working, and is stopped only after 15 minutes of producing nothing. It is spent on the conversation, never added to a run"
           >
             <div className="w-36">
               <Input

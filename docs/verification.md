@@ -4665,13 +4665,34 @@ through before trusting this unattended:
   child's whole process group the way it does an agent's — the chat spawns
   `detached` under the same `killProcessGroup` setting, so it should, but the
   agent path is the one that has been watched. And whether the sweeper ever
-  fires on a turn that was merely slow: it waits a minute past the ten-minute
+  fires on a turn that was merely slow: it waits a minute past the silence
   bound, and the in-closure timer should have settled the row long before, so an
-  entry saying the chat "did not answer within 10 minutes" that arrives with no
-  preceding kill means the two paths disagree about when a turn began. Putting a
-  row into `thinking` by hand (`sqlite3 $DATA_DIR/usagefoundry.db "update
-  chat_sessions set status='thinking', turn_started_at=… where id=…"`) and
-  loading `/chat` exercises the no-child half of both without spending anything.
+  entry saying the chat "produced nothing for 15 minutes" that arrives with no
+  preceding kill means the two paths disagree about when the turn was last heard
+  from. Putting a row into `thinking` by hand (`sqlite3 $DATA_DIR/usagefoundry.db
+  "update chat_sessions set status='thinking', turn_started_at=…, partial_at=…
+  where id=…"`) and loading `/chat` exercises the no-child half of both without
+  spending anything.
+- **The silence bound on a turn, in every one of its three places.** The change
+  from a wall clock to an idle bound is unit tested where it is pure —
+  `staleTurn` against a row, the `<synthetic>` latch against a stream — and
+  nothing else about it has been run against a real child. Four things to watch,
+  and the first two are the ones that would be silent. Whether a long working
+  turn now survives: a turn that runs past fifteen minutes while still producing
+  output should never be stopped, and the way to see it is a brief that takes a
+  while ("read every repository under the mount and summarise each") plus the
+  "last output …" figure beside *Thinking…* staying small while the elapsed
+  clock passes 15:00. Whether the two enforcers still agree: the in-closure timer
+  re-arms on bytes and `staleTurn` reads `partial_at`, so a turn killed by the
+  sweeper a minute after the timer should be impossible, and a thread that ends
+  with the sweeper's wording having never been signalled is the pair drifting.
+  Whether `partial_at` actually moves during a long tool call — it is stamped per
+  event and a silent tool call produces none, which is intended, but a turn
+  running a fifteen-minute build is the case where the bound and a legitimate
+  silence meet. And whether the capability outlives what it should: it is minted
+  with no expiry now, so a tool call late in a very long turn should still be
+  answered, and `/api/mcp` returning 401 mid-turn would mean the revocation fired
+  early.
 - **The `chat_proposals` rebuild on a database that predates it.** Dropping the
   NOT NULL from `template_id` needs a table rebuild, which was exercised against
   SQLite directly — rows preserved, index recreated, foreign key and its cascade

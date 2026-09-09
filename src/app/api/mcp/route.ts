@@ -603,7 +603,7 @@ const CHAT_TOOLS = [
     // that reads this as "returns the operator's answer" calls it, gets a
     // receipt, calls it again, and spends the turn's whole budget asking the
     // same question in a loop — which is what a tool that *could* block would
-    // do to the ten-minute timeout anyway.
+    // do to the silence bound anyway.
     name: "ask_operator",
     description:
       "Ask the operator something you cannot find out by reading, and end " +

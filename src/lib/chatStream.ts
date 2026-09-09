@@ -46,6 +46,24 @@ export interface ChatTurnAccumulator {
   /** Our own price for those tokens: a guard figure, never a shown one. */
   costGuardUSD: number;
   sessionId: string | null;
+  /**
+   * The first provider refusal the turn met, or null.
+   *
+   * `orchestrator.ts`'s reading of the same event, one file over: Claude Code
+   * writes an API error — a 429, an overloaded upstream, a dropped connection —
+   * as an assistant turn attributed to `<synthetic>` rather than to a model.
+   * Latched on **first** sight and never cleared, because the CLI retries and
+   * the retry that finally fails prints something shorter than the one that
+   * said what went wrong.
+   *
+   * Nothing here acts on it: the CLI's own retries are what a transient fault
+   * is answered with, and a turn that recovers ends with an ordinary `result`
+   * that this is not consulted for. It is what the turn says *afterwards* when
+   * it ends with no verdict at all — the case that used to read as "produced no
+   * readable output (exit 1)" with the actual cause sitting unread in the
+   * stream.
+   */
+  apiError: string | null;
   /** The final `result` object, once one has arrived. */
   result: Record<string, unknown> | null;
   /** Lines that were not JSON at all — a CLI writing prose to stdout. */
@@ -60,6 +78,7 @@ export function newChatTurnAccumulator(): ChatTurnAccumulator {
     tokens: { ...ZERO_TOKENS },
     costGuardUSD: 0,
     sessionId: null,
+    apiError: null,
     result: null,
     unreadable: 0,
     unknownTypes: new Set(),
@@ -145,7 +164,15 @@ export function readChatEvent(
       return { textGrew: false, spendGrew: false, sawResult: false };
     }
     const before = acc.text.length;
-    acc.text += textOf(message);
+    const text = textOf(message);
+    acc.text += text;
+
+    // Kept in the text above as well as here: the operator watching a turn
+    // stall is owed the sentence that says why, and the row's partial is the
+    // only place they can see it while the turn is still going.
+    if (message?.model === "<synthetic>" && acc.apiError === null && text) {
+      acc.apiError = text;
+    }
 
     const used = usageOf(message);
     const spendGrew = totalTokens(used) > 0;
