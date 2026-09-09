@@ -148,4 +148,12 @@ test("the guard's higher reading is shown wherever it exceeds the known one", ()
   // the visible figure has not reached needs the gap on screen.
   assert.match(html, /40\.0%/);
   assert.match(html, /90\.0%/);
+  // And the gap is *this* card's gap: `guardFraction` is the same reading
+  // priced with a fallback rate for models we have no price for. `Meter` no
+  // longer supplies that sentence — a caller that drops the hint falls back to
+  // a generic one and this card stops saying where its second figure came from.
+  assert.match(
+    html,
+    /aria-valuetext="40\.0%, up to 90\.0% once unpriced models are charged"/,
+  );
 });

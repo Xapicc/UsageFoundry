@@ -131,6 +131,7 @@ export function RunAgentCost({
         // The gap an unpriced model opens, drawn as the hatched band every other
         // meter here draws it as — the displayed figure stays a floor.
         upperFraction={upperShare}
+        upperHint="once unpriced models are charged"
         unknownHint={
           error
             ? "could not read"

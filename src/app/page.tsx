@@ -726,6 +726,7 @@ export default function Dashboard() {
             label="Session consumed"
             fraction={s.session.fraction}
             upperFraction={s.session.guardFraction}
+            upperHint="once unpriced models are charged"
             detail={ceilingDetail(
               s.session,
               s.session.fractionMetric === "tokens"
@@ -814,6 +815,7 @@ export default function Dashboard() {
               label="Weekly consumed"
               fraction={s.weekly.fraction}
               upperFraction={s.weekly.guardFraction}
+              upperHint="once unpriced models are charged"
               detail={ceilingDetail(
                 s.weekly,
                 s.weekly.fractionMetric === "tokens"
@@ -1367,6 +1369,11 @@ export default function Dashboard() {
                 ? null
                 : install.spentGuardUSD / install.limitUSD
             }
+            // Not the unpriced-model band the window meters draw: `spentGuardUSD`
+            // is this app's own price for work Claude Code never reported — a
+            // cycle or a chat turn cut off before it said, and what telemetry has
+            // seen of the ones still going.
+            upperHint="including work still running and work that stopped before reporting its cost"
             unknownHint="no install limit set"
             detail={
               install.limitUSD === null

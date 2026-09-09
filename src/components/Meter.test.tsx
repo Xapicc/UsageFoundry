@@ -42,7 +42,7 @@ test("severity thresholds map to the three fills", () => {
   assert.match(at(0.9), /bg-danger/);
 });
 
-test("an unpriced-model band is hatched and sits behind the solid fill", () => {
+test("an upper band is hatched and sits behind the solid fill", () => {
   const html = renderToStaticMarkup(
     <Meter label="Session" fraction={0.4} upperFraction={0.8} />,
   );
@@ -105,6 +105,110 @@ test("size selects a track height rather than interpolating one", () => {
 test("an unknown reading is announced as unknown, not as a bare bar", () => {
   const html = renderToStaticMarkup(<Meter label="Session" fraction={null} />);
   assert.match(html, /aria-valuetext="no ceiling set"/);
+});
+
+/**
+ * What a screen reader is told the hatched band *means*, per meter that draws
+ * one.
+ *
+ * A sighted reader has the card's own prose, the second percentage and the
+ * hatch; a screen reader has this one sentence and nothing else. The component
+ * used to compose it from a single guess — that the band is what unpriced
+ * models would cost once charged — and that is true of the four window-shaped
+ * meters and false of the three money-shaped ones, where the band is spend this
+ * app reconciled or estimated for work Claude Code never reported. Fluent,
+ * specific and wrong is the worst available failure here, and nothing about it
+ * throws, renders differently or fails a typecheck.
+ *
+ * So the rows below are the call sites, and what each one announces is the
+ * assertion. They are named by file and label rather than by line because the
+ * point of the row is that a reviewer can go and read the call site.
+ */
+const ANNOUNCEMENTS: Array<{ site: string; hint: string; says: string }> = [
+  {
+    site: "src/app/page.tsx — Session consumed",
+    hint: "once unpriced models are charged",
+    says: "40.0%, up to 80.0% once unpriced models are charged",
+  },
+  {
+    site: "src/app/page.tsx — Weekly consumed",
+    hint: "once unpriced models are charged",
+    says: "40.0%, up to 80.0% once unpriced models are charged",
+  },
+  {
+    site: "src/components/UsagePeriods.tsx — {period} consumed",
+    hint: "once unpriced models are charged",
+    says: "40.0%, up to 80.0% once unpriced models are charged",
+  },
+  {
+    site: "src/components/RunAgentCost.tsx — Outside the main thread",
+    hint: "once unpriced models are charged",
+    says: "40.0%, up to 80.0% once unpriced models are charged",
+  },
+  {
+    site: "src/app/page.tsx — Spent by everything this app runs",
+    hint: "including work still running and work that stopped before reporting its cost",
+    says:
+      "40.0%, up to 80.0% including work still running and work that stopped" +
+      " before reporting its cost",
+  },
+  {
+    site: "src/app/workflows/[id]/instances/[instanceId]/page.tsx — Spent across blocks",
+    hint: "including work still running and work that stopped before reporting its cost",
+    says:
+      "40.0%, up to 80.0% including work still running and work that stopped" +
+      " before reporting its cost",
+  },
+  {
+    site: "src/app/runs/[id]/page.tsx — Spend",
+    hint: "including work cycles that stopped before reporting their cost",
+    says:
+      "40.0%, up to 80.0% including work cycles that stopped before reporting" +
+      " their cost",
+  },
+];
+
+/** The whole attribute, so a partial match cannot pass a truncated sentence. */
+function announced(html: string): string | null {
+  return /aria-valuetext="([^"]*)"/.exec(html)?.[1] ?? null;
+}
+
+test("each meter announces the band its own caller can explain", () => {
+  for (const { site, hint, says } of ANNOUNCEMENTS) {
+    const html = renderToStaticMarkup(
+      <Meter label="w" fraction={0.4} upperFraction={0.8} upperHint={hint} />,
+    );
+    assert.equal(announced(html), says, site);
+  }
+});
+
+test("a band no caller explained claims no mechanism", () => {
+  // The default has to be true of every meter in the app, which means it can
+  // name the measured-versus-estimated split and nothing narrower. A default
+  // that named a mechanism would go on being spoken at the meters it is false
+  // at, which is the defect this replaced.
+  const html = renderToStaticMarkup(
+    <Meter label="w" fraction={0.4} upperFraction={0.8} />,
+  );
+  assert.equal(
+    announced(html),
+    "40.0%, up to 80.0% counting what this app estimated as well as what it measured",
+  );
+  assert.doesNotMatch(
+    html,
+    /unpriced/,
+    "an unexplained band must not be attributed to unpriced models",
+  );
+});
+
+test("a band nobody draws is announced as nothing at all", () => {
+  // `aria-valuenow` alone is the reading when there is no band, and a hint that
+  // leaked into that case would describe a span that is not on the track.
+  const html = renderToStaticMarkup(
+    <Meter label="w" fraction={0.4} upperFraction={0.4} upperHint="ignored" />,
+  );
+  assert.equal(announced(html), null);
+  assert.match(html, /aria-valuenow="40"/);
 });
 
 test("a supplied value is suppressed when the fraction is unknown", () => {

@@ -378,6 +378,8 @@ function guardBars(run: RunDTO, now: number) {
     label: string;
     fraction: number;
     upperFraction?: number | null;
+    /** What the band means, said to a screen reader; see `Meter`. */
+    upperHint?: string;
     value: string;
   }> = [];
 
@@ -405,6 +407,10 @@ function guardBars(run: RunDTO, now: number) {
       fraction: run.spent_usd / costCap,
       upperFraction:
         estimated > 0 ? (run.spent_usd + estimated) / costCap : null,
+      // `spent_usd_est` is only ever a killed cycle's reconciled spend, so this
+      // is the one thing the band can mean here — not the unpriced-model gap
+      // the dashboard's window meters draw under the same hatch.
+      upperHint: "including work cycles that stopped before reporting their cost",
       value: `${fmtUSD(run.spent_usd)} / ${fmtUSD(costCap)}`,
     });
   }
@@ -1442,6 +1448,7 @@ export default function RunDetail({
                       label={b.label}
                       fraction={b.fraction}
                       upperFraction={b.upperFraction}
+                      upperHint={b.upperHint}
                       value={b.value}
                     />
                   ))}
