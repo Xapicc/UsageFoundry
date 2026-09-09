@@ -1,0 +1,508 @@
+<title>The task gate</title>
+<style>
+  :root{
+    color-scheme: light dark;
+    /* The sibling mockup's tokens, unchanged: the two pages are one set, and a
+       second palette for the same subject would read as a second product. */
+    --bg:            #f0f0f3;
+    --bg-raised:     #ffffff;
+    --bg-inset:      #f5f5f7;
+    --border:        #e3e3e6;
+    --border-strong: #c7c7cc;
+    --fg:            #1d1d1f;
+    --fg-muted:      #68686d;
+    --fg-faint:      #86868b;
+    --accent:        #0069d9;
+    --accent-dim:    #d6e4fa;
+    --ok:            #177d33;
+    --warn:          #8c5e00;
+    --danger:        #d70015;
+    --rail:          #d8d8dd;
+    --shadow-e1: 0 1px 2px rgba(0,0,0,.06), 0 0 0 .5px rgba(0,0,0,.05);
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#1e1e20; --bg-raised:#2a2a2d; --bg-inset:#161618;
+      --border:#3a3a3d; --border-strong:#4d4d52;
+      --fg:#f5f5f7; --fg-muted:#a1a1a6; --fg-faint:#8a8a8f;
+      --accent:#4a9bff; --accent-dim:#1f3a5f;
+      --ok:#30d158; --warn:#ff9f0a; --danger:#ff6961;
+      --rail:#3f3f44;
+      --shadow-e1: 0 1px 2px rgba(0,0,0,.4), 0 0 0 .5px rgba(255,255,255,.05);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#1e1e20; --bg-raised:#2a2a2d; --bg-inset:#161618;
+    --border:#3a3a3d; --border-strong:#4d4d52;
+    --fg:#f5f5f7; --fg-muted:#a1a1a6; --fg-faint:#8a8a8f;
+    --accent:#4a9bff; --accent-dim:#1f3a5f;
+    --ok:#30d158; --warn:#ff9f0a; --danger:#ff6961;
+    --rail:#3f3f44;
+    --shadow-e1: 0 1px 2px rgba(0,0,0,.4), 0 0 0 .5px rgba(255,255,255,.05);
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font:14px/1.55 var(--sans); -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1060px;margin:0 auto;padding:0 24px 96px}
+  h1{font-size:26px;letter-spacing:-.022em;margin:0 0 6px;text-wrap:balance}
+  h2{font-size:18px;letter-spacing:-.012em;margin:0;text-wrap:balance}
+  h3{font:600 11px/1 var(--sans);margin:0 0 10px;color:var(--fg-faint);
+     text-transform:uppercase;letter-spacing:.07em}
+  p{margin:0 0 12px;color:var(--fg-muted);max-width:66ch}
+  code{font-family:var(--mono);font-size:.88em;
+       background:var(--bg-inset);border:.5px solid var(--border);
+       border-radius:4px;padding:.1em .35em}
+  b,strong{color:var(--fg);font-weight:600}
+
+  header.top{
+    border-bottom:.5px solid var(--border);
+    background:var(--bg-raised);
+  }
+  header.top .inner{max-width:1060px;margin:0 auto;padding:22px 24px}
+  .kicker{font:600 11px/1 var(--sans);letter-spacing:.09em;text-transform:uppercase;
+          color:var(--accent);margin:0 0 8px}
+
+  .chip{
+    display:inline-flex;align-items:center;gap:5px;
+    font:600 11px/1 var(--sans);letter-spacing:.02em;
+    border-radius:5px;padding:5px 8px;border:.5px solid var(--border-strong);
+    color:var(--fg-muted);background:var(--bg-inset);white-space:nowrap;
+  }
+  .chip.ok{color:var(--ok);border-color:color-mix(in oklab,var(--ok) 40%,var(--border));
+           background:color-mix(in oklab,var(--ok) 10%,var(--bg-raised))}
+  .chip.warn{color:var(--warn);border-color:color-mix(in oklab,var(--warn) 40%,var(--border));
+             background:color-mix(in oklab,var(--warn) 10%,var(--bg-raised))}
+  .chip.accent{color:var(--accent);border-color:color-mix(in oklab,var(--accent) 40%,var(--border));
+               background:var(--accent-dim)}
+
+  .note{
+    border:.5px solid color-mix(in oklab,var(--warn) 38%,var(--border));
+    background:color-mix(in oklab,var(--warn) 9%,var(--bg-raised));
+    border-radius:9px;padding:13px 16px;margin:22px 0 0;font-size:13px;max-width:none;
+  }
+  .note b{color:var(--warn)}
+
+  section{margin:52px 0 0}
+  .sechead{display:flex;gap:13px;align-items:baseline;margin-bottom:18px;
+           padding-bottom:11px;border-bottom:.5px solid var(--border)}
+  .sechead .n{font:600 11px/1 var(--mono);color:var(--fg-faint);
+              border:.5px solid var(--border-strong);border-radius:5px;padding:5px 7px;flex:none}
+
+  /* ---------- the lifecycle rail ---------- */
+  .steps{display:flex;flex-direction:column;gap:0;margin:0;padding:0;list-style:none}
+  .step{display:grid;grid-template-columns:112px 1fr;gap:20px;padding:0 0 26px}
+  .step .when{
+    position:relative;padding:2px 16px 0 0;text-align:right;
+    font:600 11px/1.4 var(--mono);color:var(--fg-faint);letter-spacing:.02em;
+  }
+  .step .when::after{
+    content:"";position:absolute;right:-5px;top:4px;width:9px;height:9px;border-radius:50%;
+    background:var(--bg);border:2px solid var(--rail);
+  }
+  .step:not(:last-child) .when::before{
+    content:"";position:absolute;right:-1px;top:14px;bottom:-26px;width:1.5px;background:var(--rail);
+  }
+  .step.is-gate .when::after{border-color:var(--accent);background:var(--accent)}
+  .step .body h4{margin:0 0 5px;font-size:14.5px;letter-spacing:-.006em}
+  .step .body p{margin:0 0 10px;font-size:13.5px}
+  .step .body p:last-child{margin-bottom:0}
+
+  /* ---------- the app's own log lines ---------- */
+  .log{
+    background:var(--bg-inset);border:.5px solid var(--border);border-radius:9px;
+    padding:11px 13px;font-family:var(--mono);font-size:12.2px;line-height:1.6;
+    overflow-x:auto;
+  }
+  .log .ln{display:grid;grid-template-columns:60px 1fr;gap:11px;padding:2px 0;align-items:start}
+  .log .lb{
+    color:var(--fg-faint);text-align:right;font-size:10.5px;letter-spacing:.04em;
+    text-transform:uppercase;padding-top:2px;white-space:nowrap;
+  }
+  .log .tx{color:var(--fg-muted);white-space:pre-wrap;word-break:break-word}
+  .log .ln.ok   .lb,.log .ln.ok   .tx{color:var(--ok)}
+  .log .ln.warn .lb,.log .ln.warn .tx{color:var(--warn)}
+  .log .ln.acc  .lb,.log .ln.acc  .tx{color:var(--accent)}
+  .log .ln.dang .lb,.log .ln.dang .tx{color:var(--danger)}
+  .log .ln.agent .tx{color:var(--fg)}
+
+  /* ---------- verdict branches ---------- */
+  .branches{display:grid;grid-template-columns:repeat(auto-fit,minmax(228px,1fr));gap:14px}
+  .branch{
+    background:var(--bg-raised);border:.5px solid var(--border);border-radius:11px;
+    box-shadow:var(--shadow-e1);padding:15px 16px;display:flex;flex-direction:column;gap:9px;
+  }
+  .branch.hold{border-color:color-mix(in oklab,var(--warn) 45%,var(--border));
+               box-shadow:var(--shadow-e1),inset 3px 0 0 var(--warn)}
+  .branch .v{font:600 12px/1 var(--mono);letter-spacing:.01em}
+  .branch .did{font-size:13px;color:var(--fg);font-weight:600}
+  .branch .why{font-size:12.5px;color:var(--fg-muted);margin:0}
+  .branch .cost{margin-top:auto;padding-top:9px;border-top:.5px solid var(--border);
+                font:11.5px/1.4 var(--mono);color:var(--fg-faint)}
+
+  /* ---------- board rows ---------- */
+  .board{border:.5px solid var(--border);border-radius:11px;overflow:hidden;background:var(--bg-raised);
+         box-shadow:var(--shadow-e1)}
+  .brow{display:grid;grid-template-columns:1fr auto;gap:14px;align-items:center;
+        padding:13px 16px;border-bottom:.5px solid var(--border)}
+  .brow:last-child{border-bottom:0}
+  .brow .t{font-size:13.5px;color:var(--fg);font-weight:500}
+  .brow .m{font-size:12px;color:var(--fg-faint);margin-top:3px;font-family:var(--mono)}
+
+  /* ---------- settings ---------- */
+  .setrow{display:grid;grid-template-columns:1fr 132px;gap:18px;align-items:start;
+          padding:15px 16px;border-bottom:.5px solid var(--border)}
+  .setrow:last-child{border-bottom:0}
+  .setrow .lbl{font-size:13.5px;font-weight:600;margin-bottom:4px}
+  .setrow .dsc{font-size:12.5px;color:var(--fg-muted);max-width:62ch}
+  .ctl{justify-self:end;font-family:var(--mono);font-size:12.5px;
+       border:.5px solid var(--border-strong);border-radius:7px;background:var(--bg-inset);
+       padding:7px 11px;color:var(--fg);min-width:78px;text-align:right}
+  .sw{width:46px;height:27px;border-radius:14px;background:var(--ok);position:relative;justify-self:end}
+  .sw::after{content:"";position:absolute;top:2.5px;right:2.5px;width:22px;height:22px;
+             border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3)}
+  .sw.off{background:var(--border-strong)}
+  .sw.off::after{right:auto;left:2.5px}
+
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+  .card{background:var(--bg-raised);border:.5px solid var(--border);border-radius:11px;
+        box-shadow:var(--shadow-e1);padding:16px 18px}
+  ul.plain{margin:0;padding-left:18px}
+  ul.plain li{margin:0 0 9px;font-size:13px;color:var(--fg-muted)}
+  ul.plain li:last-child{margin-bottom:0}
+  .foot{margin-top:56px;padding-top:18px;border-top:.5px solid var(--border);
+        font-size:12.5px;color:var(--fg-faint)}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style>
+
+<header class="top">
+  <div class="inner">
+    <p class="kicker">External validator · what shipped</p>
+    <h1>The task gate</h1>
+    <p style="margin:0;max-width:70ch">A run is started from a task, does the work, and says it is done.
+    Here is every step between that claim and the board changing — and the four ways it can end.</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="note">
+    <b>This models the code, not a proposal.</b> The sibling file
+    <code>external-validator-mockup.html</code> models the design that was <em>pitched</em> — notify-only, a card,
+    a filter segment. What shipped is narrower and stronger: it gates one thing (a run closing its task) and it
+    can spend a work cycle. Where the two disagree, this page is the one that matches
+    <code>src/lib/validation.ts</code>. Off by default.
+  </div>
+
+  <!-- =============================================== lifecycle -->
+  <section>
+    <div class="sechead">
+      <span class="n">01</span>
+      <div>
+        <h2>One run, one task, from start to ending</h2>
+        <p style="margin:4px 0 0">The steps are a real sequence, so they are numbered by <em>when</em>.
+        The blue node is the only new gate.</p>
+      </div>
+    </div>
+
+    <ol class="steps">
+      <li class="step">
+        <div class="when">run starts</div>
+        <div class="body">
+          <h4>The task is claimed, before the first cycle</h4>
+          <p><code>claimTaskForRun</code> runs at the top of <code>startRun</code> — ahead of the worktree, ahead of
+          everything. The board shows <b>claimed</b> while the work is in flight, which is what stops a second agent
+          taking the same brief. This happens whether or not runs can reach the board: the claim is this app writing
+          down what it just did.</p>
+        </div>
+      </li>
+
+      <li class="step">
+        <div class="when">cycle 1</div>
+        <div class="body">
+          <h4>The agent works, and commits</h4>
+          <p>Its three board tools are <code>list_my_tasks</code>, <code>complete_task</code> and
+          <code>create_task</code> — no <code>list_tasks</code>, so it never sees the rest of your backlog. With the
+          gate on, <code>complete_task</code>'s description tells it the branch is what gets read, and to commit
+          before calling.</p>
+        </div>
+      </li>
+
+      <li class="step is-gate">
+        <div class="when">the claim</div>
+        <div class="body">
+          <h4>It calls <code>complete_task</code> — and nothing closes yet</h4>
+          <p>The tool stops being the close and becomes the claim. A <code>run_reviews</code> row opens with
+          <code>kind='validate'</code>, carrying the task it is about and the base and head it is judging, and a
+          separate <code>--permission-mode plan</code> child starts on the run's own diff. The agent is told the
+          truth and told not to poll:</p>
+          <div class="log">
+            <div class="ln agent"><span class="lb">tool</span><span class="tx">“Add jitter to the 429 retry ladder” is <b>not closed yet</b>. What this run has committed to its branch is being read against what the task asks for, and the task closes by itself if that reading finds everything there.
+
+Two things follow. Anything you have changed but not committed is not on the branch and cannot be seen, so commit it now if it is part of the work. And if the reading comes back saying something is missing, you will be told what, and the task stays yours — you do not need to call this tool again to find out.</span></div>
+          </div>
+          <p style="margin-top:10px">Asked twice, it answers with the reading already running rather than starting a
+          second one — and rather than closing the task, which is the whole gate defeated by repetition.</p>
+        </div>
+      </li>
+
+      <li class="step">
+        <div class="when">~50s</div>
+        <div class="body">
+          <h4>What the reader is shown</h4>
+          <p>The task's own title and brief; the branch diff, up to 60&nbsp;kB, with the file counts whole even when
+          the patch is cut; the paths that are changed but <b>not committed</b>, named as not delivered; and the run's
+          own prompt underneath, marked context — a run told to do more than the task named is not unfinished for
+          having done it.</p>
+          <p><b>It is never told a run claims to be finished.</b> Agreement bias is directional, and the trigger for
+          this whole path is a claim of completion — so the claim is the one fact kept out of the prompt, and a test
+          asserts against five phrasings of it.</p>
+        </div>
+      </li>
+
+      <li class="step">
+        <div class="when">cycle ends</div>
+        <div class="body">
+          <h4>The boundary waits for the answer</h4>
+          <p>A run that called <code>complete_task</code> in its last few seconds would otherwise end with the verdict
+          still in flight and no cycle left to act on it — so the boundary waits, polling the row, up to eleven minutes
+          against a measured median of fifty seconds. It holds its own folder and slot, which it was holding anyway;
+          nothing has been released and no dependent is waiting. Press <b>Stop</b> and the wait ends at once.</p>
+        </div>
+      </li>
+    </ol>
+  </section>
+
+  <!-- =============================================== branches -->
+  <section>
+    <div class="sechead">
+      <span class="n">02</span>
+      <div>
+        <h2>Four endings, and only one of them costs anything</h2>
+        <p style="margin:4px 0 0">Three of the four close the task. That asymmetry is the design: a gate that failed
+        closed would turn a shortage of assist slots — a memory limit — into billed work.</p>
+      </div>
+    </div>
+
+    <div class="branches">
+      <div class="branch">
+        <span class="chip ok" style="align-self:flex-start">finished</span>
+        <div class="did">The task closes</div>
+        <p class="why">Recorded as completed by this run. The run then ends exactly as it would have — its DONE, or
+        its cycle cap.</p>
+        <div class="cost">costs: one reading</div>
+      </div>
+
+      <div class="branch">
+        <span class="chip" style="align-self:flex-start">unjudgeable</span>
+        <div class="did">The task closes</div>
+        <p class="why">A real answer and a common one: the deliverable never enters the repository, or the
+        specification is somewhere the reader cannot see. A shrug must not buy a cycle.</p>
+        <div class="cost">costs: one reading</div>
+      </div>
+
+      <div class="branch">
+        <span class="chip" style="align-self:flex-start">no verdict</span>
+        <div class="did">The task closes</div>
+        <p class="why">No slot free, no branch of its own, a crash, a timeout, an unreadable reply. Null in the column
+        is its own state and never reads as agreement.</p>
+        <div class="cost">costs: nothing, or one failed reading</div>
+      </div>
+
+      <div class="branch hold">
+        <span class="chip warn" style="align-self:flex-start">not-finished</span>
+        <div class="did">The task is held open</div>
+        <p class="why">It stays <b>claimed by this run</b>, and the run gets another work cycle — past the cycle cap
+        it was started with — carrying what the reading could not find.</p>
+        <div class="cost">costs: one reading + one work cycle</div>
+      </div>
+    </div>
+
+    <div class="note" style="border-color:color-mix(in oklab,var(--accent) 35%,var(--border));background:color-mix(in oklab,var(--accent) 7%,var(--bg-raised))">
+      <b style="color:var(--accent)">The extra cycle extends exactly one limit.</b> <code>maxIterations</code> and
+      <code>maxDurationMinutes</code> are the only two things that guarantee a run ends, so the grant is counted on the
+      row and ceilinged by <em>Extra work cycles a check may buy</em> (default 2). The time limit, the run's spending
+      limit, both window guards and the daily ceiling are all read again at the top of that cycle and still end the run
+      there — a grant is permission to <em>ask</em> for a cycle, never to have one. Set it to zero and the task is
+      still held open and you are still told why; nothing is bought.
+    </div>
+  </section>
+
+  <!-- =============================================== the log -->
+  <section>
+    <div class="sechead">
+      <span class="n">03</span>
+      <div>
+        <h2>What you see on the run page</h2>
+        <p style="margin:4px 0 0">There is no new card and no new run status. The verdict arrives where every other
+        out-of-cycle spend already arrives: the run's own log, under the label <code>check</code>.</p>
+      </div>
+    </div>
+
+    <h3>A run that was sent back once, and then finished</h3>
+    <div class="log">
+      <div class="ln"><span class="lb">log</span><span class="tx">Checking “Add jitter to the 429 retry ladder” against this run's branch before closing it. The task stays open until that comes back.</span></div>
+      <div class="ln acc"><span class="lb">check</span><span class="tx">started — 6/6 files</span></div>
+      <div class="ln warn"><span class="lb">check</span><span class="tx">something the task asks for is missing — $0.11</span></div>
+      <div class="ln"><span class="lb">log</span><span class="tx">The work for this task was checked and something the task asks for is missing: TRANSIENT_BACKOFF_MS is never passed through jitterMs, and no test covers the 429 path.</span></div>
+      <div class="ln"><span class="lb">log</span><span class="tx">The task this run holds was checked and is not closed: TRANSIENT_BACKOFF_MS is never passed through jitterMs, and no test covers the 429 path. Giving it another work cycle to finish what is missing.</span></div>
+      <div class="ln"><span class="lb">cycle</span><span class="tx">3 started</span></div>
+      <div class="ln acc"><span class="lb">check</span><span class="tx">started — 8/8 files</span></div>
+      <div class="ln"><span class="lb">check</span><span class="tx">the work the task asks for is on the branch — $0.13</span></div>
+      <div class="ln"><span class="lb">log</span><span class="tx">Checked against this run's branch and closed: the ladder now jitters and retry.test.ts covers the 429 path.</span></div>
+      <div class="ln ok"><span class="lb">done</span><span class="tx">Agent reported the task complete.</span></div>
+    </div>
+
+    <h3 style="margin-top:26px">A run that ran out of grants</h3>
+    <div class="log">
+      <div class="ln warn"><span class="lb">check</span><span class="tx">something the task asks for is missing — $0.10</span></div>
+      <div class="ln"><span class="lb">log</span><span class="tx">The task this run holds was checked and something the task asks for is still missing, but this run has used all 2 extra work cycles a check may buy. The task stays open and claimed by this run.</span></div>
+      <div class="ln ok"><span class="lb">done</span><span class="tx">Used all 4 work cycles allowed for this run.</span></div>
+    </div>
+    <p style="margin-top:11px">The run still ends <b>Completed</b>. Nothing about the ending ladder moved: a verdict is
+    a sixth voice, not a status, and <code>reported_done</code> still records what the agent said rather than what a
+    reader thought of it.</p>
+
+    <h3 style="margin-top:26px">A check that could not run</h3>
+    <div class="log">
+      <div class="ln dang"><span class="lb">check</span><span class="tx">failed: It did not finish within 10 minutes and was stopped.</span></div>
+      <div class="ln"><span class="lb">log</span><span class="tx">It could not be checked, so it is closed on the run's own word.</span></div>
+    </div>
+  </section>
+
+  <!-- =============================================== board -->
+  <section>
+    <div class="sechead">
+      <span class="n">04</span>
+      <div>
+        <h2>What you see on the board</h2>
+        <p style="margin:4px 0 0">Two endings, and the second one is the one worth recognising.</p>
+      </div>
+    </div>
+
+    <div class="board">
+      <div class="brow">
+        <div>
+          <div class="t">Add jitter to the 429 retry ladder</div>
+          <div class="m">UsageFoundry · closed by run 3f8a1c2e · checked</div>
+        </div>
+        <span class="chip ok">done</span>
+      </div>
+      <div class="brow">
+        <div>
+          <div class="t">Give the merge queue a head-of-line timeout</div>
+          <div class="m">UsageFoundry · claimed by run 91b47de0 — which has finished</div>
+        </div>
+        <span class="chip warn">claimed</span>
+      </div>
+    </div>
+
+    <p style="margin-top:13px">A held-open task stays <b>claimed</b> by a run that is over. That is a stale claim, and
+    this app deliberately has no clock on it — it is left standing and it is yours to release
+    (<code>claimed → open</code>), on a board you are already reading, against a run whose page is one click away. It
+    is not a new state; it is the state a run that died holding a task has always left.</p>
+  </section>
+
+  <!-- =============================================== settings -->
+  <section>
+    <div class="sechead">
+      <span class="n">05</span>
+      <div>
+        <h2>The three switches</h2>
+        <p style="margin:4px 0 0">Under <em>Agents</em>, below <em>Let runs use the taskboard</em> — which has to be on
+        first, since a run that cannot reach the board never claims one.</p>
+      </div>
+    </div>
+
+    <div class="board">
+      <div class="setrow">
+        <div>
+          <div class="lbl">Check a task before a run closes it</div>
+          <div class="dsc">When a run marks its task complete, what it committed to its branch is read against what the
+          task asks for, and the task closes only if that reading finds the work there. If something is missing the task
+          stays open and the run gets another work cycle to finish it. Anything else — a run without its own branch, no
+          slot free, a check that fails, or a reading that cannot tell — closes the task exactly as it does today. Off by
+          default: it is the one child this app starts without being asked</div>
+        </div>
+        <div class="sw" role="img" aria-label="on"></div>
+      </div>
+      <div class="setrow">
+        <div>
+          <div class="lbl">Limit per check</div>
+          <div class="dsc">A hard stop inside the CLI, and the only money bound on a check — it fires by itself, so it
+          cannot be left to the window guard that is read once at the door. Measured at about 12c a check on an upper
+          bound. Blank removes it</div>
+        </div>
+        <div class="ctl">1.00</div>
+      </div>
+      <div class="setrow">
+        <div>
+          <div class="lbl">Extra work cycles a check may buy</div>
+          <div class="dsc">How many further cycles one run may be given when a check finds something missing, past the
+          cycle limit it was started with. Every other limit still ends it — time, run spend, both windows and the daily
+          ceiling — so this extends one bound and not the rest. Zero means the task is still held open and you are still
+          told why, and nothing is bought. There is no blank: a limit that could be removed would be a run nothing ends</div>
+        </div>
+        <div class="ctl">2</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =============================================== gaps -->
+  <section>
+    <div class="sechead">
+      <span class="n">06</span>
+      <div>
+        <h2>What is not built, and what is not known</h2>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <h3>Not built</h3>
+        <ul class="plain">
+          <li><b>The verdict card and the filter segment</b> the pitch asks for. The action is the product here — the
+          task does not close and the run goes back to work — so the log carries the verdict and nothing was added to
+          the runs list.</li>
+          <li><b>Anything for an unclaimed task.</b> This gates <code>claimed → done</code> by the run that holds it.
+          A task nobody was started for is still yours to close, and always was.</li>
+          <li><b>Running your tests.</b> The strong verifier is absent and that is the honest gap — a reading can say
+          the change is <em>present</em>, never that it works.</li>
+          <li><b>Non-isolated runs.</b> A run in a shared folder has no diff that is only its own work.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Not measured</h3>
+        <ul class="plain">
+          <li><b>No verdict has ever been produced by a real <code>claude</code>.</b> Nothing in this app has run the
+          assist path against the real CLI, and this is the first thing to make that path automatic.</li>
+          <li><b>The shipped prompt is not the scored prompt.</b> 34-of-37 agreement with zero false-finished was
+          measured on a text whose <em>be suspicious rather than generous</em> paragraph this change had to replace —
+          because a wrong <em>not-finished</em> now costs a cycle instead of a glance. The figure is inherited.</li>
+          <li><b>The daily ceiling now counts assists.</b> <code>installSpend</code> reads
+          <code>run_reviews.cost_usd</code> for the first time, so an install with a history of reviews reads higher
+          against its limit immediately, with no run having spent anything new.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="note" style="margin-top:20px">
+      <b>It is a weak verifier and the literature is not flattering.</b> A retry loop improves things when an external
+      verifier supplies the signal — Reflexion, 91% against 80%, where the signal is a test runner — and degrades them
+      when a model grades itself: 75.8% → 38.1% on CommonSenseQA after one round. This sits between the two: a separate
+      process reading a diff it did not write. Two of that literature's three rules are met — it is not intrinsic
+      self-correction, and the model does not decide when to stop, a number you set does. The third is the gap above.
+    </div>
+  </section>
+
+  <p class="foot">
+    Modelled from <code>src/lib/validation.ts</code>, <code>src/lib/review.ts</code>,
+    <code>src/lib/orchestrator.ts</code>'s cycle boundary and <code>docs/agent/taskboard.md</code>.
+    Every log line and every settings sentence on this page is the string the code actually emits.
+  </p>
+
+</div>
