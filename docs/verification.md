@@ -2346,6 +2346,28 @@ Built and exercised against real transcripts:
   row in each of its three lists; and the rendered graph draws all three notes,
   the edge between two of them, and the unwritten `[[Missing note]]` target.
 
+- **A superseded proposal, and the stale click that races it, driven in a real
+  browser.** 2026-09-08, against `.next/standalone/server.js` — the artifact the
+  container ships — on a throwaway `DATA_DIR` with a `CLAUDE_BIN` that cannot
+  spawn, so nothing here was a real agent. The panel was opened with one pending
+  proposal, its checkbox ticked, and its `GET /api/chat*` polls then aborted at
+  the browser so the render could go stale; the server was stopped, the row
+  superseded by a second one through `createProposalReplacing`'s own statement,
+  and the server restarted. **13 of 13 assertions passed.** The page still
+  offered `Approve 1`; the click was refused with "Nothing was approved. 1
+  proposal(s) had already been decided and were left alone."; `GET /api/runs`
+  returned zero runs; and `POST /api/chat/<id>/proposals` for the same id
+  answered 400 with that sentence. After the poll was released the replacement
+  was the only card with a checkbox and the badge read `1 waiting`, so no count
+  on the panel sees a superseded row. On **Decided** the card read `SUPERSEDED`
+  and named its replacement, and its link switched the tab to **Proposals** with
+  the replacement on screen. The refusal placement was measured both ways on the
+  same harness: drawn inside the approve row it is **gone** when the refused
+  click empties `pending`, and outside it survives. What is **not** verified: no
+  model wrote either proposal — both rows were seeded — so nothing here exercises
+  `propose_run`'s `supersedes` argument end to end, which is covered by the unit
+  tests in `chat.test.ts` and not by a browser.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the

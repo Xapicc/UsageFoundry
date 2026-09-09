@@ -103,7 +103,27 @@ import {
 
 export type ChatStatus = "idle" | "thinking" | "failed";
 export type ChatRole = "user" | "assistant" | "system";
-export type ProposalStatus = "pending" | "approved" | "rejected" | "failed";
+/**
+ * What became of a proposal.
+ *
+ * `superseded` is the orchestrator replacing a card it had already written, and
+ * it is a fifth state rather than a deletion for `QuestionStatus`' reason one
+ * table over: the thread has to read as what happened, and a card that vanished
+ * reads as one nobody was ever shown. It is **decided** — not pending, so every
+ * door that offers a proposal for decision refuses it — and it is not a failure:
+ * nothing went wrong, the work was restated.
+ *
+ * It can only be reached from `pending`, by the conditional UPDATE in
+ * `createProposalReplacing`. A proposal the operator has already approved,
+ * rejected or failed out stays where it is, and the replacement is refused
+ * rather than written beside a run nobody asked for twice.
+ */
+export type ProposalStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "failed"
+  | "superseded";
 
 /**
  * What became of a question the chat put to the operator.
@@ -291,6 +311,15 @@ export interface ChatProposalRow {
   workflow_id: string | null;
   decided_at: number | null;
   error: string | null;
+  /**
+   * The proposal that replaced this one, by id, and null on every other row.
+   *
+   * Written only by the UPDATE that moves this row to `superseded`, in the same
+   * transaction as the replacement's INSERT, so a row carrying one always names
+   * a proposal that exists — and a row that does not carry one was never
+   * replaced, whatever else became of it.
+   */
+  superseded_by: string | null;
 }
 
 /**
@@ -911,7 +940,24 @@ export function createProposal(
   chatId: string,
   input: ProposalInput,
 ): ChatProposalRow {
-  const id = randomUUID();
+  return insertProposal(randomUUID(), chatId, input);
+}
+
+/**
+ * The INSERT, with the id decided by the caller.
+ *
+ * Split out for `createProposalReplacing` alone, which has to know the
+ * replacement's id *before* it writes it — that id is what the row it replaces
+ * records in `superseded_by`, and both statements are one transaction. One
+ * writer either way: a second INSERT over these columns is a second place to
+ * forget the guard freeze below, which is the one column on this table no model
+ * may reach.
+ */
+function insertProposal(
+  id: string,
+  chatId: string,
+  input: ProposalInput,
+): ChatProposalRow {
   const deps = input.dependsOn ?? [];
   const kind = input.kind ?? "run";
   db()
@@ -965,6 +1011,116 @@ export function createProposal(
         : null,
     );
   return getProposal(id)!;
+}
+
+/**
+ * The proposal a `supersedes` argument names, or null for none.
+ *
+ * Pure and unit-tested, because both ways of getting it wrong are silent and
+ * neither throws. Resolving to the *wrong* row replaces a card the operator was
+ * still reading; resolving to none where one exists is a refusal for a label the
+ * model can see in `list_proposals`, which it answers by proposing a second card
+ * beside the first — the exact outcome the tool exists to remove.
+ *
+ * Two spellings, because the model holds two names for the same thing: the `id`
+ * it gave the proposal itself, and the `proposalId` this app gave back. The
+ * label is tried first — it is the one the model wrote and the one a sibling's
+ * `dependsOn` resolves against — and the uuid only after, which is why a label
+ * that happens to look like a uuid still means the label.
+ *
+ * **The undecided one wins.** A label may be reused once the proposal holding it
+ * has been decided, so a chat can hold several rows spelling it, and only one of
+ * them is a card the operator is still looking at. Newest last, because
+ * `listProposals` is in creation order and the last undecided row spelling a
+ * label is the one that holds it.
+ */
+export function proposalByReference<
+  T extends Pick<ChatProposalRow, "id" | "spec_id" | "status">,
+>(proposals: readonly T[], reference: string): T | null {
+  const named = proposals.filter(
+    (p) => p.spec_id === reference || p.id === reference,
+  );
+  if (named.length === 0) return null;
+  const undecided = named.filter((p) => p.status === "pending");
+  const spelled = undecided.length > 0 ? undecided : named;
+  const byLabel = spelled.filter((p) => p.spec_id === reference);
+  const chosen = byLabel.length > 0 ? byLabel : spelled;
+  return chosen[chosen.length - 1];
+}
+
+/** Writing a proposal that replaces one, or writing neither. */
+export type ProposalReplacement =
+  | { ok: true; proposal: ChatProposalRow }
+  | { ok: false; reason: string };
+
+/**
+ * Replace a proposal that is still waiting with a corrected one, or write
+ * nothing at all.
+ *
+ * **The conditional UPDATE is the whole contract**, and it is `rejectProposal`'s
+ * shape rather than a read-then-write for `rejectProposal`'s reason: the
+ * operator is looking at this card in a browser that polls, and the instant
+ * between reading its status and writing over it is exactly long enough for them
+ * to press Approve. So `status='pending'` is in the WHERE clause, and a call
+ * that matches no row is a call that changed nothing.
+ *
+ * When it matches nothing the replacement is **not written**. That is the one
+ * decision in this function and it goes the way it does because the two failures
+ * are not the same size: a refused tool call costs the orchestrator a sentence
+ * and a second attempt, where a replacement quietly created beside an approved
+ * run is a duplicate agent working the same folder that nobody asked for and
+ * nobody was shown. The refusal names the id and what became of it, so the model
+ * can say so rather than guess.
+ *
+ * One transaction, so the two statements cannot be seen apart: a reader that saw
+ * the supersede without the replacement would see a chat that lost a card, and
+ * one that saw the replacement without the supersede would see the duplicate the
+ * paragraph above exists to prevent. The replacement's id is minted first
+ * because the row it replaces records it.
+ */
+export function createProposalReplacing(
+  chatId: string,
+  input: ProposalInput,
+  targetId: string,
+): ProposalReplacement {
+  return db().transaction((): ProposalReplacement => {
+    const id = randomUUID();
+    // Inside the transaction, so the row this reads is the row the UPDATE below
+    // decides — the status it reports on a refusal is the one that refused it,
+    // and the label it hands over belongs to the card actually replaced.
+    const target = getProposal(targetId);
+    const res = db()
+      .prepare(
+        "UPDATE chat_proposals SET status='superseded', decided_at=?," +
+          " superseded_by=? WHERE id=? AND chat_id=? AND status='pending'",
+      )
+      .run(Date.now(), id, targetId, chatId);
+    if (res.changes === 0) {
+      return {
+        ok: false,
+        reason:
+          target && target.chat_id === chatId
+            ? `That proposal was ${target.status} while you were writing this ` +
+              "one, so it cannot be replaced."
+            : "That proposal is no longer in this conversation.",
+      };
+    }
+    return {
+      ok: true,
+      proposal: insertProposal(id, chatId, {
+        ...input,
+        // The label survives the correction. Decided here rather than by the
+        // caller, because it is what a sibling's `dependsOn` resolves against
+        // and the replacement is the only row left that can answer to it: a
+        // caller that forgot to carry it over would turn a correction into a
+        // dependency that fails the sibling by name at the click, and nothing
+        // between here and there would say so. A replacement that names a
+        // label of its own keeps it — that is the model relabelling
+        // deliberately, and the old one is decided either way.
+        specId: input.specId ?? target!.spec_id,
+      }),
+    };
+  })();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1682,6 +1838,13 @@ export function approveRunBatch(
   const outside = new Map<string, SettledProposal>();
   for (const p of listProposals(chatId)) {
     if (wanted.has(p.id) || !p.spec_id) continue;
+    // A replaced card does not hold its label: the replacement inherits it, and
+    // a dependent naming it means the one that is still waiting. Ordering alone
+    // would nearly always do this — the replacement is newer — but "nearly" is
+    // a coin toss on the `created_at, id` tiebreak when a supersede lands in the
+    // same millisecond as the card it replaces, and losing it turns a live
+    // dependency into "superseded and never became a run".
+    if (p.status === "superseded" && outside.has(p.spec_id)) continue;
     outside.set(p.spec_id, { status: p.status, runId: p.run_id });
   }
 
@@ -3334,6 +3497,14 @@ function systemPrompt(): string {
     "  than guessing.",
     "- After save_template, tell the operator to adjust guards on the new-run",
     "  form if they matter; that tool cannot touch them.",
+    "- When a proposal you already made is still waiting and turns out to be",
+    "  wrong, correct it with supersedes rather than proposing a second card or",
+    "  asking the operator to reject the first — two cards for one job is a",
+    "  choice they did not ask to make. It replaces the card in place, keeps the",
+    "  id so anything ordered behind it still is, and works either way between a",
+    "  run and a workflow. It is only for a proposal still waiting: once the",
+    "  operator has approved or rejected one, the call is refused and the",
+    "  correction is a new proposal saying what changed.",
     "",
     "Ordering runs against each other:",
     "- Runs on one folder are serialised anyway, and runs in their own checkouts",

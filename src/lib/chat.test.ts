@@ -137,7 +137,11 @@ const {
   composeTask,
   createChat,
   createProposal,
+  createProposalReplacing,
   findChats,
+  getProposal,
+  pendingProposals,
+  proposalByReference,
   createQuestions,
   markProposal,
   decisionNote,
@@ -1242,6 +1246,283 @@ describe("a proposal's label, dependencies and graph survive the round trip", ()
       proposalDeps({ depends_on: '[{"specId":"a","edge":"whenever"}]' }),
       [],
     );
+  });
+});
+
+/**
+ * The write that replaces a card the operator has not decided yet.
+ *
+ * It earns a test on the same grounds as the rest of this file, and the one that
+ * matters is the refusal rather than the success. The check and the act are two
+ * statements against a row a browser is polling, so the interesting moment is
+ * the one where the operator presses Approve between them — and every way of
+ * getting that wrong is silent. A replacement written beside an approved run is
+ * two agents in one folder for one job, authorised once; a supersede written
+ * without its replacement is a chat that lost a card; and a label dropped on the
+ * way through is a sibling that starts immediately instead of after the run it
+ * was told to wait for, which is bit-for-bit a sibling that was never told.
+ *
+ * Driven against the database rather than a pure function because the guarantee
+ * *is* the SQL — `status='pending'` in the WHERE clause and both statements in
+ * one transaction — exactly as `chatOwnsRun` above is driven against the query
+ * that scopes it.
+ */
+describe("replacing a proposal that is still waiting", () => {
+  /** A minimal run proposal; only the label and the title vary below. */
+  const proposalFor = (title: string, specId: string | null) => ({
+    templateId: null,
+    title,
+    task: `${title}, in full.`,
+    promptOverride: null,
+    mountId: "work",
+    folder: "repo",
+    specId,
+  });
+
+  it("decides the old card, names its replacement, and hands over the label", () => {
+    const chat = createChat();
+    const first = createProposal(chat.id, proposalFor("Fix #412", "fix"));
+
+    const written = createProposalReplacing(
+      chat.id,
+      // No label of its own: the ordinary correction, which has to inherit.
+      proposalFor("Fix #412 in the right file", null),
+      first.id,
+    );
+    assert.equal(written.ok, true);
+    if (!written.ok) return;
+
+    const replaced = getProposal(first.id)!;
+    assert.equal(replaced.status, "superseded");
+    assert.equal(replaced.superseded_by, written.proposal.id);
+    // Decided, so the row carries when — the column `pendingProposals` and the
+    // decision route both read a proposal as settled by.
+    assert.notEqual(replaced.decided_at, null);
+
+    // The label moves with the work. Written on the row rather than resolved at
+    // the click, because `dependsOn` holds a label and nothing else.
+    assert.equal(written.proposal.spec_id, "fix");
+    assert.equal(written.proposal.status, "pending");
+    assert.equal(written.proposal.superseded_by, null);
+  });
+
+  it("keeps a label the replacement names for itself", () => {
+    const chat = createChat();
+    const first = createProposal(chat.id, proposalFor("Fix #412", "fix"));
+    const written = createProposalReplacing(
+      chat.id,
+      proposalFor("Fix #412 properly", "fix-again"),
+      first.id,
+    );
+    assert.equal(written.ok, true);
+    if (!written.ok) return;
+    assert.equal(written.proposal.spec_id, "fix-again");
+  });
+
+  // The whole reason the two statements are one transaction. Each of these is a
+  // decision the operator has already made and a run that may already be
+  // working, and a replacement written beside one is a second agent nobody
+  // approved — so the call fails and the chat is told, rather than the panel
+  // quietly growing a card.
+  for (const decided of ["approved", "rejected", "failed"] as const) {
+    it(`refuses a card already ${decided}, and writes nothing`, () => {
+      const chat = createChat();
+      const first = createProposal(chat.id, proposalFor("Fix #412", "fix"));
+      markProposal(first.id, decided, { runId: "run-1" });
+
+      const written = createProposalReplacing(
+        chat.id,
+        proposalFor("Fix #412 in the right file", null),
+        first.id,
+      );
+      assert.equal(written.ok, false);
+      if (written.ok) return;
+      assert.match(written.reason, new RegExp(decided));
+
+      // The refusal is only half of it: the expensive failure is the row that
+      // exists anyway.
+      assert.deepEqual(
+        listProposals(chat.id).map((p) => p.title),
+        ["Fix #412"],
+      );
+      const untouched = getProposal(first.id)!;
+      assert.equal(untouched.status, decided);
+      assert.equal(untouched.superseded_by, null);
+    });
+  }
+
+  it("refuses a card already replaced, and leaves the first link alone", () => {
+    const chat = createChat();
+    const first = createProposal(chat.id, proposalFor("Fix #412", "fix"));
+    const second = createProposalReplacing(
+      chat.id,
+      proposalFor("Fix #412, second attempt", null),
+      first.id,
+    );
+    assert.equal(second.ok, true);
+    if (!second.ok) return;
+
+    // A retry of the same correction — a turn that lost its own reply, or a
+    // model reading a stale list. It must not chain a third card behind the
+    // one it already replaced.
+    const third = createProposalReplacing(
+      chat.id,
+      proposalFor("Fix #412, third attempt", null),
+      first.id,
+    );
+    assert.equal(third.ok, false);
+    if (third.ok) return;
+    assert.match(third.reason, /superseded/);
+
+    assert.equal(listProposals(chat.id).length, 2);
+    assert.equal(getProposal(first.id)!.superseded_by, second.proposal.id);
+  });
+
+  it("refuses a proposal of another conversation, and writes nothing", () => {
+    // The scope `chatOwnsRun` above enforces for a diff, on the write side: a
+    // chat that could replace another thread's card could decide a proposal
+    // its own operator never saw. It is in the WHERE clause rather than in a
+    // check above it, so there is no window between proving it and using it.
+    const mine = createChat();
+    const theirs = createChat();
+    const other = createProposal(theirs.id, proposalFor("Their work", "fix"));
+
+    const written = createProposalReplacing(
+      mine.id,
+      proposalFor("My correction", null),
+      other.id,
+    );
+    assert.equal(written.ok, false);
+    assert.deepEqual(listProposals(mine.id), []);
+    assert.equal(getProposal(other.id)!.status, "pending");
+  });
+
+  it("stops offering a replaced card for approval, and refuses one by name", () => {
+    const chat = createChat();
+    const first = createProposal(chat.id, proposalFor("Fix #412", "fix"));
+    const written = createProposalReplacing(
+      chat.id,
+      proposalFor("Fix #412 in the right file", null),
+      first.id,
+    );
+    assert.equal(written.ok, true);
+    if (!written.ok) return;
+
+    // What the decision route scopes its ids to: a replaced card is not among
+    // what a click may act on, so it can never reach `approveProposal` at all.
+    assert.deepEqual(
+      pendingProposals(chat.id).map((p) => p.id),
+      [written.proposal.id],
+    );
+
+    // And the gate behind that one, which is what actually decides whether a
+    // run is created: no plan, so no `createRun`, whatever calls it.
+    const plan = planProposal(
+      proposal({ status: "superseded" }),
+      template,
+      defaults,
+      null,
+    );
+    assert.equal(plan.ok, false);
+    if (plan.ok) return;
+    assert.match(plan.reason, /superseded/);
+  });
+
+  it("leaves a sibling's dependency resolving to the replacement", () => {
+    const chat = createChat();
+    const first = createProposal(chat.id, proposalFor("Fix #412", "fix"));
+    createProposal(chat.id, {
+      ...proposalFor("Prove #412", "prove"),
+      dependsOn: [{ specId: "fix", edge: "on-success", continueBranch: false }],
+    });
+    const written = createProposalReplacing(
+      chat.id,
+      proposalFor("Fix #412 in the right file", null),
+      first.id,
+    );
+    assert.equal(written.ok, true);
+    if (!written.ok) return;
+
+    // One undecided row spells the label, and it is the replacement. This is
+    // what every resolution below rests on: `approveRunBatch` builds its
+    // outside map from these rows, and a label spelled by two live cards is a
+    // dependency that resolves to whichever the tiebreak felt like.
+    assert.deepEqual(
+      pendingProposals(chat.id)
+        .filter((p) => p.spec_id === "fix")
+        .map((p) => p.id),
+      [written.proposal.id],
+    );
+
+    // The click itself, in the shape `approveRunBatch` hands it over: the
+    // replacement and the sibling in one batch, and the card they replaced
+    // outside it still spelling the label it gave up. The batch is looked at
+    // first, so the edge lands on the replacement rather than failing as
+    // "superseded and never became a run".
+    const steps = planApprovalBatch(
+      [
+        { id: written.proposal.id, specId: "fix", title: "Fix #412 in the right file", dependsOn: [] },
+        {
+          id: "sibling",
+          specId: "prove",
+          title: "Prove #412",
+          dependsOn: [{ specId: "fix", edge: "on-success", continueBranch: false }],
+        },
+      ],
+      new Map([["fix", { status: "superseded", runId: null }]]),
+    );
+    const sibling = steps.find((s) => s.id === "sibling")!;
+    assert.equal(sibling.ok, true);
+    if (!sibling.ok) return;
+    assert.deepEqual(sibling.dependsOn, [
+      {
+        on: "proposal",
+        proposalId: written.proposal.id,
+        edge: "on-success",
+        continueBranch: false,
+      },
+    ]);
+  });
+});
+
+describe("proposalByReference", () => {
+  // Pure, and both ways of being wrong are silent. Resolving to the wrong row
+  // replaces a card the operator is still reading; resolving to none replaces
+  // nothing and the model, told its correction did not land, writes a second
+  // card beside the first — the outcome the whole argument exists to remove.
+  const row = (
+    id: string,
+    specId: string | null,
+    status: ChatProposalRow["status"] = "pending",
+  ) => ({ id, spec_id: specId, status });
+
+  it("reads the chat's own label before the proposal id", () => {
+    // A label is 1–64 letters, digits, hyphens or underscores, so a model may
+    // legally label a proposal with something spelled like another's uuid. The
+    // label is what it wrote, so the label is what it means.
+    const rows = [row("b7f0-1", "b7f0-2"), row("b7f0-2", "later")];
+    assert.equal(proposalByReference(rows, "b7f0-2")!.id, "b7f0-1");
+    // And the id still answers where no label spells it.
+    assert.equal(proposalByReference(rows, "b7f0-1")!.id, "b7f0-1");
+  });
+
+  it("takes the card still waiting when a label has been reused", () => {
+    // Legal, and the ordinary state after a correction: a label is only unique
+    // among undecided proposals, so a chat holds several rows spelling one.
+    // Only one of them is a card the operator can still act on.
+    const rows = [
+      row("old", "fix", "superseded"),
+      row("older", "fix", "rejected"),
+      row("live", "fix"),
+    ];
+    assert.equal(proposalByReference(rows, "fix")!.id, "live");
+  });
+
+  it("answers null for a name nothing in the conversation spells", () => {
+    // What the route turns into a refusal by name. Answering *something* here
+    // would be a correction landing on a card nobody meant.
+    assert.equal(proposalByReference([row("a", "fix")], "nope"), null);
+    assert.equal(proposalByReference([], "fix"), null);
   });
 });
 
