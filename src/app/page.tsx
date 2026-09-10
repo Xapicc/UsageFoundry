@@ -1496,9 +1496,10 @@ export default function Dashboard() {
 
           Two cards, never one table, and nothing added across them. The tile
           adds the two mechanisms because that is the question it answers, and
-          its own footnote says by how much that overstates the truth — "a few
-          per cent," 4% where measured, once both halves are actually in the
-          sum. The measured bound itself is `docs/verification.md`'s,
+          it says nothing about how much that overstates the truth: a footnote
+          that did was removed twice by the operator, and the second removal
+          took the invariant behind it. The measured bound is
+          `docs/verification.md`'s,
           `intakeFilter.ts`'s own docblock's, and `contextTokens`'s
           (`contextPruning.ts`), not this band's; this band is where each
           half's own arithmetic lives, and a total here would be the same sum

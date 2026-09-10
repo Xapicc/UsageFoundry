@@ -1040,7 +1040,10 @@ Built and exercised against real transcripts:
   with only 6 reaching the mid-age threshold of 15); `mega-block-trim` (>32 KB)
   matched zero blocks in the whole corpus.
 
-  **The arithmetic was left alone, deliberately, and the card says why.** Not
+  **The arithmetic was left alone, deliberately, and this file is where that is
+  said.** The card used to say it too; that footnote was removed by the operator
+  in `6a78ef9`, restored by `78c87fa`, and removed again with the invariant that
+  had licensed the restore — so the bound is documented and not rendered. Not
   because 4.06% is small — because the correction is *not available today*.
   Identifying which transcript blocks the API never saw needs a `tool_use_id` on
   each ledger line, and **every line this install has written carries none**

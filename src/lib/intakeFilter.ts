@@ -31,9 +31,9 @@ import { scanUsage, type UsageEntry } from "./transcripts";
  * mechanisms both remove — measured at 4.06% of pruned tokens across this
  * install's ten largest transcripts, an upper bound recorded here, in
  * `docs/verification.md`, and in `contextTokens` (`contextPruning.ts`). The
- * card's own footnote names a rounded form of it — "a few per cent," 4% where
- * measured — under the sum, and only once both halves are actually in it,
- * rather than implying they are disjoint. Nothing else may add it to
+ * card does **not** name it: a footnote that did was removed twice by the
+ * operator (`6a78ef9`, then again after `78c87fa` restored it), so the bound
+ * lives in those three places and not on the page. Nothing else may add it to
  * anything.
  *
  * ## The arithmetic

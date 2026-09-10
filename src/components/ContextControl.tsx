@@ -153,29 +153,20 @@ function combinedUSD(
  * sum. The split stays on the card, as a share under each span, because an
  * operator deciding whether to leave *either* mechanism on needs the halves.
  *
- * So the sum ships with the overstatement printed under it, which is the
- * condition `docs/agent/conventions.md` puts on adding these two at all: a
- * reader cannot add two figures whose overlap is unstated, and the alternative
- * this card exists to refuse is two figures nobody can combine. The footnote
- * names it rather than the derivation — 4.06% is corpus-weighted across this
- * install's ten largest transcripts, 3.07% unweighted, 0.00–9.92% across them,
- * and itself an upper bound, so the line says "a few per cent" and gives the
- * one figure it was measured at. `docs/verification.md` carries the spread, and
- * `contextTokens` (`contextPruning.ts`) is where the reading that overstates is
- * derived; a reader who wants the bound rather than the fact goes to either.
+ * The overstatement is **not printed on this card**, and that is a decision
+ * rather than an omission. A footnote naming it was removed by `6a78ef9` — a
+ * VisualEdit pass against the dashboard — restored by `78c87fa` on the strength
+ * of an invariant this docblock and `docs/agent/conventions.md` then asserted,
+ * and removed again along with that invariant once the operator saw it come
+ * back. Twice is a decision about copy, and re-adding the line is not a fix.
  *
- * The overlap clause is conditional on there being an overlap: with the
- * filter's half absent from the total — not running, unreadable, or every
- * result on a model with no price here — the sum is one mechanism's figure and
- * is not high. Printing it anyway would be the mirror of the fault above it,
- * a caveat asserting an error that is not there.
- *
- * A footnote under this figure was deleted once, by `6a78ef9`, in the same pass
- * that took the coverage caveat off the window meters. What is back is not that
- * footnote and restoring it is not reverting that pass: it is one line, printed
- * only where the two halves actually overlap, and the condition above is what
- * outranks the copy decision. Anything longer than that line belongs in the
- * band lower down rather than up here.
+ * The figure it named is unchanged and is not in doubt: 4.06% corpus-weighted
+ * across this install's ten largest transcripts, 3.07% unweighted, 0.00–9.92%
+ * across them, and itself an upper bound. It stays where it is derived and
+ * where it can carry its spread — `contextTokens` (`contextPruning.ts`) and
+ * `docs/verification.md`. What a reader loses on the tile is the warning; what
+ * they keep is the split, as a share under each span, which is the half of the
+ * argument that survives the copy going.
  *
  * ## Why the week leads and the filter's share follows
  *
@@ -226,9 +217,6 @@ export function ContextControlAside({
   // `extends` there is for — the whole reading and one window inside it are the
   // same arithmetic over different spans.
   const totalShare = filterShareUSD(filter, filter);
-  // Both halves are in the sum, which is the only state the overstatement is
-  // an overstatement of.
-  const overlaps = totalShare !== null && pruning.prunes > 0;
 
   return (
     <Card>
@@ -266,35 +254,12 @@ export function ContextControlAside({
       </div>
 
       <div className="mt-3 space-y-1 text-xs text-ink-muted">
-        {/* Keyed on the total span rather than on each of the three, because
-            the sub-spans are subsets of it: a prune this app cannot price in
-            the week is an unpriced prune in the total too, so one line here
-            answers "is this money complete" for every figure above it. The
-            same qualification `FilterSavingsRows` and `PruneSavingsRows` both
-            print — a total that silently omits part of its own subject is
-            worse than one that says how much it omits. */}
-        {pruning.pricedPrunes < pruning.prunes && (
-          <div>
-            Money covers {pruning.pricedPrunes} of {pruning.prunes} prunes; the
-            rest ran on a model with no price here, so what they saved is
-            unknown rather than nothing.
-          </div>
-        )}
         {/* Only when the adjacency would otherwise mislead. A history read off a
             ledger nothing is appending to is still worth reading, but it is not
             a reading of now. */}
         {!filter.running && filter.ledger === "read" && (
           <div>The intake filter is not running now; this is its history.</div>
         )}
-        {/* The card's footnote, and the condition under which its two halves
-            may be added at all — see the docblock. Last, and one line: the
-            derivation of either half is a band lower down, and this says what
-            the sum is rather than how it was reached. */}
-        <div>
-          Not spend, and added to nothing beside it.
-          {overlaps &&
-            " The two mechanisms overlap, so the sum is a few per cent high — 4% where it was measured."}
-        </div>
       </div>
     </Card>
   );

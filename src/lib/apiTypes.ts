@@ -694,8 +694,10 @@ export interface FilterWindowDTO {
  * removes the same result counts tokens the API never held. Measured at 4.06%
  * of pruned tokens across this install's ten largest transcripts, and an upper
  * bound. Correcting it needs a `tool_use_id` on each ledger line that winnow
- * does not write yet, so until then the card prints the overlap rather than
- * implying the halves are disjoint — and nothing else adds them.
+ * does not write yet, so until then the bound is carried by
+ * `docs/verification.md`, `intakeFilter.ts` and `contextTokens`
+ * (`contextPruning.ts`) — the card itself names it nowhere, on the operator's
+ * decision — and nothing else adds them.
  *
  * The three money fields are the arithmetic rather than its result: `2.0·D`
  * saved on the cache write, `1.0·D` still paid to send it once uncached, and
@@ -738,9 +740,12 @@ export interface UsageResponse {
   snapshot: SnapshotDTO;
   /**
    * The intake filter's own reading. Its own key beside `pruning` and never
-   * inside it: the card adds the two, but it adds them where it can also print
-   * how much they overlap. A shape that pre-added them on the wire would carry
-   * the overstatement into every later reader with nothing left saying so.
+   * inside it: the card adds the two, and one card adding them is a decision a
+   * later reader can see and undo. A shape that pre-added them on the wire
+   * would carry the overstatement into every later reader with nothing left to
+   * take apart — the halves each surface prints are what make the sum
+   * checkable, and they are the more load-bearing half now that the card
+   * carries no footnote.
    */
   intakeFilter: FilterSavingsDTO;
   /**

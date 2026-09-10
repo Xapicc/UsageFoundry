@@ -147,19 +147,6 @@ export function PruneSavingsRows({
               </Td>
             </Tr>
           )}
-          {/* Only when it would otherwise mislead. The money above covers the
-              priced prunes alone, and a reader has no way to know some were left
-              out — a total that silently omits part of its own subject is worse
-              than one that says how much it omits. */}
-          {pricedPrunes < prunes && (
-            <Tr>
-              <Td className="text-ink-muted" colSpan={2}>
-                Money covers {pricedPrunes} of {prunes} prunes — the rest ran on a
-                model with no price here, so what they saved is unknown rather
-                than nothing.
-              </Td>
-            </Tr>
-          )}
           {/* The denominator for the figures above it: money describes the
               boundaries that cut, and this says how many there were. Without
               it a span where four of twelve boundaries cut reads exactly like
