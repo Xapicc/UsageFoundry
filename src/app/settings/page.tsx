@@ -51,7 +51,7 @@ import {
   type SegmentedOption,
 } from "@/components/ui/SegmentedControl";
 import { Sheet } from "@/components/ui/Sheet";
-import { Table, TableWrap, Td, Th, Tr } from "@/components/ui/Table";
+import { Table, TableWrap, TBody, Td, Th, THead, Tr } from "@/components/ui/Table";
 import { isPlainCommandChord } from "@/components/shell/shortcuts";
 
 interface CalibrateResponse {
@@ -2961,16 +2961,21 @@ export default function SettingsPage() {
 
           {cal?.ok && cal.suggestion && (
             <div className="mt-3.5">
+              {/* Stacked below the breakpoint, and the labels are the other
+                  half of it: the two figures are both dollar amounts, so with
+                  the column heads gone `Set now` and `Observed peak` are the
+                  only thing telling them apart. The window is what the record
+                  is identified by and carries no label. */}
               <TableWrap>
-                <Table>
-                  <thead>
+                <Table stack>
+                  <THead>
                     <tr>
                       <Th>Ceiling</Th>
                       <Th num>Set now</Th>
                       <Th num>Observed peak</Th>
                     </tr>
-                  </thead>
-                  <tbody>
+                  </THead>
+                  <TBody>
                     <Tr>
                       <Td>
                         5-hour
@@ -2980,12 +2985,12 @@ export default function SettingsPage() {
                             : `${fmtTokens(cal.suggestion.sessionTokenLimit)} raw tokens`}
                         </div>
                       </Td>
-                      <Td num className="mono">
+                      <Td num label="Set now" className="mono">
                         {effective.sessionCostLimit === null
                           ? "—"
                           : fmtUSD(effective.sessionCostLimit)}
                       </Td>
-                      <Td num className="mono">
+                      <Td num label="Observed peak" className="mono">
                         {cal.suggestion.sessionCostLimit === null
                           ? "—"
                           : fmtUSD(cal.suggestion.sessionCostLimit)}
@@ -3000,18 +3005,18 @@ export default function SettingsPage() {
                             : `${fmtTokens(cal.suggestion.weeklyTokenLimit)} raw tokens`}
                         </div>
                       </Td>
-                      <Td num className="mono">
+                      <Td num label="Set now" className="mono">
                         {effective.weeklyCostLimit === null
                           ? "—"
                           : fmtUSD(effective.weeklyCostLimit)}
                       </Td>
-                      <Td num className="mono">
+                      <Td num label="Observed peak" className="mono">
                         {cal.suggestion.weeklyCostLimit === null
                           ? "—"
                           : fmtUSD(cal.suggestion.weeklyCostLimit)}
                       </Td>
                     </Tr>
-                  </tbody>
+                  </TBody>
                 </Table>
               </TableWrap>
 
