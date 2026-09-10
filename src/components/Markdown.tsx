@@ -690,7 +690,7 @@ function inline(text: string, key: string, ctx: Ctx): ReactNode[] {
       out.push(
         <code
           key={id}
-          className="rounded-sm bg-inset px-1 py-px font-mono text-[0.9em] text-ink"
+          className="rounded-sm bg-inset px-1 py-px font-mono text-[0.9em] text-ink [overflow-wrap:anywhere]"
         >
           {token.slice(fence, -fence).trim()}
         </code>,
@@ -1382,7 +1382,15 @@ export function Markdown({
     // chat turn or a card without adding a gap nobody asked for. Block layout,
     // not flex, so adjacent paragraph margins collapse to one gap rather than
     // stacking into two.
-    <div className="text-sm leading-relaxed text-ink [&>:first-child]:mt-0 [&>:last-child]:mb-0">
+    //
+    // `anywhere` and not `break-word` below the shell's breakpoint, and only
+    // there: a file path or a URL in prose is one unbroken word wider than a
+    // 390px column, and only `anywhere` takes it out of the intrinsic minimum
+    // too — `break-word` wraps the text and still blows the track out. Above
+    // the breakpoint the column is wide enough that nothing needs breaking,
+    // and leaving it off is what keeps a wide markdown table scrolling in its
+    // own box instead of squeezing its cells.
+    <div className="text-sm leading-relaxed text-ink [&>:first-child]:mt-0 [&>:last-child]:mb-0 max-md:[overflow-wrap:anywhere]">
       {render(blocks, "b", {
         resolve: resolveWikilink,
         ids,
