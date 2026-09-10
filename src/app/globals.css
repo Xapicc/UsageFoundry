@@ -746,9 +746,13 @@ textarea { font-family: var(--mono); font-size: 12.5px; resize: vertical; min-he
    themselves — see CONTROL_BASE in components/ui/Field.tsx. This rule is the
    floor under everything still reaching for the element selectors above.
 
-   The query is the one Tailwind v4 emits for `max-md:`, character for
-   character, rather than a max-width — so the breakpoint is one boundary and
-   not two that agree to within a fraction of a pixel. */
+   The query is `max-md:`'s own boundary rather than a max-width, so the
+   breakpoint is one line and not two that agree to within a fraction of a
+   pixel. It is not the same *string* — this build emits `@media not all and
+   (min-width: 48rem)`, which is the identical complement of `min-width: 48rem`
+   and not an approximation of it. Anything written here in em or px would be,
+   which is the whole point: whatever Tailwind spells its negation as, both
+   sides of this rule flip at exactly 48rem. */
 @media (width < 48rem) {
   input[type="text"], input[type="number"], input[type="password"],
   select, textarea { font-size: 16px; }
