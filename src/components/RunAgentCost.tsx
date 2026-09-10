@@ -14,7 +14,7 @@ import { Meter } from "@/components/Meter";
 import { Badge } from "@/components/ui/Badge";
 import { Empty } from "@/components/ui/Card";
 import { Notice } from "@/components/ui/Notice";
-import { Table, Td, Th, Tr } from "@/components/ui/Table";
+import { TBody, THead, Table, Td, Th, Tr } from "@/components/ui/Table";
 
 /**
  * What this run's own turns cost, split by who produced them.
@@ -170,19 +170,26 @@ export function RunAgentCost({
 
       {spend && spend.rows.length > 0 && (
         <div className="mt-3 overflow-auto rounded-sm border border-line">
-          <Table>
+          {/* A row here is a record identified by a name, not a set of readings
+              held against each other: an agent's name is an operator's own
+              string and carries a badge beside it, so the cell that names the
+              record is the one that grows without bound. In the box above,
+              which scrolls, that puts the name on screen with its cost off it —
+              which is the failure `stack` exists for. `Who` therefore carries
+              no label: it is the headline the record is identified by. */}
+          <Table stack>
             <caption className="sr-only">
               What this run&rsquo;s turns cost, by who produced them, dearest
               first
             </caption>
-            <thead>
+            <THead>
               <tr>
                 <Th>Who</Th>
                 <Th num>Cost</Th>
                 <Th num>Turns</Th>
               </tr>
-            </thead>
-            <tbody>
+            </THead>
+            <TBody>
               {spend.rows.map((r) => {
                 const mark = agentOriginBadge(r.origin);
                 return (
@@ -196,12 +203,16 @@ export function RunAgentCost({
                         </>
                       )}
                     </Td>
-                    <Td num>{fmtUSD(r.costUSD)}</Td>
-                    <Td num>{r.entryCount}</Td>
+                    <Td num label="Cost">
+                      {fmtUSD(r.costUSD)}
+                    </Td>
+                    <Td num label="Turns">
+                      {r.entryCount}
+                    </Td>
                   </Tr>
                 );
               })}
-            </tbody>
+            </TBody>
           </Table>
         </div>
       )}
