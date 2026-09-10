@@ -1047,7 +1047,7 @@ export default function ChatPage() {
             Each proposal waits for you, and then runs under the guards of the
             template it names — never under anything the chat chose.
           </p>
-          <div className="ml-auto flex items-center gap-3">
+          <div className="ml-auto flex items-center gap-3 max-md:w-full max-md:flex-wrap max-md:gap-y-2">
             {/* What the figure counts is said, because what it leaves out is
                 the turn the operator is most likely watching: the CLI reports a
                 cost only with its final event, so a turn in flight has spent
@@ -1055,7 +1055,7 @@ export default function ChatPage() {
                 move for the length of a long turn reads as a turn that is not
                 costing anything. */}
             {chat && chat.costUSD > 0 && (
-              <span className="text-xs tabular-nums text-ink-muted">
+              <span className="text-xs tabular-nums text-ink-muted max-md:basis-full">
                 {fmtUSD(chat.costUSD)} this chat, settled turns only
               </span>
             )}
@@ -1066,11 +1066,15 @@ export default function ChatPage() {
                 be a total nobody could act on; separate, "settled" above still
                 means settled. */}
             {chat && chat.costEstUSD > 0 && (
-              <span className="text-xs tabular-nums text-ink-faint">
+              <span className="text-xs tabular-nums text-ink-faint max-md:basis-full">
                 + {fmtUSD(chat.costEstUSD)} estimated, turns that were cut off
               </span>
             )}
-            <Button variant="secondary" onClick={() => void newChat()}>
+            <Button
+              variant="secondary"
+              className="max-md:ml-auto"
+              onClick={() => void newChat()}
+            >
               New chat
             </Button>
           </div>
@@ -1127,7 +1131,14 @@ export default function ChatPage() {
             further in. What the floor was buying was a thread too short to be
             worth reading; what it cost was the composer, and a short thread
             still scrolls. */}
-        <div className="grid gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_360px]">
+        {/* The single column is stated rather than left implicit. An implicit
+            track is `auto`, which is floored at the content's min-content
+            width, so one long path in a message sized this column at 584px
+            inside a 358px pane and every card in it was cut off at the right —
+            silently, because the shell clips rather than scrolling sideways, so
+            nothing that asserts about `scrollWidth` can see it. `lg` already
+            spells its own tracks out and is unaffected. */}
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_360px]">
           {/* `max-h` in rem and not vh, for the reason a box inside the pane is
               never sized in viewport units: the pane is the window less the
               toolbar less its own padding less everything above this row, so
@@ -1137,10 +1148,27 @@ export default function ChatPage() {
               cards are. */}
           <Card
             emphasis="default"
-            className="flex max-h-[34rem] min-h-[22rem] flex-col lg:max-h-none lg:min-h-0"
+            /* The 34rem cap is a bounded box for a stacked *window*, and on a
+               390px screen it is smaller than the questions and the composer
+               inside it: the thread took the shortfall, `flex-1` collapsed it
+               to nothing, and the conversation was not on the page at all.
+               Below the breakpoint the card is sized by its content and the
+               pane scrolls, which is what the stacked layout already does. */
+            className="flex max-h-[34rem] min-h-[22rem] flex-col max-md:max-h-none max-md:min-h-0 lg:max-h-none lg:min-h-0"
           >
             <div className="relative min-h-0 flex-1">
-              <div ref={threadRef} onScroll={onScroll} className="h-full overflow-y-auto pr-1">
+              <div
+                ref={threadRef}
+                onScroll={onScroll}
+                /* `h-full` of a content-sized card resolves to `auto`, which
+                   would stop this being a scroll container at all and take the
+                   jump control, the unseen count and every rule above about
+                   what may move the thread with it. A height off `--pane-h`
+                   keeps it one and leaves room for the composer under it; the
+                   composer's own height is what the 16rem is. It shrinks with
+                   the keyboard because `--pane-h` already subtracts it. */
+                className="h-full overflow-y-auto pr-1 max-md:h-[calc(var(--pane-h)-16rem)] max-md:min-h-[10rem]"
+              >
                 {/* `additions` only: the waiting row's elapsed time changes every
                     second inside this region, and the default `additions text`
                     would read the whole thing out again each time. */}
@@ -1275,8 +1303,18 @@ export default function ChatPage() {
             {/* Pinned to the foot of the pane: the card is a flex column and the
                 thread above it is the only thing that scrolls, so the composer
                 stays where the hand expects it however long the conversation
-                gets. */}
-            <div className="relative mt-4 border-t border-line pt-4">
+                gets.
+
+                Below the shell's breakpoint the card is not bounded by the pane
+                — the standing sentence and the notice above it are most of a
+                390px screen, so the card starts below the fold and the composer
+                would start below that. `sticky` is what keeps the same promise
+                there: it rides the foot of the pane until the card ends. The
+                negative margin is only so its own background covers the card's
+                bottom padding, which the thread would otherwise scroll through.
+                Nothing here reads the keyboard: `--pane-h` and the shell's own
+                height already subtract `--keyboard-inset`. */}
+            <div className="relative mt-4 border-t border-line pt-4 max-md:sticky max-md:bottom-0 max-md:z-10 max-md:-mb-4 max-md:bg-surface max-md:pb-4">
               {mentionOpen && (
                 // Above the composer, because the composer is at the foot of the
                 // pane. `mousedown` rather than `click` on a row, with the
@@ -1642,7 +1680,7 @@ export default function ChatPage() {
                     platform puts it and where every sheet in this app already
                     puts it. Select all is not a decision about the work, so it
                     sits at the other end as a ghost. */}
-                <ButtonRow className="mt-3">
+                <ButtonRow className="mt-3 max-md:gap-x-6">
                   <Button
                     variant="ghost"
                     disabled={busy}
@@ -2011,7 +2049,14 @@ function AskedQuestions({
       <div className="flex flex-col divide-y divide-line">
         {questions.map((q) => (
           <div key={q.id} className="py-3 first:pt-0 last:pb-0">
-            <p className="text-sm leading-normal text-ink">{q.question}</p>
+            {/* The model writes this and reaches for a path or a flag in it
+                often enough that one unbroken word is wider than a 390px
+                column, which takes the row and everything beside it with it.
+                `anywhere` for the reason `Markdown.tsx` gives: it is the one
+                that comes off the intrinsic minimum too. */}
+            <p className="text-sm leading-normal text-ink max-md:[overflow-wrap:anywhere]">
+              {q.question}
+            </p>
 
             {q.status === "answered" && (
               <p className="mt-1 text-xs leading-normal text-ink-muted">
@@ -2538,7 +2583,7 @@ function Decided({
           <Link
             href={href}
             title={proposal.title}
-            className="block truncate text-xs"
+            className="block truncate text-xs max-md:whitespace-normal"
           >
             {proposal.title}
             {proposal.workflowId && (
@@ -2546,7 +2591,10 @@ function Decided({
             )}
           </Link>
         ) : (
-          <div className="truncate text-xs text-ink-muted" title={proposal.title}>
+          <div
+            className="truncate text-xs text-ink-muted max-md:whitespace-normal"
+            title={proposal.title}
+          >
             {proposal.title}
           </div>
         )}
@@ -2625,7 +2673,9 @@ function ChatRow({
         CHAT_ROW[current ? "current" : "other"]
       }`}
     >
-      <span className="block truncate text-xs">{entry.title ?? "Untitled"}</span>
+      <span className="block truncate text-xs max-md:whitespace-normal">
+        {entry.title ?? "Untitled"}
+      </span>
       <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-2xs text-ink-muted">
         <span className="tabular-nums">{fmtRelative(entry.updatedAt)}</span>
         {entry.status === "thinking" && <span className="text-accent">thinking</span>}

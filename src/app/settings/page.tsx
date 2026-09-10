@@ -51,7 +51,7 @@ import {
   type SegmentedOption,
 } from "@/components/ui/SegmentedControl";
 import { Sheet } from "@/components/ui/Sheet";
-import { Table, TableWrap, Td, Th, Tr } from "@/components/ui/Table";
+import { Table, TableWrap, TBody, Td, Th, THead, Tr } from "@/components/ui/Table";
 import { isPlainCommandChord } from "@/components/shell/shortcuts";
 
 interface CalibrateResponse {
@@ -1808,8 +1808,13 @@ function SandboxRow({ sandbox }: { sandbox: unknown }) {
 
 function EnvRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex gap-2">
-      <dt className="w-24 shrink-0 text-ink-faint">{label}</dt>
+    // The pair stacks below the breakpoint. 96px of label off a 358px pane
+    // leaves the value 254px, which is where the two account rows put each of
+    // their buttons on a line of its own and a mount path came out four lines
+    // deep; the label above buys the value the whole pane. The 2px gap is
+    // narrower than the 6px between rows, so a stacked pair still reads as one.
+    <div className="flex max-md:flex-col gap-2 max-md:gap-0.5">
+      <dt className="w-24 max-md:w-auto shrink-0 text-ink-faint">{label}</dt>
       <dd className="min-w-0 break-words text-ink-muted">{children}</dd>
     </div>
   );
@@ -2603,8 +2608,16 @@ export default function SettingsPage() {
           >
             {/* The width is on a wrapper, never on the control: `Input` already
                 states `w-full`, and two width utilities on one element resolve
-                by stylesheet order rather than class order. */}
-            <div className="w-36">
+                by stylesheet order rather than class order.
+
+                `max-md:w-40` rides every narrow field on this page, and it is a
+                stacking rule rather than a size: `ListRow` sends the control to
+                a line of its own only once the label cannot keep its 128px, so
+                anything under ~150px stays on the right and leaves the label a
+                134px column — four words to a line, against descriptions that
+                run five to nineteen lines. 160px is the first step past that
+                threshold in the widest group here. */}
+            <div className="w-36 max-md:w-40">
               <Input
                 id="sessc"
                 type="number"
@@ -2630,7 +2643,7 @@ export default function SettingsPage() {
             edited={isEdited("weeklyCostLimit")}
             label="Weekly ceiling"
           >
-            <div className="w-36">
+            <div className="w-36 max-md:w-40">
               <Input
                 id="wkc"
                 type="number"
@@ -2677,7 +2690,7 @@ export default function SettingsPage() {
               </>
             }
           >
-            <div className="w-28">
+            <div className="w-28 max-md:w-40">
               <Input
                 id="head"
                 type="number"
@@ -2785,7 +2798,7 @@ export default function SettingsPage() {
               label="Weekly reset"
               description="Rolling means the weekly total decays over days rather than resetting, so no run can wait it out"
             >
-              <div className="w-52">
+              <div className="w-52 max-md:w-40">
                 <Select
                   id="anchor"
                   value={
@@ -2948,16 +2961,21 @@ export default function SettingsPage() {
 
           {cal?.ok && cal.suggestion && (
             <div className="mt-3.5">
+              {/* Stacked below the breakpoint, and the labels are the other
+                  half of it: the two figures are both dollar amounts, so with
+                  the column heads gone `Set now` and `Observed peak` are the
+                  only thing telling them apart. The window is what the record
+                  is identified by and carries no label. */}
               <TableWrap>
-                <Table>
-                  <thead>
+                <Table stack>
+                  <THead>
                     <tr>
                       <Th>Ceiling</Th>
                       <Th num>Set now</Th>
                       <Th num>Observed peak</Th>
                     </tr>
-                  </thead>
-                  <tbody>
+                  </THead>
+                  <TBody>
                     <Tr>
                       <Td>
                         5-hour
@@ -2967,12 +2985,12 @@ export default function SettingsPage() {
                             : `${fmtTokens(cal.suggestion.sessionTokenLimit)} raw tokens`}
                         </div>
                       </Td>
-                      <Td num className="mono">
+                      <Td num label="Set now" className="mono">
                         {effective.sessionCostLimit === null
                           ? "—"
                           : fmtUSD(effective.sessionCostLimit)}
                       </Td>
-                      <Td num className="mono">
+                      <Td num label="Observed peak" className="mono">
                         {cal.suggestion.sessionCostLimit === null
                           ? "—"
                           : fmtUSD(cal.suggestion.sessionCostLimit)}
@@ -2987,18 +3005,18 @@ export default function SettingsPage() {
                             : `${fmtTokens(cal.suggestion.weeklyTokenLimit)} raw tokens`}
                         </div>
                       </Td>
-                      <Td num className="mono">
+                      <Td num label="Set now" className="mono">
                         {effective.weeklyCostLimit === null
                           ? "—"
                           : fmtUSD(effective.weeklyCostLimit)}
                       </Td>
-                      <Td num className="mono">
+                      <Td num label="Observed peak" className="mono">
                         {cal.suggestion.weeklyCostLimit === null
                           ? "—"
                           : fmtUSD(cal.suggestion.weeklyCostLimit)}
                       </Td>
                     </Tr>
-                  </tbody>
+                  </TBody>
                 </Table>
               </TableWrap>
 
@@ -3171,7 +3189,7 @@ export default function SettingsPage() {
             label="Runs at the same time"
             description="Work cycles only — reviews, chat turns and workflow blocks have their own budget below. Each run carries its own spending limit, so this multiplies the worst case: three runs at $5 can spend $15. A run over the limit waits rather than being refused, and queued or parked runs do not count against it"
           >
-            <div className="w-32">
+            <div className="w-32 max-md:w-40">
               <Input
                 id="conc"
                 type="number"
@@ -3197,7 +3215,7 @@ export default function SettingsPage() {
             label="Other Claude processes at the same time"
             description="A review, a merge-conflict resolution, an orchestrator chat turn and a workflow orchestrator block's deciding turn share this one budget. The first three are refused while it is full, and say so; a workflow block waits for a slot instead. Together with the limit above, this is the most Claude processes the container will ever carry"
           >
-            <div className="w-32">
+            <div className="w-32 max-md:w-40">
               <Input
                 id="concassist"
                 type="number"
@@ -3552,7 +3570,7 @@ export default function SettingsPage() {
               </>
             }
           >
-            <div className="w-36">
+            <div className="w-36 max-md:w-40">
               <Input
                 id="cgcost"
                 type="number"
@@ -3584,7 +3602,7 @@ export default function SettingsPage() {
               </Toned>
             }
           >
-            <div className="w-36">
+            <div className="w-36 max-md:w-40">
               <Input
                 id="cgcycles"
                 type="number"
@@ -3649,7 +3667,7 @@ export default function SettingsPage() {
             label="Orchestrator chat limit"
             description="A chat is not a run and has no guards of its own, so this is the only thing that bounds one message — a turn runs for as long as it keeps working, and is stopped only after 15 minutes of producing nothing. It is spent on the conversation, never added to a run"
           >
-            <div className="w-36">
+            <div className="w-36 max-md:w-40">
               <Input
                 id="chatbudget"
                 type="number"
@@ -3675,7 +3693,7 @@ export default function SettingsPage() {
             label="Install limit, rolling 24 hours"
             description="Every other limit here bounds one run, one workflow or one chat turn — this is the only one that bounds the total. Once it is reached, no new run, workflow, orchestrator turn or chat message starts until spend ages out of the window. A run still going, or one that finished inside it, counts its whole spend"
           >
-            <div className="w-36">
+            <div className="w-36 max-md:w-40">
               <Input
                 id="installbudget"
                 type="number"
@@ -3713,7 +3731,7 @@ export default function SettingsPage() {
             label="Live limit check"
             description="How often a run set to stop mid-cycle re-reads usage. It cannot beat one model turn however low this goes, because usage comes from transcripts written as each turn completes"
           >
-            <div className="w-36">
+            <div className="w-36 max-md:w-40">
               <Input
                 id="livechk"
                 type="number"
@@ -3734,7 +3752,7 @@ export default function SettingsPage() {
             label="Silent cycle limit"
             description="A work cycle that has printed nothing for this long is ended, so a wedged agent gives its folder and its slot back without a restart. Counted from the last line Claude Code printed, not from the start of the cycle, and one tool call can be silent for a long time"
           >
-            <div className="w-36">
+            <div className="w-36 max-md:w-40">
               <Input
                 id="silence"
                 type="number"
@@ -3768,7 +3786,7 @@ export default function SettingsPage() {
             label="Restart grace"
             description="A parked run older than this is closed out at boot rather than picked up, so a forgotten run cannot wake up days later and start spending"
           >
-            <div className="w-32">
+            <div className="w-32 max-md:w-40">
               <Input
                 id="grace"
                 type="number"
@@ -3869,7 +3887,7 @@ export default function SettingsPage() {
             label="Limit per check"
             description="A hard stop inside the CLI, and the only money bound on a check — it fires by itself, so it cannot be left to the window guard that is read once at the door. Measured at about 12c a check on an upper bound. Blank removes it"
           >
-            <div className="w-36">
+            <div className="w-36 max-md:w-40">
               <Input
                 id="validatebudget"
                 type="number"
@@ -3893,7 +3911,7 @@ export default function SettingsPage() {
             label="Extra work cycles a check may buy"
             description="How many further cycles one run may be given when a check finds something missing, past the cycle limit it was started with. Every other limit still ends it — time, run spend, both windows and the daily ceiling — so this extends one bound and not the rest. Zero means the task is still held open and you are still told why, and nothing is bought. There is no blank: a limit that could be removed would be a run nothing ends"
           >
-            <div className="w-36">
+            <div className="w-36 max-md:w-40">
               <Input
                 id="validatecycles"
                 type="number"
@@ -3992,7 +4010,7 @@ export default function SettingsPage() {
                 </>
               }
             >
-              <div className="w-36">
+              <div className="w-36 max-md:w-40">
                 <Input
                   id="forkcoldage"
                   type="number"
@@ -4041,7 +4059,7 @@ export default function SettingsPage() {
               </>
             }
           >
-            <div className="w-36">
+            <div className="w-36 max-md:w-40">
               <Input
                 id="readcap"
                 type="number"
@@ -4068,7 +4086,7 @@ export default function SettingsPage() {
             label="Start a work cycle over once the conversation gets this long"
             description="Normally each work cycle carries on the last one's conversation, so a long run pays for everything said so far on every turn it takes. Past this, the next cycle starts a new conversation: it is sent the task again and pointed at the work already on disk. The saving is real and so is the cost — the agent has to work out again what it had just decided, and this app cannot tell you which was bigger. Blank keeps today's behaviour"
           >
-            <div className="w-36">
+            <div className="w-36 max-md:w-40">
               <Input
                 id="freshstart"
                 type="number"
@@ -4307,7 +4325,7 @@ export default function SettingsPage() {
             label="Run at"
             description="Minutes past local midnight, in the zone below. A boot never catches up on a time that passed while the server was down"
           >
-            <div className="w-32">
+            <div className="w-32 max-md:w-40">
               <Input
                 id="dreamtime"
                 type="number"
@@ -4348,7 +4366,7 @@ export default function SettingsPage() {
             label="Write a failure after"
             description="Separate days it must have occurred on. At 2 it waits a median of three days, and writes only what is a standing property rather than an incident"
           >
-            <div className="w-32">
+            <div className="w-32 max-md:w-40">
               <Input
                 id="dreamdays"
                 type="number"
@@ -4368,7 +4386,7 @@ export default function SettingsPage() {
             label="Notes per night"
             description="Each one is a note plus an edit to whatever links to it, so a night that wrote dozens would be a long run inside a store you have open"
           >
-            <div className="w-32">
+            <div className="w-32 max-md:w-40">
               <Input
                 id="dreammax"
                 type="number"
@@ -4387,7 +4405,7 @@ export default function SettingsPage() {
             label="Cost ceiling"
             description="There is no way to express no ceiling. This runs with nobody present, and every other press of Run has a person behind it who sees what the last one cost"
           >
-            <div className="w-32">
+            <div className="w-32 max-md:w-40">
               <Input
                 id="dreamcost"
                 type="number"
@@ -4421,7 +4439,7 @@ export default function SettingsPage() {
             label="Keep a finished run's log for"
             description="Every tool call, every reply and every line of an agent's build output is a row. The run itself stays on the list with its spend and its stop reason — this discards the log behind it"
           >
-            <div className="w-32">
+            <div className="w-32 max-md:w-40">
               <Input
                 id="evret"
                 type="number"
@@ -4445,7 +4463,7 @@ export default function SettingsPage() {
             label="Reclaim an idle checkout after"
             description="A finished run's worktree, once its branch is landed or has no commits of its own. The branch and its commits stay; what goes is the directory, which git rebuilds in seconds — with the installed dependencies that are most of its size"
           >
-            <div className="w-32">
+            <div className="w-32 max-md:w-40">
               <Input
                 id="coret"
                 type="number"
@@ -4469,7 +4487,7 @@ export default function SettingsPage() {
             label="Keep session transcripts for"
             description="Claude Code writes one per session into your home directory, and nothing else prunes them. Pruning one ends any chance of resuming that conversation, and shortens the calendar history on the dashboard — which says which of its buckets are affected"
           >
-            <div className="w-32">
+            <div className="w-32 max-md:w-40">
               <Input
                 id="trret"
                 type="number"
