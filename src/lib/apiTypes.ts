@@ -72,6 +72,47 @@ export interface PlanUsageDTO {
   fetchedAt: number;
 }
 
+/** Mirror of `RateLimitWindow` in `rateLimitEvent.ts`. */
+export interface RateLimitWindowDTO {
+  /**
+   * 0–1, and **not clamped** — the provider reports values above 1 for a window
+   * that has been run past. `PlanWindowDTO.utilization` beside this one is the
+   * same quantity from a different channel, but it arrives as a percentage and
+   * is divided on the way in; this one does not need dividing.
+   */
+  utilization: number;
+  resetsAt: number | null;
+}
+
+/**
+ * Mirror of `RateLimitReading` in `rateLimitEvent.ts`.
+ *
+ * The provider's own utilisation figure as a running work cycle saw it, which
+ * is neither this app's estimate nor `PlanUsageDTO`'s poll of the OAuth
+ * endpoint. Whatever draws it must say so, must print `observedAt`, and must
+ * render the `null` on `UsageResponse.rateLimit` as "nothing observed" rather
+ * than as 0% — a reading that stops arriving is the ordinary case, not a fault.
+ */
+export type RateLimitReadingDTO =
+  | {
+      status: "allowed";
+      observedAt: number;
+      fiveHour: RateLimitWindowDTO | null;
+      sevenDay: RateLimitWindowDTO | null;
+      limitingWindow: string | null;
+      overageStatus: string | null;
+      overageDisabledReason: string | null;
+      isUsingOverage: boolean;
+      sessionId: string | null;
+    }
+  | {
+      /** A status this build has no branch for. No percentage comes off it. */
+      status: "unhandled";
+      observedAt: number;
+      reported: string;
+      sessionId: string | null;
+    };
+
 /**
  * Mirror of `AgentOrigin` in `windows.ts` — where the definition behind an
  * agent bucket lives, as far as this install can see.
@@ -878,6 +919,22 @@ export interface UsageResponse {
    * alike.
    */
   install: InstallSpendDTO;
+  /**
+   * What the provider itself last said about the two windows, off a running
+   * cycle's stream. `null` when nothing has been observed — see the type.
+   *
+   * A **fifth** reading, and the one that is not a reading of *spend* at all:
+   * it carries percentages and reset instants, no money and no tokens, so there
+   * is nothing on it that could be summed with anything above it even by
+   * mistake. Its own key rather than a field on `snapshot`, on `install`'s and
+   * `telemetry`'s rule and one more that is specific to this one: everything on
+   * `snapshot` is something a meter or a guard may read, and no guard may read
+   * this. `rateLimitEvent.ts` argues that out.
+   *
+   * Unconditional, like `install` and unlike `telemetry`: there is no setting
+   * behind it and nothing on it to leak. It costs a property read.
+   */
+  rateLimit: RateLimitReadingDTO | null;
 }
 
 /**

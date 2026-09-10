@@ -23,7 +23,11 @@ import { withRepoAdmin } from "./repoLock";
 import { dataDirRefusal, mayWriteDataDir, requireDataDir } from "./serverLock";
 import { childCredentials, chownForChild } from "./privsep";
 import { currentSandbox, sandboxRefusal } from "./sandbox";
-import { ensureSandboxMountPoints, sweepSandboxTreeRoot } from "./sandboxMountPoints";
+import {
+  ensureSandboxExcludesFile,
+  ensureSandboxMountPoints,
+  sweepSandboxTreeRoot,
+} from "./sandboxMountPoints";
 import { baselineFrom, taskSignature, type CostBaseline } from "./costBaseline";
 import { db } from "./db";
 import {
@@ -57,6 +61,7 @@ import {
 import { totalTokens } from "./pricing";
 import { buildSnapshot, type UsageSnapshot } from "./windows";
 import { planUsage } from "./planUsage";
+import { rateLimitReading, recordRateLimitReading } from "./rateLimitEvent";
 import {
   ingestTokenFor,
   revokeIngestTokens,
@@ -5827,35 +5832,118 @@ const GITHUB_CREDENTIAL_HELPER =
  * github.com as a whole, so how narrow the credential is comes entirely from
  * how narrow the token handed in is. Callers that have a repository pass it;
  * the chat, which roams every mount by design, has none to pass.
+ *
+ * The block itself is assembled by `agentGitEnv` below, which is where the rule
+ * that there may only be one of them per environment is written down. This door
+ * is that function with nothing else in the block, which is what every caller of
+ * it wants.
  */
 export function githubEnv(token: string = GITHUB_TOKEN): Record<string, string> {
-  if (!token) return {};
+  return agentGitEnv(token, null);
+}
 
-  const config: Array<[string, string]> = [
-    ["credential.https://github.com.helper", ""],
-    ["credential.https://github.com.helper", GITHUB_CREDENTIAL_HELPER],
-    ["url.https://github.com/.insteadOf", "git@github.com:"],
-    ["url.https://github.com/.insteadOf", "ssh://git@github.com/"],
-  ];
+/**
+ * The GitHub half of that block, as pairs.
+ *
+ * Constant rather than built from the token because none of it carries one: the
+ * helper reads `$GH_TOKEN` at call time for the reason above it.
+ */
+const GITHUB_GIT_CONFIG: ReadonlyArray<readonly [string, string]> = [
+  ["credential.https://github.com.helper", ""],
+  ["credential.https://github.com.helper", GITHUB_CREDENTIAL_HELPER],
+  ["url.https://github.com/.insteadOf", "git@github.com:"],
+  ["url.https://github.com/.insteadOf", "ssh://git@github.com/"],
+];
 
-  const env: Record<string, string> = {
-    GH_TOKEN: token,
-    GITHUB_TOKEN: token,
-    // A wrong or expired token should end the command, not the cycle: with a
-    // helper installed nothing should prompt, and a git that decides to ask
-    // anyway has no stdin to ask on and would sit there until the run's own
-    // duration limit stopped it.
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_CONFIG_COUNT: String(config.length),
-  };
-  // Every index below the count must carry both halves — git ignores the whole
-  // block if one is missing, which would put the run straight back into the
-  // failure this function exists to remove, silently.
-  config.forEach(([key, value], i) => {
+/**
+ * Pairs, numbered the one way git will read them.
+ *
+ * Every index below the count must carry both halves, and the count must be
+ * exactly the number of pairs — git discards the entire block otherwise, with no
+ * warning and no non-zero exit. So the numbering happens once, here, rather than
+ * at each contributor.
+ */
+function gitConfigEnv(
+  pairs: ReadonlyArray<readonly [string, string]>,
+): Record<string, string> {
+  const env: Record<string, string> = { GIT_CONFIG_COUNT: String(pairs.length) };
+  pairs.forEach(([key, value], i) => {
     env[`GIT_CONFIG_KEY_${i}`] = key;
     env[`GIT_CONFIG_VALUE_${i}`] = value;
   });
   return env;
+}
+
+/**
+ * Everything git-shaped a spawned agent is handed, in a single block.
+ *
+ * **One block, because git only reads one.** `GIT_CONFIG_COUNT` says how many
+ * `GIT_CONFIG_KEY_n`/`VALUE_n` pairs follow, numbered from zero, so two
+ * contributors spread into the same environment do not merge: the second
+ * overwrites the count and the low indices, and the first's remaining pairs sit
+ * past the count where git never looks. The credentials would go silently
+ * missing, which is precisely the unauthenticated container `githubEnv` exists
+ * to fix. Both contributors therefore hand over *pairs* and this is the only
+ * place that numbers them.
+ *
+ * **`core.excludesFile` is the second contributor**, and what it is for is in
+ * `sandboxMountPoints.ts` beside the list it names: while a sandboxed tool call
+ * is live the eleven bind targets at the root of the checkout are character
+ * devices, and `git add -A` — which every run is told to reach for — dies on the
+ * first of them. Handed to the child rather than written down, because the two
+ * places a rule like this would ordinarily go are a tracked file this app must
+ * not edit and a file the operator's own checkout shares.
+ *
+ * **What this costs the child is stated rather than absorbed.** A `GIT_CONFIG_*`
+ * block is the highest-precedence configuration git has: it beats the
+ * repository's `.git/config`, the operator's `~/.gitconfig` and the image's own
+ * `--system` settings. A child that runs `git config --global core.excludesFile
+ * …` will write the file and then not be read from it, and a child that exports
+ * its own `GIT_CONFIG_COUNT` for one command replaces this whole block and wins,
+ * which is the escape hatch. Neither is new — a work cycle with a GitHub token
+ * has carried a block since `githubEnv`, and this only adds a key to it.
+ *
+ * **It overrides `core.excludesFile` and deliberately does not carry the
+ * operator's own forward.** In the container this app ships there is none to
+ * carry: `githubEnv`'s own reason for existing is that the `~/.claude` mount
+ * brings no `~/.gitconfig`, there is no `~/.config/git/ignore` either, and the
+ * image's git configuration is `--system` and names `user.*` and `safe.directory`
+ * and nothing else. The case where an operator may have one is `npm run dev` on
+ * a host, and inlining a copy of it would mean re-deriving git's own precedence —
+ * system, global, `$XDG_CONFIG_HOME/git/ignore`, and a repository's local config
+ * — at every spawn and then holding a snapshot that goes stale while the run
+ * lasts. Getting *that* wrong is silent: a name quietly stops being ignored.
+ * Getting it wrong the way this does is loud: a file the operator ignores
+ * globally turns up as untracked in the checkout they review and in the run's own
+ * diff.
+ *
+ * `excludesFile` is null where there is nothing to hand over — `githubEnv`'s
+ * callers, and the excludes file's own failure to be written. No token and no
+ * file is an empty environment, exactly as before.
+ */
+export function agentGitEnv(
+  token: string,
+  excludesFile: string | null,
+): Record<string, string> {
+  const pairs: Array<readonly [string, string]> = [];
+  if (token) pairs.push(...GITHUB_GIT_CONFIG);
+  if (excludesFile) pairs.push(["core.excludesFile", excludesFile]);
+  if (pairs.length === 0) return {};
+
+  return {
+    ...(token
+      ? {
+          GH_TOKEN: token,
+          GITHUB_TOKEN: token,
+          // A wrong or expired token should end the command, not the cycle: with
+          // a helper installed nothing should prompt, and a git that decides to
+          // ask anyway has no stdin to ask on and would sit there until the run's
+          // own duration limit stopped it.
+          GIT_TERMINAL_PROMPT: "0",
+        }
+      : {}),
+    ...gitConfigEnv(pairs),
+  };
 }
 
 /**
@@ -6124,6 +6212,23 @@ export function runIteration(
       log(runId, `Could not create a sandbox mount point: ${problem}`);
     }
 
+    // The other half of the same sandbox, and the half that cannot be cleaned up
+    // afterwards: the eleven paths it binds at the root of the checkout are
+    // character devices *while a tool call is live*, and `git add -A` — which
+    // this run is told to reach for — refuses to stage one. Rewritten every
+    // cycle rather than once per run, so a `/run` cleared under the container or
+    // a file somebody deleted comes back rather than being trusted from a spawn
+    // that may have been days ago.
+    const excludes = ensureSandboxExcludesFile();
+    if (excludes.problem) {
+      log(
+        runId,
+        `Could not write the sandbox's git excludes file (${excludes.problem}), so ` +
+          "`git add -A` in this checkout will fail on the sandbox's own bind mounts " +
+          "while a tool call is running",
+      );
+    }
+
     // Before the spawn, never after the read, and that order is the whole point:
     // the CLI does not write this file when its turn fails, so a stale one left
     // by the previous cycle of the same run would be read as this cycle's last
@@ -6134,7 +6239,10 @@ export function runIteration(
     // quotes, backticks, or semicolons is inert rather than interpreted.
     const child: AgentProcess = spawn(adapter.bin, args, {
       cwd,
-      env: childEnv({ ...telemetryEnv(runId, telemetryRequired), ...githubEnv(githubToken) }),
+      env: childEnv({
+        ...telemetryEnv(runId, telemetryRequired),
+        ...agentGitEnv(githubToken, excludes.path),
+      }),
       // The uid `childEnv`'s strip only means something against: same process,
       // one step down, so `/proc/<server>/environ` and `/data` stop being
       // readable by the thing whose prompt came out of a repository.
@@ -7308,6 +7416,69 @@ function noteUnknownStreamEvent(
   recordOpsEvent("warn", "stream.unknown_event", { cli, type, runId });
 }
 
+/**
+ * Keep one `rate_limit_event`, and say so when it cannot be kept.
+ *
+ * Three outcomes and none of them is silence, because every way this can go
+ * wrong looks on screen exactly like an account with plenty of allowance left.
+ *
+ *  - Readable and `allowed`: stored, and nothing is logged. It arrives on every
+ *    turn whose rounded percentage moved, so a line per reading would be the
+ *    flood `tool_progress` is kept out of `run_events` to avoid.
+ *  - Readable and some other `status`: stored as `unhandled` — so the surface
+ *    can say the provider reported something this build will not read a
+ *    percentage out of — and reported on both of `noteUnknownStreamEvent`'s
+ *    sinks with its own lifetimes. `status` is the one field on this event that
+ *    could mean the account has *stopped* being served, so an unhandled member
+ *    of it is a durable ops row, not a log line that ages out with the run.
+ *  - Not readable at all: handed to `noteUnknownStreamEvent` under the type
+ *    itself. The type is one this app knows and the *shape under it* has moved,
+ *    which is the same fact that function exists to record and is bounded the
+ *    same way.
+ */
+function noteRateLimit(
+  runId: string,
+  ev: Record<string, unknown>,
+  acc: IterationResult,
+): void {
+  const reading = rateLimitReading(ev, Date.now());
+  if (reading === null) {
+    noteUnknownStreamEvent(runId, "Claude Code", "rate_limit_event", ev, acc);
+    return;
+  }
+
+  recordRateLimitReading(reading);
+  if (reading.status === "allowed") return;
+
+  // Keyed on the status and not on the type, so a second unhandled member is
+  // reported rather than swallowed by the first — and so this cannot suppress
+  // the plain unknown-type report for `rate_limit_event` above, which answers a
+  // different question.
+  const key = `rate_limit_status:${reading.reported}`;
+  if (acc.unknownEventTypes.has(key)) return;
+  acc.unknownEventTypes.add(key);
+
+  log(
+    runId,
+    `Claude Code reported a rate-limit status this app does not handle: ` +
+      `"${reading.reported}". Only "allowed" is read as a usage figure, so no ` +
+      `percentage is being taken from this event — and it is not being read as ` +
+      `"fine" either. Reported once per status per cycle.`,
+    { stream: "stdout", raw: ev },
+  );
+
+  const seen = `Claude Code:${key}`;
+  if (unknownEventTypesReported.has(seen)) return;
+  unknownEventTypesReported.add(seen);
+  // The status and nothing else, on `noteUnknownStreamEvent`'s rule: the body
+  // of this event is the provider's, not ours, and `ops.ts` forbids handing
+  // this a payload object.
+  recordOpsEvent("warn", "stream.rate_limit_status", {
+    status: reading.reported,
+    runId,
+  });
+}
+
 /* ------------------------------------------------------------------ */
 /* What a cycle is still inside                                        */
 /* ------------------------------------------------------------------ */
@@ -7709,6 +7880,16 @@ function handleStreamLine(
     return;
   }
 
+  // The provider's own reading of the two windows this app otherwise estimates
+  // from local transcripts. Like `tool_progress` it is held in memory and never
+  // written to `run_events`, and unlike it the reading is about the *account*
+  // rather than about this run — `rateLimitEvent.ts` has all four decisions,
+  // including why nothing on this path may reach a guard.
+  if (type === "rate_limit_event") {
+    noteRateLimit(runId, ev, acc);
+    return;
+  }
+
   if (type === "user") {
     // Before the failures and over all of them: a call that answered is a call
     // that is no longer running, and the successful ones are the majority the
@@ -7890,7 +8071,8 @@ function handleStreamLine(
     return;
   }
 
-  // A fifth top-level type. `assistant`, `user`, `result` and `system` are what
+  // A type none of the branches above claimed. `assistant`, `user`, `result`,
+  // `system`, `tool_progress` and `rate_limit_event` are what
   // `--output-format stream-json` was measured to write, so anything here means
   // the pin has moved — and the symptom of missing that is a cycle with no cost,
   // no session id and no stop reason, which every page in this app renders as a

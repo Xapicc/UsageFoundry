@@ -97,6 +97,7 @@ const {
   resolveIsolation,
   revivableDependents,
   getRun,
+  agentGitEnv,
   githubEnv,
   isRateLimited,
   isTransientApiError,
@@ -149,6 +150,8 @@ const { revokeIngestTokens, runForIngestToken } =
   require("./otlp") as typeof import("./otlp");
 const { db } = require("./db") as typeof import("./db");
 const { recentOpsEvents } = require("./ops") as typeof import("./ops");
+const { clearRateLimitReading, latestRateLimitReading } =
+  require("./rateLimitEvent") as typeof import("./rateLimitEvent");
 const { saveSettings } = require("./settings") as typeof import("./settings");
 const { priceFiles, renderFileCostNotice } =
   require("./fileCostNotice") as typeof import("./fileCostNotice");
@@ -2200,6 +2203,64 @@ describe("github credentials for a work cycle", () => {
 });
 
 /**
+ * The one `GIT_CONFIG_*` block a spawned agent may carry.
+ *
+ * It earns a test for `githubEnv`'s reason with a second failure stacked on it.
+ * git reads exactly one block per environment — a count and pairs numbered from
+ * zero — so two contributors spread into the same object do not merge: the
+ * second overwrites the count and the low indices, and the first's remaining
+ * pairs sit past the count where git never looks. Neither half says anything
+ * when that happens. Losing the credential half is an agent that could not push,
+ * inside a tool call nothing here reads; losing the excludes half is `git add
+ * -A` dying on the sandbox's own character devices at the end of a cycle that
+ * had work to commit.
+ */
+describe("the git environment a work cycle is spawned with", () => {
+  const token = "ghp_example";
+  const excludes = "/run/uf-git/sandbox-root-excludes";
+
+  const pairsOf = (env: Record<string, string>): Array<[string, string]> => {
+    const count = Number(env.GIT_CONFIG_COUNT ?? "0");
+    assert.equal(Number.isInteger(count), true);
+    // A pair past the count is a pair git never reads, so the block has to end
+    // exactly where the count says it does.
+    assert.equal(env[`GIT_CONFIG_KEY_${count}`], undefined);
+    assert.equal(env[`GIT_CONFIG_VALUE_${count}`], undefined);
+    return Array.from({ length: count }, (_, i) => [
+      env[`GIT_CONFIG_KEY_${i}`],
+      env[`GIT_CONFIG_VALUE_${i}`],
+    ]);
+  };
+
+  it("carries both contributors in one numbered block", () => {
+    const pairs = pairsOf(agentGitEnv(token, excludes));
+
+    assert.deepEqual(pairs, [
+      ...pairsOf(githubEnv(token)),
+      ["core.excludesFile", excludes],
+    ]);
+  });
+
+  it("hands over the excludes file with no token to go with it", () => {
+    const env = agentGitEnv("", excludes);
+
+    assert.deepEqual(pairsOf(env), [["core.excludesFile", excludes]]);
+    // Nothing about GitHub, and in particular no credential helper answering
+    // with an empty password, which is a rejected login rather than no login.
+    assert.equal(env.GH_TOKEN, undefined);
+    assert.equal(env.GITHUB_TOKEN, undefined);
+  });
+
+  it("hands over nothing at all when there is neither", () => {
+    assert.deepEqual(agentGitEnv("", null), {});
+  });
+
+  it("is what `githubEnv` is, with nothing else in the block", () => {
+    assert.deepEqual(agentGitEnv(token, null), githubEnv(token));
+  });
+});
+
+/**
  * Covers the argv an isolated run is spawned with, and the refusals it reports.
  *
  * Both earn a test on the same grounds as everything else here — pure, silent,
@@ -3655,6 +3716,77 @@ describe("handleStreamLine on an unrecognised event type", () => {
     assert.equal(filed.length, 1);
     assert.equal(filed[0].level, "warn");
     assert.equal(filed[0].detail.cli, "Claude Code");
+  });
+
+  // `rate_limit_event` used to land here, and the cost of that was not a log
+  // line: it is the provider's own reading of the two windows this whole app
+  // estimates, dropped. The branch is what these two pin — remove it and the
+  // reading silently stops arriving while every page still renders.
+  it("does not file the rate-limit event as a vocabulary it has lost", () => {
+    clearRateLimitReading();
+    // Reset instants relative to now, in epoch *seconds* as the wire carries
+    // them: a literal would make this test pass until that instant and then
+    // start failing, because a window whose reset has passed is dropped.
+    const inAnHour = Math.floor(Date.now() / 1000) + 3600;
+    const { acc, logs } = run([
+      {
+        type: "rate_limit_event",
+        session_id: "sess-rl",
+        rate_limit_info: {
+          status: "allowed",
+          rateLimitType: "five_hour",
+          unifiedWindows: {
+            five_hour: { utilization: 0.15, resetsAt: inAnHour },
+            seven_day: { utilization: 0.06, resetsAt: inAnHour + 86_400 },
+          },
+        },
+      },
+    ]);
+    assert.deepEqual([...acc.unknownEventTypes], []);
+    assert.equal(logs.filter((l) => l.includes("does not recognise")).length, 0);
+
+    const held = latestRateLimitReading(Date.now());
+    assert.equal(held?.status === "allowed" && held.fiveHour?.utilization, 0.15);
+    clearRateLimitReading();
+  });
+
+  it("says so out loud when the status is one it will not read", () => {
+    clearRateLimitReading();
+    const { acc, logs } = run([
+      {
+        type: "rate_limit_event",
+        session_id: "sess-rl",
+        rate_limit_info: { status: "uf_test_novel_status" },
+      },
+      // Twice, because this arrives on every turn: the report is bounded the
+      // same way an unrecognised type's is.
+      {
+        type: "rate_limit_event",
+        session_id: "sess-rl",
+        rate_limit_info: { status: "uf_test_novel_status" },
+      },
+    ]);
+
+    assert.deepEqual(
+      [...acc.unknownEventTypes],
+      ["rate_limit_status:uf_test_novel_status"],
+    );
+    assert.equal(
+      logs.filter((l) => l.includes("does not handle")).length,
+      1,
+    );
+    const filed = recentOpsEvents(50, "stream.rate_limit_status").filter(
+      (e) => e.detail.status === "uf_test_novel_status",
+    );
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].level, "warn");
+
+    // Stored rather than dropped, so the dashboard can say the provider is
+    // saying something this build will not read a percentage out of — and so
+    // the last good reading is not left on screen as if it were current.
+    const held = latestRateLimitReading(Date.now());
+    assert.equal(held?.status, "unhandled");
+    clearRateLimitReading();
   });
 });
 

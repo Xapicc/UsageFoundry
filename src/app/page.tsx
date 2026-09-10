@@ -493,6 +493,7 @@ export default function Dashboard() {
     install,
     pruning,
     intakeFilter,
+    rateLimit,
   } = data;
   const noCeilings = !meta.hasSessionCeiling && !meta.hasWeeklyCeiling;
   // Gates both context-control surfaces, and they have to agree: an empty tile
@@ -861,6 +862,127 @@ export default function Dashboard() {
               )}
             </div>
           </div>
+
+          {/* Drawn only when something has been observed, on the live-telemetry
+              card's rule: this arrives on a running work cycle's own stream and
+              is legitimately absent on an install that has not run one, or that
+              authenticates in a way carrying no such headers at all. A block
+              that appeared anyway would read as 0% — which is the one reading
+              this must never be mistaken for.
+
+              Below both meters rather than beside either, because one event
+              carries both windows and one observation instant: split across the
+              two cards it would print the same age twice and invite the reader
+              to treat each half as belonging to the bar above it. */}
+          {rateLimit && (
+            <div className="mt-5 border-t border-line pt-4">
+              <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
+                <CardTitle>Reported by Anthropic on a work cycle</CardTitle>
+                {/* The whole value of this reading is that it was true at an
+                    instant rather than now. Beside the heading, not under the
+                    figures, so it is read before them. */}
+                <div
+                  className="text-sm tabular-nums text-ink-muted"
+                  title={new Date(rateLimit.observedAt).toLocaleString()}
+                >
+                  Seen {fmtRelative(rateLimit.observedAt, s.now)}
+                </div>
+              </div>
+
+              {rateLimit.status === "allowed" ? (
+                <>
+                  <div className="mt-2 space-y-1 text-sm tabular-nums text-ink">
+                    {(
+                      [
+                        ["5-hour", rateLimit.fiveHour],
+                        ["Weekly", rateLimit.sevenDay],
+                      ] as const
+                    ).map(([label, w]) =>
+                      w === null ? null : (
+                        <div key={label}>
+                          <span className="text-ink-muted">{label}</span>{" "}
+                          {fmtPct(w.utilization)}
+                          {w.resetsAt !== null && (
+                            <span className="text-ink-muted">
+                              {" "}
+                              · resets {fmtRelative(w.resetsAt, s.now)}
+                            </span>
+                          )}
+                        </div>
+                      ),
+                    )}
+                  </div>
+
+                  <div className="mt-3 max-w-[68ch] space-y-1 text-xs text-ink-muted">
+                    {/* Both windows gone means the reading outlived the windows
+                        it described. Saying so beats an empty gap under a
+                        heading that promised two figures. */}
+                    {rateLimit.fiveHour === null && rateLimit.sevenDay === null && (
+                      <div>
+                        Both windows have reset since this was seen, so nothing on
+                        it still describes the window you are in.
+                      </div>
+                    )}
+                    {/* The sentence decision 1 exists for. Two provider figures
+                        and one estimate are on this card, and a reader who takes
+                        this one as a correction of the bars above has been
+                        misled by the layout. */}
+                    <div>
+                      Anthropic&apos;s own figure for the account, as a running
+                      work cycle&apos;s responses carried it. The meters above are
+                      measured separately and are not corrected by it; no budget
+                      guard reads this.
+                    </div>
+                    {/* Only when it names something the two figures above do not
+                        already answer — a per-model or overage wall can bind
+                        while both windows read low. */}
+                    {rateLimit.limitingWindow !== null &&
+                      rateLimit.limitingWindow !== "five_hour" &&
+                      rateLimit.limitingWindow !== "seven_day" && (
+                        <div>
+                          The window it says is binding is{" "}
+                          <span className="mono">{rateLimit.limitingWindow}</span>,
+                          which is neither of the two above.
+                        </div>
+                      )}
+                    {/* The provider's own words for both halves, unreduced:
+                        "spent" and "your organisation switched it off" are
+                        different things to whoever has to act on them. */}
+                    {rateLimit.isUsingOverage ? (
+                      <div>This account is currently on overage.</div>
+                    ) : (
+                      rateLimit.overageStatus !== null && (
+                        <div>
+                          Overage{" "}
+                          <span className="mono">{rateLimit.overageStatus}</span>
+                          {rateLimit.overageDisabledReason !== null && (
+                            <>
+                              {" "}
+                              ·{" "}
+                              <span className="mono">
+                                {rateLimit.overageDisabledReason}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      )
+                    )}
+                  </div>
+                </>
+              ) : (
+                /* An unhandled `status`, drawn rather than dropped. Only
+                   "allowed" is read as a usage figure here, and the alternative
+                   to saying so is a card that silently disappears at exactly the
+                   moment the provider started saying something new. */
+                <div className="mt-2 max-w-[68ch] text-xs text-ink-muted">
+                  Claude Code reported a rate-limit status this app does not
+                  handle: <span className="mono">{rateLimit.reported}</span>. No
+                  percentage is being read from it, and it is not being read as
+                  &ldquo;fine&rdquo;.
+                </div>
+              )}
+            </div>
+          )}
         </Card>
 
         {/* Gated on the window itself, and it has to be: `telemetryWindow`

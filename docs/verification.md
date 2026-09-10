@@ -1877,12 +1877,14 @@ Built and exercised against real transcripts:
   now calls both — the fill on `[cwd, ...addDirs]` before the spawn, the sweep on
   `cwd` inside `land`, so no ending can miss it — and `cwd` is resolved once
   above the spawn so both are handed the directory the child actually got.
-  `core.excludesFile` is deliberately **not** given to this child; the argument
-  is in the docblock at the spawn site and in `docs/agent/chat.md`, and its short
-  form is that `GIT_CONFIG_*` has no scope narrower than the process, so the
-  ignore rule would follow a turn that roams every mount into the operator's own
-  checkouts, where an untracked `.vscode`, `.idea` or `.mcp.json` at the root is
-  an ordinary thing to have.
+  `core.excludesFile` — which the bullet below hands a **work cycle's** child — is
+  deliberately **not** given to this one; the argument is in the docblock at the
+  spawn site and in `docs/agent/chat.md`, and its short form is whose repositories
+  these are: a cycle is ordered to commit in a checkout this app seeded, while
+  `GIT_CONFIG_*` has no scope narrower than the process, so the ignore rule would
+  follow a turn that roams every mount into the operator's own checkouts, where an
+  untracked `.vscode`, `.idea` or `.mcp.json` at the root is an ordinary thing to
+  have.
 
   **The before-count for chat turns, off the CLI's own transcripts.**
   `~/.claude/projects/-workspace/` is `chatCwd()`, so a session starting there is
@@ -1961,6 +1963,66 @@ Built and exercised against real transcripts:
   zero while the 35 config-directory and 16 `/workspace`-root ones remain — and
   run `git status --porcelain` in the mount the turn's cwd was, which must name
   none of the eleven `SANDBOX_TREE_ROOT_NAMES`.
+
+- **`core.excludesFile` in the child's environment as the answer to that
+  `git add -A`, measured on 2026-09-09 in
+  `.uf-worktrees/usagefoundry-721638d11c0b-1` while its own sandboxed session
+  held all eleven names as `crw-rw-rw- 1, 3`.** git 2.39.5. The failure
+  reproduces non-destructively — `git add -A --dry-run` prints `error:
+  .bash_profile: can only add regular files, symbolic links or git-directories`
+  followed by `fatal: adding files failed`, so the dry run is enough to test
+  against and no case below had to stage anything. With `GIT_CONFIG_COUNT` /
+  `KEY_0` / `VALUE_0` naming `core.excludesFile` and a file listing the eleven
+  names root-anchored, the same `git add -A --dry-run` exits 0; a **real**
+  `git add -A` then exits 0 as well, stages none of the eleven, and stages a
+  planted `docs/uf-anchor-probe/.gitconfig` — which is the root-anchoring claim,
+  that a repository genuinely tracking a nested file of one of these names keeps
+  seeing it. `git status --porcelain` no longer lists the eleven. Then the same
+  again through the shipped code rather than a hand-written file:
+  `ensureSandboxExcludesFile()` wrote `/tmp/claude-1000/uf-git/sandbox-root-excludes`,
+  481 bytes, mode 0644, and `agentGitEnv("ghp_fake_token", <that path>)` produced
+  one five-pair block — the four GitHub pairs then `core.excludesFile` — under
+  which `git add -A --dry-run` exits 0 **and** `git config --get
+  core.excludesFile` and `--get-all url.https://github.com/.insteadOf` both read
+  back, which is the half that says the two contributors to `GIT_CONFIG_COUNT`
+  are not overwriting each other. Where the file lives was checked the same way
+  the child will see it: this container is privilege-separated, and a root-owned
+  0644 file under the 0755 `/run/uf-skills` is readable from inside a sandboxed
+  `Bash` call, which is the ownership, mode and location `/run/uf-git` takes.
+  There is no `~/.gitconfig` and no `~/.config/git/ignore` here and
+  `git config --get core.excludesFile` is unset, so the override this block
+  performs overrides nothing in the container; the image's own git settings are
+  `--system` and name `user.*` and `safe.directory`, none of which this touches.
+  `npm run typecheck` exit 0; `npm test` 2590 pass, 0 fail.
+
+  **Not verified by hand:** no work cycle has been spawned by this code. An
+  agent's own sandboxed calls are spawned by the *installed* app rather than by
+  its branch, so everything above ran git by hand inside a sandbox the installed
+  app made — what is unseen is the wiring: that `runIteration` writes the file
+  and that `agentGitEnv`'s block reaches the child's environment on a real spawn.
+  Unseen with it: the file being written to `/run/uf-git` at all, since only the
+  server is root and only under compose (every reading above is the
+  `os.tmpdir()` branch), the log line for a file that could not be written, and
+  the `EEXIST` path on the second cycle of a run. What settles it is a run on
+  this code whose task is `run \`git add -A && git status --porcelain\` in your
+  checkout and report the exit status`: exit 0 with no `can only add regular
+  files` line, against the same command failing on `main`. Alongside it,
+  `docker compose exec usagefoundry cat /run/uf-git/sandbox-root-excludes` should
+  print the eleven entries root-anchored under their comment header, and reading
+  a live cycle's `/proc/<pid>/environ` should show `core.excludesFile` as the
+  last pair of a single `GIT_CONFIG_COUNT` block with the GitHub pairs still
+  ahead of it.
+
+- **Neither suite figure in the two bullets above is the merged tree's.** The two
+  changes were measured on their own branches before they met — 2,597 pass for the
+  chat child's fill and sweep, 2,590 for `core.excludesFile` — and the suite has
+  not been run since the merge, which carries both sets of tests (`agentGitEnv`'s
+  in `orchestrator.test.ts`, the excludes body's in `sandboxMountPoints.test.ts`)
+  where each run saw only its own. In the merged tree `runIteration` does all
+  three — the fill, the sweep, and `ensureSandboxExcludesFile`'s path riding
+  `agentGitEnv` into the child's environment — while `runOrchestratorChild` does
+  the fill and the sweep and, for the reason above, not the third. That is a
+  reading of the merged tree rather than a run of it.
 
 - **The Codex sign-in panel, driven end to end against `codex-cli 0.153.4`** on
   2026-09-05, on a built server (`npm start`) with a scratch `DATA_DIR` and a
@@ -2550,6 +2612,40 @@ Built and exercised against real transcripts:
   been run end to end since the change, so nothing here has exercised
   `logAssistTools` writing rows or the `check ›` prefix rendering on a run
   page.
+- **`rate_limit_event`'s shape, read off the pinned binary rather than off a
+  live stream — 2026-09-09.** The one event above was sighted arriving; what
+  `handleStreamLine` now does with it was built against
+  `@anthropic-ai/claude-code`'s own schema, read out of `bin/claude.exe` with
+  `grep -ao`. `status` is declared
+  `["allowed","allowed_warning","rejected"]`; `unifiedWindows` carries
+  `five_hour`, `seven_day` and `seven_day_overage_included`, each
+  `{utilization: number, resetsAt: int}`; and its `@internal` describe string
+  says the windows are "as read from the `anthropic-ratelimit-unified-*`
+  response headers", that `utilization` is "the fraction of the window used
+  (usually 0-1)" with values above 1 occurring, that `resetsAt` is unix epoch
+  **seconds**, that an event is emitted when a rounded percentage or a reset
+  instant *moves* rather than on a cadence, and that the field is absent until
+  a response carrying those headers has been seen and always absent on
+  API-key, Bedrock and Vertex sessions. That last pair is what `metering.md`
+  rests the "no guard may read it" decision on, and the header provenance is
+  what settles that `0.15` means 15% here while `planUsage.ts`'s `5.0` means
+  5%. The path was then driven end to end against the **standalone bundle** —
+  `CLAUDE_BIN` pointed at a stub emitting the event above verbatim, a real run
+  created through `POST /api/runs`, and the dashboard opened at 1280px and
+  390px with no console error. `/api/usage` answered `rateLimit` with
+  `utilization` 0.15/0.06 undivided, resets converted to epoch ms, the overage
+  fields and the session id; the card drew "5-hour 15.0% · resets in 1h 0m",
+  "Weekly 6.0% · resets in 96h 0m" and "Overage rejected ·
+  org_level_disabled". The same run with `status` set to `allowed_warning`
+  drew "Claude Code reported a rate-limit status this app does not handle" with
+  no percentage on it and filed one `stream.rate_limit_status` ops row at
+  `warn`. What is **not** verified: the event was canned, so nothing here has
+  read one off a real Claude Code process against a real account; nothing has
+  been observed on any `status` other than `allowed`; no
+  `seven_day_overage_included` window has been seen on this account; and the
+  card is inside the block `FirstRun` replaces, so on a machine with no local
+  transcripts the provider's reading is suppressed along with the meters it
+  would otherwise be the only alternative to.
 
 ## Not yet verified by hand
 
