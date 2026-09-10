@@ -384,6 +384,8 @@ function guardBars(run: RunDTO, now: number) {
     /** What the band means, said to a screen reader; see `Meter`. */
     upperHint?: string;
     value: string;
+    /** How the band's end of the range is spelled; see `Meter`. */
+    upperValue?: string;
   }> = [];
 
   if (run.max_iterations > 0) {
@@ -405,16 +407,28 @@ function guardBars(run: RunDTO, now: number) {
     : null;
   if (costCap !== null && costCap > 0) {
     const estimated = run.spent_usd_est ?? 0;
+    const guardReading = estimated > 0 ? run.spent_usd + estimated : null;
     bars.push({
       label: "Spend",
       fraction: run.spent_usd / costCap,
-      upperFraction:
-        estimated > 0 ? (run.spent_usd + estimated) / costCap : null,
+      upperFraction: guardReading === null ? null : guardReading / costCap,
       // `spent_usd_est` is only ever a killed cycle's reconciled spend, so this
       // is the one thing the band can mean here — not the unpriced-model gap
       // the dashboard's window meters draw under the same hatch.
       upperHint: "including work cycles that stopped before reporting their cost",
-      value: `${fmtUSD(run.spent_usd)} / ${fmtUSD(costCap)}`,
+      // The cap rides whichever reading ends the head, so the pair still reads
+      // as "spent of cap" once a band splits it across an en dash: with no band
+      // that is `$3.20 / $10.00`, with one it is `$3.20 – $4.50 / $10.00`.
+      // Naming the cap twice would be the longest head on the page, and this is
+      // a compact meter on a 390px column.
+      value:
+        guardReading === null
+          ? `${fmtUSD(run.spent_usd)} / ${fmtUSD(costCap)}`
+          : fmtUSD(run.spent_usd),
+      upperValue:
+        guardReading === null
+          ? undefined
+          : `${fmtUSD(guardReading)} / ${fmtUSD(costCap)}`,
     });
   }
 
@@ -1480,6 +1494,7 @@ export default function RunDetail({
                       upperFraction={b.upperFraction}
                       upperHint={b.upperHint}
                       value={b.value}
+                      upperValue={b.upperValue}
                     />
                   ))}
                 </div>

@@ -580,6 +580,7 @@ export default function WorkflowInstancePage() {
           // unpriced-model gap the window meters draw.
           upperHint="including work still running and work that stopped before reporting its cost"
           value={fmtUSD(instance.spentUSD)}
+          upperValue={fmtUSD(instance.spentGuardUSD)}
           unknownHint="no workflow spending limit"
           detail={
             budget.maxInstanceCostUSD === null

@@ -136,6 +136,7 @@ export function Meter({
   upperHint = UPPER_HINT_DEFAULT,
   detail,
   value,
+  upperValue,
   unknownHint = "no ceiling set",
   size = "default",
 }: {
@@ -145,8 +146,8 @@ export function Meter({
   /**
    * Completes the spoken sentence "…, up to 80.0% ___", saying what the band
    * past the solid fill is. Announced only — the sighted reading of the band is
-   * the second percentage in the head and the hatch on the track, and this
-   * string is never drawn.
+   * the second reading in the head and the hatch on the track, and this string
+   * is never drawn.
    *
    * Required in practice rather than by the type, because only the caller knows
    * what widens its own reading; `UPPER_HINT_DEFAULT` is what a caller that
@@ -160,6 +161,16 @@ export function Meter({
    * unknown — that state must keep saying so rather than showing any number.
    */
   value?: string;
+  /**
+   * How the band's own reading is spelled once `value` has replaced the
+   * percentage — the dash in the head joins two ends of one range, so both ends
+   * have to be the same kind of quantity. Required in practice rather than by
+   * the type: a caller that overrides `value` and supplies nothing here gets no
+   * band drawn at all, in the head, on the track or to a screen reader, because
+   * this component has no way to spell a dollar figure from a fraction and a
+   * percentage next to a dollar figure is not a range.
+   */
+  upperValue?: string;
   unknownHint?: string;
   size?: MeterSize;
 }) {
@@ -169,13 +180,34 @@ export function Meter({
 
   // Only meaningful when it exceeds the known reading; equal values are the
   // normal, fully-priced case and must not draw a zero-width band.
-  const hasUpper =
+  const bandExceedsFill =
     known &&
     upperFraction !== null &&
     upperFraction !== undefined &&
     Number.isFinite(upperFraction) &&
     upperFraction > fraction;
-  const upperClamped = hasUpper
+
+  const reading = known ? (value ?? fmtPct(fraction)) : null;
+
+  /**
+   * The band's reading, or `undefined` for "do not draw one".
+   *
+   * A caller that overrode `value` is naming some quantity that is not a
+   * percentage — money, or a pair like "2/5" — and the percentage this would
+   * otherwise print sits on the far side of an en dash from it, which reads as
+   * one range with two units in it (`$12.40 – 18.9%`). There is nothing to fall
+   * back to: only the caller knows how its own quantity is spelled. So an
+   * unspellable band is dropped from the head, the track and `aria-valuetext`
+   * together, because a hatch nothing explains is the same defect one step
+   * quieter.
+   */
+  const upperReading = !bandExceedsFill
+    ? undefined
+    : value === undefined
+      ? fmtPct(upperFraction)
+      : upperValue;
+  const hasUpper = upperReading !== undefined;
+  const upperClamped = bandExceedsFill
     ? Math.min(Math.max(upperFraction, 0), 1)
     : clamped;
 
@@ -190,11 +222,11 @@ export function Meter({
             weight the known reading uses makes absence look like a value. */}
         {known ? (
           <span className={`font-semibold tabular-nums text-ink ${sz.value}`}>
-            {value ?? fmtPct(fraction)}
+            {reading}
             {hasUpper && (
               <span className={`font-medium text-ink-muted ${sz.upper}`}>
                 {" "}
-                – {fmtPct(upperFraction)}
+                – {upperReading}
               </span>
             )}
           </span>
@@ -213,14 +245,16 @@ export function Meter({
         // Spoken instead of the bare percentage in the two cases where the
         // number alone misleads: no ceiling at all, and a guard reading that
         // sits above the visible bar. The second reads its explanation off the
-        // caller — a sighted reader has the hatch, the two percentages and the
+        // caller — a sighted reader has the hatch, the two readings and the
         // card's own prose to tell the bands apart, and this sentence is all a
-        // screen reader gets.
+        // screen reader gets. It quotes the head's own two readings rather than
+        // re-deriving percentages, so the sentence and the screen never name
+        // two different quantities.
         aria-valuetext={
           !known
             ? unknownHint
             : hasUpper
-              ? `${fmtPct(fraction)}, up to ${fmtPct(upperFraction)} ${upperHint}`
+              ? `${reading}, up to ${upperReading} ${upperHint}`
               : undefined
         }
         aria-label={label}
