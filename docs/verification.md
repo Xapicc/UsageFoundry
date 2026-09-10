@@ -2850,6 +2850,36 @@ through before trusting this unattended:
 > since opened a real pull request, recorded above; the button itself has still
 > not been pressed in a browser.
 
+> **Two of the six new-run pickers whose width changed on 2026-09-10 were never
+> seen at that width.** The wrapper widening recorded above was measured on the
+> four rows a bare install draws — workspace, folder, model and provider — and
+> the same class was put on the template picker
+> (`src/app/runs/new/page.tsx:1388`) and the saved-agent picker (`:1547`), which
+> render only once a template or an agent exists and neither did in the
+> throwaway `DATA_DIR` that pass used. The markup is line-for-line the four that
+> were measured, so the argument is by construction rather than by observation.
+> To settle it, save a template and define an agent, then open `/runs/new` at
+> 390px: both pickers must reach the same right edge as the four above them.
+>
+> **Nothing in that pass touched a control.** `npm run smoke-pages` asserts
+> about *load* and never about interaction, and the measurements were taken off
+> a rendered page rather than a tapped one. Three things want a thumb on a real
+> phone: that the widened pickers actually open their option list, that the
+> enforcement choice's third option is pressable on its wrapped second line, and
+> that the run list's task link opens the run when tapped anywhere in the 44px
+> its padding now claims — including the 12px of it that overlaps the folder
+> line below, which is not itself interactive but does sit under the enlarged
+> box.
+>
+> **The conflicts map at 390px was seen with one conflicted file and no other
+> shape.** The grid-column fix recorded above was measured on the touched map
+> with two file nodes and on the conflicts map with one; neither page was
+> opened at that width with a folded directory, a `modify/delete` node or a
+> selected node's inspector open, all of which draw into the same column. The
+> track can no longer floor above the card, so the failure mode those would
+> revive is a child that overflows the column rather than the column
+> overflowing the card — a different defect, and an unmeasured one.
+
 > **No Codex device sign-in has ever been completed, because there is no OpenAI
 > account in this container to complete one with.** Everything up to the
 > approval was driven against the real CLI and is recorded above; the step that
@@ -7106,6 +7136,44 @@ through before trusting this unattended:
     `Meter.test.tsx` now asserts; the fix makes the band undrawable rather than
     mis-spelled, so a future caller that overrides `value` and says nothing
     about the band loses the band instead of gaining a wrong one.
+
+  - **2026-09-10, `92e53b0` / `daf7956` / `938ee57`, class D.** Three defects on
+    the run surface at 390px, all invisible above the breakpoint and none of
+    them anything a type checker or a page load could see. (i) Every wide
+    picker on the new-run form (`src/app/runs/new/page.tsx`) kept its 256px
+    desktop width after `ListRow` wrapped it onto a line of its own, so the
+    model picker read `Inherit — Claude Code's own c…` on a phone: a control
+    that clipped its own value while 288px of line sat empty beside it. (ii)
+    The enforcement choice on the same page overflowed its card in *both*
+    directions, `Between cycles` hanging off the left edge — `SegmentedControl`
+    carries `max-md:flex-wrap`, but it is `inline-flex` inside `ListRow`'s
+    `shrink-0` control side, and a shrink-to-fit box has no width to wrap
+    against, so its own mobile rule could never fire. (iii) The run list's task
+    link (`src/app/runs/page.tsx:428`) is the only way into a run once the
+    table stacks, and one line of text is a 20px target. Found by measuring
+    every element's box and every control's height against the rendered
+    standalone bundle at 390px and 768px, with a scripted `CLAUDE_BIN` and a
+    throwaway git repository as the mount. Fixed at the call sites — a width on
+    each wrapper, a wrapper around the segmented control, and padding plus an
+    equal negative margin on the link so the hit area grows and the layout does
+    not. Measured after: no element past the viewport at either width, no
+    control under 44px below the breakpoint, link 44px at 390/767px and 20px at
+    768/1280px, and `npm run smoke-pages` clean over the standalone bundle.
+    A fourth, `640dbb2`, same class, found on the same pass once the map had
+    nodes to draw: below `lg` both sub-pages fall to one implicit grid column,
+    and an `auto` track will not shrink under its content's min-content width —
+    ~362px against the 316px a 390px screen leaves inside the card — so the
+    track hung past the card and took the right edge of the map and the last
+    control under the replay row off the screen. It reached neither instrument
+    that would normally catch it: nothing scrolled sideways, because an
+    ancestor clips, and `smoke-pages` draws that page with an empty map. Fixed
+    by spelling the column `minmax(0,1fr)`, which is what the `lg` rule beside
+    it already says.
+    **What (ii) really is is a `ui/List.tsx:153` defect** — `max-md:min-w-0
+    max-md:shrink` on the control side makes every over-wide control on every
+    `ListRow` in the app wrap instead, which was measured to work and then
+    reverted, because that layer belongs to another run. The call-site wrapper
+    fixes this page and leaves the same trap set everywhere else.
 
   **And this is not "the interface is now checked".** Even with the pass above
   written down and the smoke pass `proposals/UIChecks/09-recommendation.md`
