@@ -1127,7 +1127,14 @@ export default function ChatPage() {
             further in. What the floor was buying was a thread too short to be
             worth reading; what it cost was the composer, and a short thread
             still scrolls. */}
-        <div className="grid gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_360px]">
+        {/* The single column is stated rather than left implicit. An implicit
+            track is `auto`, which is floored at the content's min-content
+            width, so one long path in a message sized this column at 584px
+            inside a 358px pane and every card in it was cut off at the right —
+            silently, because the shell clips rather than scrolling sideways, so
+            nothing that asserts about `scrollWidth` can see it. `lg` already
+            spells its own tracks out and is unaffected. */}
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_360px]">
           {/* `max-h` in rem and not vh, for the reason a box inside the pane is
               never sized in viewport units: the pane is the window less the
               toolbar less its own padding less everything above this row, so
@@ -1137,10 +1144,27 @@ export default function ChatPage() {
               cards are. */}
           <Card
             emphasis="default"
-            className="flex max-h-[34rem] min-h-[22rem] flex-col lg:max-h-none lg:min-h-0"
+            /* The 34rem cap is a bounded box for a stacked *window*, and on a
+               390px screen it is smaller than the questions and the composer
+               inside it: the thread took the shortfall, `flex-1` collapsed it
+               to nothing, and the conversation was not on the page at all.
+               Below the breakpoint the card is sized by its content and the
+               pane scrolls, which is what the stacked layout already does. */
+            className="flex max-h-[34rem] min-h-[22rem] flex-col max-md:max-h-none max-md:min-h-0 lg:max-h-none lg:min-h-0"
           >
             <div className="relative min-h-0 flex-1">
-              <div ref={threadRef} onScroll={onScroll} className="h-full overflow-y-auto pr-1">
+              <div
+                ref={threadRef}
+                onScroll={onScroll}
+                /* `h-full` of a content-sized card resolves to `auto`, which
+                   would stop this being a scroll container at all and take the
+                   jump control, the unseen count and every rule above about
+                   what may move the thread with it. A height off `--pane-h`
+                   keeps it one and leaves room for the composer under it; the
+                   composer's own height is what the 16rem is. It shrinks with
+                   the keyboard because `--pane-h` already subtracts it. */
+                className="h-full overflow-y-auto pr-1 max-md:h-[calc(var(--pane-h)-16rem)] max-md:min-h-[10rem]"
+              >
                 {/* `additions` only: the waiting row's elapsed time changes every
                     second inside this region, and the default `additions text`
                     would read the whole thing out again each time. */}
@@ -1275,8 +1299,18 @@ export default function ChatPage() {
             {/* Pinned to the foot of the pane: the card is a flex column and the
                 thread above it is the only thing that scrolls, so the composer
                 stays where the hand expects it however long the conversation
-                gets. */}
-            <div className="relative mt-4 border-t border-line pt-4">
+                gets.
+
+                Below the shell's breakpoint the card is not bounded by the pane
+                — the standing sentence and the notice above it are most of a
+                390px screen, so the card starts below the fold and the composer
+                would start below that. `sticky` is what keeps the same promise
+                there: it rides the foot of the pane until the card ends. The
+                negative margin is only so its own background covers the card's
+                bottom padding, which the thread would otherwise scroll through.
+                Nothing here reads the keyboard: `--pane-h` and the shell's own
+                height already subtract `--keyboard-inset`. */}
+            <div className="relative mt-4 border-t border-line pt-4 max-md:sticky max-md:bottom-0 max-md:z-10 max-md:-mb-4 max-md:bg-surface max-md:pb-4">
               {mentionOpen && (
                 // Above the composer, because the composer is at the foot of the
                 // pane. `mousedown` rather than `click` on a row, with the
