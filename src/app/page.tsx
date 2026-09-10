@@ -1495,10 +1495,14 @@ export default function Dashboard() {
           with no derivation under it is the thing this band exists to prevent.
 
           Two cards, never one table, and nothing added across them. The tile
-          adds the two mechanisms because that is the question it answers and
-          it prints how much the sum overstates; this band is where each half's
-          own arithmetic lives, and a total here would be the same sum a second
-          time with nothing beside it saying so.
+          adds the two mechanisms because that is the question it answers, and
+          its own footnote says by how much that overstates the truth — "a few
+          per cent," 4% where measured, once both halves are actually in the
+          sum. The measured bound itself is `docs/verification.md`'s,
+          `intakeFilter.ts`'s own docblock's, and `contextTokens`'s
+          (`contextPruning.ts`), not this band's; this band is where each
+          half's own arithmetic lives, and a total here would be the same sum
+          a second time with nothing beside it saying so.
 
           Gated on `hasContextControl`, the same const the tile reads. */}
       {hasContextControl && (

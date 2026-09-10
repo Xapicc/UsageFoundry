@@ -29,8 +29,11 @@ import { scanUsage, type UsageEntry } from "./transcripts";
  * where the two are the halves of one intervention and a reader asking what it
  * was worth is asking about both. That sum overstates by the mass the two
  * mechanisms both remove — measured at 4.06% of pruned tokens across this
- * install's ten largest transcripts, an upper bound — and the card prints that
- * rather than implying the halves are disjoint. Nothing else may add it to
+ * install's ten largest transcripts, an upper bound recorded here, in
+ * `docs/verification.md`, and in `contextTokens` (`contextPruning.ts`). The
+ * card's own footnote names a rounded form of it — "a few per cent," 4% where
+ * measured — under the sum, and only once both halves are actually in it,
+ * rather than implying they are disjoint. Nothing else may add it to
  * anything.
  *
  * ## The arithmetic
