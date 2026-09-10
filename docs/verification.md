@@ -4081,6 +4081,56 @@ through before trusting this unattended:
   is the only thing that can check the two claims a human eye is bad at: that
   **no** page scrolls sideways at 380px, and that every box at 1440px is where it
   was before.
+- **The chat surface at 390px — measured in a headless Chromium against a
+  seeded conversation, but no thumb and no real keyboard have touched it.**
+  `/chat` carried two responsive classes across 2,654 lines and `Markdown.tsx`
+  none at all. The defect that mattered was invisible to every check this
+  repository has: the stacked grid left its single track implicit, so the track
+  was `auto` and floored at its content's min-content width, and one long path
+  in a message sized the column at **584px inside a 358px pane**. The shell
+  clips rather than scrolling sideways, so `document.scrollWidth` stayed equal
+  to `clientWidth` throughout — `npm run smoke-pages` passes `/chat` at 390px
+  both before and after, and its no-sideways-scroll assertion cannot see this
+  class of failure at all. What found it was walking the DOM for any element
+  whose `offsetWidth` exceeds its parent's `clientWidth`; that is the check
+  worth adding if this is ever automated. Second in the same family: the card's
+  `max-h-[34rem]` is smaller than the questions and the composer inside it on a
+  390px screen, so the thread — the only child that could shrink — collapsed to
+  zero and the conversation was not on the page.
+
+  Read out of the DOM against the standalone bundle, at 390×844 with a seeded
+  chat carrying a fenced code block, a three-column markdown table, a long
+  unbroken URL, two open questions, a pending, an approved, a superseded and a
+  failed proposal: no element wider than its parent anywhere on the page, no
+  console error, the code fence scrolling inside its own box at 318px while its
+  `<code>` is 824px, and the markdown table going through `Table`'s stacking
+  mode. With the on-screen keyboard modelled the way `AppShell` models it —
+  `--keyboard-inset: 336px`, so `--pane-h` and the shell's height both shrink —
+  the pane is 456px tall and the composer's textarea (92px, `font-size: 16px`,
+  full width) and its Send button (44px) are **both inside it**, measured, not
+  looked at. **1280×900 is unchanged to the pixel**: the page was built at
+  `bf9d40b` and at the change, screenshotted against the same seed, and the two
+  PNGs differ in **0 of 1,152,000 pixels**. Every rule but two is `max-md:`; the
+  two that are not are the grid track (overridden at `lg`, and it fixes the same
+  overflow in the 768–1023px band, where it was measured at 584px inside 536px)
+  and `[overflow-wrap:anywhere]` on the inline `<code>` span, which matches the
+  tag chip and the link class beside it in the same file.
+
+  **Not yet verified by hand:** no real device, and the three things that need
+  one. Whether `max-md:gap-x-6` is enough separation between Reject and Approve
+  under an actual thumb — 24px between two 44px targets, chosen rather than
+  measured, and the wrong press starts or refuses a billed run. Whether the
+  composer's `max-md:sticky max-md:bottom-0` behaves on iOS Safari, whose
+  sticky-plus-`visualViewport` behaviour is the reason `--keyboard-inset` exists
+  in the first place; the reading above sets that variable from a script rather
+  than by opening a keyboard, and Chromium recomputes a sticky offset on scroll
+  rather than on a variable changing — a measurement taken without a scroll in
+  between reads the stale one, which it did here until a real scroll was forced.
+  And no interaction of any kind was exercised: nothing here pressed a choice,
+  approved a proposal, sent a message, or opened the drawer. `npm run
+  smoke-pages` cannot close any of those — it asserts about load and never about
+  interaction, which is its own header's position, not an omission.
+
 - **The mobile form pass — and two of its three defects cannot be observed
   without a real iOS device.** Every text control gained `max-md:text-[16px]`
   (once, in `CONTROL_BASE`, which `Input`, `Select`, `Textarea` and `LimitField`
