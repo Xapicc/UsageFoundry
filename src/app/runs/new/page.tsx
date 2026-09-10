@@ -2319,15 +2319,24 @@ export default function NewRunPage() {
           >
             <ListRow label="When a limit is reached">
               {mark("enforcement")}
-              <SegmentedControl
-                options={ENFORCEMENT_OPTIONS}
-                value={enforcement}
-                onChange={(v) => {
-                  setEnforcement(v);
-                  setCarriedEnforcement(false);
-                }}
-                label="When a limit is reached"
-              />
+              {/* Three options of prose come to 352px, which is wider than the
+                  ~288px this row leaves on a phone, and `SegmentedControl` is
+                  `inline-flex`: its own `max-md:flex-wrap` never fires, because
+                  a shrink-to-fit box has no width to wrap against and the row's
+                  control side does not shrink. The wrapper gives it one, and it
+                  wraps to two lines instead of hanging off both edges of the
+                  card. The other two on this page fit and take no wrapper. */}
+              <div className="max-md:w-72">
+                <SegmentedControl
+                  options={ENFORCEMENT_OPTIONS}
+                  value={enforcement}
+                  onChange={(v) => {
+                    setEnforcement(v);
+                    setCarriedEnforcement(false);
+                  }}
+                  label="When a limit is reached"
+                />
+              </div>
             </ListRow>
 
             <ListRow
