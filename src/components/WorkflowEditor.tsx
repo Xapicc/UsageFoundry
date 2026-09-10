@@ -179,14 +179,19 @@ const DEFAULT_MERGE_STRATEGY: MergeStrategyDTO = "merge";
 /** The width a control takes in the inspector's rows. See `ui/Field`'s note:
  *  a width never goes on the control, because two width utilities on one
  *  element resolve by stylesheet order rather than class order. */
-/*  Measured 2026-09-10 at 390px: a `max-md:w-full` here is inert, and the
- *  width above already is. Both are on a flex item of `ListRow`'s `shrink-0`
- *  children wrapper, whose own width comes from its content — so 100% has no
- *  definite containing block to resolve against, and `min-width: auto` floors
- *  the row at the select's widest option anyway. `ListRow` wraps the control
- *  onto its own line below the breakpoint and right-aligns it there, which is
- *  that component's decision and reasoned out at `ui/List.tsx:120`. */
-const ROW_CONTROL = "w-44";
+/*  `w-72` and not `max-md:w-full`, which was measured inert here on
+ *  2026-09-10: this sits on a flex item of `ListRow`'s `shrink-0` children
+ *  wrapper, whose own width comes from its content, so a percentage has no
+ *  definite containing block to resolve against. `ListRow` wraps the control
+ *  onto its own line below the breakpoint and right-aligns it there, and at
+ *  176px what that line then shows is a 20-character window onto a block's
+ *  name. 288px is what fits: the row measured 322px at 390px against `px-3.5`,
+ *  leaving 294px, and 288 still clears a 320px viewport. It is a number
+ *  because the shrink-to-fit wrapper leaves no percentage to use — the fix
+ *  that would is `max-md:w-full` on that wrapper in `ui/List.tsx`, which this
+ *  run does not own. `ROW_CONTROL_NARROW` keeps its 96px: it holds two digits
+ *  at every width, and `Field` gives it the 44px height on its own. */
+const ROW_CONTROL = "w-44 max-md:w-72";
 const ROW_CONTROL_NARROW = "w-24";
 
 function emptyBlock(id: string, mountId: string, kind: WorkflowNodeKind): BlockDraft {
@@ -817,8 +822,15 @@ export function WorkflowEditor({
 
             {!selectedBlock && !selectedLink && (
               <Empty>
-                <div className="text-ink-muted">
+                {/* Split because the thing being pointed at is not the same
+                    thing at both widths: below the breakpoint the canvas is
+                    replaced by a list of the blocks, and naming a canvas there
+                    sends a reader looking for one. */}
+                <div className="text-ink-muted max-md:hidden">
                   Choose a block or a link on the canvas
+                </div>
+                <div className="text-ink-muted md:hidden">
+                  Choose a block or a link from the list above
                 </div>
               </Empty>
             )}

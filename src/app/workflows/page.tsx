@@ -118,11 +118,19 @@ export default function WorkflowsPage() {
                 {workflows.map((w) => (
                   <Tr key={w.id}>
                     <Td className="align-top">
+                      {/* The 44px target is `agents/page.tsx`'s, but the name
+                          is truncated and this link cannot take that page's
+                          `max-md:inline-flex`: measured at 390px, an
+                          inline-flex box makes the name an anonymous flex item
+                          that `text-overflow` no longer reaches, and the name
+                          ran 14px past the viewport with no ellipsis. `flex`
+                          with the truncation on a `min-w-0` child is what
+                          keeps both. */}
                       <Link
                         href={`/workflows/${w.id}`}
-                        className="block max-w-[56ch] truncate font-medium text-ink hover:text-accent"
+                        className="flex max-w-[56ch] font-medium text-ink hover:text-accent max-md:min-h-11 max-md:items-center"
                       >
-                        {w.name}
+                        <span className="min-w-0 truncate">{w.name}</span>
                       </Link>
                       {(w.liveRunCount ?? 0) > 0 && (
                         <div className="mt-1">

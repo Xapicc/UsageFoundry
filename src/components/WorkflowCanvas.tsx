@@ -644,23 +644,10 @@ export function WorkflowCanvas({
           }}
         >
           {blocks.length === 0 && (
-            // Centred in the *surface*, which is `MIN_W` wide however narrow
-            // the window is — so on a phone the only sentence an empty canvas
-            // has was centred at x=320 of a 640px sheet and sat off the right
-            // edge of a 358px pane, leaving a new workflow looking like a blank
-            // grid. Pulled to the left margin below the breakpoint, which is
-            // where the scroll region starts.
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center max-md:justify-start max-md:pl-5">
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
               <Empty>
                 <div className="font-medium text-ink">No blocks yet</div>
-                {/* The footer's split, for the footer's reason: this is the
-                    first thing a new workflow says, and on a phone it named a
-                    key. */}
-                <div className="mt-1">
-                  Drag one from Add
-                  <span className="max-md:hidden">, or press Enter on it</span>
-                  <span className="md:hidden">, or tap it</span>
-                </div>
+                <div className="mt-1">Drag one from Add, or press Enter on it</div>
               </Empty>
             </div>
           )}
@@ -881,6 +868,17 @@ export function WorkflowCanvas({
           canvas calls, so what a node holds and what an instance does with it
           are untouched. */}
       <ul className="border-t border-line md:hidden">
+        {narrowOrder.length === 0 && (
+          /* The sheet carried this sentence and is hidden here, so the list
+             owes it: an empty new workflow would otherwise be a rule between
+             the note and the footer and nothing else. */
+          <li className="px-2.5 py-4">
+            <Empty>
+              <div className="font-medium text-ink">No blocks yet</div>
+              <div className="mt-1">Tap one in Add</div>
+            </Empty>
+          </li>
+        )}
         {narrowOrder.map((block) => {
           const selected =
             selection?.kind === "block" && selection.id === block.id;
