@@ -2650,12 +2650,47 @@ Built and exercised against real transcripts:
   transcripts the provider's reading is suppressed along with the meters it
   would otherwise be the only alternative to.
 
+- **The shared layer's mobile rules and the metering readouts at 390px — 2026-09-10.**
+  `Sheet`, `Card`, `Meter` and `RunAgentCost` were changed and every one of them
+  was opened in a real Chromium at 390×844, most of them against the standalone
+  bundle serving a seeded throwaway install (its own `DATA_DIR`, a stub
+  `CLAUDE_BIN` emitting a canned `stream-json` cycle, and a hand-written
+  transcript inside the window `/api/runs/[id]/agent-cost` scans). What was
+  measured rather than eyeballed: no page grows the document sideways
+  (`scrollWidth === clientWidth === 390` on `/`, `/runs`, `/runs/[id]`,
+  `/runs/[id]/touched`, `/account`); every interactive element's box against the
+  44px floor, which found none under it in the kit; and `ContextOccupancy`
+  rendered inside a primary `Card` at 1280 is **byte-identical** before and after
+  the padding change, which is what says the `max-md:` rules cost the desktop
+  nothing. `Log` and `Patch` were given a pane full of unbreakable 120-character
+  paths: both scroll inside their own box and neither pushes the page, so they
+  needed nothing. Not verified: any of this on a real phone or with a software
+  keyboard up, and the long-label case that motivated the `Meter` fix, which was
+  reproduced in a fixture because no label on a real page is long enough to wrap
+  the reading yet.
+
 ## Not yet verified by hand
 
 The live-enforcement and pause/resume paths typecheck, build (including the
 standalone bundle), and are covered by the unit tests above, but the following
 have **not** been exercised against a real CLI. They are the list to work
 through before trusting this unattended:
+
+> **One sheet was opened at 390px; five others were not.** `Sheet` is now
+> `max-md:w-full`, and the quick-open sheet was opened, measured and dismissed
+> against the standalone bundle at that width on 2026-09-10: the panel spans the
+> window (`left 0`, `right 390`), the page behind it does not scroll sideways,
+> both footer buttons measure 44px tall, focus lands in the field, and Esc and
+> Cancel each close it. (A tap on the strip below the panel does **not**, and
+> must not: `Sheet` wires no backdrop dismiss — that is the drawer's, and only
+> the drawer's.) Eleven other files open one — `grep -rln 'components/ui/Sheet"'
+> src --include='*.tsx'` — and not one of them has been opened at that width:
+> six components (`RestartClosed`, `TaskEditor`, `RunLand`, `FleetControls`,
+> `WorkflowSchedule`, `WorkflowEditor`) and five pages (`/agents`, `/branches`,
+> `/settings`, `/workflows/[id]`, and a workflow instance). None of this has
+> been seen on a real phone or with a
+> software keyboard up, which is the one case `--keyboard-inset` and the
+> `100dvh` cap exist for.
 
 > **The image build has not been run since `npm run build` gained a wrapper.**
 > `scripts/redirect-dist-dir.mjs` was measured to do nothing on `overlayfs`,
