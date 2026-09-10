@@ -1871,6 +1871,55 @@ Built and exercised against real transcripts:
   grandchild still holding a mount, and the interaction with `trackedDirt`'s
   slot-reuse workaround in `land.ts` are all reasoned rather than seen.
 
+- **`core.excludesFile` in the child's environment as the answer to that
+  `git add -A`, measured on 2026-09-09 in
+  `.uf-worktrees/usagefoundry-721638d11c0b-1` while its own sandboxed session
+  held all eleven names as `crw-rw-rw- 1, 3`.** git 2.39.5. The failure
+  reproduces non-destructively — `git add -A --dry-run` prints `error:
+  .bash_profile: can only add regular files, symbolic links or git-directories`
+  followed by `fatal: adding files failed`, so the dry run is enough to test
+  against and no case below had to stage anything. With `GIT_CONFIG_COUNT` /
+  `KEY_0` / `VALUE_0` naming `core.excludesFile` and a file listing the eleven
+  names root-anchored, the same `git add -A --dry-run` exits 0; a **real**
+  `git add -A` then exits 0 as well, stages none of the eleven, and stages a
+  planted `docs/uf-anchor-probe/.gitconfig` — which is the root-anchoring claim,
+  that a repository genuinely tracking a nested file of one of these names keeps
+  seeing it. `git status --porcelain` no longer lists the eleven. Then the same
+  again through the shipped code rather than a hand-written file:
+  `ensureSandboxExcludesFile()` wrote `/tmp/claude-1000/uf-git/sandbox-root-excludes`,
+  481 bytes, mode 0644, and `agentGitEnv("ghp_fake_token", <that path>)` produced
+  one five-pair block — the four GitHub pairs then `core.excludesFile` — under
+  which `git add -A --dry-run` exits 0 **and** `git config --get
+  core.excludesFile` and `--get-all url.https://github.com/.insteadOf` both read
+  back, which is the half that says the two contributors to `GIT_CONFIG_COUNT`
+  are not overwriting each other. Where the file lives was checked the same way
+  the child will see it: this container is privilege-separated, and a root-owned
+  0644 file under the 0755 `/run/uf-skills` is readable from inside a sandboxed
+  `Bash` call, which is the ownership, mode and location `/run/uf-git` takes.
+  There is no `~/.gitconfig` and no `~/.config/git/ignore` here and
+  `git config --get core.excludesFile` is unset, so the override this block
+  performs overrides nothing in the container; the image's own git settings are
+  `--system` and name `user.*` and `safe.directory`, none of which this touches.
+  `npm run typecheck` exit 0; `npm test` 2590 pass, 0 fail.
+
+  **Not verified by hand:** no work cycle has been spawned by this code. An
+  agent's own sandboxed calls are spawned by the *installed* app rather than by
+  its branch, so everything above ran git by hand inside a sandbox the installed
+  app made — what is unseen is the wiring: that `runIteration` writes the file
+  and that `agentGitEnv`'s block reaches the child's environment on a real spawn.
+  Unseen with it: the file being written to `/run/uf-git` at all, since only the
+  server is root and only under compose (every reading above is the
+  `os.tmpdir()` branch), the log line for a file that could not be written, and
+  the `EEXIST` path on the second cycle of a run. What settles it is a run on
+  this code whose task is `run \`git add -A && git status --porcelain\` in your
+  checkout and report the exit status`: exit 0 with no `can only add regular
+  files` line, against the same command failing on `main`. Alongside it,
+  `docker compose exec usagefoundry cat /run/uf-git/sandbox-root-excludes` should
+  print the eleven entries root-anchored under their comment header, and reading
+  a live cycle's `/proc/<pid>/environ` should show `core.excludesFile` as the
+  last pair of a single `GIT_CONFIG_COUNT` block with the GitHub pairs still
+  ahead of it.
+
 - **The Codex sign-in panel, driven end to end against `codex-cli 0.153.4`** on
   2026-09-05, on a built server (`npm start`) with a scratch `DATA_DIR` and a
   scratch `CODEX_HOME`, and separately in a browser through Playwright. Every

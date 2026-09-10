@@ -97,6 +97,7 @@ const {
   resolveIsolation,
   revivableDependents,
   getRun,
+  agentGitEnv,
   githubEnv,
   isRateLimited,
   isTransientApiError,
@@ -2196,6 +2197,64 @@ describe("github credentials for a work cycle", () => {
     for (const [key, value] of Object.entries(env)) {
       if (key.startsWith("GIT_CONFIG_")) assert.equal(value.includes(token), false);
     }
+  });
+});
+
+/**
+ * The one `GIT_CONFIG_*` block a spawned agent may carry.
+ *
+ * It earns a test for `githubEnv`'s reason with a second failure stacked on it.
+ * git reads exactly one block per environment — a count and pairs numbered from
+ * zero — so two contributors spread into the same object do not merge: the
+ * second overwrites the count and the low indices, and the first's remaining
+ * pairs sit past the count where git never looks. Neither half says anything
+ * when that happens. Losing the credential half is an agent that could not push,
+ * inside a tool call nothing here reads; losing the excludes half is `git add
+ * -A` dying on the sandbox's own character devices at the end of a cycle that
+ * had work to commit.
+ */
+describe("the git environment a work cycle is spawned with", () => {
+  const token = "ghp_example";
+  const excludes = "/run/uf-git/sandbox-root-excludes";
+
+  const pairsOf = (env: Record<string, string>): Array<[string, string]> => {
+    const count = Number(env.GIT_CONFIG_COUNT ?? "0");
+    assert.equal(Number.isInteger(count), true);
+    // A pair past the count is a pair git never reads, so the block has to end
+    // exactly where the count says it does.
+    assert.equal(env[`GIT_CONFIG_KEY_${count}`], undefined);
+    assert.equal(env[`GIT_CONFIG_VALUE_${count}`], undefined);
+    return Array.from({ length: count }, (_, i) => [
+      env[`GIT_CONFIG_KEY_${i}`],
+      env[`GIT_CONFIG_VALUE_${i}`],
+    ]);
+  };
+
+  it("carries both contributors in one numbered block", () => {
+    const pairs = pairsOf(agentGitEnv(token, excludes));
+
+    assert.deepEqual(pairs, [
+      ...pairsOf(githubEnv(token)),
+      ["core.excludesFile", excludes],
+    ]);
+  });
+
+  it("hands over the excludes file with no token to go with it", () => {
+    const env = agentGitEnv("", excludes);
+
+    assert.deepEqual(pairsOf(env), [["core.excludesFile", excludes]]);
+    // Nothing about GitHub, and in particular no credential helper answering
+    // with an empty password, which is a rejected login rather than no login.
+    assert.equal(env.GH_TOKEN, undefined);
+    assert.equal(env.GITHUB_TOKEN, undefined);
+  });
+
+  it("hands over nothing at all when there is neither", () => {
+    assert.deepEqual(agentGitEnv("", null), {});
+  });
+
+  it("is what `githubEnv` is, with nothing else in the block", () => {
+    assert.deepEqual(agentGitEnv(token, null), githubEnv(token));
   });
 });
 

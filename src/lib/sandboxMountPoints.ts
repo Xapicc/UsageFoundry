@@ -1,6 +1,8 @@
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { chownForChild } from "./privsep";
+import { chownForChild, privilegeSeparated } from "./privsep";
 
 /**
  * The empty files the CLI's sandbox needs to find, so that constructing one
@@ -382,4 +384,134 @@ export function sweepSandboxTreeRoot(dir: string): SweptMountPoints {
     },
     (target) => fs.unlinkSync(target),
   );
+}
+
+/**
+ * What keeps the sandbox's *root* binds out of a work cycle's `git add -A`.
+ *
+ * The sweep above takes them once the child is gone. While the child is alive
+ * the eleven names are character devices at the root of its checkout, and git
+ * refuses to stage one:
+ *
+ *     error: .bash_profile: can only add regular files, symbolic links or
+ *     git-directories
+ *     fatal: adding files failed
+ *
+ * Every run is told to commit its work and `git add -A` is the obvious way to do
+ * it, so that is fatal, in a way whose message names a file the agent never
+ * touched — and an agent that does not read it carefully ends its run with
+ * everything uncommitted, which is then discarded with the worktree. The sweep
+ * cannot reach this: it runs after the child has exited, and the mounts are in
+ * that child's namespace rather than on the disk.
+ *
+ * So the rule is handed to the *child* instead of written anywhere, through
+ * `core.excludesFile` in its environment (`agentGitEnv` in `orchestrator.ts`),
+ * and nothing goes into any repository. The two ordinary places are both closed
+ * here for `GITIGNORE_BODY`'s reasons one list up: the repository's own
+ * `.gitignore` is a tracked file this app must not edit — and would have to be
+ * edited in every repository an operator points a run at — and `info/exclude` is
+ * read from `$GIT_COMMON_DIR`, which every linked worktree shares with the
+ * operator's own checkout.
+ *
+ * Root-anchored and named one by one for `GITIGNORE_BODY`'s reason too: a
+ * repository that genuinely tracks `docs/.gitconfig` keeps seeing it, and only a
+ * path at the top of the working tree is hidden — which is the only place bwrap
+ * put one. Derived from the list rather than restated, so a name added there is
+ * covered here without a second edit.
+ */
+export const SANDBOX_TREE_ROOT_EXCLUDES = [
+  "# Written by UsageFoundry, outside every repository, and read only by the git",
+  "# of one spawned agent through core.excludesFile in its environment. These are",
+  "# the paths Claude Code's sandbox bind-mounts /dev/null over at the root of the",
+  "# working directory; git cannot stage a character device, so `git add -A` dies",
+  "# on the first of them unless they are ignored.",
+  ...SANDBOX_TREE_ROOT_NAMES.map((name) => `/${name}`),
+  "",
+].join("\n");
+
+/**
+ * Where that file goes when children are a different uid.
+ *
+ * `vaultSkill.ts`'s `VAULT_SKILL_BASE` one door over, and the same argument:
+ * this is not a secret and has to reach every agent, so it is root-owned and
+ * world-readable — 0755 on the directory, 0644 on the file — and `chownForChild`
+ * is deliberately **not** applied, unlike the placeholders above. The asymmetry
+ * is the point. A placeholder sits in the tree the agent works in and is the
+ * agent's to delete; this file decides what every agent's `git add -A` can see,
+ * install-wide, so an agent able to rewrite it could hide an untracked file from
+ * another run's commit.
+ *
+ * Never under the checkout, which is the whole reason it is out here: a file
+ * there would be one more untracked path in the tree the operator reviews, and
+ * this exists to remove those rather than add one.
+ *
+ * Without separation there is no boundary to build and no point pretending
+ * otherwise, so it falls back to a directory of this app's own under
+ * `os.tmpdir()` — one uid means a sibling can write whatever this process can
+ * write, wherever it is put. A directory of its own rather than `os.tmpdir()`
+ * itself, so the mode below is never applied to a directory this app does not
+ * own.
+ */
+export const SANDBOX_EXCLUDES_BASE = "/run/uf-git";
+
+/** What one attempt at the excludes file did, for the run's log. */
+export interface SandboxExcludesFile {
+  /** Absolute path to hand git, or null when it could not be written. */
+  path: string | null;
+  /** Why not, as `<path>: <reason>`, or null when it was written. */
+  problem: string | null;
+}
+
+/**
+ * Materialise the excludes file and answer with its path.
+ *
+ * One file for the install rather than one per run, `writeVaultSkill`'s reason:
+ * the content is a function of a compile-time list, so two cycles spawning
+ * together write identical bytes. Temp-then-rename anyway, because they can be
+ * spawning *while a third cycle's git is reading it*, and a truncating write is
+ * how that git comes to see four of the eleven names and die on the fifth —
+ * intermittently, which is the expensive way to be wrong here. Not cleaned up
+ * when a run ends: git opens it when the agent runs a command, so a file removed
+ * after the spawn is a rule that exists until the moment it is needed.
+ *
+ * Never throws, for `ensureSandboxMountPoints`' reason: a cycle must not be lost
+ * to preparing for it. A failure comes back as `problem`, the caller says so on
+ * the run's log and spawns without `core.excludesFile` — which is the behaviour
+ * before this existed, stated out loud rather than defaulted past.
+ */
+export function ensureSandboxExcludesFile(): SandboxExcludesFile {
+  const dir = privilegeSeparated()
+    ? SANDBOX_EXCLUDES_BASE
+    : path.join(os.tmpdir(), "uf-git");
+  const file = path.join(dir, "sandbox-root-excludes");
+  const tmp = `${file}.tmp-${randomBytes(6).toString("hex")}`;
+  try {
+    try {
+      fs.mkdirSync(dir, { recursive: false, mode: 0o755 });
+    } catch (err) {
+      // Every cycle after the first finds it already there, which is the
+      // ordinary answer and not a problem. Not `recursive`, because the only
+      // parent this would ever create is a missing `/run` or a `TMPDIR` naming
+      // a directory that is not there — a misconfiguration to report rather
+      // than one to quietly invent a directory for.
+      if ((err as NodeJS.ErrnoException)?.code !== "EEXIST") throw err;
+    }
+    // `mkdir` masks the mode through the umask and does nothing at all when the
+    // directory already exists, so both modes are set rather than requested — a
+    // directory the agent's uid cannot enter, or a file it cannot read, is a
+    // `core.excludesFile` that silently is not there.
+    fs.chmodSync(dir, 0o755);
+    fs.writeFileSync(tmp, SANDBOX_TREE_ROOT_EXCLUDES);
+    fs.chmodSync(tmp, 0o644);
+    fs.renameSync(tmp, file);
+    return { path: file, problem: null };
+  } catch (err) {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {
+      // The rename is what matters; a leftover temp file is not worth masking
+      // the error that caused it.
+    }
+    return { path: null, problem: `${file}: ${(err as Error).message}` };
+  }
 }

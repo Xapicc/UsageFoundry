@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { PlaceholderStats } from "./sandboxMountPoints";
 import {
+  SANDBOX_TREE_ROOT_EXCLUDES,
   SANDBOX_TREE_ROOT_NAMES,
   isAbandonedMountPoint,
   sandboxMountPointDirs,
@@ -142,5 +143,48 @@ describe("sweepAbandonedMountPoints", () => {
     assert.deepEqual(swept.problems, ["/workspace/repo/.bashrc: EBUSY: resource busy"]);
     assert.equal(swept.removed.length, SANDBOX_TREE_ROOT_NAMES.length - 1);
     assert.equal(swept.removed.includes("/workspace/repo/.bashrc"), false);
+  });
+});
+
+/**
+ * Covers the excludes body handed to a child's `core.excludesFile`, and nothing
+ * else in that module.
+ *
+ * It earns a test because every way it can be wrong is silent and expensive. A
+ * name missing from it puts the cycle back on `fatal: adding files failed`, in a
+ * message naming a file the agent never touched, at the end of a run that has
+ * work to commit — which is how a whole cycle's output is discarded with the
+ * worktree. An entry that is *not* root-anchored is silent in the other
+ * direction: a repository that tracks `docs/.gitconfig` would stop seeing a file
+ * it has always tracked, and nothing in this app would ever say so.
+ */
+
+describe("SANDBOX_TREE_ROOT_EXCLUDES", () => {
+  const lines = SANDBOX_TREE_ROOT_EXCLUDES.split("\n").filter(
+    (line) => line !== "" && !line.startsWith("#"),
+  );
+
+  it("names every path the sandbox binds at the root of the checkout", () => {
+    assert.deepEqual(lines, SANDBOX_TREE_ROOT_NAMES.map((name) => `/${name}`));
+  });
+
+  it("anchors every entry, so a nested file of the same name is still tracked", () => {
+    for (const line of lines) {
+      assert.equal(line.startsWith("/"), true, `${line} is not anchored`);
+      // A second slash would anchor a path rather than a name, and there is no
+      // path here to anchor: bwrap binds these at the top of the tree only.
+      assert.equal(line.indexOf("/", 1), -1, `${line} names more than a root entry`);
+    }
+  });
+
+  it("ends with a newline, which is what makes the last entry an entry", () => {
+    assert.equal(SANDBOX_TREE_ROOT_EXCLUDES.endsWith("\n"), true);
+  });
+
+  it("says in the file itself what wrote it and why", () => {
+    // Somebody will find this outside every repository with nothing to explain
+    // it, and a file of bare paths would look like a mistake worth deleting.
+    assert.equal(SANDBOX_TREE_ROOT_EXCLUDES.startsWith("#"), true);
+    assert.equal(SANDBOX_TREE_ROOT_EXCLUDES.includes("UsageFoundry"), true);
   });
 });
