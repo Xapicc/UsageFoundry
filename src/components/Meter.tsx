@@ -220,8 +220,16 @@ export function Meter({
         {/* An unknown reading is never scaled up with the size: it is a
             statement that there is no figure, and setting it in the headline
             weight the known reading uses makes absence look like a value. */}
+        {/* `shrink-0` on both: the label is prose and the reading is a figure,
+            so the label is what gives when the two do not fit on one line. Left
+            shrinkable, the reading is a flex item that wraps at its own spaces —
+            and this reading's spaces are inside `82.4% – 91.1%`, which broke
+            after the en dash at 390px and read as two unrelated figures on two
+            lines. The pair is one reading and the dash is what says so. */}
         {known ? (
-          <span className={`font-semibold tabular-nums text-ink ${sz.value}`}>
+          <span
+            className={`shrink-0 font-semibold tabular-nums text-ink ${sz.value}`}
+          >
             {reading}
             {hasUpper && (
               <span className={`font-medium text-ink-muted ${sz.upper}`}>
@@ -231,7 +239,7 @@ export function Meter({
             )}
           </span>
         ) : (
-          <span className="text-xs font-medium text-ink-muted">
+          <span className="shrink-0 text-xs font-medium text-ink-muted">
             {unknownHint}
           </span>
         )}
