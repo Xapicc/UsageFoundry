@@ -1808,8 +1808,13 @@ function SandboxRow({ sandbox }: { sandbox: unknown }) {
 
 function EnvRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex gap-2">
-      <dt className="w-24 shrink-0 text-ink-faint">{label}</dt>
+    // The pair stacks below the breakpoint. 96px of label off a 358px pane
+    // leaves the value 254px, which is where the two account rows put each of
+    // their buttons on a line of its own and a mount path came out four lines
+    // deep; the label above buys the value the whole pane. The 2px gap is
+    // narrower than the 6px between rows, so a stacked pair still reads as one.
+    <div className="flex max-md:flex-col gap-2 max-md:gap-0.5">
+      <dt className="w-24 max-md:w-auto shrink-0 text-ink-faint">{label}</dt>
       <dd className="min-w-0 break-words text-ink-muted">{children}</dd>
     </div>
   );
