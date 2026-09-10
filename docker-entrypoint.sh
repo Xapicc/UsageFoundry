@@ -1021,13 +1021,14 @@ if [ "${WINNOW_FILTER:-}" = "1" ]; then
     # Everything below runs at UF_AGENT_UID, and both halves of that matter.
     #
     # `$WINNOW_PATH` is a checkout inside a workspace bind mount, which every
-    # agent can write, and `uv run` executes what is there — the project's build
-    # backend when it syncs, then winnow's own module. As root that is one run
-    # putting its own code on every other run's transcript at uid 0, holding
-    # this script's whole environment and root's reach into /data and
+    # agent can write, and what runs here is what is there — the project's
+    # build backend when `uv sync` builds it, then winnow's own module in the
+    # interpreter that build produced. As root that is one run putting its own
+    # code on every other run's transcript at uid 0, holding this script's
+    # whole environment and root's reach into /data and
     # ~/.claude/.credentials.json. It is the argument `gh_as_agent` and
     # `uv_as_agent` are wrapped for, one step further along: those two exit,
-    # this one keeps running for the life of the container.
+    # the interpreter keeps running for the life of the container.
     #
     # The environment is an allowlist rather than the inherited one because the
     # drop is what makes that matter. A root process's `/proc/<pid>/environ` is
@@ -1053,45 +1054,67 @@ if [ "${WINNOW_FILTER:-}" = "1" ]; then
       fi
     }
 
-    # HOW THE FILTER IS LAUNCHED, and why it is not always `uv run`.
+    # HOW THE FILTER IS LAUNCHED, and why nothing called `uv` stays resident.
     #
     # An operator's checkout is a project uv should resolve: it may be a
     # different ref and its lock is the one to honour. The tree this image
     # vendors is not - the Dockerfile already installed it into
     # /opt/winnow/venv and then made the source read-only with `chmod -R a+rX`,
-    # so `uv run --project` there fails on `Cannot update time stamp of
+    # so `uv sync --project` there fails on `Cannot update time stamp of
     # directory 'src/winnow.egg-info'`: the build backend wants to write into a
     # tree that is deliberately not writable. It also has no reason to build at
     # all, because the venv beside it is that build.
     #
-    # So the vendored copy is run from its own interpreter and everything else
-    # goes through uv exactly as before.
+    # The checkout is synced by `uv sync --frozen`, which exits, and then run by
+    # the virtualenv's own interpreter — never by `uv run`. `uv run` does not
+    # exec: it syncs, spawns the interpreter and waits, and on Unix it has no
+    # flag to do otherwise. The process left waiting was the one that had just
+    # created the virtualenv, downloaded its packages and built winnow, and it
+    # never gives that heap back — measured 2026-09-10 at 178 MB of anonymous
+    # memory held for the life of the container, beside a 24 MB filter doing
+    # the work. The sync is the only thing `uv run` did that the interpreter
+    # cannot do for itself, and `uv sync` is that step alone.
+    #
+    # Either branch ends with the venv on PATH, so the plain `python` below is
+    # that interpreter in both. Prepending beats naming the binary because the
+    # command that follows is shared.
     WINNOW_RUN_PATH="$PATH"
+    WINNOW_SYNC=""
     if [ "$WINNOW_PATH" = /opt/winnow/src ] && [ -x /opt/winnow/venv/bin/python ]; then
-      # No launcher at all: the venv goes on PATH so the plain `python` below
-      # is that interpreter. Prepending beats naming the binary because the
-      # command that follows is shared with the uv branch.
-      WINNOW_LAUNCH=""
       WINNOW_RUN_PATH="/opt/winnow/venv/bin:$PATH"
     else
-      WINNOW_LAUNCH="uv run --frozen --project $WINNOW_PATH"
+      WINNOW_SYNC="uv sync --frozen --project $WINNOW_PATH"
+      WINNOW_RUN_PATH="/home/node/.winnow-venv/bin:$PATH"
     fi
 
-    # UV_PROJECT_ENVIRONMENT is load-bearing, not tidiness. The checkout is a
-    # bind mount shared with the operator's own machine, and `uv run` in a
-    # project whose .venv was built by a different OS *deletes and rebuilds it*
-    # — so without this, starting the filter destroys the virtualenv the
-    # operator works in, on every boot.
+    # One environment for the sync and the launch, written once so the two
+    # cannot drift. UV_PROJECT_ENVIRONMENT is load-bearing in it, not
+    # tidiness: the checkout is a bind mount shared with the operator's own
+    # machine, and `uv sync` in a project whose .venv was built by a different
+    # OS *deletes and rebuilds it* — so without this, starting the filter
+    # destroys the virtualenv the operator works in, on every boot.
+    winnow_filter_env() {
+      winnow_filter_as_agent \
+          PATH="$WINNOW_RUN_PATH" \
+          HOME=/home/node \
+          UV_PROJECT_ENVIRONMENT=/home/node/.winnow-venv \
+          UV_PYTHON_INSTALL_DIR="$UV_PYTHON_INSTALL_DIR" \
+          UV_PYTHON_PREFERENCE="$UV_PYTHON_PREFERENCE" \
+          WINNOW_FILTER=1 \
+        "$@"
+    }
+
+    # A sync that fails must not be followed by a launch: the interpreter would
+    # either import a stale winnow or none at all, and the 90 s port wait below
+    # would then report the filter absent for a reason nobody logged.
     (
       while :; do
-        winnow_filter_as_agent \
-            PATH="$WINNOW_RUN_PATH" \
-            HOME=/home/node \
-            UV_PROJECT_ENVIRONMENT=/home/node/.winnow-venv \
-            UV_PYTHON_INSTALL_DIR="$UV_PYTHON_INSTALL_DIR" \
-            UV_PYTHON_PREFERENCE="$UV_PYTHON_PREFERENCE" \
-            WINNOW_FILTER=1 \
-          $WINNOW_LAUNCH \
+        if [ -n "$WINNOW_SYNC" ] && ! winnow_filter_env $WINNOW_SYNC; then
+          echo "[usagefoundry] winnow sync failed; retrying in 5s" >&2
+          sleep 5
+          continue
+        fi
+        winnow_filter_env \
             python -m winnow filter \
               --port "$WINNOW_PORT" \
               --ledger "$WINNOW_STATE_VOLUME/filter.jsonl" \

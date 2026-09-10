@@ -1205,8 +1205,8 @@ describe("winnow is in the image, because nothing else bounds a cycle now", () =
  *
  * The third of the entrypoint's long-lived children and the only one that runs
  * code the *agents* wrote: `WINNOW_FILTER_PATH` defaults inside a workspace bind
- * mount, and `uv run` executes the project it points at — the build backend on a
- * sync, then winnow's own module. Started without `setpriv` that is one run
+ * mount, `uv sync` builds the project it points at, and the interpreter that
+ * build produced then runs winnow's own module. Started without `setpriv` that is one run
  * putting its code on every other run's transcript as uid 0, with this script's
  * whole environment and root's access to `/data`, and nothing about it is
  * visible: the filter works, the ledger fills, the dashboard reads correctly.
@@ -1283,7 +1283,7 @@ describe("the intake filter runs as the agent uid, holding no credential", () =>
       filterLaunch(),
       /setpriv --reuid="\$UF_AGENT_UID" --regid="\$\{UF_AGENT_GID:-\$UF_AGENT_UID\}"/,
       "docker-entrypoint.sh starts the winnow intake filter without dropping " +
-        "to UF_AGENT_UID, so `uv run` executes a workspace checkout every " +
+        "to UF_AGENT_UID, so the sync and the filter execute a workspace checkout every " +
         "agent can write as root, holding this script's whole environment",
     );
   });

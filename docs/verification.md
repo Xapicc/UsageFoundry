@@ -6961,6 +6961,51 @@ through before trusting this unattended:
      exercised was the path where the branch, the remote and the credential are
      all present.
 
+- **The intake filter's launcher, and the container's memory at rest, measured
+  2026-09-10.** Idle with no run, four minutes after boot: `docker stats`
+  576 MiB; `next-server` 441 MB RSS (381 MB anonymous, of which the transcript
+  cache is 168 MB at a measured 697 B per turn and 164 B per tool call —
+  `config.ts` says 330); the `uv run --frozen --project /workspace/winnow`
+  parent of the intake filter 199 MB RSS (178 MB anonymous, VmHWM equal to
+  VmRSS) beside a 23 MB filter; and `docker stats` drifting to 1.35 GiB an hour
+  later with still no run, the difference being virtiofs `fuse_inode` and
+  `dentry` slab from walking the bind mounts. `uv run` does not exec: it syncs,
+  spawns and waits, and the waiter was the process that had just built the
+  virtualenv. `docker-entrypoint.sh` now runs `uv sync --frozen --project`
+  (which exits) and then the virtualenv's own `python -m winnow filter`, under
+  the same `winnow_filter_as_agent` wrapper and the same seven-entry
+  environment, written once. Checked by hand on the rebuilt container: the boot
+  log shows the sync creating `/home/node/.winnow-venv` and building winnow;
+  `ps` shows `python -m winnow filter` at uid 1000, 23 MB, with no `uv`
+  process; `winnow.__file__` resolves into `/workspace/winnow/src`; the proxy
+  answers on 8789 and the ledger's 54,145 lines are intact; cgroup `anon` fell
+  from 578 MB to 390 MB and `docker stats` from 576 to ~410 MiB after a full
+  cold scan. On a plain `docker restart` the wrapper only ever held ~29 MB, so
+  the saving is the `compose up --build` one, which is the deployment path.
+  **Two other readings from the same day belong here because each was mis-read
+  first.** The +214 MB heap on a dashboard poll is not the transcript scan (a
+  memo miss is +13-15 MB on the container's Node 22) but `intakeFilter.ts`
+  reading its 102 MB ledger whole once a minute; and the server's 1,531 MB
+  high-water mark is not the transcript scan either (~650 MB at any heap
+  ceiling, measured on the host at 512/1024/2048) but the dreaming pane's cold
+  whole-file read under V8's growing factor of 4.0 at a 2048 MB ceiling —
+  1,268 MB at 2048 against 656 MB at 1024 in a throwaway node:22 container.
+  This install's `.env` now sets `UF_NODE_HEAP_MB=1024` and `UF_MEM_LIMIT=6g`
+  (the Docker Desktop VM here is 8 GiB, so the shipped 10g never fired — the
+  2026-09-07 OOM), with `maxConcurrentRuns` lowered to 2 to keep the compose
+  arithmetic true; the shipped defaults are unchanged and their move is on the
+  task board.
+
+  **Not yet verified by hand:** the `/opt/winnow/src` branch of the launcher
+  (an install built with the vendored copy and no `WINNOW_FILTER_PATH`) was not
+  booted — it is the branch that did not change, but the loop around it did; a
+  sync failure's retry path has not been exercised; no work cycle has run
+  through the rebuilt filter yet, so "agents routed through it" rests on the
+  boot line and the proxy answering rather than on a ledger line written by a
+  real request; and the 1024 figure for the server itself is derived from the
+  throwaway container, not observed on a dreaming cold scan in the rebuilt
+  server.
+
 - **The class of every interface defect found from here on is recorded here, and
   the running list has four entries.** This is a measurement rather than a
   convention for its own sake, and it exists because the argument it settles is
