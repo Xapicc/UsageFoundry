@@ -1047,7 +1047,7 @@ export default function ChatPage() {
             Each proposal waits for you, and then runs under the guards of the
             template it names — never under anything the chat chose.
           </p>
-          <div className="ml-auto flex items-center gap-3">
+          <div className="ml-auto flex items-center gap-3 max-md:w-full max-md:flex-wrap max-md:gap-y-2">
             {/* What the figure counts is said, because what it leaves out is
                 the turn the operator is most likely watching: the CLI reports a
                 cost only with its final event, so a turn in flight has spent
@@ -1055,7 +1055,7 @@ export default function ChatPage() {
                 move for the length of a long turn reads as a turn that is not
                 costing anything. */}
             {chat && chat.costUSD > 0 && (
-              <span className="text-xs tabular-nums text-ink-muted">
+              <span className="text-xs tabular-nums text-ink-muted max-md:basis-full">
                 {fmtUSD(chat.costUSD)} this chat, settled turns only
               </span>
             )}
@@ -1066,11 +1066,15 @@ export default function ChatPage() {
                 be a total nobody could act on; separate, "settled" above still
                 means settled. */}
             {chat && chat.costEstUSD > 0 && (
-              <span className="text-xs tabular-nums text-ink-faint">
+              <span className="text-xs tabular-nums text-ink-faint max-md:basis-full">
                 + {fmtUSD(chat.costEstUSD)} estimated, turns that were cut off
               </span>
             )}
-            <Button variant="secondary" onClick={() => void newChat()}>
+            <Button
+              variant="secondary"
+              className="max-md:ml-auto"
+              onClick={() => void newChat()}
+            >
               New chat
             </Button>
           </div>
@@ -1676,7 +1680,7 @@ export default function ChatPage() {
                     platform puts it and where every sheet in this app already
                     puts it. Select all is not a decision about the work, so it
                     sits at the other end as a ghost. */}
-                <ButtonRow className="mt-3">
+                <ButtonRow className="mt-3 max-md:gap-x-6">
                   <Button
                     variant="ghost"
                     disabled={busy}
@@ -2045,7 +2049,14 @@ function AskedQuestions({
       <div className="flex flex-col divide-y divide-line">
         {questions.map((q) => (
           <div key={q.id} className="py-3 first:pt-0 last:pb-0">
-            <p className="text-sm leading-normal text-ink">{q.question}</p>
+            {/* The model writes this and reaches for a path or a flag in it
+                often enough that one unbroken word is wider than a 390px
+                column, which takes the row and everything beside it with it.
+                `anywhere` for the reason `Markdown.tsx` gives: it is the one
+                that comes off the intrinsic minimum too. */}
+            <p className="text-sm leading-normal text-ink max-md:[overflow-wrap:anywhere]">
+              {q.question}
+            </p>
 
             {q.status === "answered" && (
               <p className="mt-1 text-xs leading-normal text-ink-muted">
@@ -2572,7 +2583,7 @@ function Decided({
           <Link
             href={href}
             title={proposal.title}
-            className="block truncate text-xs"
+            className="block truncate text-xs max-md:whitespace-normal"
           >
             {proposal.title}
             {proposal.workflowId && (
@@ -2580,7 +2591,10 @@ function Decided({
             )}
           </Link>
         ) : (
-          <div className="truncate text-xs text-ink-muted" title={proposal.title}>
+          <div
+            className="truncate text-xs text-ink-muted max-md:whitespace-normal"
+            title={proposal.title}
+          >
             {proposal.title}
           </div>
         )}
@@ -2659,7 +2673,9 @@ function ChatRow({
         CHAT_ROW[current ? "current" : "other"]
       }`}
     >
-      <span className="block truncate text-xs">{entry.title ?? "Untitled"}</span>
+      <span className="block truncate text-xs max-md:whitespace-normal">
+        {entry.title ?? "Untitled"}
+      </span>
       <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-2xs text-ink-muted">
         <span className="tabular-nums">{fmtRelative(entry.updatedAt)}</span>
         {entry.status === "thinking" && <span className="text-accent">thinking</span>}
