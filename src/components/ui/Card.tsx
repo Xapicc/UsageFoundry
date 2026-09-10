@@ -10,8 +10,23 @@ import type { ReactNode } from "react";
  */
 export type CardEmphasis = "primary" | "default" | "quiet";
 
+/**
+ * Only `primary` steps down below the breakpoint, and the other two deliberately
+ * do not.
+ *
+ * A card is the pane's width less its own `px-4`, so at 390px a primary card has
+ * 358px and spends 40 of them on padding — 11%, against 3% of the 1280px pane
+ * the figure was chosen for. Stepping it to the 16px the other two already use
+ * gives the widest cards on the dashboard 8px back.
+ *
+ * Taking `default` and `quiet` down with it is what is refused: 16px is already
+ * the kit's floor for a surface, several of these nest one inside another, and
+ * a third figure below the breakpoint would leave the ladder saying one thing on
+ * a phone and another on a laptop. Below `md` the ladder is the shadow and the
+ * 4px that are left, which is the same order it states above.
+ */
 const EMPHASIS: Record<CardEmphasis, string> = {
-  primary: "p-5 shadow-e2",
+  primary: "p-5 max-md:p-4 shadow-e2",
   default: "p-4 shadow-e1",
   quiet: "p-4",
 };

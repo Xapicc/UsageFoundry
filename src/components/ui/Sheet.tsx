@@ -113,7 +113,21 @@ export function Sheet({
       style={VIEWPORT_INSETS}
     >
       <div
-        className="sheet-enter mx-auto w-[min(34rem,calc(100%-2rem))] rounded-b-lg border border-t-0 border-line bg-surface shadow-e3"
+        // Full width below the breakpoint, and not a bottom sheet. The 2rem the
+        // desktop panel gives back as a gutter is 8% of a 390px window, and it
+        // buys nothing there: the panel already meets the top edge, so the
+        // inset sides read as a card that lost its top border rather than as a
+        // sheet that has room around it. What it costs is real — a form's
+        // controls, its hint text and the `justify-end` footer all measure
+        // against what is left. A *bottom* sheet would buy thumb reach for the
+        // default action and cost the whole of this component's identity: the
+        // enter animation, the `border-t-0`/`rounded-b-lg` grammar and
+        // `SidebarDrawer`'s "obeys Sheet's three rules" would each need a
+        // second answer below `md`, which is two components wearing one name.
+        // The footer is at the end of a scroll region capped at the visible
+        // height, so on the long sheets where reach matters it is already at
+        // the bottom of the screen.
+        className="sheet-enter mx-auto w-[min(34rem,calc(100%-2rem))] rounded-b-lg border border-t-0 border-line bg-surface shadow-e3 max-md:w-full"
         // The panel scrolls, not the viewport-sized dialog around it: a long
         // sheet has to stay reachable without the page behind it moving. That
         // is also what keeps Cancel and the default action reachable with a
@@ -121,7 +135,10 @@ export function Sheet({
         // is at the end of a scroll region rather than under the keyboard.
         style={{ maxHeight: PANEL_MAX_H, overflowY: "auto" }}
       >
-        <div className="p-5">
+        {/* `max-md:p-4` for `Card`'s reason, and it is the same 4px: a panel
+            that now runs to both window edges spends its padding out of a
+            390px window rather than out of a 34rem one. */}
+        <div className="p-5 max-md:p-4">
           <h2 id={titleId} className="text-sm font-semibold text-ink">
             {title}
           </h2>
