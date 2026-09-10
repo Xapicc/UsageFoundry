@@ -2657,6 +2657,33 @@ standalone bundle), and are covered by the unit tests above, but the following
 have **not** been exercised against a real CLI. They are the list to work
 through before trusting this unattended:
 
+> **The workflow surface's narrow layout has not been touched by a real
+> finger.** The 2026-09-10 mobile pass replaced the workflow canvas with a list
+> of the blocks below `md` (`WorkflowCanvas.tsx`, and
+> `proposals/UIChecks/10-the-graph-at-390px.md` for the measurement behind it),
+> widened the wrapped controls in the inspector and in `WorkflowSchedule` from
+> 176/208px to 288px there, and gave every link on the surface a 44px target.
+> All of it was measured in headless Chromium at 390x844 with `isMobile` and
+> `hasTouch` — element boxes, control heights, the document's scroll width —
+> and `npm run smoke-pages` loads all five pages clean off the standalone
+> bundle at both widths. The list's four gestures were driven with Playwright's
+> synthetic `tap()` against that build and all four answered: a row fills the
+> inspector, **Link** relabels the other rows to **Link here**, tapping a target
+> row took the graph from six links to seven, and tapping an incoming chip drew
+> the link's panel rather than a block's. The 1280px arrangement was compared
+> before and after on the one change that could reach it — the list's name link,
+> which stopped being `block truncate` — and the table screenshot is
+> byte-identical.
+>
+> What none of that is, is a hand. `smoke-pages` asserts about load and never
+> about interaction, and a synthetic tap dispatched at an element's centre
+> cannot tell you whether a target is reachable by a thumb holding the phone,
+> whether a 44px row is comfortable at the bottom of a long list, or whether
+> the list reads as an ordering rather than a pile. On a real phone, at
+> `/workflows/[id]/edit`: work down a six-block graph adding a link between two
+> blocks that are not adjacent, and confirm the arming state is visible while
+> you scroll to the target. Then open `/workflows/[id]` and change a schedule.
+
 > **The image build has not been run since `npm run build` gained a wrapper.**
 > `scripts/redirect-dist-dir.mjs` was measured to do nothing on `overlayfs`,
 > which is what `/app` is on, so the builder stage should reach `next build` on

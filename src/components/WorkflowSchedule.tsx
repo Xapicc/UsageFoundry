@@ -319,9 +319,18 @@ export function WorkflowSchedule({
               limits still stop the whole graph — nothing here changes either.
             </Notice>
 
+            {/* `max-md:w-72` on the two rows whose content has no length a
+                reader can predict, for `WorkflowEditor`'s reason and to the
+                same number: `ListRow` wraps a control onto its own line below
+                the breakpoint, 208px is a short window onto an IANA name like
+                America/Argentina/Buenos_Aires, and 288 is what the row's
+                294px of content box takes. The day, the time and the hour
+                count keep their widths — each holds a bounded value that
+                already fits, and widening a two-digit box to the width of the
+                card says it holds more than it does. */}
             <ListGroup>
               <ListRow label="How often" htmlFor="sched-kind">
-                <div className="w-52">
+                <div className="w-52 max-md:w-72">
                   <Select
                     id="sched-kind"
                     value={draft.kind}
@@ -421,7 +430,7 @@ export function WorkflowSchedule({
                   htmlFor="sched-tz"
                   description="an IANA name — the server runs in UTC and reads this time in the zone you name"
                 >
-                  <div className="w-52">
+                  <div className="w-52 max-md:w-72">
                     <Input
                       id="sched-tz"
                       value={draft.timeZone}
