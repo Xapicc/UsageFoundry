@@ -520,7 +520,7 @@ export default function WorkflowPage() {
                       )}
                       {n.kind !== "merge" && (
                         <>
-                          <div className="mono mt-0.5 text-ink-muted">
+                          <div className="mono mt-0.5 break-words text-ink-muted">
                             {n.mountId} / {n.folder || "."}
                           </div>
                           <div

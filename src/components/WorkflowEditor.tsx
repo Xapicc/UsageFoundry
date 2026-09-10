@@ -179,6 +179,13 @@ const DEFAULT_MERGE_STRATEGY: MergeStrategyDTO = "merge";
 /** The width a control takes in the inspector's rows. See `ui/Field`'s note:
  *  a width never goes on the control, because two width utilities on one
  *  element resolve by stylesheet order rather than class order. */
+/*  Measured 2026-09-10 at 390px: a `max-md:w-full` here is inert, and the
+ *  width above already is. Both are on a flex item of `ListRow`'s `shrink-0`
+ *  children wrapper, whose own width comes from its content — so 100% has no
+ *  definite containing block to resolve against, and `min-width: auto` floors
+ *  the row at the select's widest option anyway. `ListRow` wraps the control
+ *  onto its own line below the breakpoint and right-aligns it there, which is
+ *  that component's decision and reasoned out at `ui/List.tsx:120`. */
 const ROW_CONTROL = "w-44";
 const ROW_CONTROL_NARROW = "w-24";
 
@@ -1163,8 +1170,12 @@ function BlockPanel({
     </>
   );
 
+  // `break-words` because a folder is the one value in this sentence a browser
+  // will not break on its own: it has no spaces, and `/` is not a break
+  // opportunity, so a deep path is a single unbreakable run that pushes the
+  // sentence past a 390px viewport and takes the page sideways with it.
   const where: ReactNode = (
-    <strong className="mono font-semibold text-ink">
+    <strong className="mono break-words font-semibold text-ink">
       {mount?.label ?? (block.mountId || "no workspace")}
       {block.folder ? ` / ${block.folder}` : " — the whole workspace"}
     </strong>
@@ -1626,7 +1637,7 @@ function BlockPanel({
         <Button variant="ghost" size="compact" onClick={onRemove}>
           Remove block
         </Button>
-        <span className="text-xs text-ink-faint">or press Delete</span>
+        <span className="max-md:hidden text-xs text-ink-faint">or press Delete</span>
       </ButtonRow>
     </>
   );
@@ -1710,7 +1721,7 @@ function LinkPanel({
         <Button variant="ghost" size="compact" onClick={onRemove}>
           Remove link
         </Button>
-        <span className="text-xs text-ink-faint">or press Delete</span>
+        <span className="max-md:hidden text-xs text-ink-faint">or press Delete</span>
       </ButtonRow>
     </>
   );

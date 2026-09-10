@@ -515,6 +515,18 @@ export function WorkflowCanvas({
   /* Render                                                            */
   /* ---------------------------------------------------------------- */
 
+  // The order the narrow viewport's list reads the graph in: the sheet's own,
+  // column then row, so a reader who has seen the canvas on a screen finds the
+  // same first block here. A block the layout has not placed yet sorts last
+  // rather than being dropped — the list is the only way to reach it below the
+  // breakpoint, so it may not be the thing that hides it.
+  const narrowOrder = [...blocks].sort((a, b) => {
+    const pa = positions.get(a.id);
+    const pb = positions.get(b.id);
+    if (!pa || !pb) return pa ? -1 : pb ? 1 : 0;
+    return pa.x - pb.x || pa.y - pb.y;
+  });
+
   return (
     // The frame: a toolbar strip, the surface, and a footer that says what the
     // gestures are. Clipped, so the recessed surface takes the frame's corners
@@ -559,21 +571,22 @@ export function WorkflowCanvas({
         </span>
       </div>
 
-      {/* Said plainly rather than worked around. Every gesture below still
-          answers a finger — a tap on the palette adds a block, a drag moves
-          one, and Link then **Link here** joins two — but a 390px window is
-          about 358px of pane against a `NODE_W` of 232 and a `COL_STRIDE` of
-          328, so it holds exactly one block and the gap to the next. Placing
-          blocks against each other through that is what this declines to
-          pretend at, rather than a gesture it half-implements. The one fact a
-          reader needs instead is where the block they just tapped is edited,
-          because at one column the inspector is below the canvas and nothing
-          else on screen says so. `md:hidden` rather than a JS width test: the
-          shell already owns the app's one `matchMedia`, and a second would be
-          a second boundary to keep in step. */}
+      {/* Said plainly rather than worked around, and the arithmetic that says
+          so is unchanged: a 390px window is about 358px of pane against a
+          `NODE_W` of 232 and a `COL_STRIDE` of 328, so the sheet holds exactly
+          one block and the gap to the next — measured at 356×352 over a
+          1592×420 sheet, 22% of its width. What that leaves is not a graph a
+          thumb can read but a picker showing one of six blocks behind a
+          two-axis pan, so below the breakpoint the sheet is replaced by the
+          list under it rather than capped and scrolled. Placing blocks against
+          each other is still what this declines to pretend at; reaching the
+          sixth of them is what the list stops charging for. `md:hidden` rather
+          than a JS width test: the shell already owns the app's one
+          `matchMedia`, and a second would be a second boundary to keep in
+          step. */}
       <p className="border-b border-line bg-inset px-3 py-1.5 text-xs text-ink-muted md:hidden">
-        A graph is arranged on a larger screen. Here, tap a block to edit it in
-        the panel below the canvas.
+        A graph is arranged on a larger screen. Here the blocks are listed in
+        the order it runs them — tap one to edit it in the panel below.
       </p>
 
       {linking && (
@@ -602,21 +615,19 @@ export function WorkflowCanvas({
           Delete" to the handler written for it. Out of the tab order, and a
           pointer press yields `:focus` rather than `:focus-visible`, so nothing
           draws a ring. */}
-      {/* The cap is *tightened* below the breakpoint rather than released, and
-          that is the one place this surface departs from the rule `ListView`'s
-          `capped` box follows. Releasing it there is right because a stacked
-          list has no width left to scroll and the cap is all that traps the
-          reader; here the sheet is at least 640px wide against a 390px pane,
-          so `overflow-auto` is the whole of what keeps the *pane* from
-          scrolling sideways and cannot be given up. What is left of that rule
-          is the part that still bites: at 62vh the frame filled a phone on its
-          own, and a nested scroller with nothing visible past it reads as the
-          end of the page — which is exactly where the inspector holding the
-          block's guards is. 22rem is three block-heights, so the surface still
-          shows a column, and what is under it is on screen. */}
+      {/* `max-md:hidden` and not a tightened cap. The cap that used to stand
+          here — 22rem, three block-heights — was answering the right problem,
+          that a nested scroller filling a phone reads as the end of the page
+          when the inspector holding the block's guards is under it. It could
+          not answer the other one: `overflow-auto` on a sheet at least 640px
+          wide is what keeps the *pane* from scrolling sideways, so a reader at
+          390px pans two axes through a window onto 22% of the graph's width to
+          reach the sixth block. Hiding the sheet costs the arrangement, which
+          this surface already declines to offer a finger; the list below keeps
+          every gesture that was left. */}
       <div
         tabIndex={-1}
-        className="relative max-h-[62vh] max-md:max-h-[22rem] overflow-auto bg-inset"
+        className="relative max-h-[62vh] overflow-auto bg-inset max-md:hidden"
       >
         <div
           ref={sheetRef}
@@ -858,6 +869,105 @@ export function WorkflowCanvas({
         </div>
       </div>
 
+      {/* The narrow viewport's reading of the same graph. Order is the sheet's
+          own — left to right, then top to bottom — so the list and the canvas
+          never disagree about which block comes first, and it is read off
+          `positions` rather than re-derived, because the arrangement is the
+          operator's and a second ordering rule would drift from it. Every
+          gesture the sheet still offered a finger has a route here: the row
+          selects, the row completes an armed link the way a card does, Link
+          arms one, and an incoming link is a chip that selects it for the
+          panel below. Nothing here writes: it is the same `onSelect` the
+          canvas calls, so what a node holds and what an instance does with it
+          are untouched. */}
+      <ul className="border-t border-line md:hidden">
+        {narrowOrder.map((block) => {
+          const selected =
+            selection?.kind === "block" && selection.id === block.id;
+          const armed = linkFrom === block.id;
+          const incoming = links.filter((link) => link.to === block.id);
+          return (
+            <li
+              key={block.id}
+              className="border-b border-line px-2.5 py-2 last:border-b-0"
+            >
+              <div className="flex flex-wrap items-start gap-2">
+                <button
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => {
+                    if (!chooseTarget(block.id)) {
+                      onSelect({ kind: "block", id: block.id });
+                    }
+                  }}
+                  className={`ui-transition min-h-11 min-w-32 flex-1 cursor-pointer rounded-md px-2 py-1.5 text-left ${
+                    selected ? "bg-accent-dim" : "hover:bg-inset"
+                  }`}
+                >
+                  <span className="block text-sm font-medium text-ink">
+                    {label(block)}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-ink-faint">
+                    {KIND_LABEL[block.kind]}
+                  </span>
+                  {block.kind !== "merge" && block.mountId ? (
+                    /* `truncate` for the card's reason: a folder is the one
+                       fact on this row with no length a reader can predict,
+                       and four wrapped lines of it would bury the name above
+                       it. The whole path is one tap away in the panel. */
+                    <span className="mono mt-0.5 block truncate text-xs text-ink-muted">
+                      {block.mountId} / {block.folder || "."}
+                    </span>
+                  ) : null}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleLink(block.id)}
+                  aria-pressed={armed}
+                  className={`ui-transition min-h-11 shrink-0 cursor-pointer rounded-md border px-3 text-xs ${
+                    armed
+                      ? "border-accent-line bg-accent-dim text-accent"
+                      : "border-line text-ink-muted hover:bg-inset"
+                  }`}
+                >
+                  {linkFrom !== null && !armed ? "Link here" : "Link"}
+                </button>
+              </div>
+              {incoming.length > 0 && (
+                <ul className="mt-1 flex flex-wrap gap-1.5 pl-2">
+                  {incoming.map((link) => {
+                    const from = blocks.find((b) => b.id === link.from);
+                    return (
+                      <li key={linkKey(link)}>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onSelect({
+                              kind: "link",
+                              from: link.from,
+                              to: link.to,
+                            })
+                          }
+                          className={`ui-transition min-h-11 max-w-full cursor-pointer rounded-lg border px-2.5 py-1 text-left text-xs ${
+                            LINK_CHIP[linkTone(link, selection)]
+                          }`}
+                        >
+                          after {from ? label(from) : link.from} ·{" "}
+                          {EDGE_CHIP_LABEL[link.edge]}
+                          {link.continueBranch && (
+                            <span className="text-accent"> · branch</span>
+                          )}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+
       {/* The gestures, and which half of each exists depends on the input:
           "press Enter" and "Delete" name keys a phone does not have, where the
           panel below the canvas is the route a finger takes to those same two
@@ -871,9 +981,12 @@ export function WorkflowCanvas({
             "This workflow is full"
           ) : (
             <>
-              Drag a block onto the canvas
-              <span className="max-md:hidden">, or press Enter to place it</span>
-              <span className="md:hidden">, or tap one in Add</span>
+              <span className="max-md:hidden">
+                Drag a block onto the canvas, or press Enter to place it
+              </span>
+              <span className="md:hidden">
+                Tap one in Add — it joins the end of the list
+              </span>
             </>
           )}
         </span>
