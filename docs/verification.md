@@ -2854,6 +2854,15 @@ through before trusting this unattended:
 > its padding now claims — including the 12px of it that overlaps the folder
 > line below, which is not itself interactive but does sit under the enlarged
 > box.
+>
+> **The conflicts map at 390px was seen with one conflicted file and no other
+> shape.** The grid-column fix recorded above was measured on the touched map
+> with two file nodes and on the conflicts map with one; neither page was
+> opened at that width with a folded directory, a `modify/delete` node or a
+> selected node's inspector open, all of which draw into the same column. The
+> track can no longer floor above the card, so the failure mode those would
+> revive is a child that overflows the column rather than the column
+> overflowing the card — a different defect, and an unmeasured one.
 
 > **No Codex device sign-in has ever been completed, because there is no OpenAI
 > account in this container to complete one with.** Everything up to the
@@ -7134,6 +7143,16 @@ through before trusting this unattended:
     not. Measured after: no element past the viewport at either width, no
     control under 44px below the breakpoint, link 44px at 390/767px and 20px at
     768/1280px, and `npm run smoke-pages` clean over the standalone bundle.
+    A fourth, `640dbb2`, same class, found on the same pass once the map had
+    nodes to draw: below `lg` both sub-pages fall to one implicit grid column,
+    and an `auto` track will not shrink under its content's min-content width —
+    ~362px against the 316px a 390px screen leaves inside the card — so the
+    track hung past the card and took the right edge of the map and the last
+    control under the replay row off the screen. It reached neither instrument
+    that would normally catch it: nothing scrolled sideways, because an
+    ancestor clips, and `smoke-pages` draws that page with an empty map. Fixed
+    by spelling the column `minmax(0,1fr)`, which is what the `lg` rule beside
+    it already says.
     **What (ii) really is is a `ui/List.tsx:153` defect** — `max-md:min-w-0
     max-md:shrink` on the control side makes every over-wide control on every
     `ListRow` in the app wrap instead, which was measured to work and then
