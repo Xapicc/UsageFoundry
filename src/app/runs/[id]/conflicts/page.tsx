@@ -226,7 +226,15 @@ export default function RunConflictsPage({ params }: Ctx) {
             </Notice>
           )}
 
-          <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,1fr)_21rem]">
+          {/* The single column below `lg` has to be spelled out, and spelled
+              `minmax(0,1fr)` rather than left implicit: an `auto` track will
+              not shrink below its content's min-content width, and this
+              column's floor is ~362px against the 316px a 390px screen leaves
+              inside this card. Nothing scrolled and nothing threw — the track
+              simply hung past the card, taking the right edge of the map and
+              the last control under it off the screen. The `lg` rule already
+              writes the same floor-free track for the same reason. */}
+          <div className="mt-3 grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_21rem]">
             <RunConflictMap
               plan={plan}
               selectedId={selectedId}

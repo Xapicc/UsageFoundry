@@ -2676,7 +2676,8 @@ standalone bundle), and are covered by the unit tests above, but the following
 have **not** been exercised against a real CLI. They are the list to work
 through before trusting this unattended:
 
-> **One sheet was opened at 390px; five others were not.** `Sheet` is now
+> **One sheet was measured at 390px, and of the eleven other files that open
+> one, exactly one has had a sheet opened at all.** `Sheet` is now
 > `max-md:w-full`, and the quick-open sheet was opened, measured and dismissed
 > against the standalone bundle at that width on 2026-09-10: the panel spans the
 > window (`left 0`, `right 390`), the page behind it does not scroll sideways,
@@ -2684,13 +2685,61 @@ through before trusting this unattended:
 > Cancel each close it. (A tap on the strip below the panel does **not**, and
 > must not: `Sheet` wires no backdrop dismiss — that is the drawer's, and only
 > the drawer's.) Eleven other files open one — `grep -rln 'components/ui/Sheet"'
-> src --include='*.tsx'` — and not one of them has been opened at that width:
-> six components (`RestartClosed`, `TaskEditor`, `RunLand`, `FleetControls`,
-> `WorkflowSchedule`, `WorkflowEditor`) and five pages (`/agents`, `/branches`,
-> `/settings`, `/workflows/[id]`, and a workflow instance). None of this has
-> been seen on a real phone or with a
+> src --include='*.tsx'` — and the only sheet any pass has opened between them
+> is Codex's `Use API key` on `/settings`, which the Settings entry below
+> records opening without saying at what width. The rest have not been seen at
+> 390px: six components (`RestartClosed`, `TaskEditor`, `RunLand`,
+> `FleetControls`, `WorkflowSchedule`, `WorkflowEditor`), four pages
+> (`/agents`, `/branches`, `/workflows/[id]`, and a workflow instance), and the
+> four other sheets on `/settings`. The workflow pass below closes none of it
+> either: it drove that surface at 390px, but `WorkflowEditor`'s and
+> `WorkflowSchedule`'s sheets are both confirmations and neither was triggered.
+> None of this has been seen on a real phone or with a
 > software keyboard up, which is the one case `--keyboard-inset` and the
 > `100dvh` cap exist for.
+
+> **The workflow surface's narrow layout has not been touched by a real
+> finger.** The 2026-09-10 mobile pass replaced the workflow canvas with a list
+> of the blocks below `md` (`WorkflowCanvas.tsx`, and
+> `proposals/UIChecks/10-the-graph-at-390px.md` for the measurement behind it),
+> widened the wrapped controls in the inspector and in `WorkflowSchedule` from
+> 176/208px to 288px there, and gave every link on the surface a 44px target.
+> All of it was measured in headless Chromium at 390x844 with `isMobile` and
+> `hasTouch` — element boxes, control heights, the document's scroll width —
+> and `npm run smoke-pages` loads all five pages clean off the standalone
+> bundle at both widths. The list's four gestures were driven with Playwright's
+> synthetic `tap()` against that build and all four answered: a row fills the
+> inspector, **Link** relabels the other rows to **Link here**, tapping a target
+> row took the graph from six links to seven, and tapping an incoming chip drew
+> the link's panel rather than a block's. The 1280px arrangement was compared
+> before and after on the one change that could reach it — the list's name link,
+> which stopped being `block truncate` — and the table screenshot is
+> byte-identical.
+>
+> What none of that is, is a hand. `smoke-pages` asserts about load and never
+> about interaction, and a synthetic tap dispatched at an element's centre
+> cannot tell you whether a target is reachable by a thumb holding the phone,
+> whether a 44px row is comfortable at the bottom of a long list, or whether
+> the list reads as an ordering rather than a pile. On a real phone, at
+> `/workflows/[id]/edit`: work down a six-block graph adding a link between two
+> blocks that are not adjacent, and confirm the arming state is visible while
+> you scroll to the target. Then open `/workflows/[id]` and change a schedule.
+
+> **The Settings mobile pass was measured in headless Chromium, never on a
+> phone, and its stacked table was never filled by a real scan.** The 390px
+> work on `src/app/settings/page.tsx` — every narrow field's `max-md:w-40`,
+> `EnvRow`'s stacked pair, and `stack` on the calibration suggestion table —
+> was checked by driving the built standalone bundle at 390x844 and 390x568
+> with every disclosure open, every switch on and a long path in every text
+> field: no element reached past the viewport and `#main` never gained a
+> sideways scroll. That is geometry, not touch. Nothing was tapped, no finger
+> found the wrong control, and the 44px floor was read off bounding boxes
+> rather than hit. The table is the one piece whose *content* is fabricated:
+> the sandbox has no transcripts, so `Scan history` cannot produce a
+> suggestion, and the stacked rendering was seen only with the `cal` state
+> seeded by a local patch that was reverted. Nothing has confirmed the stacked
+> table against a real scan's figures, and no `Sheet` on this page other than
+> Codex's `Use API key` was opened at any width.
 
 > **The image build has not been run since `npm run build` gained a wrapper.**
 > `scripts/redirect-dist-dir.mjs` was measured to do nothing on `overlayfs`,
@@ -2868,6 +2917,36 @@ through before trusting this unattended:
 > credential — none of which existed here. The endpoint behind that last one has
 > since opened a real pull request, recorded above; the button itself has still
 > not been pressed in a browser.
+
+> **Two of the six new-run pickers whose width changed on 2026-09-10 were never
+> seen at that width.** The wrapper widening recorded above was measured on the
+> four rows a bare install draws — workspace, folder, model and provider — and
+> the same class was put on the template picker
+> (`src/app/runs/new/page.tsx:1388`) and the saved-agent picker (`:1547`), which
+> render only once a template or an agent exists and neither did in the
+> throwaway `DATA_DIR` that pass used. The markup is line-for-line the four that
+> were measured, so the argument is by construction rather than by observation.
+> To settle it, save a template and define an agent, then open `/runs/new` at
+> 390px: both pickers must reach the same right edge as the four above them.
+>
+> **Nothing in that pass touched a control.** `npm run smoke-pages` asserts
+> about *load* and never about interaction, and the measurements were taken off
+> a rendered page rather than a tapped one. Three things want a thumb on a real
+> phone: that the widened pickers actually open their option list, that the
+> enforcement choice's third option is pressable on its wrapped second line, and
+> that the run list's task link opens the run when tapped anywhere in the 44px
+> its padding now claims — including the 12px of it that overlaps the folder
+> line below, which is not itself interactive but does sit under the enlarged
+> box.
+>
+> **The conflicts map at 390px was seen with one conflicted file and no other
+> shape.** The grid-column fix recorded above was measured on the touched map
+> with two file nodes and on the conflicts map with one; neither page was
+> opened at that width with a folded directory, a `modify/delete` node or a
+> selected node's inspector open, all of which draw into the same column. The
+> track can no longer floor above the card, so the failure mode those would
+> revive is a child that overflows the column rather than the column
+> overflowing the card — a different defect, and an unmeasured one.
 
 > **No Codex device sign-in has ever been completed, because there is no OpenAI
 > account in this container to complete one with.** Everything up to the
@@ -4116,6 +4195,56 @@ through before trusting this unattended:
   is the only thing that can check the two claims a human eye is bad at: that
   **no** page scrolls sideways at 380px, and that every box at 1440px is where it
   was before.
+- **The chat surface at 390px — measured in a headless Chromium against a
+  seeded conversation, but no thumb and no real keyboard have touched it.**
+  `/chat` carried two responsive classes across 2,654 lines and `Markdown.tsx`
+  none at all. The defect that mattered was invisible to every check this
+  repository has: the stacked grid left its single track implicit, so the track
+  was `auto` and floored at its content's min-content width, and one long path
+  in a message sized the column at **584px inside a 358px pane**. The shell
+  clips rather than scrolling sideways, so `document.scrollWidth` stayed equal
+  to `clientWidth` throughout — `npm run smoke-pages` passes `/chat` at 390px
+  both before and after, and its no-sideways-scroll assertion cannot see this
+  class of failure at all. What found it was walking the DOM for any element
+  whose `offsetWidth` exceeds its parent's `clientWidth`; that is the check
+  worth adding if this is ever automated. Second in the same family: the card's
+  `max-h-[34rem]` is smaller than the questions and the composer inside it on a
+  390px screen, so the thread — the only child that could shrink — collapsed to
+  zero and the conversation was not on the page.
+
+  Read out of the DOM against the standalone bundle, at 390×844 with a seeded
+  chat carrying a fenced code block, a three-column markdown table, a long
+  unbroken URL, two open questions, a pending, an approved, a superseded and a
+  failed proposal: no element wider than its parent anywhere on the page, no
+  console error, the code fence scrolling inside its own box at 318px while its
+  `<code>` is 824px, and the markdown table going through `Table`'s stacking
+  mode. With the on-screen keyboard modelled the way `AppShell` models it —
+  `--keyboard-inset: 336px`, so `--pane-h` and the shell's height both shrink —
+  the pane is 456px tall and the composer's textarea (92px, `font-size: 16px`,
+  full width) and its Send button (44px) are **both inside it**, measured, not
+  looked at. **1280×900 is unchanged to the pixel**: the page was built at
+  `bf9d40b` and at the change, screenshotted against the same seed, and the two
+  PNGs differ in **0 of 1,152,000 pixels**. Every rule but two is `max-md:`; the
+  two that are not are the grid track (overridden at `lg`, and it fixes the same
+  overflow in the 768–1023px band, where it was measured at 584px inside 536px)
+  and `[overflow-wrap:anywhere]` on the inline `<code>` span, which matches the
+  tag chip and the link class beside it in the same file.
+
+  **Not yet verified by hand:** no real device, and the three things that need
+  one. Whether `max-md:gap-x-6` is enough separation between Reject and Approve
+  under an actual thumb — 24px between two 44px targets, chosen rather than
+  measured, and the wrong press starts or refuses a billed run. Whether the
+  composer's `max-md:sticky max-md:bottom-0` behaves on iOS Safari, whose
+  sticky-plus-`visualViewport` behaviour is the reason `--keyboard-inset` exists
+  in the first place; the reading above sets that variable from a script rather
+  than by opening a keyboard, and Chromium recomputes a sticky offset on scroll
+  rather than on a variable changing — a measurement taken without a scroll in
+  between reads the stale one, which it did here until a real scroll was forced.
+  And no interaction of any kind was exercised: nothing here pressed a choice,
+  approved a proposal, sent a message, or opened the drawer. `npm run
+  smoke-pages` cannot close any of those — it asserts about load and never about
+  interaction, which is its own header's position, not an omission.
+
 - **The mobile form pass — and two of its three defects cannot be observed
   without a real iOS device.** Every text control gained `max-md:text-[16px]`
   (once, in `CONTROL_BASE`, which `Input`, `Select`, `Textarea` and `LimitField`
@@ -7125,6 +7254,44 @@ through before trusting this unattended:
     `Meter.test.tsx` now asserts; the fix makes the band undrawable rather than
     mis-spelled, so a future caller that overrides `value` and says nothing
     about the band loses the band instead of gaining a wrong one.
+
+  - **2026-09-10, `92e53b0` / `daf7956` / `938ee57`, class D.** Three defects on
+    the run surface at 390px, all invisible above the breakpoint and none of
+    them anything a type checker or a page load could see. (i) Every wide
+    picker on the new-run form (`src/app/runs/new/page.tsx`) kept its 256px
+    desktop width after `ListRow` wrapped it onto a line of its own, so the
+    model picker read `Inherit — Claude Code's own c…` on a phone: a control
+    that clipped its own value while 288px of line sat empty beside it. (ii)
+    The enforcement choice on the same page overflowed its card in *both*
+    directions, `Between cycles` hanging off the left edge — `SegmentedControl`
+    carries `max-md:flex-wrap`, but it is `inline-flex` inside `ListRow`'s
+    `shrink-0` control side, and a shrink-to-fit box has no width to wrap
+    against, so its own mobile rule could never fire. (iii) The run list's task
+    link (`src/app/runs/page.tsx:428`) is the only way into a run once the
+    table stacks, and one line of text is a 20px target. Found by measuring
+    every element's box and every control's height against the rendered
+    standalone bundle at 390px and 768px, with a scripted `CLAUDE_BIN` and a
+    throwaway git repository as the mount. Fixed at the call sites — a width on
+    each wrapper, a wrapper around the segmented control, and padding plus an
+    equal negative margin on the link so the hit area grows and the layout does
+    not. Measured after: no element past the viewport at either width, no
+    control under 44px below the breakpoint, link 44px at 390/767px and 20px at
+    768/1280px, and `npm run smoke-pages` clean over the standalone bundle.
+    A fourth, `640dbb2`, same class, found on the same pass once the map had
+    nodes to draw: below `lg` both sub-pages fall to one implicit grid column,
+    and an `auto` track will not shrink under its content's min-content width —
+    ~362px against the 316px a 390px screen leaves inside the card — so the
+    track hung past the card and took the right edge of the map and the last
+    control under the replay row off the screen. It reached neither instrument
+    that would normally catch it: nothing scrolled sideways, because an
+    ancestor clips, and `smoke-pages` draws that page with an empty map. Fixed
+    by spelling the column `minmax(0,1fr)`, which is what the `lg` rule beside
+    it already says.
+    **What (ii) really is is a `ui/List.tsx:153` defect** — `max-md:min-w-0
+    max-md:shrink` on the control side makes every over-wide control on every
+    `ListRow` in the app wrap instead, which was measured to work and then
+    reverted, because that layer belongs to another run. The call-site wrapper
+    fixes this page and leaves the same trap set everywhere else.
 
   **And this is not "the interface is now checked".** Even with the pass above
   written down and the smoke pass `proposals/UIChecks/09-recommendation.md`

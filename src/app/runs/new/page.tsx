@@ -1378,8 +1378,14 @@ export default function NewRunPage() {
               >
                 {/* The width is on a wrapper, never on the control: `Select`
                     already states `w-full`, and two width utilities on one
-                    element resolve by stylesheet order, not class order. */}
-                <div className="w-64">
+                    element resolve by stylesheet order, not class order. Both
+                    figures are absolute for `ListRow`'s sake — its control side
+                    is `shrink-0`, so a percentage there resolves against a
+                    shrink-to-fit box and does nothing. 288px is what the line
+                    holds at 390px once the row has wrapped, and it is the
+                    figure the limit rows below already use, so every wide
+                    control on this form is the same width on a phone. */}
+                <div className="w-64 max-md:w-72">
                   <Select
                     id="tpl"
                     value={templateId}
@@ -1431,7 +1437,7 @@ export default function NewRunPage() {
                 </>
               }
             >
-              <div className="w-64">
+              <div className="w-64 max-md:w-72">
                 <Select
                   id="mount"
                   value={mountId}
@@ -1464,7 +1470,7 @@ export default function NewRunPage() {
               }
             >
               {mark("where")}
-              <div className="w-64">
+              <div className="w-64 max-md:w-72">
                 <Select
                   id="folder"
                   value={folder}
@@ -1538,7 +1544,7 @@ export default function NewRunPage() {
                 }
               >
                 {mark("agent")}
-                <div className="w-64">
+                <div className="w-64 max-md:w-72">
                   <Select
                     id="agent"
                     value={agentId}
@@ -1595,7 +1601,7 @@ export default function NewRunPage() {
               }
             >
               {mark("model")}
-              <div className="w-64">
+              <div className="w-64 max-md:w-72">
                 {provider === "codex" ? (
                   <Input
                     id="model"
@@ -1662,7 +1668,7 @@ export default function NewRunPage() {
               label="Provider"
               description="Which agent CLI runs the work cycles"
             >
-              <div className="w-64">
+              <div className="w-64 max-md:w-72">
                 <Select
                   id="provider"
                   value={provider}
@@ -2313,15 +2319,24 @@ export default function NewRunPage() {
           >
             <ListRow label="When a limit is reached">
               {mark("enforcement")}
-              <SegmentedControl
-                options={ENFORCEMENT_OPTIONS}
-                value={enforcement}
-                onChange={(v) => {
-                  setEnforcement(v);
-                  setCarriedEnforcement(false);
-                }}
-                label="When a limit is reached"
-              />
+              {/* Three options of prose come to 352px, which is wider than the
+                  ~288px this row leaves on a phone, and `SegmentedControl` is
+                  `inline-flex`: its own `max-md:flex-wrap` never fires, because
+                  a shrink-to-fit box has no width to wrap against and the row's
+                  control side does not shrink. The wrapper gives it one, and it
+                  wraps to two lines instead of hanging off both edges of the
+                  card. The other two on this page fit and take no wrapper. */}
+              <div className="max-md:w-72">
+                <SegmentedControl
+                  options={ENFORCEMENT_OPTIONS}
+                  value={enforcement}
+                  onChange={(v) => {
+                    setEnforcement(v);
+                    setCarriedEnforcement(false);
+                  }}
+                  label="When a limit is reached"
+                />
+              </div>
             </ListRow>
 
             <ListRow

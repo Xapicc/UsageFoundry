@@ -145,7 +145,7 @@ function RunRows({
             <Td className="align-top">
               <Link
                 href={`/runs/${n.runId}`}
-                className="block font-medium text-ink hover:text-accent"
+                className="block font-medium text-ink hover:text-accent max-md:inline-flex max-md:min-h-11 max-md:items-center"
               >
                 {n.nodeName}
               </Link>
@@ -477,7 +477,14 @@ export default function WorkflowInstancePage() {
   return (
     <>
       <div className="mb-6">
-        <Link href={`/workflows/${id}`} className="text-sm text-ink-muted">
+        {/* `inline-flex` only below the breakpoint, for `agents/page.tsx`'s
+            reason: this is the page's back button under a thumb and owes the
+            44px target, and above it it is pointed at and reads as the inline
+            text it is. */}
+        <Link
+          href={`/workflows/${id}`}
+          className="text-sm text-ink-muted max-md:inline-flex max-md:min-h-11 max-md:items-center"
+        >
           ← {instance.workflowName}
         </Link>
         <div className="mt-1 flex flex-wrap items-center justify-between gap-3">

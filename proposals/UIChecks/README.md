@@ -68,6 +68,13 @@ argument arriving as a measurement.
 | [08-comparison.md](08-comparison.md) | What each buys, and what each fails for *other than a defect* |
 | [09-recommendation.md](09-recommendation.md) | The order, the falsifier, and the three things this survey is least sure of |
 
+[10-the-graph-at-390px.md](10-the-graph-at-390px.md) is not part of the
+survey and does not answer its question. It is filed here because it is the
+one decision this repository has taken that the survey's instruments cannot
+check and a person would have to: a measured finding that the workflow canvas
+cannot be made useful at 390px, and the linear fallback that replaced it
+there.
+
 ## What it deliberately does not re-open
 
 **`proposals/OperatorInterface/`.** Contrast is settled there — four measured

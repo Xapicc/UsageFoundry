@@ -422,10 +422,21 @@ function RunList({
                     {/* The task is what tells two runs in the same project
                         apart, so it leads and the folder hangs under it. Both
                         truncate; both keep the whole value in `title`. 56ch is
-                        an upper bound on a wide window, never a floor. */}
+                        an upper bound on a wide window, never a floor.
+
+                        Below the breakpoint this line is the only way into the
+                        run — the row stacks and nothing else in it is
+                        clickable — and one line of text is a 20px target. The
+                        padding takes it to 44px and the equal negative margin
+                        hands the space straight back, so the folder still sits
+                        where it did: the hit area grows, the layout does not.
+                        A taller box instead would have opened a gap under
+                        every task in the list. Nothing it now overlaps is
+                        interactive, so the larger target cannot be mis-hit
+                        against anything. */}
                     <Link
                       href={`/runs/${r.id}`}
-                      className="block max-w-[56ch] truncate font-medium text-ink hover:text-accent"
+                      className="block max-w-[56ch] truncate font-medium text-ink hover:text-accent max-md:-my-3 max-md:py-3"
                       title={r.prompt}
                     >
                       {r.prompt}
