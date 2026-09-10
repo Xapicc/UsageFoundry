@@ -5,6 +5,7 @@ import {
   EDGE_OPTION_LABEL,
   fmtCycleInFlight,
   fmtCycles,
+  fmtTokens,
   guardBadge,
   pollFailureMessage,
 } from "./format";
@@ -219,4 +220,21 @@ test("the unanswered state reads as unanswered rather than as a condition", () =
   assert.notEqual(EDGE_OPTION_LABEL[""], EDGE_OPTION_LABEL["on-finish"]);
   assert.notEqual(EDGE_CHIP_LABEL[""], EDGE_CHIP_LABEL["on-success"]);
   assert.notEqual(EDGE_CHIP_LABEL[""], EDGE_CHIP_LABEL["on-finish"]);
+});
+
+/**
+ * A deficit is a token figure like any other in the column it sits in.
+ *
+ * The composition legend prints the residual beside five positive bands, and
+ * the residual is negative on any reading whose estimates over-explain the
+ * window. The unsigned formatter fell through every threshold on a negative
+ * and printed the raw integer: `-81822` under `182.2k`, a figure in a different
+ * unit on the same list, with nothing to say it was.
+ */
+test("a negative token figure is scaled and signed like a positive one", () => {
+  assert.equal(fmtTokens(-81_822), "−81.8k");
+  assert.equal(fmtTokens(-1_500_000), "−1.50M");
+  assert.equal(fmtTokens(-5), "−5");
+  assert.equal(fmtTokens(0), "0");
+  assert.equal(fmtTokens(81_822), "81.8k");
 });

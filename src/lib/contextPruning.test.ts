@@ -816,6 +816,51 @@ describe("parseComposition — what the window is made of", () => {
     );
   });
 
+  it("takes the residual against the window, and lets it be negative", () => {
+    // Winnow prints its residual as `window − Σ nodes + shed`, the shed being
+    // what left the window with no compaction boundary to explain it, added
+    // back because its rows describe arrivals. This app's bands promise to sum
+    // to the window, so the residual is the window less the provenances — and
+    // it keeps its sign. Floored at zero, as it was, every reading of a run
+    // with tool traffic summed past its window, and the stack drew that by
+    // clipping its top three bands to nothing: prefix and conversation present
+    // in the legend and absent from the picture, read as tool traffic pushing
+    // them out of a window nothing can push the prefix out of.
+    const c = parseComposition(
+      JSON.stringify({
+        window: { tokens: 100_000, kind: "exact" },
+        shedding: { events: [{ tokens: { tokens: 15_000, kind: "exact" } }] },
+        nodes: [
+          { label: "tool traffic", tokens: 90_000, kind: "estimated" },
+          { label: "prefix", tokens: 20_000, kind: "derived" },
+          // What winnow prints for this window: 100,000 − 110,000 + 15,000.
+          { label: "unattributed", tokens: 5_000, kind: "residual" },
+        ],
+      }),
+    )!;
+    assert.equal(c.slices.find((s) => s.kind === "residual")!.tokens, -10_000);
+    assert.equal(
+      c.slices.reduce((n, s) => n + s.tokens, 0),
+      c.window,
+    );
+    // A provenance stays floored. Winnow floors them itself — no prefix node
+    // when the subtraction is negative — and the stack treats every band but
+    // the residual as a height, so a sign here would be a band it cannot draw.
+    const floored = parseComposition(
+      JSON.stringify({
+        window: { tokens: 1_000, kind: "exact" },
+        nodes: [
+          { label: "prefix", tokens: -400, kind: "derived" },
+          { label: "unattributed", tokens: 1_400, kind: "residual" },
+        ],
+      }),
+    )!;
+    assert.deepEqual(
+      floored.slices.map((s) => s.tokens),
+      [0, 1_000],
+    );
+  });
+
   it("carries the kind, which is the one thing a band cannot show", () => {
     const c = parseComposition(REAL)!;
     const kinds = new Map(c.slices.map((s) => [s.label, s.kind]));

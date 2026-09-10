@@ -96,6 +96,9 @@ export function fmtWaitingFor(
 
 export function fmtTokens(n: number): string {
   if (!Number.isFinite(n)) return "—";
+  // `signedUSD`'s minus, for its reason: the composition legend prints a
+  // deficit in a column of these, and a hyphen is a different width.
+  if (n < 0) return `−${fmtTokens(-n)}`;
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;

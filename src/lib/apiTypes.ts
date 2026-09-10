@@ -526,6 +526,7 @@ export interface ContextCompositionNodeDTO {
 export interface ContextCompositionSliceDTO {
   /** Winnow's own label, passed through — never mapped to a closed set here. */
   label: string;
+  /** Signed on the residual and floored at zero on every provenance. */
   tokens: number;
   /** `exact` | `derived` | `estimated` | `residual`, as winnow reported it. */
   kind: string;
@@ -554,8 +555,15 @@ export interface ContextCompositionSliceDTO {
  * minutes, measured on this install — so the slices are drawn against `window`
  * and against nothing else.
  *
- * `slices` sum to `window` by construction: the residual is one of them. Their
- * `children` do **not** sum to their parent, and are not meant to: a node
+ * `slices` sum to `window` by construction: the residual is one of them, and it
+ * is **signed** — negative wherever the provenances over-explain the window,
+ * which is a third of sessions by winnow's count and the ordinary state of a
+ * run here once it carries tool traffic. A reader stacking these as heights
+ * has to size its axis to the taller of the window and the positive bands, or
+ * it clips whatever sits above the crossing; `CompositionStack` says what that
+ * looked like. The residual is taken against the window here rather than
+ * copied off winnow, which adds the shed back — `parseComposition` says why.
+ * Their `children` do **not** sum to their parent, and are not meant to: a node
  * unreadable at the parse and a tail past the per-node cap are both dropped
  * rather than pooled into a manufactured bin, so a subtree that falls short is
  * saying so out loud.

@@ -7171,7 +7171,7 @@ through before trusting this unattended:
   server.
 
 - **The class of every interface defect found from here on is recorded here, and
-  the running list has four entries.** This is a measurement rather than a
+  the running list has five entries.** This is a measurement rather than a
   convention for its own sake, and it exists because the argument it settles is
   currently resting on a sample of size one. `proposals/UIChecks/` recommends
   reaching for a real engine — the expensive class — and its whole case for
@@ -7292,6 +7292,18 @@ through before trusting this unattended:
     `ListRow` in the app wrap instead, which was measured to work and then
     reverted, because that layer belongs to another run. The call-site wrapper
     fixes this page and leaves the same trap set everywhere else.
+  - **2026-09-10, class B, with a data half that is no class at all.** The
+    context composition stack on the run page drew standing configuration,
+    prefix and conversation at zero height from the fifth reading on — three
+    provenances in the legend, absent from the picture — which the operator
+    read as tool traffic and retained reasoning pushing the rest out of the
+    window. Found by a person looking at run `5b967a08`; decidable from the
+    static markup, where the three paths' top edge equalled their bottom at
+    the rightmost x, and now asserted that way in `ContextOccupancy.test.tsx`.
+    The markup was wrong because the data was: the parse floored winnow's
+    residual at zero, so the bands summed past the window the axis was sized
+    to. That half is a pure function with a silent failure, and sits in
+    `contextPruning.test.ts` on the suite's usual grounds rather than here.
 
   **And this is not "the interface is now checked".** Even with the pass above
   written down and the smoke pass `proposals/UIChecks/09-recommendation.md`
@@ -7300,6 +7312,60 @@ through before trusting this unattended:
   by nothing at all**. That hole is deliberate and it is written here so a green
   `npm test` cannot be read as covering it. The list above is the thing that
   would tell a future reader whether leaving it open is still the right call.
+
+- **The context composition stack clipped its top bands, and the parse behind
+  it floored a signed figure (2026-09-10).** Found on run `5b967a08` by the
+  operator, who read the picture as tool traffic and retained reasoning pushing
+  the rest of the context out of the window. Measured before anything was
+  touched: the eight stored readings summed past their windows on every reading
+  after the first — 107,087 against 75,743 at the second, 324,569 against
+  243,678 at the last — with `unattributed` stored at 0 on all eight; in the
+  rendered SVG, standing configuration, prefix and conversation had their top
+  edge equal to their bottom at the rightmost x (y = 5, the chart's top), and
+  the aria label's shares summed to 133%. `winnow context --depth 2 --json`,
+  run directly against the same transcript inside the container, reported a
+  256,579 exact window, provenances summing to 338,401, and `unattributed` at
+  **−17,969** with 63,853 of shed added back — nineteen shedding events, one of
+  50,582 at the early-end cut — and `context.py` says in as many words that the
+  residual "is allowed to be negative" and that 423 of the 922 anchored
+  sessions on its author's machine have one. The prefix stood at 14,392 on all
+  eight readings and standing configuration grew from 18,098 to 44,511, so
+  nothing was displaced: the picture was the clip. Fixed in three places and
+  repaired in one. `parseComposition` keeps the residual's sign and takes it as
+  the window less the provenances — −81,822 on that transcript, differing from
+  winnow's printed node by exactly the shed; `CompositionStack` sizes its axis
+  to the taller of the window and the bands, hatches the excess in the
+  residual's own fill, stripes the residual's legend swatch, prints the signed
+  figure and carries one caption while there is a strip; `fmtTokens` scales
+  and signs a negative; and `migrate()` takes every stored residual again
+  against its reading's window on every boot. The repair statement was driven
+  against the eight readings in a scratch database first: every sum equal to
+  its window, an already-correct reading untouched, the same result on a
+  second pass. Then `docker compose up --build`, and the same page: the API
+  returned all eight readings summing to their windows with residuals from −1
+  to −80,891, every band had height at the rightmost x — conversation
+  5.00–5.85, prefix 5.85–9.26, standing configuration 9.26–19.82 — the hatched
+  strip ran from the window at y 24.19 up to the top, the legend read
+  `unattributed −80.9k` behind a striped swatch, and the caption was on the
+  page. `npm run typecheck` clean; `npm test` 2,618 tests with one failing —
+  `backupRestore.test.ts`'s "leaves the database that was there when the copy
+  dies part-way", which fails identically on the tree before this change and
+  is not touched by it. The new component case was compiled against the old
+  chart and failed there, at `conversation`.
+
+  This closes two items the 2026-09-04 entries left open. The tick **does**
+  write `context_compositions`: eight readings on this run, paced by growth,
+  with one taken a minute after the early-end cut at 30 minutes — the absolute
+  distance catching the drop, as reasoned — and the path from the table
+  through `compositionSeries` to the page draws stored rows, which until this
+  run had been proven only by its types.
+
+  **Not yet verified by hand:** nothing has drawn a strip at 390px — it sits
+  inside the same `viewBox` as the bands, so the layout argument is unchanged,
+  and that is an argument rather than a measurement. And the one-line polish
+  in `describeComposition` that spells the residual's negative share with the
+  same minus as its figure went in after the container was rebuilt, and has
+  been seen only by the test build.
 
 There is no linter run in this repo, and `npm test` covers a deliberately short
 list: the folder-collision predicate, which queued runs may start, the budget
@@ -7317,8 +7383,9 @@ for deciding whether one was really resolved and for deciding what to show, what
 the orchestrator chat may ask its operator, what an answer to it settles, where
 a question is drawn in the thread that shows it and what one poll of an open thread
 reads against how long that thread already is — and
-the two renderings that would lie quietly about a number: an unconfigured
-ceiling, and a first-party figure shown beside the meters. Two entries are
+the three renderings that would lie quietly about a number: an unconfigured
+ceiling, a first-party figure shown beside the meters, and a context stack whose
+bands claim more than the window they are drawn against. Two entries are
 neither a function nor a rendering: the order a chat's thread renders in, driven
 against a real database because what it pins is in the SQL rather than in any
 function — as is what an operator's message does to a question the chat left

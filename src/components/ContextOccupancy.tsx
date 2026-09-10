@@ -610,6 +610,27 @@ const LEGEND_ROW: Record<"picked" | "idle", string> = {
  * different anchor, and the first thing anyone would do with the two is read
  * the gap between them.
  *
+ * ## Why the axis is the taller of the two, and what the hatch is
+ *
+ * The bands sum to the window by construction, the residual among them — and
+ * the residual is negative wherever the provenances over-explain the window,
+ * which winnow puts at a third of sessions and which was every reading of the
+ * run that surfaced this once it carried tool traffic. A negative band has no
+ * height, so the positive ones stand taller than the window, and an axis sized
+ * to the window alone — which is what this was — clamped every running total
+ * at its top: from the reading where tool traffic and retained reasoning alone
+ * crossed it, standing configuration, prefix and conversation were drawn with
+ * their top on their bottom, present in the legend and absent from the picture.
+ * That read as tool traffic pushing the prefix out of the window, and the
+ * prefix is the one part of the window nothing can move. So the axis is the
+ * taller of the window and the bands at every reading, and the excess — from
+ * the window up to what the bands claim — is drawn as a hatched strip over
+ * whichever bands it falls in, in the residual's own fill: it is those bands'
+ * claim past the window and not a seventh provenance, and `hatched` is already
+ * this app's word for a span nothing can put a figure on. The legend's residual
+ * row wears the same stripes and a signed figure, and one caption says what the
+ * strip is and why it exists, since neither is visible.
+ *
  * ## Why the bands are ordered by total and not by size at each reading
  *
  * Winnow returns its nodes largest-first *per reading*, so two readings can
@@ -658,6 +679,7 @@ function CompositionStack({
   // would silently come to mean a different band.
   const [picked, setPicked] = useState<string | null>(null);
   const detailId = useId();
+  const hatchId = useId();
 
   if (readings.length === 0) {
     return (
@@ -680,7 +702,18 @@ function CompositionStack({
   }
 
   const order = bandOrder(readings);
-  const yMax = Math.max(...readings.map((r) => r.window), 1);
+  // What the bands claim at each reading: every drawn band as a height, with a
+  // negative one — the residual, wherever the provenances over-explain the
+  // window — adding nothing. The stack is this tall, and the window sits at its
+  // top or somewhere inside it; see "Why the axis is the taller of the two".
+  const claims = readings.map((reading) => {
+    const byLabel = new Map(reading.slices.map((s) => [s.label, s.tokens]));
+    return order.reduce((n, label) => n + Math.max(0, byLabel.get(label) ?? 0), 0);
+  });
+  const yMax = Math.max(
+    ...readings.map((r, i) => Math.max(r.window, claims[i])),
+    1,
+  );
   const t0 = readings[0].ts;
   const span = readings[readings.length - 1].ts - t0;
   const lone = readings.length === 1;
@@ -705,14 +738,36 @@ function CompositionStack({
     const byLabel = new Map(reading.slices.map((s) => [s.label, s.tokens]));
     let running = 0;
     return order.map((label) => {
-      running += byLabel.get(label) ?? 0;
+      running += Math.max(0, byLabel.get(label) ?? 0);
       return { cx: x(reading.ts), top: y(running) };
     });
   });
 
   const baseline = PAD_TOP + STACK_PLOT_H;
+  // The strip between the window and what the bands claim past it, per
+  // reading — zero-tall wherever they claim no more than it, so one path runs
+  // the whole series and is simply absent where the residual is not negative.
+  const deficit = readings.map((reading, i) => ({
+    cx: x(reading.ts),
+    top: y(claims[i]),
+    bottom: y(Math.min(reading.window, claims[i])),
+  }));
+  const anyDeficit = readings.some((r, i) => claims[i] > r.window);
   const latest = readings[readings.length - 1];
   const latestByLabel = new Map(latest.slices.map((s) => [s.label, s]));
+  const latestDeficit = Math.max(0, claims[claims.length - 1] - latest.window);
+
+  // One strip's outline: along its top left to right and back along its lower
+  // edge right to left, or the rectangle between the two for a column.
+  const strip = (upper: { cx: number; top: number }[], lower: number[]) =>
+    column
+      ? `M${round(upper[0].cx - LONE_COLUMN_W / 2)} ${upper[0].top}` +
+        `H${round(upper[0].cx + LONE_COLUMN_W / 2)}` +
+        `V${lower[0]}` +
+        `H${round(upper[0].cx - LONE_COLUMN_W / 2)}Z`
+      : upper.map((p, i) => `${i === 0 ? "M" : "L"}${p.cx} ${p.top}`).join(" ") +
+        upper.map((p, i) => ` L${p.cx} ${lower[i]}`).reverse().join("") +
+        "Z";
 
   // Derived during the render rather than corrected in an effect: a band that
   // leaves the newest reading has to read as *closed*, and an effect resetting
@@ -732,35 +787,34 @@ function CompositionStack({
         className="mt-3 block h-auto w-full"
         viewBox={`0 0 ${VIEW_W} ${STACK_H}`}
         role="img"
-        aria-label={describeComposition(latest, order, readings.length)}
+        aria-label={describeComposition(latest, order, readings.length, latestDeficit)}
       >
+        {anyDeficit && (
+          <defs>
+            {/* `hatched`'s stripes — four on, four off, at 45° — in the
+                residual's own fill, which is the last band's: the strip is that
+                band drawn the other way up, not a seventh provenance. */}
+            <pattern
+              id={hatchId}
+              width="8"
+              height="8"
+              patternUnits="userSpaceOnUse"
+              patternTransform="rotate(45)"
+            >
+              <rect width="4" height="8" className={BAND_FILL[order.length - 1]} />
+            </pattern>
+          </defs>
+        )}
         {order.map((label, band) => {
           const upper = stacked.map((cols) => cols[band]);
-          const lower =
-            band === 0 ? null : stacked.map((cols) => cols[band - 1]);
-
-          const d = column
-            ? // The column: a rectangle from this band's top down to the one
-              // below it, or to the baseline for the first.
-              `M${round(upper[0].cx - LONE_COLUMN_W / 2)} ${upper[0].top}` +
-              `H${round(upper[0].cx + LONE_COLUMN_W / 2)}` +
-              `V${lower ? lower[0].top : baseline}` +
-              `H${round(upper[0].cx - LONE_COLUMN_W / 2)}Z`
-            : upper.map((p, i) => `${i === 0 ? "M" : "L"}${p.cx} ${p.top}`).join(" ") +
-              (lower
-                ? // Back along the band below, right to left, which is what
-                  // closes this band against it rather than against the floor.
-                  lower
-                    .map((p) => `L${p.cx} ${p.top}`)
-                    .reverse()
-                    .join(" ")
-                : ` L${upper[upper.length - 1].cx} ${baseline} L${upper[0].cx} ${baseline}`) +
-              "Z";
+          const lower = stacked.map((cols) =>
+            band === 0 ? baseline : cols[band - 1].top,
+          );
 
           return (
             <path
               key={label}
-              d={d}
+              d={strip(upper, lower)}
               // A pointer shortcut for the legend's own button and never the
               // only way in: this `<svg>` is `role="img"`, so everything inside
               // it is presentational and no assistive technology can reach a
@@ -803,6 +857,19 @@ function CompositionStack({
             </path>
           );
         })}
+        {anyDeficit && (
+          <path
+            d={strip(deficit, deficit.map((p) => p.bottom))}
+            // Quoted: React 19's `useId` spells its ids with characters a bare
+            // `url(#…)` is not guaranteed to survive.
+            fill={`url("#${hatchId}")`}
+            // Over the bands, since it is *their* claim past the window and
+            // falls across whichever of them sit there; and through to the
+            // pointer, so hovering it still names the band underneath. What it
+            // means is in the legend row and the caption, not in a tooltip.
+            className="pointer-events-none"
+          />
+        )}
       </svg>
 
       {/* The legend, and it is not optional: six bands cannot be told apart by
@@ -822,6 +889,7 @@ function CompositionStack({
         {order.map((label, band) => {
           const slice = latestByLabel.get(label);
           const isOpen = open === label;
+          const isDeficit = (slice?.tokens ?? 0) < 0;
           return (
             <li key={label}>
               <button
@@ -840,7 +908,17 @@ function CompositionStack({
                 className={`ui-transition -mx-1.5 flex min-h-[var(--control-h)] w-full cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-left max-md:min-h-11 ${LEGEND_ROW[isOpen ? "picked" : "idle"]}`}
               >
                 <svg viewBox="0 0 8 8" className="h-2 w-2 shrink-0" aria-hidden="true">
-                  <rect x="0" y="0" width="8" height="8" className={BAND_FILL[band]} />
+                  {/* The stripes when this reading's figure is a deficit, so the
+                      row matches the strip it names. The fill class has to go
+                      with them: a class outranks a presentation attribute. */}
+                  <rect
+                    x="0"
+                    y="0"
+                    width="8"
+                    height="8"
+                    className={isDeficit ? undefined : BAND_FILL[band]}
+                    fill={isDeficit ? `url("#${hatchId}")` : undefined}
+                  />
                 </svg>
                 <span className="min-w-0 flex-1">{label}</span>
                 <span className="tabular-nums">{fmtTokens(slice?.tokens ?? 0)}</span>
@@ -849,6 +927,17 @@ function CompositionStack({
           );
         })}
       </ul>
+
+      {/* Only while there is a strip to explain. What the hatch is and why the
+          bands can claim more than the window are the two things the picture
+          cannot say; that they do is already drawn. */}
+      {latestDeficit > 0 && (
+        <p className="mt-1.5 max-w-[68ch] text-xs leading-snug text-ink-muted">
+          Hatched: the bands claim {fmtTokens(latestDeficit)} more than the
+          window holds. Estimates over-explain it, and what a cut removed is
+          still counted where it arrived.
+        </p>
+      )}
 
       {/* The detail list is replaced without anything moving focus: pressing a
           second band while one is open swaps its whole contents, and
@@ -966,18 +1055,25 @@ function describeComposition(
   latest: ContextCompositionDTO,
   order: string[],
   readings: number,
+  /** What the bands claim past the window at that reading; zero when nothing. */
+  deficit: number,
 ): string {
   const parts = order.map((label) => {
     const slice = latest.slices.find((s) => s.label === label);
     const tokens = slice?.tokens ?? 0;
     const pct =
       latest.window > 0 ? Math.round((tokens / latest.window) * 100) : 0;
-    return `${label} ${fmtTokens(tokens)} (${pct}%)`;
+    // `fmtTokens`'s minus beside its own, so the residual's share is not the
+    // one figure in the sentence spelled with a hyphen.
+    return `${label} ${fmtTokens(tokens)} (${pct < 0 ? `−${-pct}` : pct}%)`;
   });
   return (
     `What the context is made of, over ${readings} ` +
     `${readings === 1 ? "reading" : "readings"}. At the last one the window was ` +
-    `${fmtTokens(latest.window)} tokens: ${parts.join(", ")}.`
+    `${fmtTokens(latest.window)} tokens: ${parts.join(", ")}.` +
+    (deficit > 0
+      ? ` The bands claim ${fmtTokens(deficit)} more than the window holds.`
+      : "")
   );
 }
 

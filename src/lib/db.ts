@@ -1854,6 +1854,31 @@ function migrate(db: Database.Database) {
       ON context_compositions(ts);
   `);
 
+  // Every residual row taken again against its reading's window, on every boot.
+  //
+  // `parseComposition` used to floor every band at zero, the residual included,
+  // and winnow's residual is negative wherever its estimates over-explain the
+  // window — a third of sessions by winnow's own count, and every reading of a
+  // run here once it carried tool traffic. A reading whose residual was clamped
+  // has bands summing past its window, which the stack drew by clipping its top
+  // bands to nothing, and the rows that repair it are the rows already here: the
+  // window and every provenance on the reading are what winnow printed, so the
+  // residual is the window less their sum (the derivation `parseComposition`
+  // states, and why it differs from winnow's own node). Idempotent, since the
+  // value is a function of rows this statement never changes; a scan per boot
+  // of a table capped per run and swept with it, on `chat_messages.seq`'s terms.
+  db.exec(`
+    UPDATE context_compositions
+       SET tokens = window - (
+             SELECT COALESCE(SUM(o.tokens), 0)
+               FROM context_compositions o
+              WHERE o.run_id = context_compositions.run_id
+                AND o.reading = context_compositions.reading
+                AND o.kind <> 'residual'
+           )
+     WHERE kind = 'residual'
+  `);
+
   // What one band is made of, for the newest reading of a run and no other.
   //
   // Its own table rather than more rows in the one above, and the separation is

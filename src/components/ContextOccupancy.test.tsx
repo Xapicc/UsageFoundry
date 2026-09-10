@@ -567,6 +567,76 @@ test("the stack is drawn against winnow's own window", () => {
   assert.match(html, /the window was 100\.0k tokens/);
 });
 
+/**
+ * A band's top and bottom edge at its rightmost x, read off the path it was
+ * drawn as. Static markup can only be read this way at the newest reading —
+ * which is the reading the clip below took first.
+ */
+function rightEdge(html: string, label: string): { top: number; bottom: number } {
+  const path = new RegExp(`<path d="([^"]+)"[^>]*><title>${label} —`).exec(html);
+  assert.ok(path, `${label} is drawn`);
+  const points = [...path[1].matchAll(/[ML](-?[\d.]+) (-?[\d.]+)/g)].map((p) => [
+    Number(p[1]),
+    Number(p[2]),
+  ]);
+  const maxX = Math.max(...points.map((p) => p[0]));
+  const ys = points.filter((p) => p[0] === maxX).map((p) => p[1]);
+  return { top: Math.min(...ys), bottom: Math.max(...ys) };
+}
+
+test("bands that claim more than the window are drawn whole, and the excess is hatched", () => {
+  // The residual is negative wherever the provenances over-explain the window —
+  // a third of sessions by winnow's count, and every reading of the run that
+  // surfaced this once it carried tool traffic. The stack sized its axis to
+  // the window and clamped every running total at it, on the promise that the
+  // bands sum to the window; a negative band has no height, so the positive
+  // ones stood taller than the axis and every band above the crossing was
+  // drawn with its top on its bottom. Three provenances in the legend and
+  // absent from the picture, which an operator read as tool traffic pushing
+  // the prefix out of the window: the one part of it nothing can move.
+  const early = reading({
+    ts: NOW - 1_000,
+    window: 100_000,
+    slices: [
+      band("tool traffic", 60_000, "estimated"),
+      band("prefix", 30_000, "derived"),
+      band("conversation", 5_000, "estimated"),
+      band("unattributed", 5_000, "residual"),
+    ],
+  });
+  const late = reading({
+    window: 200_000,
+    slices: [
+      band("tool traffic", 180_000, "estimated"),
+      band("prefix", 30_000, "derived"),
+      band("conversation", 10_000, "estimated"),
+      band("unattributed", -20_000, "residual"),
+    ],
+  });
+  const html = render(
+    series({ composition: [early, late], compositionCount: 2, compositionAbsence: null }),
+  );
+  for (const label of ["tool traffic", "prefix", "conversation"]) {
+    const edge = rightEdge(html, label);
+    assert.ok(edge.top < edge.bottom, `${label} has height at the last reading`);
+  }
+  // The excess is a strip of its own — hatched, in the residual's fill — and
+  // the legend and the description both say what it is; the residual's row
+  // carries the sign rather than a zero.
+  assert.match(html, /<pattern /);
+  assert.match(html, /<rect[^>]*fill="url\(/, "the residual's swatch is hatched");
+  assert.match(html, /−20\.0k/);
+  assert.match(html, /claim 20\.0k more than the window holds/);
+
+  // And a reading that claims no more than its window draws none of that: the
+  // strip is not a standing feature, and the caption goes with it.
+  const within = render(
+    series({ composition: [reading()], compositionCount: 1, compositionAbsence: null }),
+  );
+  assert.doesNotMatch(within, /<pattern /);
+  assert.doesNotMatch(within, /more than the window holds/);
+});
+
 test("pruning switched off is not a run that has nothing to show yet", () => {
   // Two blanks that look identical on the page and have opposite fixes: one is
   // waiting for growth, the other is winnow deliberately never being spawned

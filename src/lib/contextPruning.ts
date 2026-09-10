@@ -2137,17 +2137,47 @@ export function contextComposition(
  * neighbours, and a node binned as "other" here would hide the one figure whose
  * whole job is to say what nothing accounted for.
  *
- * ## Why the slices are not re-derived
+ * ## Why `share` is not re-derived, and why the residual is
  *
  * `share` is on the wire and is ignored: it is `tokens / window` to six places,
  * and recomputing it in the component keeps one number in one place. `tokens`
  * is what is stored, because a share stored against a window that later moves
  * is a figure with no denominator.
  *
+ * The residual is the one figure taken here rather than read off the wire, and
+ * it is **allowed to be negative**. Winnow prints it as `window − Σ nodes +
+ * shed`, where the shed is what left the window between two priced requests
+ * with no compaction boundary to explain it — an early-end cut, an interrupt —
+ * added back because winnow's rows describe what the transcript recorded
+ * *arriving* and a shed is that material leaving again. This app's bands are
+ * drawn against the window and promise to sum to it, so the residual here is
+ * `window − Σ provenances`: winnow's own stated derivation, "the window less
+ * everything above it", without the add-back, and it differs from the printed
+ * node by exactly the shed. Measured on this install, 2026-09-10: a window of
+ * 256,579 whose provenances summed to 338,401, winnow printing −17,969 with
+ * 63,853 of shed added back, and −81,822 taken here. It keeps its sign because
+ * the sign is the reading — estimates over-explain a window on about a third
+ * of sessions by winnow's own count, and did on every reading of the run that
+ * surfaced this once it carried tool traffic. Floored at zero, as it was, the
+ * bands summed to 324,569 against a 243,678 window and the stack clipped its
+ * top three bands to nothing, which read as tool traffic pushing the prefix
+ * out of the window: a thing that cannot happen.
+ *
+ * Every other node is floored, and that changes nothing winnow prints: it
+ * floors the provenances itself — no `prefix` node is drawn when the
+ * subtraction comes out negative, and `retained reasoning` is a sum of
+ * per-response maxima — and the floor is what lets the stack treat every band
+ * but one as a height.
+ *
  * A node whose token count is not a finite number is dropped rather than zeroed:
  * a band drawn at zero says winnow measured nothing there, and a band dropped
  * makes the slices fail to sum, which is visible. Zero is a measurement. The
- * children below follow the same rule, for the same reason.
+ * children below follow the same rule, for the same reason. One cost of the
+ * derivation is stated: a *provenance* dropped as unreadable used to leave the
+ * stack visibly short of its window and is now absorbed by the residual, which
+ * cannot tell a token nothing accounted for from one it could not read. Winnow
+ * has never printed a non-finite count, so this trades a signal that has never
+ * fired for a sum that holds.
  */
 export function parseComposition(body: string): ContextComposition | null {
   try {
@@ -2175,7 +2205,10 @@ export function parseComposition(body: string): ContextComposition | null {
         // level down only, where the key is an artefact rather than a category,
         // so a provenance carrying one would be a label this app invented.
         label,
-        tokens: Math.max(0, Math.round(tokens)),
+        // Floored for every provenance; the residual keeps its sign, and is
+        // taken again against the window below. See the docblock.
+        tokens:
+          kind === "residual" ? Math.round(tokens) : Math.max(0, Math.round(tokens)),
         // Winnow states the kind on every node; an absent one is passed through
         // as the empty string rather than guessed at, because every value this
         // field can take is a claim about how the number was reached.
@@ -2184,7 +2217,18 @@ export function parseComposition(body: string): ContextComposition | null {
       });
     }
     if (slices.length === 0) return null;
-    return { window: Math.round(window), slices };
+    const exact = Math.round(window);
+    // Exactly one residual, which is what winnow prints whenever it has a
+    // window at all. Two would be a winnow that changed shape, and neither is
+    // touched then: picking one to correct would be asserting which of two
+    // confessions was the real one.
+    const residuals = slices.filter((s) => s.kind === "residual");
+    if (residuals.length === 1) {
+      residuals[0].tokens =
+        exact -
+        slices.reduce((n, s) => (s.kind === "residual" ? n : n + s.tokens), 0);
+    }
+    return { window: exact, slices };
   } catch {
     return null;
   }
