@@ -2657,6 +2657,22 @@ standalone bundle), and are covered by the unit tests above, but the following
 have **not** been exercised against a real CLI. They are the list to work
 through before trusting this unattended:
 
+> **The Settings mobile pass was measured in headless Chromium, never on a
+> phone, and its stacked table was never filled by a real scan.** The 390px
+> work on `src/app/settings/page.tsx` — every narrow field's `max-md:w-40`,
+> `EnvRow`'s stacked pair, and `stack` on the calibration suggestion table —
+> was checked by driving the built standalone bundle at 390x844 and 390x568
+> with every disclosure open, every switch on and a long path in every text
+> field: no element reached past the viewport and `#main` never gained a
+> sideways scroll. That is geometry, not touch. Nothing was tapped, no finger
+> found the wrong control, and the 44px floor was read off bounding boxes
+> rather than hit. The table is the one piece whose *content* is fabricated:
+> the sandbox has no transcripts, so `Scan history` cannot produce a
+> suggestion, and the stacked rendering was seen only with the `cal` state
+> seeded by a local patch that was reverted. Nothing has confirmed the stacked
+> table against a real scan's figures, and no `Sheet` on this page other than
+> Codex's `Use API key` was opened at any width.
+
 > **The image build has not been run since `npm run build` gained a wrapper.**
 > `scripts/redirect-dist-dir.mjs` was measured to do nothing on `overlayfs`,
 > which is what `/app` is on, so the builder stage should reach `next build` on
