@@ -668,6 +668,20 @@ on the run that did. That map is a second `Record` holding the same four words a
 the two tables move independently, and one map shared between them would let a
 fifth word added for either reach a reader typed against the other.
 
+**The count goes inside a cell the board already has, and a column for it is
+refused rather than merely not built.** The Task column is `w-full` over six
+min-width columns and is therefore whatever they leave — about 190px on a 1280px
+window — so a seventh floor comes straight off the title, for a figure that is
+zero on most rows. It is drawn in the Task cell specifically: that is the one
+cell the board deliberately leaves unlabelled, being the headline the record is
+identified by, and every other cell carries a `label` that `stack` puts above the
+value at 390px, where "Priority urgent 3" and "Runs 3" both read as a fact about
+something else. **Nothing at all at zero**, which is the same decision the Runs
+cell makes one column over: a faint "0 comments" on every row is a column of the
+word none. And it is **not** a link, unlike the run count beside it — that one is
+the only handle its cell can give, where the title directly above this one is
+already a link to the page the thread is on.
+
 **The three ways of having nothing are three different screens, and none of them
 is an empty list.** A board with nothing on it says a task is a brief anybody —
 the orchestrator, a workflow block, a work cycle, the operator — can file, and

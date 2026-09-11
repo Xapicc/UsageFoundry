@@ -344,6 +344,29 @@ export default function TasksPage() {
                 )}
               </span>
             )}
+            {/* The thread's size, in this cell and never a column of its own.
+                A seventh `min-w` would come straight off the title — the Task
+                column is `w-full` over six of them and is whatever they leave —
+                for a figure that is zero on most rows. This cell is the one the
+                board deliberately leaves unlabelled, being the headline the
+                record is identified by, so a count here is the only placement
+                that cannot be mislabelled when `stack` puts each field under
+                its own name at 390px: "Priority urgent 3" and "Runs 3" both
+                read as a fact about something else.
+
+                Nothing at all at zero rather than a faint "0 comments", which
+                is the same decision the Runs cell makes one column over: a
+                column of the word none is what a board looks like when every
+                row answers a question nobody asked. Not a link either, unlike
+                the run count beside it — that one is the only handle its cell
+                can give, where the title directly above this is already a link
+                to the page the thread is on. */}
+            {task.commentCount > 0 && (
+              <span className="mt-0.5 block text-xs text-ink-faint">
+                {task.commentCount}{" "}
+                {task.commentCount === 1 ? "comment" : "comments"}
+              </span>
+            )}
           </Td>
           <Td
             label="Project"
