@@ -51,7 +51,13 @@ export type IconName =
   // Appearance, read by SegmentedControl in ThemeToggle.
   | "display"
   | "sun"
-  | "moon";
+  | "moon"
+  // The skin, read by SegmentedControl in SkinToggle. The pair has to say
+  // "proportional" against "monospace terminal" at 16px, which is why it is a
+  // letterform against a prompt rather than two drawings of a window —
+  // `display` is already the monitor in the control beside this one.
+  | "text"
+  | "terminal";
 
 const GLYPH: Record<IconName, ReactElement> = {
   dashboard: (
@@ -184,6 +190,23 @@ const GLYPH: Record<IconName, ReactElement> = {
       fill="currentColor"
       stroke="none"
     />
+  ),
+  // A capital A: the two diagonals and the crossbar, and nothing else. A serif
+  // would be the clearer "proportional" cue and is not available — one stroke
+  // weight is the set's rule, and a 16px letterform with brackets on it is a
+  // smudge for the reason the crescent is.
+  text: (
+    <>
+      <path d="M3.4 12.75 8 3.25l4.6 9.5" />
+      <path d="M5.3 9.4h5.4" />
+    </>
+  ),
+  // A shell prompt, which is the one glyph a terminal is universally drawn as.
+  terminal: (
+    <>
+      <path d="M3.6 5.25 6.4 8l-2.8 2.75" />
+      <path d="M8.4 11.25h4" />
+    </>
   ),
 };
 

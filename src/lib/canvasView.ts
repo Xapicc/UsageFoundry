@@ -408,16 +408,19 @@ export function probeFont(host: HTMLElement): string {
 /**
  * Call `onChange` whenever a probed colour could have changed.
  *
- * Two boundaries, and each one is a way the answer changes without the
- * component rendering. `data-theme` is what `ThemeToggle` sets; the media query
- * is the OS flipping underneath "Match system", which sets nothing. Returns its
- * own teardown.
+ * Three boundaries, and each one is a way the answer changes without the
+ * component rendering. `data-theme` is what `ThemeToggle` sets and `data-skin`
+ * what `SkinToggle` sets — the skin retunes the border tones and the whole font
+ * family, and `probeFont` reads the latter off the host, so a canvas that
+ * watched only the theme would keep drawing the previous skin's palette and
+ * type until something else forced a rebuild. The media query is the OS flipping
+ * underneath "Match system", which sets nothing. Returns its own teardown.
  */
 export function observeTheme(onChange: () => void): () => void {
   const attribute = new MutationObserver(onChange);
   attribute.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ["data-theme"],
+    attributeFilter: ["data-theme", "data-skin"],
   });
   const scheme = window.matchMedia("(prefers-color-scheme: dark)");
   scheme.addEventListener("change", onChange);

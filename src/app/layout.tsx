@@ -105,14 +105,24 @@ export default function RootLayout({
             The collapsed sidebar rides along for the same reason and is a
             louder version of the same failure: the rail is 168px narrower than
             the list, so a state read after hydration would shove the whole
-            content pane sideways one frame into every page load. Both are the
-            absence of an attribute in their default state, so neither costs
-            anything for someone who has never touched the control. */}
+            content pane sideways one frame into every page load. The ascii
+            skin is the loudest of the three — it swaps the font family and
+            takes every radius to 0, so reading it after hydration reflows
+            every box on the page rather than recolouring it. All three are the
+            absence of an attribute in their default state, so none of them
+            costs anything for someone who has never touched the control.
+
+            One script rather than three: a second inline block would be a
+            second place for the storage keys to drift from the components that
+            write them, and the order the three attributes land in does not
+            matter because each one is read by its own selectors. */}
         <script
           dangerouslySetInnerHTML={{
             __html:
               `try{var t=localStorage.getItem("uf-theme");` +
               `if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;` +
+              `if(localStorage.getItem("uf-skin")==="ascii")` +
+              `document.documentElement.dataset.skin="ascii";` +
               `if(localStorage.getItem("uf.sidebar")==="collapsed")` +
               `document.documentElement.dataset.sidebar="collapsed"}catch(e){}`,
           }}

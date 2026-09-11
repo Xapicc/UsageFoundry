@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { SkinToggle } from "@/components/SkinToggle";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
@@ -134,8 +135,16 @@ export function Toolbar({
           </kbd>
         </Button>
 
+        {/* Two axes, two controls, in the order they were added: the colour
+            scheme and then the skin. They are independent — neither reads the
+            other's attribute — so there is nothing to group them into beyond
+            the strip's own gap. */}
         <div className="app-no-drag">
           <ThemeToggle />
+        </div>
+
+        <div className="app-no-drag">
+          <SkinToggle />
         </div>
 
         {action && (
