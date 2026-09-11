@@ -625,6 +625,32 @@
   background: none;
 }
 
+/* A meter's track flattens and its two fills stop being drawn; the characters
+   inside it are what is left. The element itself is untouched on purpose — it
+   is the `role="progressbar"` carrying `aria-valuenow`, `aria-valuetext` and
+   the label, and the one thing this skin may never do is move a reading out of
+   the accessibility tree on the way to redrawing it.
+
+   `height` and `overflow` are the two that have to be named: the track is a
+   7-9px box with `overflow: hidden` on it, and a row of block characters set
+   inside one is invisible rather than clipped — the failure looks like the
+   skin simply not being on. `border-radius` because `rounded-full` is one of
+   the static literals counted beside `--corner-sm`, which a token cannot
+   reach.
+
+   The bar is not stretched to the track's width and cannot be: a cell is a
+   character, so a bar is only ever a whole number of them wide, and the count
+   is the component's own (see `Meter`'s SIZE map). A meter under this skin is
+   therefore narrower than its card, which is what a fixed-width reading looks
+   like and not a bug. */
+:root[data-skin="ascii"] .uf-meter {
+  height: auto;
+  overflow: visible;
+  border-color: transparent;
+  border-radius: 0;
+  background: none;
+}
+
 @layer components {
   /* The rail centres its glyphs and its labels stop being drawn — but they
      stay in the accessibility tree, because the glyph is then the only thing

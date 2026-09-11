@@ -4,6 +4,7 @@
 // nothing rewrites the path alias at runtime, so a tested component has to
 // import the way src/lib already does.
 import { fmtPct, severityFor, type Severity } from "../lib/format";
+import { AsciiBar } from "./ui/AsciiBar";
 
 /**
  * A single limit meter.
@@ -47,6 +48,18 @@ const SEVERITY_FILL: Record<Severity, string> = {
 };
 
 /**
+ * The same three severities as a text colour, for the skin whose fill is a run
+ * of characters. Same short-circuit, for the same reason: `severityFor(null)`
+ * is "ok", and an unknown bar tinted green is the lie this component exists to
+ * refuse, in a second place.
+ */
+const SEVERITY_TEXT: Record<Severity, string> = {
+  ok: "text-ok",
+  warn: "text-warn",
+  danger: "text-danger",
+};
+
+/**
  * Complete class strings per size, never interpolated — Tailwind scans source
  * as text, so `h-${n}` emits nothing and does it silently. Same rule the tone
  * maps in `ui/Badge` and `ui/Button` follow.
@@ -65,6 +78,18 @@ const SIZE: Record<
     /** The guard's higher reading. Never larger than `value` at the same size. */
     upper: string;
     detail: string;
+    /**
+     * The ascii skin's cell count, which is how *that* skin says a meter leads:
+     * it has no track height to step, because a bar there is one row of text.
+     *
+     * Fixed rather than fitted to the card, because nothing can measure the
+     * card without a layout pass, and a bar that reflowed its own resolution
+     * mid-render would change what it says. The ceiling is the narrowest place
+     * any of them lands: 34 characters at the 14px monospace this is set in is
+     * ~286px, against ~326px inside a card at the 390px viewport — so `hero`,
+     * the widest, still clears it with the brackets on.
+     */
+    cells: number;
   }
 > = {
   compact: {
@@ -74,6 +99,7 @@ const SIZE: Record<
     value: "text-xs",
     upper: "text-xs",
     detail: "mt-1.5",
+    cells: 16,
   },
   default: {
     root: "mt-3",
@@ -82,6 +108,7 @@ const SIZE: Record<
     value: "text-sm",
     upper: "text-xs",
     detail: "mt-2",
+    cells: 24,
   },
   hero: {
     root: "mt-3",
@@ -90,6 +117,7 @@ const SIZE: Record<
     value: "text-lg",
     upper: "text-sm",
     detail: "mt-2",
+    cells: 32,
   },
 };
 
@@ -244,8 +272,15 @@ export function Meter({
           </span>
         )}
       </div>
+      {/* `uf-meter` on the track itself rather than a second element beside it:
+          this is the node carrying `role="progressbar"` and the whole spoken
+          reading, and a skin that swapped it for a different box would take the
+          accessible widget off the page every time the toolbar was clicked.
+          Under the ascii skin the box goes flat and its two fills stop being
+          drawn — the element, its role and its value stay exactly where they
+          were, and the characters are its aria-hidden child. */}
       <div
-        className={`relative overflow-hidden rounded-full border border-line bg-inset ${sz.track}`}
+        className={`uf-meter relative overflow-hidden rounded-full border border-line bg-inset ${sz.track}`}
         role="progressbar"
         aria-valuenow={known ? Math.round(clamped * 100) : undefined}
         aria-valuemin={0}
@@ -272,13 +307,13 @@ export function Meter({
             out below the first and clipped away by overflow-hidden. */}
         {hasUpper && (
           <div
-            className={`hatched absolute inset-y-0 left-0 rounded-full ${FILL_MOTION}`}
+            className={`hatched uf-plain absolute inset-y-0 left-0 rounded-full ${FILL_MOTION}`}
             data-unknown="true"
             style={{ width: `${upperClamped * 100}%` }}
           />
         )}
         <div
-          className={`absolute inset-y-0 left-0 rounded-full ${FILL_MOTION} ${
+          className={`uf-plain absolute inset-y-0 left-0 rounded-full ${FILL_MOTION} ${
             known ? SEVERITY_FILL[severityFor(fraction)] : "hatched"
           }`}
           data-sev={known ? severityFor(fraction) : undefined}
@@ -287,6 +322,17 @@ export function Meter({
             width: `${clamped * 100}%`,
             minWidth: clamped > 0 ? MIN_VISIBLE_PX : undefined,
           }}
+        />
+        {/* Handed the *raw* readings, not the clamped pair above: the band is
+            only drawn where it genuinely exceeds the fill, and that comparison
+            is the caller's two numbers rather than two widths. `hasUpper` and
+            not `bandExceedsFill`, so a band the head could not spell is absent
+            from the characters exactly as it is from the pixels. */}
+        <AsciiBar
+          fraction={fraction}
+          upperFraction={hasUpper ? upperFraction : null}
+          cells={sz.cells}
+          className={`text-sm ${known ? SEVERITY_TEXT[severityFor(fraction)] : "text-ink-muted"}`}
         />
       </div>
       {/* `text-ink-muted`, not `text-ink-faint`: this line names the ceiling the
