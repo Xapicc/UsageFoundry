@@ -1,4 +1,6 @@
 import { strict as assert } from "node:assert";
+import fs from "node:fs";
+import path from "node:path";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Card, CardTitle } from "./Card";
@@ -8,7 +10,7 @@ import { Switch } from "./Field";
 import { StatusMark } from "../StatusMark";
 
 /**
- * One rule, and it is the whole reason this component is allowed to exist:
+ * Two rules. The first is the whole reason this component is allowed to exist:
  * **nothing the ascii skin draws may reach the accessibility tree.**
  *
  * A card's frame is 1,600 characters. A screen reader that reaches one reads
@@ -22,6 +24,17 @@ import { StatusMark } from "../StatusMark";
  * shape and once as characters, with `globals.css` turning one off. Both are
  * in the DOM at once on every page, under both skins, so both have to be
  * hidden — the CSS that hides one of them is not what keeps it quiet.
+ *
+ * The second rule is one file over and is why it is pinned here rather than
+ * left to the comments on both ends of it: `globals.css` corrects this frame's
+ * inset for a host that still carries the border `uf-unboxed` only paints out,
+ * and it does that through a selector — `.uf-unboxed > .uf-ascii-frame` — whose
+ * two halves are written in two other files. Rename either class, or stop
+ * rendering the frame as the host's own child, and the rule matches nothing:
+ * no throw, no type error, the page renders, and every framed box in the app
+ * quietly goes back to drawing its edge a pixel inside itself. That is the
+ * defect `docs/verification.md` records shipping app-wide twice already, each
+ * time caught only by reading device pixels off a screenshot by hand.
  */
 
 /**
@@ -65,6 +78,58 @@ function endOfElement(markup: string, start: number): number {
   }
   throw new Error(`unbalanced markup from index ${start}`);
 }
+
+/** The repository root, found the way `deployment.test.ts` finds it. */
+function repoRoot(): string {
+  let dir = __dirname;
+  while (!fs.existsSync(path.join(dir, "package.json"))) {
+    const parent = path.dirname(dir);
+    assert.notEqual(parent, dir, `no package.json above ${__dirname}`);
+    dir = parent;
+  }
+  return dir;
+}
+
+/** The first two element openings in a fragment: the root, then its first child. */
+function rootAndFirstChild(markup: string): [string, string] {
+  const tags = markup.match(/<[a-z][^>]*>/g);
+  assert.ok(tags !== null && tags.length >= 2, "expected a root with a child element");
+  return [tags[0], tags[1]];
+}
+
+function classesOn(tag: string): string[] {
+  const attribute = /class="([^"]*)"/.exec(tag);
+  return attribute === null ? [] : attribute[1].split(/\s+/);
+}
+
+test("the skin's border correction still has the two ends it is written between", () => {
+  // Read out of the stylesheet rather than spelled again here, so the test
+  // cannot pass against a selector that has been edited or deleted — the whole
+  // failure being guarded is the two halves drifting apart.
+  const css = fs.readFileSync(path.join(repoRoot(), "src/app/globals.css"), "utf8");
+  const rule = /:root\[data-skin="ascii"\]\s+\.([\w-]+)\s*>\s*\.([\w-]+)\s*\{\s*inset:/.exec(css);
+  assert.ok(
+    rule !== null,
+    "globals.css no longer carries an `inset` rule for a framed host's own border",
+  );
+  const [, hostClass, frameClass] = rule;
+
+  const [root, firstChild] = rootAndFirstChild(
+    renderToStaticMarkup(
+      <Card>
+        <CardTitle>Current 5-hour window</CardTitle>
+      </Card>,
+    ),
+  );
+  assert.ok(
+    classesOn(root).includes(hostClass),
+    `a card no longer says .${hostClass}, so the correction stops applying to it`,
+  );
+  assert.ok(
+    classesOn(firstChild).includes(frameClass),
+    `the frame is no longer the card's own .${frameClass} child, which is all the rule selects`,
+  );
+});
 
 test("a card's frame never reaches the accessibility tree", () => {
   const markup = renderToStaticMarkup(
