@@ -508,6 +508,42 @@ is `docs/agent/testing.md`; interface defects and their classes are
   2026-09-07**, Chromium at 1280px, production build; `smoke-pages` drew
   `/settings` and `/tasks` clean at 390 and 1280.
 
+- **Task comments end to end, in-process, 2026-09-11**: the real route
+  handlers and the real MCP route compiled with `tsc` to a scratch `outDir`
+  and required directly, tokens from `mintCapability`/`mintRunCapability`
+  against a seeded `runs` row and a claimed task, **31/31 assertions**.
+  `comment_on_task` is published to the run subject (4 tools, not 3) and to
+  the chat subject and refused to a block in its own sentence naming
+  `list_tasks`; an operator's note written through `POST
+  /api/tasks/[id]/comments` is recorded as `operator` with a null
+  `authorRunId` and its body trimmed; a body carrying `author` is a 400
+  naming the field; a thread on an id that is not there is a 404 rather than
+  an empty list; a note written through the run's tool is attributed to the
+  token's run id; the thread reads back oldest first with `total` beside it;
+  `updated_at`, `status` and `claimed_by_run_id` are unmoved after both
+  writes; `commentCount` is 2 on `GET /api/tasks/[id]` **and** on the board
+  row from `GET /api/tasks`; `list_my_tasks` hands the run both notes whole
+  under `held` with `commentsTotal`, and `openInFolder` carries no thread;
+  `complete_task` is still refused for a task the run does not hold while
+  `comment_on_task` on that same task is allowed, which is the stated trade;
+  and `DELETE /api/tasks/[id]` leaves zero rows in `task_comments`, which is
+  the cascade proved through the real route rather than through a `PRAGMA`.
+  Caveat: this is the server half only. Nothing here opened a browser — the
+  board's own rendering of a count or a thread is a later run's work — and
+  no `claude` child was spawned, so what a model does when handed the tool
+  description is unmeasured.
+
+- **`npm run build` with the comments route, 2026-09-11**: `env -u
+  __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` exit 0 twice,
+  `.next/BUILD_ID` and `.next/standalone` both written on the worktree
+  mount; `/api/tasks/[id]/comments` is listed as a dynamic route. Ahead of
+  it, `NODE_ENV=development npm ci --include=dev` exit 0, `npm run
+  typecheck` exit 0, `npm test` 2654/2654. `npm run smoke-pages` then served
+  `.next/standalone/server.js` — the artifact the container ships, not the
+  `next start` fallback — and reported 44/44 page loads clean, 0 of 22 pages
+  failing at either width. It asserts about *load* only and this change adds
+  no page, so what it rules out is a route change having broken one.
+
 ### Workflows and schedules
 
 - **Workflows end to end, live dev server, stub CLI:** save refuses each bad
@@ -1084,6 +1120,28 @@ is `docs/agent/testing.md`; interface defects and their classes are
   `Table stack` turns each run into a labelled block.
 
 ## Not yet verified by hand
+
+- **Nothing has watched a real `claude` child call `comment_on_task`.** Every
+  assertion about this feature is against the route handlers in-process; what
+  a model does when handed the tool description — whether it reads the
+  operator's note out of `list_my_tasks` and acts on it, and whether it
+  reaches for `comment_on_task` instead of widening its own diff — is
+  unmeasured, and the descriptions are the only thing standing between the
+  two. Settling it: `docker compose up --build`, switch *Let runs use the
+  taskboard* on, start a run from a task, write a note on that task from
+  `/tasks/<id>` mid-run, and read the next cycle's transcript for whether the
+  note reached the model and what it did with it.
+
+- **The `MAX_RUN_TASKS × MAX_TOOL_TASK_COMMENTS` ceiling on a
+  `list_my_tasks` payload has never been reached.** Bodies are not clipped in
+  a tool result, deliberately — a work cycle has no `get_task` — so a run
+  holding twenty tasks each carrying ten notes at `MAX_TASK_COMMENT` is a
+  reply nothing bounds below two megabytes. Nothing in this app produces that
+  shape (a run holds one task in practice) and no measurement says what a
+  cycle pays for a realistic one. Settling it: seed a run holding three tasks
+  with ten notes each, call `tools/call list_my_tasks` through the in-process
+  harness, and measure the reply's bytes against the same call with no
+  threads.
 
 Everything below typechecks and builds, and some of it is unit tested, but none
 of it has been exercised the way its entry says — against a real CLI, a real

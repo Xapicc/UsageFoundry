@@ -34,17 +34,44 @@ Only you can drop a task, delete one, or re-open a closed one. A re-open clears
 the record of which run had claimed and completed it, because a task that is
 open while naming the run that finished it is a row contradicting itself.
 
+## Comments
+
+A task carries a thread of notes. You write one, the orchestrator chat can write
+one, and a run working can write one — and a run holding a task reads what you
+wrote on it, which is the point: it is the way to say something to an agent
+already in flight without editing the brief it was given.
+
+Three things are worth knowing before you use it.
+
+**Notes are permanent.** There is no edit and no delete. A note goes away only
+when its task does. A thread three parties write to is a record of what was said,
+and a note a run has already read and acted on is not something that should be
+able to change underneath it — so a mistaken note stays, and you answer it with
+the next one.
+
+**A note is attributed and the attribution is not a claim.** It says who wrote
+it, and for a run it says which run, taken from that run's own credential rather
+than from anything the agent said. An agent cannot write a note as you.
+
+**A note moves nothing.** It does not close, claim, drop or re-prioritise a task,
+and it deliberately does not count as the task being touched — the board sorts on
+when a task last *moved*, and a row jumping to the top because somebody added a
+sentence would be the board telling you something happened to the work.
+
+A workflow block cannot write one. It runs unattended, and a permanent note from
+something nobody is watching is the same problem as a backlog from one.
+
 ## Who else can reach it
 
 Three kinds of agent, each with a different half of the board.
 
-**The orchestrator chat** reads the board, files tasks, and can name a task on a
-run it proposes to you. It cannot close anything.
+**The orchestrator chat** reads the board, files tasks, writes notes on them,
+and can name a task on a run it proposes to you. It cannot close anything.
 
 **A workflow block** reads the board and can name a task on a run it emits. It
-cannot file one: a block runs unattended, and a backlog written by something
-nobody is watching is one you meet already full of an agent's own idea of the
-work.
+cannot file one and cannot write a note: a block runs unattended, and anything
+permanent written by something nobody is watching is one you meet already full of
+an agent's own idea of the work.
 
 **A work cycle** — the agent doing the work — is off by default. Switch on
 *Let runs use the taskboard* in Settings and a run can:
@@ -52,7 +79,9 @@ work.
 - list the task it was started for and what else is open in the folder it is
   working in;
 - mark **that** task complete, and only that one;
-- file a new task for something it found and should not fix itself.
+- file a new task for something it found and should not fix itself;
+- write a note on a task, including one merely open in the folder it is working
+  in — and read the notes you have written on the task it holds.
 
 It cannot complete a task it was not given, start anything, approve anything,
 touch another run's work, or see the rest of your board. The refusal is enforced
