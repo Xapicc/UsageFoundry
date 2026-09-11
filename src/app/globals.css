@@ -597,6 +597,17 @@
 :root[data-skin="ascii"] .uf-badge::before { content: "["; }
 :root[data-skin="ascii"] .uf-badge::after  { content: "]"; }
 
+/* A mark inside a badge (the branches page's `Mark`) has to go inline with it.
+   Preflight makes every `svg` `display: block`, which is harmless in a flex
+   chip, but a block inside the `inline` badge above splits it into anonymous
+   boxes — `[` / mark / `merged]` on three lines at every column width, which
+   is why widening the State column's `min-w` never touched it. `1ch` puts back
+   the gap `inline` dropped, as one cell of the mono stack. */
+:root[data-skin="ascii"] .uf-badge > svg {
+  display: inline;
+  margin-inline-end: 1ch;
+}
+
 /* `[ Label ]`. The brackets are the button's own flex items, so the `gap` goes
    to zero and the spaces inside the strings do the spacing — `white-space` is
    what keeps them, since generated content is collapsed like any other text.

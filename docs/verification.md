@@ -7468,6 +7468,24 @@ through before trusting this unattended:
     on one line at every width from 780px to 2128px; `text-balance` stays as
     a fallback for a count long enough to overflow even that (measured
     "9999 uncommitted in the checkout" still fits at 240px).
+  - **2026-09-11, class D, the same cell again and a different cause.** Under
+    the ascii skin every badge on `/branches` carrying a `Mark` — the State
+    column's and the merge queue's, 61 of 61 on the live page — broke over
+    three lines, `[` / mark / `merged]`. The skin turns `.uf-badge` from
+    `inline-flex` to `inline` (`src/app/globals.css`), and Tailwind's
+    preflight makes every `svg` `display: block`: harmless as a flex item,
+    but a block inside an inline splits it into anonymous boxes, so the break
+    held at every column width. That is why neither fix above touched it, and
+    why the headless render behind them never showed it — it drew the default
+    skin. Reported by the operator with a screenshot after `1cd7966`;
+    confirmed on the running container by setting `data-skin="ascii"` on the
+    live page (every such badge 44–45px tall, its `svg` computing to
+    `block`). Fixed with one rule beside the badge's own, `.uf-badge > svg {
+    display: inline; margin-inline-end: 1ch }`, the margin standing in for
+    the gap `inline` dropped. Measured with that rule injected into the same
+    page: 0 of 61 over one line, no sideways scroll; `next build` emits it.
+    Class D rather than B because the markup is identical in both skins —
+    only the cascade, preflight against the skin block, decides it.
 
   **And this is not "the interface is now checked".** Even with the pass above
   written down and the smoke pass `proposals/UIChecks/09-recommendation.md`
