@@ -79,12 +79,20 @@ export function AsciiFrame({ tone = "faint" }: { tone?: AsciiFrameTone }) {
       {/* The side columns are taken out of flow inside this one, so the
           frame's height is the parent's and never 400 rows of `│`. `break-all`
           is what puts one glyph on each line: the box is exactly one character
-          wide, so every break lands between two of them. */}
+          wide, so every break lands between two of them.
+
+          `1em` and not `1ch`, which is the width this shipped at and was wrong
+          in a way only a rendered page shows. `ch` is the advance of `0` — an
+          ASCII glyph, so half an em on the fallback face that answers for
+          U+2500–257F here (docs/agent/conventions.md's character-art bullet).
+          A `│` is a full em with its stroke down the middle, so a box half that
+          wide clipped the left column's stroke off entirely and left the right
+          column's standing 7px inside the corners it was supposed to join. */}
       <span className="relative min-h-0 flex-1">
-        <span className="absolute inset-y-0 left-0 w-[1ch] overflow-hidden break-all">
+        <span className="absolute inset-y-0 left-0 w-[1em] overflow-hidden break-all">
           {V_FILL}
         </span>
-        <span className="absolute inset-y-0 right-0 w-[1ch] overflow-hidden break-all">
+        <span className="absolute inset-y-0 right-0 w-[1em] overflow-hidden break-all">
           {V_FILL}
         </span>
       </span>
@@ -93,6 +101,52 @@ export function AsciiFrame({ tone = "faint" }: { tone?: AsciiFrameTone }) {
         <span className="min-w-0 flex-1 overflow-hidden">{H_FILL}</span>
         <span>┘</span>
       </span>
+    </span>
+  );
+}
+
+/**
+ * One edge of a surface rather than a box around it, for the two separators the
+ * shell draws: the source list's right-hand edge and the toolbar's underline.
+ *
+ * It is here and not in a file of its own because it is the same decision as
+ * `AsciiFrame` twice over — the same two fills, the same tone ramp, the same
+ * `aria-hidden`, the same out-of-flow-so-nothing-reflows rule — and a second
+ * copy of them somewhere else is how two frames come to disagree.
+ *
+ * The half-em offset is the whole of what is different. A box-drawing glyph's
+ * stroke runs down the *middle* of its em box, so a 1em box sitting flush
+ * against the host's edge would draw its line half a character inside the
+ * boundary it is replacing, and the toolbar's underline would float above the
+ * pane instead of dividing it. Pulled out by half, the stroke lands exactly
+ * where the 1px border was. The half that hangs over the neighbour is the
+ * glyph's empty side, so nothing is drawn there.
+ */
+export function AsciiEdge({
+  side,
+  tone = "faint",
+}: {
+  side: "right" | "bottom";
+  tone?: AsciiFrameTone;
+}) {
+  const common = `uf-ascii pointer-events-none absolute select-none overflow-hidden text-sm leading-none ${TONE[tone]}`;
+
+  // `display` is left to globals.css for `AsciiFrame`'s reason — and an
+  // absolutely positioned box computes its `inline` to `block` anyway, so the
+  // one declaration there covers both of these without a modifier class.
+  if (side === "bottom") {
+    return (
+      <span aria-hidden="true" className={`${common} inset-x-0 -bottom-[0.5em] whitespace-nowrap`}>
+        {H_FILL}
+      </span>
+    );
+  }
+  return (
+    <span
+      aria-hidden="true"
+      className={`${common} inset-y-0 -right-[0.5em] w-[1em] break-all`}
+    >
+      {V_FILL}
     </span>
   );
 }
