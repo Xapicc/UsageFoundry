@@ -700,11 +700,11 @@
    the static literals counted beside `--corner-sm`, which a token cannot
    reach.
 
-   The bar is not stretched to the track's width and cannot be: a cell is a
-   character, so a bar is only ever a whole number of them wide, and the count
-   is the component's own (see `Meter`'s SIZE map). A meter under this skin is
-   therefore narrower than its card, which is what a fixed-width reading looks
-   like and not a bug. */
+   The bar takes the track's width to within one cell, and not exactly: a cell
+   is a character, so a bar is only ever a whole number of them wide, and the
+   count is `AsciiBar`'s own — fitted from what a cell measured, because no
+   stylesheet can read a glyph's advance and it is the reader's font that
+   decides it. The remainder is at the right-hand end, under a cell wide. */
 :root[data-skin="ascii"] .uf-meter {
   height: auto;
   overflow: visible;
@@ -718,11 +718,12 @@
 
      Containment stops that propagation: the track's inline size is computed as
      if it were empty, which is the width it would have had anyway, and the bar
-     can no longer be consulted for it. `Meter`'s cell counts are budgeted to
-     fit without this; it is the backstop for a viewport or a minimum font size
-     they were not budgeted against, and it fails the right way round. The bar
-     hangs over the card's edge, which is visible — the alternative is clipping
-     it, which quietly draws a fuller bar than the reading. */
+     can no longer be consulted for it. That is also what makes a *fitted* count
+     safe — `AsciiBar` measures this box and then draws into it, and without the
+     containment the second would move the first. It stays the backstop it was
+     for the one frame before any measurement, and it fails the right way round:
+     the bar hangs over the card's edge, which is visible, where the alternative
+     is clipping it, which quietly draws a fuller bar than the reading. */
   contain: inline-size;
 }
 

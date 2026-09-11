@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AsciiBar, meterCells } from "./AsciiBar";
+import { AsciiBar, fittedCells, meterCells } from "./AsciiBar";
 import { Meter } from "../Meter";
 
 /**
@@ -203,7 +203,11 @@ test("an unknown bar is not tinted by severity in either skin", () => {
   assert.doesNotMatch(html, /text-ok|text-warn|text-danger/);
 });
 
-test("each size draws its own fixed width", () => {
+test("each size draws its own width before it has measured itself", () => {
+  // What the server sends and what the default skin holds. The bar fits itself
+  // to its box after one layout pass, so these are the counts standing in the
+  // frame where nothing has been measured — and the frame a bar may not
+  // overflow in, because it is the one no measurement can save.
   const cells = (size: "compact" | "default" | "hero") => {
     const html = renderToStaticMarkup(
       <Meter label="w" fraction={1} size={size} />,
@@ -213,6 +217,51 @@ test("each size draws its own fixed width", () => {
   assert.equal(cells("compact"), 12);
   assert.equal(cells("default"), 16);
   assert.equal(cells("hero"), 20);
+  // 326px is the narrowest card a meter lands in (Meter's SIZE map has the
+  // arithmetic) and an em is 13px at `text-sm`, so the widest a cell can draw
+  // is 13px. The brackets are counted as cells, which is a further 13px of
+  // slack, because they measured half that.
+  for (const size of ["compact", "default", "hero"] as const) {
+    const drawn = cells(size) ?? 0;
+    assert.ok((drawn + 2) * 13 <= 326, `${size} overflows before it is fitted`);
+  }
+});
+
+/**
+ * The other half of the arithmetic, and the half that decides a width rather
+ * than a reading. It fails the same way `meterCells` does — silently. A count
+ * one too high draws a bar that hangs out of its card, which `contain:
+ * inline-size` keeps from widening the column, so nothing moves and nothing
+ * throws; a count that collapses to zero draws `[]`.
+ */
+test("a fitted count is the count that fits, never the one that rounds", () => {
+  // 300px of room, 13px a cell, 13px of brackets: 22 cells is 286 and 23 is 299
+  // *plus* the brackets, which is over. `Math.round` would take it.
+  assert.equal(fittedCells(300, 13, 13), 22);
+  assert.equal(fittedCells(299, 13, 13), 22);
+  assert.equal(fittedCells(298, 13, 13), 21);
+  // The same box, read by a browser whose face covers the block range at the
+  // monospace advance — the 2026-09-11 handoff's 0.602em. A count budgeted for
+  // the first is 40% short here, which is the report this fitting answers.
+  assert.equal(fittedCells(300, 7.83, 15.66), 36);
+});
+
+test("a box too narrow to say anything keeps a readable bar", () => {
+  // Below eight cells one cell is more than an eighth of the reading. The bar
+  // overhangs instead, which the track's containment makes visible.
+  assert.equal(fittedCells(40, 13, 13), 8);
+  assert.equal(fittedCells(1, 13, 13), 8);
+});
+
+test("a box that was never laid out is not a cell count", () => {
+  // Every meter under the default skin measures zero, and so does one inside a
+  // `display: none` ancestor. Rounding that into a count is a bar drawn to a
+  // width nobody measured; `null` is what leaves the caller's own count up.
+  assert.equal(fittedCells(0, 13, 13), null);
+  assert.equal(fittedCells(300, 0, 13), null);
+  assert.equal(fittedCells(Number.NaN, 13, 13), null);
+  assert.equal(fittedCells(300, Number.NaN, 13), null);
+  assert.equal(fittedCells(300, 13, Number.NaN), null);
 });
 
 test("a meter whose band the head cannot spell draws no band in either skin", () => {

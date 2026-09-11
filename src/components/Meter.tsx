@@ -79,21 +79,27 @@ const SIZE: Record<
     upper: string;
     detail: string;
     /**
-     * The ascii skin's cell count, which is how *that* skin says a meter leads:
-     * it has no track height to step, because a bar there is one row of text.
+     * The ascii skin's cell count **until the bar has measured itself**, which
+     * is the server's render and every meter under the default skin. After one
+     * layout pass `AsciiBar` fits itself to the box it is in, because the width
+     * of a cell is the reader's font and not a constant this app can budget
+     * against — `fittedCells` in `ui/AsciiBar.tsx` has the two measurements that
+     * differ by 40%.
      *
-     * Fixed rather than fitted to the card, because nothing can measure the
-     * card without a layout pass, and a bar that reflowed its own resolution
-     * mid-render would change what it says.
+     * So what this ladder still decides is the *narrow* end, where a meter is
+     * nearly the width of its card either way, and it keeps stepping with the
+     * size for the reason the track height does: under this skin a bar is one
+     * row of text and has no height to step.
      *
-     * So the count is budgeted against **14px a cell**, which is not the
-     * monospace advance: the block glyphs come from a fallback face at one per
-     * em, and `docs/agent/conventions.md`'s character-art bullet has the
-     * measurement and why the failure is silent. The narrowest card a meter
-     * lands in is 326px — a 390px viewport, less the page's `px-4` and the
-     * card's `max-md:p-4` — and `(cells + 2) * 14 <= 326` allows 21. The ladder
-     * stops short of that so a browser with a larger minimum font size has
-     * somewhere to go.
+     * Budgeted against **one em a cell**, which is not the monospace advance:
+     * the block glyphs come from a fallback face at one glyph per em where the
+     * mono face does not answer for the range, and
+     * `docs/agent/conventions.md`'s character-art bullet has the measurement and
+     * why the failure is silent. An em here is `text-sm`, 13px. The narrowest
+     * card a meter lands in is 326px — a 390px viewport, less the page's `px-4`
+     * and the card's `max-md:p-4` — and `(cells + 2) * 13 <= 326` allows 23.
+     * The ladder stops short of that so a browser with a larger minimum font
+     * size has somewhere to go before the one unmeasured frame overflows.
      */
     cells: number;
   }
