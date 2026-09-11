@@ -79,6 +79,13 @@ export function AsciiFrame({ tone = "faint" }: { tone?: AsciiFrameTone }) {
       // lands where the 1px border was. The half that then hangs outside is the
       // glyph's empty side, so nothing is drawn there and nothing is clipped:
       // `AsciiEdge` below is the same correction for a single edge.
+      //
+      // Half is the whole correction only on a host with no border of its own.
+      // This is positioned against the host's *padding* box, so a host wearing
+      // the 1px `uf-unboxed` merely paints out needs half an em **and** that
+      // pixel — see the `.uf-unboxed > .uf-ascii-frame` rule in globals.css,
+      // which is keyed on the class that states the border is still there. The
+      // `uf-ascii-frame` class below is that rule's only hook.
       className={`uf-ascii uf-ascii-frame pointer-events-none absolute -inset-[0.5em] select-none flex-col overflow-hidden text-sm leading-none ${TONE[tone]}`}
     >
       <span className="flex">

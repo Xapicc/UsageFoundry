@@ -557,6 +557,26 @@
 :root[data-skin="ascii"] .uf-framed { position: relative; }
 :root[data-skin="ascii"] .uf-unboxed { border-color: transparent; }
 
+/* The 1px the rule above keeps is still 1px of *layout*, and an absolutely
+   positioned frame is placed against its host's **padding** box — so the
+   `-0.5em` in `AsciiFrame` lands the stroke a pixel inside the edge it is
+   replacing whenever the host wears a border, while the same frame on a
+   border-less host (`ListGroup`'s wrapper) lands it on the edge. One frame,
+   two answers, and which you get depends on a class the frame cannot see.
+
+   Measured on `/` at 1920x963, DPR 2, ascii, light: a card whose border box
+   ended at x=1900.00 inked its `│` on device columns 3797-3798 — centre
+   css 1898.73, a pixel further in than a group box ending at x=1883.00, which
+   inked at 3765-3766, centre css 1882.73. Device column 3799 was still card
+   fill: the light halo the `-0.5em` was introduced to remove, down to its last
+   pixel but not gone. Backing the border out of the inset closes both.
+
+   Keyed on `uf-unboxed` because that class *is* the statement "this host still
+   has a border the skin painted out" — and `1px` rather than the host's own
+   width because the rule above is what makes a literal safe here: a box keeps
+   its 1px under this skin, so there is no second figure to read. */
+:root[data-skin="ascii"] .uf-unboxed > .uf-ascii-frame { inset: calc(-0.5em - 1px); }
+
 /* `[ok]`, not a pill. The brackets are generated content rather than two more
    spans because a span would be a flex item and would take the badge's `gap`
    with it; punctuation is also the one kind of decorative character a screen
@@ -605,8 +625,20 @@
 
 /* A grid rather than a list of rows: the column separator is what the default
    skin deliberately does not draw, and it is the mark that makes a table read
-   as one under this skin. `double` under the head is `═` — two lines with a
-   gap, which is what the character is — against `─` between the rows.
+   as one under this skin.
+
+   The head rule is the component's own `border-b` and nothing else. This skin
+   used to double it into `═` — `border-bottom: 3px double` — and a CSS
+   `double` border at that width is exactly 1px of ink, 1px of gap, 1px of ink,
+   which is the character but reads on screen as two rules under the heading
+   row rather than one mark. Reviewed against the running app 2026-09-11 and
+   reversed; `─` between the rows carries the grid on its own. Do not restore
+   it — a head that needs more weight takes a colour, not a second line.
+
+   A sticky head draws 2px of ink here rather than 1px, because the inset
+   shadow the call sites add lands immediately above the border instead of on
+   it. That is what the default skin does too, so it is one rule drawn thicker
+   and not this skin's to override.
 
    Below the breakpoint a `stack` table is one block per record and has no
    columns left to separate, so the vertical rules come off. It is keyed on the
@@ -616,10 +648,6 @@
 :root[data-skin="ascii"] .uf-table th,
 :root[data-skin="ascii"] .uf-table td { border-right: 1px solid var(--border); }
 :root[data-skin="ascii"] .uf-table tr > :last-child { border-right-width: 0; }
-:root[data-skin="ascii"] .uf-table th {
-  border-bottom-style: double;
-  border-bottom-width: 3px;
-}
 @media (width < 48rem) {
   :root[data-skin="ascii"] .uf-table[role="table"] th,
   :root[data-skin="ascii"] .uf-table[role="table"] td { border-right-width: 0; }
