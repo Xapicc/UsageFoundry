@@ -60,7 +60,15 @@ export function Table({
     <StackedContext.Provider value={stack}>
       <table
         role={stack ? "table" : undefined}
-        className={`w-full border-collapse text-sm${stack ? " max-md:block" : ""}`}
+        // `uf-table` is what the ascii skin adds the column separators and the
+        // doubled rule under the head by — the two marks a CSS border can draw
+        // that this table does not, `│` and `═`. It is on the `<table>` and
+        // nothing goes inside the grid, which is not tidiness: a `<tr>` may
+        // hold cells and nothing else, so character art between the rows would
+        // have to be markup no parser accepts. The separators come off again
+        // below the breakpoint where a `stack` table is one block per record,
+        // and that rule is keyed on the `role` already stated here.
+        className={`uf-table w-full border-collapse text-sm${stack ? " max-md:block" : ""}`}
       >
         {children}
       </table>

@@ -479,6 +479,10 @@
 .uf-ascii { display: none; }
 :root[data-skin="ascii"] .uf-ascii { display: inline; }
 :root[data-skin="ascii"] .uf-ascii-frame { display: flex; }
+/* The other half of the pair: the mark the character replaces. Both are drawn
+   in the markup and one of them is always off, which is what lets a component
+   answer a question it is never told the answer to. */
+:root[data-skin="ascii"] .uf-plain { display: none; }
 
 /* A surface that wears a frame. `position` is granted only under the skin
    because it is not free: `relative` on every card in the app would move
@@ -607,7 +611,6 @@
   border-color: transparent;
   background: none;
 }
-:root[data-skin="ascii"] .uf-switch-knob { display: none; }
 
 @layer components {
   /* The rail centres its glyphs and its labels stop being drawn — but they

@@ -393,17 +393,25 @@ export function LimitField({
  * which is the one deliberate divergence. `--bg-inset` is a very light grey in
  * the light scheme — a white knob on it is a white knob on white, and the state
  * this control exists to report would be unreadable at rest.
+ *
+ * `mark` is the third statement of the same state, for the ascii skin, and it
+ * is here rather than in a map of its own for the reason the other two are: it
+ * says the same thing they do. Three characters wide in both entries, so the
+ * control cannot change size when it is pressed — which is the property the
+ * pill was already built around.
  */
-const SWITCH: Record<"on" | "off", { track: string; knob: string }> = {
+const SWITCH: Record<"on" | "off", { track: string; knob: string; mark: string }> = {
   on: {
     track:
       "border-transparent bg-tint enabled:hover:brightness-110 enabled:active:brightness-95",
     knob: "left-[18px] bg-white",
+    mark: "[x]",
   },
   off: {
     track:
       "border-line-strong bg-inset enabled:hover:border-ink-faint enabled:active:brightness-95",
     knob: "left-0.5 bg-ink-faint",
+    mark: "[ ]",
   },
 };
 
@@ -450,7 +458,7 @@ export function Switch({
       disabled={off}
       onClick={() => onChange(!checked)}
       className={
-        "ui-transition relative h-[22px] w-[38px] shrink-0 cursor-pointer rounded-full border " +
+        "uf-switch ui-transition relative h-[22px] w-[38px] shrink-0 cursor-pointer rounded-full border " +
         "disabled:cursor-not-allowed disabled:opacity-50 " +
         // The pointer target, not the box: inset vertically past the pill to
         // --control-h and no wider, so a row of controls keeps its spacing.
@@ -469,8 +477,18 @@ export function Switch({
       {/* `left`, not a transform: the knob is the one thing in the kit that is
           *meant* to travel, and the distance it travels is the state. */}
       <span
-        className={`absolute top-0.5 h-[18px] w-[18px] rounded-full shadow-e1 transition-all duration-[var(--motion-fast)] ease-standard ${state.knob}`}
+        className={`uf-plain absolute top-0.5 h-[18px] w-[18px] rounded-full shadow-e1 transition-all duration-[var(--motion-fast)] ease-standard ${state.knob}`}
       />
+      {/* `aria-hidden`, and it has to be: `aria-checked` is what reports this
+          state, and a `[x]` inside the button would otherwise become the
+          accessible name of every switch that is named by a `ListRow` label
+          instead of by a prop. */}
+      <span
+        aria-hidden="true"
+        className="uf-ascii absolute inset-0 leading-[20px] text-ink"
+      >
+        {state.mark}
+      </span>
     </button>
   );
 }

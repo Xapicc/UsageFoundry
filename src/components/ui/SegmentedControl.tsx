@@ -103,7 +103,7 @@ export function SegmentedControl<T extends string>({
       // that cannot wrap answers that by pushing the pane sideways, which is the
       // scroll this whole breakpoint exists to remove. It changes nothing above
       // the line, where no group here comes near the width.
-      className={`inline-flex max-md:flex-wrap items-center gap-0.5 rounded-sm border border-line bg-inset p-0.5 ${className}`}
+      className={`uf-segment-track inline-flex max-md:flex-wrap items-center gap-0.5 rounded-sm border border-line bg-inset p-0.5 ${className}`}
     >
       {options.map((option, index) => {
         const selected = option.value === value;
@@ -143,13 +143,21 @@ export function SegmentedControl<T extends string>({
               // item there that shrinks — truncates that much sooner. That
               // title is derived from the route and the page under it carries
               // its own <h1>, so what gives way is a duplicate.
-              "ui-transition inline-flex min-h-[var(--control-h)] max-md:min-h-11 max-md:min-w-11 cursor-pointer " +
+              // `uf-segment` brackets the segment under the ascii skin, and it
+              // is on the button rather than in either half of SEGMENT because
+              // that is the whole point: both states are bracketed, so
+              // selection still changes no width and no neighbour moves. The
+              // padding the rule gives back is what the two characters cost,
+              // for the strip on the toolbar that has five of these at 390px.
+              "uf-segment ui-transition inline-flex min-h-[var(--control-h)] max-md:min-h-11 max-md:min-w-11 cursor-pointer " +
               "items-center justify-center gap-1.5 rounded-[4px] border px-2.5 text-sm " +
               `${SEGMENT[selected ? "selected" : "unselected"]}`
             }
           >
             {option.icon && <Icon name={option.icon} />}
-            <span className={LABEL_VISIBILITY[labels]}>{option.label}</span>
+            <span className={`uf-segment-label ${LABEL_VISIBILITY[labels]}`}>
+              {option.label}
+            </span>
           </button>
         );
       })}

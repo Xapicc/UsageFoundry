@@ -2,6 +2,8 @@
 
 import { useEffect, useId, useRef, type CSSProperties, type ReactNode } from "react";
 import { Button, ButtonRow, type ButtonVariant } from "@/components/ui/Button";
+// Relative for the reason written beside `Card`'s import of the same file.
+import { AsciiFrame } from "./AsciiFrame";
 
 /**
  * A `<dialog>` is in the top layer, so it is outside `AppShell`'s box and owes
@@ -127,7 +129,11 @@ export function Sheet({
         // The footer is at the end of a scroll region capped at the visible
         // height, so on the long sheets where reach matters it is already at
         // the bottom of the screen.
-        className="sheet-enter mx-auto w-[min(34rem,calc(100%-2rem))] rounded-b-lg border border-t-0 border-line bg-surface shadow-e3 max-md:w-full"
+        // `uf-framed` on the panel and not on the `<dialog>`: the skin's rules
+        // reach `display`, and a `display` on the element would outrank the
+        // UA's `dialog:not([open]) { display: none }` and leave a closed sheet
+        // lying across the page — the same reason nothing else here sets one.
+        className="uf-framed sheet-enter mx-auto w-[min(34rem,calc(100%-2rem))] rounded-b-lg border border-t-0 border-line bg-surface shadow-e3 max-md:w-full"
         // The panel scrolls, not the viewport-sized dialog around it: a long
         // sheet has to stay reachable without the page behind it moving. That
         // is also what keeps Cancel and the default action reachable with a
@@ -138,7 +144,13 @@ export function Sheet({
         {/* `max-md:p-4` for `Card`'s reason, and it is the same 4px: a panel
             that now runs to both window edges spends its padding out of a
             390px window rather than out of a 34rem one. */}
-        <div className="p-5 max-md:p-4">
+        {/* The frame hangs off the content box rather than the panel, because
+            the panel is the scroll container: an `inset-0` edge inside one is
+            sized to what is visible and would sit across a long sheet's text
+            as it scrolled. This box is in normal flow at the full content
+            height, so the frame is the sheet's and travels with it. */}
+        <div className="uf-framed p-5 max-md:p-4">
+          <AsciiFrame />
           <h2 id={titleId} className="text-sm font-semibold text-ink">
             {title}
           </h2>

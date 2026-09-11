@@ -106,7 +106,14 @@ export function Disclosure({
     // fold is left exactly where the reader put it however often the page
     // polls behind it.
     <details
-      className={className}
+      // `uf-disclosure` is how the ascii skin gets `[+]`/`[-]`, and it does it
+      // through `::marker` rather than by hiding the triangle and drawing a
+      // glyph beside the word. That keeps `display: list-item`, which is what
+      // makes this a native disclosure at all and what the hit target above is
+      // written around — and an engine that will not take `content` on a
+      // marker keeps its own triangle, which is the right thing to be left
+      // with. Still no ARIA, under either skin.
+      className={`uf-disclosure ${className}`}
       open={open ?? defaultOpen}
       onToggle={
         onToggle ? (event) => onToggle(event.currentTarget.open) : undefined

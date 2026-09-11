@@ -90,6 +90,33 @@ const GLYPH: Record<RunDTO["status"], ReactNode> = {
 };
 
 /**
+ * The same nine marks as characters, for the skin that has no vector in it.
+ *
+ * Each one echoes the shape above it rather than starting a vocabulary of its
+ * own — filled `*` for the run that is spending, hollow `o` for the one that is
+ * only alive, `=` for the pause bars, `!` for the bang that asks the reader for
+ * something — because the shapes were chosen to be separable at a glance and
+ * that is the property the port has to keep. Nine distinct characters, checked
+ * against each other and not only against the SVG each replaces: `+` and `x`
+ * are the two endings and read as opposites, `#` is the stop square, and
+ * `blocked`'s `/` is the slash through the circle it is drawn as.
+ *
+ * One advance width each, which under this skin's monospace is what keeps a
+ * column of rows from stepping sideways by status.
+ */
+const ASCII: Record<RunDTO["status"], string> = {
+  running: "*",
+  waiting: ">",
+  queued: "o",
+  paused: "=",
+  completed: "+",
+  "needs-review": "!",
+  stopped: "#",
+  blocked: "/",
+  failed: "x",
+};
+
+/**
  * The glyph's own colour, as `currentColor` for the svg inside it.
  *
  * Only the text half of `Badge`'s tone map, and only because the mark leads the
@@ -107,12 +134,21 @@ const TONE: Record<BadgeTone, string> = {
 
 export function StatusMark({ status }: { status: RunDTO["status"] }) {
   return (
-    // aria-hidden: the status word is on the same row, so announcing the shape
-    // would read the state twice.
+    // aria-hidden on both: the status word is on the same row, so announcing
+    // the shape would read the state twice — and that is what makes the pair
+    // safe to leave in the markup together. Exactly one of them is ever drawn,
+    // and neither was ever in the accessibility tree to begin with.
     <span className={`inline-flex shrink-0 ${TONE[STATUS_TONE[status]]}`}>
-      <svg viewBox="0 0 10 10" className="h-2.5 w-2.5 shrink-0" aria-hidden="true">
+      <svg
+        viewBox="0 0 10 10"
+        className="uf-plain h-2.5 w-2.5 shrink-0"
+        aria-hidden="true"
+      >
         {GLYPH[status]}
       </svg>
+      <span className="uf-ascii" aria-hidden="true">
+        {ASCII[status]}
+      </span>
     </span>
   );
 }

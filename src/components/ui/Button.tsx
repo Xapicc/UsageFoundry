@@ -36,9 +36,18 @@ export type ButtonSize = "default" | "compact";
  * text field sits in — the two read as the same object at a glance, and one of
  * them is clickable.
  */
+/**
+ * Two of the four carry a hook for the ascii skin, and only two, because only
+ * two state a label colour that was chosen to sit on a fill: `--tint-fg` is
+ * whatever the OS says is legible on the accent, and `text-white` is white on
+ * red. The skin takes both fills away, and either of those on a card is a
+ * button nobody can read. `secondary` and `ghost` already name a text colour
+ * that works unfilled, so a hook on them would be a selector with nothing
+ * behind it. The rule itself is in globals.css — this file names no skin.
+ */
 const VARIANT: Record<ButtonVariant, string> = {
   primary:
-    "border-transparent bg-tint text-tint-fg shadow-e1 focus-visible:outline-ring " +
+    "uf-button-primary border-transparent bg-tint text-tint-fg shadow-e1 focus-visible:outline-ring " +
     "not-disabled:hover:brightness-110 not-disabled:active:brightness-95 not-disabled:active:shadow-press",
   secondary:
     "border-line bg-bezel text-ink shadow-e1 focus-visible:outline-ring " +
@@ -47,7 +56,7 @@ const VARIANT: Record<ButtonVariant, string> = {
   // focus: an accent focus ring on a red button would be the app's "go ahead"
   // colour drawn around the one control that cannot be undone.
   danger:
-    "border-transparent bg-danger text-white shadow-e1 focus-visible:outline-ring-danger " +
+    "uf-button-danger border-transparent bg-danger text-white shadow-e1 focus-visible:outline-ring-danger " +
     "not-disabled:hover:brightness-110 not-disabled:active:brightness-95 not-disabled:active:shadow-press",
   ghost:
     "border-transparent bg-transparent text-ink-muted focus-visible:outline-ring " +
@@ -115,7 +124,12 @@ export function Button({
       disabled={disabled || busy}
       aria-busy={busy || undefined}
       className={
-        "ui-transition relative inline-flex cursor-pointer items-center " +
+        // `uf-button` is where the ascii skin puts the `[ ` and ` ]` and takes
+        // the fill away. Nothing about the box moves with it: the two `SIZE`
+        // heights, the padding, the focus outline and `disabled` are all
+        // untouched, because a skin that could reach a hit target is a skin
+        // that can break a page nobody opened.
+        "uf-button ui-transition relative inline-flex cursor-pointer items-center " +
         "justify-center gap-2 rounded-sm border text-sm font-medium " +
         "disabled:cursor-not-allowed " +
         // Busy is disabled, but it must not *look* disabled — a dimmed button
@@ -168,7 +182,7 @@ export function ButtonLink({
       {...rest}
       href={href}
       className={
-        "ui-transition relative inline-flex cursor-pointer items-center " +
+        "uf-button ui-transition relative inline-flex cursor-pointer items-center " +
         "justify-center gap-2 rounded-sm border text-sm font-medium no-underline " +
         `hover:no-underline ${SIZE[size]} ${VARIANT[variant]} ${className}`
       }

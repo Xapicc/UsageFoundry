@@ -31,7 +31,11 @@ export function Badge({
 }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border bg-inset px-2 py-0.5 text-2xs font-semibold uppercase tracking-wide ${TONE[tone]}`}
+      // `uf-badge` is the hook the ascii skin's block in globals.css takes the
+      // chip away by, leaving `[ok]` in the tone's own text colour. The tone
+      // map above is untouched and is what still says which: the border half
+      // of each entry simply has nothing to draw once the ring is transparent.
+      className={`uf-badge inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border bg-inset px-2 py-0.5 text-2xs font-semibold uppercase tracking-wide ${TONE[tone]}`}
     >
       {children}
     </span>

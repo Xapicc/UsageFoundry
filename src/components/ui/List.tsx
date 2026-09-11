@@ -2,6 +2,8 @@
 
 import { useId, type ReactNode } from "react";
 import { FieldControlContext } from "@/components/ui/Field";
+// Relative for the reason written beside `Card`'s import of the same file.
+import { AsciiFrame } from "./AsciiFrame";
 
 /**
  * A group's heading, at the one rank a heading over a grouped box is drawn at.
@@ -54,8 +56,17 @@ export function ListGroup({
   return (
     <div className={className}>
       {label && <GroupLabel>{label}</GroupLabel>}
-      <div className="divide-y divide-line rounded-lg border border-line bg-grouped">
-        {children}
+      {/* The frame is a sibling of the divided box rather than a child of it,
+          and the wrapper exists only to hold the two together. `divide-y` is
+          `& > :not(:last-child) { border-bottom-width: 1px }`, so a frame
+          rendered inside would either wear a hairline itself or push one onto
+          the last row — a rule under the final row of a group, which is the
+          one place this component deliberately does not draw one. */}
+      <div className="uf-framed">
+        <AsciiFrame />
+        <div className="uf-framed divide-y divide-line rounded-lg border border-line bg-grouped">
+          {children}
+        </div>
       </div>
       {footnote && (
         <p className="mt-1.5 max-w-[70ch] px-1 text-xs leading-snug text-ink-muted">

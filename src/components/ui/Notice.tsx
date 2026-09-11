@@ -56,7 +56,12 @@ export function Notice({
     <div
       role={live ? "status" : undefined}
       aria-live={live ? "polite" : undefined}
-      className={`mb-4 rounded-sm border border-line border-l-[3px] bg-inset leading-normal text-ink-muted ${
+      // `uf-notice` takes the box and the recess away under the ascii skin and
+      // leaves the tone edge, which is the one mark on this component that is
+      // not decoration — it is what says whether this is a standing note or
+      // the loudest thing in its column, and both tone maps above keep
+      // deciding that unchanged.
+      className={`uf-notice mb-4 rounded-sm border border-line border-l-[3px] bg-inset leading-normal text-ink-muted ${
         quiet ? "px-3.5 py-2 text-xs" : "px-3.5 py-3 text-sm"
       } ${quiet ? TONE_QUIET[tone] : TONE[tone]} [&_strong]:font-semibold [&_strong]:text-ink ${className}`}
     >
