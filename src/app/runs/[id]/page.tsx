@@ -832,7 +832,11 @@ export default function RunDetail({
     } else {
       setMissed(Math.max(0, shown.length - seenLines.current));
     }
-  }, [shown.length, tab, filterKey]);
+    // `liveTools.length` too: the activity rows are pinned to the bottom of the
+    // same scroll container, so a call opening or answering changes how much of
+    // the pane the feed has — and a reader following the tail would otherwise
+    // have the newest line slide behind the bar the moment one appears.
+  }, [shown.length, tab, filterKey, liveTools.length]);
 
   function onScroll() {
     const el = logRef.current;
@@ -1885,14 +1889,6 @@ export default function RunDetail({
 
           {activeTab === "log" && (
             <>
-              {/* Above the background tasks and outside the log's scroll
-                  container, for the reason they are: this is the log's header
-                  rather than a line in it, so Find/Show narrows the feed below
-                  and leaves it alone. First of the two because it is the only
-                  thing on the page that is true *now* — a task panel describes
-                  what was started, this says what has not come back. */}
-              <RunActivity tools={liveTools} active={active} now={nowTick} />
-
               {/* Above the filter and outside the log's scroll container, both
                   deliberately: the tasks are the log's header rather than lines
                   in it, so Find/Show narrows the feed below and leaves this
@@ -1997,24 +1993,57 @@ export default function RunDetail({
                       timestamp={fmtClock(l.ts)}
                     />
                   ))}
+
+                  {/* The last rows of the feed, and the only ones in it that
+                      are not `run_events`: passed beside `shown` rather than
+                      through it, because a filter narrowing the feed must not
+                      be able to hide a call that has not come back. It pins
+                      itself to the pane's bottom edge for the same reason a
+                      scroll position must not either — the component says why
+                      both are load-bearing. */}
+                  <RunActivity
+                    tools={liveTools}
+                    active={active}
+                    now={nowTick}
+                  />
                 </Log>
 
                 {/* The way back. Autoscroll stops the moment the reader scrolls
                     up, which is right — but without this the only way to rejoin
-                    the tail of a long log is to drag to the bottom by hand. */}
+                    the tail of a long log is to drag to the bottom by hand.
+
+                    It floats over the same corner the activity rows pin
+                    themselves to, and the two are shown together exactly when
+                    a call is open and the reader is away from the tail. Later
+                    in the DOM than the pane, so it paints over them rather than
+                    under — losing the way back to the tail behind a bar would
+                    be the worse of the two, and this overlap answers itself:
+                    pressing it is what un-pins those rows and takes the button
+                    away. The rows are packed so that what it can cover is the
+                    right of a command that was already truncating — measured at
+                    390px, where the command is on its own line and the spinner,
+                    the elapsed figure and the tool name are all clear of it.
+
+                    The opaque backing is a wrapper because the ascii skin's
+                    `.uf-button` is unlayered and takes the button's own fill to
+                    `none`, which over a row is text on text. `bg-inset` is the
+                    pane's own colour, so it is invisible except where it clears
+                    the line underneath. */}
                 {!atLiveEdge && shown.length > 0 && (
-                  <Button
-                    variant="secondary"
-                    className="absolute bottom-3 right-4 shadow-e2"
-                    onClick={jumpToLive}
-                  >
-                    Jump to live
-                    {missed > 0 && (
-                      <span className="ml-1.5 tabular-nums text-ink-muted">
-                        {missed} new
-                      </span>
-                    )}
-                  </Button>
+                  <span className="absolute bottom-3 right-4 flex rounded-sm bg-inset">
+                    <Button
+                      variant="secondary"
+                      className="shadow-e2"
+                      onClick={jumpToLive}
+                    >
+                      Jump to live
+                      {missed > 0 && (
+                        <span className="ml-1.5 tabular-nums text-ink-muted">
+                          {missed} new
+                        </span>
+                      )}
+                    </Button>
+                  </span>
                 )}
               </div>
             </>
