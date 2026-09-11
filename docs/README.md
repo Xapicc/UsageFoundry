@@ -41,6 +41,8 @@
   from whom.
 - **[Verification log](verification.md)** — what has been exercised by hand
   against a real CLI, and an explicit list of what has **not**.
+- **[Interface defects](interface-defects.md)** — every interface defect found,
+  and the class of check that could have caught it.
 - **[A fourth ending: `needs-review`](needs-review.md)** — **a design record, not
   a reference.** The feature is implemented and the durable description of it is
   [Runs](runs.md) plus `docs/agent/`; this is the argument behind each decision,

@@ -1,2388 +1,358 @@
-# Verified
+# Verification log
 
 [← Documentation index](README.md)
 
-Built and exercised against real transcripts:
-
-- Cost math cross-checked by hand — `$12.843618` computed independently vs
-  `$12.8436175` from the API, on 54 input / 83,517 output / 12,072,025 cache-read
-  / 471,941 cache-1h tokens.
-- **Claude Fable 5.1 / Mythos 5.1 rates read from the published table, not measured.** On 2026-09-04, `platform.claude.com/docs/en/about-claude/pricing`: $10 input, $12.50 5m write, $20 1h write, **$0.25 cache hit**, $50 output per MTok, with the page's own footnote that "cache hits and refreshes on Claude Fable 5.1 and Claude Mythos 5.1 are priced at 0.025x the base input price. All other models use the standard 0.1x multiplier." That 0.025× is the only figure in the row `pricing.ts` could not already derive, and it is why the multiplier stopped being a module constant. What is **not** verified: no turn from either model has been through this install's meter, so nothing here confirms the transcript writes a model string these prefixes match — the entries are `claude-fable-5-1` and `claude-mythos-5-1`, taken from the API's model IDs, and a transcript that spells one differently would be priced at the Fable 5 rate below it rather than surfacing as unknown, which is the one failure this shape cannot make loud.
-- Dedup verified (99 → 31 records).
-- **Dedup resolution measured across 1,011 transcript files / 40,885 turns**, on
-  2026-08-21: every turn's lines share one `requestId` (0 exceptions), the last
-  line carries the largest `output_tokens` in 27,228 of 27,228 multi-line turns,
-  and `input_tokens`, `cache_read_input_tokens` and `cache_creation` are
-  identical on every line of a turn (0 differ). Corpus output under first-seen
-  29.61 Mtok against 38.80 Mtok under highest-output — understated 15.6% on CLI
-  2.1.226, 60.1% on 2.1.233, 74.4% on 2.1.234, 74.9% on 2.1.238. Worst single
-  turn recorded 4 output tokens against an actual 40,199.
-- Incremental re-scan picks up records appended mid-session.
-- Budget refusal returns `blocked` with 0 iterations and 0 spend.
-- Metric selection: cost ceiling wins when both are set; falls back to tokens
-  when cost is cleared; null when neither is set.
-- Budget guard evaluated against the cost fraction — allowed at an 80% guard,
-  refused at 5% with the window at 11.2%.
-- Unpriced-model guard fallback, 17 assertions against the compiled modules: a
-  window of 90M output tokens from an unknown model still reports `$0` and
-  `fraction = 0` (so the pre-fix guard could never fire) while `guardFraction`
-  reads 45× a $100 ceiling and the guard blocks with `weekly_fraction`. A fully
-  priced window keeps `guardFraction === fraction` exactly, an under-threshold
-  window is still allowed, and a fraction guard with no ceiling still refuses
-  with `no_ceiling` rather than being satisfied by the fallback.
-- Model-ID canonicalisation: `us.anthropic.claude-opus-5-20260101-v1:0`,
-  `anthropic.claude-sonnet-4-5`, and `claude-sonnet-4-5@20250929` all resolve;
-  `claude-nextgen-9` stays unknown; `claude-opus-4-1` keeps its own $15/$75.
-- A zero-token turn (`<synthetic>`) no longer counts as an unpriced model, and
-  incurs no fallback charge.
-- **5-hour boundaries no longer rounded to the hour.** That resets are not
-  hour-aligned was established from the shipped CLI itself: it reads
-  `anthropic-ratelimit-unified-reset` off each API response, and its own
-  formatter emits the minutes whenever they are non-zero — dead code if a reset
-  always landed on `:00`. That the instant is unreadable locally was established
-  the same way: no transcript record carries it (the assistant record's fields
-  were enumerated across 205 files), no file under `~/.claude` holds it, and the
-  CLI's OTLP export defines eight metrics and six event names, none of them
-  rate-limit state. The effect on 4,663 real deduped turns: the four derived
-  windows moved from a `17:00 / 22:00 / 03:00 / 08:00` grid onto the turns that
-  actually opened them (`17:17:14 / 22:17:24 / 03:29:12 / 08:31:16`), the
-  current window's reported reset moved 31 minutes later, and **86 turns moved
-  back into the window that was really open** — at 22:00 the old rule showed a
-  fresh empty session, and re-armed the session guard, 17 minutes before
-  Anthropic's window closed.
-- Attribution tables against real transcripts: effort, sub-agent, and skill each
-  reconcile to the window total to within a rounding error ($138.3639 over 998
-  turns), every turn lands in exactly one bucket per breakdown (998 = 998), and
-  the `groupBy` refactor left `byModel` / `byProject` reconciling as before.
-- **Calendar periods against 9,200 real deduped turns from 303 files**, in
-  `Europe/Berlin` while the machine ran UTC. Every day boundary landed on local
-  midnight (`00:00:00` Berlin, i.e. `22:00` UTC the day before under CEST), all
-  three granularities were contiguous with no gap between adjacent buckets, and
-  every turn in each series' span landed in exactly one bucket (9,200 = 9,200,
-  three times). Pro-rating checked against a $700 weekly ceiling: a day read
-  $100.00 and a 31-day August read $3,100.00. The weekly bucket's total matched
-  the weekly meter's exactly ($1,228.79), the `limitBasis` was `weekly` for
-  weeks and `prorated` for the other two, and the day series was three buckets
-  rather than fourteen because the transcripts start on 10 August. Nine unit
-  tests cover the same ground plus the DST case, an anchored week, and the
-  no-ceiling case (`fraction === null`, never `0`).
-- Stop path, end to end against a stub CLI that ignores SIGTERM: the run now
-  reaches `stopped` about 8s after the stop (5s escalation + 2s drain grace),
-  where it previously stayed `running` indefinitely. Two independent causes
-  were needed — the `!child.killed` test made the SIGKILL escalation dead code,
-  and even once SIGKILL was delivered, an orphaned grandchild still holding the
-  inherited stdout pipe kept `close` from ever firing, so the iteration is now
-  settled from `exit` as well.
-- Operator stop records `stopped` with the interrupted-cost note in
-  `stop_reason`, not `failed`.
-- Child environment, dumped from a real spawned process: 97 variables reach the
-  agent with `PATH` and `HOME` intact, while a sentinel `ANTHROPIC_ADMIN_KEY`,
-  `UF_AUTH_TOKEN`, and every `OTEL_*` are absent.
-- Normal accounting path unaffected: a stub emitting a `result` event records
-  $0.42 / 35 tokens, completes on `DONE`, and adds no interrupted-cost note.
-- OTLP ingest over HTTP: a captured batch inserts 1 row, replaying it inserts
-  0, a garbage body yields `seen: 0`, and a non-JSON body still returns 200 so
-  the exporter does not retry it forever. The stored row has no column for
-  `user.email` or any account UUID.
-- OTLP transport captured from a real headless `claude -p` run on CLI v2.1.226,
-  not taken from the docs. Telemetry *does* initialise under `-p`; a base
-  endpoint of `/api/otlp` receives `POST /api/otlp/v1/logs` and
-  `/api/otlp/v1/metrics`, so the CLI appends the signal suffix itself; the body
-  is uncompressed `application/json`. The docs name the event
-  `claude_code.api_request`, but on the wire that string is the record *body*
-  and the `event.name` attribute is the bare `api_request` — the parser accepts
-  both. `OTEL_RESOURCE_ATTRIBUTES` lands on the resource *and* on each record,
-  and the parser merges both so run attribution does not depend on which.
-- OTLP parser run against those captured payloads, 13 assertions: extracts the
-  priced request with its `req_…` id, first-party cost, tokens and run id;
-  drops `user.email` / `user.account_uuid` at the parser; a redelivered batch
-  inserts 0 rows (delivery is at-least-once); an unknown run returns null
-  rather than a zero row; and malformed or null payloads return empty instead
-  of throwing, since a rejected batch would be retried forever.
-- The dashboard's **Live from runs** card, against a real database with batches
-  pushed through the live ingest route: the window total counts only the five
-  requests inside the 5-hour window and attributed to a run, so a record seven
-  hours old, a record carrying no `uf.run_id`, and a redelivered `request_id`
-  are each left out; per-run rows carry the run's real status from the `runs`
-  join (`running`, `completed`, and `—` when no row matches) and are ordered
-  heaviest first; eight runs in the window list six and still report `runCount`
-  8; `workingRunCount` counts the one `running` row, which is what switches the
-  poll to 5s. The transcript-derived `session.costUSD` in the same response
-  contains none of it, and the card disappears entirely when *Agent
-  self-reporting* is switched back off.
-- That card's own rendering (`npm test`, 5 cases): the first-party figure never
-  renders without all three sentences that stop it being read as an addend to
-  the meters; a list capped by `TOP_RUNS` names the number of runs it left out
-  and a complete list claims no omission; a telemetry row with no matching
-  `runs` row renders `—` rather than inventing a status; and nothing is
-  described as "working" when `workingRunCount` is 0.
-- Plan detection reads `Claude Max 20x` from `.credentials.json` with no email,
-  name, or account UUID crossing the wire; caches for 60s including misses (the
-  CLI writes these files lazily); and degrades to "plan unknown" with no error
-  when the config directory holds neither file. The legacy `~/.claude.json` is
-  consulted only while the config directory is still the default — a redirected
-  `CLAUDE_HOME` reports no plan rather than the wrong one.
-- Path traversal rejected in every form tested: `../` escape, absolute path
-  outside all mounts, a symlink pointing out of the tree, a folder belonging to a
-  *different* mount, an unknown mount id, an unmounted workspace, and a path
-  inside a workspace slot that is configured but disabled.
-- Multiple workspaces: slots parse and are listed independently, a disabled slot
-  is skipped, a missing one is reported as unavailable rather than empty, and a
-  run's folder maps back to its workspace even when the mount is reached through
-  a symlink.
-- Folder collision (`npm test`, 8 cases): a folder collides with itself, not with
-  a sibling, with its own parent and child in both directions, with the same
-  directory reached through a second workspace, and with a name differing only in
-  case; a nested mount reached through an alias keeps its parent-relative prefix,
-  so the one directory named two ways still collides and the parent mount still
-  contains it; two isolated checkouts do not collide with each other or with the
-  repository, but all of them collide with a run on the whole workspace.
-- Concurrency, against a real database with a stub agent: two runs on one plain
-  folder → the second queues and is promoted automatically when the first ends;
-  a run on a different folder starts immediately; a run on the workspace root
-  queues behind both and still runs rather than being starved; `session_id` is
-  persisted.
-- Isolation, against a real repository with uncommitted work and a gitignored
-  `.env`: two runs on one repo both start, in different slots, each on its own
-  `uf/…` branch; the seeded `.env` is present in the checkout; the operator's
-  modified file and current branch are untouched; `.uf-worktrees/` does not
-  appear in `git status`.
-- Restart recovery: a row left `running` is closed out as `failed` with the
-  `claude --resume <id>` command in its stop reason, freeing the folder.
-- Concurrency limit and stopping: with the limit at 1, runs on two further idle
-  folders queue rather than being refused, and exactly one is promoted when a
-  slot frees; stopping a live run records `stopped` rather than `failed`, and a
-  run whose agent leaves a grandchild holding its output still terminates.
-- The **standalone** build (what the container runs) boots and serves, native
-  SQLite binding included.
-- **One real billed run**, end to end: 1 iteration, exit 0, stopped at the
-  iteration cap, $0.067 / 13,983 tokens accounted correctly.
-- Reserved headroom: 50% reserve halves the effective ceiling ($200 → $100),
-  doubling the reading (13.8% → 27.5%) and converting a 20% guard from allow to
-  refuse. Out-of-range input (400%) clamps to 95%.
-- Budget policy and guard ordering (`npm test`, 11 cases): `normalizePolicy` is
-  idempotent across a JSON round trip for every field, an explicit `null` cycle
-  cap survives while blank / zero / negative / missing all still mean one cycle,
-  a string `"false"` for `continueAfterDone` reads as off, and an unknown
-  enforcement mode degrades to `between-cycles`. `evaluateBudget` refuses
-  `no_terminus` ahead of every other check, parks on the 5-hour window only
-  under `live-resume` and never on the weekly one, **ends** rather than parks a
-  run that is also out of time, still refuses a fraction guard with no ceiling,
-  and blocks on reconciled spend that `spent_usd` alone would have missed.
-- Provider refusals (`npm test`, 18 cases): `isUsageLimit` matches both the
-  wording the CLI renders and the wording in its own error taxonomy, including a
-  model label it has never seen; leaves `Not logged in`, a spend cap and a
-  credit balance to fail as themselves; and treats a 429, an overloaded upstream
-  and a plain rate limit as transient rather than as an exhausted allowance —
-  money and blips are the two things that must not be waited out.
-  `isTransientApiError` picks those blips back up: all five stream-truncation
-  sentences the CLI can render, the statuses and `error.type` names the provider
-  documents as retryable, and a connection that never reached a status — while
-  leaving a bad key, a malformed request and an empty credit balance to fail as
-  themselves, and reading neither `Wrote 500 lines` nor `429 tests passed` as a
-  status. `refusalResumeAt` waits for a window still open, backs
-  off 20/40/60 minutes for one already passed or invisible, never re-spawns
-  inside five minutes, and never holds a folder past six hours.
-- Reviewing and landing, exercised end to end against real scratch repositories
-  (the compiled modules driven directly, with a stub CLI standing in for
-  `claude` so nothing was billed):
-  - A diff over a change containing an edit, a rename, a binary file and a
-    filename containing a tab: file list, statuses, line counts and per-file
-    patches all correct, and the tab-containing name survives intact.
-  - Landing refused while the checkout was dirty, and refused again while it was
-    on a different branch — naming both branches. A clean fast-forward landed and
-    the tree matched.
-  - A conflicting branch: previewed as conflicting in `f.txt` with nothing
-    written, and the merge attempt refused with the checkout left clean and HEAD
-    unmoved.
-  - A squash land: one commit on the target, the run's task as its subject, and
-    the branch then deletable by tip comparison — with its worktree removed
-    first, and refused while that worktree held uncommitted work.
-  - A run predating target recording: the target deduced from the base commit and
-    flagged as inferred.
-  - The branch inventory reporting merged/ahead state, and `branch -d` after it.
-  - The review path with a stub CLI: prompt assembled with the task and the whole
-    diff, `--output-format json --permission-mode plan` on the command line, cost
-    and tokens recorded to `run_reviews`, `running`/`completed` events emitted,
-    and a second concurrent review refused.
-  - Conflict resolution, both ways, with stub CLIs: one that resolves the
-    markers — the branch gained a merge commit, the preview went from
-    *conflicts* to *fast-forward*, the temporary checkout was removed, the
-    operator's tree stayed clean throughout, and the branch then landed — and
-    one that reported success without touching anything, which was caught, the
-    merge rolled back, the branch left byte-identical, and the cost still
-    recorded.
-  - The run page, the branches page and the land/delete actions driven through
-    the browser against that fixture.
-- Parsers and budgets under `npm test` (24 further assertions): NUL-separated
-  numstat and name-status records including renames, binaries and a tab in a
-  filename; patch splitting that does not split on a `diff --git` line *inside* a
-  hunk; the size budget naming what it left out; `merge-tree` output read as
-  clean, conflicting, or undetermined-on-an-old-git; and every `landRefusal`
-  branch.
-- The merge queue, against a five-branch scratch repository on a live dev server,
-  with the stub CLI standing in for the resolver. Three branches queued in an
-  order that was not the list's — one clean, one conflicting, one clean — landed
-  in exactly that order: the conflict was resolved in a throwaway checkout, its
-  $0.07 recorded on the queue row and never on the run, and the two clean merges
-  went either side of it. With the resolver toggled off, the conflicting branch
-  failed with its own reason and the branch behind it still landed. With the
-  operator's checkout deliberately dirtied, both queued branches were skipped
-  with one reason between them, nothing was written, and the conflicting one was
-  **not** paid to be resolved — the checkout is tested before the conflict
-  precisely so that a merge which was going to be refused is never billed for
-  first. Driven through the browser as well as the API, including the selection
-  order badges and the inventory re-reading itself once the queue stopped.
-- The conflict display, against a scratch repository with a content conflict and
-  a modify/delete conflict in the same merge, on git 2.50. `merge-tree
-  --write-tree -z` was run for real and its output fed through
-  `parseMergeTree`: both files listed once, `contents` and `modify/delete` read
-  off the informational records, git's explanation kept only where it says
-  something the type and the path do not, and the `<<<<<<<` block read back out
-  of the merged tree. Then the same fixture through a live dev server and a
-  browser: the conflict list, the type, the clash count and the block itself all
-  render on the run page, with the modify/delete file showing git's sentence and
-  no block.
-- The resolution display, from a `run_reviews` row written straight into SQLite
-  with the merge commit of a by-hand resolution: `GET /api/runs/<id>/land`
-  returned the resolution's own diff against the branch's pre-merge tip,
-  restricted to the recorded conflicted paths, and the run page rendered it under
-  the model's prose. The row was seeded rather than produced by a real agent —
-  which the *Not yet verified* list below already covers.
-- Run templates against a live dev server on a scratch workspace: create, list
-  (ordered by name, case-insensitively), update, and delete, with a second
-  delete answering 404. Every refusal came back as a 400 with the sentence the
-  form shows — a duplicate name differing only in case, a blank prompt, an
-  unknown permission mode, and the no-cycle-limit-and-no-time-limit pair that
-  `POST /api/runs` refuses. Read-time narrowing was checked by writing a row
-  straight into SQLite with `permission_mode = 'bypassEverything'` and a corrupt
-  budget blob: it comes back as `plan` (the only mode that cannot write) and one
-  work cycle, rather than as a wider permission or a throw. `normalizeTemplateInput`
-  and `rowToTemplate` also have 20 assertions under `npm test`.
-- The GitHub credential block, driven into a real `git` (2.39.5) in a scratch
-  repository rather than only asserted in a test: `git credential fill` for
-  `github.com` returns the token even when the repository's own config names a
-  helper the image does not have (`osxkeychain`), which is the reset entry
-  earning its place; `store`/`erase` are accepted as no-ops; both
-  `git@github.com:owner/repo` and `ssh://git@github.com/owner/repo` rewrite to
-  HTTPS under `ls-remote --get-url`; and a request for `gitlab.com` gets no
-  credential at all and fails immediately instead of prompting. Plus six
-  assertions in `npm test` on the block itself — the count matching its pairs is
-  the silent one, since git discards the whole block if it does not.
-- Layout, measured rather than eyeballed: every page of the production build
-  rendered in a headless browser against fabricated API responses (each status a
-  run can hold, a conflicting land preview, a working merge queue) at twelve
-  widths from 1440px to 380px, in both themes, with the geometry read back out of
-  the DOM — box intersections between in-flow siblings, boxes escaping their
-  parent's padding box, and the document scrolling sideways. Three defects were
-  found this way and are fixed here: the run page's accounting row sat at a 0px
-  gap from the card above it where every other block on that page has 24px (the
-  legacy `section + section` rule cannot see the component-kit cards that were
-  inserted above it); the merge queue's *Cancel the N still waiting* button left
-  its card by 92px at 380px wide and took the horizontal scrollbar with it (a
-  card heading is a flex row and a button will not shrink below its own label);
-  and the settings save bar was translucent over the card it floats across,
-  which in dark mode read as a card torn in half. After the fix no card heading
-  overflows at any tested width, no page scrolls sideways, and the run page's
-  vertical rhythm is 24px throughout. The remaining reported intersections are
-  inline text boxes wrapping inside a paragraph, and the save bar overlaying the
-  page as a sticky bar is meant to.
-
-  **Those measurements are of a layout that no longer exists below 768px**, and
-  the entry stays for the method rather than for the readings: the sweep was run
-  before the source list became a drawer and before seventeen tables started
-  stacking at `md`, so every width it reports under that line describes a table
-  being scrolled sideways rather than what is drawn there now. The harness is the
-  thing worth keeping — a production build, fabricated API responses covering
-  each status, twelve widths, both themes, and the geometry read back out of the
-  DOM rather than looked at. Re-running it is the entry under *Not yet verified*
-  below.
-
-- **The orchestrator chat, end to end against the real CLI.** A template was
-  saved, a chat asked to list what it could see and propose one run, the
-  proposal was approved, and the resulting run started and completed — $0.22 for
-  the chat turn, $0.165 for the run. The chat's own tool calls landed on
-  `/api/mcp` (the hand-written `initialize` / `tools/list` / `tools/call`
-  handlers answer the pinned CLI 2.1.226 correctly), `list_folders` identified
-  the repository's GitHub remote, and the proposal recorded the right template
-  and folder.
-- **The order a chat thread renders in** (`npm test`, 3 cases, against a real
-  database under a temporary `DATA_DIR`): a reply and the denial note that
-  annotates it, appended under a frozen clock, come back in that order rather
-  than by the coin toss the random `id` was; ten messages written in one
-  millisecond come back in insert order, and still do after the connection is
-  closed and reopened; and rows carrying a null `seq` — the state a deployed
-  database is in between the `ALTER TABLE` and the backfill — come back in the
-  order they were written, with a message appended afterwards landing below them
-  rather than among them. The migration itself was driven separately against a
-  hand-built database file predating the column, using the three rows read out
-  of the live deployment: it gains `seq`, they backfill to 1/2/3 in insert
-  order, and the assistant reply that used to render *below* the denial note now
-  renders above it.
-- **That the chat could not write, under the configuration it had then.** Asked
-  directly, in the same turn, to create a file inside the workspace, it reported
-  `No such tool available: Write. Write is disabled for this session, in
-  subagents as well as here.` and the file did not exist afterwards. That
-  measurement stands as a measurement of `manual` plus an allowlist, and **no
-  longer describes what ships**: the chat now runs `bypassPermissions` with no
-  tool list, and what keeps it out of a checkout is the system prompt. The
-  equivalent question — whether an orchestrator told to look and not build
-  actually leaves files alone when a fix is one edit away — has not been
-  measured and is in the list below.
-- **That `--permission-mode plan` cannot be used for this.** Measured, not
-  assumed: the first attempt ran the chat in plan mode and every MCP call came
-  back `Cannot call mcp__uf__list_templates while in plan mode`, which would
-  have left the chat able to read GitHub and not this app. That is why the
-  read-only-looking mode is not an option here, and why removing the allowlist
-  left nothing mechanical in its place.
-
-- **That an isolated run under `acceptEdits` could not commit, and now can.**
-  Found in the wild rather than reasoned about: four runs finished `completed`
-  on their own branches with nothing on them and their whole change sitting
-  uncommitted in the worktree. The transcripts say why — seven `git add` / `git
-  commit` attempts across five phrasings, every one answered `This command
-  requires approval`, which in a `-p` child nobody can give. `acceptEdits`
-  auto-approves edits and read-only shell and holds mutating git for a human, so
-  the isolation preamble was ordering work the permission mode forbade.
-  Confirmed in the same transcripts that the other 59 Bash calls *did* run, so
-  this is specifically mutating git and not "acceptEdits blocks the shell".
-
-  The fix was then verified against the real CLI for $0.02, in a throwaway
-  repository: `--permission-mode acceptEdits --allowedTools "Bash(git add:*)"
-  "Bash(git commit:*)"` wrote the file, committed it, and had its `git push`
-  refused — which establishes all three things it needed to. The grant works,
-  it grants only what it names, and `--allowedTools` is *additive* rather than
-  exhaustive when the mode is not `manual` (`Write` still ran, having never been
-  named). The same run confirmed the `stream-json` `result` event carries
-  `permission_denials`, with `tool_name: "Bash"` and the command under
-  `tool_input.command` — which is why the log line names the command.
-
-- **The two git formats behind committing and purging, read off git 2.39.5
-  rather than the manual.** `git status --porcelain -z` was captured from a
-  scratch repository holding an unstaged edit, a rename and an untracked file
-  with a space in its name: the record is `XY <space> path NUL`, a rename's
-  source follows as its **own** field with the current path first, and the
-  leading space of `" M path"` is load-bearing. Passing that same output through
-  `.trim()` — which every other caller of `git()` gets — silently drops the
-  unstaged file from the list entirely, which is what `trim: false` exists for.
-  Separately: `git worktree remove` refuses a checkout with modified *or*
-  untracked files and a single `--force` removes it, and `git branch -d` refuses
-  an unmerged branch where `-D` deletes it. Those four exit codes are the
-  difference between Delete and Purge.
-- **Workflows end to end against a live dev server**, on a scratch workspace with
-  two throwaway git repositories and `CLAUDE_BIN` pointed at a stub that speaks
-  `stream-json` — so every run below is a real run of the real loop, with no
-  spend and no network. Saving refuses each case by name and in the operator's
-  words: no blocks, a blank task, a template that does not exist, a workspace
-  that is not mounted, a folder that does not resolve inside it, a link with no
-  condition, and a loop (`B → A → B`). A four-block graph — two roots, one
-  `on-success` link carrying the branch over, one `on-finish` link into another
-  repository — created four runs in one pass: the two roots went straight to
-  `running` in parallel, the two dependents sat `waiting`, and all four reached
-  `completed`. The continuation landed on its predecessor's branch
-  (`uf/repo-a-1-a89cd5db` for both, `continues_run` set on the second, and one
-  branch in the repository rather than two). Pressing Run again while the first
-  press was still going was refused with the count; deleting the workflow was
-  refused the same way and succeeded once they had finished, taking the instance
-  records and **no run** with it (the runs were still on `/api/runs`
-  afterwards). Editing the workflow — renaming it and renaming a block — left
-  the instance reporting the name and the block names it actually ran with, and
-  an instance id requested under another workflow's id answered 404. The cascade
-  was checked with a stub that exits non-zero: the root ended `failed`, its
-  `on-success` dependent ended `blocked` with *"Set to start only after run
-  274b3840 succeeded (on-success); it ended failed"*, and its `on-finish`
-  dependent started anyway and failed on its own — which is exactly what the two
-  conditions are for. All five pages compiled and answered 200.
-- **The canvas's live check, against a dev server on a real workspace.**
-  `POST /api/workflows/validate` was driven through every refusal the canvas
-  exists to surface, and each came back as `normalizeWorkflowInput`'s own
-  sentence with a 200: no name, no blocks, a link with no condition (*"“B” needs
-  a condition for starting after “A”: on-success or on-finish."*), a loop
-  (*"…B → A → B."*), a template that has been deleted, a workspace that is not
-  mounted, a folder that does not resolve inside its mount, a block with no
-  task, and an orchestrator block with no fan-out cap. A two-block graph with an
-  `on-success` link answered `{"ok":true}`. `/workflows`, `/workflows/new`,
-  `/workflows/<id>` and `/workflows/<id>/edit` all answered 200, and the
-  canvas — the palette, the empty state and the selection panel — is in the
-  server-rendered HTML of `/workflows/new`.
-- **Backup and restore, end to end against a live writer**, on a real database
-  written by `migrate()` rather than an imitation of it. A background process
-  committed a row every 20ms and, from the two-second mark, held a second
-  connection's write transaction open with ten rows that were never committed.
-  Taken at that instant: `cp` of `usagefoundry.db` gave **25 runs**,
-  `scripts/backup-db.mjs` gave **386** — the same 386 the live database held —
-  and *both files passed `integrity_check`*, which is the whole argument for
-  this existing. None of the uncommitted rows are in the snapshot. Restored into
-  an empty directory standing in for a fresh volume, the file matched the
-  quiesced source object for object out of `sqlite_master` and row for row in
-  every table. The refusals were driven too: a restore under a heartbeating
-  `server.lock` was refused and wrote nothing, a restore over an existing
-  database moved it and its `-wal` aside as `.superseded-<stamp>` rather than
-  deleting either, a SQLite file with no `runs` table was refused by name, a
-  file that is not a database at all was refused as one, `--keep 2` deleted only
-  files matching this script's own name pattern, and a second backup to an
-  existing path was refused rather than overwriting it. Seven of those are the
-  unit tests in `backupRestore.test.ts`; replacing `VACUUM INTO` with
-  `fs.copyFileSync` in the script fails them, which is what says they are
-  measuring the mechanism rather than the file's existence.
-  The seventh was added last and was **seen to fail first**: a restore whose
-  copy dies part-way, induced with `ulimit -f 200` against a 512KB backup —
-  `EFBIG` where a full volume gives `ENOSPC`, the same unhandled throw out of
-  the same `copyFileSync`. Against the unguarded copy the scratch data directory
-  afterwards held only `usagefoundry.db.superseded-<stamp>`, a name nothing had
-  printed, and no `usagefoundry.db` at all; with the copy staged under
-  `usagefoundry.db.partial` it exits 1 saying the database *is untouched*, and
-  the file is still at its own path with all 2,000 of its rows. What was **not**
-  executed is the other half of the incident — that the next boot creates a
-  database at the empty path and comes up green — which follows from
-  `src/lib/db.ts`'s unconditional `new Database(DB_PATH)` and wants a container.
-- **The two agent flags, probed by hand against the pin
-  (`@anthropic-ai/claude-code@2.1.226`).** Seven probes, each deciding a design
-  question rather than confirming one. Four of them refuse before any API call,
-  which is how `BUILT_IN_AGENTS` was derived in the first place.
-  - `--agent` **can select a definition supplied on the same argv** by
-    `--agents`, which is what made the feature wirable at all — the alternative
-    was writing agent files into the operator's mounted `~/.claude` or into a
-    checkout. `claude --agents '{"uf-probe-agent":{…}}' --agent uf-probe-typo -p
-    hi` answered `--agent 'uf-probe-typo' not found. Available agents: claude,
-    Explore, general-purpose, Plan, statusline-setup, typescript,
-    uf-probe-agent`. That same line settles the merge from the other side:
-    `typescript` is not a built-in but a definition on that machine's disk, so
-    the resolution set is the built-ins *and* the disk *and* this argv.
-  - **An unregistrable member fails the spawn rather than being dropped.**
-    `--agents '{"uf-nodesc":{"prompt":"p"}}' --agent uf-nodesc -p hi` answered
-    `--agent 'uf-nodesc' not found` and **exited 1**, identically for a missing
-    `prompt` and for `"model": null`. Under the plural flag each of those cost a
-    run its specialist at exit 0 with nothing on stderr; named on `--agent` the
-    failure is loud. The empty name and the non-JSON payload were **not**
-    re-measured — see below.
-  - **A member named after a built-in shows once, not twice.**
-    `--agents '{"Explore":{…}}'` still listed a single `Explore`, so
-    `--agent Explore` selects *an* Explore with no way to tell whose.
-  - **`--append-system-prompt` still reaches a `--agent` session.** An agent told
-    to reply with a secret word stated only in the appended text replied
-    `BANANA ZEBRA`. That flag carries `SELF_HOSTING_NOTICE` — the `pkill` deny
-    list's explanation and the safe recipe that replaces it — so the alternative
-    was a run started as an agent that had never been told either.
-  - **`--agent` survives `--resume`**: the same probe resumed replied
-    `BANANA ZEBRA` again, `subtype=success`. Without it a run would stop being
-    what it was started as at cycle 2.
-  - **The run's own `--model` outranks the agent's**, read off the `system`/`init`
-    event before any request: the definition alone reported `claude-opus-5[1m]`,
-    `--agent uf-m` reported `claude-sonnet-5`, `--model opus … --agent uf-m`
-    reported `claude-opus-5`, `--model haiku …` reported
-    `claude-haiku-4-5-20251001`.
-  - **A name with a space registers and resolves** —
-    `--agents '{"uf spaced":{…}}' --agent "uf spaced"` — which holds only
-    because nothing here goes through a shell.
-- **The `agent` key in `settings.json` selects a session agent, and this app
-  neither passes it nor says it exists.** `claude --help` describes `--agent` as
-  overriding "the 'agent' setting"; nothing here had established whether that
-  setting was real, and the operator's own `~/.claude` is bind-mounted into every
-  child this app spawns. Four probes on the pin against a throwaway
-  `CLAUDE_CONFIG_DIR` holding a copy of the real credentials, one ambient
-  definition (`uf-set-probe`, whose whole prompt was "reply with exactly the
-  single word BANANA"), a second (`uf-set-probe2`, CHERRY) and the same prompt
-  each time, `-p "Say hello." --max-budget-usd 0.20`:
-
-  | settings.json | argv | answer |
-  |---|---|---|
-  | no `agent` key | — | `Hello! 👋 What can I help you with today?` |
-  | `"agent": "uf-set-probe"` | — | `BANANA` |
-  | `"agent": "uf-set-probe"` | `--agent uf-set-probe2` | `CHERRY` |
-  | `"agent": "uf-set-probe"` | `--agents '{"uf-offered":{…}}'` | `BANANA` |
-  | `"agent": "uf-set-typo"` | — | `Hello! 👋 …`, exit 0 |
-
-  So the key is real, the flag outranks it as documented, the **plural** flag
-  does not, and an unresolvable value is *silently ignored* — the opposite
-  direction from `--agent`, which answered `--agent 'uf-set-typo' not found.
-  Available agents: claude, Explore, general-purpose, Plan, statusline-setup,
-  uf-set-probe` and exited 1 before any API call against the same directory.
-  What that leaves: every door in this app that names an agent emits `--agent`
-  and wins, so what the key reaches is every child started as *nobody* — an
-  agentless run, every chat turn, every review (`spawnAssist` is the plural-flag
-  caller), and an orchestrator block whose node names none. It is recorded rather
-  than declared; see the entry below for why and for what declaring it would
-  take.
-- **`UF_BIND_ADDRESS` off loopback, and the two settings that fail silently
-  beside it.** Against a running container recreated with
-  `UF_BIND_ADDRESS=0.0.0.0`, `UF_AUTH_TOKEN` set, `UF_ALLOW_NO_AUTH` blank and
-  `UF_COOKIE_SECURE=0`: `docker compose ps` reported `0.0.0.0:3000->3000/tcp`
-  rather than `127.0.0.1:3000->3000/tcp`, and requests to the host's own LAN
-  address (not `localhost`) answered `/api/health` **200**, `/` **307** to
-  `/login`, `/api/usage` **401** with no credential and **200** under
-  `Authorization: Bearer $UF_AUTH_TOKEN`. `POST /api/login` with the token
-  answered 200 and its `Set-Cookie` read
-  `uf_session=…; Path=/; Expires=…; Max-Age=86400; HttpOnly; SameSite=lax` —
-  **no `Secure`**, which is the flag whose presence would have made that sign-in
-  succeed and every request after it anonymous. The recreate matters and is part
-  of what was checked: a port binding is fixed when the container is created, so
-  `docker compose restart` leaves the old one in place.
-  What this does **not** establish is in the next section.
-- **Go in the image, and the cache volume that has to outlive a rebuild.**
-  `docker compose build` on an arm64 host: the release tarball downloaded, the
-  digest fetched from `dl.google.com/go/…` and `sha256sum --check` passed, and
-  the image answered `go version go1.26.6 linux/arm64` with `go env` reporting
-  `GOPATH=/home/node/go`, `GOMODCACHE=/home/node/go/pkg/mod`,
-  `GOCACHE=/home/node/go/build-cache` and `GOTOOLCHAIN=auto` — so one volume
-  covers both caches. The entrypoint's half was driven against a fresh named
-  volume with `UF_AGENT_UID=1001`: the first boot took the volume from
-  `1000:1000` to `1001:1001`, the second left it alone (the `stat` guard, which
-  is what keeps a populated cache off the boot path), and a `go build` run
-  `--user 1001:1001` against that volume compiled and ran, leaving 35 MB of
-  build cache behind in it. The `/data` warning printed by that last run is the
-  pre-existing one — `--user 1001` is not root — and not this.
-  What that leaves unchecked: the **amd64** branch of the arch case and its
-  digest, since the build ran on Apple silicon; and a real agent mid-cycle
-  building a Go repository, as opposed to a shell in the same image.
-- **A sandbox that could not start, on this install, unnoticed for fifteen
-  hours.** Not a probe: a production failure, and the only end-to-end reading of
-  `UF_SANDBOX=1` anything here has. `UF_SANDBOX=1` and
-  `UF_SANDBOX_ENFORCEMENT=refuse` were set, `docker-entrypoint.sh` wrote
-  `/etc/claude-code/managed-settings.json` correctly, and `docker-compose.yml`'s
-  `security_opt` block was — as it ships — commented out, so bubblewrap could not
-  create a namespace. **The CLI did not refuse to start.** Its availability probe
-  `access(X_OK)`s the `bwrap` and `socat` binaries and never runs one, so
-  `getSandboxUnavailableReason()` was undefined, `failIfUnavailable` never fired,
-  and every `Bash` command was wrapped in a `bwrap` that exited 1 before reaching
-  the command. **214 failed `Bash` calls across 10 runs, 2026-08-18 18:12:12 UTC
-  to 2026-08-19 09:38:51 UTC** — fifteen and a half hours, and the last of them
-  landed 22 minutes after the failure was diagnosed, because the fleet kept
-  going. Those ten runs record $407.26 and 260.5M tokens between them; the
-  figure is what they spent while degraded rather than what the degradation
-  cost, and the first reading taken during the incident said 170 calls across 8
-  runs for $210, which is worth keeping here as an illustration of what a
-  snapshot of a live fleet is worth. The most expensive (`6052f120`, $139.12)
-  finished by parsing `.git/index` by hand to enumerate the files it could not
-  list. **UsageFoundry reported none of it**: `run_events` holds 484 `tool_error`
-  rows all time and **zero** `sandbox` rows, ever, and the only `ops_events` row
-  in the window was an unrelated boot reconciliation. The three `bwrap:` markers now in
-  `src/lib/sandbox.ts` are that transcript read back out.
-
-  Two things this settles that were open below. The generated policy does
-  **not** short-circuit to an unwrapped command on this build — every `Bash`
-  call came back as `bwrap`'s own stderr, which is a wrapper that was built.
-  And a required-but-unstartable sandbox has a **third** outcome besides the two
-  `scripts/sandbox-probe/probe.sh:521` allows for: not a refusal, not an
-  unconfined run, but a session that starts, reports nothing, and fails every
-  command inside a sandbox that was never built. Nothing observes it from the
-  inside — the CLI's own availability check is satisfied by the binaries
-  existing, and this app had no marker for `bwrap`'s stderr, so the only signal
-  was 170 tool errors that each looked like a command that went wrong.
-- **`uf-seccomp.json` applied to a real daemon, and the one bubblewrap operation
-  it does not buy.** On Docker Engine 29.7.2, kernel 6.12.76-linuxkit:
-  `bwrap --dev-bind / / --unshare-user --unshare-pid true` fails
-  `No permissions to create new namespace` with rc=1 **as root and as uid
-  1000**; with `--security-opt seccomp=./uf-seccomp.json` it exits 0 at both
-  uids. The daemon genuinely applies it — the profile is inlined in
-  `HostConfig.SecurityOpt`, and `Seccomp_filters` inside the container is still
-  1, so this is a narrowed profile and not `seccomp=unconfined`.
-  `/proc/sys/user/max_user_namespaces` is 31734: the kernel was never the
-  blocker, Docker's default profile was. `uf-seccomp.json` is byte-for-byte
-  reproducible from moby v28.5.2's default profile with
-  `scripts/make-seccomp-profile.py`'s patch applied — but the regeneration
-  command printed in `docker-compose.yml` **404s on this engine**, because moby
-  publishes no `v29` tag; the shipped file has to stay the newest tagged default
-  until it does, and 29.7.2 accepts it.
-
-  What the profile does **not** fix is the operation the CLI's default sandbox
-  needs. Under it, `--ro-bind`, `--tmpfs`, `--dev`, `--unshare-pid`,
-  `--unshare-net` and binding the existing `/proc` all succeed; `--proc /proc`
-  is the only failing one — `bwrap: Can't mount proc on /newroot/proc: Operation
-  not permitted`, as root as well — because Docker's masked `/proc`
-  over-mounts trip the kernel's `mount_too_revealing` check. The pinned CLI
-  builds exactly two bubblewrap argv shapes, switched on the managed setting
-  `sandbox.enableWeakerNestedSandbox`: the default pushes
-  `--unshare-user --cap-drop ALL --proc /proc`, the weaker one
-  `--unshare-user --bind /proc /proc`. Both shapes were read out of the binary
-  and then **run verbatim as `bwrap` command lines**: the default fails under
-  the profile, the weaker exits 0 as uid 1000. That is what
-  `docker-entrypoint.sh` now writes the key for — and it is a measurement of
-  `bwrap`, not of the CLI choosing a shape, which nothing has watched.
-- **`jq` in the image, and reachable from inside a bubblewrap namespace.** The
-  runner stage installs it — 1.6, Debian bookworm's pin, ~1.2 MB with `libjq1`
-  and `libonig5`. Measured on 2026-08-25 in a throwaway container off the
-  rebuilt image, as uid 1000 and with `--security-opt seccomp=./uf-seccomp.json`:
-  `jq` parses stdin and exits 0 unwrapped, and inside **both** bubblewrap shapes
-  the entry above names — `--dev-bind / / --unshare-user --bind /proc /proc
-  --new-session --die-with-parent`, which is the weaker-nested shape the managed
-  policy asks for, and `--ro-bind / / --dev /dev --unshare-user`. Nothing had to
-  be configured for the sandboxed case: bubblewrap binds the root filesystem,
-  and the managed policy's `denyRead` names only `/data` and `/backups`, so
-  nothing on `/usr/bin` is confined away. Same limit as the entry above — this
-  is a measurement of `bwrap`, not of the CLI wrapping a real `Bash` call, which
-  nothing here has ever watched succeed.
-- **That this install's agents have never had `Grep` or `Glob`.** The pinned CLI
-  (2.1.226) drops both from the tool list whenever `Bash` is present — the gate
-  read out of the binary is `searchToolsOptIn` false and `CLAUDE_CODE_ENTRYPOINT`
-  not `local-agent` — and its refusal text tells the model to use `grep`/`find`
-  through the shell instead. Measured against this install's own records rather
-  than inferred: **zero of 469 recorded `system:init` events have ever carried
-  `Grep`**, going back to 2026-08-10, five days before a sandbox existed here —
-  so this is not the failure above wearing a second face — and all five `Grep` /
-  `Glob` calls an agent ever attempted failed. In a throwaway container on the
-  pin, passing `--allowedTools Grep Glob` puts both back in the tool list and
-  changes nothing else in it; the opt-in is set by the CLI from the
-  `--allowedTools` values themselves, so naming them is the whole of it. That is
-  one `system:init` event on a throwaway container, not a work cycle — what the
-  flag does to a real run is in the list below.
-- **A sandbox that starts, and confines. The first on this project.** Three
-  `claude` invocations against the recreated container on 2026-08-19, as uid
-  1000, with `security_opt` applied from `docker-compose.override.yml` and the
-  managed policy carrying `enableWeakerNestedSandbox: true`. Billed: $0.51 in
-  total, and the figures are on each line below because a probe that is not
-  worth its cost should be argued about with the cost in front of it.
-
-  First, that the wrapper is built and the command survives it. `claude -p`
-  told to run `echo … > /tmp/uf-probe.txt && cat /tmp/uf-probe.txt` under
-  `--permission-mode acceptEdits` returned `UF-SANDBOX-PROBE-OK` from the tool
-  and `DONE` from the model, in 3.0s for $0.298 — no `bwrap` line anywhere in
-  the stream, where the same call before the profile produced nothing else. The
-  `system:init` event on that same invocation lists `Glob` and `Grep`, from
-  `--allowedTools Grep Glob` and nothing else on the argv, which is
-  `SEARCH_TOOLS` measured against the real binary rather than a throwaway.
-
-  Second, and the one that separates a policy from a decoration: the credential
-  deny **denies**. `/home/node/.claude/.credentials.json` is 509 bytes and
-  readable by uid 1000 from a plain `docker exec`; the same file through a
-  sandboxed `Bash` call in the same container, as the same uid, came back
-  `wc: /home/node/.claude/.credentials.json: Permission denied`, exit 1
-  ($0.099 — an earlier attempt at the same question cost $0.115 and answered
-  nothing, because a compound command is held for an approval a `-p` child has
-  nobody to give). So the policy is enforced on a file the uid otherwise owns,
-  which no reading of a settings file could have told anyone.
-
-  What it does not settle. The refusal arrives as an ordinary `EACCES`, exactly
-  as `src/lib/sandbox.ts` says a policy denial does — so this is also the
-  measurement behind that module refusing to match one, and there is still no
-  way to tell a denied path from a missing one inside a tool call. Nothing here
-  exercised the per-run `--settings` overlay (these had none), the `denyRead`
-  paths, the network allowlist, or a work cycle doing real work; the write set
-  and everything else below stay on the list.
-- **The vault reader against a real 773-note Obsidian vault, and all four of its
-  routes.** On 2026-08-21, against a live vault bind-mounted read-only at
-  `/workspace2` — the operator's own, edited by other runs while this ran, and
-  written to by nothing here. The compiled `knowledge.ts` indexed 773 notes into
-  19,438 edges over 885 nodes (773 notes, 95 tags, 17 phantoms), finding 20
-  orphans and 212 broken links, untruncated. A cold scan took **303ms** and the
-  next call **9ms**, returning the identical object — which is the whole of the
-  cache claim, measured rather than reasoned. The four routes were driven as
-  functions off a scratch `tsc` build with `DATA_DIR` and `WORKSPACE_ROOTS`
-  pointed at throwaways: `PUT /api/settings` refused `knowledgeBaseMountId:
-  "nope"` and a `../escape` subpath with 400 and accepted the real mount;
-  `/status` answered those counts; `/graph?kinds=note,phantom,tag` answered
-  885 nodes uncapped; `/note?path=…` answered a note with 13 frontmatter keys,
-  100 outgoing and 14 incoming links and its frontmatter block stripped from the
-  body; `/note?path=../../../etc/passwd` answered **404**, which is the
-  containment argument working as stated — the path is a key in a map, not a
-  join; and `/search?q=terraform` ranked an exact title first.
-
-  What it settles is that the parser and resolver are right about *this* vault's
-  conventions, which is what caught the defect worth naming: frontmatter tags
-  were not becoming tag nodes, and since 747 of the 773 notes carry every tag as
-  a property and not one writes a `#tag` in the body, the reader reported a
-  fully organised vault as having **zero** tags — a figure an operator reads as
-  a fact about their vault. What it does not settle is anything through a
-  browser: the Knowledge base settings section has been typechecked and built,
-  never looked at, and no `docker compose up --build` was possible in the
-  environment this landed from. Both are on the list below.
-- **That `--plugin-dir` actually delivers a skill, and that the generated
-  SKILL.md is one the CLI accepts.** On 2026-08-21 against the pinned CLI
-  (`claude --version` → `2.1.226`), billed **$0.00**: the API call was pointed
-  at a local sink on `127.0.0.1` that answers 400, which is enough because every
-  plugin and skill load happens before the first request and the request body is
-  then readable in full. Two things were being asked, and this is the route the
-  whole feature rests on, so it was measured before anything was built on it.
-
-  First, that the route works at all. `claude -p --plugin-dir <dir> …` against a
-  directory holding `.claude-plugin/plugin.json` and
-  `skills/knowledge-vault/SKILL.md` logged `Loaded inline plugin from path:
-  usagefoundry`, `Checking plugin usagefoundry: skillsPath=exists`, `Loaded 1
-  skills from plugin usagefoundry default directory`, and `Sending 13 skills via
-  attachment (initial)`. Second, and the part a debug line does not settle: the
-  captured request body carries the skill in the model's own skills block as
-  `usagefoundry:knowledge-vault: Search the knowledge vault at …` — the exact
-  text `renderVaultSkill` produced, from the compiled module rather than a
-  hand-written stand-in. The body of the SKILL.md is **not** in that request:
-  only `name: description` is sent up front and the body loads when the Skill
-  tool fires, which is why the description is three sentences and not the
-  operator's paragraph of topics.
-
-  Two details fell out that are load-bearing elsewhere. Skills are namespaced by
-  their plugin, so this one cannot shadow — or be shadowed by — a same-named
-  skill in the operator's own `~/.claude/skills`; the container this was run in
-  has exactly that, and both were offered. And `--add-dir <dir>` immediately
-  followed by another flag parses correctly, the variadic not swallowing it,
-  which is what makes its position in `buildArgs` safe. The published sandbox
-  policy on a session given `--add-dir` lists the directory under
-  `write.allowOnly`: **it is not a read-only grant**, which is why the skill's
-  own text is where "never write to the vault" has to live, and why the settings
-  copy says the same.
-
-  The same debug log reproduced, live, the breakage `plugins.ts` documents and
-  this feature is shaped around: the container tried to read
-  `/Users/…/.claude/plugins/marketplaces/…` out of the shared `~/.claude` mount
-  and logged `marketplace-load-failed`, exit 0, nothing else said. That is the
-  silent failure that rules out installing into `~/.claude/skills`, observed
-  rather than quoted.
-
-  What it does not settle is on the list below: nothing here ran under
-  privilege separation, so the ownership and mode of the generated directory are
-  reasoned from `chat.ts`'s precedent rather than measured, and no model has yet
-  been asked a question and answered it out of a real vault.
-- **The Knowledge page's server half, and its Markdown renderer over every note
-  in a real vault.** On 2026-08-21, against the same read-only `/workspace2`
-  mount as the entry above, through a scratch `next dev` on a spare port. The
-  routes the page calls answered: `/status` with no mount configured, then the
-  four browse figures once one was — **785 notes, 35 folders, 95 tags, 7 note
-  types** — a folder filter narrowing the list, `/health` with **19 orphans, 183
-  broken links and 25 notes missing frontmatter**, `/note?path=…` 200 for a real
-  note and **404** for one that is not, and `GET /knowledge` itself 200 carrying
-  its `<h1>` and the words *Read-only*, with no Next error overlay in the HTML.
-  Those counts differ from the 773/20/212 measured the day before because the
-  vault is live and other runs edit it, which is the point of not hard-coding
-  any of them.
-
-  The renderer was measured separately and harder, because that is where a
-  silent failure lives: the compiled `Markdown` was driven over all 785 notes
-  with the page's own resolver wired in, and it found **213 of the vault's
-  13,100 wikilinks reaching the DOM as literal `[[…]]` text** — every one of
-  them inside `**bold**` or `*italic*`, which the inline scanner took whole.
-  After the fix that rescans emphasis content, 13,076 render as links and **24**
-  remain, and all 24 are vault content rather than renderer bugs: truncated
-  links in generated index notes with no closing `]]`, and empty `[[]]`
-  placeholders in templates.
-
-  Nothing under `/workspace2` was written, and that is proved rather than
-  asserted: every probe brackets its own run with a `sha256` over
-  `find /workspace2 -printf '%T@ %s %p\n' | sort`, and every run printed the two
-  digests equal.
-
-  Two environment facts worth keeping. `NODE_ENV=production` is inherited in
-  this container and `next dev` under it 500s every request — an `EvalError:
-  Code generation from strings disallowed` out of the edge instrumentation, a
-  `globals.css` parse failure and a missing `.next/required-server-files.json`;
-  `NODE_ENV=development npx next dev` is the whole fix, and none of the three
-  symptoms points at it. And `/api/settings` takes a **PUT**, not a POST — a
-  POST answers 405.
-
-  What it does not settle is everything that needs a browser, which is on the
-  list below.
-
-- **The graph view's server half and its arithmetic, at the real vault's size —
-  and nothing about its picture.** On 2026-08-22, against the same read-only
-  `/workspace2` mount as the two entries above, through a scratch `next dev` on
-  a spare port with `WORKSPACE_ROOTS=Vault=/workspace2`. The exact URL the
-  canvas fetches — `/api/knowledge/graph?kinds=note,phantom,tag,attachment&limit=5000`
-  — answered **200 in 605ms with 7,330,042 bytes**: **893 nodes** (785 note, 95
-  tag, 13 phantom, 0 attachment), **19,995 edges**, `truncated:false` and
-  `capped:false`, so nothing on this vault reaches either of the reader's two
-  caps. Sixteen of those nodes carry no edge at all and the largest hub carries
-  **1,082**, which is the shape the repulsion has to hold apart. `GET /knowledge`
-  answered **200** carrying the graph region and its panel — *Whole vault*,
-  *Existing files only*, *Orphans*, *Arrows*, *Label fade*, *Repel force*, *Link
-  distance*, *Add group*, *Reset to defaults* — with no `__next_error__` in the
-  HTML and nothing logged.
-
-  The layout was then measured in Node 22.23.2 against **that payload**, not a
-  synthetic one, by stepping the simulation from `alpha = 1` until `step()`
-  returns `false`. Whole vault with tags on, 893 nodes and 19,995 edges: it
-  settles in **251 frames / 374ms**, at **1.49ms mean per step** (median 1.31,
-  p95 3.07, worst 4.50). Notes only, which is what the default filters show —
-  785 nodes, 16,610 edges: **1.36ms mean** (median 1.12, p95 2.55). With Repel
-  at the slider's maximum: **1.23ms**. The draw loop's own JS — the viewport
-  cull plus the two path calls per surviving link, with a stub standing in for
-  the rasteriser — is **0.137ms a frame**, with **10,712 primitives past the
-  cull** at 1200x640 and `k = 1`. So the part of a frame this repository
-  controls is about **1.6ms of a 16.7ms budget** at this vault's size.
-
-  Barnes-Hut earns its place by measurement rather than by argument: at 893
-  nodes it is **0.901ms a frame against all-pairs' 2.393ms, 2.7x**, and the gap
-  is what the caps are set against — at the same edge density the step costs
-  **1.47ms at 1,000 nodes, 3.35ms at 2,000, 4.32ms at the 2,500 the renderer
-  caps at, and 7.67ms at the 4,000 the API caps at**. The 2,500 cap therefore
-  leaves roughly 12ms of every frame for rasterisation at the worst graph this
-  app will draw.
-
-  **What none of that settles is the picture**, which is on the list below: no
-  browser will start in this container, so no frame rate has been observed, no
-  gesture has been made, and nothing has been seen drawn.
-
-- **The Markdown renderer's Obsidian surface, over every note in the real
-  vault.** On 2026-08-22, against the `/workspace2` mount, by driving the
-  compiled `Markdown` over all **785 notes** with a resolver of the page's own
-  shape and counting markup that reached the reader as punctuation — the same
-  method as the wikilink measurement above, widened to every construct.
-
-  What it found first is the size of the gap the change closes: **760 of the
-  785 notes carry a callout, 621 carry a table, 524 carry a task list**, 764 a
-  blockquote and 81 a footnote definition, and before this every one of those
-  rendered as the literal characters the author typed. That is the whole of why
-  the page reads as unrendered — it was already rendering markdown, and almost
-  nothing a note is actually written in was in the subset it knew.
-
-  After: **0 notes leak a callout marker, a task box, a table row, a highlight,
-  a strikethrough, a footnote definition, a wikilink, a bold run or a comment**,
-  across 785 notes rendered with **0 throwing**. Two renderer bugs were found by
-  this pass and only by it, both invisible from the desktop: a table's stacked
-  `label` was handed the raw head string, so every cell on a phone showed
-  `**bold**` and `[[wikilinks]]` in a table that read correctly above `md`; and
-  `- [ ]` with nothing after it — the row every template in this vault leaves
-  for the reader — was a bullet whose text was `[ ]` rather than a checkbox.
-  Both have a test. One leak remains and is content rather than a bug:
-  `[link](url)` in a template, a schemeless URL the allowlist declines to make
-  clickable, which is the same refusal that keeps `javascript:` inert.
-
-  The unconditional strip of a trailing `^block-id` was checked rather than
-  assumed, because it is the one rule here that *removes* text and a report is
-  not a note: the pattern occurs **11 times in the vault**, all of them genuine
-  block ids, and **0 times in this repository's own prose**, which is the
-  closest available stand-in for what a model writes into a cycle report.
-
-  Unlike the two entries above, this mount is **read-write** — proved by a
-  `touch` that succeeded, and the probe file was removed in the same minute. The
-  probe itself writes nothing, which is measured rather than asserted: a
-  `sha256` over `find /workspace2 -printf '%T@ %s %p\n' | sort` is identical
-  either side of a full 785-note run. A digest taken across a *longer* window
-  did differ, and that is the vault being live rather than this touching it —
-  the same reason the note counts above drift between entries.
-
-  What it does not settle is every pixel, which is on the list below.
-
-- **What removing `--autocompact` gave up, and what replaced it.** The flag was
-  removed on 2026-08-24 and `contextPruning.ts` stands in its place, at the same
-  167,000 it fired at, ending the cycle and pruning rather than summarising in
-  place. **The entry below stays on this page unchanged and is now a record of
-  the cost of that decision rather than a reason for the flag**: turns past the
-  cap cost 0.45× per turn and 0.50× per 1,000 output tokens, between the two arms
-  of a natural experiment over 1,147 transcripts. Nothing about that measurement
-  has been retracted or re-derived; what changed is that an operator chose the
-  other mechanism knowing it. A later reading must be able to tell a decision
-  from a regression, which is the whole reason this paragraph sits above rather
-  than replacing it.
-
-  The two open terms below are unchanged and one of them now cuts the other way:
-  a compaction's own summariser call — roughly 168,000 in and 6,300 out, billed
-  and invisible to `scanUsage()` — is a cost the replacement does not pay, and it
-  was never counted against the flag.
-
-- **What winnow actually removes, measured against a real transcript.** Measured
-  2026-08-24 against one 2.0 MB transcript from this container
-  (`f2de6d64-…jsonl`, 716 messages) with winnow at `b49fceb`, installed into
-  `/opt/winnow` and run as `winnow safe run -- treat … -rx standard`. Four
-  findings, and three of them changed what was built.
-
-  **Its own token figure is unusable.** The report said `Saved 0 tokens (0.0%)`
-  for a prune that removed 28% of what is actually sent. The figure comes from
-  the transcript's historical `usage` frames, which record what was billed and
-  cannot change when content is edited, so it structurally cannot express a
-  delta. `contextPruning.ts` recomputes from `message` content instead, before
-  and after, and that difference is the only figure this app reports.
-
-  **Bytes freed overstate the saving by 3.4×.** 970 KB of file freed against
-  290 KB of API-visible content — 1,018,946 bytes of `message` before, 729,376
-  after, ≈254,736 → 182,344 tokens at `BYTES_PER_TOKEN`, so **72,392 removed**.
-  The gap is `tool-use-result-strip`, whose own description says it removes an
-  envelope field "never sent to API". Bytes freed is what every other pruner
-  reports and it is the figure this app refuses to render.
-
-  **`gentle` removes nothing.** 0 bytes on the same transcript. Its one strategy
-  that fires on an ordinary session is `metadata-strip`, which orchestrator-safe
-  mode excludes by name. So the settings control offers two positions rather than
-  three.
-
-  **A second transcript, same shapes.** `06510dfb-…jsonl`, 2.4 MB, same tier and
-  same argv: 1,448,627 bytes of `message` before against 892,033 after, so
-  ≈402,396 → 247,787 tokens and **154,609 removed — 38.4% of the context**. The
-  file-bytes overstatement here is 2.0× rather than 3.4×, which is the useful
-  part of the second sample: the ratio is a property of how much `toolUseResult`
-  a particular session accumulated, not a constant, so no fixed correction factor
-  could be applied to the byte figure. Measuring `message` content is the only
-  reading that holds.
-
-  **The prune runs as the server, not as the agent uid, and it has to.** Caught
-  by running the exact argv under `setpriv`: on this install the transcripts are
-  `0600 root` and `DATA_DIR` is `0700 root`, so a child at `UF_AGENT_UID` raises
-  `PermissionError` on `WINNOW_DATA_DIR` before it ever reaches the file it was
-  meant to prune. `spawnPrune` therefore omits `childCredentials()` — the only
-  spawn in this app that does — and says why at the call site.
-
-  **Two smaller ones.** No receipts were written anywhere even with
-  `WINNOW_NO_RECEIPTS` cleared, so this app measures before and after itself
-  rather than reading the tool's own ledger. And every prune writes a full-size
-  `.bak` beside the transcript — `create_backup=True` is hardcoded at all three
-  of winnow's call sites with no flag in front of it — which lands inside the
-  bind-mounted `~/.claude`; `removeBackups` deletes it, matched on winnow's own
-  naming against a directory listing taken before the child started, so a backup
-  left by anything else survives.
-
-  **The mtime filter that used to do that matching could not work, measured
-  2026-09-08.** winnow takes the backup with `shutil.copy2`, which carries the
-  *source's* mtime, so it is always stamped earlier than the moment the prune
-  started; only a one-second grace ever matched it, and `~/.claude`'s `utime`
-  lands on whole seconds, spending most of that grace before the child runs.
-  Eleven full copies had survived here, 18.8 MB. Driven against the real winnow
-  child on a 1,289,032-byte transcript last written 999 ms into a second two
-  seconds earlier — a prune that removed 48,846 of 167,153 tokens — the old sweep
-  left `…20260908_163706.jsonl.bak` behind and the listing sweep left nothing.
-
-  **Verified against four real prunes, 2026-08-24.** All four fired from the
-  early-end path at `aggressive`, at 167,326-169,283 tokens, removing 29.1-52.8%.
-  The displayed figures were recomputed independently from the transcripts and
-  matched the API to the cent (257 turns, 266,683 tokens, `+$4.39212`), which
-  establishes the plumbing. Against *ground truth* the two sides came out
-  differently, and only one of them was right.
-  
-  **Removal is accurate to about 3%.** Claimed 266,683 tokens against 274,619
-  observed as the drop in resident context across the restart, per-receipt errors
-  +1.2% to −6.5%. That is the estimator working as designed: `BYTES_PER_TOKEN`
-  carries a systematic offset, and a *difference* between two readings of the
-  same file cancels it.
-  
-  **The invalidation was understated by 16.6% and has been corrected.** It was
-  charged against `tokens_after` — 405,049 across the four — where the resumes
-  actually wrote 485,828. The gap is everything the context holds that the
-  transcript's `message` fields do not: system prompt, tool definitions,
-  `CLAUDE.md`, the three appended notices. Being an absolute rather than a
-  difference, no offset cancels, and it overstated the net by roughly 15%
-  (`+$4.39` displayed against `+$3.58` corrected). `netReceipt` now prices the
-  resume off the first *billed* turn's own `cache_creation_input_tokens` instead
-  — a measurement rather than a model — falling back to the estimate only until
-  that turn exists. The all-zero record the CLI writes at a restart has to be
-  skipped explicitly: taken as the first turn it reports the invalidation as
-  $0.00, which is how the first pass at measuring this went wrong.
-  
-  **Also confirmed here:** the dedupe matters. Raw assistant records after the
-  four prunes number 93/129/82/57 against 61/91/58/47 deduped on
-  `messageId:requestId`, and billing is per request, so the deduped figure is the
-  right one and is what `scanUsage` supplies.
-
-  **Not yet verified by hand:** ~~no *boundary* prune has run at all — all four
-  observations are the early-end path, because each run finished within one
-  effective cycle, so the loop broke before reaching the boundary call.~~
-  **Superseded the same day it was written — the first boundary receipt is six
-  hours after the fourth of these; see the paragraph below.** The
-  corrected invalidation has unit tests and has not itself been re-observed
-  against a fifth prune. The subprocess, the token measurement, the tier behaviour and the
-  backup were all exercised directly against a copied transcript; ~~the boundary
-  call site, the early-end interrupt and the KPI arithmetic have unit tests and a
-  clean `npm run build`, and nothing more~~ **— both call sites have since fired
-  against real runs, 54 times between them; only the KPI arithmetic is still
-  unit tests and a clean `npm run build` and nothing more**. The netted figures
-  on the dashboard have never been read against a real run.
-
-  **Both triggers have since fired for real, and these four *are* four of the
-  receipts.** Read on 2026-09-07 out of this install's own `prune_receipts` and
-  `runs` — the dump at `prune-audit-dump.json` in the operator's checkout,
-  written 2026-08-28 23:37 UTC and untracked, so re-derive it with `SELECT
-  trigger, COUNT(*) FROM prune_receipts GROUP BY trigger` against
-  `/data/usagefoundry.db` rather than trusting the file. **54 receipts: 52
-  `early-end` and 2 `boundary`**, 2026-08-24 01:53 through 2026-08-28 22:57 UTC,
-  over 47 distinct runs of which 46 completed. Receipts 1-4 are the four
-  measured above and agree with it digit for digit — same tier, `tokens_before`
-  167,326-169,283, 29.1-52.8% removed, Σ`tokens_removed` 266,683,
-  Σ`tokens_after` 405,049 — which is what settles that the block above records a
-  reading that happened rather than one that was hoped for. The boundary pair is
-  receipt 9 (2026-08-24 09:03, run `69bc8a6c`, 243,190 → 207,905) and receipt 26
-  (2026-08-25 07:12, run `601df7bc`, 489,849 → 183,652), both on runs that
-  completed two cycles. `pruneAtEarlyEnd` has one caller — the run loop's
-  `kind === "prune"` branch — and one thing raises that interrupt,
-  `checkContextCeilings`, so each of the 52 is a work cycle the context ceiling
-  ended. Two cautions on reading the rows. A receipt's `tokens_before` spans
-  91,251 to 1,058,334 and is **not** the figure the ceiling compared: the
-  receipt carries the transcript measure while the ceiling reads
-  `sampleContext`'s API measure, which is the gap *The two context measures, and
-  the 65,000 tokens between them* below is about. And
-  `CYCLE_CONTEXT_CEILING_TOKENS` is 200,000 now, not the 167,000 in force for
-  receipts 1-4. What none of this touches is the display: no netted figure has
-  been read off a page, which is why the list entry below keeps that half and
-  only that half.
-
-- **What winnow's intake filter is worth, and how far it contaminates the prune
-  figure.** Measured 2026-08-24 against the real ledger at
-  `/home/node/.winnow/filter.jsonl`, the ledger's path at the time, and this
-  install's real transcripts. Two
-  questions, and the second is the one that decided a line of code.
-
-  **The filter's saving was not already in the meters, and is not a double
-  count.** Every window here is priced from `usage` frames, and a `usage` frame
-  is the API's report of the request it *received* — which is the filtered one.
-  The money the filter saved is therefore already absent from every meter, so a
-  figure beside them is new information. Nothing in this app read the ledger
-  before this change; `contextPruning.ts`'s receipts come from a different
-  mechanism and carry nothing from it. This is an argument from where the
-  numbers come from rather than a measurement, and it needed none.
-
-  **The prune figure is contaminated in the opposite direction, by 4.06% of
-  removed tokens.** `contextTokens()` measures the transcript on disk; the
-  filter never touches the transcript. So when the pruner removes a result the
-  filter had already replaced with a pointer on the wire, `tokensRemoved` counts
-  tokens that were never in the cached prefix and `cacheSavedUSD` prices
-  re-reads that were never going to happen. Winnow's own
-  `docs/COZEMPIC.md` §3.5 records this as the one hard conflict. Measured by running the real
-  `winnow treat -rx standard --execute` over this install's ten largest
-  transcripts and classifying every removed block by whether the filter's rules
-  would already have taken it: per-file phantom share **0.46%, 9.92%, 0.01%,
-  0.00%, 0.13%, 2.35%, 1.56%, 5.62%, 9.09%, 1.54%** — unweighted mean 3.07%,
-  corpus-weighted **4.06%** (305,292 phantom bytes ≈ 84,803 tokens against
-  2,086,369 tokens removed), range 0.00%–9.92%.
-
-  It is an **upper bound**, twice over: the reconstruction ignores
-  `keep_newest`, so the newest match of each rule is counted as phantom when the
-  filter would have deferred rather than dropped it, and it counts blocks the
-  filter may never have seen at all. Four structural reasons keep it small, each
-  checked against the corpus: `tool-use-result-strip` dominates and removes
-  `toolUseResult`, an envelope `contextTokens()` already excludes;
-  `thinking-blocks` is next-largest and is not tool results at all;
-  `tool-output-trim` needs >8 KB or >100 lines where the filter takes from 2,048
-  bytes up; `tool-result-age` counts **user prompts**, and a UsageFoundry work
-  cycle is one user prompt (median 1, p90 3, max 28 across 1,343 transcripts,
-  with only 6 reaching the mid-age threshold of 15); `mega-block-trim` (>32 KB)
-  matched zero blocks in the whole corpus.
-
-  **The arithmetic was left alone, deliberately, and this file is where that is
-  said.** The card used to say it too; that footnote was removed by the operator
-  in `6a78ef9`, restored by `78c87fa`, and removed again with the invariant that
-  had licensed the restore — so the bound is documented and not rendered. Not
-  because 4.06% is small — because the correction is *not available today*.
-  Identifying which transcript blocks the API never saw needs a `tool_use_id` on
-  each ledger line, and **every line this install has written carries none**
-  (15 of 15 results on the `(session, tool, rule, bytes)` fallback key). The only
-  alternative is reimplementing winnow's `rule_for`, `LOCATOR_TOOLS`,
-  `VERIFICATION_RE`, `min_bytes` and `keep_newest` in TypeScript against a Python
-  module in another repository, which is a large fragile duplication *and* still
-  an approximation, because `keep_newest` depends on per-request state the
-  transcript does not record.
-
-  The card **adds them anyway**, and prints the error. Held apart for one
-  revision, the two figures answered every question except the one the card is
-  for — what context control has been worth — and no reader can add two numbers
-  whose overlap is unstated. Added, the headline is high by a bounded, measured,
-  known-sign amount with that amount named under it, and the split survives as a
-  share beneath each span. The number is in `apiTypes.ts`'s DTO comment,
-  `intakeFilter.ts`'s module docblock and `ContextControl.tsx`'s, and on the card
-  itself, so nothing on screen is a figure shown here to be wrong without saying
-  so.
-
-  **The live readout, at 125 ledger lines (2026-08-24T21:12Z).** 125 requests,
-  372 drop/defer occurrences, 1,239,748 gross bytes — **15 distinct results,
-  15,144 tokens, a 24.8× overstatement had the file been summed**. That factor
-  is not a constant: it is roughly how many requests a result survives, so it
-  grows with session length, which is why the de-dupe is a module and not a SUM.
-  Netted: cache write avoided `+$0.05627`, the one uncached send `−$0.028135`,
-  re-reads avoided over 84 later turns `+$0.0379325`, **net `+$0.0660675`**.
-  Every figure is a **floor**: 82 of the 125 requests joined no main-thread
-  turn — the filter's B2 rule fires hardest on exactly the tool-heavy sub-agent
-  turns the join excludes — 6 of 15 results were priced, and 3 were deferred and
-  never dropped, which the ledger cannot prove escaped the cache because it does
-  not record `breakpoint_moved`. All three counts are on the wire and on the
-  card.
-
-  **Not yet verified by hand:** the cross-check against `winnow savings --json`
-  **could not be run — that subcommand does not exist in this container.**
-  `/workspace/winnow` at `f9f8e4b` offers `list, current, diagnose, treat,
-  strategy, reload, team, guard, init, uninstall, doctor, guard-watchdog,
-  formulary, completions, remind, nudge, digest, dashboard, safe` and argparse
-  rejects `savings` outright; `src/winnow/cli.py` has only `safe`, `inspect` and
-  `filter`. So this reading has been checked against its own unit tests and
-  against the raw ledger counted a second way in Python, and against no
-  independent implementation. Nothing here was rendered in a browser and no
-  container was started — see the standing entry below.
-
-  The **windowed** halves of the filter figure — `session` and `weekly`, added
-  when the card began leading with a combined weekly total — have unit tests on
-  the slice (`resultsSince`, boundary and undated) and a clean `npm run
-  typecheck`, and nothing more. They have never been read against a real ledger,
-  and the one thing to check when they are is that a 5-hour figure is not
-  permanently `—` on this install: 82 of 125 requests joined no main-thread turn
-  and an unjoined result is excluded from both windows by design, so the window
-  shares are a floor by much more than the total is.
-
-  **The card had been reading a path nothing writes since 2026-08-25, and read
-  as `missing` the whole time.** The ledger moved to `/data/winnow/filter.jsonl`
-  when the entrypoint stopped writing it to the container's writable layer, and
-  `intakeFilter.ts`'s literal did not move with it. Observed on the live
-  container: `GET /api/usage` returned `intakeFilter.ledger: "missing"` with
-  every figure zero — total, 5-hour and weekly alike — while
-  `/data/winnow/filter.jsonl` held 212 lines. A missing path is a legitimate
-  state on that DTO and renders as a sentence rather than as an error, so
-  nothing anywhere said the reading had stopped.
-
-  Measured against the ledger at its real path on 2026-08-25, by replaying the
-  join in Python over the same 1,366 transcript files: **215 of 217 request ids
-  joined, every one of them on the main thread**, all `claude-opus-5`, all
-  within the day. That is the opposite of the 82-of-125 unjoined reading above
-  and it moves the caveat rather than removing it — this ledger's lines were
-  written by main-thread requests, so the two window shares have real figures
-  here rather than a permanent `—`, and how much of a ledger joins is a property
-  of what the fleet was doing rather than a constant.
-
-  **Not yet verified by hand:** the corrected path has typecheck and the suite
-  behind it and has **not** been read in the running app — the container was
-  carrying a live billed run when the fix was written and a rebuild would have
-  killed it. What to check on the next rebuild is what has never been seen at
-  all: the card's own figures against a real ledger, in a browser.
-
-- **The two context measures, and the 65,000 tokens between them.** Measured on
-  the live container on 2026-08-25 by replaying `contextTokens` and
-  `apiContextTokens` over every frame of run `a75a7cb7`'s session
-  (`4b47c32c-…jsonl`), around the crossing the cycle ceiling acted on. The last
-  request before the prune carried **183,214 prompt tokens** plus 501 of output
-  — 183,715, which is the `183.7k` the run log printed — while the transcript's
-  own turns came to **118,776**, the receipt's `tokens_before`. The prune took
-  50,319 off that, and the **first request after it carried 120,595**: a real
-  reduction of 62,619 against the 50.3k reported, and a remainder 52,138 above
-  the "leaving 68.5k" the same log line printed.
-
-  Both readings are honest and neither bounds the other. The fixed part was read
-  off that session's own first request, which carried **57,819 tokens against
-  2,759 tokens of conversation** — the system prompt, the tool list, this
-  repository's `CLAUDE.md`, the appended notices and the skills, none of which is
-  in a transcript and none of which a prune can reach. The intake filter was live
-  throughout (`WINNOW_FILTER=1`; 43,604 bytes dropped on that cycle's last
-  request) and pushes the other way, which is why `apiContextTokens`' own note
-  records the same two measures ~69,000 apart in the **opposite** direction on
-  two other runs the same day.
-
-  So the ceiling was reading correctly and the prune line was reporting a
-  different quantity in the same units, one line below it. The line now reports
-  the prune in the ceiling's currency — `apiContextTokens` at the prune, minus
-  what came out. **What that derivation is worth, on this crossing:** it gives
-  132.9k against a real 120.6k, high by 12.3k, because `contextTokens`
-  understates what was removed; high is the direction that never claims more was
-  freed than was. `contextAfterPrune`'s ratio applied to the same numbers gives
-  105.6k, low by 15.0k, because it scales the fixed ~55,000 down along with the
-  conversation.
-
-  **What moved on the back of this measurement.** `contextAfterPrune` now
-  subtracts rather than scaling, on the arithmetic above. `CYCLE_CONTEXT_CEILING_TOKENS`
-  went from 167,000 to 300,000 and then, the same day, to **200,000**: at the
-  old value the ~55,000 of fixed prompt left ~112,000 tokens of prunable
-  conversation, and the run measured here was back over the ceiling **five
-  minutes** after its own prune, stopped from cutting again only by
-  `PAYBACK_HORIZON_TURNS`. Nothing in the models bounds either figure here — the
-  same transcript sweep that produced the figures above found a single request
-  of **752,172 tokens** on `claude-opus-5`, the largest of 678 transcript files,
-  with `claude-haiku-4-5` peaking at 32,846 and `claude-sonnet-5` at 26,016.
-
-  **The 300,000 lasted hours and is not measured.** It was lowered to 200,000
-  on the operator's reading that the runs carried at that ceiling showed the
-  cost — every turn carrying the whole prompt at the cache-read rate, roughly
-  1.8× per turn against 167,000 — and no return. No `prune_receipts` or
-  `netReceipt` comparison was taken across the two settings, so this entry
-  records a judgement and not a result. 200,000 keeps the part of the raise that
-  *was* measured: ~145,000 tokens of prunable conversation under the fixed
-  ~55,000, against the ~112,000 that put a run back over the ceiling five
-  minutes after its own prune.
-
-  The `statSync` gate in front of the ceiling check was removed in the same
-  change. It skipped any transcript under `ceiling x BYTES_PER_TOKEN` bytes on
-  the argument that message content is a subset of the file — sound under
-  `contextTokens`, unsound under `apiContextTokens`, since ~55,000 tokens of the
-  prompt are in no transcript at all. It had held because a transcript's
-  envelopes run **1.74x** its message bytes here (663 KB of file against 380 KB
-  of `message`), but that is a property of how tool-heavy a run is, not a bound,
-  and raising the ceiling widened the blind spot with it.
-
-  **Not yet verified by hand:** none of this has been read in the running app —
-  the container was carrying a live billed run when it was written, and a rebuild
-  would have killed it. Specifically unobserved: a crossing at the ceiling as it
-  now stands, the new log line, and the per-tick cost of reading every live run's
-  transcript with no size gate in front of it (bounded by a read and a `split`
-  per run per minute, not measured).
-
-- **The fixed ~55,000 was 17,229 tokens of the intake filter, and the entry
-  above measured it without knowing that.** The `57,819 tokens against 2,759 of
-  conversation` recorded there is not what a run costs to start; it is what a run
-  costs to start *through the proxy*. Pointing `ANTHROPIC_BASE_URL` anywhere but
-  the API turns the CLI's **tool deferral** off — deferred loading sends a tool's
-  name and withholds its JSON schema until the model asks through `ToolSearch`,
-  and with a custom base URL the CLI stops offering `ToolSearch` at all and every
-  schema rides every request.
-
-  Measured 2026-08-27 in the running container, on the live run's own argv read
-  out of `/proc/<pid>/cmdline` and replayed with one variable changed and nothing
-  else — same worktree, same model, same trivial prompt:
-
-  | | prompt tokens |
-  | --- | --- |
-  | bare `claude -p`, Haiku, `/workspace` | 17,084 |
-  | same, from the worktree (this repo's `CLAUDE.md`) | 20,883 |
-  | switched to `claude-opus-5[1m]` | 28,518 |
-  | the app's whole argv — agents, notices, plugin dirs, sandbox settings | 30,845 |
-  | **`ANTHROPIC_BASE_URL=http://127.0.0.1:8789`** | **48,074** |
-  | the same, plus `ENABLE_TOOL_SEARCH=1` | 30,849 |
-
-  So the fix restores the direct-to-API figure to within four tokens rather than
-  introducing a mode: `ENABLE_TOOL_SEARCH=1` is exported beside the base URL in
-  `docker-entrypoint.sh`, inside the same `winnow_up` branch, because it is only
-  ever wrong when that export did not happen. Confirmed on Haiku the same way,
-  34,161 against 20,828. The 19 tools it puts back behind `ToolSearch` are named
-  in the transcript's own `deferred_tools_delta` — `Cron{Create,Delete,List}`,
-  `DesignSync`, `EnterWorktree`, `ExitWorktree`, `Monitor`, `NotebookEdit`,
-  `PushNotification`, `RemoteTrigger`, `SendMessage`, `Task{Create,Get,List,
-  Output,Stop,Update}`, `WebFetch`, `WebSearch`. `Task` itself is **not** among
-  them, so `DELEGATION_NOTICE`'s advice stays one call away. `ENABLE_TOOL_SEARCH=auto`
-  was measured too and does nothing here: 34,302, the un-deferred figure.
-
-  The corpus dates the regression. Across 591 fresh container sessions, 528
-  carry a `deferred_tools_delta` before their first request and opened at a
-  median **36,597**; the 63 that carry none opened at **51,388**. The earliest
-  session with none is `2026-08-24T14:05:19`, and the `/workspace` sessions —
-  whose prompts are ~50 tokens and never change — step from 30,558 to 51,106 at
-  that same timestamp. That is when `WINNOW_FILTER=1` was first switched on.
-
-  **What this costs against what the filter saves is not netted anywhere.**
-  `intakeFilter.ts` prices what the filter keeps off the wire; nothing prices
-  the 17,229 tokens it added to every request to do it — paid once at the write
-  rate and then at the cache-read rate on every turn of the cycle. The two
-  belong beside each other on `ContextControlAside` and are not there yet.
-
-  **Not yet verified by hand:** the entrypoint change has not been through a
-  rebuild — the container was carrying a live billed run. What to check on the
-  next `docker compose up --build`: that a real run's first request lands near
-  30,800 rather than 48,000, that `deferred_tools_delta` appears in its
-  transcript, and that a run needing `WebSearch` or `WebFetch` reaches it through
-  `ToolSearch` without stalling.
-
-- **`--autocompact`'s sign, and what the flag actually does.** Measured
-  2026-08-22 over 1,147 transcripts through this app's own `scanUsage()`,
-  `parseCompactionBoundary()` and `pricing.ts`, and settles issue #156. Read the
-  three findings in order, because the second is the one that changes what the
-  flag is understood to be.
-
-  **The flag does not lower a threshold. It creates the only one there is.**
-  Splitting container sessions at `ee93684`'s commit instant: **before the flag,
-  604 sessions, 246 of which carried more than 167,000 tokens, produced zero
-  `compact_boundary` records, and one request reached 752,172 tokens**; after
-  it, 53 sessions produced 42 boundaries and the largest prompt anywhere is
-  167,623. The mechanism is in the pinned bundle — `dQe(e,t){return
-  Nq(e,t).source!=="auto"}` gates the check and a window resolving to
-  `source:"auto"` at or above `1e6` refuses auto-compaction outright — so this
-  install's model never compacts on its own. That is a natural experiment and
-  not a randomised one: same container, same pin, same model, same `sdk-cli`
-  entrypoint, but different calendar periods and different workloads.
-
-  **The threshold is `min(asked, window) − min(maxOutput, 20,000) − 13,000`.**
-  Read off the 2.1.226 bundle: `SCe(e,t){let r=Math.min(cbr(e),eZu); … return
-  o-r}` with `eZu=20000`, and the fire point is `SCe(…)-WQu` with `WQu=13000`.
-  So `--autocompact 200000` fires at **167,000**, not the 180,000 that
-  `effectiveWindow` alone predicts. Observed median `preTokens` is 168,072, with
-  **30 of 42 boundaries within ±3,000 of 167,000 against 2 of 42 within ±3,000
-  of 180,000**. The same 13,000 reconciles the survey's own captured debug line,
-  where `effectiveWindow=80000` is refused against `threshold 67000`.
-
-  **The sign is positive, measured between the two arms** at the point each
-  session reaches the cap — for the uncapped arm the first turn past 167,000,
-  for the capped arm the first turn after its first boundary, because a capped
-  session never exceeds the cap and the two predicates cannot be the same:
+What has been exercised by hand against real transcripts, a real CLI and the
+built container — and, under *Not yet verified by hand*, what has not. Each
+entry is one claim: what was measured, when, against which pin, the result and
+its caveat, filed under its area. The long-form write-ups these entries were
+condensed from, including how each thing was found, are
+`git show df8626c:docs/verification.md`.
+
+`npm run typecheck` plus a `docker compose up --build` smoke test is the real
+verification loop. What `npm test` covers, and why each test earned its place,
+is `docs/agent/testing.md`; interface defects and their classes are
+[`interface-defects.md`](interface-defects.md).
+
+## Verified
+
+### Metering and cost
+
+- **Cost math cross-checked by hand:** `$12.843618` vs the API's `$12.8436175`
+  on 54 in / 83,517 out / 12,072,025 cache-read / 471,941 cache-1h tokens.
+
+- **Fable 5.1 / Mythos 5.1 rates, read off the pricing page, not measured,
+  2026-09-04:** $10 input, $12.50 5m write, $20 1h write, $0.25 cache hit, $50
+  output per MTok; cache hits bill at 0.025x base input, other models 0.1x.
+
+- **Dedup verified:** 99 → 31 records.
+
+- **Dedup keeps each turn's highest-output line, 40,885 turns / 1,011 files,
+  2026-08-21:** the last line held the most output in 27,228 of 27,228
+  multi-line turns; first-seen understated output 15.6% on CLI 2.1.226 and
+  74.9% on 2.1.238.
+
+- **Incremental re-scan picks up records appended mid-session.**
+
+- **Model-ID canonicalisation:** `us.anthropic.claude-opus-5-20260101-v1:0`
+  and `claude-sonnet-4-5@20250929` resolve, `claude-nextgen-9` stays unknown,
+  `claude-opus-4-1` keeps its own $15/$75.
+
+- **A zero-token `<synthetic>` turn is not an unpriced model** and incurs no
+  fallback charge.
+
+- **5-hour windows open at their first turn, not on the hour:** the CLI's reset
+  formatter emits minutes and nothing local records the instant. On 4,663 real
+  turns 86 moved back into the window really open; the old rule re-armed the
+  session guard 17 minutes before Anthropic's window closed.
+
+- **Attribution tables reconcile over 998 real turns:** effort, sub-agent and
+  skill each match the window total ($138.3639) within rounding.
+
+- **Calendar periods, 9,200 real turns / 303 files, `Europe/Berlin` on a UTC
+  host:** days break at local midnight with every turn in one bucket; the
+  weekly bucket matched the weekly meter ($1,228.79) and a $700 week pro-rates
+  to $100.00 a day. Nine unit tests add DST and the no-ceiling case.
+
+- **OTLP ingest over HTTP:** a captured batch inserts 1 row and its replay 0;
+  a non-JSON body still gets 200 so the exporter stops retrying; no column
+  holds `user.email` or an account UUID.
+
+- **OTLP transport, captured from a real headless `claude -p`, CLI v2.1.226:**
+  uncompressed JSON to `/api/otlp/v1/logs` and `/v1/metrics`; the event is
+  `event.name` `api_request`, the documented `claude_code.api_request` being
+  the record body. The parser accepts both.
+
+- **OTLP parser, 13 assertions on the captured payloads:** extracts cost,
+  tokens and run id, drops `user.email` / `user.account_uuid`, inserts 0 on
+  redelivery, and returns empty rather than throwing on malformed input.
+
+- **Live from runs card, real database via the live ingest route:** counts
+  only the five in-window, run-attributed requests, takes status from the
+  `runs` join, and never reaches `session.costUSD`; it vanishes when *Agent
+  self-reporting* is off.
+
+- **Live from runs card rendering, `npm test` 5 cases:** the first-party figure
+  never renders without the three sentences that keep it from reading as an
+  addend; a `TOP_RUNS`-capped list says how many runs it left out.
+
+- **Plan detection** reads `Claude Max 20x` from `.credentials.json` with no
+  identity crossing the wire, caches 60s including misses, and says "plan
+  unknown" without error; a redirected `CLAUDE_HOME` reports no plan rather
+  than the wrong one.
+
+- **Most of this fleet's spend is carrying context, 2026-08-23.** 1,194
+  transcripts (49,038 deduped turns, $6,537, 12.3 days): 58% cache read, 20%
+  cache write, though `fileCostNotice.ts` reads 60.5% / 26.5%, so good to a
+  few points. Repricing the 327 runs at sonnet-5 gives 0.408× ($3,043.09 to
+  $1,241.30): arithmetic over produced tokens, not a forecast.
+
+- **A cycle's spend summed two nested `result` events, 2026-08-27.** Run
+  `075f7959`: $16.355574 against telemetry's $9.330155, which matches its 110
+  `requestId`s exactly; a late sub-agent re-inited the session and the second
+  `result` contained the first. 2 of 39 multi-result runs drift (`65252b8a`
+  +$29.082). `result.usage` omits sub-agent tokens: CLI scoping, left as is.
+
+- **The unsplit-cache-write notice and its hatched span, 2026-09-09**, one
+  synthetic `claude-sonnet-4-5-20250929` turn, 100k cache writes with no
+  breakdown: at a $1 limit the 5-hour meter read **40.2% – 62.7%**, matching
+  $0.4024 (5m rate) and $0.6274 (1h rate) by hand.
+
+- **`rate_limit_event`'s shape, read off the pinned binary, 2026-09-09**
+  (`grep -ao` in `bin/claude.exe`), then a stubbed event through the
+  standalone bundle: `/api/usage` kept `utilization` 0.15/0.06 undivided, the
+  card drew "5-hour 15.0%", and `allowed_warning` drew the unhandled notice.
+  - `status`: `allowed`, `allowed_warning`, `rejected`
+  - `five_hour`, `seven_day`, `seven_day_overage_included`, each
+    `{utilization, resetsAt}`: a fraction that can exceed 1, epoch seconds
+  - read from `anthropic-ratelimit-unified-*` headers; emitted on change, not
+    on a cadence; absent on API-key, Bedrock and Vertex sessions
+
+- **The prices around two 2026-08-23 levers are measured; their effect is
+  not.** A two-cycle run averaged $19.19 against $10.05 for one, and a call cost
+  12.0c early against 20.4c late. `orchestrator.ts` (~116,000 tokens) was read
+  496 times across 78 runs, `workflows.ts` (68,000) over 185; by arithmetic one
+  avoided full read of the first is worth about $3.19.
+
+### Budgets and guards
+
+- **Budget refusal returns `blocked` with 0 iterations and 0 spend.**
+
+- **Metric selection:** the cost ceiling wins when both are set, tokens when
+  cost is cleared, null when neither is.
+
+- **The guard reads the cost fraction:** with the window at 11.2%, allowed at
+  an 80% guard and refused at 5%.
+
+- **Unpriced-model guard fallback, 17 assertions:** 90M output tokens from an
+  unknown model read `$0`, yet `guardFraction` is 45× a $100 ceiling and the
+  guard blocks; priced windows are unchanged, and no ceiling still refuses.
+
+- **Reserved headroom:** a 50% reserve halves a $200 ceiling to $100, doubling
+  the reading (13.8% → 27.5%) past a 20% guard; 400% clamps to 95%.
+
+- **Budget policy and guard order, `npm test` 11 cases:** `normalizePolicy` is
+  idempotent over JSON; `evaluateBudget` refuses `no_terminus` first, parks on
+  the 5-hour window only under `live-resume` and never on the weekly, and
+  blocks on reconciled spend that `spent_usd` alone would miss.
+
+### Run lifecycle
+
+- **Stop reaches `stopped` against a stub that ignores SIGTERM**, about 8s
+  after the stop (5s escalation + 2s drain), instead of staying `running`
+  forever; the iteration also settles on `exit`, since a grandchild can hold
+  stdout open.
+
+- **Operator stop records `stopped`**, not `failed`, with the interrupted-cost
+  note in `stop_reason`.
+
+- **Normal accounting survives the stop fix:** a stub `result` event records
+  $0.42 / 35 tokens and completes on `DONE` with no interrupted-cost note.
+
+- **Restart recovery:** a row left `running` closes as `failed` with
+  `claude --resume <id>` in its stop reason, freeing the folder.
+
+- **One real billed run, end to end:** 1 iteration, exit 0, stopped at the
+  cap, $0.067 / 13,983 tokens accounted correctly.
+
+- **Provider refusals, `npm test` 18 cases:** spend caps and credit balances
+  fail as themselves while a 429 or an overload is transient;
+  `refusalResumeAt` backs off 20/40/60 minutes, never re-spawns inside five
+  and never holds a folder past six hours.
+
+- **`acceptEdits` holds mutating git for an approval a `-p` child cannot get:**
+  four runs ended with their change uncommitted. For $0.02, `--allowedTools
+  "Bash(git add:*)" "Bash(git commit:*)"` committed while `git push` stayed
+  refused, and proved additive outside `manual`.
+
+- **Agents here have never had `Grep` or `Glob`:** CLI 2.1.226 drops both when
+  `Bash` is present, and 0 of 469 `system:init` events since 2026-08-10
+  carried `Grep`.
+
+- **The outbound webhook delivers and its signature verifies, 2026-08-23.**
+  The compiled `notifyLifecycle` at a local listener: four events, two POSTs
+  (`needs-review`; `stopped` after a `budget` verdict), six-key UTF-8 body,
+  `sha256=` header matched by `openssl` and Python's `hmac`. A real POST to
+  httpbin got 200, but byte fidelity is proved over loopback only.
+
+- **An assist's `stream-json` stdout against the pin, 2026-09-09**: CLI
+  `2.1.260`, `spawnAssist`'s whole flag set, exit 0, eight lines. The
+  `tool_use` came on an `assistant` event in the shape `assistToolUses` reads;
+  `parseReviewOutput` read `completed`, $0.206351, 64,437 tokens.
+  - argv: `-p … --output-format stream-json --verbose --permission-mode plan
+    --max-budget-usd 0.30 --allowedTools Grep Glob Read`
+  - lines: three `system`, two `assistant`, one each of `rate_limit_event`,
+    `user` and `result`
+
+- **The live log's open-tool rows, rendered in isolation, 2026-09-11**:
+  `renderToStaticMarkup` with the built CSS at 1280 and 390, both skins; the
+  `sticky bottom-0` rows sit flush in both scroll states, jump-to-live paints
+  over them, and 390px has no sideways scroll.
+
+- **Every flag `buildArgs` and `sessionAgentArgs` emit is in `claude --help` on
+  2.1.260**, checked before the 2026-09-04 bump, so a run will at least start.
+
+- **The failed `tool_result` shape comes from real CLI 2.1.226 transcripts.**
+  Both the string and the array-of-blocks `content` carry `is_error: true`.
+
+- **The `<synthetic>` refusal marker**, from a real record on this machine;
+  the only refusal seen here is `Not logged in · Please run /login`.
+
+- **`Connection closed mid-response`, seen in a real run** (then filed
+  `failed`); one of five `isTransientApiError` sentences from the binary.
+
+- **A new run takes a parked run's folder straight away**, reproduced against
+  the live container.
+
+- **The refusals around resuming a finished run** (an exhausted cycle or spend
+  limit, a taken checkout), checked against the live container.
+
+- **The column a follow-up pick-up reads is written end to end**, against a
+  stub CLI printing the two `stream-json` events the loop reads.
+
+- **`Grep`/`Glob` on `--allowedTools` restore both tools, on four `system:init`
+  events.** Two with only those names (throwaway container; real image, live
+  container), one with two `Bash(git …:*)` grants in front, one also under
+  `--permission-mode plan`. None was a spawn from this app; `SEARCH_TOOLS` on
+  every spawn's argv is unit-tested only.
+
+- **The `needs-review` matcher, precedence, prompt composition, loop stop and
+  edge semantics are unit-tested.**
+
+### Context control
+
+- **`--autocompact` removed 2026-08-24 for `contextPruning.ts`, at the same
+  167,000 it fired at**, knowing its measured value: over 1,147 transcripts,
+  turns past the cap cost 0.45x per turn and 0.50x per 1,000 output tokens
+  between the two arms. A decision, not a regression; nothing retracted.
+
+- **winnow's own token figure is unusable, 2026-08-24.** It read
+  `Saved 0 tokens (0.0%)` for a prune that removed 28% of what is sent: it
+  comes from historical `usage` frames and cannot express a delta. winnow
+  wrote no receipts either, so `contextPruning.ts` measures `message` content
+  before and after itself, and that is the only figure the app reports.
+
+- **winnow at `standard` removed 28% and 38.4% of context, 2026-08-24.**
+  winnow `b49fceb`, `winnow safe run -- treat … -rx standard`: 72,392 tokens
+  from `f2de6d64-…jsonl` (2.0 MB), 154,609 from `06510dfb-…jsonl` (2.4 MB).
+  Bytes freed overstated these 3.4× and 2.0×, a ratio that varies by session,
+  so no fixed factor corrects it and the app never renders bytes freed.
+
+- **`gentle` removes nothing, 2026-08-24.** 0 bytes on `f2de6d64-…jsonl`: its
+  one strategy that fires on an ordinary session, `metadata-strip`, is
+  excluded by name in orchestrator-safe mode, so the setting offers two
+  positions, not three.
+
+- **Every prune leaves a full-size `.bak`; only a listing sweep removes it,
+  2026-09-08.** `create_backup=True` is hardcoded in winnow and `shutil.copy2`
+  keeps the source's mtime, so the old mtime filter missed them: eleven
+  copies, 18.8 MB, had survived here. On a real prune the old sweep left its
+  `.bak`; `removeBackups`' pre-spawn directory listing left nothing.
+
+- **Four real prunes at `aggressive` removed 29.1-52.8%, 2026-08-24.** All
+  early-end, at 167,326-169,283 tokens; removal matched the observed context
+  drop to about 3% (266,683 claimed, 274,619 observed). The resume
+  invalidation was understated 16.6%, so `netReceipt` now prices it off the
+  first billed turn's `cache_creation_input_tokens`.
+
+- **Both prune triggers have fired: 54 receipts, 52 `early-end` and 2
+  `boundary`, read 2026-09-07.** 2026-08-24 to 2026-08-28, 47 runs, read from
+  `/data/usagefoundry.db`, not the untracked `prune-audit-dump.json`. Receipts
+  1-4 match the four measured 2026-08-24 digit for digit. `tokens_before` is
+  the transcript measure, not the API measure the ceiling compares.
+
+- **Intake-filter/prune overlap is 4.06% of pruned tokens, an upper bound,
+  2026-08-24.** Corpus-weighted over this install's ten largest transcripts;
+  3.07% unweighted, 0.00-9.92% spread. The context card adds the two figures
+  and does not print the bound. No correction today: no ledger line carries a
+  `tool_use_id` (15 of 15 results on the fallback key).
+
+- **The filter ledger's live readout nets `+$0.0660675`, a floor,
+  2026-08-24T21:12Z.** 125 lines held 15 distinct results, 15,144 tokens, so
+  summing the file would overstate 24.8×, a factor that grows with session
+  length. A floor because 82 of 125 requests joined no main-thread turn and
+  only 6 of 15 results were priced.
+
+- **`intakeFilter.ts` read a dead ledger path from 2026-08-25, as `missing`.**
+  The ledger had moved to `/data/winnow/filter.jsonl`; `GET /api/usage` showed
+  every figure zero while it held 212 lines. At the real path 215 of 217
+  request ids joined, all main-thread: how much of a ledger joins depends on
+  what the fleet was doing.
+
+- **The API and transcript context measures sat ~65,000 apart, 2026-08-25.**
+  Run `a75a7cb7`: the last request before the prune carried 183,214 prompt
+  tokens against 118,776 in the transcript's turns. Its first request carried
+  57,819 against 2,759 of conversation, through the winnow proxy, which turns
+  tool deferral off; no prune reaches that fixed part.
+
+- **Ratio versus subtraction on that crossing, 2026-08-25.** The first request
+  after the prune carried 120,595. `apiContextTokens` minus what came out gave
+  132.9k, high; `contextAfterPrune`'s ratio gave 105.6k, low, because it
+  scales the fixed prompt down too. It now subtracts: high never claims more
+  was freed than was.
+
+- **At a 167,000 ceiling a run was back over it five minutes after its own
+  prune, 2026-08-25.** The ~55,000 fixed prompt left ~112,000 prunable.
+  `CYCLE_CONTEXT_CEILING_TOKENS` went to 300,000, then the same day to 200,000
+  (~145,000 prunable), and the size gate before the check went, since ~55,000
+  prompt tokens are in no transcript.
+
+- **The fixed prompt carried 17,229 tokens of the intake filter, 2026-08-27.**
+  A custom `ANTHROPIC_BASE_URL` turns the CLI's tool deferral off: the live
+  argv replayed gave 30,845 prompt tokens direct and 48,074 through the proxy.
+  `docker-entrypoint.sh` now exports `ENABLE_TOOL_SEARCH=1` (30,849). Sessions
+  step up at 2026-08-24T14:05:19, when `WINNOW_FILTER=1` was first switched on.
+
+- **`--autocompact` creates the only compaction threshold, firing at ~167,000,
+  2026-08-22.** 1,147 transcripts split at `ee93684`: before the flag, 604
+  sessions (246 past 167,000) made zero `compact_boundary` records; after, 53
+  made 42. CLI 2.1.226 fires at min(asked, window) − min(maxOutput, 20,000) −
+  13,000, so 167,000 for 200,000; 30 of 42 boundaries fell within ±3,000.
+
+- **Capping cut cost to 0.45× per turn and 0.50× per 1,000 output tokens,
+  2026-08-22.** Compared between arms from where each session reaches the cap;
+  a natural experiment, not randomised (same pin and model, different periods
+  and workloads). The within-session ±K-turn figure (−18.6% to −23.2%) is a
+  phase contrast, not a saving; do not quote it.
 
   | | sessions | turns | cache $/turn | $/1k output | output/turn |
   |---|---|---|---|---|---|
   | Uncapped | 227 | 15,933 | $0.1656 | $0.1849 | 896 |
   | Capped | 16 | 1,541 | $0.0742 | $0.0930 | 798 |
 
-  **0.45× per turn and 0.50× per 1,000 output tokens.** The second denominator
-  is the one that matters: a within-session ±K-turn measurement of the same
-  corpus gives −18.6% at K=10 and −23.2% at K=20, and **that figure is a phase
-  contrast rather than an effect size** — per-turn cost is monotone in position
-  within a compaction cycle, so it measures the down edge of a saw-tooth and
-  never the up edge. A placebo comparing the first K to the last K turns of the
-  same *uncompacted* ramp reproduces about 87% of it; re-denominated per output
-  token it flips to +30% to +47%; and the net across a full cycle is −2% to −6%
-  by three methods. Do not quote the ±K figure as a saving.
-
-  **No thrash-breaker trip.** Every line in the corpus matching `circuit breaker
-  tripped` is `type: "user"`, `"assistant"` or `"result"` — a person or an agent
-  quoting the issue — and **zero are `type: "system"`**. The file count rose from
-  5 to 12 *while this measurement ran*, so the check is a record-type filter and
-  never a file count; a bare `grep -rl` returns a number that grows with every
-  investigation of it. This is the same self-pollution class
-  `proposals/ContextControl/19-validation.md` found with `system-reminder`.
-
-  **Decision: `AUTOCOMPACT_WINDOW_TOKENS` stays at 200,000**
-  (`src/lib/orchestrator.ts:4802`, pushed at `:4984`). The issue's "consider
-  150000" is **declined**, and the reason is its own floor clause: 150,000 fires
-  at 117,000, the observed firing spread is roughly ±12,000 around nominal, and
-  that lower tail reaches the 100,000 floor where the CLI's breaker lives. No
-  test is owed — `src/lib/orchestrator.test.ts:2074` already asserts the flag
-  survives `--resume` and pins the CLI's accepted range rather than the value,
-  which is the right shape and leaves this file as the only record of the number.
-
-  **What this does not establish.** That 200,000 is *optimal* — there is one arm
-  and no dose-response, so nothing here measures what another value would do.
-  That the firing arithmetic generalises to another model: it is model-dependent
-  through `min(cbr(model), 20000)` and through whether the window resolution
-  reaches `source:"auto"` at all. And **the summariser's own call is not in any
-  ledger**: all 42 `isCompactSummary` records carry no usage block and no
-  assistant-with-usage record sits between a boundary and its summary, so a call
-  of roughly 168,000 in and 6,300 out — order $0.24 to $1.84 per compaction — is
-  billed and invisible to `scanUsage()`. It does not threaten the between-arm
-  result, and it is the largest unmeasured term here. Both are on the list below.
-
-- **What this app puts on the wire, and what it spends answering — measured
-  against the running container, and every figure a *before*.** Taken on
-  2026-08-23 by asking the container as it was then running, ahead of the
-  changes that answer them. `GET /api/runs` answered **696,197 bytes**
-  for 100 rows, of which **522,541 — 75.1% — was prompt text**, for a column the
-  table clips at 56 characters. `GET /api/runs/[id]` answered **591,574 bytes**,
-  of which **582,469 was an events array no caller reads**, on a three-second
-  poll. `GET /api/knowledge/graph` answered **9,864,990 bytes**;
-  `GET /api/branches` **254,752**; `GET /api/workflows` **30,290** for two saved
-  workflows, of which the node graphs — task prompts, drawn by neither reader —
-  were **28,934**. `GET /api/storage` took **5.3–7.4 s warm to answer 585
-  bytes**, and two concurrent readers each paid it in full. The runs page pulled
-  **10.5 MB a minute from an idle browser**, none of it compressed.
-
-  Three of those were profiled rather than only weighed, which is what says
-  where the time goes. Of the storage route, **5,981 ms was one serial `lstat`
-  walk of 88,325 entries / 2.62 GB** — the two `COUNT(*)`s beside it are 0.05 ms
-  and 0.01 ms — against **1,750 ms** for the same walk with 64 stats
-  outstanding. Of a **1.13 s** `/api/branches`, **1.12 s was eight serial `git
-  status` probes at 140 ms each** against a 15,082-entry worktree, and the cap
-  of twenty puts the worst case at 2.8 s. And `listTranscriptFiles` recursing
-  serially measured **105–121 ms** of a 165 ms `/api/usage` against **49 ms**
-  for a level-parallel walk of the same tree, where everything it feeds is
-  trivial beside it (1,174 `fs.stat` 9 ms, the dedupe 8, the sort 3).
-
-  **The figures after each change are computed, not curled.** No server was
-  asked a second time. The graph payload's **734,233 bytes** as pairs of
-  positions — from 9,864,990 whole, 4,601,846 with the eight unread edge fields
-  dropped and the ids kept, 1,056,865 as `{from, to}` objects — and the workflow
-  list's **471 bytes** are re-serialisations of the captured payloads under the
-  new shapes: arithmetic over a measurement rather than a second measurement.
-  The distinction matters more than usual here because the sixteen changes were
-  made in parallel against one baseline capture, so the readings do not compose
-  — the compression entry below prices an 8.8 MB graph body that the
-  link-position change had already made smaller.
-
-- **Why no `/api` response was compressed, which is not what the audit that
-  found it guessed.** HTML and JS from this same server came back gzipped and no
-  route handler's answer ever did. The guess was that route handlers flush their
-  own headers past Next's `compression` hook. They do flush, in
-  `pipe-readable.js`, and it makes no difference: the flush goes through the
-  patched `writeHead` and the hook fires normally. The mechanism is one step
-  further out. `sendResponse` copies a handler's headers across with
-  `NodeNextResponse.appendHeader`, which stores **every** value as an array, so
-  the raw response holds `content-type: ['application/json']`; `compression`'s
-  default filter asks `compressible()` about that value, and `compressible()`
-  returns false for anything that is not a string. Every app-router route
-  handler in this version is filtered out of compression by a one-element array.
-
-  Reproduced rather than reasoned: against Next 15.5.23's own `sendResponse` and
-  its own bundled `compression`, with `DEBUG=compression` printing
-  `[ 'application/json' ] not compressible` and then `no compression: filtered`
-  for the handler path, and `gzip compression` for a plain `res.end()` of the
-  same body on the same server. The tell that led there is worth keeping too:
-  what was missing was `Vary`, not `Content-Encoding` — the hook sets `Vary`
-  *before* it checks the size threshold, so a response missing it never reached
-  the threshold at all.
-
-  Two things measured beside it. The small-body break-even: 111→120, 169→178,
-  283→215, 374→264 and 586→336 bytes through `gzip -6`, so below roughly 250
-  bytes the answer comes back larger than it went in. And that `gzipSync` on the
-  8.8 MB graph body blocks the loop **30.6 ms and fires zero timer callbacks**
-  while it does, against 43 in an idle 50 ms, where the promisified form costs
-  the same wall clock (28.7 ms) and spends it on the threadpool — which is the
-  whole reason this process, which carries the fleet's guards on that loop, does
-  not take the synchronous call. The four before/after pairs (graph 8.8 MB →
-  488 KB, `/api/runs` 699 KB → 174 KB, `/api/branches` 255 KB → 76 KB,
-  `/api/usage` 52 KB → 10 KB) are gzip run over bodies captured at the start of
-  this pass, so they price what those routes answered that morning rather than
-  what they answer now.
-
-- **Where this fleet's money goes, over the whole recorded corpus.** Measured
-  2026-08-23 through this app's own `scanUsage()` and `pricing.ts` over 1,194
-  transcripts — **49,038 deduped turns, $6,537, 12.3 days**. Most of the bill is
-  carrying context rather than generating anything: **58% cache read and 20%
-  cache write**. Two readings of that split were taken separately in this pass
-  and they do not agree to the point — `readGuard.ts` records 58/20 and
-  `fileCostNotice.ts` records 60.5% read / 26.5% write / 13.0% output / 0.1%
-  input over the same corpus — so the split is good to a few points and no
-  better, while the direction is not in doubt. Both levers that landed in this
-  pass rest on the direction alone, which is the only reason the disagreement is
-  recorded here rather than resolved.
-
-  Split on the transcripts' own `isSidechain` flag, a tool call costs **13.55c
-  on a main thread against 5.01c in a sub-agent**, and within a thread it climbs
-  with position: **12.0c over turns 1–10 against 20.4c past turn 200**. The
-  first of those is confounded and the second is not — sub-agents are handed the
-  self-contained errands precisely because those are the ones worth delegating,
-  and easier work costs less per call in any context, whereas the gradient is
-  the same threads doing the same work further along. Count tool calls from
-  every assistant record rather than the deduped ones: Claude Code writes one
-  line per content block sharing a message id and a usage block, so the dedupe
-  that makes the cost right drops every `tool_use` after the first and triples
-  the apparent price per call.
-
-  **What is in those contexts, denominated in characters and never in money.**
-  Over the weekly window, **29,707 tool calls placed 97,970,351 characters**, of
-  which **`Read` is 57.1% and `Bash` 38.2%** — 95.3% between them. Characters
-  because a `tool_result` carries no usage block at all, so attributing a share
-  of the bill to one would be inventing it. Denominated in tokens instead:
-  **114,686,394 were placed into a context and re-read 30.6 times on average**,
-  which is **$26.53 per million placed** against Opus's $5/M list input. That
-  price is a **floor**, and knowably so — a re-written cache prefix counts twice
-  in the denominator, which understates the multiple and therefore the price.
-
-  **And the counterfactual, which is not a forecast.** Every one of this
-  install's 327 runs is Opus. Repricing each recorded turn at sonnet-5's rate on
-  the day it ran takes **$3,043.09 to $1,241.30**: **0.408×, not the 0.60× the
-  rate table implies today**, because Sonnet's introductory price runs to
-  2026-09-01. It is arithmetic over the tokens that were actually produced, so
-  it does not know that the same task on a smaller model may take more turns,
-  and the card that renders it says so in the same breath.
-
-- **Four things read out of the pinned CLI bundle rather than run.** All four
-  decide the shape of something that shipped in this pass, and all four fail
-  silently if they are wrong, which is why they were read rather than assumed —
-  and reading a bundle is not running one, so each stays on this footing until a
-  billed run says otherwise. `PreToolUse` hook output is validated against a
-  discriminated union keyed on `hookSpecificOutput.hookEventName`, carrying
-  `permissionDecision` of allow/deny/ask/defer: a deny missing the event name is
-  not a refusal, it is output the CLI discards without a word. A plugin's
-  `hooks/hooks.json` takes the wrapper shape
-  `{"hooks": {"PreToolUse": [{matcher, hooks: […]}]}}`, which is not the
-  settings-file shape, and the wrong one registers nothing — again silently.
-  `agent_id` appears on hook stdin **only inside a sub-agent**, which is what
-  lets a hook tell the two apart at all. And the CLI's own whole-file read is
-  capped at **25,000 tokens** and truncated to the **first 2,000 lines** ("was
-  too large and has been truncated to the first 2000 lines"), which is why a cap
-  on a read measures the read rather than the file: a long thin file never
-  reaches a cap it would otherwise be refused for.
-
-- **That `--plugin-dir` registers a plugin's *hooks*, observed at last** — the
-  thing the entry below used to say had never been seen here. Read off the live
-  install's own `run_events` on 2026-08-23, from a third-party plugin
-  (`/workspace/winnow/plugin`) sitting in `plugins.enabled` beside `orient`: 213
-  `hook_response` rows, `hook_name` `SessionStart:startup` (93),
-  `SessionStart:compact` (88) and `SessionStart:resume` (32), each `exit_code:
-  0` with the hook's own `Cozempic: guard active` as `stdout`, and each followed
-  by a `log` row reading `SessionStart:… hook added this to the agent's
-  context`. So the flag delivers hooks as well as skills, a resumed cycle gets
-  them (`--resume` restores no flags, and this is the flag being on the argv
-  doing its work), and an autocompact fires `SessionStart` a second time inside
-  one cycle.
-
-  **What this does not establish, and the reason is in the CLI rather than in
-  the data.** Only `SessionStart` was ever *seen*, and that is not evidence
-  about the others: `hook_response` is emitted through `zRo(hookEvent)`, whose
-  allowlist is `JKy = ["SessionStart","Setup"]` with everything else behind
-  `CLAUDE_CODE_REMOTE`. `PostToolUse`, `PreCompact`, `PostCompact` and `Stop`
-  therefore run — or do not — entirely unobserved from here, and this plugin
-  registers all four. `readGuard`'s `PreToolUse` is in that unobserved set, so
-  what it inherits from this is the general claim and not its own.
-
-  And what was running was the hook *shell*, not the plugin: `cozempic` was
-  absent from the image the whole time — no `pip`, no `ensurepip`,
-  `EXTERNALLY-MANAGED` — so every command in every one of those hook bodies fell
-  through its `|| true` having done nothing. The `echo` sits outside those
-  chains, which is exactly what makes it evidence: it proves the body executed
-  and proves nothing about what the body does. 213 sessions were told a guard
-  was active with no guard present. `UF_PY_TOOLS` is the answer to that half.
-
-- **The outbound webhook delivers, and the signature it sends verifies against
-  two implementations that are not this one.** Measured on 2026-08-23 with a
-  throwaway `node:http` listener outside the checkout, driving the real
-  `notifyLifecycle` through the compiled module rather than a paraphrase of it.
-  Four events in, two POSTs out — exactly the ones the filter names: a
-  `needs-review` status, and a `stopped` preceded by a `budget` verdict, with a
-  `completed` and an unaccompanied `stopped` (an operator's own cancel) sending
-  nothing. Both requests arrived `POST /api/webhook/uf-proof` with
-  `content-type: application/json`, `user-agent: UsageFoundry/0.1.0` and a
-  `content-length` equal to the bytes read off the socket. The body of the first
-  was 156 bytes:
-
-  ```
-  {"install":"büro","event":"run.needs_review","run_id":"r-proof-1","status":"needs-review","at":1700000000000,"url":"https://uf.example.com/runs/r-proof-1"}
-  ```
-
-  `JSON.parse` of it gives exactly `["install","event","run_id","status","at",
-  "url"]` and nothing else; `ü` arrived as `c3bc`, so the body is UTF-8 on the
-  wire, and the trailing slash on `UF_PUBLIC_URL` was stripped rather than
-  doubled. The header was
-  `sha256=3ec1124f7004e3b8b1d4280bb050e9ec7dee1199429e029c51a66e0fef564b6e`, and
-  the raw bytes were written to a file and re-hashed by `openssl dgst -sha256
-  -hmac` and by Python's `hmac` — both agree with the header, on both bodies. So
-  what a receiver verifies is checked by something other than the code that
-  produced it, which is the whole point of freezing the vectors in
-  `notify.test.ts`.
-
-  Two more things were exercised the same way. A real external POST to
-  `https://httpbin.org/post` returned **200** and was recorded as such, so egress
-  from this environment works and the delivery path is not only a loopback story
-  — though httpbin's echo was discarded by `deliver`, so byte-level fidelity is
-  established over the local listener and not over the internet. And a POST at an
-  unreachable receiver (`http://127.0.0.1:9/uf`) logged
-  `webhook.delivery … http_status: 0, ok: false, message: "fetch failed"` at
-  `warn` and left `webhookHealth()` reading `consecutiveFailures: 1`, which is the
-  path `/api/status`'s alert row depends on.
-
-- **Discord's 400, the in-container relay, and the credential it does not
-  hand on.** 2026-08-24, against a real Discord channel webhook and a real
-  container on Docker Desktop.
-
-  The generic six-field body posted to a live Discord webhook answered **400**
-  with `{"message": "Cannot send an empty message", "code": 50006}`, and a
-  `{"content": …}` control to the same URL answered **204**. So the claim that
-  a Discord URL cannot be a receiver is now a request this project sent rather
-  than a reading of Discord's documentation, and the URL was proved live in the
-  same pass — the two failure modes that look identical from here.
-
-  A real run loop produced a real notification. Run `2ed6f591`, `completed` under
-  `UF_NOTIFY_ON_SUCCESS=1`, wrote `webhook_deliveries` `event: run.completed,
-  http_status: 0, ok: 0, error: "fetch failed"` — the emit, the filter, the body
-  and the recording all exercised by an actual ending rather than a constructed
-  `PersistedRunEvent`, with the failure being the receiver that was not running.
-
-  `scripts/discord-relay.mjs` then ran **inside the container**, started by
-  `docker-entrypoint.sh` off `DISCORD_WEBHOOK_URL`, listening on
-  `127.0.0.1:8787`. A correctly signed body sent from inside that container to
-  the `UF_WEBHOOK_URL` the *server process* holds was answered `204` and logged
-  `forwarded run.completed`, and the message arrived in the channel. The relay
-  also refused an unsigned body with `401`, a wrong signature with `401`, a `GET`
-  with `405` and a signed unparseable body with `400`.
-
-  The unset was measured on the right process, which took three attempts and is
-  the reason this paragraph exists. `docker compose exec` starts a process from
-  the container's *configured* environment and `/proc/1/environ` is `tini`'s —
-  both still carry `DISCORD_WEBHOOK_URL`, and both are the wrong probe. The
-  server is the process the entrypoint `exec`s into: its environ carries
-  `UF_WEBHOOK_URL`, `UF_WEBHOOK_SECRET` and `UF_NOTIFY_ON_SUCCESS` and **no
-  `DISCORD_*` at all**, which is what `orchestrator.ts` copies into an agent. The
-  relay keeps the URL, runs as root, and `setpriv --reuid=1000` reading its
-  `/proc/<pid>/environ` was refused.
-
-- **Playwright renders a real page, as the uid an agent runs as.** 2026-08-24,
-  inside the live `usagefoundry` container on Docker Desktop, arm64.
-
-  `playwright install --with-deps chromium` at 1.62.1 pulled Chrome for Testing
-  151.0.7922.34 (build `chromium-1234`), the matching headless shell and ffmpeg,
-  and the 32 apt packages Playwright's own dependency list names — the X, mesa
-  and font stack, `fonts-noto-color-emoji` and the CJK packs among them. Measured
-  on disk: **641 MB** Chromium, **340 MB** headless shell, 3.3 MB ffmpeg, against
-  a 1.94 GB image. So Debian 12 on arm64 is a platform Playwright ships a
-  Chromium for, which is the thing that could have been false.
-
-  `docker exec -u 1000 … playwright screenshot --viewport-size=1280,800
-  http://127.0.0.1:3000/login /tmp/uf-login.png` then produced a correct 1280×800
-  PNG of this app's own login page — right fonts, right colours, no tofu — run as
-  uid 1000, which is what `UF_AGENT_UID` defaults to and therefore what an agent
-  is. Chromium's own sandbox is unusable here for the reason `bwrap` is (`unshare`
-  is EPERM under Docker's default seccomp profile), and it did not have to be:
-  Playwright defaults `chromiumSandbox` to false, so neither the CLI nor an
-  ordinary `launch()` asks for it.
-
-  What was **not** verified: the `Dockerfile` and `docker-entrypoint.sh` changes
-  that make this survive a rebuild. The install above was done by `docker exec`
-  into a container holding a live run, so it sits in the writable layer at the
-  default `$HOME/.cache/ms-playwright`, while the image build puts it at
-  `/opt/playwright/browsers` behind `PLAYWRIGHT_BROWSERS_PATH`. Both were reasoned
-  about, only the first was run. The build has not been executed.
-
-- **`playwright install` fails inside the container, in two different ways, and
-  rendering does not.** 2026-08-25, live `usagefoundry` container, arm64. The
-  image has since been built from the block above — `chromium-1234`,
-  `chromium_headless_shell-1234` and `ffmpeg-1011` are at
-  `/opt/playwright/browsers` and `playwright --version` is 1.62.1 — which closes
-  the "the build has not been executed" note above.
-
-  With the sandbox off (`docker exec -u 1000`), `npx playwright install chromium`
-  exits `Failed to install browsers / Error: EACCES: permission denied, open
-  '/opt/playwright/browsers/.links/4aea…'`. Nothing was downloaded and nothing
-  needed to be: `npx --no -- playwright --version` reports 1.62.1, so npx
-  resolves the global install rather than fetching from the registry. What the
-  command cannot do is rewrite the 67-byte link file naming
-  `/usr/local/lib/node_modules/playwright/node_modules/playwright-core`, which
-  was root-owned because the image chowned the directory and not its contents.
-  That is what this commit's two `.links` chowns close. It matters because
-  `playwright install` is also what an agent runs to *check* whether a browser is
-  there, and the words it prints say the opposite of the truth.
-
-  With `UF_SANDBOX=1` the ownership decides nothing. Measured through `srt` at
-  0.0.71 with `enableWeakerNestedSandbox: true` and `allowWrite: ["/tmp"]`, a
-  write under `/opt/playwright/browsers` is refused with **`Read-only file
-  system`**: the sandbox's write model is allow-only and bubblewrap binds
-  everything outside the allow list read-only. Adding `/opt/playwright/browsers`
-  to `allowWrite` does reopen it — also measured — so a managed-settings change
-  could make the install work under the sandbox. What was **not** measured is
-  whether the CLI's own `filesystem.allowWrite` merges with or *replaces* the
-  working-directory and `/tmp` defaults it adds, and a replacement would leave
-  every agent unable to write its own worktree. Do not add that key on reasoning
-  alone.
-
-  Rendering is unaffected in both modes. `playwright screenshot` against a
-  `data:` URL produced a correct PNG as uid 1000 unsandboxed, and again inside
-  `srt` under the same policy.
-
-  That second run failed first with `ENOENT: mkdtemp
-  '/tmp/claude/playwright-artifacts-…'`, which looked like a fleet-wide problem
-  and is **not** one — it is an artifact of driving `srt` by hand.
-  `sandbox-utils.js` sets `TMPDIR` inside the sandbox to `CLAUDE_CODE_TMPDIR ??
-  CLAUDE_TMPDIR ?? /tmp/claude`, creates none of the three, and says so in its
-  own comment; a bare `srt` invocation carries none of those variables, so it
-  lands on the fallback. The CLI sets one: `/tmp/claude-1000` exists in the
-  running container, owned by `node`, holding `tsx-1000`, a `node-compile-cache`
-  and one directory per project path — all written by real agent work under the
-  sandbox. So the path nothing creates is the path nothing uses.
-
-  **Do not create `/tmp/claude` in the entrypoint to "fix" this.** The CLI
-  refuses a temp directory it does not own — `tempdir_owner_mismatch`, "Set
-  CLAUDE_CODE_TMPDIR to a directory you control, or ask an administrator to
-  remove it" — so a root-owned one would break the fallback rather than repair
-  it, and an agent-owned one would sit there unread.
-
-- **The runs list's `Pruning` column, rendered at two viewports.** Measured
-  2026-08-25 against a production build served on a throwaway `DATA_DIR` with
-  `CLAUDE_HOME` pointed at synthetic transcripts, so nothing here touched the
-  real `~/.claude` or the install's database. Four seeded runs covering the
-  three states the column can be in: two priced positive (`+$0.77`), one whose
-  early end removed 5,000 tokens with two turns behind it and therefore nets
-  **negative** (`−$0.07`, the invalidation outrunning the re-reads), and one
-  with no receipts at all, which renders `—`. The wire agreed with the render in
-  every case, and `prunedNetUSD` was **absent** rather than 0 on the run that
-  never pruned.
-
-  Both shapes were opened. At 1440px the column sits right of `Spent` in both
-  the in-flight and the finished-in-24-hours tables and no column edge moved;
-  below `md` the table stacks and each figure came out under a `Pruning` label,
-  which is the whole of what names it there.
-
-  **Two things this does not establish.** The figures came from seeded receipts
-  against seeded transcripts, so what is verified is the plumbing and the
-  rendering — not that pruning is worth what the column says on a real install,
-  which is the prune entry above's open question. And the per-run figure is
-  deliberately **unbounded in time**, unlike the dashboard's spans: a run old
-  enough for its transcripts to have been swept prices at zero saving with any
-  early-end invalidation still charged, so its column will drift towards a small
-  negative. That is the same number its own page prints — the two must not
-  disagree about one run — but it has not been observed on an aged run.
-
-  Dev mode could not be used for this and is worth recording: `next dev` answers
-  500 to every request here, `EvalError: Code generation from strings disallowed
-  for this context` out of `edge-instrumentation`, before any of this change was
-  involved. A production build and `next start` were the way in.
-
-- **The orchestrator page bounded to the pane at `lg`, rendered at seven
-  viewports.** Measured 2026-08-27 against `next dev` on a throwaway `DATA_DIR`
-  with `CLAUDE_HOME` pointed at an empty directory, driven by Playwright's
-  bundled Chromium, so nothing here read the real `~/.claude`, touched the
-  install's database or started a `claude` process. The database was seeded
-  directly: three chat sessions — so the side card shows its tab strip rather
-  than the `CardTitle` a fresh install opens on — forty messages, twelve pending
-  proposals and six decided.
-
-  At 1440×1080, 1440×700 and 1024×700 the pane's own overflow
-  (`main.scrollHeight − main.clientHeight`) is **0** in every combination tried:
-  the notice's disclosure closed and open, with and without two error banners
-  above the grid, and on each of the side card's three tabs. The thread reports
-  3,079–3,653px of internal scroll and the proposals list 1,401–1,950px, which
-  is where the length went. The composer's textarea ends at y=966 of 1,080 and
-  y=586–621 of 700; the approve row at 1,011 and 631–692. The same script
-  against the parent commit reads **3,180–5,024px** of pane overflow with the
-  thread not scrolling at all — at `lg` the card dropped its cap and grew to the
-  whole transcript, putting the composer at y=4,146 of a 1,080px window.
-
-  Below `lg` the change is a **no-op, measured rather than argued**: at
-  1023×700, 1023×1080, 900×900 and 500×900 this commit and its parent produce
-  identical numbers — the same pane overflow (715 / 335 / 515 / 551), the same
-  column height, the same 544px (34rem) cards, the same thread height and
-  internal scroll, the same proposals scroll. The page still scrolls there,
-  which is what the stacked layout is for.
-
-  **Three things this does not establish.** No container was started — Docker is
-  unavailable in the environment this was measured in, so the image's own
-  stylesheet rests on `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build`
-  (exit 0) plus a grep proving `lg:absolute`, `lg:inset-0`, `lg:min-h-0` and
-  `lg:flex-1` are all in the emitted CSS, which is the failure Tailwind's
-  `source(none)` exists to prevent and not the same as having seen it.
-  `docker compose up --build` is still the run to make. The error banners were
-  **injected into the live DOM** rather than produced by a failing poll, so what
-  is measured is the height they take rather than the state that puts them
-  there. And there is one case at `lg` where a scrollbar remains, which is
-  arithmetic rather than a defect: the row's incompressible furniture is about
-  186px — the composer, the approve row and the two cards' padding, none of
-  which may shrink — so a 700px window carrying the read-only banner *and* the
-  disclosure open *and* two error banners at once runs 71px short and the pane
-  scrolls by exactly that, with the composer 22px under the fold. All four
-  together is the only combination found that does it, and shortening any one of
-  them fits.
-
-- **A cycle's spend was the sum of two `result` events, and one of them already
-  contained the other.** Measured on the live container on 2026-08-27 against
-  run `075f7959` (session `ff106514-…`, one work cycle, 20.6 minutes, the
-  `ts-coder` agent on `claude-opus-5`). The run row read **$16.355574 /
-  5,915,907 tokens**; the telemetry card beside it read **$9.330155 / 8,481,166
-  tokens** — 75% apart on money and 30% apart on tokens, in *opposite*
-  directions, which is what made it worth chasing rather than filing as an
-  export that had dropped a batch.
-
-  Telemetry is the reading that reconciles. The session's transcripts hold 110
-  unique `requestId`s — 56 in `ff106514-….jsonl` and 37/10/7 in the three
-  `subagents/agent-*.jsonl` files — and `otlp_requests` holds exactly 110 rows
-  totalling exactly 8,481,166 tokens. Token for token, so there is no room in
-  the transcript for the extra $7 the run row claimed. Its per-class rates check
-  out too: 1,458 / 57,607 / 5,709,769 / 147,073 at `pricing.ts`'s
-  `claude-opus-5` with 1h cache writes comes to $5.773080, which is the `sdk`
-  rows' total to six decimals.
-
-  `run_events` held **two `result` rows at the same millisecond**
-  (`1787852651348`): `{costUSD: 7.025419, numTurns: 60}` and `{costUSD:
-  9.330155, numTurns: 9}`, and `orchestrator.ts` added them. Both are session
-  running totals: $7.025419 is the cumulative telemetry at `1787852201959`
-  exactly — an `sdk` request — and $9.330155 is the cumulative total at the last
-  request of the run. The second contains the first. What produced two of them
-  from one child is visible in the same feed: the agent's turn ended at
-  `…201959` while the `Adversarially verify refactor fidelity` `Explore`
-  sub-agent was still running, and when it answered at `…509306` the *same*
-  session re-inited (`system:init` at `…509435`, same `session_id`) and ran 8
-  more main-thread requests to a second terminal result.
-
-  The token gap is the other half of the same event and does not have the same
-  cause: `result.usage` is per-stretch, so summing it is right, but it is
-  main-thread-only. 5,915,907 is exactly the 56 `sdk` requests, split
-  4,798,457 / 1,117,450 across the two stretches; the 54 sub-agent requests
-  (2,565,259 tokens, $3.557076) are absent from it entirely. That is the CLI's
-  scoping, not this app's, and correcting it from telemetry would make
-  `runs.spent_tokens` a mixture of two sources.
-
-  **The shape is rare and the discriminator was checked**, which is why every
-  other multi-`result` run reconciles: across 39 recent runs with more than one
-  `result` and telemetry to compare against, drift is $0.000 for all but two.
-  The rest are restarts — a first `result` of `error_during_execution`, then a
-  new child with a CLI accumulator that starts at zero, so summing partitions
-  correctly. The two that drift are this run (+$7.025) and `65252b8a` (+$29.082),
-  both with two `success` results inside one cycle. `cycleCostAfterResult` is
-  therefore scoped to one `IterationResult` and the run loop's `+=` across
-  children is untouched.
-
-  **Not yet verified by hand:** the fix has `npm run typecheck` (exit 0) and
-  `npm test` (**1,816 tests / 268 suites / 0 failures**, of which 4 are the new
-  `cycleCostAfterResult` cases) behind it and has **not** been read in the
-  running app — the container was deliberately left alone rather than rebuilt.
-  No `next build` was run either. What to check on the next rebuild is the thing
-  no unit test can reach: a real two-`success`-result cycle, and that the run
-  page's spend then agrees with its telemetry card rather than exceeding it. The
-  two runs above are **not** retroactively corrected — `runs.spent_usd` is
-  stored, not derived, so both rows keep their inflated figures.
-
-- **The context ceiling was pricing the wrong engine's cut, measured against
-  the running container on 2026-08-28.** The operator's report was that pruning
-  "would only cut 8k tokens and do basically nothing" on the legacy engine. It
-  was reading `winnow plan --tier CB` — the fork engine's classifier — on an
-  install running `treat -rx aggressive`. Both engines were run over the two
-  transcripts that produced the declines, inside the deployed container
-  (winnow 1.8.39, `WINNOW_ORCHESTRATOR=1`, `treat` dry-run, nothing written):
-
-  | session | `plan --tier CB` | `treat -rx aggressive` |
-  |---|---|---|
-  | `02584a86` (run `98ade0c1`) | 30,729 B = 8.5k tok, 2.2%, 9/183 results | 1.79 MB of 3.65 MB — **49%**, 183/183 results |
-  | `de288909` (run `547f56a1`) | 68,776 B = 19.1k tok, 7.1%, 13/172 results | 1.50 MB of 2.83 MB — **53%**, 172/172 results |
-
-  The plan column reproduces the `run_events` lines exactly ("8.0k tokens
-  (3.1%)", "19.1k tokens (7.5%)"). The gap is one strategy:
-  `tool-use-result-strip` takes every tool result where CB's B1/B2/C1/C2/C3
-  fired on 9 of 183. Four further transcripts of 3–13 MB gave the same shape —
-  plan 0%, 8.6%, 11.0%, 25.2% against treat 49.8%, 53.9%, 54.9%, 52.8%. The
-  record agrees: the last `prune_receipts` row is 2026-08-26 21:14 and the
-  decline line repeated every few minutes for two days after it.
-
-- **The corrected path was run end to end against that same output.** The real
-  captured stdout of both dry runs was fed through the compiled
-  `parseTreatEstimate` → `treatRemovedTokens` → `ceilingPayback`
-  → `ceilingDeclineMessage`, at the API-context figures the two runs actually
-  declined at: `02584a86` reads 49.0%, D = 126,673 of C = 258,300, T\* = 21 —
-  still declined, by one turn — and `de288909` reads 53.0%, D = 135,053 of
-  C = 254,800, T\* = 18 — pruned. That the two land either side of a horizon of
-  20 is the arithmetic being right rather than the gate being off: the in-place
-  pruner frees about half these transcripts, and half is exactly where
-  `20·(C − D)/D` crosses.
-
-- **The units bug that reading found, and why the share is not
-  `BYTES_PER_TOKEN`.** Session `02584a86` stood at 3,832,363 bytes on disk
-  against an API context of 258,300 tokens — 14.8 bytes a token, four times the
-  constant — so the dry run's 1.79 MB read at 3.6 comes to 521k tokens
-  "removed" from a 258k-token conversation. `ceilingPayback` floors the
-  remainder at zero and prices that at 0 turns, i.e. prune unconditionally. The
-  test asserts the overshoot before asserting the fix.
-
-- **The sandbox mount-point failures were counted, their mechanism read out of
-  the pinned CLI, and the fix's git half exercised — 2026-09-04.** `run_events`
-  carries **255** failed tool calls of the shape `bwrap: Can't create file at
-  <path>: Permission denied` on ten days, 2026-08-25 to 2026-09-04, 15–56 a day,
-  naming **261** paths between them. The commands were `cat`, `sed -n`, `grep`
-  and `git log`; none of them touched the path in the message, because the
-  failure is in sandbox construction and happens before the command runs. By
-  path tail: `settings.local.json` 97, `settings.json` 55, `skills` 54, `hooks`
-  13, `workflows` 8, `routines` 8, `launch.json` 7, `output-styles` 5,
-  `scheduled_tasks.json` 2, `agents` 2, `commands` 1 — **252 of 261 inside a
-  project tree**. Of the nine that are not, eight name `policy-limits.json`,
-  `local`, `seed-admin` or `mcp-skill-archives` in the config directory, which
-  `sandboxMountPoints.ts` deliberately leaves alone, and one is `.idea` in a
-  project root, which belongs to the sandbox's *other* list — the shell and
-  editor dotfiles — and is not covered either.
-
-  **The mechanism was read, not inferred.** In `claude.exe` 2.1.260 the deny
-  builder applies one list per tree — `.claude/{settings.json,
-  settings.local.json,skills,commands,agents,hooks,launch.json,workflows,
-  routines,output-styles,scheduled_tasks.json,loop.md}` and `.mcp.json` — to the
-  working directory and then to **every ancestor up to `/`**, which is why
-  `/workspace/.claude/settings.local.json` is the single most frequent real path
-  for runs whose cwd is two levels below it. The ancestor half is guarded on
-  `.claude` already existing and the cwd half is not; `sandboxMountPointDirs`
-  copies that guard exactly. `.mcp.json` is left out: no failure named it, and
-  an empty one in a repository root is a file an operator would read as theirs.
-
-  **What was exercised by hand:** the module against a scratch tree — twelve
-  files created in the cwd (with `.claude` made for it) and twelve in an
-  ancestor that already had one, an ancestor without one skipped, and a second
-  pass creating nothing — and then in a real linked worktree, where after the
-  fill `git status --porcelain` is empty and `git add -A --dry-run` stages
-  nothing. That last one is the half that matters beyond tidiness: eleven of the
-  fourteen repositories here do not ignore `.claude/`, so without the
-  `.claude/.gitignore` the placeholders would ride a run's `git add -A` onto its
-  branch, and a leftover would fail `ensureWorktree`'s clean-slot check.
-
-  **Not yet verified by hand:** no sandboxed cycle has run with the fix. The
-  container was deliberately left alone rather than rebuilt — runs were active —
-  so nothing here shows bwrap finding the mount points and binding over them,
-  which is the whole claim. `npm run typecheck` is exit 0 and `npm test` passes
-  apart from one pre-existing `backupRestore` failure that also fails on a clean
-  tree. What settles it is the `bwrap: Can't create file` count in `run_events`
-  after the next `docker compose up --build`: it should go to zero for project
-  trees and keep the handful in the config directory and the one `.idea`.
-
-- **The sandbox's *other* list — the eleven shell, git, editor, MCP and ripgrep
-  dotfiles it binds at the root of the working directory — measured on
-  2026-09-09 inside an isolated cycle in
-  `.uf-worktrees/usagefoundry-721638d11c0b-7`.** In a live session
-  `/proc/self/mountinfo` carries one entry per name against the cwd, each a
-  character device `1,3` from the container's `/dev` tmpfs, and `git status
-  --porcelain` lists all eleven as `??`; `git add -A` there does not commit
-  them, it dies with `error: .bash_profile: can only add regular files,
-  symbolic links or git-directories`. None of the eleven is bound at
-  `/workspace`, an exposed ancestor that *does* get the `.claude` list, nor at
-  `/workspace2`, an added directory — the list follows the working directory
-  and nothing else. They outlive the session: six of the 47 checkouts under
-  `.uf-worktrees` with nothing running in them carried all eleven as regular
-  empty `0444` files, `.idea` and `.vscode` among them as files where a
-  checkout wants directories. `sweepSandboxTreeRoot` was run against a scratch
-  tree holding all eleven plus a `.gitconfig` with content and a `.vscode`
-  directory: nine removed, those two left. **Not verified by hand:** the
-  orchestrator's call to it after a cycle's child exits. No sandboxed cycle has
-  been spawned since the change, so the log line, the `EBUSY` branch for a
-  grandchild still holding a mount, and the interaction with `trackedDirt`'s
-  slot-reuse workaround in `land.ts` are all reasoned rather than seen.
-
-- **The chat and workflow-block child's half of the same two lists, wired and
-  counted on 2026-09-09.** `ensureSandboxMountPoints` and `sweepSandboxTreeRoot`
-  had exactly one caller, `runIteration`. `runOrchestratorChild` in `chat.ts`
-  now calls both — the fill on `[cwd, ...addDirs]` before the spawn, the sweep on
-  `cwd` inside `land`, so no ending can miss it — and `cwd` is resolved once
-  above the spawn so both are handed the directory the child actually got.
-  `core.excludesFile` — which the bullet below hands a **work cycle's** child — is
-  deliberately **not** given to this one; the argument is in the docblock at the
-  spawn site and in `docs/agent/chat.md`, and its short form is whose repositories
-  these are: a cycle is ordered to commit in a checkout this app seeded, while
-  `GIT_CONFIG_*` has no scope narrower than the process, so the ignore rule would
-  follow a turn that roams every mount into the operator's own checkouts, where an
-  untracked `.vscode`, `.idea` or `.mcp.json` at the root is an ordinary thing to
-  have.
-
-  **The before-count for chat turns, off the CLI's own transcripts.**
-  `~/.claude/projects/-workspace/` is `chatCwd()`, so a session starting there is
-  a chat turn unless somebody pointed a run at the mount root itself: **192**
-  sessions, **53** of them carrying at least one errored `tool_result` of the
-  shape `bwrap: Can't create file at <path>: Permission denied`, **118** such
-  results over 11 days, 2026-08-25 to 2026-09-08. Counted from `tool_result`
-  blocks rather than by grepping the transcripts, because agents working on this
-  very fix quote the string in prose and a raw match is roughly twice the truth.
-  By list: **67** name the `.claude` list inside a project tree — 30
-  `/workspace/.claude/settings.local.json`, 16 `settings.json`, 8 `skills`, 6
-  `hooks`, and the rest — which is the half the fill covers; **35** name the
-  config directory, which `sandboxMountPoints.ts` deliberately leaves alone; and
-  **16** name the *tree-root* list at `/workspace` itself (`.gitconfig` 3,
-  `.zprofile` 3, `.profile` 3, `.gitmodules` 3, `.zshrc` 2, `.mcp.json` 1,
-  `.bashrc` 1). So the expected count after this change is **51 rather than
-  zero**, and those 16 are a gap it does not close: the module's stated reason
-  for never pre-creating that list is that "the working directory is writable, so
-  bwrap's create succeeds", which holds for a cycle's checkout under
-  `.uf-worktrees` and does not hold for the chat's `/workspace`, whose root the
-  child's uid cannot write. Filed on the board rather than widened into this
-  change.
-
-  **What was exercised by hand, through `runOrchestratorChild` itself rather
-  than through the module.** Two scratch mounts under `WORKSPACE_ROOTS`, the
-  first a git repository holding one tracked file and an operator's own untracked
-  `.vscode/settings.json`, and a `CLAUDE_BIN` stub standing in for bwrap: it
-  creates the eleven `SANDBOX_TREE_ROOT_NAMES` at the root of its cwd as 0-byte
-  `0444` files, exactly as `create_file(path, 0444)` leaves them, and exits. The
-  same script was run against `chat.ts` at `HEAD~1` and at `HEAD`.
-
-  Before: no `.claude` in either tree, ten placeholders left at the root — ten
-  rather than eleven because `.vscode` was already the operator's directory and
-  the stub skipped it — and `git status --porcelain` reading `?? .bash_profile |
-  ?? .bashrc | ?? .gitconfig | ?? .gitmodules | ?? .idea | ?? .mcp.json | ??
-  .profile | ?? .ripgreprc | ?? .vscode/ | ?? .zprofile | ?? .zshrc`. After: the
-  cwd's `.claude` holds the twelve mount points and the generated `.gitignore`,
-  the `--add-dir` mount's holds the same thirteen entries, no placeholder
-  survives, and `git status --porcelain` is `?? .vscode/` and nothing else, with
-  the operator's `.vscode/settings.json` untouched. That last line is also the
-  concrete thing `core.excludesFile` would have hidden from a turn asked what is
-  uncommitted.
-
-  The stub's output is not a turn's, so both runs settle `failed` — which
-  exercises the placement for free: the sweep is in `land` rather than beside the
-  exit, so a turn that ended badly still hands the tree back clean.
-
-  Against the module alone, on a third scratch tree: 24 placeholders created
-  across two trees with no problems and `git status --porcelain` unchanged by the
-  fill, the sweep removing 9 while leaving a real `.gitconfig` with content and a
-  real `.vscode/` directory, and a second fill creating nothing. `npm run
-  typecheck` is exit 0 and `npm test` is 2597 pass, 0 fail.
-
-  **That both halves are live rather than historical** was seen twice while doing
-  this. This worktree, held by a sandboxed session, carries all eleven at its
-  root as character devices, `git status --porcelain` lists them `??`, and a
-  `git add -A` here died with `error: .bash_profile: can only add regular files,
-  symbolic links or git-directories`. And across `/workspace` and `/workspace2`
-  one abandoned placeholder outlived its session: `/workspace2/.mcp.json`, a
-  0-byte `0444` file at the root of the operator's own Obsidian vault, which is a
-  mount and not a checkout — left where it was found rather than swept by hand.
-
-  **Not verified by hand:** no chat turn has run with this change against a real
-  CLI, and this container cannot host one. `bwrap` refuses to nest inside the
-  sandbox every Bash call here already runs in (`bwrap: open /proc/<pid>/ns/ns
-  failed: No such file or directory`), so nothing here can construct a real
-  sandbox; no server or `DATA_DIR` is reachable from an agent worktree; and
-  driving a live turn would spawn a billed child with nobody present. The stub
-  above stands in for bwrap's *effect* and cannot stand in for bwrap. So the
-  after-count, bwrap finding the placeholders this child now creates and binding
-  over them rather than failing, the sweep's `EBUSY` branch for a grandchild
-  still holding a mount, and both `opsLog` warnings are reasoned rather than
-  seen. What settles it, after a `docker compose up --build`: send a chat message
-  that runs a `Bash` call, re-run the transcript count above over
-  `~/.claude/projects/-workspace/` — the 67 `.claude`-list failures should go to
-  zero while the 35 config-directory and 16 `/workspace`-root ones remain — and
-  run `git status --porcelain` in the mount the turn's cwd was, which must name
-  none of the eleven `SANDBOX_TREE_ROOT_NAMES`.
-
-- **`core.excludesFile` in the child's environment as the answer to that
-  `git add -A`, measured on 2026-09-09 in
-  `.uf-worktrees/usagefoundry-721638d11c0b-1` while its own sandboxed session
-  held all eleven names as `crw-rw-rw- 1, 3`.** git 2.39.5. The failure
-  reproduces non-destructively — `git add -A --dry-run` prints `error:
-  .bash_profile: can only add regular files, symbolic links or git-directories`
-  followed by `fatal: adding files failed`, so the dry run is enough to test
-  against and no case below had to stage anything. With `GIT_CONFIG_COUNT` /
-  `KEY_0` / `VALUE_0` naming `core.excludesFile` and a file listing the eleven
-  names root-anchored, the same `git add -A --dry-run` exits 0; a **real**
-  `git add -A` then exits 0 as well, stages none of the eleven, and stages a
-  planted `docs/uf-anchor-probe/.gitconfig` — which is the root-anchoring claim,
-  that a repository genuinely tracking a nested file of one of these names keeps
-  seeing it. `git status --porcelain` no longer lists the eleven. Then the same
-  again through the shipped code rather than a hand-written file:
-  `ensureSandboxExcludesFile()` wrote `/tmp/claude-1000/uf-git/sandbox-root-excludes`,
-  481 bytes, mode 0644, and `agentGitEnv("ghp_fake_token", <that path>)` produced
-  one five-pair block — the four GitHub pairs then `core.excludesFile` — under
-  which `git add -A --dry-run` exits 0 **and** `git config --get
-  core.excludesFile` and `--get-all url.https://github.com/.insteadOf` both read
-  back, which is the half that says the two contributors to `GIT_CONFIG_COUNT`
-  are not overwriting each other. Where the file lives was checked the same way
-  the child will see it: this container is privilege-separated, and a root-owned
-  0644 file under the 0755 `/run/uf-skills` is readable from inside a sandboxed
-  `Bash` call, which is the ownership, mode and location `/run/uf-git` takes.
-  There is no `~/.gitconfig` and no `~/.config/git/ignore` here and
-  `git config --get core.excludesFile` is unset, so the override this block
-  performs overrides nothing in the container; the image's own git settings are
-  `--system` and name `user.*` and `safe.directory`, none of which this touches.
-  `npm run typecheck` exit 0; `npm test` 2590 pass, 0 fail.
-
-  **Not verified by hand:** no work cycle has been spawned by this code. An
-  agent's own sandboxed calls are spawned by the *installed* app rather than by
-  its branch, so everything above ran git by hand inside a sandbox the installed
-  app made — what is unseen is the wiring: that `runIteration` writes the file
-  and that `agentGitEnv`'s block reaches the child's environment on a real spawn.
-  Unseen with it: the file being written to `/run/uf-git` at all, since only the
-  server is root and only under compose (every reading above is the
-  `os.tmpdir()` branch), the log line for a file that could not be written, and
-  the `EEXIST` path on the second cycle of a run. What settles it is a run on
-  this code whose task is `run \`git add -A && git status --porcelain\` in your
-  checkout and report the exit status`: exit 0 with no `can only add regular
-  files` line, against the same command failing on `main`. Alongside it,
-  `docker compose exec usagefoundry cat /run/uf-git/sandbox-root-excludes` should
-  print the eleven entries root-anchored under their comment header, and reading
-  a live cycle's `/proc/<pid>/environ` should show `core.excludesFile` as the
-  last pair of a single `GIT_CONFIG_COUNT` block with the GitHub pairs still
-  ahead of it.
-
-- **Neither suite figure in the two bullets above is the merged tree's.** The two
-  changes were measured on their own branches before they met — 2,597 pass for the
-  chat child's fill and sweep, 2,590 for `core.excludesFile` — and the suite has
-  not been run since the merge, which carries both sets of tests (`agentGitEnv`'s
-  in `orchestrator.test.ts`, the excludes body's in `sandboxMountPoints.test.ts`)
-  where each run saw only its own. In the merged tree `runIteration` does all
-  three — the fill, the sweep, and `ensureSandboxExcludesFile`'s path riding
-  `agentGitEnv` into the child's environment — while `runOrchestratorChild` does
-  the fill and the sweep and, for the reason above, not the third. That is a
-  reading of the merged tree rather than a run of it.
-
-- **The Codex sign-in panel, driven end to end against `codex-cli 0.153.4`** on
-  2026-09-05, on a built server (`npm start`) with a scratch `DATA_DIR` and a
-  scratch `CODEX_HOME`, and separately in a browser through Playwright. Every
-  reading in `codexAuth.ts` comes from this run rather than from `--help`.
-  `codex login status` has **four** answers and the exit code splits them wrong:
-  `Not logged in` exits 1 and so does `Error checking login status: <detail>` on
-  a credential file it cannot parse, which is why `parseCodexStatus` reads the
-  text and reports the second as unreadable rather than as signed out. The
-  device flow prints its URL *and* a one-time code — `https://auth.openai.com/codex/device`
-  and e.g. `W0YZ-APHI9` — wrapped in SGR colour **that survives `NO_COLOR=1` and
-  `FORCE_COLOR=0` and a pipe**, then polls silently; nothing comes back through
-  this app, and starting one **deletes the stored credential immediately**,
-  before anyone approves anything (measured: an API-key install answered `Not
-  logged in` seconds after a device flow began). `codex login --with-api-key`
-  reads stdin and **exits 0 having read nothing**, printing "No API key provided
-  via stdin." — so the exit code is not a success signal and `submitApiKey`
-  re-reads the status and requires it to say `apikey`. What the routes did:
-  `GET /api/codex-auth` on an empty home answered signed out; a blank key was
-  refused 400; a key posted to `/api/codex-auth/api-key` came back
-  `{"loggedIn":true,"method":"apikey","apiKeyHint":"sk-proj-***56789"}` and
-  `codex login status` on the same `CODEX_HOME` printed the identical mask;
-  `/api/codex-auth/logout` returned it to `Not logged in`, the CLI agreeing;
-  `/api/codex-auth/login` returned a live URL and code, `GET` reported it
-  `pending`, and `DELETE` cleared it. **The key reached no log**: grepping the
-  server's stdout and the whole of `DATA_DIR` for a posted key found nothing,
-  and the only copy on disk was `$CODEX_HOME/auth.json`, mode 0600, which is
-  where the CLI puts it. In the browser the Settings row read `SIGNED OUT ·
-  Sign in · Use API key`, the sheet rendered the link, the URL as text and the
-  code, and after `Done` the row read `WAITING FOR APPROVAL · Show code`.
-
-- **`runs.provider`, its admission refusals and its two labels exercised end to
-  end in the container**, 2026-09-05, against a scratch `DATA_DIR` and a built
-  server (`npm start`, not `npm run dev`). `PRAGMA table_info(runs)` reports
-  `provider TEXT`, nullable, no default, at cid 47; the exact `INSERT` statement
-  `createRun` uses was prepared and run against the migrated schema with
-  `'codex'` and with `null`, which is what confirms its column list, placeholder
-  arity and bound-parameter count still agree — a mismatch there typechecks
-  clean and throws only at the first real run. Four `POST /api/runs` requests,
-  each answered 400 with its own sentence: `provider: "gpt"` → *Unknown
-  provider: gpt*; `codex` with `maxIterations: null`, `maxDurationMinutes: null`
-  and a 5-hour fraction and a cost cap set → the C2 refusal naming the window
-  guards and the spending limit; the **same** policy under `claude` → the
-  generic `no_terminus` sentence, which is what shows the ordering keeps both
-  reachable; and `codex` with `maxIterations: 1` → *This build has no Codex
-  adapter*. The run form was driven with Playwright: selecting Codex reveals the
-  disclosure, and the run page was rendered for two seeded `needs-review` rows —
-  `provider = 'claude'` draws `Spawned as / Claude Code` and *Claude Code
-  produced what is here.*, `provider = null` draws `Spawned as / not recorded`
-  and *Which agent CLI produced what is here was not recorded.* **What is not
-  verified: no cycle has been spawned with a provider on its row at all.** No
-  Codex adapter exists, so the only run that could reach the loop is a Claude
-  one, and none was started here — the seeded rows were written directly. The
-  refusal at the door is what stands between a `codex` row and a loop that would
-  spawn Claude Code for it, and it is the refusal, not the loop, that was tested.
-
-- **The gap-register pass of 2026-09-06, driven against a dev server on an
-  isolated `DATA_DIR`.** `npx next dev` with `DATA_DIR`, `CLAUDE_HOME`,
-  `WORKSPACE_ROOTS` and `CLAUDE_BIN` all pointed at a scratch directory, so no
-  real transcript was read and no `claude` could be spawned. What was exercised
-  by request rather than by unit test:
-
-  - **`POST /api/logout {"all":true}` with no credential answers 401 and revokes
-    nothing** — `env.activeSessions` read 1 before and 1 after. The same body
-    carrying the session cookie answers 200 and takes it to 0. This is the
-    branch that previously acted for any caller that could reach the port.
-  - **`/api/status` accepts a session cookie the login route can actually
-    issue.** Matrix, with `UF_STATUS_TOKEN` set: no credential 401, monitor
-    token 200, master bearer 200, **a real minted `uf_session` 200**, and the
-    master token pasted in as the cookie 401. The fourth was 401 before this —
-    the check compared the cookie against `UF_AUTH_TOKEN`, which is what the
-    cookie stopped being — so the branch that exists to let the operator's own
-    browser read this route could not be satisfied by anything this app issues.
-  - **`stores.backups` and `restartClosedOutstanding` are on `/api/status`**, and
-    the backup reading moves: an empty `./backups` reported
-    `{readable: true, count: 0, newestAt: null}`, and one file dropped in it read
-    back `count: 1, bytes: 4` with an mtime. The Storage card's copy of the same
-    reading carries the path; the status payload's does not, which the route
-    test asserts.
-  - **`GET /api/chat` reads `q`, `offset` and `limit`, and answers with the list
-    alone.** A search that matches nothing returns `{"chats": [], "total": 0}`;
-    `?offset=1&limit=2` over three threads returns 2 of 3; and — the half that
-    matters — the thread count was 3 before and 3 after, so a search does not
-    call `latestChat()` and does not create an empty thread.
-  - **`landVerifyCommand` is on `GET /api/settings`'s payload**, which it was not
-    before: the field existed on `Settings` and on the PUT, and the DTO the page
-    reads did not carry it, so no page could have rendered it.
-
-  `npm run typecheck` is clean, `npm test` is 2,268 of 2,269 (the one failure is
-  `backupRestore.test.ts`'s `ulimit -f` truncation case, which fails on this
-  macOS host before any of this and is unrelated), and
-  `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` produces the standalone
-  bundle with every new string in the client chunks.
-
-- **The chat turn's streaming and durability, driven end to end against a fake
-  CLI on 2026-09-06.** No real turn was billed for any of this: `CLAUDE_BIN`
-  pointed at a shell script emitting the event shape
-  `--output-format stream-json --verbose` produces, on the same isolated
-  `DATA_DIR` as above. That the flag pair itself is accepted by the pinned CLI
-  is **not** established here — it is the same pair `cycleInvocation.ts:1075`
-  has passed for every work cycle since it was written, which is why it was
-  chosen, and no chat turn has been through a real one.
-
-  - **The partial arrives and grows.** `partialText` read
-    `"Reading the repository. "` two seconds in, the full two sentences at four,
-    and `null` at nine with `costUSD` at the CLI's own `0.0731` — so the settled
-    answer replaces the live one rather than being drawn beside it.
-  - **A `SIGKILL` half-way leaves the turn behind.** With the server killed
-    outright — no shutdown handler, which is what a crash, an OOM or
-    `docker kill` is — the row still held `partial_text`, `turn_tokens = 31240`
-    and `turn_cost_est = 0.022`. Every one of those was lost before.
-  - **The boot pass turns them into a record.** On restart the thread reads
-    `user` → `assistant: "Reading the repository."` → `system: the server
-    restarted…`, in that order; `tokens` folded to 31,240, `cost_usd` stayed 0,
-    `cost_usd_est` took the 0.022, and `chat_turn_spend` carried one row marked
-    `estimated = 1` beside the earlier turn's unmarked 0.0731. The mark is what
-    keeps a figure this app derived out of the measured half of the install's
-    reading.
-  - **The ceiling stops a turn that crosses it while running.** With
-    `installDailyCostLimitUSD` at $0.025 and no prior spend, the turn was
-    admitted, produced both sentences, and was then stopped part-way — the
-    thread holds the half-answer as an assistant message followed by the
-    refusal naming the ceiling, `cost_usd_est` took the $0.0275, and the CLI
-    reported no cost because it never finished. The same turn under a $0.03
-    ceiling ran to completion, which is the control: the stop is the estimate
-    crossing the limit and not the check firing on every turn.
-
-- **Delivery, end to end against a real GitHub repository, on 2026-09-06 — the
-  first pull request this app has ever opened.** `M1`'s standing assumption was
-  that none had been; that is now settled by having done it rather than by
-  reading the code.
-
-  Setup: a throwaway `Xapicc/uf-deliver-smoke` (private, deleted afterwards
-  where permissions allowed), a scratch git repository inside a workspace mount
-  with `main` pushed **by hand** and the branch deliberately *not*, a seeded
-  `completed` run with `isolation = 'worktree'` on that branch, and the dev
-  server given `UF_GITHUB_TOKEN`. The branch being unpushed is the point: what
-  is verified is that **the app** pushed it.
-
-  - **The card refuses before it offers.** With a remote that was not GitHub and
-    no credential, `delivery` came back `possible: false` with
-    `"\`origin\` is not a GitHub remote…"` — `planDelivery`'s own sentence, so
-    the button and the endpoint cannot disagree about why.
-  - **With both present it offers**, reporting `Xapicc/uf-deliver-smoke`,
-    `uf/deliver-smoke` → `main`.
-  - **One press pushed the branch and opened the pull request.**
-    `{"ok":true,"url":".../pull/1","number":1}`; GitHub reports **#1 OPEN,
-    `uf/deliver-smoke` → `main`**, titled from the prompt's first line, body
-    naming the run and quoting the task. `ls-remote` showed the branch on the
-    remote afterwards and not before. The credential reached it — this is the
-    one git call in the app that carries one, and the merged version of that
-    code did not, because `gitEnv()` strips the whole `UF_` namespace.
-  - **The card then shows the link and withdraws the button**, `delivered`
-    carrying the number and the url off the run's own `deliver` event.
-  - **A second press — reachable only by API once the button is gone — is
-    refused honestly**: 400, *"A pull request for this branch is already open.
-    GitHub will not open a second one, which is the state you were asking
-    for."* Not reported as a success, which is `openPullRequest`'s stated rule
-    about a 422.
-
-  **What this does not establish.** The run row was seeded rather than produced
-  by the run loop, so nothing here exercises an agent actually committing to
-  that branch. `landVerifyCommand` was empty, so the verify gate in front of
-  delivery was not run. And the eight-character run id in the pull request body
-  read `deliver-` because the seeded id is not a UUID — an artefact of the
-  fixture, not of the code.
-
-- **The Land verify field rendered in a browser, on 2026-09-07.** The
-  production standalone bundle, an empty throwaway `DATA_DIR` and Chromium
-  through Playwright — the first time any of the controls added on 2026-09-06
-  has been seen rather than compiled.
-
-  - **The search finds it while it is still folded away.** `landVerifyCommand`
-    sits inside the *Isolated runs* disclosure, which is closed on load.
-    Typing `land merges` into the settings search listed
-    **"Check that must pass before Land merges"**, which is what the corpus
-    being the rendered DOM rather than a declared index buys: a `<details>`
-    keeps its children in the DOM, so a closed fold hides a field from the eye
-    and not from the walk.
-  - **Pressing the hit opens the fold and lands on the control.** The input was
-    `visible` and `document.activeElement` afterwards, so a field behind a
-    closed fold on a page of ten sections is one keystroke and one press away,
-    rather than a scroll and a guess about which fold it is in.
-  - **The shell warning is drawn where it was designed to be drawn.** Typing
-    `npm test && npm run typecheck` — the obvious first thing to type — put
-    *"a verify command is argv, never a shell line — remove the shell
-    characters, or put them in a script and name the script here"* under the
-    field, on blur and before any Save. That is the whole point of saying it
-    here rather than at the click.
-  - **The pair reads correctly now.** The renamed grant renders directly under
-    it as **"Checks a conflict resolution may run"**, so the gate and the
-    conflict-assist grant are two visibly different things in the one place an
-    operator looks.
-
-  **What this does not establish.** Nothing was saved, so this is the form and
-  not the round trip — that is what the settings route's probe table covers.
-  The other four controls in the list below were not looked at.
-
-- **A workflow's history paged, in a browser, on 2026-09-07.** `/api/workflows/[id]`
-  read no `searchParams` and answered with `listInstances`' newest twenty, so this
-  was checked at both ends against a production build (`next start`, a throwaway
-  `DATA_DIR`, one workflow seeded with 45 instances an hour apart). The route:
-  no parameters answers `total 45, offset 0, limit 20` with `inst-44 … inst-25`;
-  `?offset=20` answers `inst-24 … inst-05`; `?offset=999` answers `offset 44`
-  with the single oldest row rather than an empty page; `?limit=5000` answers
-  `limit 100` — the ceiling, not the ask. The page: the table drew twenty rows
-  under *Runs of this workflow* with `1–20 of 45` and a disabled Previous beside
-  an enabled Next, and pressing Next drew the next twenty under `21–40 of 45`
-  with both enabled. So this one is not on the list below: it was rendered, and
-  the control was pressed.
-
-  **What this does not establish.** The instances were inserted directly rather
-  than produced by presses of Run, so every row read `finished` with no member
-  runs; nothing here exercises the pager against a graph with something live in
-  it, or against instances arriving while an older page is open.
-
-- **The taskboard was driven, in a browser, on 2026-09-07.** A production
-  build under `node .next/standalone/server.js`, a throwaway `DATA_DIR`, a
-  scratch `UF_AUTH_TOKEN`, rows seeded straight into `tasks` with the repo's own
-  `better-sqlite3`, and Playwright holding the `uf_session` cookie. One trap in
-  that setup, worth a line because it looks like a broken stylesheet rather than
-  a missing step: `next build` rewrites `.next/standalone` and does **not** copy
-  `.next/static` into it, so a server started straight after a build serves every
-  page with no CSS at all — `cp -r .next/static .next/standalone/.next/static`
-  after each build, which is what `smoke-pages` does for itself. What was
-  measured rather than assumed:
-
-  - **The clipped brief cannot be written back.** The seeded brief was 310
-    characters; the board's row carried 200 ending in `…`, the editor's textarea
-    carried all 310 with no ellipsis, and a title-only save left the stored
-    brief at 310. That is the one destructive path on this page and it is shut.
-  - **A refusal reaches the operator verbatim.** With the row dropped out from
-    under the page through the API, pressing Done rendered
-    `taskTransitionRefusal`'s own sentence — "This task is already dropped.
-    Re-open it first — …" — rather than a generic failure.
-  - **Every move the rules allow an operator, through its own button.** Open →
-    done, open → dropped, claimed → open (releasing a stale claim), done → open
-    from behind the Closed fold, and a delete through the sheet; each confirmed
-    against `GET /api/tasks/[id]` afterwards rather than against the redraw.
-    There is no Claim button and there should not be — a claim names the run
-    that will hold the task, and the operator is not a run.
-  - **Filing by hand.** The form's `POST /api/tasks` stored title, brief,
-    priority and a mount/folder pair chosen from the real workspace scan.
-  - **All three nothings, each on screen.** An empty board; a filter matching
-    none, naming the project ("No tasks in Github / DaiVELOPER") with the way
-    back to every project; and — with `/api/tasks` aborted at the network layer
-    — "The board could not be read", which says it is a failed request rather
-    than an empty backlog.
-  - **Every pane shortcut after the renumbering.** ⌘1…⌘9 each landed on the row
-    the sidebar announces (`/` `/chat` `/runs` `/tasks` `/workflows` `/agents`
-    `/branches` `/knowledge` `/dreaming`), `aria-keyshortcuts` matched on each,
-    `/account` and `/settings` carry none, and quick open still reaches
-    `/account`. Note that a shortcut pressed before hydration does nothing —
-    a test that navigates with `domcontentloaded` and presses immediately will
-    report every chord as broken and be wrong.
-  - No console error at 1280px, and none at 390px on the stacked board.
-
-  `npm run smoke-pages` agrees on the load half — `/tasks` clean at both widths,
-  a 200, no console error, no sideways scroll — after `/tasks` was added to that
-  script's route list, which is **hand-written rather than discovered**, so the
-  next page to land has to add itself the same way. The run as a whole exited 1
-  that day, on `/knowledge` at both widths, for a reason that predates this page:
-  the smoke sandbox configured no vault root, so that pane's own fetch answered
-  409 and the browser logged it as a failed resource. **That was never a standing
-  property of the check and it no longer holds** — the condition is the harness's
-  own fixture, which `66e71c0` changed on 2026-09-08; the pass exits 0 on the
-  tree as it stands. See the `/knowledge` entry below.
-
-- **The board's three MCP tools were driven in-process on 2026-09-07, against
-  the real route handler and both capability subjects.** Not through a browser
-  and not through a spawned CLI: `src/app/api/mcp/route.ts` was compiled to
-  CommonJS beside `src/lib/**` with the repo's own `tsc`, `@/…` was resolved by
-  a `Module._resolveFilename` hook, `next/server` was shimmed down to the one
-  `NextResponse.json` the route uses, and capabilities were minted straight
-  through `mintCapability` — which is the only way to hold one, since `caps` is
-  an in-memory map and a token cannot be minted from outside the server process.
-  What that buys is the **gating and the wording** exercised for real rather than
-  reasoned about; what it does not cover is a model actually calling any of it
-  over stdio, which needs a billed run. Twenty-three assertions, all passing:
-
-  - **The subject split, off `tools/list` rather than off the source.** A chat
-    token is offered `list_tasks`, `get_task` and `create_task`; a block token is
-    offered the first two and not the third, and calling it anyway comes back as
-    the refusal that names `list_tasks` and the `taskId` field rather than
-    pointing at `emit_runs`.
-  - **Nothing on the surface can close a task.** `create_task` sent a
-    `status: "done"` was refused by name by `normalizeTaskInput` — the schema is
-    what a model is *told*, and this is the check that holds when it ignores it —
-    and the task it did file came back `open`, `origin: "chat"`, unclaimed.
-  - **An unknown id is refused by name at all three doors**, in `taskRefusal`'s
-    one wording: `get_task`, `propose_run` and `planEmission`, the last refusing
-    the **whole** emission and naming which spec carried it.
-  - **A filter that cannot be honoured is refused rather than quietly matching
-    nothing** — `status: "finished"`, and a `folder` sent without its `mountId`.
-  - **The link is written and moves nothing.** `propose_run` with a `taskId`
-    stored it on the row with `run_id` null; the card resolved it live to the
-    title and `open`; a *completed* run recorded against the task left it `open`
-    with `completed_by_run_id` null; and the board row listed the run under
-    "started for it".
-  - **A deleted task is a third answer, not a missing one.** With the row
-    deleted, `taskForRun` returned the id with `title` and `status` both null and
-    the card kept the id with a null title — which is what both surfaces draw as
-    "a task since deleted".
-
-  The bug this run caught is the reason it was worth doing: `taskId` was on
-  `propose_run`'s schema and **not** wired into the handler, so a known id was
-  silently dropped and an unknown one silently accepted — a proposal that read as
-  naming a task and carried none, which is exactly the failure `taskRefusal`
-  exists to close and which typecheck, the unit suite and the build all passed
-  over.
-
-- **All three surfaces the link added were rendered in Chromium on 2026-09-07 at
-  1280px, against the production build.** Not through `smoke-pages`, which
-  asserts about *load* and would have drawn none of these: every one needs a row
-  holding a task id, so a throwaway `DATA_DIR` was seeded through `src/lib` —
-  two chat proposals, one naming a live task and one naming a task then deleted,
-  and a **completed** run recorded against the live one. The server was started
-  and driven inside one shell invocation, because each gets its own network
-  namespace and a server left running in a previous one is not reachable.
-
-  - The **proposal card** draws `for “Fix the flaky auth test”` under the guard
-    line, in the row's own muted grey with the taskboard glyph and no tone — and
-    the second card, whose task was deleted between the proposal and the render,
-    draws `for a task since deleted` in the same place. Both cards still offer
-    Approve, which is the rule the card is drawn to: the deletion refuses
-    nothing.
-  - The **run page** draws `· for Fix the flaky auth test` between the origin
-    and *Start another like this*, linked to `/tasks`. The run is `completed`
-    and the task it names is still **Open** on the board two pages away, which
-    is the whole record-not-trigger rule visible in one pair of screenshots.
-  - The **board row** draws `started for it run-shot` under `Filed by the
-    orchestrator`, through the same `RunLink` the other three run links use.
-
-  No console error came from any of it. The one 503 each page logs is the
-  read-only data directory this container's server-lock notice already explains
-  — `/api/tasks`, `/api/runs/[id]`, `/api/usage` and `/api/settings` all answered
-  200, and the same 503 appears on pages this run did not touch.
-
-- **The `taskboardForRuns` row was rendered in Chromium on 2026-09-07 at 1280px
-  against the production build**, signed in over `/api/login` against a scratch
-  token, off an empty `DATA_DIR`. It draws directly under *Let agents report
-  per-request cost over OpenTelemetry* in the same `ListGroup`, in that row's
-  shape, and its switch is **off** on a settings file that has never been
-  written — which is the only claim about it a screenshot can settle, and the
-  one worth settling, since a per-run capability whose default came back on
-  would be a switch nobody chose. `npm run smoke-pages` over the same build drew
-  `/settings` and `/tasks` clean at 390px and 1280px. It reported `/knowledge`
-  failing on a 409 at both widths; that is `/api/knowledge/*` answering *no
-  vault root configured* against the harness's throwaway `DATA_DIR`, it is not
-  reached by anything on this path, and it was left alone.
-
-- **A written fork removes nothing from the API's window, measured on all five
-  forks this install has ever written (2026-08-28 export, re-derived from the
-  session transcripts under `~/.claude/projects`).** "Before" is the last
-  main-thread `usage` frame in the source session; "after" is the first one the
-  resumed process wrote. Both are `input_tokens + cache_creation_input_tokens +
-  cache_read_input_tokens`, which is exactly what `apiContextTokens` sums.
+- **Decision, 2026-08-22: keep the autocompact window at 200,000, declining
+  issue #156's 150,000.** 150,000 fires at 117,000, and a firing spread of
+  roughly ±12,000 reaches the CLI breaker's 100,000 floor. No breaker trip was
+  found (zero `type: "system"` matches). `AUTOCOMPACT_WINDOW_TOKENS` has since
+  gone from `src/`.
+
+- **The runs list's `Pruning` column renders, 2026-08-25.** Production build,
+  seeded runs: `+$0.77`, an early end netting `−$0.07`, and `—` with no
+  receipts (`prunedNetUSD` absent, not 0); wire matched render at 1440px and
+  stacked below `md`. `next dev` 500'd there (`EvalError` from
+  `edge-instrumentation`).
+
+- **The context ceiling priced the wrong winnow engine, 2026-08-28.** It read
+  `winnow plan --tier CB` (8.5k tokens, 2.2%, on session `02584a86`) on an
+  install running `treat -rx aggressive`, which frees 49% there and 53% on
+  `de288909` (winnow 1.8.39, dry-run in the container). No prune landed after
+  2026-08-26 21:14.
+
+- **The corrected ceiling path declines one session and prunes the other,
+  2026-08-28.** Real dry-run stdout through `parseTreatEstimate` to
+  `ceilingDeclineMessage`: `02584a86` 49.0%, T\* = 21, declined by one turn;
+  `de288909` 53.0%, T\* = 18, pruned; horizon 20.
+
+- **Treat's byte share cannot be converted with `BYTES_PER_TOKEN`.** Session
+  `02584a86` ran 14.8 bytes a token, four times the constant, so 1.79 MB read
+  as 521k tokens removed from a 258k-token context and `ceilingPayback`
+  priced it at 0 turns. A test asserts the overshoot before the fix.
+
+- **A written fork removes nothing from the API's window**, all five forks
+  this install has written (2026-08-28 export): 58,002 tokens recorded removed,
+  the window **+14,745** after resume, five 178k–260k cold rewrites paid; 0
+  bytes of `toolUseResult` removed. The in-place engine does reach the wire:
+  108,534 claimed, 114,350 measured, run `115c617d`.
 
   | run | `net_bytes` | recorded removed (÷3.6) | API before | API after | measured change | resume's `cache_creation` |
   |---|---|---|---|---|---|---|
@@ -2392,2326 +362,1406 @@ Built and exercised against real transcripts:
   | fc491479 | 60,911 | 16,920 | 204,471 | 207,102 | **+2,631** | 185,244 |
   | c939c07a | 35,756 | 9,932 | 281,628 | 285,194 | **+3,566** | 259,881 |
 
-  Recorded removal across the five: 58,002 tokens. Measured change in the API
-  window: **+14,745 tokens**. Nothing came out and five cold rewrites of
-  178k–260k tokens — about $1.80 each at the one-hour class — were paid for.
-
-  The `message`-byte arithmetic itself is not wrong: winnow really did remove
-  17,153 / 32,175 / 65,221 / 62,251 / 36,433 bytes of `message` content. It
-  removed **0** bytes of `toolUseResult` on every one of the five (370,002 →
-  370,002 on `c939c07a`; 371,631, 428,492, 956,077, 359,319 unchanged on the
-  other four), from a uuid-keyed record-by-record diff of each source against
-  its fork. The bytes left the file; they did not leave the request. The
-  in-place engine is not affected and was measured separately: it strips
-  `toolUseResult` too, and its `message`-basis figure of 108,534 tokens on run
-  `115c617d` sat against a measured API fall of 114,350.
-
-  **Assumed, not measured:** that the resumed CLI rebuilding tool results from
-  the untouched `toolUseResult` is *why* the edit does not reach the wire. The
-  measurement that it does not reach the wire is direct on all five pairs; the
-  mechanism is the one structural difference between the two engines and is
-  offered as the most likely cause rather than as a second measurement.
-
-  Acted on 2026-09-07: `fork_attempts.api_context_before` /
-  `api_context_after`, `NettableCut.removalKnown`, and `measuredForkRemoval`
-  feeding `ceilingCut`. See `forkCutFromRow`.
-
-- **`npm run build` cannot finish in an agent worktree, and the cause is the
-  mount rather than anything in this repository.** Measured 2026-09-08 in
-  `/workspace/.uf-worktrees/usagefoundry-721638d11c0b-3` at `23a3d45`, on a
-  fresh `NODE_ENV=development npm ci --include=dev`: four consecutive
-  `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` runs each died copying
-  the standalone bundle, on a different path every time —
-  `ENOTDIR .next/standalone/.next`, `ENOENT .next/standalone/node_modules/@swc/helpers/cjs`,
-  `ENOENT .next/diagnostics`, `ENOENT .next/standalone/node_modules/next/dist/compiled`.
-  Pre-creating `.next/diagnostics` and `.next/cache` did not prevent the third.
-  Every failing path's parent existed, and `mkdir -p` of the same path succeeded
-  immediately afterwards.
-
-  The mount is `virtiofs`. What isolates it: 2,400 concurrent recursive
-  `mkdir`s failed **0** times on both that mount and `$TMPDIR` (overlayfs), but
-  `rm -rf` of a tree written moments earlier returned `ENOTEMPTY` on **6 of 40**
-  attempts on the virtiofs mount against **0 of 40** under `$TMPDIR` — a
-  directory cache that outlives an unlink, which is the same stale entry a
-  later `mkdir` trips over as `ENOENT` or `ENOTDIR`. It is also why `npm ci`
-  occasionally dies with `ENOTDIR: mkdir node_modules/@img`.
-
-  `.next` itself completes and carries a `BUILD_ID`. Acted on 2026-09-08:
-  `stageStandalone` in `scripts/smoke-pages.mjs` became `stageServer`, which
-  serves the standalone bundle when there is one and otherwise spawns
-  `next start -H 127.0.0.1 -p <port>` against `.next/`, printing which of the
-  two it took as its first line. All three states measured on that worktree: no
-  `.next` at all still exits 2; a `.next` without a standalone bundle runs the
-  full pass in fallback mode (38/40 page loads clean); a `.next` with one runs
-  it in standalone mode. **The fallback is a weaker check** — it proves nothing
-  about whether the shipped bundle boots or whether its traced `node_modules`
-  are complete. That was every mode available in this container until the
-  entry below.
-
-  The `.env` blanking `serverEnv` depends on was re-measured for the new mode,
-  because `next start` loads the repo's own `.env` rather than the copy beside
-  the standalone server: with the repo root passed as the env directory,
-  `UF_GITHUB_TOKEN`, `UF_WEBHOOK_URL`, `DISCORD_WEBHOOK_URL` and `UF_WORKSPACE`
-  all reach the child blank, and all four reach it populated without it.
-
-  Acted on 2026-09-08, on the same worktree: `npm run build` finishes there now,
-  and the standalone bundle it writes serves. `scripts/redirect-dist-dir.mjs`
-  runs ahead of `next build` and points `.next` at a scratch directory under
-  `$TMPDIR`, keyed on the checkout so concurrent worktrees do not share one.
-  **2 of 2** in-place runs failed first, with the signature above — `ENOENT` from
-  `mkdir .next/standalone/node_modules/react` whose parent is in the listing
-  taken at the failure. With the redirect, **7 consecutive runs** exited 0 with a
-  `.next/standalone/server.js` and not one filesystem error; four of those came
-  after a `npm ci` that rebuilt `node_modules` under it. `npm run smoke-pages`
-  then printed `serving .next/standalone/server.js`, the first standalone-mode
-  pass this container has had, at 42/44 page loads clean. The same build with
-  `.next/standalone` deleted, forced back into fallback mode, reported 42/44 and
-  the identical single failure — `/knowledge`, whose API answers 409 `No
-  knowledge base is configured.` under the throwaway `DATA_DIR`. So the bundle is
-  measured no weaker than the fallback, and that page's failure is the fixture
-  rather than either mode. Both runs predate the `seedVault` fixture in the
-  `/knowledge` entry below, which is what removes that failure; a pass on a tree
-  carrying both changes is recorded at the end of that entry.
-
-  Two nearer approaches were measured and rejected, and the rejection is the
-  useful half. Pointing `distDir` outside the project has Next rewrite the
-  tracked `tsconfig.json`'s `include` to climb back in through `../../..`, after
-  which the route types generated out there cannot resolve `next`: the build
-  fails at "Checking validity of types", twice out of two, having dirtied a file
-  nobody edited. Symlinking `.next` with nothing beside it fails one stage later,
-  at page-data collection, on `Cannot find module 'react/jsx-runtime'` — Node
-  resolves the real path of what it requires and then walks up from the scratch
-  directory. The `node_modules` link the script writes next to the scratch
-  `.next` is what answers that walk, and is load-bearing rather than tidiness.
-  Two properties of the script itself were measured directly: on `overlayfs` it
-  exits 0 having printed nothing and created nothing, which is what makes it
-  inert in the image build; and `rm -rf .next` still means a clean build,
-  because an absent link is what tells it to discard the scratch.
-
-- **`/knowledge` was the smoke pass's one failing page, and it was the check
-  that was wrong rather than the page.** Measured 2026-09-08 in
-  `/workspace/.uf-worktrees/usagefoundry-721638d11c0b-2`: both of the two loads
-  missing from the 38/40 above were `/knowledge`, at 390px and at 1280px, each
-  failing on `console error: Failed to load resource: the server responded with
-  a status of 409 (Conflict)`. Not an artefact of the fallback mode added the
-  same day — it reproduced identically in standalone mode and on a second, older
-  build (`BUILD_ID -ZLYjjw166q7Y7bZfY-zS`), so it predates that change and was
-  invisible only while the script exited 2.
-
-  `makeSandbox` configured no knowledge base, so `resolveKnowledgeRoot` returned
-  `configured: false` and every `/api/knowledge/*` handler answered 409.
-  `KnowledgeGraphView` asks for `/api/knowledge/graph` before the status call
-  has come back and the page has had the chance to draw its unconfigured state
-  instead, and Chromium logs any non-2xx response as a failed resource however
-  the page then handles it. The page itself rendered correctly throughout:
-  **there was no interface defect.**
-
-  Acted on 2026-09-08: `seedVault` in `scripts/smoke-pages.mjs` writes three
-  notes into the sandbox workspace and PUTs `knowledgeBaseMountId` /
-  `knowledgeBaseSubpath` through `/api/settings`, so the page is exercised in
-  its configured state — the note list, the backlinks, the health rows and the
-  graph — rather than in the four lines of copy it shows without a vault. The
-  alternative, letting this route opt out of the console-error assertion for one
-  expected status, was refused: it would have gone green while checking strictly
-  less. Measured after, at `e5bbcec` in standalone mode under `$TMPDIR`, where
-  the build completes: **44/44 page loads clean, 0 of 22 pages failed.** The
-  denominator moved from 40 because `f5e9bd7` added `/tasks/new` and
-  `/tasks/[id]`, not because anything stopped being checked.
-
-  The vault is read rather than merely resolved, which is the failure this
-  would otherwise hide — a wrong subpath also silences the 409.
-  `/api/knowledge/status` answers `noteCount: 3, orphanCount: 1,
-  brokenLinkCount: 1, tagCount: 1`; `/api/knowledge/health` returns exactly one
-  row in each of its three lists; and the rendered graph draws all three notes,
-  the edge between two of them, and the unwritten `[[Missing note]]` target.
-
-  **Re-measured both ways on one build, 2026-09-09 at `3e59699`: the condition is
-  the harness's own fixture and not anything about this container.** The two
-  readings taken on 2026-09-08 — 42/44 with `/knowledge` failing at both widths,
-  and 44/44 with it clean — describe the same machine on either side of
-  `66e71c0`, so neither is conditional on host state. One
-  `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build`
-  (`BUILD_ID g3KBoWoJFodxMmqBw8O5M`), two passes minutes apart, both printing
-  `serving .next/standalone/server.js`:
-
-  | fixture | `/knowledge` at 390 / 1280 | result | exit |
-  |---|---|---|---|
-  | `seedVault` runs — the tree as it stands | `ok` / `ok` | 44/44 clean, 0 of 22 pages failed | **0** |
-  | its one call site removed | `FAIL` / `FAIL`, on `console error: Failed to load resource: the server responded with a status of 409 (Conflict)` | 42/44 clean, 1 of 22 failed | **1** |
-
-  The second was a scratch copy of the script with `await seedVault(...)` taken
-  out, which is the whole behavioural half of `66e71c0`; nothing was committed
-  for it. **No host state can move this reading.** The vault root is a settings
-  field with no environment override, and `serverEnv` hands the child a
-  `DATA_DIR` made for the run, so neither this container's mounts nor the
-  operator's own vault is reachable from the pass — a claim that the check "can
-  never exit 0 here" was true of a script version rather than of here. This is
-  also the first pass recorded on a tree carrying both `redirect-dist-dir.mjs`
-  and `seedVault`, which the entry above leaves open.
-
-- **A superseded proposal, and the stale click that races it, driven in a real
-  browser.** 2026-09-08, against `.next/standalone/server.js` — the artifact the
-  container ships — on a throwaway `DATA_DIR` with a `CLAUDE_BIN` that cannot
-  spawn, so nothing here was a real agent. The panel was opened with one pending
-  proposal, its checkbox ticked, and its `GET /api/chat*` polls then aborted at
-  the browser so the render could go stale; the server was stopped, the row
-  superseded by a second one through `createProposalReplacing`'s own statement,
-  and the server restarted. **13 of 13 assertions passed.** The page still
-  offered `Approve 1`; the click was refused with "Nothing was approved. 1
-  proposal(s) had already been decided and were left alone."; `GET /api/runs`
-  returned zero runs; and `POST /api/chat/<id>/proposals` for the same id
-  answered 400 with that sentence. After the poll was released the replacement
-  was the only card with a checkbox and the badge read `1 waiting`, so no count
-  on the panel sees a superseded row. On **Decided** the card read `SUPERSEDED`
-  and named its replacement, and its link switched the tab to **Proposals** with
-  the replacement on screen. The refusal placement was measured both ways on the
-  same harness: drawn inside the approve row it is **gone** when the refused
-  click empties `pending`, and outside it survives. What is **not** verified: no
-  model wrote either proposal — both rows were seeded — so nothing here exercises
-  `propose_run`'s `supersedes` argument end to end, which is covered by the unit
-  tests in `chat.test.ts` and not by a browser.
-
-- **The unsplit-cache-write notice and the meter span it points at, drawn in a
-  real browser.** 2026-09-09, against a `next start` build on a throwaway
-  `DATA_DIR` and a `CLAUDE_HOME` holding one synthetic assistant turn:
-  `claude-sonnet-4-5-20250929`, 120 input / 800 output / 50,000 cache read and
-  `cache_creation_input_tokens: 100000` with no `cache_creation` breakdown — the
-  shape `readTokens` cannot attribute. The dashboard drew the notice ("Cache
-  writes with no declared lifetime: 100.0k…"), and with `sessionCostLimit` at $1
-  seeded into the settings row the 5-hour meter read **40.2% – 62.7%**: a solid
-  bar to the shown figure and a hatched span from there to the guard figure, so
-  the notice's "hatched span on the meters above" names something that is
-  actually on screen. Both ends were checked by hand against the price table —
-  $0.4024 with the 100k at the 5m write rate ($3.75/MTok) and $0.6274 with it at
-  the 1h rate ($6.00/MTok), the rest of the turn identical — which is the
-  floor/ceiling split `costOf` and `guardCostOf` are supposed to produce. What is
-  **not** verified: this was `next start` against `.next/`, not the standalone
-  bundle; the settings row was written in SQL because the scratch server did not
-  hold the data directory's lock and refuses writes without it; and no real
-  transcript from a CLI that omits the breakdown has been through this, so
-  nothing here confirms which turns in the wild take this path.
-
-- **What an assist's stdout looks like now that it streams, 2026-09-09.** The
-  flag set `spawnAssist` sends was run whole against the pinned CLI in the
-  running container — `2.1.260`, `-p … --output-format stream-json --verbose
-  --permission-mode plan --max-budget-usd 0.30 --allowedTools Grep Glob Read`,
-  in `/workspace/UsageFoundry` — and it exited 0 having printed eight lines:
-  three `system`, two `assistant`, one `rate_limit_event`, one `user` and one
-  `result`. That is the measurement the change needed, because the failure it
-  guards against is silent in the expensive direction: an output format the pin
-  did not accept would leave every review, resolution and validation recorded
-  `failed` at $0 with the money already spent, and nothing in this app reads a
-  run's own stdout to notice. The `tool_use` block arrived on an `assistant`
-  event in the shape `assistToolUses` reads — `Read`, with its `file_path` and
-  `limit` — and `parseReviewOutput` took the `result` event off the whole
-  stream: `completed`, **$0.206351**, 64,437 tokens summed across the usage
-  buckets, and the reply text. Both were run over the captured stdout rather
-  than asserted about a fixture. The probe cost $0.206351 of real subscription
-  spend, and it was the second attempt: the first was piped into `head`, whose
-  exit killed the child through `tee` after two `system` lines — worth
-  recording only because a truncated stream is exactly what a killed assist
-  leaves, and it is the case `resultObject` refuses to read as a result. What
-  is **not** verified: no real validation, review or conflict resolution has
-  been run end to end since the change, so nothing here has exercised
-  `logAssistTools` writing rows or the `check ›` prefix rendering on a run
-  page.
-- **`rate_limit_event`'s shape, read off the pinned binary rather than off a
-  live stream — 2026-09-09.** The one event above was sighted arriving; what
-  `handleStreamLine` now does with it was built against
-  `@anthropic-ai/claude-code`'s own schema, read out of `bin/claude.exe` with
-  `grep -ao`. `status` is declared
-  `["allowed","allowed_warning","rejected"]`; `unifiedWindows` carries
-  `five_hour`, `seven_day` and `seven_day_overage_included`, each
-  `{utilization: number, resetsAt: int}`; and its `@internal` describe string
-  says the windows are "as read from the `anthropic-ratelimit-unified-*`
-  response headers", that `utilization` is "the fraction of the window used
-  (usually 0-1)" with values above 1 occurring, that `resetsAt` is unix epoch
-  **seconds**, that an event is emitted when a rounded percentage or a reset
-  instant *moves* rather than on a cadence, and that the field is absent until
-  a response carrying those headers has been seen and always absent on
-  API-key, Bedrock and Vertex sessions. That last pair is what `metering.md`
-  rests the "no guard may read it" decision on, and the header provenance is
-  what settles that `0.15` means 15% here while `planUsage.ts`'s `5.0` means
-  5%. The path was then driven end to end against the **standalone bundle** —
-  `CLAUDE_BIN` pointed at a stub emitting the event above verbatim, a real run
-  created through `POST /api/runs`, and the dashboard opened at 1280px and
-  390px with no console error. `/api/usage` answered `rateLimit` with
-  `utilization` 0.15/0.06 undivided, resets converted to epoch ms, the overage
-  fields and the session id; the card drew "5-hour 15.0% · resets in 1h 0m",
-  "Weekly 6.0% · resets in 96h 0m" and "Overage rejected ·
-  org_level_disabled". The same run with `status` set to `allowed_warning`
-  drew "Claude Code reported a rate-limit status this app does not handle" with
-  no percentage on it and filed one `stream.rate_limit_status` ops row at
-  `warn`. What is **not** verified: the event was canned, so nothing here has
-  read one off a real Claude Code process against a real account; nothing has
-  been observed on any `status` other than `allowed`; no
-  `seven_day_overage_included` window has been seen on this account; and the
-  card is inside the block `FirstRun` replaces, so on a machine with no local
-  transcripts the provider's reading is suppressed along with the meters it
-  would otherwise be the only alternative to.
-
-- **The shared layer's mobile rules and the metering readouts at 390px — 2026-09-10.**
-  `Sheet`, `Card`, `Meter` and `RunAgentCost` were changed and every one of them
-  was opened in a real Chromium at 390×844, most of them against the standalone
-  bundle serving a seeded throwaway install (its own `DATA_DIR`, a stub
-  `CLAUDE_BIN` emitting a canned `stream-json` cycle, and a hand-written
-  transcript inside the window `/api/runs/[id]/agent-cost` scans). What was
-  measured rather than eyeballed: no page grows the document sideways
-  (`scrollWidth === clientWidth === 390` on `/`, `/runs`, `/runs/[id]`,
-  `/runs/[id]/touched`, `/account`); every interactive element's box against the
-  44px floor, which found none under it in the kit; and `ContextOccupancy`
-  rendered inside a primary `Card` at 1280 is **byte-identical** before and after
-  the padding change, which is what says the `max-md:` rules cost the desktop
-  nothing. `Log` and `Patch` were given a pane full of unbreakable 120-character
-  paths: both scroll inside their own box and neither pushes the page, so they
-  needed nothing. Not verified: any of this on a real phone or with a software
-  keyboard up, and the long-label case that motivated the `Meter` fix, which was
-  reproduced in a fixture because no label on a real page is long enough to wrap
-  the reading yet.
-
-- **2026-09-11 — the ascii skin: the tokens, the switch, and what was only load-asserted.** `data-skin="ascii"` on `:root`, its pre-paint line, and the `SkinToggle` beside `ThemeToggle`. Checked in this order, because each step is what makes the next one worth running.
-
-  **The emitted stylesheet, read rather than assumed.** This is the step the whole change turns on and it is invisible from the source: `@theme inline` bakes a *literal* token value into the utility, so `--radius-sm: 6px` made `rounded-sm` emit `border-radius: 6px` and no `[data-skin]` selector could ever have reached it. After moving the value to `:root` and pointing the theme entry at it, `.next/static/css/*.css` carries `.rounded-sm{border-radius:var(--corner-sm)}`, `.font-sans{font-family:var(--family-sans)}`, `.shadow-e1{--tw-shadow:var(--elevation-1)…}` and one `:root[data-skin=ascii]{…}` block. An override that did not land here would have been silent — the page would simply have stayed rounded.
-
-  **The two line tones were computed, not judged**, on the grounds the `--band-*` note in `globals.css` already sets. Under the skin the border tokens are text colours, because a frame is drawn with `─ │ ┌ ┐ └ ┘`, so `--border` takes `--fg-faint` and `--border-strong` takes `--fg-muted`. WCAG contrast against all four surfaces in both schemes, sixteen pairs: faint clears 3:1 everywhere (worst 3.19:1, light on `--bg`; 3.72:1 dark, on `--bg-grouped`), strong clears 4.5:1 everywhere (worst 4.87:1, light on `--bg`). Nothing else in the palette moved, which is why no band or accent figure in this file needed re-measuring.
-
-  **The scripted checks, in the default skin.** `npm run typecheck` clean; `npm test` 2618 pass, 0 fail; `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build`; `npm run smoke-pages` 44/44 page loads clean with `.next/standalone/server.js` present, so it exercised the shipped artifact rather than the `next start` fallback.
-
-  **By hand, in the ascii skin**, in Chromium against a scratch `DATA_DIR` with a seeded `runs` table, authenticated through `/api/login`: `/settings` at 1280 in both skins side by side, `/runs/new` at 1280 and 390, `/runs` at 1280 with real rows, `/branches`, `/` at 1280 in light and dark, `/knowledge` at 1280 with a four-node graph drawn, `/runs/[id]/touched`, `/agents`, and the toolbar cropped at both widths. Monospace, square and flat throughout; the table's rules, the card edges and the control borders all read against their surfaces in both schemes; nothing overlapped, clipped or lost its state.
-
-  Three things that **cost something**, all of them real and none of them a defect this change introduced into the default skin. `rounded-full` is Tailwind's own utility with a literal value, so 48 call sites — badges, switch tracks, meter tracks, graph nodes — stay pills while everything around them is square. Native `<select>` option text truncates sooner, because the mono face is wider than the sans at the same step. And the toolbar's route-derived title, which `SegmentedControl`'s comment already priced as "a duplicate that gives way", is down to a single character at 390px now that the strip carries two pickers. All three are on the board.
-
-  **The live flip, which is the one path the screenshots above could not reach**, and the one defect this change is known to carry. Everything else sets `localStorage` before first paint, so the pre-paint script does the work and `data-skin` never mutates on a rendered page — which is exactly the path `observeTheme` exists for. Pressing the control's ASCII segment on `/knowledge` with the graph drawn does repaint the canvas in the mono face and the new line tones, without a reload: `flip-before-canvas.png` carries proportional node labels, `flip-after-canvas.png` mono ones. But the graph is left framed at about 5× — red node ink 194px² settled, 4486px² after the flip — and the fourth node is pushed off the canvas. It is not a transient and not the simulation settling: unchanged at +2s, +4s, +6s and +12s, and unchanged by a viewport nudge that resized the backing store 1008→1075. A reload under the same skin is back to 194px². Since `fitView` runs once behind `fittedRef` and nothing resets that ref (`KnowledgeGraphCanvas.tsx:409`), a refit at all means the component remounted and fitted against a canvas measured mid-reflow.
-
-  **And it predates the skin**, which is worth more than the finding itself. `observeTheme` fires the same callback for `data-theme` as it now does for `data-skin`, so the experiment was to flip light→dark and touch nothing else. Same page, one session: 194px² settled, **4175px² after clicking Dark**, 196px² after a reload with dark still set — 4.6x linear, against the skin flip's 5x, with the canvas the same 662×974 before and after, so a resize is not the mechanism either. The skin axis did not introduce this; it added a second doorway to it, and a light→dark flip on `/knowledge` has been doing it all along with nothing to say so. On the board.
-
-  **Not verified.** Every page was asserted in the ascii skin by a driver at 390 and 1280, but only the eight routes named above were looked at by a person. The other fourteen — `/account`, `/chat`, `/dreaming`, `/login`, `/tasks`, `/tasks/new`, `/tasks/[id]`, `/workflows`, `/workflows/new`, `/workflows/[id]`, `/workflows/[id]/edit`, `/workflows/[id]/instances/[instanceId]`, `/runs/[id]` and `/runs/[id]/conflicts` — have a 200, a clean console and no sideways scroll under the skin and nothing more, so a misalignment on any of them that does not overflow is not covered. Nothing was checked in an installed window or under Window Controls Overlay, on a touch device, at a browser zoom other than 100%, or with `prefers-reduced-motion`. No screen reader heard the new control. Class **D** for the truncation finding; the skin's own correctness is class **D** throughout, which is why none of it could be left to `npm test`.
-
-- **2026-09-11 — the ascii skin, part two: the kit primitives.** `Card`, `Badge`, `StatusMark`, `Button`, `Table`, `ListGroup`, `Notice`, `Disclosure`, `Sheet`, `SegmentedControl` and `Switch` drawn as characters under `[data-skin="ascii"]`. No call site changed, and no component reads the skin: each renders one extra `aria-hidden` node or carries a hook class, and the unlayered block in `globals.css` decides which half is drawn.
-
-  **The scripted checks.** `npm run typecheck` clean; `npm test` 2622 pass, 0 fail (2618 before, plus four in `ui/AsciiFrame.test.tsx`); `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build`; `npm run smoke-pages` 44/44 with `.next/standalone/server.js` present, so the shipped artifact and not the `next start` fallback.
-
-  **The new test was checked against the defect it claims to catch**, which is the only thing that makes it worth its line: deleting `aria-hidden` from `AsciiFrame` fails two of the four, and the page it happens on is pixel-identical, typechecks and passes `smoke-pages` — which asserts a 200 and no sideways scroll and cannot see an accessible name at all.
-
-  **Driven in the skin**, in Chromium against a scratch `DATA_DIR` with two seeded runs and a task, cookie-authenticated: thirteen routes at 390 and 1280 in **both** skins. Sideways scroll measured as `scrollWidth - clientWidth` on every one of those 52 loads: **0 everywhere**. Overlong fill strings are the specific way this treatment pushes a pane sideways, so that figure is the check and not a formality.
-
-  **Looked at by a person**, at both widths: `/runs` (the dense table, flat at 1280 with its column rules and stacked at 390 with them correctly gone), `/settings` (the form, 35 framed boxes on one page), `/runs/[id]` (cards inside cards, both levels framed and neither clipped), `/runs/new` (the folder group and the task textarea), and `/` at 1280. A kit sampler carrying all eleven primitives at once was read at 760px in light **and** dark and at 390px, zoomed to 2.6× to check the corners land on whole glyphs, and a `danger` `Sheet` at 1.9× — Cancel focused, the confirm red, the frame on the panel's content box rather than on the `<dialog>`.
-
-  **The fill ceiling was measured rather than trusted.** Each edge is 400 characters, good for about 2,800px across and 5,200px down; past that an edge stops short, silently. The tallest framed box anywhere in the app is **1,860px** (`/settings` at 390) against a widest of ~1,010px, so no frame in the app is within 2.7× of running out. Re-measure if a card is ever given an uncapped log.
-
-  **One defect, found and fixed here.** `ListGroup`'s frame was drawn and then painted out entirely by the group's own `--bg-grouped` box: a positioned element paints above everything not positioned but *below* a later positioned sibling, and the wrapper and the inner box were wearing the same hook class, so the inner box became positioned. Nothing threw, nothing overflowed, and the group simply kept the default skin's box — invisible to typecheck, to `npm test` and to `smoke-pages`. Class **D**; it needed a real engine with the stylesheet applied. The fix splits the hook, and the geometry is now asserted rather than eyeballed: under the skin the wrapper, the frame and the inner box return the identical rect (`265,1239,245,482` at 1280) with the inner border computed as `rgba(0, 0, 0, 0)`, so there is one edge and not two; under the default skin the frame computes `display: none` and the box keeps its hairline and its 10px radius.
-
-  **Not verified.** Nine of the thirteen routes were driven and measured but not looked at — `/tasks`, `/workflows`, `/chat`, `/agents`, `/branches`, `/account`, `/knowledge`, `/dreaming` and `/login` — so a misalignment on those that does not overflow is not covered, and the nine routes the driver does not visit at all are covered only by `smoke-pages` in the default skin. No screen reader heard any of it; the `aria-hidden` claim is asserted in markup and in a test, never listened to. Nothing was checked on a touch device, at a zoom other than 100%, or under `prefers-reduced-motion`. The charts, meters and app shell were deliberately left alone and are two other runs' work, so the toolbar and the meters in these screenshots are the default skin's.
-
-- **2026-09-11 — the ascii skin, part three: the meters, and what the charts needed (which was nothing).** Every proportional graphic in the app under `[data-skin="ascii"]`. One new primitive, `ui/AsciiBar`, drawn `[████████▒▒░░░░░░]`; `Meter` renders it beside its pixel fills and `globals.css` turns one off, so no call site changed and no component reads the skin. `UsagePeriods`, `ContextOccupancy`, `InstallSpendCard` and `RunAgentCost` inherit it whole — all four delegate to `Meter` and none of them was edited. `RepoSpendCard` and `PruneSavings` draw no proportional graphic at all: the first prints a share as a table cell, the second is text rows, and neither was given a bar it did not have.
-
-  **The scripted checks.** `npm run typecheck` clean; `npm test` 2641 pass, 0 fail (2622 before, plus nineteen in `ui/AsciiBar.test.tsx`); `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build`; `npm run smoke-pages` 44/44 against `.next/standalone/server.js`, the shipped artifact.
-
-  **The arithmetic is where this treatment is dangerous, and it is unit-tested rather than eyeballed.** `meterCells` converts a 0–1 reading into whole cells, and every way of getting it wrong draws a plausible bar beside a figure that goes on being correct — so the only reader who would catch it is one who counted the blocks. Pinned: a true 0 fills nothing and a true 1 fills everything; 0.4% still shows a cell, because `Math.round(0.004 * 20)` is 0 and an empty bar reads as an untouched window; 99.6% still leaves one empty, because rounding it full is the reading an operator acts on when deciding whether to start another run; a reading with no ceiling is `null` and not a cell count; a fraction above 1 (spend past an install ceiling, which is a real state) clamps rather than overrunning; and the three runs account for every cell across 160 combinations of reading, band and width.
-
-  **"Unknown" was got wrong once here, visibly, and the screenshot is what caught it.** The first cut drew no-ceiling as the band's own hatch at full width — which is what the pixel meter does, where it is distinguished from the track only by covering all of it. Ported to characters at 16 cells that is two tones of grey, and it read as a level. It is now `╳`, which cannot. That mark is U+2573 and not `?` for a reason that is invisible from the source: see the next paragraph.
-
-  **The cell width was measured in a browser, and the first cut of it was wrong.** This app downloads no font on purpose, every stack it ships falls back for U+2580–259F, and the face that answers draws one glyph per em — 14px a cell at `text-sm` against the 7px an ASCII character takes in the same run. Sized at the monospace advance, a `hero` meter came out 462px wide inside a 326px card. A bar is one unbreakable word and a card is a grid item, whose automatic minimum size is its content's, so that did not overflow — it **widened the column** and pushed the dashboard's left column past a 390px viewport. `smoke-pages` stayed green and nothing scrolled sideways, because `AppShell` clips. Measured: `[M=7.00 █=14.00 ░=14.00 ▒=14.00 ─=14.00 ?=7.00 ╳=14.00]` at `font-size: 14px` on the app's own `--family-mono` stack. Hence the counts (12/16/20 for compact/default/hero, against a budget of 21), hence `contain: inline-size` on `.uf-meter` as the backstop, and hence `╳` rather than `?` — an ASCII mark would have made an unknown bar *half the length* of a bar with a reading, on the same card.
-
-  **The canvases and the SVG charts needed no change, and that was checked rather than assumed.** `canvasView.ts`'s `observeTheme` already lists `data-skin` in its `attributeFilter` (added by this branch's own skin-toggle commit), so both real canvases re-probe on a skin change. Verified end to end on `KnowledgeGraphCanvas` at `/knowledge`: the node labels are set in the sans face under the default skin and in the mono face under ascii, which is `probeFont` reading the host after the attribute changed — a canvas that had not re-probed would have kept the old type. `PathMapCanvas` was driven with a synthetic 18-file report at `/runs/[id]/touched` and does the same. `WorkflowCanvas` and `RunTouchReplay` read no colour in JS at all — the first is absolutely-positioned DOM with an inline `<svg>` link layer, the second is a transport control — so both follow the skin through the cascade for free. `ContextOccupancy`'s `Sparkline` and `CompositionStack` are inline SVG with Tailwind classes and do the same; both were driven with a synthetic 26-sample series and looked at. **The judgement, per component:** every one of these is a genuine 2D layout — a force graph, a path hierarchy, a time series, a stacked area — so restyling the palette is the answer and character art is not. Nothing here is the small discrete chart that would repay being redrawn as text.
-
-  **Looked at by a person**, in Chromium against a scratch `DATA_DIR` with a seeded 40-turn transcript and configured ceilings, at 390 **and** 1280 in both skins: `/` (the hero 5-hour meter at 78.6% with its 90.6% guard band, the weekly meter at 90.7% with the band clamped at the ceiling, `InstallSpendCard` at a true 0.0% drawing an empty track, and `RepoSpendCard` drawing no bar), `/runs/[id]` (the work-cycle guard meter full and red, `RunAgentCost` with no ceiling drawing `[╳╳╳…]`, and `ContextOccupancy`'s compact meter at 72.5% above both its charts), `/runs/[id]/touched` (the map with data), `/knowledge` (the graph), `/runs/[id]/conflicts`, `/workflows/new` and `/settings`. A `Meter` sampler carrying the eleven boundary states at once — 0, 0.4%, 50%, 74%, 99.6%, 100%, no ceiling, a guard band, a money-headed band, `hero` and `compact` — was read at 390 in light and at 1280 in dark.
-
-  **Not verified.** No screen reader heard any of it; the `aria-hidden` claim is asserted in markup and in a test, never listened to. `RunConflictMap` was looked at only in its no-branch empty state — the map itself is covered by inference from `PathMapCanvas`, which was driven, and not by sight. The touched map and the context charts were driven through **intercepted API responses**, so what was checked is the drawing and not the queries behind it. Nothing was checked on a touch device, at a zoom other than 100%, or under `prefers-reduced-motion`. Nothing scripted exercises the ascii skin at all — `smoke-pages` runs in the default skin only, which is the open task on the board, so every figure above came from a throwaway driver and not from a check that will run again. The app shell is the next run's work and is the default skin's in half of these screenshots.
-
-- **2026-09-11 — the ascii skin, part four: the app shell, a wordmark, and the walk that found what the first three left.** `AppShell`, `Sidebar`, `Toolbar`, `ReadOnlyNotice` and `QuickOpen` under `[data-skin="ascii"]`, plus the block-character wordmark. Same pairing as the three runs before it: both halves in the markup, `globals.css` turning one off, no component reading the skin. **Nothing keyboard, focus or ARIA changed** — the row marker *reads* `aria-current` and `aria-selected`, which the source list and the palette already set for a screen reader, and that is the whole of how the skin knows which row is which.
-
-  **The scripted checks.** `NODE_ENV=development npm ci --include=dev`; `npm run typecheck` clean; `npm test` 2643 pass, 0 fail (2641 before, plus two in `ui/AsciiFrame.test.tsx`); `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build`; `npm run smoke-pages` 44/44 against `.next/standalone/server.js`, the shipped artifact.
-
-  **The walk, which is this run's deliverable and not a formality.** A throwaway driver opened all 22 `src/app/**/page.tsx` routes at 390 **and** 1280, in ascii **and** default, in light **and** dark — 176 loads — and asserted a 200, a clean console and no sideways scroll on every one: 176/176, zero faults in all eight combinations. It sets the skin and the theme in `localStorage` **before first paint** and reads `documentElement.dataset` back on every page, aborting the run on a mismatch, because a live flip is the one known-defective path here (task `d8e5f614`) and a walk that silently ran the wrong skin is worse than no walk. A second driver covered the four shell surfaces a page load cannot reach — the drawer, the palette at both widths, the collapsed rail and the read-only banner — in all four skin × theme combinations.
-
-  **The default skin is unchanged, and that was measured rather than argued.** All 88 default-skin pages come back at identical geometry before and after this run's changes; the 40 that differ by bytes differ in seeded run ids, sandbox paths and timestamps, which move every run. Every rule added here is inside `:root[data-skin="ascii"]`, and the one component change outside it — `AsciiFrame`'s side columns — is on an element the default skin sets `display: none`.
-
-  **The palette's keyboard behaviour is asserted, not assumed.** In all eight quick-open cases (both widths × both skins × both themes): after one `ArrowDown` exactly one row carries `aria-selected="true"` and it is the second one, and `Escape` closes the dialog. This is appearance-only work and that is the assertion that says so — a palette that looks like a terminal and has lost its Escape handler is a regression, not a redesign.
-
-  **Five defects were found by looking, four of them shipped by earlier runs in this chain, and every one was invisible to every other instrument.** All five are class **D**: each needed a real engine with the stylesheet applied, and each left `npm run typecheck`, `npm test` and `smoke-pages` green.
-
-  - **A frame drew three edges and a stray line.** `AsciiFrame`'s side columns were `w-[1ch]`. `ch` is the advance of `0` — an ASCII glyph, so half an em on the fallback face this app gets for U+2500–257F — while `│` is a full em. The left column clipped its stroke off entirely and the right one stood 7px inside the corners it was supposed to join. Every framed box in the app, since the run that introduced them.
-  - **And then drew the rest of it 7px inside the card.** Same measurement, one level up: a box-drawing glyph's stroke runs down the *middle* of its em box, so a frame laid `inset-0` sits half a character in from the border it replaces. Measured on `/agents` in dark, the card surface begins at x=16 and the stroke stood at x=23 — a 7px band of card outside its own edge on all four sides, reading as a light halo around every box in both schemes. It is also why two reviewers independently reported the row separators inside a grouped list "overhanging the frame": the separators were flush and the frame was not. `-0.5em` puts the stroke where the 1px border was.
-  - **The block glyph is a 0.94 square in a 1.0 em box, on both axes.** Measured in this container's Chromium: `█`'s ink is 94.00 tall at a 100px font size, and `████` is 394.00 of ink across 400.00 of advance. At `line-height: 1` and default tracking the wordmark is a lattice of separate squares rather than letters, and at the ~4px cell a 224px source list gives 48 columns that 6% antialiases into a grid over the whole block. `line-height: 0.85` and `letter-spacing: -0.08em`, both larger than the measured 0.06 because at a 4px cell the line box and the ink box round to whole pixels independently. **`│` is not affected and `AsciiFrame` is right to keep `leading-none`** — its ink fills the em box exactly (1.0000), which is why a column of it joins where a column of `█` does not.
-  - **The brand mark drew twice.** `BrandMark` never got `uf-plain`, so the strip carried both the rounded blue SVG tile — `rx="6"` is an attribute no token can reach, so it was the one round object left on a squared-off page — and the character bars beside it. `/login` had the same tile and was missed by the sidebar's fix for the one reason that makes it interesting: it is the only page the source list is not on.
-  - **The `>` marker took width where there was no word to mark.** On the collapsed rail the label is `sr-only` and the row is one glyph centred in 56px, so a character of marker pushed every icon 8px off centre against the docked list it collapsed from. Suppressed there and scoped to `.uf-sidebar-row` rather than `.uf-pick`, because `[data-sidebar]` is on `:root` and a bare `.uf-pick` would have taken the marker out of quick open and the drawer at the same time.
-
-  **The wordmark is the marketing site's art and the marketing site's approach, with one change that is the whole reason `ui/AsciiArt.tsx` is not that file copied.** There a gap is a space, because the site ships a font cut to one advance across ASCII and the block range alike. This app downloads no font on purpose, so a space is 0.5em here and a `█` is 1.0em, and those rows pasted in would put every letter after the first gap in the wrong column. A gap is therefore a `█` drawn transparent, which makes every cell literally the same glyph in the same face and needs nothing measured again — `▀` came out **0.709em** against `█`'s 1.0em in the same run, so the block range is answered by more than one face and no blank character may be assumed to match. The site's sizing rule divides the container by `cols × 0.6`, its font's advance; here the divisor is `cols` and nothing else.
-
-  **The art is `aria-hidden` without exception and the accessible name is real text.** The sidebar's own "UsageFoundry" label carries it under both skins, which is why the collapsed rail keeps that label `sr-only` rather than dropping it. Two tests in `ui/AsciiFrame.test.tsx` pin it, on the grounds that file already carries: these are in the *shell*, so 528 block characters of wordmark and 400 of edge would be announced on all 22 routes rather than on the one page that drew a card. A third invariant is enforced by a throw instead — `toArt` refuses a row that is neither full width nor deliberately blank, so a typo in hand-typed art takes the import down rather than silently shifting one row's right edge. **All three were mutation-checked**: a 47-cell row, a gap emitted as a literal space and a dropped `aria-hidden` each fail the suite, and each was reverted.
-
-  **One reported defect was measured and is not one.** Both the `/login` card's heading and the source list's label were read — by a reviewer and then by eye — as a proportional sans sitting in a page of monospace. They are not: the h1 computes the mono stack, and a probe in the page puts `iiiiiiiiii` and `MMMMMMMMMM` at **100.00px each**. The face this container's bare `monospace` resolves to is humanist enough to read as proportional at a glance, and `tracking-tight` on a 20px heading closes it up further. Recorded because the crop is convincing and the next run to look at it will reach for the same wrong conclusion.
-
-  **Looked at by a person**, in Chromium against the standalone bundle, at 390 and 1280 in light and dark: `/`, `/settings`, `/runs/new`, `/runs/[id]`, `/agents`, plus the drawer, the palette, the collapsed rail and the read-only banner in all four combinations. The remaining seventeen routes were read by two reviewers working from the same screenshot set, one at each width, against the default-skin control.
-
-  **Five findings were written down rather than fixed**, all of them earlier runs' surfaces and all on the board: the toolbar clipping `New run` off the viewport at 390px **in both skins** (`943525e0`, which corrects an earlier task that blamed the mono face and understated the symptom); `/settings`' section chooser half-converted and its inactive labels at **1.3:1** in ascii dark (`14691097`); a disabled `[ Save ]` at 1.93:1 dark and 1.74:1 light (`f6d61ed2`); four workflow block-type buttons and one Knowledge control the skin never reached (`6c4b6d3f`); and every bracketed button sitting 15px right of the column it heads, because it kept the padding the filled block needed (`683293b5`). The last is deliberately not a one-line fix: it changes every button's width at once, 390px is where this skin is tightest, and `AppShell` clips rather than scrolls — so it needs its own full walk to land, which this run did not have left.
-
-  **Not verified.** No screen reader heard any of it; the `aria-hidden` claim is asserted in markup and in two tests, never listened to. Nothing was checked on a touch device, at a browser zoom other than 100%, under `prefers-reduced-motion`, in an installed window or under Window Controls Overlay. The live skin flip is still the defective path it was — task `d8e5f614` — and this run deliberately drove the pre-paint route instead, so nothing here says the shell survives a flip on a rendered page. `smoke-pages` still runs in the **default skin only** (task `4e6dd0b9`), so every ascii figure above came from a throwaway driver and not from a check that will run again: the driver is the instrument this whole chain has been read with, and it is not in the repository. Of the seventeen routes not looked at directly, what is covered is what two reviewers could see in a screenshot, which is not the same as having opened them.
-
-- **2026-09-11 — the ascii skin, part five: the last pixel of the halo, at 1920.** Read pixels off `/` at **1920x963, DPR 2**, ascii, light, against a standalone build seeded with a synthetic week of transcripts, answering one reviewer comment with no element anchored: *"The borders of boxes on the right side dont line up."* 1920 had never been looked at under this skin — the part-four walk covered 390 and 1280 — which is consistent with a report arriving from there.
-
-  **It reproduced, it is geometry rather than tone, and it is the same defect as the entry above, one pixel further down.** `-0.5em` corrected the glyph's half-em but not the pixel `uf-unboxed` leaves behind: an absolutely positioned frame is placed against its host's **padding** box, and `uf-unboxed` paints a border out rather than removing it, so a framed host that carries one puts its stroke a pixel inside its own layout edge while a framed host without one puts it on the edge. Measured, both readings from the same screenshot: a `Card` whose border box ended at **x=1900.00** inked its `│` on device columns **3797–3798**, centre css **1898.73**; `ListGroup`'s frame, on a border-less wrapper ending at **x=1883.00**, inked at **3765–3766**, centre css **1882.73**. One component, one em, **1.00px apart** relative to the box each was framing. Device column 3799 was still card fill (255 against the page's 240) — the halo of the entry above, down to its last pixel but not gone.
-
-  **Fixed from the frame side, and the correction was measured rather than assumed.** `globals.css` gains `:root[data-skin="ascii"] .uf-unboxed > .uf-ascii-frame { inset: calc(-0.5em - 1px); }`, keyed on the class that *states* the border is still there and sitting beside the rule that makes it transparent. After: the card's stroke inks at device **3799–3800**, centre css **1899.75** = boxRight − 0.25, against `ListGroup`'s unchanged 1882.73 = boxRight − 0.27 — a residual of **0.016px**, and no fill left outside the stroke. The same reading at 1280 (card 1259.75 against a 1260.00 box, group 1242.73 against 1243.00), which is the control against the walk that had already been done. `border-width` was not touched, nothing reflowed, and `ListGroup` and `Sheet` — framed hosts with no border — are untouched by the selector, which is why they were re-measured rather than reasoned about.
-
-  **The correction is held by a test, because nothing else here can see it.** The rule is written between three files — the class on `Card`, the class on the frame span, and the selector in `globals.css` — and any one of them moving leaves the other two typechecking, building and rendering. `ui/AsciiFrame.test.tsx` gains a second rule: it reads the selector **out of the stylesheet** rather than spelling it again, decomposes it, and checks both halves against a rendered `Card`. Checked against the defect it claims to catch, which is the only thing that makes it worth its line — all four mutations fail it and nothing else in the suite: dropping `uf-unboxed` from `Card.tsx`, renaming the class on the frame span, wrapping the frame so it is no longer the host's own child, and deleting the rule from `globals.css` (2643 pass / 1 fail each, against 2644 / 0 green).
-
-  **What was ruled out, by measurement, before editing.** *Tone*: the two cards in the capture's grid branch do carry different frame weights — the primary meters card inked at luminance 167, a `default` card at 183/184 — but that is `Card.tsx`'s documented emphasis ladder, it is the same on every card in the app at every width, and it is not a position. *Half-pixel origin*: every box edge on this page lands on a whole CSS pixel at both 1920 and 1280 (cards at x=1900.00/1260.00, inner boxes at 1883.00/1243.00), so nothing here snaps differently by width and the `0.5em` inset's own half-pixel resolves exactly at DPR 2.
-
-  **One thing the same scan found and this run did not fix.** `ui/ListView.tsx`'s three boxes keep a **real CSS border** under this skin — no `uf-unboxed`, no frame — so the boxes stacked down the right of the dashboard alternate between a character stroke at luminance **181** and a solid rounded hairline at **134**, the latter set in a token the skin retuned to be read as *text*. Positionally they agree to within a quarter pixel (1882.73 against 1882.25), so it is a weight and style mismatch rather than the misalignment reported, and it is left alone here.
-
-  **Not verified.** No screen reader, no touch device, no zoom other than 100%, and dark was not re-measured at 1920 — the correction is a CSS length and has no colour in it, but that is an argument and not a reading. The instrument is again a throwaway driver rather than anything in the repository (`smoke-pages` is still default-skin only, task `4e6dd0b9`), so nothing above will run again by itself. The 1920 walk was the dashboard **only**: the other twenty-one routes have still never been opened at this width in this skin, and this run's correction moves a pixel on *every* framed box in the app.
-
-- **2026-09-11 — the ascii skin's doubled head rule, reversed.** A reviewer reading the dashboard at 1920 called out "two lines after the heading row" on every table, and the count is literally right: `:root[data-skin="ascii"] .uf-table th` carried `border-bottom: 3px double`, and a CSS `double` border at 3px is 1px of ink, 1px of gap, 1px of ink. Sampled a one-pixel column through the head/body boundary at DPR 1, ascii skin: a plain head read `#`, `.`, `#` and a sticky head `#`, `#`, `.`, `#` — the extra leading pixel being the `shadow-[inset_0_-1px_0_var(--border)]` the sticky call sites add, which lands immediately **above** the border rather than on it. The same sample under the default skin gives `~`, `~` for a sticky head and a single `~` for a plain one, so the shadow doubling the *thickness* is what the default skin already does and is not this skin's to override; the gap was the whole defect. Dropped the two declarations, leaving `Th`'s own `border-b border-line`, and re-sampled: one contiguous run of ink at 390px, 1280px and 1920px, on a flat table and a `stack` one, under both skins, with the head correctly absent from a stacked table at 390px. Also drove `/runs` in the built standalone server with three seeded rows at all three widths and both skins — `border-bottom: 1px solid rgb(134, 134, 139)` in ascii, zero console errors, column separators and `─` row rules unchanged.
-
-  **Not verified.** The reviewer's own anchor — the dashboard's "Cost by model over weekly quota" table — needs transcript data this container has no access to, so the live check was `/runs`, which is the same `stack` component above the breakpoint; the flat case was measured in a scratch page built from the real `Table` components and the built CSS, not on a route. `/account`'s flat table renders nothing without plan data and was not reached. No screen reader, no touch device, no zoom other than 100%. `smoke-pages` still does not open the ascii skin, so nothing in the repository will catch this coming back.
-
-- **The ascii skin's meters take the width of the card they are in, 2026-09-11.** Measured in this container's Chromium against the standalone bundle, `data-skin` set before first paint by seeding `localStorage["uf-skin"]` rather than by pressing the toggle, which board item `d8e5f614` records leaving `/knowledge` refitted at ~5x and never recovering. Every `.uf-meter` on `/`, `/runs/[id]` and `/workflows/[id]/instances/[instanceId]`, at 390, 1280 and 1920, with a run and a workflow instance seeded through the app's own API and one real transcript under a scratch `CLAUDE_HOME`.
-
-  **What was wrong.** A cell is one em of whatever face answers for the block range, and which face that is belongs to the reader: `█` measured 13.00px here at the bar's own `text-sm`, and 7.83px — 0.602em, the mono advance — in the browser the VisualEdit handoff of the same day came from, where a `default` meter drew 141px inside a card several times that. A count budgeted against either is 40% wrong on the other, and wrong silently: the bar is simply short.
-
-  **What it does now.** `AsciiBar` divides its own drawn run by the cells in it to get the advance, subtracts that from the bar to get the brackets, and fits the remainder to the track. Measured fill, track width in brackets: 390px — every meter 23 cells (96.9% of 322px, and 97.5% of the 320px run inspector), against 20/16/12 cells and 273/221/169px before. 1280px — 52 cells in the dashboard's 50% card (98.4% of 700px), 74 in a full-width card (99.5% of 980px), 21 in the run inspector's 21rem column (96.0% of 298px). 1920px — 102 cells (99.9% of 1340px), 123 cells (99.5% of 1620px), 21 unchanged in the fixed column. No bar ended right of its track at any width; no sideways scroll at 390px; no console error. `npm run smoke-pages` was 44/44 clean in the default skin, and the same three pages driven with the skin off showed every bar at zero width and the counts still 20/16/12 — the fit refuses a box it cannot measure rather than guessing at one.
-
-  **A resize settles once and does not step.** 1920 → 900 on `/`: 102,102,123,123 before, the same four 60ms in — the re-fit is held until a drag stops — then 44,44,45,45 at 400ms and 44,44,45,45 at 1.3s. The count is a pure function of a width the bar cannot move, `contain: inline-size` being what guarantees the second half of that, so there is nothing for it to oscillate between.
-
-  **Not verified.** No screen reader; the bar is `aria-hidden` in markup and in two tests and was never listened to. Nothing was checked against a browser with a raised minimum font size, which is the case the pre-measurement count is budgeted for and the one frame no measurement can save. The 0.602em reading is the handoff's arithmetic — 18 glyphs in 141px — and not a second browser driven here, so the fit was only *exercised* at one advance.
-
-- **The Context sparkline's floor was a section divider, 2026-09-11.** A VisualEdit comment on `/runs/[id]`'s Context block at 1920x963 under the ascii skin — *"a random line rendered in the context ceiling reading that looks out of place"* — with no element anchored and no screenshot exported. Reproduced in a scratch page built from the real `ContextOccupancy` and `Card` components and the built CSS, at the capture's own shape: one sample, one prune, `live=false`, ceiling 200.0k.
-
-  **What it was.** `Sparkline` drew its floor at `baseline` in `stroke-line` at `strokeWidth="1"` across the full plot — which is `--border`, 1px, and the same near-full width as the `border-t border-line` that `Section` draws between every pair of inspector blocks. In the capture's case there is no polyline at all (`samples.length > 1` gates it), so that hairline was the **only solid mark on the chart**, sitting directly above the legend row and reading as a rule dropped into the middle of the panel. It renders identically in both skins: the SVG is not `uf-plain` and nothing in `:root[data-skin="ascii"]` reaches it, so the same grey hairline sits among character art under ascii and among the inspector's own hairlines under the default skin.
-
-  **Removed rather than retuned, and the alternative was ruled out by a figure already in the tree.** The floor is `0` tokens — a reading no series approaches — so it asserts nothing, and the scale is stated twice without it: the ceiling rule is on the chart and the legend beneath carries that figure in words. The case it was written for was checked directly and it does not hold there either: in the six-point series at 9% of the ceiling the polyline sits **on** the floor and hides it, so the reading it was meant to place against a floor is the one reading that never had one. Drawing it quieter is not available: `globals.css` records `--fg-faint` at **3.19:1** in its worst pair and deliberately no higher *because* it is every 1px hairline in the app, so anything fainter is under the 3:1 a graphical object owes. `PAD_BOTTOM` and `baseline` stay — `baseline` is still the coordinate the prune markers hang from, and the markers were re-read after the change.
-
-  **Looked at.** Three shapes — one sample with a prune, seven samples with a prune, and a six-point series far below the ceiling — in the default skin and in ascii, before and after. The stray rule is present in all six before and absent in all six after; the dashed ceiling, the prune's vertical and triangle and the legend are unchanged. The prune marker was then re-read at DPR 3 under both skins, because the 1.5-unit gap between its vertical and its triangle used to be filled by the floor's own stroke and is now open: it still reads as one mark. `npm run typecheck` clean, `npm test` 2647 pass / 0 fail.
-
-  **Not verified.** Run `d02b9e40` itself was never loaded — this checkout has its own throwaway data directory and that run is not in it — so the reproduction is a constructed case matching the capture's subtree text, not the operator's own page. No route was opened: the check was a scratch page, not `/runs/[id]` in the standalone server, so nothing here exercises the surrounding inspector at 1920. Dark was not looked at; the change removes a mark and adds no colour, but that is an argument and not a reading. No screen reader — the SVG's `role="img"` label and the sr-only prune table are untouched by this and were not listened to. `smoke-pages` still does not open the ascii skin (task `4e6dd0b9`), so nothing in the repository will catch this coming back.
-
-- **The live log's open-tool rows, rendered in isolation, 2026-09-11.** `RunActivity` moved out of the strip above the feed and into the log's own scroll container as `sticky bottom-0` rows. There is no way to open a tool call in an agent worktree, so it was driven the way `docs/verification.md`'s context-panel entry records: `renderToStaticMarkup` of `Log` + `LogLine` + `RunActivity` + the real `Button`, the built stylesheet inlined, `data-skin` on `<html>`, and the pane's `scrollTop` set by hand in this container's Chromium.
-
-  **What was measured.** 27 feed lines and one or two open calls, at 1280px and 390px, in both skins, scrolled 120px off the tail and at the tail. The rows sit flush on the pane's inner bottom edge in both scroll states — `bottom-0` alone left 10px of the pane's `py-2.5` below them, through which the feed went on scrolling as a line clipped to its last 10px, and a negative `bottom` closed that only while pinned; the `translate-y-2.5` is the same 10px in both states. The jump-to-live button paints over the rows rather than under (the rows carry no `z-index` and it is later in the DOM), and needs the `bg-inset` wrapper because the ascii skin takes `.uf-button`'s fill to `none` unlayered — without it the label is text on text, over a row here and over the feed already. At 390px the command takes its own line and the spinner, elapsed figure and tool name stay clear of the button. No sideways scroll at 390px in either skin (`scrollWidth` 390 against `clientWidth` 390).
-
-  **Not verified.** Nothing here was seen on a real run: no `tool_progress` frame was received, so the arrival, the 30-second restatement and the clearing on `tool_result` are exactly as untested by this pass as they were before it. `npm run smoke-pages` was 44/44 clean against the standalone bundle, but it asserts about page *load* and never opens a run with a call in flight, so it cannot see any of this. No screen reader: the `sr-only` `aria-live` line that names the running set — and deliberately not the clock — was carried across unchanged and was never listened to.
-=======
-- **The Context sparkline's floor was a section divider, 2026-09-11.** A VisualEdit comment on `/runs/[id]`'s Context block at 1920x963 under the ascii skin — *"a random line rendered in the context ceiling reading that looks out of place"* — with no element anchored and no screenshot exported. Reproduced in a scratch page built from the real `ContextOccupancy` and `Card` components and the built CSS, at the capture's own shape: one sample, one prune, `live=false`, ceiling 200.0k.
-
-  **What it was.** `Sparkline` drew its floor at `baseline` in `stroke-line` at `strokeWidth="1"` across the full plot — which is `--border`, 1px, and the same near-full width as the `border-t border-line` that `Section` draws between every pair of inspector blocks. In the capture's case there is no polyline at all (`samples.length > 1` gates it), so that hairline was the **only solid mark on the chart**, sitting directly above the legend row and reading as a rule dropped into the middle of the panel. It renders identically in both skins: the SVG is not `uf-plain` and nothing in `:root[data-skin="ascii"]` reaches it, so the same grey hairline sits among character art under ascii and among the inspector's own hairlines under the default skin.
-
-  **Removed rather than retuned, and the alternative was ruled out by a figure already in the tree.** The floor is `0` tokens — a reading no series approaches — so it asserts nothing, and the scale is stated twice without it: the ceiling rule is on the chart and the legend beneath carries that figure in words. The case it was written for was checked directly and it does not hold there either: in the six-point series at 9% of the ceiling the polyline sits **on** the floor and hides it, so the reading it was meant to place against a floor is the one reading that never had one. Drawing it quieter is not available: `globals.css` records `--fg-faint` at **3.19:1** in its worst pair and deliberately no higher *because* it is every 1px hairline in the app, so anything fainter is under the 3:1 a graphical object owes. `PAD_BOTTOM` and `baseline` stay — `baseline` is still the coordinate the prune markers hang from, and the markers were re-read after the change.
-
-  **Looked at.** Three shapes — one sample with a prune, seven samples with a prune, and a six-point series far below the ceiling — in the default skin and in ascii, before and after. The stray rule is present in all six before and absent in all six after; the dashed ceiling, the prune's vertical and triangle and the legend are unchanged. The prune marker was then re-read at DPR 3 under both skins, because the 1.5-unit gap between its vertical and its triangle used to be filled by the floor's own stroke and is now open: it still reads as one mark. `npm run typecheck` clean, `npm test` 2647 pass / 0 fail.
-
-  **Not verified.** Run `d02b9e40` itself was never loaded — this checkout has its own throwaway data directory and that run is not in it — so the reproduction is a constructed case matching the capture's subtree text, not the operator's own page. No route was opened: the check was a scratch page, not `/runs/[id]` in the standalone server, so nothing here exercises the surrounding inspector at 1920. Dark was not looked at; the change removes a mark and adds no colour, but that is an argument and not a reading. No screen reader — the SVG's `role="img"` label and the sr-only prune table are untouched by this and were not listened to. `smoke-pages` still does not open the ascii skin (task `4e6dd0b9`), so nothing in the repository will catch this coming back.
->>>>>>> main
-
-- **2026-09-11 — the ascii skin's three in-flight marks became one, and the two measurements that chose its glyphs.** Three different things said "this is happening now" and the skin conversion (`b32c37d`) left all three alone: `Spinner`'s CSS ring (`ui/Log.tsx`), a second hand-rolled ring at a different size inside `Button`, and `StatusMark`'s ascii `running`, which was a motionless `*` while a vector ring turned two components away on a page made of characters. All three now draw `.uf-spin` under `[data-skin="ascii"]` and keep exactly what they had under the default skin.
-
-  **The glyphs were measured, not assumed, and the measurement ruled out the obvious sequence.** In this container's Chromium against the app's own `--family-mono` at `font-size: 13px`, where an ASCII advance is **6.50px**: every quadrant glyph in U+2596–U+259F draws **13.00px**, `█` 13.00px, and `▀` and `▐` draw **9.22px** — 0.709em, the same third face `docs/agent/conventions.md`'s character-art bullet already records. So the four-frame half-block rotation `▀ ▐ ▄ ▌` would have stepped sideways twice a cycle, and braille (`⠋`, 7.00px) is not one advance width either. The four three-quarter blocks `▛ ▜ ▟ ▙` are, and are what ships, with the notch travelling clockwise. Because a block is *two* ASCII advances there, the box is `1ch` and the glyph is set at `font-size: 0.5em` inside it — read back off the rendered page, the drawn mark is **6.50 x 6.50 css px**, exactly one column, square.
-
-  **Looked at, in the built standalone bundle.** `/runs` seeded with four `running` rows and one of each other status, dark, `data-skin` set by seeding `localStorage["uf-skin"]` before first paint rather than by pressing the toggle (board item `d8e5f614`). Six successive captures 100ms apart at DPR 4 read the notch at TL, TR, BR, BL, TL, TR — one clean clockwise rotation, the four rows in phase, and the `paused` row's `=` directly beneath at an unchanged x, so the column does not step sideways by status. `/runs/run-000` carries both remaining call sites in one view: `StatusMark` beside the `[running]` badge in the page title, and `RunActivity`'s `Spinner` beside the word "Working", both scaling with their own font size. A busy `[ … ]` button was captured by holding `POST /api/login` open with a route delay: the brackets, the box and the reserved label width are unchanged and the mark sits centred over the invisible label.
-
-  **Frozen, and the plain skin.** Under `prefers-reduced-motion: reduce` — where `@layer base` flattens the duration to 0.01ms — no keyframe fills forwards, so it settles on the base value `▛`: a block with the bottom-right corner bitten out, which still reads "not finished" the way `Log.tsx` records the ring being drawn *broken* rather than whole, and which is not `o`, `=`, `+`, `!`, `#`, `/`, `x` or `>`. The default skin was proved untouched rather than argued to be: the tree was built at `HEAD~1`, the status column and a busy button captured at DPR 4 in both motion settings, then built again with the change and captured identically — all four default-skin pairs are **byte-identical raw pixels**, while the four ascii pairs differ. `NODE_ENV=development npm ci --include=dev`, `npm run typecheck` clean, `npm test` 2647 pass / 0 fail, `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` clean, `npm run smoke-pages` 44/44 against `.next/standalone/server.js` — the artifact the container ships, not the fallback.
-
-  **Not verified.** **Which face answers the block range is the reader's, not this app's** — `conventions.md` records `█` measuring 0.602em in the browser a VisualEdit handoff came from, where this mark draws half a column wide instead of one. That direction is safe (it can never widen the column, which is what the `1ch` box is for) but it was not looked at, and nothing here measures a second browser. Only Chromium, only dark, only 1280px: the light theme was not opened, and 390px was not opened under the ascii skin, though the mark takes `currentColor` from the same `TONE` map the eight characters do and is one column wide at every width. No screen reader — both halves are `aria-hidden` and `src/components/ui/AsciiFrame.test.tsx` still pins that a status mark announces nothing, but that is a string assertion and not a listen. `smoke-pages` still does not open the ascii skin (task `4e6dd0b9`), so nothing in the repository will catch any of this coming back.
+- **Context pruning runs on real work cycles (recorded 2026-09-07).** This
+  install held 52 `early-end` receipts against 2 `boundary`: both triggers
+  fired. The image's `WINNOW_REF` step worked (54 receipts need `/opt/winnow`);
+  `Xapicc/winnow` is `PUBLIC`. Four runs took a second prune, `54931cbb` a
+  third, all completed: the loop re-enters resumably.
+
+- **The context occupancy series has been written by real runs (2026-08-27).**
+  198 rows across 10 runs at the default 60 s tick: 159 of 188 gaps are one
+  tick, the widest 1,320 s while run `fc491479` sat in a sub-agent; every gap is
+  a multiple of 60 s, so gaps are deduplication, not a late ticker. 16 rows
+  carry `turns_exact` false.
+
+- **`ContextOccupancy` rendered in headless Chromium, in isolation, on synthetic
+  data.** Four states in a 336px box against the build's CSS, light and dark:
+  token classes resolve, the sawtooth is legible with prune rules on the cliffs,
+  the no-reading hatch is not a zero fill, the legend fits one line.
+
+- **The intake-filter card's markup caught a defect.** Of 24
+  `renderToStaticMarkup` cases (eight filter states, both components, both
+  pruning states), one printed `Net +$0.00` on a fully unpriced read; the money
+  rows are now omitted there. The reader has run on the real ledger and
+  transcripts, its arithmetic under 13 unit tests.
+
+- **The compaction reader and `compactionNotice` have run against a real
+  boundary off this machine.** The session matched and the notice rendered in
+  full; only the run loop's call site is unexercised.
+
+- **The context composition series, and the winnow pin it needed,
+  2026-09-04.** The pin moved from `0384486` to `0421da5` (forty-three commits)
+  because `winnow context` is an unknown command at the old one; all four
+  spawned subcommands were re-read at the new pin against a real 8.7 MB
+  transcript, and `docker compose build` completed.
+  - In the image, `safe run -- context <path> --depth 1 --json` returned a body
+    with stderr empty in ~0.12 s; `parseComposition` read window 433,331 and
+    six bands summing to it exactly.
+  - `python -m winnow context --help` outside `safe run` printed that it wired
+    7 hooks into `~/.claude/settings.json`; every app spawn uses `safe run`.
+
+- **A depth-3 `winnow context` body is 18–29 KB, 2026-09-04**: 72 to 110
+  sub-nodes and at most 29 children under one parent over the four largest
+  local transcripts (7.2–12.9 MB), so the 4 MB stdout bound holds. Against the
+  real pinned winnow the tree round-tripped through `recordComposition`, which
+  kept the newest reading's only, and `sweepRunEvents` removed it with its run.
+
+- **The composition stack clipped because the parse floored a signed residual,
+  2026-09-10.** On run `5b967a08` the eight stored readings summed past their
+  windows after the first (324,569 against 243,678 at the last) with
+  `unattributed` stored at 0; `winnow context --depth 2 --json` on the same
+  transcript put it at −17,969, and `context.py` allows a negative residual.
+
+- **Nothing was displaced on that run; the picture was the clip, 2026-09-10.**
+  The prefix held at 14,392 tokens on all eight readings and standing
+  configuration grew from 18,098 to 44,511.
+
+- **The signed residual, end to end, 2026-09-10.** `parseComposition` keeps the
+  sign (−81,822 on that transcript) and `migrate()` re-derives every stored
+  residual on boot — idempotent on a scratch database first. After `docker
+  compose up --build`: all eight readings sum to their windows, residuals −1 to
+  −80,891, every band has height, the legend reads `unattributed −80.9k`.
+
+- **The tick writes `context_compositions` on a real run, 2026-09-10.** Eight
+  readings on run `5b967a08`, paced by growth, one taken a minute after the
+  early-end cut at 30 minutes; `compositionSeries` draws the stored rows.
+
+### Orchestrator chat
+
+- **Orchestrator chat end to end, real CLI 2.1.226:** a chat proposed a run
+  from a saved template, it was approved and completed ($0.22 the turn, $0.165
+  the run), and `/api/mcp`'s hand-written handlers served the pinned CLI.
+
+- **Chat thread order, `npm test` 3 cases, real database:** same-millisecond
+  messages keep insert order across a reopen and over null-`seq` rows; the
+  migration, on three rows from the live deployment, put the reply back above
+  its denial note.
+
+- **Under `manual` plus an allowlist the chat could not write** (`No such tool
+  available: Write`). That is not what ships: it now runs `bypassPermissions`
+  with no tool list, held back only by its system prompt.
+
+- **`--permission-mode plan` cannot run the chat:** every MCP call answered
+  `Cannot call mcp__uf__list_templates while in plan mode`.
+
+- **The chat child gets the fill and the sweep, 2026-09-09.** Before: 118
+  bwrap failures in 53 of 192 `-workspace` sessions (67 `.claude` list, 35
+  config dir, 16 `/workspace` root, which it leaves). A bwrap-effect stub via
+  `runOrchestratorChild` left ten placeholders at `HEAD~1` and only the
+  operator's `?? .vscode/` at `HEAD`. Deliberately no `core.excludesFile`.
+
+- **A chat turn streams and survives a crash, 2026-09-06**, fake `CLAUDE_BIN`,
+  nothing billed: `partialText` grew, then settled to the CLI's `0.0731`; after
+  a `SIGKILL` the boot pass kept the half-answer, cost `0.022` marked
+  `estimated = 1`; a $0.025 install ceiling stopped it mid-turn, $0.03 did not.
+
+- **A stale Approve on a superseded proposal is refused, 2026-09-08**,
+  standalone server, non-spawning `CLAUDE_BIN`, 13/13 assertions: "Nothing was
+  approved…", zero runs, the badge counting only the replacement, and the
+  `SUPERSEDED` card linking to it.
+
+- **The chat naming a model, driven in-process through `/api/mcp`.** With a
+  minted capability, `propose_run` and `save_template` write and state a named
+  model, store null for a blank, and `save_template` keeps it when omitted;
+  guards unchanged. The migration survived seeded rows and the
+  pre-`relaxProposalTemplate` schema. `npm test` 2,139 tests / 0 failures.
+
+- **The `ask_operator` card was rendered and clicked in Chromium at 1440×1000
+  and 390**, over hand-seeded threads with `POST /api/chat/[id]/questions`
+  intercepted: six card states and the `asked you` marker drew, dark and 390px
+  held, its text controls are 16px below `md`, and a choice sends on one press
+  only when it is the only open question.
+
+- **One poll of an open chat thread is flat in its length, 2026-09-07**: on a
+  throwaway database, 246,362 bytes to 1,136 at 500 messages and 1,004,522 to
+  1,137 at 2,000, the cursored read now on `idx_chat_messages_seq` with no
+  sort. A thread's first read costs 2.0% more, once.
+
+### Taskboard
+
+- **The taskboard in a browser, 2026-09-07**, standalone server, seeded
+  `tasks`: a clipped 310-character brief survived a title-only save; every
+  operator move worked through its own button; a refusal rendered
+  `taskTransitionRefusal` verbatim; all three nothings drew; ⌘1…⌘9 matched the
+  sidebar; no console error at 1280 or 390.
+
+- **The board's MCP tools, in-process, 2026-09-07**: the real route handler
+  compiled with `tsc`, tokens from `mintCapability`, 23/23 assertions. Block
+  tokens lack `create_task`, `status: "done"` is refused by name, unknown ids
+  are refused at all three doors; it caught `propose_run` dropping `taskId`.
+
+- **The task link on its three surfaces, 2026-09-07**, Chromium at 1280px,
+  rows seeded through `src/lib`: the proposal card names the task or "a task
+  since deleted" and still offers Approve; the run page links it, still Open
+  after the run completed; the board row lists the run.
+
+- **The `taskboardForRuns` switch is off on a never-written settings file,
+  2026-09-07**, Chromium at 1280px, production build; `smoke-pages` drew
+  `/settings` and `/tasks` clean at 390 and 1280.
+
+### Workflows and schedules
+
+- **Workflows end to end, live dev server, stub CLI:** save refuses each bad
+  graph by name; a four-block graph ran its roots in parallel and continued a
+  branch; a failed root left its `on-success` dependent `blocked` while the
+  `on-finish` one ran; deleting a workflow keeps its runs.
+
+- **Canvas live check:** `POST /api/workflows/validate` returned each of nine
+  refusals as `normalizeWorkflowInput`'s sentence and a valid graph as
+  `{"ok":true}`; all four workflow pages answered 200.
+
+- **A workflow's history pages, 2026-09-07**, `next start`, 45 seeded
+  instances: 20 by default, `?offset=999` clamps to the oldest row and
+  `?limit=5000` to 100; the page drew `1–20 of 45`, Next drew `21–40 of 45`.
+
+- **A drawn workflow cannot be discarded without being asked, 2026-09-07**
+  (Chromium 1400×900, production build): the sidebar link, breadcrumb,
+  Cancel, ⌘3 and quick open each raised *Discard unsaved changes?*; a
+  Ctrl-click and an unchanged or typed-back editor did not. Browser Back was
+  deliberately not tested.
+
+### Concurrency and ownership
+
+- **Folder collision, `npm test` 8 cases:** self, parent/child both ways, a
+  second workspace's alias and a case-only difference collide, a sibling does
+  not; isolated checkouts collide only with a whole-workspace run.
+
+- **Concurrency, real database, stub agent:** a second run on one folder
+  queues and is promoted when the first ends, another folder starts at once,
+  and a workspace-root run queues behind both without starving.
+
+- **Concurrency limit 1:** runs on two further idle folders queue rather than
+  being refused, one promoted per freed slot; a run whose agent leaves a
+  grandchild holding its output still terminates.
+
+- **The `chat_proposals` rebuild keeps rows, index and cascade**, against
+  SQLite directly and under a throw after each statement
+  (`schemaMigration.test.ts`).
+
+- **A process that does not own the data directory no longer closes the
+  owner's runs on exit**: `shutdownRuns` is gated on `mayWriteDataDir()`. A new
+  `shutdown.test.ts` case (a lock naming a live foreign pid, then
+  `claimDataDir()`) failed on the unfixed function: `closed: 1, recovered: 1`,
+  the row's `restart_closed`, `active_started_at`, `spent_usd_est` rewritten.
+
+- **What a migration finds now outlives stdout, 2026-09-07**: all four
+  findings, driven against a real SQLite file by reopening it, write one
+  `ops_events` row each under `schema.fault`. `schemaMigration.test.ts`'s five
+  cases fail with the write removed (`# fail 5`, then `# pass 16`), and the row
+  survives the fault clearing.
+
+### Isolation and landing
+
+- **Isolation, real repo with uncommitted work and a gitignored `.env`:** two
+  runs start in separate slots on their own `uf/…` branches with `.env`
+  seeded; the operator's modified file and branch are untouched.
+
+- **Review and land, real scratch repos, stub CLI (unbilled):** diffs survive
+  a rename, a binary and a tab-named file; land refuses a dirty or wrong-branch
+  checkout and leaves HEAD unmoved on conflict; a stub resolver faking success
+  is caught and rolled back, cost still recorded. Also driven in a browser.
+
+- **Merge queue, five-branch scratch repo, live dev server, stub resolver:**
+  branches landed in queue order, the $0.07 resolution on the queue row not
+  the run; with the resolver off the next branch still landed; a dirty
+  checkout skipped both queued branches without paying to resolve.
+
+- **Conflict display, git 2.50, a content and a modify/delete conflict:** real
+  `merge-tree --write-tree -z` through `parseMergeTree` lists each file once
+  with its type and `<<<<<<<` block, and the run page renders both.
+
+- **Resolution display, from a seeded `run_reviews` row, never a real
+  agent's:** `GET /api/runs/<id>/land` returns the resolution's own diff over
+  the conflicted paths and the run page renders it.
+
+- **The Land verify field in a browser, 2026-09-07**, standalone bundle:
+  settings search found it inside the closed *Isolated runs* fold and focused
+  it; `npm test && npm run typecheck` drew the argv warning on blur, before any
+  Save; "Checks a conflict resolution may run" sits beneath it.
+
+- **Conflicts map (`/runs/[id]/conflicts`) seen against real `merge-tree`
+  output.** `next dev`, eight planted runs on built repos, 1280×1100, light
+  theme: 21 paths (12 unopened, drawn hollow and dashed), three of four fills,
+  the inspector, five empty states, n=1, one link in. A binary conflict reads
+  `contents`, as `parseMergeTree` takes the last record.
+
+### Git and review
+
+- **Diff and land parsers, `npm test` 24 assertions:** NUL-separated numstat
+  and name-status incl. renames and tabs, patch splitting that ignores `diff
+  --git` inside a hunk, `merge-tree` on an old git, every `landRefusal` branch.
+
+- **GitHub credential block, real git 2.39.5:** `credential fill` returns the
+  token past a repo-configured missing helper (`osxkeychain`), SSH GitHub
+  remotes rewrite to HTTPS, and `gitlab.com` fails without prompting. Six
+  `npm test` assertions.
+
+- **git 2.39.5 formats behind Delete and Purge:** `status --porcelain -z`
+  needs its leading space, so `.trim()` drops an unstaged file (hence `trim:
+  false`); `worktree remove` needs `--force` on a dirty checkout, and `branch
+  -d` refuses an unmerged branch where `-D` deletes it.
+
+- **`core.excludesFile` via `GIT_CONFIG_*` lets `git add -A` pass the bound
+  dotfiles, 2026-09-09.** git 2.39.5: exit 0, none staged, a nested
+  `.gitconfig` still staged; `agentGitEnv` keeps the GitHub pairs in the same
+  block. Only the `os.tmpdir()` path was written; 2590 tests pass.
+
+- **Delivery opened a real pull request, 2026-09-06**, the app's first:
+  throwaway `Xapicc/uf-deliver-smoke`, branch unpushed, seeded worktree run,
+  `UF_GITHUB_TOKEN`. The app pushed and opened #1 `uf/deliver-smoke` → `main`;
+  it refused a non-GitHub remote with no credential, and a second request, 400.
+
+- **Review and conflict-resolution spawn, flags, JSON shape and accounting**,
+  with a stub `result`; a bad conflict resolution cannot be committed.
+
+- **The Files tab's touched/changed scan returns what the design claims, on
+  real SQLite** (in-memory `better-sqlite3`, ten hand-written tool payloads, a
+  throwaway script): worktree and checkout paths collapse to one row, `/tmp`
+  counts as outside, a command-only `Bash` and a directory `Grep` are excluded.
+  `runTouches.test.ts` covers only the pure reconciliation, nine cases.
+
+### Agents, templates and models
+
+- **Run templates, live dev server:** CRUD works and each refusal is a 400 with
+  the form's sentence; a stored `bypassEverything` mode with a corrupt budget
+  reads back as `plan` and one work cycle. Plus 20 `npm test` assertions.
+
+- **`--agent` / `--agents`, seven probes on CLI 2.1.226:** `--agent` selects a
+  definition passed on the same argv, exits 1 on an unregistrable one, keeps
+  `--append-system-prompt`, survives `--resume`, and yields to the run's
+  `--model`.
+
+- **The `settings.json` `agent` key is real and deliberately not declared,
+  CLI 2.1.226:** `--agent` outranks it, `--agents` does not, and a bad value is
+  silently ignored at exit 0; it reaches every child started with no agent.
+  Four probes, throwaway `CLAUDE_CONFIG_DIR`, `-p "Say hello."`:
+
+  | settings.json | argv | answer |
+  |---|---|---|
+  | no `agent` key | — | `Hello! 👋 What can I help you with today?` |
+  | `"agent": "uf-set-probe"` | — | `BANANA` |
+  | `"agent": "uf-set-probe"` | `--agent uf-set-probe2` | `CHERRY` |
+  | `"agent": "uf-set-probe"` | `--agents '{"uf-offered":{…}}'` | `BANANA` |
+  | `"agent": "uf-set-typo"` | — | `Hello! 👋 …`, exit 0 |
+
+- **The model catalogue in a browser and over HTTP, 2026-09-08**, `next
+  start`, throwaway `DATA_DIR`: thirty rows render, a typed `acme-model-9[1m]`
+  adds, the last enabled switch is `disabled`, both `#model` selects list
+  Inherit first; `PUT /api/settings` stores `claude-opus-5[1m]` intact, and
+  settings and runs refuse disabled or unknown models with a sentence.
+
+- **A template's model (added 2026-09-04) works up to the planners.** Migration
+  checked by hand on a pre-change database; dropping the inherit in
+  `planProposal`/`planNode` fails 6 tests; routes (auth on) trim, null blanks,
+  clear on `PUT ""`; the form (Chromium, auth off) seeds it and overrides it per
+  run. `npm test` 2,136 tests / 0 failures.
+
+- **Per-run model (added 2026-09-04) rendered on `next dev`, on planted rows.**
+  `/runs/new` draws the field under *Folder* with placeholder
+  `Claude Code's own default`; `/runs/[id]` reads `This run`/`Its agent` for a
+  set and a NULL model. `npm test` 2,123 tests / 0 failures. `next dev` there
+  needs `NODE_ENV=development` set explicitly.
+
+- **The routes under the new-run form's template UI**, exercised directly.
+
+### Other providers
+
+- **The Codex sign-in panel, end to end, 2026-09-05**, `codex-cli 0.153.4`,
+  scratch `CODEX_HOME`, routes and Playwright: `login status` exits 1 both
+  signed out and on a bad credential file; a device flow deletes the stored
+  credential on start; `--with-api-key` exits 0 on empty stdin. The key
+  reached no log, only `$CODEX_HOME/auth.json` (0600).
+
+- **`runs.provider` and its admission refusals, 2026-09-05**, `npm start`:
+  `provider TEXT`, nullable, cid 47, with `createRun`'s `INSERT` run for
+  `'codex'` and `null`; four refused `POST /api/runs` each got their own 400
+  sentence; both run-page labels rendered for seeded rows.
+
+- **Codex device sign-in was driven against the real CLI up to approval.**
+  `Logged in using ChatGPT` was read from a hand-written `auth.json` (unsigned
+  JWT), not a real credential; the Settings row's poll arms and stands down
+  around a cancelled flow, never a successful one.
+
+- **The Codex CLI installs and runs on this image's base, measured on arm64
+  only, 2026-09-05.** In `node:22-bookworm-slim`, `npm install -g
+  @openai/codex@0.153.4` then `codex --version` prints `codex-cli 0.153.4`;
+  279 MiB on disk. The binary arrives via `optionalDependencies` gated on
+  `os`/`cpu`, so the Dockerfile block ends in a version check.
+
+- **The Codex adapter's argv and spend handling, 2026-09-05.** Every flag it
+  emits is in `codex-cli 0.153.4`'s `codex exec --help`; `codex execpolicy
+  check` forbids `pkill node` under the app's `prefix_rule` spelling
+  (`rule(...)` and `define_program(...)` do not parse); a seeded Codex run
+  renders `148.2k` tokens against a dash, not `$0.00`, in the built app.
+
+### Knowledge and plugins
+
+- **Vault reader on a real 773-note vault, read-only, 2026-08-21:** 885 nodes
+  and 19,438 edges, cold scan 303ms, cached 9ms, and
+  `/note?path=../../../etc/passwd` answered 404. It caught frontmatter tags
+  being dropped (747 notes tag only there).
+
+- **`--plugin-dir` delivers the generated skill, CLI 2.1.226, 2026-08-21,
+  $0.00:** the request carried `usagefoundry:knowledge-vault` with
+  `renderVaultSkill`'s exact text, namespaced so it cannot shadow the
+  operator's skills; `--add-dir` proved a write grant, not a read-only one.
+
+- **Knowledge page and renderer over a real 785-note vault, 2026-08-21:** the
+  routes answered with live counts, 213 of 13,100 wikilinks leaked as literal
+  `[[…]]` inside emphasis (24 after the fix, all vault content), and `sha256`
+  digests showed the vault untouched.
+
+- **Graph view at the real vault's size, 2026-08-22:** 893 nodes and 19,995
+  edges in 605ms, uncapped; the layout settles in 251 frames at 1.49ms a step
+  (Node 22.23.2), and Barnes-Hut is 2.7x all-pairs, 4.32ms a step at the
+  2,500-node render cap.
+
+- **Obsidian markdown over all 785 real notes, 2026-08-22:** 760 carry a
+  callout, 621 a table, 524 a task list, all previously literal text; now 0
+  notes leak a construct and 0 throw; two bugs the pass found, both invisible
+  from the desktop, are tested.
+
+- **Four hook and read facts, read in the pinned CLI bundle.** A `PreToolUse`
+  deny lacking `hookSpecificOutput.hookEventName` is silently discarded; a
+  plugin's `hooks/hooks.json` needs the `{"hooks": …}` wrapper; `agent_id` is
+  on hook stdin only in a sub-agent; a whole-file read caps at 25,000 tokens
+  and the first 2,000 lines.
+
+- **`--plugin-dir` registers a plugin's hooks, observed 2026-08-23.** 213
+  `hook_response` rows from `/workspace/winnow/plugin`, all exit 0:
+  `SessionStart:startup` 93, `:compact` 88, `:resume` 32, so resumed cycles
+  get hooks and autocompact re-fires `SessionStart`. Only the shell ran:
+  `cozempic` was absent, so 213 sessions were told a guard was active.
+
+- **The `/knowledge` graph orientation layer, `next dev`, 2026-09-02**, on the
+  mounted vault (1,227 notes, 1,258 of 1,375 nodes drawn) at 1440px and 390px:
+  graph first, three closed folds, legend, `Fit`, a readout that survives the
+  pointer leaving, `role="img"` with a label. `textFade` 0.35 chosen by eye: a
+  threshold just under `fitView`'s `k` 0.12–0.14 put 1,258 titles in 820px.
+
+- **The vault skill is on `--plugin-dir` for first and resumed cycles.** Three
+  `buildArgs` cases pin it; the skill reaches the model's skill list.
+
+- **`graphTags`, `tagGroups` and the query they write are unit-tested.**
+
+### Dreaming
+
+- **Dreaming end to end, 2026-09-02**, built app over the real corpus: the
+  readout matches `proposals/Dreaming` (77 signatures, 1,260 of 2,553
+  instances); warm scan 21 ms, 0 files re-read. One night ($9.40) wrote notes
+  passing `_Meta/qc.py`'s ERROR gate for nine of twelve signatures, and found
+  the scan double-counting the 5.1% of records resumes rewrite.
+
+### Retention
+
+- **A transcript's filename is its session id under CLI 2.1.226**, checked
+  against every `.jsonl` in a real `~/.claude/projects`.
+
+### Security and sandboxing
+
+- **Child environment, dumped from a real spawn:** 97 variables, `PATH` and
+  `HOME` intact; `ANTHROPIC_ADMIN_KEY`, `UF_AUTH_TOKEN` and `OTEL_*` absent.
+
+- **Path traversal rejected in every form tested:** `../`, an absolute path
+  outside all mounts, an escaping symlink, another mount's folder, an unknown
+  mount id, an unmounted workspace, a disabled slot.
+
+- **A required sandbox that could not start ran unnoticed, 2026-08-18/19:**
+  the only end-to-end reading of `UF_SANDBOX=1`. With `security_opt` commented
+  out as shipped the CLI started anyway (its probe only `access(X_OK)`s
+  `bwrap`); 214 `Bash` calls failed across 10 runs in 15.5 hours ($407.26),
+  and UsageFoundry recorded zero `sandbox` events.
+
+- **`uf-seccomp.json`, Docker Engine 29.7.2, kernel 6.12.76-linuxkit:** it
+  lets `bwrap --unshare-user` create a namespace (rc=1 → 0, root and uid 1000)
+  but not `--proc /proc`, so only the CLI's weaker `--bind /proc /proc` shape
+  runs, measured on `bwrap`, not on the CLI choosing. Its regeneration command
+  404s: moby publishes no `v29` tag.
+
+- **A sandbox that starts and confines, 2026-08-19, $0.51 for three calls:**
+  with the seccomp override and `enableWeakerNestedSandbox`, a sandboxed `Bash`
+  ran and was refused the `.credentials.json` uid 1000 reads outside it, as a
+  plain `EACCES` indistinguishable from a missing path.
+
+- **The prune has to run as the server, not the agent uid, 2026-08-24.** Under
+  `setpriv`, a child at `UF_AGENT_UID` raises `PermissionError` on
+  `WINNOW_DATA_DIR`, because transcripts are `0600 root` and `DATA_DIR` is
+  `0700 root` on this install. `spawnPrune` is the only spawn that omits
+  `childCredentials()`.
+
+- **Sandbox mount-point failures counted, the fill's git half checked,
+  2026-09-04.** 255 `bwrap: Can't create file` tool failures in ten days, 252
+  of 261 paths in a project tree's `.claude` list, which `claude.exe` 2.1.260
+  applies to the cwd and every ancestor. After the fill a linked worktree's
+  `git status --porcelain` is empty.
+
+- **The sandbox's tree-root list binds eleven dotfiles at the cwd only,
+  2026-09-09.** Each is a character device `1,3`, and `git add -A` dies on
+  `.bash_profile`; 6 of 47 idle checkouts kept all eleven as `0444` files.
+  `sweepSandboxTreeRoot` removed nine on a scratch tree, keeping a real
+  `.gitconfig` and `.vscode`.
+
+- **The gap-register pass, 2026-09-06**, dev server on an isolated `DATA_DIR`:
+  logout-all without a credential is 401 and revokes nothing; with
+  `UF_STATUS_TOKEN` set, `/api/status` takes a minted `uf_session` but not the
+  master token as a cookie. `npm test` 2,268/2,269, the miss
+  `backupRestore.test.ts`'s `ulimit -f` case, which fails on this macOS host.
+
+- **The entrypoint drops the intake filter to the agent uid, under a harness
+  only.** The real `docker-entrypoint.sh` with a recording `setpriv` and `uv`
+  recorded `setpriv --reuid=1000 --regid=1000 --clear-groups env -i …` and a
+  seven-entry environment holding none of the four credentials set. A
+  recording `uv` is not `uv`, and none of it boots a container.
+
+- **The sandbox wiring builds, boots and wraps `Bash` (2026-08-18/19).**
+  `bubblewrap` and `socat` ship executable; `UF_SANDBOX=1` writes the managed
+  policy; Docker applies `uf-seccomp.json` (v28.5.2's default, six syscalls
+  ungated). `sandboxRefusal` is unit-tested; its three `bwrap:` markers were
+  read off `run_events`.
+
+- **The per-run write set is unit-tested and was watched to fail first.**
+  `sandboxSettings`/`sandboxArgs` in `orchestrator.test.ts`: own checkout
+  writable, a sibling run's not, `CLAUDE_CONFIG_DIR` writable, plus glob-path
+  and empty-set cases.
+
+- **`UF_LOCK_CLAUDE_HOME`'s entrypoint passed an 18-scenario `dash` harness.**
+  Stubbed `chown`/`stat`/`id`/`setpriv`; every branch printed right and chowned
+  nothing wrong. Control flow only, not a kernel: no ownership changed. CLI
+  2.1.226 (throwaway config dir) reaches the API with an unwritable top level
+  whose entries exist, and rewrites in place with `O_TRUNC` on `EACCES`.
+
+- **The CLI's own sandbox has been executed three narrow ways (2026-08-18/19
+  onward).** `bwrap` with and without the seccomp profile, in both argv
+  shapes; a 15-hour `UF_SANDBOX=1` install whose sandbox never started (Q2);
+  three hand-run `claude -p` calls against one that did: one ran a shell
+  command, one was refused the credentials file its own uid owns.
+
+### Container and environment
+
+- **Multiple workspaces:** slots list independently, a disabled one is skipped,
+  a missing one reads unavailable rather than empty, and a folder maps back to
+  its workspace through a symlinked mount.
+
+- **Backup and restore against a live writer:** mid-transaction, `cp` got 25
+  runs and `scripts/backup-db.mjs` the live 386, both passing
+  `integrity_check`; restore never deletes, refuses under a live
+  `server.lock`, and a copy killed part-way leaves the database in place.
+  Seven tests in `backupRestore.test.ts`.
+
+- **`UF_BIND_ADDRESS=0.0.0.0` with a token, from the LAN address:** bound
+  `0.0.0.0:3000`, `/api/usage` 401 bare and 200 with the bearer; with
+  `UF_COOKIE_SECURE=0` the cookie had no `Secure`. A new binding needs a
+  recreate; `docker compose restart` keeps the old one.
+
+- **Go in the image, arm64 only:** the tarball passed `sha256sum --check`, the
+  image reports `go1.26.6 linux/arm64` with both caches under `/home/node/go`,
+  and a fresh cache volume was re-owned to `UF_AGENT_UID=1001` once.
+
+- **`jq` 1.6 in the image, 2026-08-25:** runs as uid 1000 under
+  `uf-seccomp.json`, unwrapped and inside both `bwrap` shapes, unconfigured.
+
+- **Discord's 400, the in-container relay, and the URL it keeps,
+  2026-08-24.** The generic body to a live Discord webhook got 400 (`"code":
+  50006`), `{"content": …}` 204. `scripts/discord-relay.mjs` forwarded a
+  signed body (204; unsigned 401). The server holds no `DISCORD_*`, and uid
+  1000 was refused the root relay's environ.
+
+- **Playwright renders a real page as uid 1000, 2026-08-24.** 1.62.1 on
+  Debian 12 arm64 installed Chrome for Testing 151.0.7922.34 (`chromium-1234`,
+  641 MB, plus a 340 MB headless shell) and screenshotted `/login` correctly
+  at 1280×800. Chromium's own sandbox is unusable (`unshare` EPERM) and
+  unneeded: `chromiumSandbox` defaults to false.
+
+- **`playwright install` fails in the container two ways; rendering does
+  not, 2026-08-25.** As uid 1000, `EACCES: permission denied, open
+  '/opt/playwright/browsers/.links/4aea…'` (a root-owned link file); under
+  `UF_SANDBOX=1`, `Read-only file system` (`srt` 0.0.71). Screenshots work
+  both ways. A bare-`srt` ENOENT on `/tmp/claude` is an artifact; don't add it.
+
+- **The host-side causes of an unreachable LAN install are ruled out.** From
+  the container's own host, `lsof -nP -iTCP:3000 -sTCP:LISTEN` showed Docker on
+  `*:3000` and the macOS application firewall was confirmed disabled.
+
+- **The intake filter's launcher, and the container's memory at rest,
+  2026-09-10.** Idle four minutes after boot: `docker stats` 576 MiB,
+  `next-server` 441 MB RSS (transcript cache 168 MB), the filter's `uv run`
+  parent 199 MB beside a 23 MB filter; an hour later, still idle, `docker
+  stats` read 1.35 GiB, the difference virtiofs slab from the bind mounts.
+  - The entrypoint now runs `uv sync`, then the venv's `python -m winnow
+    filter`. On the rebuilt container the filter runs at uid 1000, 23 MB, with
+    no `uv`; the proxy answers on 8789; the ledger's 54,145 lines are intact.
+  - cgroup `anon` fell from 578 MB to 390 MB and `docker stats` to ~410 MiB
+    after a cold scan. A plain `docker restart` wrapper held only ~29 MB, so
+    the saving is the `compose up --build` one.
+  - Same day: the +214 MB poll spike is `intakeFilter.ts` reading its 102 MB
+    ledger whole; the 1,531 MB high-water mark is the dreaming pane's cold read
+    (1,268 MB at a 2048 MB heap, 656 MB at 1024, in a throwaway container).
+  - This install now sets `UF_NODE_HEAP_MB=1024`, `UF_MEM_LIMIT=6g` and
+    `maxConcurrentRuns` 2; the shipped defaults are unchanged.
+
+### Build and release
+
+- **The standalone build boots and serves**, native SQLite binding included.
+
+- **`npm run build` cannot finish on an agent worktree's virtiofs mount,
+  2026-09-08**, at `23a3d45`: 4 of 4 died copying the standalone bundle, a
+  different path each time; `rm -rf` gave `ENOTEMPTY` 6/40 there, 0/40 under
+  `$TMPDIR`. `scripts/redirect-dist-dir.mjs` made 7 consecutive builds exit 0
+  with a serving bundle; `distDir` and a bare symlink were measured and fail.
+
+- **`next build` failing with `TypeError: generate is not a function` in a
+  spawned run** is the inherited `__NEXT_PRIVATE_STANDALONE_CONFIG`; with it
+  unset, `npm run build` builds cleanly, standalone output included.
+
+- **Four traps for a hand check inside an agent's sandbox.** The ambient
+  `NODE_ENV=production` makes `next dev` answer every request with a 500
+  (`EvalError: Code generation from strings disallowed`); the ambient
+  `WORKSPACE_ROOTS` silently outranks any `WORKSPACE_ROOT`; `UF_ALLOW_NO_AUTH=1`
+  does not open the app while `UF_AUTH_TOKEN` is set — export it empty instead;
+  and each shell has its own network namespace, so boot, seed, drive and tear
+  down in one command.
+
+### Interface
+
+- **Layout sweep, production build, twelve widths 1440–380px, both themes,
+  geometry read from the DOM:** it found and fixed three defects (a 0px gap, a
+  button 92px outside its card at 380px, a translucent save bar), after which
+  no page scrolled sideways.
+
+- **API payloads before the 2026-08-23 wire pass.** `GET /api/runs` 696,197
+  bytes for 100 rows, 75.1% prompt text; `/api/runs/[id]` 591,574, of which
+  582,469 an unread events array; `/api/knowledge/graph` 9,864,990;
+  `/api/storage` 5.3–7.4 s warm for 585 bytes, 5,981 ms of it one serial
+  `lstat` walk. An idle runs page pulled 10.5 MB a minute, uncompressed.
+
+- **No app-router `/api` response was compressed, Next 15.5.23.** Handler
+  headers are stored as arrays and `compression`'s `compressible()` rejects a
+  non-string, reproduced with `DEBUG=compression`. Bodies under ~250 bytes
+  grow under gzip; `gzipSync` blocks the loop 30.6 ms on the 8.8 MB graph, so
+  the async form is used. Graph 8.8 MB → 488 KB on that morning's capture.
+
+- **The orchestrator page fits the pane at `lg`, 2026-08-27.** `next dev`,
+  seeded chat, Playwright's Chromium: pane overflow 0 at 1440×1080, 1440×700
+  and 1024×700 (parent commit 3,180–5,024px); below `lg` identical to the
+  parent. A 700px window with the read-only banner, disclosure and two error
+  banners all open still runs 71px short.
+
+- **`/knowledge`'s smoke failure was the harness fixture, 2026-09-08**: with
+  no vault configured its API answered 409; `seedVault` (`66e71c0`) fixed it.
+  One build at `3e59699`, 2026-09-09: 44/44 clean with it, 42/44 and exit 1
+  with its call site removed; no host state reaches the pass.
+
+- **The shared layer at 390×844, 2026-09-10**: `Sheet`, `Card`, `Meter`,
+  `RunAgentCost` in Chromium, mostly the standalone bundle: no sideways scroll
+  on five pages, nothing in the kit under 44px, `ContextOccupancy` at 1280
+  byte-identical before and after.
+
+- **The ascii skin's tokens and switch, 2026-09-11**: built utilities read
+  tokens one `:root[data-skin=ascii]` block overrides; line tones clear
+  contrast (worst 3.19:1, 4.87:1); `npm test` 2618/0, `smoke-pages` 44/44; 48
+  `rounded-full` sites stay pills. A live flip zooms `/knowledge`'s graph ~5x,
+  as light→dark already did.
+
+- **The ascii skin's kit primitives, 2026-09-11**, eleven components, no call
+  site changed: `npm test` 2622/0 with a test that fails without `aria-hidden`,
+  sideways scroll 0 on 52 loads; `ListGroup`'s frame, painted out by its own
+  box, was found and fixed.
+
+- **The ascii skin's meters, 2026-09-11**: `ui/AsciiBar` in `Meter`, with
+  `meterCells` pinned by nineteen tests (0.4% shows a cell, 99.6% leaves one
+  empty, no ceiling is `null`); block glyphs measured 14px against 7px ASCII,
+  hence `╳` for unknown; `npm test` 2641/0; the charts needed no change.
+
+- **The ascii skin's app shell, 2026-09-11**: 176/176 loads clean (22 routes ×
+  widths × skins × themes), default-skin geometry unchanged, `npm test` 2643/0.
+  Five defects found only by looking, one of them every framed box app-wide
+  inking its stroke 7px inside its edge since frames shipped; `-0.5em`
+  corrected all but a pixel on bordered hosts.
+
+- **The ascii frame's second app-wide offset, caught only by reading device
+  pixels, 2026-09-11**, 1920x963 at DPR 2: bordered `Card`s inked their stroke
+  1.00px inside where `ListGroup` did. `calc(-0.5em - 1px)` leaves 0.016px, and
+  a test reading the selector from `globals.css` fails all four mutations.
+
+- **The ascii table head rule is one line again, 2026-09-11**: the `3px
+  double` border drew ink-gap-ink; without it, one run of ink at 390, 1280 and
+  1920 in both skins, and `/runs` in the standalone server read `1px solid`.
+
+- **The ascii meters fit their card, 2026-09-11**, standalone bundle, three
+  pages at 390/1280/1920: `AsciiBar` measures its own advance and fills 96.0%
+  to 99.9% of the track (23 cells at 390, up to 123 at 1920), never past it;
+  a resize settles once.
+
+- **The Context sparkline's floor line is removed, 2026-09-11**: reproduced
+  from the real `ContextOccupancy` at the capture's shape, the 1px floor read
+  as a section rule; it is gone in all six shape × skin cases, the prune
+  marker still reads as one mark, `npm test` 2647/0.
+
+- **The ascii skin's in-flight marks became one, 2026-09-11**: `▛ ▜ ▟ ▙`,
+  since `▀`/`▐` measured 9.22px against 13.00px, drawn 6.50 × 6.50px; DPR 4
+  captures on `/runs` rotate clockwise in phase; default-skin pixels
+  byte-identical; `npm test` 2647/0, `smoke-pages` 44/44 standalone.
+
+- **The quick-open sheet at 390px, 2026-09-10**, standalone bundle: it spans
+  the window, nothing scrolls sideways, footer buttons are 44px, focus lands in
+  the field, Esc and Cancel close it (a tap below does not, by design: `Sheet`
+  has no backdrop dismiss). Not on a real phone.
+
+- **The workflow surface at 390x844, headless Chromium, 2026-09-10.** The
+  block list replacing the canvas below `md`, 288px controls and 44px links
+  measured by box; `smoke-pages` clean on all five pages at both widths; the
+  list's four gestures answer Playwright's synthetic `tap()`; the 1280px table
+  screenshot is byte-identical.
+
+- **`/settings` at 390px, headless Chromium, geometry only.** The standalone
+  bundle at 390x844 and 390x568, every disclosure open, every switch on, a long
+  path in every field: nothing past the viewport, no sideways scroll on
+  `#main`. The 44px floor was read off bounding boxes, not hit.
+
+- **Touched map (`/runs/[id]/touched`) rendered 2026-09-02, on a seeded run
+  only.** 399 tool events over 48 distinct files, none real: it renders, settles
+  and stops, and clusters by directory legibly at 1440×1000 in both themes.
+  Headless layout (nothing on colour or labels) settles at 250 frames against a
+  2,000 cap and separates clusters 3.6× on a reconstruction of the measured run.
+
+- **Touch replay scrubber driven 2026-09-02, on the same seeded run only.** 399
+  touches over 48 distinct files; the sequence route answers 50 KB beside the
+  collapsed scan's 47 KB. Playwright at 1440×1000: space played 121→170 in 2.5 s
+  (the `TARGET_SECONDS` rate), pause held, Reset cleared, the wash read in both
+  themes. `touchReplay.test.ts` covers the fold cases.
+
+- **Paged `/api/runs` query checked in SQLite, not a browser.** Seven planted
+  rows check paging, the offset clamp, the `created_at`/`id` tiebreak and
+  literal `%`/`_` in `q`; 13 unit cases. At 50,000 rows the poll's unfiltered
+  first page takes 0.23ms and a `status` page at offset 20,000 7.8ms, with no
+  new index.
+
+- **Stacked tables (`d8c711d`) typecheck, test and build.** `npm test` 1335
+  pass, 0 fail at `c9d0b3c`; the build exits 0 at `a294ed2`, whose CSS holds
+  `.md\:contents{display:contents}`. An unescaped `grep 'md:contents'` matches
+  nothing there: grep built CSS with `-F` and escaped colons.
+
+- **`/chat` at 390×844 has no element wider than its parent.** Headless
+  Chromium, standalone bundle, seeded chat; this fixed a 584px column in a
+  358px pane that `smoke-pages` cannot see. With a 336px keyboard inset set by
+  script, composer and Send stay inside the pane. 1280×900 differs from
+  `bf9d40b` in 0 of 1,152,000 pixels.
+
+- **The mobile form pass (`d8c711d`, `2e68820`) passes typecheck, test and
+  build, and two of its classes reach the CSS.** On the `a294ed2` build,
+  `grep -cF 'max-md\:text-\[16px\]'` and `'max-md\:min-w-32'` match once each;
+  `min-width:8rem` never does, since Tailwind v4 emits a `calc()`.
+
+- **The density restructure typechecks, tests (1335 pass, 210 suites) and
+  builds, and was read at a wide desktop width.** Per `ui-density-audit.md` §9,
+  the completion pass opened eleven surfaces and found `CardTitle`'s `mb-0` a
+  no-op at seven call sites, every table's fixed columns at a third of their
+  width, and `npm test` failing on macOS for an unrelated reason.
+
+- **The Context panel's band picker was operated in the built app,
+  2026-09-04** (`npm start`, seeded `DATA_DIR`, Chromium over `/runs/<id>`; no
+  container, no real winnow): 24 assertions pass, a legend row is 44px under
+  `md`, and polling left an open region's rows byte-identical. `npm run dev`
+  500s there on a Tailwind `EvalError`; use `npm run build && npm start`.
+
+- **The dashboard's three-column top row was measured in headless Chromium**
+  against the built stylesheet and a stand-in shell: from 1280 to 1920 the
+  window card is 50.0% of the row and the tile 256px; at 1180 and 1024 it is
+  two columns, as half of a 760px row leaves the middle track 85px.
+
+- **The collapsed live-telemetry card fits its 533px cell, 2026-09-04**:
+  rendered alone via `renderToStaticMarkup` in headless Chromium with six runs
+  and the widest plausible figures, all five columns fit unwrapped; at 390px
+  `Table stack` turns each run into a labelled block.
 
 ## Not yet verified by hand
 
-The live-enforcement and pause/resume paths typecheck, build (including the
-standalone bundle), and are covered by the unit tests above, but the following
-have **not** been exercised against a real CLI. They are the list to work
-through before trusting this unattended:
-
-> **One sheet was measured at 390px, and of the eleven other files that open
-> one, exactly one has had a sheet opened at all.** `Sheet` is now
-> `max-md:w-full`, and the quick-open sheet was opened, measured and dismissed
-> against the standalone bundle at that width on 2026-09-10: the panel spans the
-> window (`left 0`, `right 390`), the page behind it does not scroll sideways,
-> both footer buttons measure 44px tall, focus lands in the field, and Esc and
-> Cancel each close it. (A tap on the strip below the panel does **not**, and
-> must not: `Sheet` wires no backdrop dismiss — that is the drawer's, and only
-> the drawer's.) Eleven other files open one — `grep -rln 'components/ui/Sheet"'
-> src --include='*.tsx'` — and the only sheet any pass has opened between them
-> is Codex's `Use API key` on `/settings`, which the Settings entry below
-> records opening without saying at what width. The rest have not been seen at
-> 390px: six components (`RestartClosed`, `TaskEditor`, `RunLand`,
-> `FleetControls`, `WorkflowSchedule`, `WorkflowEditor`), four pages
-> (`/agents`, `/branches`, `/workflows/[id]`, and a workflow instance), and the
-> four other sheets on `/settings`. The workflow pass below closes none of it
-> either: it drove that surface at 390px, but `WorkflowEditor`'s and
-> `WorkflowSchedule`'s sheets are both confirmations and neither was triggered.
-> None of this has been seen on a real phone or with a
-> software keyboard up, which is the one case `--keyboard-inset` and the
-> `100dvh` cap exist for.
-
-> **The workflow surface's narrow layout has not been touched by a real
-> finger.** The 2026-09-10 mobile pass replaced the workflow canvas with a list
-> of the blocks below `md` (`WorkflowCanvas.tsx`, and
-> `proposals/UIChecks/10-the-graph-at-390px.md` for the measurement behind it),
-> widened the wrapped controls in the inspector and in `WorkflowSchedule` from
-> 176/208px to 288px there, and gave every link on the surface a 44px target.
-> All of it was measured in headless Chromium at 390x844 with `isMobile` and
-> `hasTouch` — element boxes, control heights, the document's scroll width —
-> and `npm run smoke-pages` loads all five pages clean off the standalone
-> bundle at both widths. The list's four gestures were driven with Playwright's
-> synthetic `tap()` against that build and all four answered: a row fills the
-> inspector, **Link** relabels the other rows to **Link here**, tapping a target
-> row took the graph from six links to seven, and tapping an incoming chip drew
-> the link's panel rather than a block's. The 1280px arrangement was compared
-> before and after on the one change that could reach it — the list's name link,
-> which stopped being `block truncate` — and the table screenshot is
-> byte-identical.
->
-> What none of that is, is a hand. `smoke-pages` asserts about load and never
-> about interaction, and a synthetic tap dispatched at an element's centre
-> cannot tell you whether a target is reachable by a thumb holding the phone,
-> whether a 44px row is comfortable at the bottom of a long list, or whether
-> the list reads as an ordering rather than a pile. On a real phone, at
-> `/workflows/[id]/edit`: work down a six-block graph adding a link between two
-> blocks that are not adjacent, and confirm the arming state is visible while
-> you scroll to the target. Then open `/workflows/[id]` and change a schedule.
-
-> **The Settings mobile pass was measured in headless Chromium, never on a
-> phone, and its stacked table was never filled by a real scan.** The 390px
-> work on `src/app/settings/page.tsx` — every narrow field's `max-md:w-40`,
-> `EnvRow`'s stacked pair, and `stack` on the calibration suggestion table —
-> was checked by driving the built standalone bundle at 390x844 and 390x568
-> with every disclosure open, every switch on and a long path in every text
-> field: no element reached past the viewport and `#main` never gained a
-> sideways scroll. That is geometry, not touch. Nothing was tapped, no finger
-> found the wrong control, and the 44px floor was read off bounding boxes
-> rather than hit. The table is the one piece whose *content* is fabricated:
-> the sandbox has no transcripts, so `Scan history` cannot produce a
-> suggestion, and the stacked rendering was seen only with the `cal` state
-> seeded by a local patch that was reverted. Nothing has confirmed the stacked
-> table against a real scan's figures, and no `Sheet` on this page other than
-> Codex's `Use API key` was opened at any width.
-
-> **The image build has not been run since `npm run build` gained a wrapper.**
-> `scripts/redirect-dist-dir.mjs` was measured to do nothing on `overlayfs`,
-> which is what `/app` is on, so the builder stage should reach `next build` on
-> the same real `.next` directory `COPY --from=builder /app/.next/standalone`
-> has always read. That is an argument, not a measurement: there is no docker
-> client in this container, so `docker compose up --build` could not be run to
-> confirm it. It is the first thing to check on a machine that has one.
-
-> **Neither three-valued reading has been seen on a real install.** The branch
-> row's unread checkout and the `run.guard_unreadable` line are covered by
-> `BranchWork.test.tsx`, `logLine.test.ts` and `orchestrator.test.ts`, and
-> `npm run smoke-pages` loads `/branches` clean off the standalone bundle at
-> both widths — but that run has a throwaway `DATA_DIR` with no branches in it,
-> so the new row was never drawn, and no run has hit a `no_ceiling` verdict
-> here. What is unmeasured is that `heldByCheckout` is true on exactly the rows
-> `MAX_PENDING_PROBES` skipped: it is `p.slot !== null`, the same predicate
-> `selectProbeTargets` picks on, so the two agree by construction rather than by
-> observation. To exercise it, start more than `MAX_PENDING_PROBES` isolated
-> runs against one repository, leave a file uncommitted in a late one's
-> checkout, and open `/branches`: the rows past the cap must say "checkout could
-> not be read" and must still offer Commit.
-
-> **`RELAY_PORT` and `RELAY_BIND` have never reached a container.** Both are
-> now in `docker-compose.yml`'s `environment:` block, and `deployment.test.ts`
-> fails without them — it derives the entrypoint's read set from every
-> `${NAME}` outside a comment minus what the script assigns and what the
-> `Dockerfile`'s `ENV` sets, and a second assertion reads the relay's own
-> `requiredEnv`/`optionalEnv` calls, which is the only thing that can see
-> `RELAY_BIND`. That is a static reconciliation of three files. Docker is
-> unavailable in the container that wrote this, so nothing has confirmed that
-> compose substitutes them, that the relay inherits them from the entrypoint's
-> environment, or that a moved port is actually where the notification lands.
-> On a Docker host, with `RELAY_PORT=9000` and
-> `UF_WEBHOOK_URL=http://127.0.0.1:9000/uf` in `.env`:
->
-> ```bash
-> docker compose config | grep RELAY_        # expect both keys; before: nothing
-> docker compose up -d
-> docker compose exec -T usagefoundry printenv RELAY_PORT RELAY_BIND
-> # expect 9000 and an empty line; before the fix: nothing for either
-> docker compose logs usagefoundry | grep 'discord-relay: listening'
-> # expect 127.0.0.1:9000; before the fix: 127.0.0.1:8787 whatever .env said
-> ```
->
-> Then take a run to an ending that notifies and check the message arrives,
-> because the listening line is the part that already looked healthy while
-> nothing was delivered.
-
-> **No fork has been written since the API-basis measurement was added.** The
-> two new `fork_attempts` columns, `NettableCut.removalKnown` and
-> `measuredForkRemoval` typecheck, build and are unit-tested at every point
-> whose failure is silent — that a row with a reading on only one side is
-> unknown rather than zero, that a resume which grew reads as having removed
-> nothing rather than as a negative, that the byte columns cannot move
-> `tokensRemoved` at all, that `netReceipt` credits nothing for an unmeasured
-> fork while still charging its rewrite, and that `measuredForkRemoval` floors
-> per row before it means. What has **not** happened is a real
-> `winnow … fork --write` under this build, so nothing has yet confirmed that
-> `apiContextSample` returns the `api` basis at the fork site on a live
-> transcript, or that `IterationResult.firstContextTokens` picks up the resumed
-> cycle's first billed turn rather than a `<synthetic>` zero. Docker is
-> unavailable in the container that wrote this. The list, in order: set
-> `contextPruningEngine` to the fork engine and run to a natural boundary; check
-> the row has both `api_context_before` and `api_context_after`; check the run
-> page prints no saving for it unless the window actually fell; then let a run
-> cross the context ceiling and check the decline line names the measurement
-> rather than saying nothing was worth removing.
->
-> **The composition stack's re-read after a cut has been driven only through
-> `checkContextCeilings`.** `contextCeilingRace.test.ts` drives the real tick,
-> writes the real interrupt and reads the real `context_compositions` rows, and
-> the case fails without the clear. What it cannot reach is `pruneAtBoundary`'s
-> own clear, on the natural-boundary path, because nothing in this repository
-> runs the run loop. That one is an argument from the code.
->
-> **The stack's new age line has not been seen rendered.** The copy is pinned in
-> `ContextOccupancy.test.tsx` against `renderToStaticMarkup`, live and finished
-> branches both, and the caption's existing "newest N of M" clause is pinned
-> beside it. Nobody has looked at the pane.
-
-> **The model catalogue was driven in a browser; no run has yet been started on
-> a `[1m]` id, and the MCP enum has not been read by a model.**
-> `settings.modelCatalogue`, its Settings fold, the three pickers that replaced
-> free-text model boxes, and the `enum` the MCP tools publish all typecheck and
-> are unit-tested where the failure is silent (`modelCatalogue.test.ts`,
-> `modelAdoption.test.ts`, the `[1m]` pricing case in `pricing.test.ts`, and a
-> `modelCatalogue` probe in the settings route's round-trip census).
->
-> Verified by hand, 2026-09-08, through `next start` on a real build with a
-> throwaway `DATA_DIR` and a `CLAUDE_BIN` that cannot spawn, driven with
-> Playwright: the fold opens and renders all thirty rows with their ids; Add
-> puts a typed `acme-model-9[1m]` on the list with a Remove beside it and no
-> Remove on any seeded row; switching all sixteen enabled entries off leaves
-> exactly one, and that last switch is `disabled` rather than refusing at Save;
-> the new-run form's `#model` is a `<select>` whose first option is Inherit; the
-> agent editor's is too; no console errors on any of the three pages. Over HTTP:
-> `PUT /api/settings` refuses a default naming a disabled model and says
-> *switched off*, refuses a list with nothing enabled, and stores
-> `claude-opus-5[1m]` with its brackets intact; `POST /api/runs` refuses an
-> unknown model and says *not on this install's list*, and admits
-> `gpt-5-codex` on a Codex run untouched.
->
-> **`npm run build` cannot be completed in that container and it is not this
-> change.** It compiles, typechecks and generates every page, then dies copying
-> the standalone bundle with an `ENOENT` on a different `mkdir` each run
-> (`.next/standalone/node_modules/@img/colour`, `@swc/helpers/cjs`,
-> `caniuse-lite/data/features`, and once on `.next/diagnostics` itself); the
-> **unmodified** base commit fails identically. `.next` is complete enough for
-> `next start`, which is what the browser pass above used, but
-> `npm run smoke-pages` needs `.next/standalone/server.js` and so exits 2.
-> Docker is unavailable there too. **Corrected 2026-09-08:** the cause is the
-> mount, not the bundle, and `smoke-pages` now falls back to `next start` in
-> exactly this situation rather than exiting 2 — see the entry above. The rest
-> of this paragraph stands.
-> What is left, in order: start a real run on
-> `claude-opus-5[1m]` and read the spawned argv, because the square brackets are
-> the one thing on this path that could be normalised away without any test
-> failing; ask the orchestrator chat for a run and check it picks off the enum
-> rather than from memory, and that `"inherit"` reaches the row as null; then
-> `docker compose up --build` and `npm run smoke-pages` somewhere they run.
-
-> **The work cycle's taskboard tools have never been exercised against a real
-> CLI.** The whole path added on 2026-09-07 — `taskboardForRuns`, the third
-> capability subject, the per-run token, the per-cycle MCP config and
-> `--mcp-config` on every cycle's argv — typechecks, builds, and is unit-tested
-> at the three places whose failure is silent: that the flag survives a
-> `--resume`, that `--strict-mcp-config` is never beside it, that the appended
-> notice rides the same value the flag does, that `tasksForRun` narrows to the
-> run and the folder, and that the token is one per run and dies with it. What
-> has **not** happened is a `claude` child reading that config and calling one of
-> the three tools. Docker is unavailable in the container that wrote this, so
-> nothing here started a run. The list to work through, in order: that the CLI
-> accepts `--mcp-config` pointing at this app's own HTTP endpoint and lists
-> `list_my_tasks`, `complete_task` and `create_task`; that a *second* cycle of
-> the same run — the `--resume` one — still lists them, which is the failure the
-> unit test can only pin at the argv; that the operator's own MCP servers are
-> still there beside them, which is what the absent `--strict-mcp-config` buys
-> and which no test in this repository can see; that `complete_task` against a
-> task the run does not hold comes back as `taskTransitionRefusal`'s sentence
-> rather than as a transport error; and that the token stops working once the run
-> ends. The exact command is `docker compose up --build`, then a run started from
-> a task with the Settings switch on.
->
-> **No refusal an actor other than the operator would get has been seen on a
-> screen.** Every non-operator branch of `taskTransitionRefusal` is unit-tested
-> and none has been rendered. The chat's and the block's doors opened on
-> 2026-09-07 and deliberately reach none of those branches: neither can move a
-> task at all, so the only refusal either produces is `taskRefusal`'s. The work
-> cycle's door opened the same day and is the one that reaches them — a run
-> naming a task it does not hold gets the `claimed → done` branch — but it
-> arrives in a tool result rather than on a page, and the board is still where
-> those sentences will surface for a person. The first thing to check when a run
-> claims a task is that the run log's claim line and the board agree about who
-> holds it.
->
-> **The chat turn's live view has never been rendered in a browser either**, and
-> it is the one addition whose whole point is what it looks like while it moves.
-> What is verified is that the text is on the row and on the DTO at the moments
-> above; what is not is the panel drawing it, or how a partial that grows under
-> a reader behaves in a region that also polls. The same session had no browser.
->
-> **Four of the six controls added on 2026-09-06 have never been rendered in a
-> browser.** No browser was available in the session that wrote them, so what is
-> verified is that they compile, that every string is in the production client
-> chunk, and that the route each one calls behaves as above — which is not the
-> same as having seen one. The `landVerifyCommand` field and its
-> shell-metacharacter warning came off this list on 2026-09-07 and are recorded
-> above. The rest are: the Backups row on the Storage card,
-> including its `unreadable` badge, which needs a directory this server cannot
-> read to appear at all; the sentence under **Sign out everywhere** about a
-> captured cookie; the queue-priority input on a *queued* run's page, which
-> needs a run actually sitting in the queue; and **Open pull request** on the
-> Land card, which needs an isolated run with a branch, a GitHub remote and a
-> credential — none of which existed here. The endpoint behind that last one has
-> since opened a real pull request, recorded above; the button itself has still
-> not been pressed in a browser.
-
-> **Two of the six new-run pickers whose width changed on 2026-09-10 were never
-> seen at that width.** The wrapper widening recorded above was measured on the
-> four rows a bare install draws — workspace, folder, model and provider — and
-> the same class was put on the template picker
-> (`src/app/runs/new/page.tsx:1388`) and the saved-agent picker (`:1547`), which
-> render only once a template or an agent exists and neither did in the
-> throwaway `DATA_DIR` that pass used. The markup is line-for-line the four that
-> were measured, so the argument is by construction rather than by observation.
-> To settle it, save a template and define an agent, then open `/runs/new` at
-> 390px: both pickers must reach the same right edge as the four above them.
->
-> **Nothing in that pass touched a control.** `npm run smoke-pages` asserts
-> about *load* and never about interaction, and the measurements were taken off
-> a rendered page rather than a tapped one. Three things want a thumb on a real
-> phone: that the widened pickers actually open their option list, that the
-> enforcement choice's third option is pressable on its wrapped second line, and
-> that the run list's task link opens the run when tapped anywhere in the 44px
-> its padding now claims — including the 12px of it that overlaps the folder
-> line below, which is not itself interactive but does sit under the enlarged
-> box.
->
-> **The conflicts map at 390px was seen with one conflicted file and no other
-> shape.** The grid-column fix recorded above was measured on the touched map
-> with two file nodes and on the conflicts map with one; neither page was
-> opened at that width with a folded directory, a `modify/delete` node or a
-> selected node's inspector open, all of which draw into the same column. The
-> track can no longer floor above the card, so the failure mode those would
-> revive is a child that overflows the column rather than the column
-> overflowing the card — a different defect, and an unmeasured one.
-
-> **No Codex device sign-in has ever been completed, because there is no OpenAI
-> account in this container to complete one with.** Everything up to the
-> approval was driven against the real CLI and is recorded above; the step that
-> was not taken is the manual one — open `https://auth.openai.com/codex/device`,
-> sign in, type the code — and it is the one nothing in this app can take on the
-> operator's behalf. So four things are untested. That the child exits 0 and
-> writes `auth.json` on approval, which is what `pendingLogin()` clearing is
-> supposed to mean. That `codex login status` then prints `Logged in using
-> ChatGPT` for a *real* subscription: the panel's reading of that line was
-> exercised against a **hand-written** `auth.json` carrying an unsigned JWT, so
-> the string is confirmed and the credential behind it is not. That
-> `CodexAuthStateDTO.loginError` ever carries anything, since it is written only
-> from a non-zero exit of the device child and no such exit has been observed —
-> an expired code, a declined approval and a network failure are all unmeasured.
-> And that the Settings row's poll converges: it was watched arming and standing
-> down around a *cancelled* flow, never around one that succeeded. Nothing here
-> degrades loudly — a device flow that succeeded and was not noticed leaves a row
-> saying `waiting for approval` over a container that is signed in.
->
-> Two deployment facts belong beside it. `codex` is **not in the `Dockerfile`**
-> — it is present in the agent container this was built in and nowhere else — so
-> on a stock image every one of these routes answers `Could not run \`codex\``.
-> And `~/.codex` is **not a mounted volume**: `docker-compose.yml` binds
-> `~/.claude` and nothing else, so a credential written by this panel lives in
-> the container's writable layer and does not survive `docker compose up
-> --build`. `CODEX_HOME` is read through `env()` so an install can point it at a
-> mount, but no default here does.
-
-> **The pin moved to 2.1.260 on 2026-09-04, and nothing on this page has been
-> re-measured against it.** Every figure above that names a CLI names 2.1.226,
-> because that is the build they were taken from: the `stream-json` shapes
-> `handleStreamLine` parses, the OTLP records `otlp.ts` reads, the compaction
-> threshold `readCompactions` keys on, the "Available agents" refusals in
-> `docs/agent/agents-and-templates.md`, and the sandbox answers in
-> `proposals/implemented - Sandboxing`. Those readings stand as history and are not claims
-> about what the image now installs. What **was** checked before the bump, and
-> it is the cheap half: every flag `buildArgs` and `sessionAgentArgs` emit is
-> still in `claude --help` on 2.1.260 — `--output-format`, `--verbose`,
-> `--model`, `--permission-mode`, `--forward-subagent-text`, `--agent`,
-> `--agents`, `--allowedTools`, `--disallowedTools`, `--append-system-prompt`,
-> `--plugin-dir`, `--add-dir`, `--resume`, `--max-budget-usd` — so a run will at
-> least start, the CLI rejecting an unknown flag being the one failure here that
-> is loud. What was **not**: a single container run on the new pin, so no
-> `stream-json` line, no `result` event, no OTLP record and no transcript
-> written by 2.1.260 has been through this app's parsers. Each of those degrades
-> *quietly* — an unparsed line becomes a log entry, a missing `result`
-> understates spend, an unrecognised compaction boundary is simply not seen — so
-> a green build here proves nothing about metering. The first
-> `docker compose up --build` with a real cycle is what settles it.
-
-> **The knowledge graph's orientation layer was driven in a browser; the
-> ten-step canvas click-list below still has not been run.** On 2026-09-02 the
-> `/knowledge` rework — the graph moved above the Notes table, a legend, a
-> readout, `Fit`, `role="img"` with an `aria-label`, three folds, a three-tag
-> seed and a measured `textFade` — was exercised against `next dev` on the
-> mounted vault (1,227 notes, 1,375 graph nodes, 1,258 drawn) at 1440px and
-> 390px. What **was** checked by hand: the graph is the first block under the
-> heading at both widths; the three folds render closed with the summaries
-> `Edit colour groups (3)`, `Display` and `Forces`; the legend shows the three
-> seeded groups; `Fit` reframes a panned graph; the readout fills on hover and
-> **survives the pointer leaving the canvas**; the canvas carries the role and
-> the label. And `textFade` was chosen by *looking*: `fitView` frames this vault
-> at `k` 0.12–0.14, the recommendation's own suggestion of a threshold just
-> under that was rendered and is wrong — `draw` labels every visible node, so it
-> puts 1,258 titles into 820px — and 0.35 was the value that leaves the fitted
-> view clean and labels a local graph. What was **not**: the dark theme, a real
-> touch device, any screen reader, `docker compose`, and the click-list below.
-> The middleware was moved aside for each of these runs because the edge bundle
-> will not load under this container's sandbox; nothing on the page depends on
-> it, but that means no run here passed through auth.
-
-> **Dreaming's readout, ledger and refusals were driven against a running
-> server; the agent's write into a vault was not.** On 2026-09-02 the feature
-> was exercised end to end against a built app (`npm start`, a throwaway
-> `DATA_DIR`, a scratch mount holding one `CLAUDE.md`) and the real
-> `~/.claude/projects` corpus. What **was** checked by hand: the readout
-> reproduces `proposals/Dreaming`'s figures exactly — 77 recurring signatures
-> carrying 1,260 of 2,553 instances over 23 days, against the 77 / 1,260 / 2,549
-> the scripts measured, the drift being that day's own sessions; the incremental
-> cache works, cold 3,483 ms over 1,954 files against warm **21 ms with 0 files
-> re-read**; all five settings-door refusals answer 400 with the sentence the
-> form shows; `refusal` reads "No knowledge base is configured." with the flag on
-> and no vault, and clears when one is named; a press creates a real run with
-> `origin_ref = dreaming:<night>` and claims its signatures; a second press
-> selects three **different** signatures, so deduplication suppresses; a quiet
-> night records `quiet`, creates no run and spends nothing; `forgetNote` answers
-> 200 then 404 and removes only the row. Both bugs in the ledger paragraph of
-> `docs/agent/testing.md` were found this way, after the code typechecked and
-> passed the suite.
->
-> **Update, same day.** One agent has now written notes: the operator ran a
-> night that selected twelve signatures, cost $9.40 over eighteen minutes and
-> completed. Nine got note paths, and the three that did not are exactly the
-> rows the design predicted a run should decline — a person rejecting a tool
-> call, a permission prompt and a split-command prompt. Four `bwrap` signatures
-> mapped to one note, which is the collapse the string cannot express. The files
-> pass `_Meta/qc.py`'s ERROR gate; all fifteen errors in that vault are
-> pre-existing and none names a Dreaming note. It produced four warnings across
-> two notes — a `sources:` block with no `## Sources` section, and a seed with
-> no `seeded_by:` — both now named in the prompt. **And the note corrected this
-> app**: it re-derived the counts instead of trusting them and found the 5.1%
-> of records that a resumed session rewrites, which the scan was counting twice.
->
-> Still unverified after all that: **the nightly timer has never fired.** Every
-> night so far was a press. `tickDreaming`, `reconcileDreamingOnBoot` and
-> `armDreaming` are unit-tested and have never run unattended in production, and
-> the two faults that a press cannot expose — a day-keyed cursor that closed the
-> whole day a boot landed in, and a switch that started no timer — were found by
-> reading the code rather than by watching it, on 2026-09-02, after the feature
-> had already shipped. The decisive test is one 03:04 that nobody is present for.
->
-> The original entry, unchanged:
->
-> What has **not** happened is one agent writing one note. The two runs the
-> smoke test created were cancelled within seconds — a real billed agent against
-> the operator's own subscription, started to prove the spawn rather than the
-> write — so `reconcileDreamingNotes` was proved against a final report
-> **inserted into `run_events` by hand** rather than one an agent produced, and
-> no file has ever been written into a vault by this feature. Three things are
-> therefore untested against reality: whether an agent handed
-> `buildDreamingPrompt`'s text actually reads `CLAUDE.md` before writing (nothing
-> enforces it — see `docs/agent/dreaming.md`), whether it emits the `NOTE n path`
-> lines in the shape asked for, and whether what it writes passes `_Meta/qc.py`,
-> whose `LINK/orphan` rule at ERROR means a compliant write is two files rather
-> than one. The decisive test is one night against a **copy** of the vault with
-> `dreamingMaxPerNight: 1`, then `python3 "_Meta/qc.py"` over the result.
-
-> **The cycle-prompt split has never spawned a real agent.** On 2026-08-28
-> `orchestrator.ts`'s "Claude Code invocation" section — the next prompt, its
-> notices, `cycleEnding` and `buildArgs`, 1,032 lines — moved unedited to
-> `cycleInvocation.ts`, with `orchestrator.ts` re-exporting every name so that
-> none of the thirteen modules importing `@/lib/orchestrator` changed. What that
-> rests on is `npm run typecheck` (exit 0), `npm test` (1,981 passing, 0
-> failures), a clean `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build`, and
-> a diff of the file's exported names before and after that is empty in both
-> directions. What has **not** happened is one spawned cycle: Docker was not
-> available in the container this was done in, so no argv `buildArgs` composes
-> has been handed to a real CLI since the move, and no prompt has been read by an
-> agent. The decisive test is the ordinary one — a single run of two cycles, which
-> exercises `nextPrompt`'s continuation arm and `cycleEnding` together.
->
-> **The context-control readout has never been seen with a real boundary behind
-> it.** `prune_decisions`, `prunerState()` and `pruneStatement` were added on
-> 2026-08-28 so that the five ways a boundary can end stop sharing one blank —
-> the operator's own report was that a switched-back engine looked unchanged,
-> and the reason was that nothing on either screen had ever named the engine or
-> said whether the tool was present. What that rests on is `npm run typecheck`
-> (exit 0), `npm test` (**1,969 tests / 1 failure, `backupRestore.test.ts`'s
-> truncated-copy case, which fails identically on the unmodified tree**), a
-> clean `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build`, and 11 new unit
-> cases over the pure resolver and the counter. What has **not** happened is a
-> single row in `prune_decisions`: the install has been on `legacy` with
-> `maxIterations: 2` and `continueAfterDone: false`, every run has reported DONE
-> inside cycle 1, and the ceiling watcher declined every early-end measurement,
-> so `pruneAtBoundary`'s engine branch has not been reached since the switch. So
-> every sentence this change can render has been produced from a fixture and
-> **none of them from a real boundary**. The decisive test is one run with
-> `maxIterations >= 2` and a prompt that will not finish in cycle 1: the
-> boundary then writes a `resume_probes` row unconditionally, which is positive
-> confirmation the branch was reached, and the run's `session_id` staying a v4
-> UUID with no new `fork_attempts` row is the legacy engine proven by execution
-> rather than by reading.
->
-> **No early-end prune has run since the ceiling was repointed at the
-> configured engine.** The change landed 2026-08-28 with `npm run typecheck`
-> (exit 0), `npm test` (**1,980 tests / 1 failure, `backupRestore.test.ts`'s
-> truncated-copy case, which fails identically on the unmodified tree**), and
-> the end-to-end reading above against the deployed container. What has **not**
-> happened is a real crossing taking the prune branch: every reading available
-> to check it against was a decline, and the one transcript that now clears the
-> horizon was measured after its run had finished. So `prune_receipts` gaining a
-> row from a ceiling crossing, the cycle refund, and the decline line's new
-> engine clause in the operator's own pane are all still unexercised in the
-> running app.
->
-> **The share `treatRemovedTokens` takes is knowingly biased, and by how much is
-> not measured.** It applies the cut's share of the *file* to the whole API
-> context, ~55k tokens of which is a system prompt, tool list and `CLAUDE.md`
-> that no prune reaches — so it over-claims `D` by roughly a quarter and makes
-> the gate **permissive**, which is the direction that has already been wrong
-> here once. Correcting it needs a per-run head size this app does not have.
-> What would settle it is the experiment `resumeControl` already collects for: a
-> resume measured against its predecessor, giving the real reduction in what the
-> next request carries. Until then the 21-and-18 above are estimates, and a cut
-> the gate now allows may still not repay.
->
-> **The `unavailable` branch has never been rendered.** It needs an image built
-> with `WINNOW_REF=` empty, which has not been done — the running container
-> carries winnow 1.8.39 at `/opt/winnow` and `winnowAvailable()` is true. Both
-> the dashboard `Notice` and the run page's quiet one are therefore unexercised
-> against a real install, and the sentence they carry is the server's own
-> constant rather than a second copy, which is the part the unit test pins.
-
-> **Two conflict resolutions in one repository have never been run at once.**
-> The aux resolve checkout is now named for the run — `<slug>-resolve-<id8>`
-> rather than one `<slug>-resolve` the whole repository shared — and
-> `resolveConflicts` holds a claim on the run from entry until `startAssist` has
-> written the row `assistRunning` reads. What that rests on is `npm run
-> typecheck` (exit 0), `npm test` (**1,906 tests / 281 suites / 0 failures**, of
-> which 1 is the new `resolveCheckout.test.ts`) and that test driving two real
-> `git worktree add`s through `resolveCheckout` in one store, which is the
-> collision itself with no `claude` child standing in either checkout. What has
-> **not** been exercised is the rest of it: two conflicting branches in one
-> repository, the merge queue auto-resolving one while the operator presses
-> Resolve on the other, both children running to completion, and the two
-> `run_reviews` rows then describing work that is actually theirs. That needs
-> Docker and two billed children. Nothing was read in the running app and no
-> `next build` was run, since nothing under `src/app/` changed.
-
-> **No real restart was taken over a live loop block.** `reconcileBlocksOnBoot`
-> now spares a `looping` block whose instance kept a member across the boot,
-> which is the same `bootBlockPlan` question its `waiting` sweep already asked.
-> What is behind it is `npm run typecheck` (exit 0) and `npm test` (**1,909
-> tests / 0 failures**, of which 4 are the new `bootBlocks.test.ts` cases — the
-> two positive ones were seen to fail against the unfixed sweep, reporting
-> `failed` where the block must read `looping`). What no test here reaches is
-> the thing the fault was made of: a container restarted while a loop's pass is
-> genuinely parked. On the next rebuild, park a pass inside `resumeGraceHours`,
-> `docker compose restart`, and check that the loop block still reads as
-> repeating on the instance page, that the sweeper resumes the pass, and that a
-> further pass is created when it settles — and, for the other direction, that a
-> loop whose pass the same boot failed still reads `failed` with the restart
-> sentence on it.
-
-> **The intake filter's uid drop was never booted.** `docker-entrypoint.sh` now
-> starts `python -m winnow filter` through the same `setpriv --reuid` its `gh`
-> and `uv` neighbours use, hands it an `env -i` allowlist rather than the
-> entrypoint's whole environment, and writes its ledger and off switch to a
-> named volume at `/var/lib/winnow` instead of `/data/winnow` — which is
-> root-owned 0700 and so unreachable from `UF_AGENT_UID`. The run that made the
-> change had **no Docker**, so the one observation that settles it was not made.
->
-> What it does rest on: `dash -n docker-entrypoint.sh` (exit 0; `/bin/sh` in the
-> image is dash), `npm run typecheck` (exit 0), `npm test` (**1,909 tests / 0
-> failures**, of which 4 are the new `deployment.test.ts` group — seen failing
-> against the unfixed entrypoint before the fix and passing after), and the
-> branch under a harness: the real entrypoint executed with a recording
-> `setpriv` and `uv` on `PATH` and four credentials in its environment, once
-> with `UF_AGENT_UID=1000` and once without. The argv recorded was `setpriv
-> --reuid=1000 --regid=1000 --clear-groups env -i …`, and the environment
-> recorded was seven entries — `PATH`, `HOME`, `UV_PROJECT_ENVIRONMENT`,
-> `UV_PYTHON_INSTALL_DIR`, `UV_PYTHON_PREFERENCE`, `WINNOW_FILTER`, `PWD` — with
-> none of `UF_AUTH_TOKEN`, `ANTHROPIC_ADMIN_KEY`, `UF_GITHUB_TOKEN` or
-> `UF_WEBHOOK_SECRET` among them. A recording `uv` is not `uv`, and none of it
-> boots a container.
->
-> The click-list, on a host with Docker and `WINNOW_FILTER=1` in `.env`:
->
-> 1. `docker compose up --build -d`, then `docker compose exec usagefoundry ps
->    -o uid,cmd | grep 'winnow filter'`. The uid must be the agent's — 1000 by
->    default — and not 0. This is the whole of the defect.
-> 2. `docker compose logs usagefoundry | grep winnow` must report the filter on
->    its port rather than failing to open it within 90s. That timeout is what a
->    virtualenv the agent uid cannot write looks like from outside.
-> 3. `docker compose exec usagefoundry ls -ln /var/lib/winnow`: the directory is
->    root's 0755 and `filter.jsonl` is `0:<agent gid>` 0620.
-> 4. Run one work cycle, then `docker compose exec usagefoundry wc -l
->    /var/lib/winnow/filter.jsonl` — it must grow. **A listening filter with an
->    empty ledger is the failure this move exists to prevent**, and the only
->    thing that would say so is `winnow: ledger not written:` on stderr:
->    `_append_ledger` swallows its own `OSError`, and the dashboard reads a
->    missing ledger as a legitimate state rather than an error.
-> 5. `docker compose exec usagefoundry touch /var/lib/winnow/filter-off` must
->    stop the rewriting from the next request, and `rm` must resume it.
-> 6. `docker compose exec -u 1000 usagefoundry touch /var/lib/winnow/filter-off`
->    must be **refused**. The switch is the operator's: a run that could throw it
->    could stop paying for its own transcript.
-> 7. An install that had a ledger under `/data/winnow` before the upgrade should
->    find its lines carried over — the entrypoint copies them once, and only
->    when the new ledger is still empty.
-
-> **`/app`'s ownership has never been read off a built image.** The Dockerfile
-> stopped chowning `/app` to `node` (#200): it was handing the agent uid
-> ownership of `server.js`, `.next/`, the standalone `node_modules/` and
-> `scripts/discord-relay.mjs` — the last of which the entrypoint re-runs *as
-> root* every five seconds — while the server itself runs as root. The change is
-> the removal of one path from one `chown`, and `deployment.test.ts` pins the
-> absence, but Docker was unavailable to the run that made it, so nothing has
-> confirmed that the bundle actually lands root-owned or that the boot still
-> works without the grant. Three commands settle it:
->
-> ```bash
-> docker compose up --build -d
-> docker compose exec usagefoundry \
->   stat -c '%U %n' /app /app/server.js /app/scripts/discord-relay.mjs
-> uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
-> docker compose exec -u "$uid" usagefoundry sh -c 'touch /app/probe 2>&1; echo exit=$?'
-> ```
->
-> The `stat` must say `root` three times and the `touch` must fail with
-> `Permission denied` and a non-zero exit. Then read the boot log for the
-> ordinary lines — a healthy `/api/health`, the gh-extension and pytools blocks
-> if they are configured, and the relay if `DISCORD_WEBHOOK_URL` is set — since
-> what is unproven is not only the ownership but that nothing in the image
-> quietly needed to write the bundle. The uid comes from the container, never
-> from `-u 1000`, for the reason `docs/install.md`'s *Sign in once* gives.
-
-> **The `canvasView.ts` extraction was not looked at.** The world/screen
-> transform, hit testing, device-pixel sizing, the pan/zoom gestures, the
-> `ResizeObserver` and the colour probe were moved out of
-> `KnowledgeGraphCanvas.tsx` into `src/lib/canvasView.ts` by a run with **no
-> Docker and no browser it could drive**. It is a refactor and behaviour is
-> meant to be identical, and the one thing that would demonstrate that — that
-> the graph still pans and zooms — is the thing that run could not check.
-> Everything claimed for it rests on `npm run typecheck` (exit 0), `npm test`
-> (**1,834 tests / 267 suites / 0 failures**, of which 22 are the new
-> `canvasView.test.ts`) and `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run
-> build` (exit 0). The unit tests cover the arithmetic and cover *none* of the
-> DOM wiring: `observeCanvasSize`, `observeTheme`, `probeTokens` and
-> `sizeCanvasToHost` have no assertions anywhere and are only known to compile.
->
-> The click-list, at **Knowledge → the graph pane** (the vault must be mounted
-> and a graph showing; the pane is the canvas beside the settings panel):
->
-> 1. **Pan.** Drag from empty space. The graph must follow the pointer 1:1 and
->    stay where it is let go. Nothing may spring back.
-> 2. **Zoom about the pointer.** Put the cursor on a *named* node away from the
->    centre and wheel both ways. That node must stay under the cursor at every
->    step — this is the assertion most likely to have been broken, because
->    `zoomAt` now returns a new view where the old code mutated one in place.
-> 3. **Both clamps.** Keep wheeling in past the ceiling and out past the floor.
->    The zoom must stop and the graph must **not creep** while it is stopped.
-> 4. **Hit targets.** Click a node: the note opens. Click two overlapping nodes
->    at low zoom: the one whose centre is nearer the cursor opens, not the other.
->    Click empty space 5–10px off a node's edge: nothing opens.
-> 5. **Drag a node.** It must stay under the pointer, stay where dropped, and
->    still be there after changing a filter.
-> 6. **Click versus drag.** Press on a node, move ~2px, release — the note opens.
->    Press, move ~20px, release — it does not.
-> 7. **Device pixel ratio.** Load at dpr 1 and at dpr 2 (a HiDPI display, or
->    Chrome DevTools' device toolbar at 2×). Labels and node edges must be
->    crisp at both, and the graph must fill the pane rather than a quarter of it.
-> 8. **Resize.** Drag the window narrow and wide, and collapse/expand the panel
->    beside the pane. The canvas must track the host's box and — the fault this
->    one is for — must **not ratchet**: made tall then narrow, it must come back
->    down rather than keeping the taller height.
-> 9. **Theme.** Flip the theme toggle, then flip the OS scheme while the app is
->    on "Match system". The graph's colours must change on both without a
->    reload; the second is the one that has no React render behind it.
-> 10. **The loop still stops.** Leave a settled graph alone and watch the CPU:
->    it must go to idle. Then touch anything — a slider, a drag — and it must
->    wake.
->
-> Firefox is worth one pass for step 2 alone: `wheelZoomFactor`'s `deltaMode`
-> handling is the one branch no other engine takes, and its own docblock says
-> the 16px line height is an estimate nobody has held against a real mouse.
-
-> **The map at `/runs/[id]/touched` had never been seen when it shipped, and has
-> since been seen on synthetic data only.** It was built without a browser:
-> Docker was unavailable in the environment it was written in and no browser
-> could be driven there, so every statement about it below is a statement about
-> the code. It typechecks, `next build` registers the route, its reduction, its
-> fold rule and its three empty states are unit-tested in `touchedMap.test.ts`,
-> and every Tailwind class it uses was grepped out of the emitted stylesheet
-> rather than assumed — which catches a spelling Tailwind would drop silently and
-> catches nothing at all about whether the picture is legible.
->
-> On 2026-09-02 it was rendered for the first time, driving a built app
-> (`npm start`, a throwaway `DATA_DIR`) with Playwright against a **seeded** run:
-> 399 tool events over 48 distinct files in three directories, none of it real.
-> What that settles is that the page renders, the canvas settles and stops, the
-> nodes cluster by directory legibly at 1440×1000, and the same picture holds in
-> the dark theme — the tokens are re-read rather than frozen. What it does not
-> settle is anything about a **real** run: no shape here is one this app produced,
-> the fold has still never fired on data anybody generated, and the whole of the
-> list below still stands. Nobody has looked at it on a run that happened.
->
-> What *is* measured: the layout was run headlessly against the compiled
-> modules — no DOM, no canvas, just `buildTouchTree` → `planTouchedMap` →
-> `createSimulation`/`step` to settlement — over five shapes. It is not a
-> substitute for looking, because it says nothing about colour, label
-> collision or whether any of it is readable, but it does settle the two
-> things that are arithmetic rather than taste.
->
-> **The loop stops.** Every shape reached `step() === false` at 250 frames
-> against a 2,000-frame cap, which is the cooling curve doing what
-> `ALPHA_DECAY` says and is the failure that otherwise looks identical to
-> success.
->
-> **The clusters separate.** Mean directory-anchor-to-directory-anchor
-> distance against mean file-to-its-own-anchor distance: **3.6×** on a
-> reconstruction of the measured run (39 named files plus one changed-never-
-> named, 15 directories, 55 nodes, 708×642 world units, nothing folded);
-> **7.4×** at 400 files in ten directories; **1.8×** for 60 files that are
-> all in one directory, which is the degenerate case and is right — there is
-> only one cluster to separate. Closest two nodes edge to edge: 11.7 world
-> units at 39 files, 7.1 at the 60-in-one-directory case, and **−1.1** at
-> 400, so at that size one pair just touches. One file draws two nodes and
-> does not divide by zero.
->
-> **The fold is coarse at the bottom of its range.** 400 files against the
-> shipped budget of 300 folds three directories, hides 120 files and draws
-> 280 — the intended behaviour. Forced to a budget of 100 the cutoff falls
-> to 0 and it draws *no* files at all, six nodes standing for four hundred:
-> honest, announced, and one click from opening, but a step rather than a
-> ramp. Nothing on this install is near enough to 300 for it to fire; if a
-> real run ever lands between the two, that is the thing to look at.
->
-> Open a settled run that changed something, take the **Files** tab, and press
-> **Lay it out** on the "What it touched" card. At 1440×900:
->
-> 1. **The shell.** Runs is still the lit row in the sidebar and the toolbar
->    reads "What it touched" — both were verified by running `activePane` and
->    `toolbarTitle` over `/runs/<id>/touched`, but only the functions were, not
->    the rendering. ⌘3 should still come back here.
-> 2. **The first frame.** The map settles and *stops*. Watch a CPU meter for ten
->    seconds after it comes to rest: a canvas that keeps asking for frames is the
->    failure `forceLayout`'s cooling exists to prevent, and it looks identical to
->    one that has stopped. Then turn on "Reduce motion" at the OS level and
->    reload: the layout should arrive already settled, in one step, with no
->    visible animation at all.
-> 3. **The arrangement.** Files should sit in clusters around a small ringed
->    directory node carrying the directory's name, and the clusters should be
->    separated rather than one mass. This is the whole deliverable and the thing
->    least likely to be right first time: `FORCES` in `PathMapCanvas.tsx` is the
->    graph panel's defaults with `linkDistance` dropped from 90 to 70, chosen by
->    reasoning about a rosette rather than by looking at one. If files crowd
->    their directory or clusters overlap, that constant is the dial.
-> 4. **What a node says.** Against the legend beside the canvas: a read-only file
->    is grey, a written one is accent blue, one that is both is accent with a grey
->    core, and a file that changed with no tool call behind it is hollow with a red
->    edge. A ring in the foreground colour means the branch diff lists it; a dashed
->    amber ring means outside the checkout. Check the accent-and-grey core is
->    actually distinguishable from plain accent at the smallest node on screen — it
->    is a disc at half radius and nobody has seen it below about 5px.
-> 5. **Labels.** Directory names are always drawn; file names ramp in above about
->    0.75 scale, and appear immediately on whatever the pointer is over. Zoom out
->    far: the file names should go, the directory names should stay.
-> 6. **The gestures.** Drag the background to pan, wheel to zoom — the point under
->    the cursor should stay under it — drag a node and it should stay where it was
->    dropped. Click a file: the inspector on the right fills in with its path,
->    counts, tools and callers, and the node takes a `--tint` halo well clear of
->    its own edge — check that halo actually reads as *selected*, since the ring
->    it has to be told apart from is the foreground-coloured one meaning "in the
->    diff". Click empty space: it clears. Then repeat this whole step with "Reduce
->    motion" on: the integrator never runs there, so the drag writes the position
->    itself, and a drag that appears to do nothing — or a node that jumps
->    somewhere later — is that path being wrong.
-> 7. **A run with one work cycle.** This is the common case on this install and
->    the map is deliberately built without a time axis, so it must not look broken
->    or half-empty: the header says "… across 1 work cycle" and nothing else on the
->    page mentions cycles at all. Confirm there is no empty column, axis or legend
->    entry waiting for a second one.
-> 8. **A run whose events were swept.** Find or make a run older than
->    `eventRetentionDays` whose branch still exists. The card on the Files tab
->    offers no "Lay it out" button at all — the link is only drawn over a report —
->    so the route has to be typed. It must say the events were removed on the
->    *N*-day horizon and that the changes are still on the Files tab. It must not
->    render an empty canvas. Same check for a run that named no file (an idle
->    sentence, not a blank picture) and for an id that does not exist.
-> 9. **A run with no diff.** Delete a finished run's branch and reload the map.
->    The changed ring must disappear from every node, the legend must drop its
->    "ringed" row, and each file's inspector must read "Unknown — there is no diff
->    for this run" rather than "Not changed".
-> 10. **Folding.** The budget is 300 drawn files and no run on this install is near
->    it, so this needs a run that touched a few hundred files or a temporarily
->    lowered `MAX_DRAWN_FILES`. A folded directory draws as one larger node with
->    its name and "N files" under it, the notice above the canvas gives the total
->    folded, and clicking one opens it — the files inside appear *beside it*
->    rather than flying in from the middle of the map, the surrounding layout does
->    not jump, and the inspector then describes the directory that just opened
->    rather than clearing. Open a second fold afterwards: nothing already on
->    screen may change position except by settling, including a directory the
->    budget closes again to pay for the one you opened. Nothing should ever
->    vanish.
-> 11. **Both themes and the OS switch.** Toggle light/dark with the map open; the
->    node colours must re-probe without a reload. Then leave the app on "Match
->    system" and change the OS appearance, which is the boundary that fires no
->    React render.
-> 12. **Narrow.** At 390px the split stacks, the canvas keeps its 24rem height, and
->    dragging on the canvas pans rather than scrolling the page.
-
-> **The replay scrubber under that map was driven, on the same synthetic run and
-> never on a real one.** Added 2026-09-02. `scanTouchSequence` and
-> `/api/runs/[id]/touched/sequence` were exercised against a seeded database
-> through the built app: **399 touches over 48 distinct files**, a 50 KB response
-> against the collapsed scan's 47 KB beside it — which is the number that decided
-> the payload rides on its own route and that a slider with one step per call is
-> the right unit rather than a thousand-to-one compromise. `touchReplay.ts`'s
-> derivation is unit-tested in `touchReplay.test.ts`, including the two cases the
-> synthetic run could not reach: a touch behind a fold landing on the fold, and
-> that fold opening to move the playhead onto the file itself.
->
-> Driven with Playwright at 1440×1000: the track's max is the touch count; the
-> readout at 120 read `Touch 120 of 399 / src/components/ui/C3.tsx / Read /
-> explorer`; right-arrow from there stepped to 121; space played it from 121 to
-> 170 in 2.5 s, which is the `TARGET_SECONDS` rate to within a step; space again
-> paused it and it was still on the same number 1.5 s later; the last touch is the
-> one outside the checkout and it kept its position and said so; Reset returned to
-> 0, took the two replay rows back out of the legend and left the map with nothing
-> dimmed and nothing haloed. At touch 8 of 399 the wash reads clearly — a handful
-> of solid nodes in one cluster against a pale rest — in both themes, with the
-> directory anchors at full strength.
->
-> **What no automated pass can settle, and is the reason to open this by hand:**
-> whether *scrubbing* it tells you anything. A playhead that is legible frame by
-> frame in a screenshot can still be unreadable in motion, and the rate is a
-> guess: `TARGET_SECONDS = 20` was chosen by reasoning about how long a person
-> will watch, not by watching. Open `/runs/<id>/touched` on a **real** run, play
-> it end to end, and answer three things — is the halo findable without hunting
-> while it is moving; does the wash lifting file by file read as the run
-> progressing or as noise; and at that run's own length is 20 seconds too long to
-> sit through or too fast to follow. If the answer to the last one is either, the
-> constant is the dial. The keyboard needs a real pass too: space is claimed only
-> from the range input, so check that pressing it on Play does not toggle twice
-> and that pressing it on the track does not scroll the page.
-
-> **The map at `/runs/[id]/conflicts` *has* been seen, against real
-> `merge-tree` output, and here is exactly how far that goes.** Docker is still
-> unavailable, so this was not a `docker compose up`: the app was booted with
-> `npx next dev` against a throwaway `WORKSPACE_ROOT` and `DATA_DIR` under
-> `$TMPDIR`, `WORKSPACE_ROOTS` unset so the mount degraded to that one directory,
-> and eight `runs` rows inserted straight into the migrated database with
-> `better-sqlite3` — every one of them pointing at a real git repository built for
-> the state it was meant to produce. Chromium was driven with Playwright at
-> 1280×1100. **Three environment facts are load-bearing and cost an hour between
-> them**: this container's ambient `NODE_ENV=production` makes `next dev` die in
-> edge instrumentation with `EvalError: Code generation from strings disallowed`,
-> its ambient `WORKSPACE_ROOTS` silently outranks any `WORKSPACE_ROOT` you set, and
-> a server started in one shell is unreachable from the next — the sandbox gives
-> each invocation its own network namespace, so boot, seed, drive and tear down
-> have to happen inside one command.
->
-> What was **seen rendered**, each from its own repository:
->
-> - **A conflict of 21 paths across five directories and the checkout root**, 12 of
->   them past `MAX_CONTENT_FILES` and so never opened. The card reads "21 files
->   conflict, with 6 clashes in the 9 this preview opened", the warn notice below
->   it names the 12 and says the smallest size is not a count, and those twelve
->   nodes draw hollow and dashed while the nine drawn solid are sized by their
->   counts. This is the case the whole encoding exists for and it is the one that
->   would have been invisible: a zero there draws exactly like a real zero.
-> - **Three of the four fills.** Amber content clashes, a red `modify/delete`
->   (`src/lib/doomed.ts`), and blue `rename/rename` on all three of the paths git
->   files under that one conflict — a `docs/guide.md` renamed differently on each
->   side, which also renders as blue *and* dashed, since it is both another kind
->   and unopened. The grey `untyped` fill was **not** seen and cannot easily be:
->   it needs an informational section this git version does not produce, which is
->   the case `parseMergeTree` parses defensively for. It is unit-tested and
->   nothing else.
-> - **The inspector, on three kinds of node.** A file: "Kind: rename/rename —
->   Another kind git named", "Clashes: Unknown — its merged content was not opened
->   by this preview", and git's own sentence under "git says". A directory
->   (`docs`): "Holds 7 conflicted files · Clashes 3 and more — see below · Not
->   opened 1 of them, so the count above is a floor · Kinds contents,
->   rename/rename". The checkout root, with all 21 and all 12.
-> - **Five of the ways of having nothing**, each with its own sentence and each
->   from a repository built to produce it: `clean` ("Every file merges cleanly…"),
->   `fast-forward`, `already-merged`, `unknown` on a `paused` run (the warn notice
->   carrying git's "This run can still commit to it." and saying in as many words
->   that it is not a clean merge), and a deleted branch, which renders the land
->   card's own "Branch uf/deleted-demo no longer exists." rather than a second
->   wording. A run with `isolation: "none"` renders the no-branch sentence.
-> - **n=1.** A single-file conflict draws one node and one root anchor and says "1
->   file conflicts, with 1 clash in it". It is a thin picture and it is supposed
->   to be: there is deliberately no guard that refuses to draw.
-> - **The one link in.** Driven from the run page: the Land tab's conflict section
->   carries exactly one anchor to `/runs/conflict1/conflicts` (asserted as a count
->   of one, not eyeballed), the 21-row list above it is unchanged, and following
->   the link lands on the map.
->
-> **What has still not been seen, and how to see it.** No `docker compose up`, so
-> nothing is confirmed against the shipped image. Only light theme at one
-> viewport: the theme re-probe on a `data-theme` flip and on an OS scheme change,
-> and the 390px stack, are `PathMapCanvas`'s behaviour and were inherited rather
-> than checked here. Nobody watched a CPU meter, so "the loop stops" rests on
-> `forceLayout`'s cooling and on the touch map's own headless measurement.
-> `prefers-reduced-motion` was not exercised. **Folding was not seen at all** —
-> the budget is 300 drawn files and 21 is nowhere near it, so a real check needs a
-> conflict of a few hundred paths or a temporarily lowered `MAX_DRAWN_FILES`, and
-> what to look for is the touched map's step 10 verbatim. Nor was the `none-named`
-> state, which needs stage records git will not produce on request. A human with
-> Docker should: make two branches conflict in several directories, open the run's
-> land card, follow the link, and walk steps 2–6 and 10–12 of the touched map's
-> list above with this map's own legend in hand.
->
-> One thing the map is faithfully reporting and did not cause: a **binary**
-> conflict arrives typed `contents` rather than `binary`. `merge-tree` emits two
-> informational records for it and `parseMergeTree` takes the last, so
-> `docs/logo.bin` reads "Content — both sides changed the same lines / None — git
-> left no conflict markers in it". That is `land.ts`'s parse and is out of this
-> map's hands; it is recorded here so the next reader does not chase it into the
-> encoding.
-
-> **The four frontend reachability fixes — the paged runs list, quick open's
-> search, the run log's filter and the settings field search — were written on
-> branch `uf/usagefoundry-721638d11c0b-1-41e5e190` by two runs, and a third that
-> only wrote documentation. **Between them they opened no browser, drove nothing
-> at any viewport and started no container.** Everything claimed for them rests on
-> `npm run typecheck` (exit 0), `npm test` (**1,660 tests / 245 suites / 0
-> failures**), `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` (exit 0)
-> and, for the runs query only, SQLite driven directly against throwaway
-> databases. Those commands were re-run on the branch head `a34e56b` and the
-> results above are that run's output, not a repeated claim.
->
-> **Roughly 900 lines of interactive page code were added and not one of them was
-> rendered by anything** — `+286` `src/app/runs/page.tsx`, `+243`
-> `src/app/settings/page.tsx`, `+185` `src/app/runs/[id]/page.tsx`, `+130`
-> `src/components/shell/QuickOpen.tsx`, from `git diff main...HEAD --stat`. There
-> are still zero page tests, no jsdom and no browser in CI, so the two entries
-> below are the whole of what stands between these controls and an operator, and
-> `proposals/GapRegister/01-frontend.md`'s F5 is the row that says so. The
-> narrow-viewport entries further down this list predate all four controls and
-> cover none of them.
-
-- **A template's model, from the save row to the two server-side readers.**
-  `run_templates.model`, the normalizer and row read in `templates.ts`, the
-  `POST`/`PUT` routes, the new-run form's save-and-seed, and the inheritance in
-  `planProposal`/`planNode`/`planEmittedRun` were added on 2026-09-04, on the
-  branch that added the per-run field in the entry below. What *is* checked:
-  `npm run typecheck` (exit 0), `npm test` (**2,136 tests / 326 suites / 0
-  failures**, up from 2,123/324), and `env -u __NEXT_PRIVATE_STANDALONE_CONFIG
-  npm run build` (exit 0).
-
-  **The migration was checked by hand against a database that already existed**,
-  which is the one thing here no unit test covers. A scratch `*.test.ts` — since
-  deleted — booted the app's own `db()` against a throwaway `DATA_DIR`, inserted
-  a `run_templates` row, then re-opened the file directly and ran `ALTER TABLE
-  run_templates DROP COLUMN model` to put it back in the state a build before
-  this change would have left. Re-opening through `db()` reported
-  `{"cid":11,"name":"model","type":"TEXT","notnull":0,"dflt_value":null,"pk":0}`
-  with the pre-existing row reading `{"id":"old","model":null}` — the column
-  lands, the row survives, and null is what an unbackfilled template says. A
-  third open reported exactly one `model` column, so the `addColumn` guard is
-  doing its job, and a write of `'sonnet'` read back unchanged.
-
-  The two inheriting readers were checked the way a bug fix is: deleting `model:
-  template?.model ?? null` from `planProposal` and `planNode` and re-running the
-  suite failed 6 tests across both, and restoring it returned the tree to green.
-
-  **The routes were driven against `next dev`** on a throwaway `DATA_DIR`, with
-  the install's own `UF_AUTH_TOKEN` presented as a `Bearer` header (an
-  unauthenticated `GET /api/templates` answered 401 in the same run, so the gate
-  was up). `POST` with `"  claude-sonnet-5  "` stored `"claude-sonnet-5"`;
-  `"   "`, an absent key and a literal JSON `null` each stored `null`; `GET` read
-  all four back unchanged. `PUT` with `claude-model-that-ships-next-week` stored
-  it verbatim, which is the absence of narrowing working rather than a value
-  slipping through, and `PUT` with `""` cleared it back to `null` — the overwrite
-  case that is why the form posts an explicit `null` rather than
-  `modelFromForm`'s absent key. Reading `run_templates` straight out of SQLite
-  afterwards agreed with the payloads.
-
-  **The form was driven in Chromium** at 1440px against the same server (auth
-  off, so nothing here passed through the sign-in path). Typing
-  `claude-sonnet-5` into *Model* and pressing *Save* stored that model on the
-  template. A reloaded form's *Model* box is **empty**, not pre-filled with
-  `settings.defaultModel`. Picking the template seeds the box with
-  `claude-sonnet-5` alongside the prompt; typing `haiku` over it raises the
-  *Reset* affordance — the seed is registered as the row's baseline, which is the
-  `mountId`/`folder` treatment and not the prompt's — and the template's stored
-  model stays `claude-sonnet-5` while the field says `haiku`, so one run can be
-  moved off a template's model without editing it. *Reset* puts
-  `claude-sonnet-5` back. The save row reads `Keeps the task, the model, the
-  limits and how it behaves`, which is the sentence that used to promise the
-  opposite.
-
-  What was **not**: `docker compose`, unavailable in this container; any narrow
-  viewport; the sign-in path; and — as below — no template's model has reached a
-  real `--model` on a real spawn, because starting a run here starts a billed
-  agent.
-
-- **A per-run model reaching an actual spawn, and the run page's `Model`
-  section.** The new-run form's Model field, what it posts, and the two rows the
-  inspector draws from `runs.model` were added on 2026-09-04. What *is* checked:
-  `npm run typecheck` (exit 0), `npm test` (**2,123 tests / 324 suites / 0
-  failures**, of which 2 are `modelFromForm` in `budgetPayload.test.ts` — that a
-  blank field contributes no `model` key at all, and that a typed one is trimmed
-  and otherwise sent verbatim), `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run
-  build` (exit 0), and both pages rendered against `next dev` in this container
-  on a throwaway `DATA_DIR`. `/runs/new`: the Model row draws in *What to work
-  on* under *Folder*, and its placeholder reads `Claude Code's own default` on an
-  install whose `settings.defaultModel` is unset. `/runs/[id]`: two rows planted
-  directly in that database — one with `model = 'claude-opus-5'` and an agent
-  whose own model is `claude-sonnet-5`, one with `model = NULL` and an agent with
-  none — draw a `Model` section in *How it was set up*, above `Agent` and two
-  regions below `Against its limits`, reading `This run` / `Its agent` as
-  `claude-opus-5` / `claude-sonnet-5` and `Claude Code's own default` / `the
-  run's own`. Planting a row rather than starting one is the whole of why that
-  could be checked at all: creating a run here starts a billed agent.
-
-  What was **not**: that a typed model reaches `--model` on a real spawn and that
-  the CLI runs on it — the fact the whole feature exists to deliver, and the one
-  thing no fixture can stand in for; the placeholder on an install that *has* a
-  default; the copied-run seed carrying `run.model`; `docker compose`; and any
-  narrow viewport.
-
-  One environment note for the next run that tries this: `next dev` has to be
-  given `NODE_ENV=development` explicitly. Under this container's
-  `NODE_ENV=production` every route answers 500 from the edge instrumentation
-  bundle with `Code generation from strings disallowed for this context` — the
-  same edge-bundle wall the knowledge-graph entry above records, except that
-  setting `NODE_ENV` is what gets past it, so the middleware is left in place and
-  loads. It was still run with `UF_ALLOW_NO_AUTH=1`, so what this checked is that
-  the edge bundle loads at all, not that the sign-in path works.
-
-- **The chat naming a model: `propose_run`, `save_template`, the proposal card.**
-  `chat_proposals.model`, the two tool schemas, `planProposal`'s precedence and
-  the row the card draws — the third of the three runs on this branch, and the
-  one where a model rather than a person writes the value. `npm run typecheck`
-  exits 0, `npm test` is 2,139 tests over 326 suites with 0 failures (three more
-  than before, all on `planProposal`), and `env -u
-  __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` exits 0.
-
-  The three new tests were each run against the implementation they exist to
-  refuse rather than only against the one that ships, which is the only way a
-  precedence test says anything: the two that assert the proposal's model wins
-  fail on the `template?.model ?? null` read they replaced, and the one that
-  reads a blank model as naming none fails on a plain `proposal.model ??
-  template?.model ?? null` chain — where `""` or `"   "` off a trimmed argument
-  becomes `--model ""` and never reaches the template's own answer.
-
-  **The migration was checked against a database with rows in it, twice, not
-  only against a fresh one.** A scratch script under `/tmp` opened a data
-  directory through the app's own `db()`, seeded three `chat_proposals` rows a
-  real install would have — templated pending, untemplated pending carrying a
-  frozen `guards_json`, and one already approved against a run id — then
-  `ALTER TABLE chat_proposals DROP COLUMN model` to make the file look like one
-  the previous build wrote. Reopening it ran `migrate()` for real: the column
-  came back, all three rows were still there, every `model` was NULL, the frozen
-  guard blob was byte-identical and the approved row kept its status. A second
-  reopen changed nothing, which is the idempotence `migrate()` is written for.
-  The second shape is the one the `PROPOSAL_BASE_COLUMNS` warning is about: the
-  table was replaced by hand with the pre-`relaxProposalTemplate` schema —
-  `template_id TEXT NOT NULL`, none of the columns added since — with a row in
-  it, and the boot rebuilt it, kept the row, relaxed `template_id` and then
-  added `model` on top. That is the ordering the warning names, and it holds
-  because `model` was deliberately left out of `PROPOSAL_BASE_COLUMNS`; naming
-  it there would have made the rebuild's copy list mention a column the old
-  table does not have.
-
-  **Both tools were driven for real, in-process rather than over HTTP.** The
-  sandbox this run was executed in gives every shell its own network namespace,
-  so a `next dev` started in one call is unreachable from the next — measured,
-  `ECONNREFUSED` on `127.0.0.1` from both `curl` and `node` while the server
-  reported ready. So `/api/mcp`'s own `POST` was called directly with a
-  capability minted by `mintCapability({kind:"chat", …})` and a real
-  `Authorization: Bearer` header, against a seeded template naming
-  `claude-sonnet-5`. `propose_run` with `model: "haiku"` answered *"It runs on
-  haiku"* and wrote `haiku` to the row; the same call without the field wrote
-  null and said nothing about a model; `model: "   "` wrote null, so whitespace
-  never becomes a flag. `save_template` with `model: "opus"` set it and said so
-  in the thread and in the tool result, the same call with the field omitted
-  left `opus` alone across two further writes — the wholesale-replace trap the
-  `agentId` note warns about — and `model: ""` cleared it back to null with the
-  thread reading *"It names no model, so runs from it use your default."* Every
-  one of those results also carried *"Its guards are unchanged: acceptEdits, own
-  checkout, 3 work-cycle limit"*, which is the sentence the field had to not
-  disturb. `chatDTO` over the same rows then carried `model: "haiku"` on the
-  card that named one and `null` on the two that did not.
-
-  **Not checked by hand:** the card itself, rendered. The model row is verified
-  by type, by the DTO above and by the JSX being a plain truthy guard, but no
-  browser drew it, for the loopback reason above — `docker compose up --build`,
-  which is where a person would look at it, is also unavailable here. Nor was
-  the text a real orchestrator reads: whether a model given these two
-  descriptions names a sensible model, or reads "the model can be set" as
-  licence to argue for guards, is a question about a live turn and nothing here
-  answers it.
-
-- **The paged runs list and quick open's search, in a browser.** `/api/runs`
-  now reads `offset`, `limit`, `status`, `q` and `settledBefore`, the runs page
-  drives all five from the Older runs fold, and quick open asks the route for
-  typed text 250ms after the last keystroke. What *is* checked: `typecheck`,
-  `npm test` (`normalizeRunListQuery`, `clampRunOffset` and `isRunStatus`, 13
-  cases), the standalone build, and the query itself driven against a throwaway
-  SQLite database with seven planted rows — paging, the offset clamp past the
-  end, the `created_at`/`id` tiebreak holding across a page edge, `?q=50%` and
-  `?q=a_b` matching only the rows that hold those characters literally, and
-  `settledBefore` correctly leaving out a `queued` run created three days ago.
-  None of that needed a browser and none of it is the page.
-
-  The query's cost was measured rather than assumed, because a paged list adds a
-  `COUNT(*)` and an `ORDER BY` tiebreak to the answer a four-second poll already
-  asks for. Against 50,000 planted rows in groups of 25 sharing a millisecond, on
-  this container: unfiltered first page **0.23ms** with the `id DESC` tiebreak
-  and 0.14ms without it, the unfiltered `COUNT(*)` **0.01ms** (a covering index
-  scan), a `status` page at offset 20,000 **7.8ms**, and a `LIKE` over `prompt`
-  **4.1ms**. The tiebreak needs no index of its own — the plan is `SCAN runs
-  USING INDEX idx_runs_created` plus `USE TEMP B-TREE FOR LAST TERM OF ORDER BY`,
-  so SQLite sorts only inside each equal-`created_at` group, and a dedicated
-  `(created_at DESC, id DESC)` index brings 0.23ms to 0.15ms. **No schema change
-  was made**, and neither of the slower shapes is on the poll: the poll is the
-  unfiltered first page. What this does *not* measure is a 50,000-run install's
-  behaviour in a browser, only the SQLite time behind one request.
-
-  What a person has to open and click, in order:
-
-  1. `/runs`, with more than one page of history on the install. Open **Older
-     runs**: the count on the fold is the server's `total` over the whole table
-     rather than what arrived, and `1–100 of n` sits under the list with
-     Previous/Next (100 is the route's default page, unchanged from what the
-     page showed before). Page forward and back and confirm no row appears twice and
-     none is skipped — that is what the `id DESC` tiebreak is for and a fleet
-     admitting several runs inside one millisecond is what tests it.
-  2. The status segments. **Failed** must now show failed runs from the whole
-     history rather than the failed runs among the newest hundred, which is the
-     bug this change exists to fix and the one that looked identical to working.
-     Check the count moves with the segment, and that the sentence claiming the
-     route does not page beyond a hundred is gone.
-  3. The **Search** box in that fold. Type part of a task, a folder name and a
-     run id; each should narrow the list, and the request should land once after
-     typing stops rather than once per keystroke (the network panel is the only
-     place that shows it). Then **Clear filters** from the empty state, which is
-     the one way back out of a filter that matched nothing — the fold holds its
-     own controls, so a fold that vanished with its filter would strand you.
-     With a screen reader on, the count should be announced when the list is
-     replaced: nothing moves focus, so that announcement is the only signal a
-     reader gets that the filter did anything.
-  4. The two sections above the fold. A run that settles must appear under
-     **Finished in the last 24 hours** and, once the boundary steps past it, move
-     into the fold — appearing in exactly one of the two at any moment. This is
-     the shared `boundary` and it is the subtlest thing in the change: if the two
-     sides ever read different instants, a run at the 24-hour mark is drawn twice
-     or drawn nowhere, and neither says anything. The boundary is quantised to
-     the minute, so a run can sit one bucket too high for up to 60 seconds by
-     design — that is the interval at which the fold re-requests, and confirming
-     it is a network panel showing one request a minute rather than one every
-     four seconds.
-  5. `⌘K`, and type the task text of a run older than the newest hundred. That
-     run must come back — it could not before, and the empty list it used to
-     give read as "no such run exists". Each row now reads `id · task`. Confirm
-     the placeholder list still offers the six newest runs with nothing typed,
-     and that a failed read still leaves the panes listed.
-  6. A 400 nobody can reach from the UI but a URL can: `/api/runs?status=nope`
-     answers `{"error":"Unknown run status: nope"}` rather than every run. The
-     opposite choice — falling back to "all" — is what makes a miss read as an
-     absence, which is the whole subject of this entry.
-
-- **The run log's filter, and the settings field search, in a browser.** Both
-  are client-only and neither has been rendered by anything: zero page
-  components in this repository are under test, so nothing catches a visual or
-  interactive regression in either. What *is* checked: `typecheck`, `npm test`
-  (`matchesLogFilter` and `logFilterActive`, six cases — that a `tool_error`
-  stays under **Tool calls** as well as under **Warnings and failures**, that a
-  parked `status` row counts as a problem, that the two halves apply together,
-  and that whitespace is not a query), and the standalone build. The settings
-  search has **no unit test at all**, deliberately: it reads `textContent` off
-  the rendered page, so there is nothing pure to test — which also means every
-  one of its failure modes is a browser away.
-
-  What a person has to open and click, in order:
-
-  1. A run page with a long log — a few hundred lines, ideally one that hit the
-     replay cap. Type into **Find in this log**: the header count becomes
-     `n of m lines`, and with a screen reader on that same count is announced,
-     because the log narrows in place and nothing moves focus.
-  2. The **Show** picker, all five options. **Tool calls** must include the
-     calls that *failed* — that is the one thing the unit test pins and the one
-     an operator would misread as "nothing failed here". **Warnings and
-     failures** must catch a parked run's status line, not only tool errors.
-  3. A run whose replay was truncated (the log carries the `… n earlier events
-     not shown` line). With a filter on, a warning-toned hint must appear under
-     the field naming that count. Without a filter, it must not. This is the
-     one thing on the register that the filter could otherwise imply and must
-     not: that the array it searched is the log.
-  4. Autoscroll, which the filter shares state with. Scroll up in a filtered
-     log, let new lines arrive, and confirm **Jump to live** counts only the
-     lines the filter keeps. Then clear the filter: the badge must **not** jump
-     to the number of lines the filter had been hiding.
-  5. `/settings`, and **Find a setting**. Type `weekly`, `plugin`, `retention`,
-     `prompt`. Each result names its section on the right; pressing one scrolls
-     the field into view, focuses its control (the app's one focus ring is the
-     only highlight) and fills that section's chip. A match inside one of the
-     four **Prompts** folds must open the fold — `textContent` reads a closed
-     one, so a result could otherwise name something invisible.
-  6. A one-letter query, which matches most of the page: at most eight rows,
-     with `8 of n matches` under them. A capped list that does not say it is
-     capped reads as the whole answer.
-  7. That the search did not break what the page already did. Edit a field —
-     the margin rail and the bar's unsaved count must still appear; `⌘S` must
-     still save; **Discard** must still restore the saved baseline (the button
-     is `Discard`, at `src/app/settings/page.tsx:3702`; an earlier draft of this
-     entry called it Revert, which is not a control on that page). Then check a
-     field whose description interpolates its own value (any of the ceilings):
-     changing the value must change what the search finds, because the corpus
-     is the rendered page rather than an index built once.
-  8. The unsaved guard. With an edit pending, reload the page and close the tab
-     — the browser's own dialog must appear both times. Save, then reload: no
-     dialog. This is the half that fails in the direction that trains the
-     operator to dismiss it. A **client-side** navigation (a press on the
-     sidebar) still prompts nothing and cannot, which is stated in the code and
-     is the known gap.
-  9. At **390×844**: the filter's text box and picker wrap onto two lines above
-     the log rather than squeezing it; the settings search box and its results
-     stay inside the viewport with no horizontal scroll; each result row is at
-     least 44px tall. The narrow-viewport entries already on this list predate
-     both controls and cover neither.
-
-- **The background-task panel on the run page's log tab, in a browser.**
-  `src/components/RunTasks.tsx` renders `runTasks.ts`'s rows over the events
-  already in the page's client state — no route, no poll, no schema change — and
-  **nothing rendered it**. Docker is not available in the container it was
-  written in, and an attempt to boot `npm run dev` against a seeded throwaway
-  database was refused before it started, so not one of these rows has been drawn
-  by a browser at any viewport. What *is* checked: `npm run typecheck` (exit 0),
-  `npm test` (**1,705 tests / 251 suites / 0 failures**, of which 18 cases are
-  `runTasks.test.ts`), and `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run
-  build` (exit 0). The reducer is therefore well covered and the component is
-  not covered at all — there are still zero page tests and no jsdom.
-
-  Run `eadfe9f2-ac96-4c44-b59a-fbb3c9341871` has real `system:task_*` events in
-  it and is the run to open. What a person has to look at, in order:
-
-  1. `/runs/eadfe9f2-ac96-4c44-b59a-fbb3c9341871`, **log** tab. A
-     `Background tasks (n)` fold must appear above the Find/Show row, with one
-     row per task, each naming the task, its `task_type`, a state badge and how
-     long it ran.
-  2. Any run that backgrounded nothing — most runs. The panel must render
-     **nothing at all**: no empty box, no heading, no fold.
-  3. Type into **Find** and change **Show**. The rows above must not narrow —
-     the filter owns the feed below and nothing else. Scroll the log: the panel
-     must stay put rather than scrolling away with it.
-  4. A run whose replay was cut (`droppedEvents > 0`, the same condition the
-     log's own truncation line reads). A warning must sit above the fold saying
-     a task that started in the dropped events is missing here. This is the one
-     that cannot be checked without such a run, and a partial list presented as
-     complete is the failure the entry exists for.
-  5. A run with a task still going — the badge reads `running` and the fold is
-     open by default. On a **stopped** run with a task that never reported an
-     ending, the duration must read `—` rather than a clock still counting up,
-     and the line under the table must say no ending reached the log.
-  6. At **390×844**: the table stacks (it is a `Table stack` and every `Td`
-     carries a `label`), each value is named, and nothing scrolls sideways.
-
-- **Context pruning inside a live run.** ~~The whole feature.~~ **Retracted on
-  2026-09-07 to the display half; what settled it is *Both triggers have since
-  fired for real* above.** The winnow
-  subprocess, the token measurement, all three prescriptions and the `.bak` it
-  leaves were exercised directly against a copied transcript in the running
-  container, and those numbers are recorded above. ~~What has **not** run is any
-  of the wiring: no boundary prune has fired at the end of a real work cycle, no
-  cycle has been ended by the context ceiling, and~~ **The wiring has run: this
-  install holds 52 `early-end` receipts against 2 `boundary` ones, so both call
-  sites have fired at the end of real work cycles and 52 cycles were ended by
-  the ceiling.** What has **not** been read is the display — no netted figure on
-  the dashboard or a run page has been read against a real run. That now includes
-  the tile beside the window meters — now `ContextControlAside`, carrying both
-  mechanisms: its six pruning states (a bounded span, an unbounded one, either
-  window empty, partially priced, nothing priced at all, a negative net) were
-  rendered through `renderToStaticMarkup` and read as markup, and the grid rule
-  behind the two-column split is present in the emitted production CSS, but no
-  browser has displayed either — this container has no headless browser — and
-  the money on it came from hand-written DTOs rather than a real
-  `prune_receipts` table.
-
-  ~~**The context occupancy series has never been written by a real run.**~~ **Withdrawn — measured on 2026-08-27; see the entry below.** Every
-  claim about it comes from unit tests over hand-written transcript fixtures
-  (`contextSamples.test.ts`): no `context_samples` row on this install was
-  produced by `liveGuardTick` against a live child, so the cadence the series
-  actually gets — which is the ticker's period filtered by how often the last
-  `usage` frame moves — is reasoned about rather than measured, and so is what a
-  real run's turn-to-turn growth looks like. Two things are specifically
-  unmeasured. The **cost of the scan**: the turn count walks back to the previous
-  sample's frame instead of stopping at the first `usage` frame, which is a few
-  more lines in the steady state and up to a megabyte of JSON on a run's *first*
-  sample, and neither has been timed here — the 23 ms figure above is a
-  whole-file read and split, not a parse. And the **`turns_exact` false branch**:
-  it needs a transcript larger than `TAIL_SCAN_BYTES` at the moment of a run's
-  first sample, which the fixtures construct and no run here has produced. The
-  retention half is exercised (`retentionSweep.test.ts` pins that a blank horizon
-  sweeps none of it) but no sweep has removed a real sample, and no run has
-  reached `CONTEXT_SAMPLES_PER_RUN`.
-
-  **The series has now been written by real runs, and its cadence measured — it
-  is not the ticker's.** 198 rows across 10 runs on this install, all on
-  2026-08-27 between 16:42 and 20:03 UTC, read out of `/data/usagefoundry.db` in
-  the running container with `liveGuardIntervalSeconds` at its default 60. Of
-  the 188 consecutive pairs, **159 are one tick apart** (under 90 s), 22 are
-  more than two minutes apart, 5 are more than five, and **the widest is 1,320 s
-  — 22 minutes**. Every gap is an exact multiple of 60 s and every row's
-  timestamp lands on the ticker's own phase second, which is what separates the
-  two candidate explanations: the ticker never ran late, and the gaps are
-  deduplication refusing to write an unchanged frame. Readings ran 34,495 to
-  317,477 tokens. The **`turns_exact` false branch is no longer unmeasured** — 16
-  rows across two runs carry it — and neither is the ticker's write path under a
-  live child. Still unmeasured: the `transcript` fallback basis (0 of 198 rows;
-  every reading found a usage frame), the cost of the scan, `CONTEXT_SAMPLES_PER_RUN`
-  (the largest single run holds 38 rows), and any retention sweep over real rows.
-
-  **What the widest gap was, and what the panel said about it.** Run
-  `fc491479` at 18:15:59 called the `Agent` tool; from 18:16 to 18:38 every frame
-  its transcript gained was a sub-agent's, which this measure excludes exactly as
-  the ceiling does, so no row was written for 22 minutes. Context across that gap
-  went 186,989 → 197,286. The panel, which had only the newest row's timestamp,
-  rendered "read 22m ago" — and the figure it was labelling was correct
-  throughout, because a parent's context does not grow while a sub-agent works.
-  That is the report `lastCheck` and `liveTickPlan` were written against.
-
-  **Not yet verified by hand:** the freshness split has `npm run typecheck`
-  (exit 0), `npm test` (**1,902 tests / 0 failures**, of which 16 are new) and
-  `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` (exit 0) behind it, and
-  the container was **not** rebuilt — so no browser has seen the new line. What
-  to read on the next rebuild, on a live run: that the age moves every tick
-  rather than every turn, that "unchanged for" appears on a run inside a
-  sub-agent and *not* on an ordinary one, and that a restart mid-run drops the
-  age back to the point's own rather than inventing a fresh one. `guardScanDue`'s
-  stand-down has never been exercised at all on this install, because it does
-  nothing at the default interval: it needs `liveGuardIntervalSeconds` above 120
-  to have any effect.
-
-  **The occupancy panel that draws that series was rendered by a browser, and
-  the run page it sits on was not.** Correcting the entry two above: this
-  container *does* carry a headless Chromium on `PATH`, and it was used here.
-  `ContextOccupancy` was compiled by `tsconfig.test.json`, put through
-  `renderToStaticMarkup` in four states — a 64-point run with two cuts, an
-  18-point run with one, a single reading, and a run with a prune and no
-  readings at all — and each was laid out in a 336px box (the inspector
-  column's `21rem` less `Card`'s padding) against **the production CSS the
-  build emitted**, in light and again under `:root[data-theme="dark"]`.
-  Screenshots were read back. What that establishes: every token class the
-  panel uses resolves in both schemes, including `fill-surface` on the
-  fallback-basis markers, which have to be opaque against the card to read as
-  hollow; the sawtooth is legible at that width with the prune rules landing on
-  the cliffs rather than beside them; the ceiling rule and the baseline are both
-  distinguishable from the series; and the hatched no-reading state is visibly
-  not a zero fill. The legend's worst case — all three items, ceiling and prunes
-  and a fallback count — fits on one line at that width without wrapping.
-
-  What it does not establish. The series was **synthetic** — a generated
-  sawtooth, not `context_samples` rows a run wrote — so this says nothing the
-  entry above does not already withdraw about the data. The panel was rendered
-  **in isolation**, never inside `runs/[id]`: its placement in the `Against its
-  limits` region, its spacing under the `Guards` block, and the way it behaves
-  when the poll replaces the DTO every three seconds have not been seen. And
-  nothing was driven at a narrow viewport, where the inspector stacks above the
-  pane. A human opening a real run should look at those four things: the block's
-  position and spacing in the inspector, the figure and the fill moving together
-  as the poll lands, the panel at one column, and whether the caption's length
-  is right beside the blocks around it — it is the longest paragraph in that
-  region and only the isolated card has been looked at.
-
-  **The intake-filter half was rendered as markup and it caught a defect.**
-  Eight filter states — read, ledger missing with the filter off, ledger missing
-  with it on, unreadable, empty, nothing priced, a read ledger nothing is
-  appending to, and a bounded span — were put through `renderToStaticMarkup`
-  against both components and both pruning states, 24 cases, each asserted to
-  name the card and to contain no `$0.00`. Twenty-three passed first time. The
-  twenty-fourth did not: with `pricedResults` at 0, `FilterSavingsRows` guarded
-  only on `ledger !== "read" || results === 0`, so a fully-unpriced read fell
-  past `noFigureReason` into the money table and printed `Net +$0.00` — the one
-  claim the reading has never observed, under a real token count that makes it
-  look measured. The four money rows are now omitted whole in that state and
-  replaced by a sentence saying what is unknown; the token row, which *is* a
-  measurement, stays. Nothing but a typechecking branch would have shown this,
-  and the type checker had already passed on it. The harness was a throwaway and
-  is not in the tree: it needed a `Module._resolveFilename` shim for `@/`, which
-  `.test-build` has no path mapping for, so it cannot run under `npm test`.
-
-  Rendering is not display. No browser has shown any of it, this container has
-  no headless one, and every DTO in those 24 cases was hand-written rather than
-  read off a real `/api/usage` response. What *has* been exercised against real
-  data is the reader behind it — the real ledger, the real transcripts — and its
-  arithmetic through 13 unit tests. `readFilterSavings`' TTL and single-flight
-  are read, not raced: no two concurrent callers have been observed sharing one
-  pass, and no cache miss on a changed `from` has been observed either.
-
-  **The tile's headline is now the total rather than the 5-hour window, and
-  nothing about that span has been measured.** `/api/usage` reads one span
-  bounded at the transcript horizon, prices it once and sums three nested spans
-  out of it — so what a real install shows depends on receipts older than a
-  window, which no run here has produced: every prune receipt on this machine
-  was written inside one session. Unverified specifically: that the `total`
-  really is a superset of both windows on an install whose
-  `transcriptRetentionDays` is shorter than a week (the `Math.min` clamp against
-  `snapshot.weekly.startsAt` is the only thing holding it, and it has been read,
-  not run); that a receipt whose transcript has been swept is excluded rather
-  than priced at zero saving with its invalidation still charged; and that the
-  single-read-three-sums path is faster than the two `pruneSavings` calls it
-  replaced — it does strictly less work by inspection, and nothing was timed.
-  ~~The Docker build that
-  bundles winnow has also never completed — the repository was private when this
-  was written, so the `git fetch` in the image fails and the feature reports
-  itself unavailable.~~ **Retracted 2026-09-07 on the receipts.** Every prune
-  goes through `pruneTranscript`, which answers `unavailable` and runs nothing
-  unless `WINNOW_PYTHON` is a file under `WINNOW_ROOT` (`/opt/winnow`), and only
-  the `Dockerfile`'s `WINNOW_REF` step puts it there — so 54 receipts say it
-  was there. The stated cause is spent too: `gh repo view Xapicc/winnow
-  --json visibility` answers `PUBLIC`, checked 2026-09-07. Of the two things
-  this entry said to watch first, one is now answered. **The loop's `continue`
-  after a `prune` interrupt does re-enter cleanly with the session still
-  resumable**: four runs took a second early-end prune, one of them (`54931cbb`)
-  a third — cutting at 169,332 tokens at 06:01 on 2026-08-25, again at 171,716
-  at 06:20 and again at 182,478 at 06:23 — and all four completed, which the
-  loop cannot do without re-entering on a session it could resume. What stays is the
-  other — whether the transcript reader's shrink detection (the `rotated` test
-  in `readAppended`) picks up the rewrite as intended.
-
-  **This is also the only thing bounding a work cycle now**, since
-  `--autocompact` was removed in the same change, so an install where it silently
-  does not run has nothing stopping a long cycle at all.
-
-- **A real receiver.** Nothing here has been pointed at a Home Assistant
-  instance, an ntfy topic or anything else an operator would actually run. The
-  automation in `docs/install.md` is written from Home Assistant's documented
-  webhook trigger and has not been loaded, so its field names (`trigger.json.*`,
-  `allowed_methods`, `local_only`) are unconfirmed against a running install; the
-  claim that endpoint accepts arbitrary JSON is the vendor's, not this project's.
-  The Discord **400**, the relay running in the container and a notification
-  produced by a real run loop have since been measured and moved to the section
-  above; what stays here is every *other* receiver, and the endings other than
-  `completed`. Only a `completed` ending has been driven through
-  `notifyLifecycle` by an actual run — the events behind `needs-review`,
-  `blocked`, `failed`, a guard-caused `stopped` and the 429's first rung were
-  constructed, so the shape of a real `PersistedRunEvent` at those five is
-  unproven, not the filter's answer to it. Nor has any single run gone the whole
-  way to a Discord message: the run that fired predates the relay, and the body
-  the relay forwarded was signed by hand. The relay's mention (no
-  `DISCORD_MENTION_USER_ID` has been configured, so no ping has ever been
-  produced) and its one 429 retry are both unexercised.
-
-- **What `--autocompact` costs to run, and what another window would do.** The
-  flag's sign is measured and is in the *Verified* section above; two things it
-  could not reach stay here, and both need a billed run rather than a query.
-  **The summariser's own call has no price anywhere.** All 42
-  `compact_boundary` summaries carry no usage block, so a call of roughly
-  168,000 in and 6,300 out is billed and invisible to every source this app
-  reads; only out-of-band accounting — the account's usage view, an OTLP export,
-  or `--max-budget-usd` straddling a compaction — can bound it. **And one value
-  has ever run.** Comparable work at another window is the only thing that turns
-  keeping 200,000 from a default into a choice, and until then no claim that it
-  is the right number is available. A cheap intermediate step exists and has not
-  been taken: the CLI emits `effectiveWindow` on its own debug channel, so one
-  Docker run with that logging on prints the operating point directly instead of
-  inferring it from the bundle.
-
-- **A compaction notice arriving on a run log, and the metadata field names on
-  any CLI but `2.1.226`.** `readCompactions`/`parseCompactionBoundary`
-  (`transcripts.ts`) and `injectionFates`/`compactionNotice`
-  (`orchestrator.ts`) are unit-tested against a record copied verbatim off this
-  machine, and the run loop reads the transcript after every cycle — but **no
-  compaction has been driven end to end here**, so nobody has seen the notice on
-  a run's own log. Nothing in this repository's probes reaches a *completed*
-  compaction without a live model: the 23 records above were all written by
-  other agents' work, not by a probe, and this container has no `docker` to run
-  the app under. Two things are unverified, and they fail differently.
-  - The wiring: whether the notice appears at all. It is a `log()` call on a
-    path that already ran, so its failure mode is silence — an empty read on a
-    transcript that had not flushed, or a session id the reader could not match
-    to a file. To check it: `docker compose up --build`, start a run whose
-    prompt is long enough to compact (or set `CLAUDE_CODE_AUTO_COMPACT_WINDOW`
-    low in `.env` — which the run's own first log line will then name back), and
-    watch for `Claude Code compacted this run's conversation` on `/runs/<id>`.
-    That is the line the code actually writes (`orchestrator.ts:5291`); this
-    entry named a string that exists nowhere in `src/`, which is exactly the
-    failure it was written to catch. Everything below the run loop's call site
-    *has* been driven against a real boundary off this machine — the reader
-    matched the session, and `compactionNotice` rendered the full text with its
-    hypothesis wording and one line per injected thing — so what is untested is
-    only whether the call site fires with a session id and window that match.
-  - The field names: whether `preTokens`, `postTokens`, `durationMs` and
-    `trigger` keep those names on another CLI. `parseCompactionBoundary` reads
-    every one defensively, so a rename does not throw — it renders as a real
-    figure of zero. "180,694 tokens summarised down to 0" is what that looks
-    like on a run log, and there is nothing on the page to check it against.
-    The pin is `2.1.226` (`Dockerfile:215`) and all 23 records came from it, so
-    the names are pinned to exactly one version and to nothing else.
-
-  Separately and by design, the survival table those notices quote — which parts
-  of a window a compaction keeps — is **not** a measurement of this install and
-  must never be presented as one. It is Anthropic's documentation, self-pinned
-  to Claude Code `v2.1.198`; this install pins `2.1.226`, so `compactionNotice`
-  words every line as a hypothesis whenever the record's own `version` differs
-  from `SURVIVAL_TABLE_CLI_VERSION`, which today is always. Measuring it would
-  mean reading a real post-compaction window, which is a different piece of work
-  from anything here.
-
-- **A second machine actually reaching a LAN-published install, and a browser
-  staying signed in to it.** Every check in the entry above was made *from the
-  host running the container*, at its own LAN address. That proves Docker
-  published on a non-loopback interface and that the gate and the cookie flags
-  are right; it says nothing about whether anything else on the network can open
-  the socket, because an access point isolating its clients sits entirely
-  outside what a request to yourself traverses. (`lsof -nP -iTCP:3000
-  -sTCP:LISTEN` did show Docker on `*:3000` rather than `127.0.0.1:3000`, and
-  the macOS application firewall was confirmed disabled, so the two host-side
-  causes are ruled out — the network between the two machines is not.) Nor has a browser
-  completed the flow — the `Secure`-flag failure this is guarding against is
-  specifically one `curl` cannot see, since curl returns the cookie either way
-  and only a browser enforces the rule. Before trusting it: from a different
-  machine, `curl -sf http://<host>:3000/api/health`, then open the app, sign in
-  with the token, and reload a page — a redirect back to `/login` after an
-  apparently successful sign-in means `UF_COOKIE_SECURE` is `1` (or blank behind
-  something setting `X-Forwarded-Proto: https`) and not `0`.
-- **The stacked tables at 390px — and, uniquely on this list, the three
-  commands themselves.** `Table`'s `stack` turns seventeen of the app's twenty
-  tables into one block per record below `md`: `/runs` (both lists), `/branches`
-  (the inventory and the checkout-slot table), `/agents` (saved and on-disk),
-  the five on the dashboard, all six across the three workflow pages, and
-  `/account`'s rate limits. The three left flat are the settings page's storage
-  report and `RunAgentCost`, both out of the scope this landed under, and
-  `/account`'s daily cost — which has no `<thead>` at all, so it has no column
-  name to lose and a date beside a dollar figure already fits.
-  `src/components/ui/Table.test.tsx` pins the two halves that fail
-  silently — that a stacked cell names its own field and keeps the ARIA roles
-  `display: block` strips, and that a table which did **not** ask to stack emits
-  no `md:`-prefixed rule at all, which is the whole of the "1440px is unchanged"
-  claim in one assertion. What has not happened is anything else. The run that
-  wrote this had **no working shell at all** — every command, `git` included,
-  died in the sandbox with `bwrap: No permissions to create new namespace`, which
-  is the failure recorded under *Verified* above and whose cause is settled
-  there — so
-  `npm run typecheck`, `npm test` and `env -u __NEXT_PRIVATE_STANDALONE_CONFIG
-  npm run build` were **not run**, and neither was a browser.
-
-  **That gate is now discharged.** The change landed as `d8c711d`, and all three
-  commands have since been run in a worktree with a working shell: `npm run
-  typecheck` exit 0, `npm test` exit 0 (1335 pass, 0 fail, 210 suites) at
-  `c9d0b3c`, and `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` exit 0
-  with `.next/standalone` written at `a294ed2` — two documentation-only commits
-  above the same source. **What is still open is the browser**, which is the rest
-  of this entry and none of it was run. At 390×844: every page that holds one of
-  them read top to bottom with **no horizontal scroll**, every figure still
-  `tabular-nums` and every unknown reading still hatched, the branches selection
-  bar starting at the window's left edge rather than 224px in with its Land,
-  Clear and strategy picker all reachable, and the reserved spacer under it
-  (`max-md:h-80`, chosen by arithmetic rather than measurement) actually taller
-  than the bar — a bar taller than its spacer hides the last row of the table.
-  The workflow instance page is the one worth opening first: its two run tables
-  are one `RunTableHead` and one `RunRows`, so they are also the proof that the
-  context carries `stack` across a component boundary rather than only down one
-  file's JSX. Two Tailwind spellings
-  are load-bearing and emit nothing at all if wrong: `md:contents` on the value
-  wrapper, whose loss is a silent *desktop* change in all seventeen, and
-  `max-md:last:border-b-0` on the row, whose loss is one doubled hairline.
-  The cheap form of both is a grep of the emitted stylesheet after a build —
-  but it has to be spelled the way Tailwind writes a selector, which escapes
-  every `:`. Use `-F` and escape the colons, or the pattern cannot match at all:
+Everything below typechecks and builds, and some of it is unit tested, but none
+of it has been exercised the way its entry says — against a real CLI, a real
+browser, a real device or a real install. This is the list to work through
+before trusting this unattended. When an item gets measured, add the
+measurement under *Verified* and cut the item down to what is still open.
+
+### Metering and cost
+
+- **No Fable 5.1 / Mythos 5.1 turn has been metered here.** A transcript not
+  spelling `claude-fable-5-1` / `claude-mythos-5-1` would price silently at the
+  Fable 5 rate.
+
+- **The `cycleCostAfterResult` fix is unit-tested only, 2026-08-27.** 1,816
+  tests pass; no rebuild, not read in the running app. Check a two-`success`
+  cycle's run-page spend against its telemetry card. `075f7959` and
+  `65252b8a` keep their inflated stored `runs.spent_usd`.
+
+- **The unsplit-cache-write notice was seen only on `next start`**, not the
+  standalone bundle, with the settings row written in SQL; no real transcript
+  lacking the breakdown has been seen.
+
+- **No `rate_limit_event` read off a real process**: the event was canned,
+  only `allowed` has been seen, no overage window, and `FirstRun` hides the
+  card on a machine with no transcripts.
+
+- **The metering figures measured on 2.1.226 have not been re-measured on
+  2.1.260** (the pin moved 2026-09-04). Each parser degrades quietly, so a
+  green build proves nothing about metering. One assist's 2.1.260 stdout has
+  been parsed (2026-09-09); nobody has compared a 2.1.260 work cycle's spend,
+  OTLP records or transcript against the 2.1.226 readings.
+
+- **The per-repository cost card has never been rendered or read against a
+  real multi-repository install.** `groupRunSpend` is unit-tested only. Check
+  its total against `SELECT SUM(spent_usd) FROM runs WHERE created_at >= …`,
+  and that a run outside git lands in `(not a repository)`.
+
+- **No browser has rendered the Usage by period card.** Its rollup ran against
+  9,200 real turns, but its sandbox could not execute Next's edge runtime.
+  Unseen: the tab strip at a narrow width, a fourteen-row daily table, and a
+  798% meter clamping to a full bar.
 
+- **A 413 from the OTLP ingest route, on the wire.** `readCappedBody` is unit
+  tested; no oversized request has reached a running server.
+
+- **The derived 5-hour boundary against a live `/usage` reading.** Argued, not
+  watched; the residual offset against the real reset time is unmeasured.
+
+- **The Live from runs card, looked at on a real telemetry-enabled run**:
+  whether it reads apart from the meters and moves within one cycle.
+
+### Budgets and guards
+
+- **The process budget has never refused a real child in a browser, nor
+  deferred and woken a real block.** `assistBudget.test.ts` covers it. Settle:
+  *Other Claude processes at the same time* at 1, a workflow block behind
+  something slow and a chat turn; the block should wait, then start as the
+  chat settles.
+
+- **A work cycle stopping at its `--max-budget-usd` ceiling.** The argv is
+  unit tested; no billed cycle has hit it, so whether the CLI honours it on
+  `-p` and how far a cycle overshoots are reasoned, not measured.
+
+- **A workflow-wide budget tripping against real spend.** No instance has been
+  halted by a guard; `instanceSpend` has never summed a real `otlp_requests`
+  row.
+
+### Run lifecycle
+
+- **What `--allowedTools Grep Glob` does to a real work cycle is unmeasured.**
+
+- **No real validation, review or conflict resolution has run since assists
+  began streaming (2026-09-09)**, so `logAssistTools`' rows and the `check ›`
+  prefix are unexercised.
+
+- **The live log's open-tool rows have never met a real `tool_progress`
+  frame**: arrival, the 30-second restatement and clearing on `tool_result`
+  are untested, and the `aria-live` line was never listened to.
+
+- **Never a real Home Assistant, ntfy topic or other operator receiver.** The
+  `docs/install.md` automation was never loaded, so `trigger.json.*`,
+  `allowed_methods` and `local_only` are unconfirmed. Only `completed` has come
+  from a real run; the other endings' events were constructed. No run has gone
+  all the way to Discord, and the mention and one 429 retry are unexercised.
+
+- **The audit trail has not been read off a running install.** The five
+  creation paths and the request wrapper pass under `npm test` only, and no run
+  page has shown its origin line. Settle with `SELECT origin, count(*) FROM
+  runs GROUP BY origin;` and the last 20 `request_log` rows on a real database.
+
+- **No install-wide control has met a live child or a browser.** `stopFleet`
+  and the hold are unit-tested, but no real `claude` was signalled (the test
+  answers `cancelled`, not `signalled`) and the Fleet card never rendered.
+  Settle: **Stop everything** on two or three cheap runs, then **Hold new
+  work** and **Resume new work**.
+
+- **Setting a run aside has never been done in a browser or on a live
+  child.** `fleet.test.ts` drives all three doors; the mark-then-signal order
+  has only been read. Settle: **Stop and set aside** a cheap run, check the
+  Fleet count and restart notice exclude it, then **Resume** it.
+
+- **The work-cycle deadline has never met a real hanging `claude`.**
+  `cycleDeadline.test.ts` pins the mechanism on a silent child. Unknown: does
+  `SIGINT` reap a hung `claude` and keep its `result` event, or only `SIGKILL`
+  eight seconds later; the 120-minute default is reasoned. Settle with a
+  `sleep 100000` task under a five-minute **Silent cycle limit**.
+
+- **No live `stream-json` failure has reached the run page.** A forwarded
+  message's `parent_tool_use_id` is still assumed, and no `tool_error` row has
+  rendered. Settle: a run whose `git push` fails should log one danger row, a
+  clean run none.
+
+- **"The agent's own report" was never compiled, tested or rendered.** Its run
+  had no `npm` and no `gh`: `cycles.ts`, `Markdown.tsx`, `RunOutput.tsx` and
+  their tests were read by hand only, and the issue it follows was never read.
+  Run typecheck, test and build and open a finished run first.
+
+- **Whether `claude -p` flushes its `result` event on `SIGINT`.** If so, an
+  interrupted cycle keeps its measured cost; reconciliation becomes a fallback.
+
+- **What a subscription-limit refusal actually says.** `isUsageLimit()`'s
+  wording is from the binary's strings, never seen on the wire.
+
+- **Whether a refusal ever arrives on stderr alone** rather than as a
+  `<synthetic>` turn. `refusalInStderr` covers that case but has never fired.
+
+- **What a dropped stream does to the cycle around it.** Which path that run
+  took, and whether `--resume` accepts a drop-truncated session, is unwatched.
+
+- **Whether `claude --resume` accepts a session truncated by a mid-turn
+  kill.** The ladder retries once, then stops rather than start fresh.
+
+- **Which session id `claude -p --resume <id>` reports back.** A differing id
+  is adopted and logged; no real resume has been watched.
+
+- **Whether a session id from an `init` event killed seconds later is
+  resumable.** It is persisted, relying on the first user turn being flushed.
+
+- **A run parking and resuming across a real 5-hour boundary**, in the same
+  worktree, on the same branch, with its commits intact.
+
+- **A paused run surviving `docker compose restart`**, and a stale one being
+  closed out once past `resumeGraceHours`.
+
+- **A parked run taking its folder back** within a sweep of the run that took
+  it finishing, and staying parked until then.
+
+- **Resuming a finished run into a real agent**: `--resume` picking the
+  session up, an isolated one back in its own checkout on its own branch.
+
+- **Picking a `completed` run back up with a follow-up, through a real
+  `claude`**: the note as the next turn, DONE pushback only after a real `DONE`.
+
+- **`detached: true`**: that Ctrl-C during `npm run dev` still kills the agent
+  (via `instrumentation.ts`) and any long command it started.
+
+- **The in-flight cycle line on a real run.** `fmtCycleInFlight` is unit
+  tested; no run started through a server has been watched.
+
+- **`SEARCH_TOOLS` on a real spawn from this app is unwatched.** Unknown:
+  whether the mixed list still grants its two git commands, whether the tools
+  appear in a `bypassPermissions` chat turn, and whether `--resume` keeps them
+  at cycle 2. Check: `Grep` in the latest `system:init` payload in `run_events`.
+
+- **Whether a real agent says `NEEDS_REVIEW` when it should, and only then.**
+  Reasoned from `COMPLETION_NOTICE`'s precedent (251 runs), not measured.
+  Under-use burns the cycle cap; cheap use turns completions into questions
+  for a person. A task quoting the token ending in one cycle is unmeasured too.
+
+- **No `claude` child has reported `NEEDS_REVIEW` to this app.** Unrendered:
+  the amber badge and glyph, the **Needs review** filter, the reason under the
+  state card, the warn log line. Unexercised on a database: freeing the folder,
+  continuing the branch, Resume, the bulk pick-ups, Land/Delete/Purge. No
+  `docker compose up --build` has been run against it.
+
+### Context control
+
+- **No netted prune figure has been read against a real run.** The KPI
+  arithmetic rests on unit tests and a clean `npm run build`; the
+  `ContextControlAside` tile's six states were rendered only as markup from
+  hand-written DTOs. Also unchecked: the corrected invalidation against a fifth
+  prune, and whether `readAppended`'s `rotated` test catches a prune's rewrite.
+
+- **The intake-filter figures have no independent check and were never seen
+  in a browser.** `winnow savings --json` does not exist at `f9f8e4b`; checked
+  only against unit tests and the ledger recounted in Python. The windowed
+  `session`/`weekly` halves and the corrected path have typecheck and tests
+  only; check that the 5-hour figure is not permanently `—`.
+
+- **Lowering the ceiling from 300,000 to 200,000 was a judgement, 2026-08-25.**
+  No `prune_receipts` or `netReceipt` comparison was taken across the two.
+  Never seen in the running app: a crossing at the current ceiling, the new
+  prune log line, and the per-tick cost of reading every live run's
+  transcript with no size gate.
+
+- **The `ENABLE_TOOL_SEARCH=1` fix has not been through a rebuild.** Check
+  that a real run's first request lands near 30,800 rather than 48,000 and
+  that `WebSearch`/`WebFetch` still reach through `ToolSearch`. The 17,229
+  added tokens are not netted against the filter's saving anywhere.
+
+- **The compaction summariser's call is billed and in no ledger, 2026-08-22.**
+  All 42 `isCompactSummary` records carry no usage: roughly 168,000 in and
+  6,300 out, order $0.24 to $1.84 per compaction, invisible to `scanUsage()`.
+  Also unmeasured: whether 200,000 is optimal (one arm, no dose-response; one
+  Docker run logging `effectiveWindow` would show the operating point) and
+  whether the firing arithmetic holds for another model.
+
+- **The `Pruning` column has not been read on a real install or an aged
+  run.** Seeded receipts prove plumbing, not worth; a run whose transcripts
+  were swept should drift to a small negative, unobserved.
+
+- **Why a fork's edit misses the wire is assumed**: the resumed CLI rebuilding
+  tool results from the untouched `toolUseResult` is the likeliest cause.
+
+- **No fork has been written since the API-basis measurement was added**, so
+  `apiContextSample`'s `api` basis at the fork site and `firstContextTokens`
+  skipping a `<synthetic>` zero are unconfirmed. Settle: fork engine to a
+  natural boundary; the row needs `api_context_before` and `api_context_after`.
+  `pruneAtBoundary`'s clear is argued from code; the stack's age line is unseen.
+
+- **No 2026-08-28 cycle or prune change has met a real boundary**: no agent
+  spawned since `cycleInvocation.ts` split out, no `prune_decisions` row, no
+  early-end prune; settle with a `maxIterations >= 2` run outlasting cycle 1.
+  `treatRemovedTokens` over-claims `D` by ~a quarter (unmeasured), making the
+  gate permissive; winnow's `unavailable` branch has never been rendered.
+
+- **Context series: fallback basis, cap, scan cost and sweep unmeasured.** 0 of
+  198 rows use the `transcript` basis, no run reached `CONTEXT_SAMPLES_PER_RUN`
+  (max 38), the scan is untimed, no sweep has removed a real row. The freshness
+  line (container not rebuilt) and `guardScanDue` (needs
+  `liveGuardIntervalSeconds` above 120) are unseen.
+
+- **`ContextOccupancy` has never been seen on real rows or on the run page.**
+  Its placement in `Against its limits`, its behaviour as the 3-second poll
+  replaces the DTO, the one-column narrow layout and its caption length are
+  unchecked.
+
+- **The intake-filter card has never been displayed.** No browser has shown it,
+  every DTO was hand-written, the throwaway harness is not in the tree, and
+  `readFilterSavings`' TTL and single-flight have not been raced.
+
+- **The tile's total span is unmeasured.** Every prune receipt here was written
+  inside one session, none older than a window; the superset clamp (`Math.min`
+  against `snapshot.weekly.startsAt`) is read, not run; a swept-transcript
+  receipt's exclusion is unseen; the single-read path is untimed.
+
+- **No compaction notice has been seen on a run log, and its field names hold
+  only on CLI `2.1.226`.** `preTokens`, `postTokens`, `durationMs`, `trigger`
+  come from 23 records, all `2.1.226` (`Dockerfile:215`); a rename renders as
+  zero. Watch `/runs/<id>` for `Claude Code compacted this run's conversation`.
+  The survival table is Anthropic's docs (`v2.1.198`), never a measurement.
+
+- **`freshStartContextTokens`' net saving is unmeasured.** Its prices are: a
+  two-cycle run averaged $19.19 against $10.05 for one, 12.0c a call early
+  against 20.4c late. The net needs a matched pair of runs on one task, one arm
+  each way, compared on total spend **and** on whether the task finished —
+  never a within-run before/after, since cost per call climbs with position.
+
+- **Nothing else in the 2026-08-23 pass ran against a real agent, container or
+  browser**; its graph and workflow-list "after" bytes are computed. Unseen:
+  the file-cost notice on a real argv, or byte-identical on cycles 1 and 2; any
+  page from that build.
+
+- **The composition series' winnow/sample anchor divergence has never been
+  measured while a sub-agent ran**; it is read from code (2026-09-04).
+
+- **The depth-3 tree has been drawn only from hand-seeded rows, and
+  `COMPOSITION_CHILDREN_PER_NODE` (64) has never fired on real output
+  (2026-09-04)**; its test feeds 200 synthetic children.
+
+- **`describeComposition`'s signed negative share has been seen only by the
+  test build.** It went in after the container was rebuilt.
+
+### Orchestrator chat
+
+- **Whether the shipped chat leaves files alone when a fix is one edit away
+  has not been measured.**
+
+- **No chat turn has run the fill against a real CLI, 2026-09-09.** `bwrap`
+  cannot nest in that container and a live turn would bill unattended; the
+  stub is not bwrap. Expected after a rebuild: 51 failures, not zero, and no
+  tree-root name in the turn's `git status --porcelain`.
+
+- **No chat turn has run through the real CLI's `stream-json --verbose`**; the
+  pair is only the one work cycles pass (`cycleInvocation.ts:1075`).
+
+- **The stale-Approve check used two seeded proposals**, so `propose_run`'s
+  `supersedes` is covered only by `chat.test.ts`.
+
+- **The proposal card's model row has never been drawn**, and no live
+  orchestrator turn has shown whether a model names a sensible model or reads
+  the field as licence to argue for guards.
+
+- **A chat reaching `MAX_PENDING_PROPOSALS` (25) or `MAX_REMOTES_READ` (25).**
+  Both are reasoned, never hit; behaviour at the cap mid-answer is unseen.
+
+- **Ordered proposals and proposed workflows, against a real CLI.** Unit
+  tested only; no CLI has called `propose_workflow` or passed a `dependsOn`.
+
+- **The chat's inspection tools and untemplated proposals.** `get_run`,
+  `get_run_diff`, `get_usage`, `list_proposals` and `save_template` typecheck;
+  no real CLI has called one.
+
+- **That an unrestricted chat stays an orchestrator.** It runs
+  `bypassPermissions` with push credentials; only a `systemPrompt()` paragraph
+  stops it editing. Untested against a real CLI.
+
+- **Stopping a chat turn, in either of its two forms.** `staleTurn` is unit
+  tested; no CLI child has been signalled by `cancelChatTurn` and no sweep has
+  fired on a live row. The no-child half of both, free (then load `/chat`):
+  ```bash
+  sqlite3 $DATA_DIR/usagefoundry.db "update chat_sessions set status='thinking', turn_started_at=…, partial_at=… where id=…"
+  ```
+
+- **A chat turn's silence bound, in all three places.** Unit tested where
+  pure; no real child has shown a turn past fifteen minutes surviving.
+
+- **Switching Orchestrator threads, in a browser.** The cross-thread 400's
+  sentence is unit tested; the click and the red banner are unwatched.
+
+- **The *Earlier chats* two-line rows, in a browser.** Never rendered in the
+  360px column; how they read against the 6px gap is unmeasured.
+
+- **The chat page recovering from a dropped request, in a browser.** Unit
+  tested; no one has stopped the server and pressed Send.
+
+- **The chat page's failed-poll notice, in a browser.** Its sentence is unit
+  tested; its appearing and clearing are unwatched.
+
+- **The "Earlier chats" list refreshing on its 10s poll, in a browser.** The
+  route is unit tested against the handler; the sidebar is unwatched.
+
+- **Whether the pinned CLI ends an `ask_operator` turn when told to is
+  unmeasured**; only prose ends it. Test: ask something under-specified, watch
+  whether it asks once and stops. Also unmeasured: `--resume` carrying the tool
+  call, the caps (5 questions, 8 choices), an exchange's cost, `chat_questions`
+  on a real database, and a stranded turn writing into an idle chat.
+
+- **No `ask_operator` answer has reached a real turn, and no model has called
+  it**: `answerChatQuestions` → `sendChatMessage` → `claude -p` runs only in
+  unit tests, and the when-to-ask prompt paragraph, paid every turn, is
+  unmeasured. No screen reader or reduced-motion pass; `busy` seen only against
+  an instant stub; the eight-step click list is unwalked against a real turn.
+
+- **The chat has never been shown a workspace with more than twenty-five git
+  repositories.** `list_folders`' paging is covered only by
+  `remoteReads.test.ts` over the pure selection; no model has been seen to read
+  `notRead` and call back with the offset it was handed.
+
+- **No browser has held a chat open across a turn landing (2026-09-07)**; the
+  append path is unit-tested only. Unseen: a mid-turn reply appending, the
+  unseen count and scroll on a tail, a thread switch mid-poll. Open `/chat`,
+  send a message to a thread with history, and watch the reply land.
+
+### Taskboard
+
+- **No model has called the board tools over stdio**; that needs a billed run.
+
+- **The taskboard tools (2026-09-07) have never met a real CLI**: unseen are
+  the tool list on a first and a `--resume` cycle beside the operator's MCP
+  servers, a refused `complete_task`, the token dying with the run; settle
+  with a task's run after `docker compose up --build`. Unrendered: refusals
+  to non-operators, chat live view, Backups, sign-out, queue priority, Open PR.
+
+- **The external validator, end to end.** No verdict has come from the pinned
+  CLI via `spawnAssist`. It rests on a spike's 34 of 37, zero false-finished
+  (subagent transport, one sample per case, 40 runs judged against `runs.task`)
+  on a prompt since replaced; the shipped prompt has never been scored.
+
+### Workflows and schedules
+
+- **The pager has not met live instances**: all rows were inserted `finished`
+  with no member runs, and none arrived while a page was open.
+
+- **No real restart has been taken over a live loop block**; the
+  `reconcileBlocksOnBoot` fix is unit-tested only. Settle: park a pass inside
+  `resumeGraceHours`, `docker compose restart`; the block must still read as
+  repeating and the pass resume, and a loop whose pass that boot failed must
+  still read `failed`.
+
+- **No workflow schedule has ever fired.** `decideSchedule` and its helpers are
+  unit-tested, both Europe/Berlin DST boundaries included; no card has rendered,
+  and `reconcileSchedulesOnBoot` has not seen a real restart. Settle: fire one
+  a few minutes out, stop the container over the next and expect *missed*.
+
+- **An unhalted instance's `working`/`finished`/`blocked` badges.** Tested
+  against a real db; no browser has rendered them. The risk is cosmetic.
+
+- **Stopping a whole workflow instance against real runs.** `haltPlan` is unit
+  tested; no child has been signalled by `stopInstance`.
+
+- **An orchestrator block, end to end.** Its planners are unit tested; no
+  block has spawned a child, called `emit_runs` or created a run.
+
+- **The workflow canvas, touched in a browser.** Dragging, linking, keyboard
+  routes and the stored layout are all unexercised.
+
+- **A pre-canvas workflow opened on the canvas and saved back**, to confirm
+  every link survives; the derived layout is unit tested.
+
+- **A workflow instantiated against the real CLI.** Every run so far came from
+  a stub that committed nothing.
+
+- **The rollback path.** Its stop-everything-and-record-`failed` branch has
+  never run; read it rather than trust it.
+
+### Concurrency and ownership
+
+- **The `chat_proposals` rebuild on a real upgraded volume**, in a running
+  container; the first `docker compose up` on an existing `.data` is the test.
+
+- **The server lock with two live processes**: two servers on one `DATA_DIR`,
+  and an owner stalled past `STALE_MS`. Unit tests cover the verdicts and
+  `claimDataDir` against a temporary directory.
+
+- **`STALE_MS` against a measured stall.** Its multiplier of six is reasoned;
+  nothing has been timed under 25 concurrent runs.
+
+- **The shutdown reconciling its cycles under a real `docker compose
+  restart`.** `shutdown.test.ts` fakes `spawn`; whether 30s of grace suffices
+  is unknown.
+
+- **No two-process reproduction of the shutdown gate was run**, and no
+  container built; the second server is only worth watching against a real
+  billed agent in the first.
+
+- **A migration finding has not been seen on a real boot (2026-09-07).**
+  Settle: set `user_version = 99` via `docker compose exec app node -e`, run
+  `docker compose restart app`, and `GET /api/status`'s `.schemaFaults` should
+  hold one `downgrade` naming 99, its line in `docker compose logs`; a second
+  restart clears it.
+
+### Isolation and landing
+
+- **The Land verify field was never saved**, so its check covers the form, not
+  the round trip; the other four controls added 2026-09-06 were not looked at.
+
+- **Neither three-valued reading has been seen on a real install**: the branch
+  row's unread checkout (smoke-pages' `/branches` held no branches) and
+  `run.guard_unreadable` (no run has hit `no_ceiling`). `heldByCheckout`
+  matching the `MAX_PENDING_PROBES` skips is by construction. Settle: past the
+  cap on one repo, rows must say "checkout could not be read" and offer Commit.
+
+- **Two conflict resolutions in one repository have never run at once.**
+  Only the checkout collision is tested (`resolveCheckout.test.ts`, two real
+  `git worktree add`s, no `claude` child); the merge queue resolving one while
+  the operator resolves the other, and each `run_reviews` row describing its
+  own work, need Docker and two billed children.
+
+- **Conflicts map unseen in the shipped image, dark theme, 390px, reduced motion
+  or folding.** No `docker compose up`; nobody watched a CPU meter; the grey
+  `untyped` fill (unit-tested only) and `none-named` need records the git on
+  hand will not produce; folding needs a few-hundred-path conflict or a lowered
+  `MAX_DRAWN_FILES`.
+
+- **No run has met a real exhausted checkout store.** `resolveIsolation`'s
+  refusal is unit-tested only. Dirty `<mount>/.uf-worktrees/<slug>-1` … `-64`,
+  confirm Branches shows `0 of 64` free and an isolated run is refused with the
+  sentence; which of its four counts it prints has only been unit-tested.
+
+- **The branches filter and pager have never run on a real inventory past 400
+  runs.** `selectBranchCandidates` is unit-tested; unchanged git cost rests on
+  the cap. Settle with `curl -s 'localhost:3000/api/branches?offset=60' | jq
+  '.branches | length, .total, .notShown'` over sixty-plus branches.
+
+- **The multi-repository sweep (#77, #76, #70, #67) has met neither Docker nor
+  a second repository.** Unrun: compose interpolating `UF_UNMOUNTED_WORKSPACES`
+  for a fifth slot, a nested seed pattern reaching a real checkout, a
+  per-repository GitHub token pushing, and two repositories landing at once.
+
+- **Landing inside the container, on git 2.39** rather than 2.50. Conflict
+  types come from `-z` records captured on 2.50; a 2.39 that differs loses type
+  and explanation but still lists every file.
+
+### Git and review
+
+- **No work cycle has been spawned by the `core.excludesFile` code,
+  2026-09-09.** Unseen: the write to `/run/uf-git`, the block reaching a
+  child's environment, the `EEXIST` path. Settles on a cycle whose `git add -A
+  && git status --porcelain` exits 0 where `main` fails.
+
+- **What the 2026-09-06 delivery does not establish**: an agent committing to
+  the branch (the run was seeded), the verify gate (`landVerifyCommand` empty),
+  a real run id in the PR body (the fixture's read `deliver-`).
+
+- **A review or conflict resolution against the real CLI.** Review quality,
+  `plan` mode in print mode and `acceptEdits` resolutions are unconfirmed.
+
+- **A repository large enough to hit the diff's size budget in the wild.**
+
+- **Committing and purging through the app itself.** Git formats confirmed on
+  2.39.5, decisions unit tested; never done through a running server.
+
+- **A real agent using the token**: a `git push` of a run's branch, and a `gh`
+  call that needs authentication. The credential block itself was driven into
+  a real git; what has not been watched is the CLI's own git picking it up out
+  of the environment mid-run.
+
+- **The Files tab's *What it touched* card has never been rendered**, in a
+  browser or a container. To walk at 1280px and 390px:
+  - write down the header's distinct-file and work-cycle counts: the deferred
+    file-by-cycle grid in `proposals/SessionFlow/` waits on them;
+  - a gone branch (`kind: "none"`) drops to two groups with a warn notice and
+    neither "changed, never named" nor "named, and not changed" — the item
+    most likely to be wrong;
+  - `/api/runs/[id]/touched` is fetched once per tab open, never on the poll.
+
+### Agents, templates and models
+
+- **An empty agent name and a non-JSON `--agents` payload were not
+  re-measured under `--agent`.**
+
+- **No run has started on a `[1m]` id and no model has read the MCP `enum`.**
+  Unread: the spawned argv for `claude-opus-5[1m]` (brackets could be
+  normalised away with no test failing), whether chat picks off the enum and
+  `"inherit"` lands as null. Not run for it: `docker compose up --build` (no
+  Docker), `smoke-pages` (the container's mount broke `npm run build`).
+
+- **No template's model has reached a real `--model` on a spawn**, since a run
+  here starts a billed agent. `docker compose`, narrow viewports and the sign-in
+  path are also unchecked.
+
+- **A per-run model has never reached `--model` on a real spawn**, nor the CLI
+  run on it. Also unchecked: the placeholder with a default set, the copied-run
+  seed carrying `run.model`, `docker compose`, narrow viewports, and sign-in (it
+  ran with `UF_ALLOW_NO_AUTH=1`).
+
+- **The new-run form's template UI, in a browser**: only the client wiring
+  (loading, *Start another like this*, the two banners) is unconfirmed.
+
+- **Everything about a saved agent that is not one of the seven probes.** No
+  child has been spawned with `--agent` or `--agents` from this app, no browser
+  has rendered its UI, and no request has written `/api/agents`. Open under
+  `--agent`: the two `--agents` drops, turns' agent name, delegation; and
+  whether a member's `tools` beats the `PROCESS_KILLERS` deny.
+
+- **The `settings.json` `agent` key: measured, and deliberately not
+  declared.** Declaring it needs a read in `agents.ts`, a field on
+  `GET /api/agents`, and copy probably on the Settings page rather than under
+  the picker, since choosing an agent there overrides the key.
+
+### Other providers
+
+- **No Codex device sign-in has been completed** (no OpenAI account): the
+  exit-0 `auth.json` write, `loginError` on any failure and the poll
+  converging are unmeasured; an unnoticed success reads `waiting for approval`.
+  `codex` is not in the `Dockerfile`, and `CODEX_HOME` (unmounted `~/.codex`
+  by default) lives in the container's writable layer, lost on a rebuild.
+
+- **The image has not been rebuilt with Codex (2026-09-05)**: the amd64
+  figures (~335 MB unpacked, 123 MB download) are registry metadata, no work
+  cycle has run `codex`, signed-out is reasoned from `childEnv`'s strip, and
+  `codex` under `UF_SANDBOX=1`, whose read-only binds may break `$HOME/.codex`,
+  is untried.
+
+- **No Codex work cycle has ever been spawned (2026-09-05)**; `codex login
+  status` says "Not logged in". Unverified: argv acceptance, event names,
+  `resume` taking the session id, `--output-last-message`, sandbox binding,
+  notices as prompt text, a Codex wall, and above all a real cycle loading the
+  rules file (a wrong dialect loads as zero rules): ask one to `pkill -f`.
+
+### Knowledge and plugins
+
+- **None of the four pinned-bundle hook and read facts has been run.** Each
+  stays read-not-run until a billed run confirms it.
+
+- **No hook event but `SessionStart` has been observed.** `hook_response` is
+  emitted only for `["SessionStart","Setup"]` outside `CLAUDE_CODE_REMOTE`,
+  so `PostToolUse`, `PreCompact`, `PostCompact`, `Stop` and `readGuard`'s
+  `PreToolUse` run, or not, unobserved.
+
+- **The graph orientation layer is unseen in the dark theme, on a touch
+  device, with a screen reader and under `docker compose`**, and no run passed
+  through auth: the middleware was moved aside because the edge bundle will
+  not load under that container's sandbox. The canvas click-list is unrun.
+
+- **The `canvasView.ts` extraction has never been looked at.** Pan, zoom, hit
+  testing, dpr sizing, the `ResizeObserver` and the colour probe left
+  `KnowledgeGraphCanvas.tsx` with no browser; `observeCanvasSize`,
+  `observeTheme`, `probeTokens`, `sizeCanvasToHost` only compile. Unrun: its
+  ten-step click-list, and Firefox on `wheelZoomFactor`'s estimated 16px line.
+
+- **The Knowledge base settings section has never rendered**, and no `docker
+  compose up --build` ran where it landed. Four states unseen: nothing
+  configured, a gone mount (*Folder no longer mounted*), a scanned vault, a
+  capped walk; the `≥` prefix and Truncated badge need more than 5,000 notes.
+
+- **Of the Knowledge page, only the graph's orientation layer has been drawn
+  (2026-09-02).** Unverified in a browser:
+  wikilink and modified clicks, **Back** via `popstate`, the 250ms debounce,
+  stacking below `md`, the 2026-08-22 Obsidian constructs (a DOM count is no
+  substitute) and chrome pass (scroll-to-note, reduced motion, the 180ms
+  spinner, tag chips), and the graph box's `aspect-[4/3]` on a wide window.
+
+- **No run has answered out of the vault.** Unmeasured: that the model invokes
+  the skill, stops and reports on an unreadable path, and carries the
+  confidence grade. The root-owned 0755 `/run/uf-skills` is reasoned, not
+  measured (only the `os.tmpdir()` fallback has run); the Settings switch has
+  never rendered.
+
+- **The graph view's frame rate and interaction are unmeasured.** Unseen: the
+  colour probe and its theme re-run,
+  crisp strokes, the rAF stopping, wheel/drag/hover, the non-passive wheel,
+  `LINE_HEIGHT_PX` 16 (an estimate), the 7.3MB payload's parse, the row-height
+  sizing, and the one-shot tag seed with `uf.knowledge-graph` cleared.
+
+- **`readGuard`'s `PreToolUse` hook has never been seen to fire.** Plugin
+  hooks are observed for `SessionStart` only, and the CLI emits
+  `hook_response` for `SessionStart` and `Setup` alone, so an inert guard looks
+  exactly like one switched off. One billed run settles it: switch `readGuard`
+  on, have a cycle read one file twice, and confirm the second read is refused.
+
+### Dreaming
+
+- **Dreaming's nightly timer has never fired**: every night was a press, and
+  `tickDreaming`, `reconcileDreamingOnBoot` and `armDreaming` have never run
+  unattended; two faults a press cannot expose were found only by reading the
+  code. Nothing enforces that an agent reads `CLAUDE.md` first. Settle: one
+  03:04 that nobody is present for.
+
+### Retention
+
+- **The retention sweep under a CLI that names transcripts differently.** On a
+  moved pin, compare basenames with each file's first `sessionId`.
+
+- **A pruned transcript's run being reopened, against a real CLI.** Both
+  halves are unit tested; the whole sequence has not run.
+
+### Security and sandboxing
+
+- **The 2026-08-19 probes did not exercise** the per-run `--settings` overlay,
+  `denyRead` paths, the network allowlist, the write set, or real work.
+
+- **Whether the CLI's `filesystem.allowWrite` replaces its defaults is
+  unmeasured, 2026-08-25.** Adding `/opt/playwright/browsers` reopens the
+  install, but a replacement would drop the cwd and `/tmp` and leave agents
+  unable to write their worktrees. Do not add it on reasoning alone.
+
+- **No sandboxed cycle has run with the mount-point fill, 2026-09-04.** Bwrap
+  binding over the placeholders is unseen. After a rebuild the `run_events`
+  count should fall to zero for project trees, keeping the config-directory
+  handful and the one `.idea`.
+
+- **The post-cycle `sweepSandboxTreeRoot` call is unseen, 2026-09-09.** No
+  sandboxed cycle since; its log line, the `EBUSY` branch and the interplay
+  with `land.ts`'s `trackedDirt` workaround are reasoned only.
+
+- **The merged tree's suite has not been run for the chat child's fill and
+  sweep plus `core.excludesFile`.** Its 2,597 and 2,590 passes were measured on
+  separate branches; that `runIteration` does all three and
+  `runOrchestratorChild` the first two is read from code, not run.
+
+- **The intake filter's uid drop has never been booted.** Unseen: the filter
+  running as the agent uid (`docker compose exec usagefoundry ps -o uid,cmd |
+  grep 'winnow filter'` must not say 0), the `/var/lib/winnow` ledger growing
+  after a cycle (a failed write is silent), and uid 1000 refused `filter-off`.
+
+- **`/app`'s ownership has never been read off a built image** since the
+  `Dockerfile` stopped chowning it to `node` (#200); `deployment.test.ts` pins
+  the absence. Settle: `stat -c '%U %n' /app /app/server.js
+  /app/scripts/discord-relay.mjs` must say `root` thrice, a `touch` as the
+  container's `UF_AGENT_UID` must be refused, and the boot log stay healthy.
+
+- **The privilege split's probes (#79, #80, #87, #83) have never been run
+  against a container.** `resolveChildCredentials`, the compose/Dockerfile
+  pair, the capability file and `telemetryEnv` are unit-tested; one uid cannot
+  observe the MCP refusal.
+  Also unrun: an isolated run committing as the dropped uid, and macOS Docker
+  Desktop's mount remapping. Known open: agents can read `.credentials.json`.
   ```sh
-  grep -cF 'md\:contents' .next/static/css/*.css                # expect ≥ 1
-  grep -cF 'max-md\:last\:border-b-0' .next/static/css/*.css    # expect ≥ 1
-  ```
-
-  The unescaped `grep -c 'md:contents'` this entry used to prescribe returns
-  **0 on a build where the class is present** — measured, not reasoned: on a
-  build at `a294ed2` the emitted `da7ba9cfe258a729.css` contains
-  `.md\:contents{display:contents}`, the unescaped pattern matched nothing and
-  the `-F` form above matched. Any check written as `grep '<variant>:<utility>'`
-  against built CSS has that defect by construction.
-
-  The right form of it is the harness already in *Verified* above — a production
-  build in a headless browser against fabricated API responses, both themes,
-  geometry read out of the DOM rather than looked at. Its readings now describe a
-  layout that is gone below 768px, so re-running it is what replaces them, and it
-  is the only thing that can check the two claims a human eye is bad at: that
-  **no** page scrolls sideways at 380px, and that every box at 1440px is where it
-  was before.
-- **The chat surface at 390px — measured in a headless Chromium against a
-  seeded conversation, but no thumb and no real keyboard have touched it.**
-  `/chat` carried two responsive classes across 2,654 lines and `Markdown.tsx`
-  none at all. The defect that mattered was invisible to every check this
-  repository has: the stacked grid left its single track implicit, so the track
-  was `auto` and floored at its content's min-content width, and one long path
-  in a message sized the column at **584px inside a 358px pane**. The shell
-  clips rather than scrolling sideways, so `document.scrollWidth` stayed equal
-  to `clientWidth` throughout — `npm run smoke-pages` passes `/chat` at 390px
-  both before and after, and its no-sideways-scroll assertion cannot see this
-  class of failure at all. What found it was walking the DOM for any element
-  whose `offsetWidth` exceeds its parent's `clientWidth`; that is the check
-  worth adding if this is ever automated. Second in the same family: the card's
-  `max-h-[34rem]` is smaller than the questions and the composer inside it on a
-  390px screen, so the thread — the only child that could shrink — collapsed to
-  zero and the conversation was not on the page.
-
-  Read out of the DOM against the standalone bundle, at 390×844 with a seeded
-  chat carrying a fenced code block, a three-column markdown table, a long
-  unbroken URL, two open questions, a pending, an approved, a superseded and a
-  failed proposal: no element wider than its parent anywhere on the page, no
-  console error, the code fence scrolling inside its own box at 318px while its
-  `<code>` is 824px, and the markdown table going through `Table`'s stacking
-  mode. With the on-screen keyboard modelled the way `AppShell` models it —
-  `--keyboard-inset: 336px`, so `--pane-h` and the shell's height both shrink —
-  the pane is 456px tall and the composer's textarea (92px, `font-size: 16px`,
-  full width) and its Send button (44px) are **both inside it**, measured, not
-  looked at. **1280×900 is unchanged to the pixel**: the page was built at
-  `bf9d40b` and at the change, screenshotted against the same seed, and the two
-  PNGs differ in **0 of 1,152,000 pixels**. Every rule but two is `max-md:`; the
-  two that are not are the grid track (overridden at `lg`, and it fixes the same
-  overflow in the 768–1023px band, where it was measured at 584px inside 536px)
-  and `[overflow-wrap:anywhere]` on the inline `<code>` span, which matches the
-  tag chip and the link class beside it in the same file.
-
-  **Not yet verified by hand:** no real device, and the three things that need
-  one. Whether `max-md:gap-x-6` is enough separation between Reject and Approve
-  under an actual thumb — 24px between two 44px targets, chosen rather than
-  measured, and the wrong press starts or refuses a billed run. Whether the
-  composer's `max-md:sticky max-md:bottom-0` behaves on iOS Safari, whose
-  sticky-plus-`visualViewport` behaviour is the reason `--keyboard-inset` exists
-  in the first place; the reading above sets that variable from a script rather
-  than by opening a keyboard, and Chromium recomputes a sticky offset on scroll
-  rather than on a variable changing — a measurement taken without a scroll in
-  between reads the stale one, which it did here until a real scroll was forced.
-  And no interaction of any kind was exercised: nothing here pressed a choice,
-  approved a proposal, sent a message, or opened the drawer. `npm run
-  smoke-pages` cannot close any of those — it asserts about load and never about
-  interaction, which is its own header's position, not an omission.
-
-- **The mobile form pass — and two of its three defects cannot be observed
-  without a real iOS device.** Every text control gained `max-md:text-[16px]`
-  (once, in `CONTROL_BASE`, which `Input`, `Select`, `Textarea` and `LimitField`
-  all concatenate; plus the legacy layer's element selectors, and the two
-  hand-written controls that carry their own `text-sm` and so beat that layer —
-  the chat composer and the branches page's strategy `select`. Every
-  `page.tsx` under `src/app/` and every file in `src/components/` was read to
-  establish that those were the only two. **The density pass has since made it
-  one**: the strategy `select` is now the kit's `Select` inside a `Field`, so it
-  takes the floor from `CONTROL_BASE` like everything else, and the chat
-  composer is what is left. The device check below is unchanged either way —
-  it is about whether the class reached the stylesheet, not about how many call
-  sites state it.) `CONTROL_LINE`, `Toggle`,
-  `ListRow`, `QuickOpen`'s result rows, the settings section chips and the run
-  form's link-shaped button took `max-md:min-h-11`, `SegmentedControl`'s segment
-  a `max-md:min-w-11` beside it, and `Switch` a 44×44 `::after` overlay.
-  `ListRow` learned to wrap (`max-md:flex-wrap` with `max-md:min-w-32` on the
-  label deciding when, and `max-md:justify-end` so a wrapped control does not
-  change edges). Three `<summary>` elements took `max-md:py-3.5` rather than a
-  min-height, for the reason the runs list already gives; the four in the run
-  detail pane are the one gap left, and are that run's files. `AppShell`
-  publishes `--keyboard-inset` from
-  `visualViewport`; the shell's height, `--pane-h`, `Sheet`'s panel cap and the
-  branches page's `fixed` selection bar all subtract it — the last two because
-  they sit outside `AppShell`'s box and so owe the edge themselves. All of it was reasoned from documented platform behaviour. **None
-  of it was watched.**
-
-  **The run that wrote this had no working shell either** — every command died
-  with `bwrap: No permissions to create new namespace`, `git` included, from the
-  same cause as the entry above and settled under *Verified* — so `npm run
-  typecheck`, `npm test` and `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run
-  build` were **not run** and no browser was driven.
-
-  **The work is committed and the three commands pass.** The change is
-  `d8c711d`, with `2e68820` above it; `git status --porcelain
-  --untracked-files=no` is empty, so there is no uncommitted worktree to go
-  looking for. `npm run typecheck` and `npm test` (1335 pass, 0 fail) were run at
-  `c9d0b3c` and the build at `a294ed2`, all exit 0. **The browser was still not
-  driven**, which is what the rest of this entry is about and is where the two
-  device-only defects still sit.
-
-  Narrowing a desktop window is not a substitute for either device-only check.
-  **The zoom**: on real iOS Safari at 390px, tap into any field on `/runs/new`
-  and the page must not scale — if it does, the class did not reach the emitted
-  stylesheet. **The keyboard**: on the same device, focus the chat composer and
-  confirm the composer, the run form's save bar and a `Sheet`'s Cancel/confirm
-  pair all stay above the keyboard rather than behind it; then blur the field
-  and confirm `--keyboard-inset` returns to `0px`, which is what a shell left
-  stuck at two-thirds height would be reporting. **The targets** can be measured
-  anywhere: at ≤767px every control's border box ≥44px in both axes, and
-  `Switch`'s is its `::after` and not the pill.
-
-  Five spellings are load-bearing and emit nothing at all if Tailwind does not
-  know them: `max-md:text-[16px]` (the zoom), `max-md:min-w-32` (without it a
-  `ListRow` never wraps and a `w-72` select squeezes its label to nothing),
-  `max-md:min-w-11` (an icon-only segment still 38px wide), and
-  `max-md:after:-inset-y-[11px]` / `-inset-x-[3px]` (a switch still 38×32).
-  The cheap form of the first two is again a grep of the built stylesheet, and
-  again it has to be spelled for what Tailwind emits rather than for what the
-  class says:
-
-  ```sh
-  grep -cF 'max-md\:text-\[16px\]' .next/static/css/*.css   # expect ≥ 1
-  grep -cF 'max-md\:min-w-32' .next/static/css/*.css        # expect ≥ 1
-  ```
-
-  Grepping the *declaration* instead is the trap this entry fell into. It used
-  to prescribe `grep -o 'font-size:16px\|min-width:8rem'`, and the second half
-  can never match: Tailwind v4 emits `min-width:calc(var(--spacing) * 32)`, not
-  a resolved `8rem`. Measured on the same build at `a294ed2` —
-  `font-size:16px` twice, `min-width:8rem` never, and the two class-name
-  patterns above once each. The 1440px claim
-  needs the harness above: the only unprefixed edits are `AppShell`'s root
-  height (`h-dvh` → an inline `calc(100dvh - var(--keyboard-inset, 0px))`),
-  `--pane-h`'s extra term, `Sheet`'s panel cap and safe-area padding, and the
-  branches bar's inline `bottom: var(--keyboard-inset, 0px)` — each
-  identical while the variable and the insets are `0px`, which is every desktop,
-  but identical *by argument* rather than by measurement.
-- **Checkout-slot exhaustion end to end, and the store inventory behind it.**
-  `resolveIsolation`'s refusal is unit-tested in both directions (it was seen to
-  fail against the old downgrade and to pass against the refusal), and
-  `npm run typecheck` and `npm test` pass — but no run has met a real exhausted
-  store. Filling one needs a workspace mount and 64 dirty checkouts, and Docker
-  was not available where this was written, so `allocateSlotPath`'s census
-  counts, `checkoutStores`' directory walk and the Branches table it feeds have
-  never seen a real `.uf-worktrees`. Before trusting it: on a real deployment,
-  make `<mount>/.uf-worktrees/<slug>-1` … `-64` dirty for one repository (start
-  and hard-kill isolated runs, or write a file into each checkout), confirm the
-  Branches page lists them with their uncommitted path counts and `0 of 64`
-  free, then submit an isolated run on that repository and confirm it is
-  **refused with the sentence** rather than started — and that `git status` in
-  your own checkout is unchanged afterwards. Then free one slot and confirm the
-  next run starts in it. Read the sentence itself while you are there: since the
-  admission stops asking git after `MAX_SLOT_PROBES_PER_ADMISSION` checkouts, on
-  a full store it names some slots as ones it never examined rather than as
-  uncommitted work, and which of the four counts it prints has only ever been
-  seen in a unit test.
-- **The audit trail in a browser and in SQLite.** All five creation paths and
-  the request wrapper are driven under `npm test` against a throwaway database
-  — including that a body, a query string and a cookie holding a token leave
-  nothing behind — but nothing has been read off a *running* install. What has
-  not happened: the origin line rendered on a run page, and the query the issue
-  names run against a real database. Before trusting it:
-
-  ```
-  sqlite3 "$DATA_DIR/usagefoundry.db" \
-    "SELECT origin, count(*) FROM runs GROUP BY origin;"
-  sqlite3 "$DATA_DIR/usagefoundry.db" \
-    "SELECT ts, method, path, status, subject, actor, address FROM request_log
-       ORDER BY id DESC LIMIT 20;"
-  ```
-
-  and confirm no row of the second carries anything that is not on that list.
-  Runs created before this landed read `origin` NULL, and the run page says so
-  in words rather than guessing.
-- **The whole UI density restructure — every surface of it, at every width.**
-  Five build runs regrouped `/settings`, `/runs/new`, `/runs/[id]`, the three
-  workflow surfaces, the dashboard, `/runs`, `/branches`, `/chat` and
-  `/account` against `docs/agent/ui-density-audit.md`, and built two primitives
-  (`ui/Disclosure`, `ui/ListView`) that every fold and every list box in the app
-  now goes through. What *has* been checked, on the last of the five runs and
-  reported with its output: `npm run typecheck` clean, `npm test` 1335 passing
-  across 210 suites, and `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build`
-  compiling and emitting the standalone bundle. Every class spelling the last
-  run wrote was then looked up **in the emitted stylesheet** rather than
-  assumed, which is how the one silent defect in it was found and fixed before
-  it shipped: Tailwind emits a numeric utility's values ascending, so
-  `.mb-0{` sits at byte 10980 of the sheet and `.mb-3\.5{` at 11276, and a
-  caller's `className="mb-0"` on a `Field` is a no-op. (**The same read says
-  three landed `CardTitle className="mb-0"` call sites are also no-ops** —
-  `page.tsx`'s *Where it went*, `RepoSpendCard` and `UsagePeriods`. Left alone
-  deliberately: fixing them is a desktop spacing change nothing asked for, and
-  it is recorded here rather than quietly made.)
-
-  **No browser was opened and Docker is not available in this container**, so
-  `docker compose up --build` — half this repository's real verification loop —
-  was not run by any of the five.
-
-  > **A later completion pass did open a browser, on the host, at a wide
-  > desktop width — see `docs/agent/ui-density-audit.md` §9.** It closed the six
-  > items §8 left open, and it moved four of the readings below out of this
-  > list: eleven surfaces were opened and read; every `Disclosure` on
-  > `/settings` was seen opening by itself with its count when its contents
-  > differ from their defaults; the dashboard's three bands were read as
-  > rendered; and every arbitrary-value class the pass wrote was looked up in
-  > the stylesheet the running page loads. It also found that **`CardTitle`'s
-  > no-op was seven call sites and not three**, that every table in the app was
-  > drawing its fixed columns at a third of their declared width, and that
-  > `npm test` had been failing on macOS all along for a reason unrelated to
-  > any of this. All of it is at a wide width: **nothing below about 390px was
-  > seen**, because the browser refused to resize, so every narrow-viewport
-  > entry on this list stands exactly as written.
-
-  Nothing below has been *seen*:
-
-  - Every restructured page top to bottom at **390×844** with no horizontal
-    scroll, and at **1440px** with nothing moved that the audit did not name.
-    The audit authorises exactly four deliberate desktop changes — the
-    dashboard's and the run inspector's region headings, the dashboard's card
-    emphasis, and the one line on `/branches` that grows to `text-sm` while
-    auto-resolve is on — and every other new class carries `max-md:`/`md:`.
-    That claim is by argument, not by measurement.
-  - The **dashboard's three bands**: that a card sits under exactly one of
-    them, that nothing draws a figure at band level, and that the three
-    statements read as provenance rather than as headings for a total.
-  - The **`Land N branches` confirmation**: that the sheet opens only with
-    *Have Claude resolve conflicts* on, opens with **Cancel** focused, and that
-    pressing Land with the toggle off still queues immediately with no dialog.
-  - The **land-strategy picker in the fixed bar** at both widths: the wrapper's
-    `-mb-3.5 self-end` is what keeps a labelled `Field` aligned with the
-    buttons beside it in a row `ButtonRow` centres, and that is arithmetic
-    rather than a reading. At 390px it goes full width above the buttons; the
-    reserved spacer (`max-md:h-80`) has to stay taller than the bar, and the
-    bar has grown by one label line.
-  - Every migrated **`Disclosure`** opening and closing, and the branches
-    history one still fetching on open rather than on mount — the closed case
-    staying cheap is what keeps an idle install off `?history=1` every three
-    seconds.
-  - The **chat approval correspondence** through a real thread: that Approve
-    still sends exactly the ids the panel displayed. Nothing in this pass
-    touched the approve path, the selection state or the row that renders it,
-    so the correspondence is preserved by *absence of change* rather than by a
-    new test — and one gap it already had is worth naming while somebody is
-    looking: `selected` is not pruned against `pending` when the poll answers,
-    so a proposal decided in another tab leaves a stale id in the set that the
-    next press sends. The route refuses it by id; nothing on the page says so.
-    **The completion pass fixed that prune** (§9.2) without touching the approve
-    path, so the correspondence is still preserved by absence of change and this
-    entry still needs a real thread to settle it.
-- **`/api/status` against a real fleet, and the structured lines on real
-  stdout.** The route is driven by `npm test` against a seeded database — the
-  counts, the documented keys, the read-only credential, the absence of prompts,
-  paths and tokens, and a checkout store's bytes — but every one of those is a
-  throwaway directory with six rows in it. What has **not** happened is a poll
-  against an install with runs in flight, so the cost of the snapshot and the
-  checkout walk at that size is reasoned from the cap and the five-minute cache
-  rather than measured. Nor has any browser rendered the restart banner on the
-  runs page, and no monitoring system has scraped a single JSON line. Before
-  trusting it:
-
-  ```
-  curl -s -H "Authorization: Bearer $UF_STATUS_TOKEN" \
-    http://127.0.0.1:3000/api/status | jq .
-  docker logs usagefoundry --since 1h | grep '^{' | jq -c .
-  ```
-
-  and confirm that no line carries a prompt, a folder path or a token, and that
-  `stores.partial` is false (or that the figure is understood as a floor when it
-  is not).
-- **The container's `HEALTHCHECK`.** `GET /api/health` is driven in both
-  directions by `npm test` — 200 with counts, and 503 with the database handle
-  throwing — and `src/lib/deployment.test.ts` pins the `HEALTHCHECK` directive
-  against the route it names. What has **not** happened is Docker running it:
-  the container was never built, so no `docker inspect` has reported a health
-  status and the `${PORT}` expansion inside the `CMD` has not been watched
-  working. Before trusting it:
-
-  ```
-  docker compose up -d --build
-  docker inspect --format '{{json .State.Health}}' usagefoundry     # expect Status "healthy"
-  curl -sf http://127.0.0.1:3000/api/health | jq .
-  docker exec usagefoundry sh -c 'kill -STOP 1'                     # wedge it
-  docker inspect --format '{{.State.Health.Status}}' usagefoundry   # expect "unhealthy" within ~3 min
-  ```
-
-  Note what the last step does *not* do: Docker Engine surfaces the unhealthy
-  state and does not act on it — `restart: unless-stopped` restarts on process
-  exit only. Wiring a restart to it is the operator's own supervisor or
-  orchestrator, and the Dockerfile comment says why that is left to them.
-- **Every install-wide control, in a browser or against a real fleet.**
-  `fleet.test.ts` drives `stopFleet` against a real database — the four live
-  statuses, the ordering that blocks a waiting run before the run it waits on is
-  stopped, and the `fleet` halt cause on the instance row — and a case per
-  creation site proves the hold suppresses `promoteQueued`,
-  `releaseDependents`, `emitBlockRuns` and `tickSchedules`. `npm run typecheck`
-  and `npm test` both pass. What has **not** happened is any of it against a
-  live child: no run with a real `claude` process has been signalled by
-  `stopFleet` (the test process registers no children, so every live run there
-  answers `cancelled` rather than `signalled`, and the kill ladder itself is
-  `stopRun`'s existing path reached through a new caller), no browser has
-  rendered the Fleet card or its two sheets, and the bulk pick-up has never
-  reopened a real run. The run it was written in has no Docker, so
-  `docker compose up --build` was not run either. Before trusting it: start two
-  or three cheap runs, press **Stop everything**, and confirm each run page says
-  it was stopped *with every run in flight*; then press **Hold new work**,
-  submit a run, and confirm it sits `queued` with the dashboard saying so in
-  words; then **Resume new work** and confirm it starts without a restart.
-- **Setting a run aside, in a browser.** `fleet.test.ts` drives all three doors
-  against a real database: `reopenFleet` refuses a set-aside id by name while
-  picking up the one beside it, `restartClosedRuns` drops it from the notice and
-  restores it when the run is put back, and `reopenRun` clears the mark. `npm run
-  typecheck` and `npm test` both pass. What has **not** happened: no browser has
-  rendered either button, and **Stop and set aside** has never been pressed on a
-  run with a live `claude` child — the stop is `stopRun`'s existing path reached
-  through a new route, but the *ordering* that matters (mark, then signal) has
-  only been read, not watched. `docker compose up --build` was not run. Before
-  trusting it: stop a cheap run with **Stop and set aside**, confirm the Fleet
-  count excludes it and the restart notice does too, then press **Resume** on its
-  page and confirm the chip is gone and the counts include it again.
-- **Per-repository cost, in a browser.** `groupRunSpend` is unit-tested for the
-  two cases that fail silently — two mounts onto one host directory rolling up
-  as one repository, and a run with no repository landing in its own bucket
-  rather than being dropped — plus that the rows add to the total over the same
-  span. No browser has rendered the card, and the figures have never been read
-  against a real multi-repository install. Before trusting them to apportion
-  anything: check the card's total against the sum of `runs.spent_usd` for the
-  same span (`sqlite3 .data/usagefoundry.db "SELECT SUM(spent_usd) FROM runs
-  WHERE created_at >= …"`), and confirm a run started outside a git repository
-  appears in `(not a repository)` rather than nowhere.
-- **The branches page's filter and pager, against a database past 400 runs.**
-  `selectBranchCandidates` is unit-tested for the count over the whole set, for
-  paging by branch rather than by run, for a chain collapsing to one row before
-  the slice and for the cap holding whatever is asked for. What has not
-  happened is a request against a real inventory: no browser has rendered the
-  repository picker or the Previous/Next pair, and the claim that the
-  per-request git cost is unchanged rests on the cap in the code rather than on
-  a measurement. Before trusting it: `curl -s
-  'localhost:3000/api/branches?offset=60' | jq '.branches | length, .total,
-  .notShown'` against a database with more than sixty branches, and the same
-  with `repo=` set to one of the roots in `.repos`.
-- **The whole privilege split, which is every part of it that matters.** The
-  server now runs as root and drops each child to `UF_AGENT_UID`; `/data` is
-  root-owned 0700 and reclaimed by an entrypoint; the MCP capability leaves
-  `/tmp` and is owned by `UF_CHAT_GID`, a group only the chat and block child
-  is in; the telemetry exporter carries a per-run capability instead of
-  `UF_AUTH_TOKEN`. `npm run typecheck` and `npm test` pass, the decision
-  (`resolveChildCredentials`), the compose/Dockerfile pair, the capability file
-  and `telemetryEnv` are all unit-tested, and **no container has been built or
-  started**: the run this was written in has no Docker at all. Nothing below is
-  reasoning about a design — it is reasoning about whether the design runs.
-
-  Build and start it, then:
-
-  ```sh
-  docker compose up --build -d
   docker compose logs usagefoundry | grep 'privilege separation'
   # expect "on: children run as 1000:1000, chat and block turns as 1000:65533,
-  # server as 0" — a line naming no chat gid is the capability boundary absent
-
-  # uid out of the container: a UF_UID default written here would expand in
-  # your own shell, which .env never reaches (#147). Shape corrected
-  # 2026-09-08; the check itself was not re-taken.
+  # server as 0"; uid below read in-container (#147, reshaped 2026-09-08, not re-run)
   uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
-
-  # #79 — the server's environment
+  # #79 the server's environment: expect a permission error, not a count
   docker compose exec --user "$uid" usagefoundry sh -c \
     'tr "\0" "\n" < /proc/$(pgrep -f "next-server" | head -1)/environ | grep -c UF_'
-  # expect a permission error, not a count
-
-  # #80 — the database, on a fresh volume and on an upgraded one
+  # #80 the database, fresh and upgraded volume: expect ok twice
   docker compose exec --user "$uid" usagefoundry sh -c \
     'test -w /data/usagefoundry.db && echo BAD-writable || echo ok'
   docker compose exec --user "$uid" usagefoundry sh -c \
     'test -w /data/server.lock && echo BAD-writable || echo ok'
-
-  # #87 — a capability in flight, with a run working and a chat turn sent
+  # #87 mid chat turn: nothing from the first ls, a permission error from the second
   docker compose exec --user "$uid" usagefoundry sh -c \
     'ls /tmp/uf-mcp-* 2>/dev/null; ls /run/uf-mcp 2>/dev/null; echo "exit=$?"'
-  # expect nothing from the first and a permission error from the second
-
-  # #87 — and the read itself, which the group is what refuses. Prints modes
-  # and a byte count only: the file carries a live bearer token.
+  # #87 the read: expect "ok: not readable", directory group 65533; no
+  # --mcp-config argv found proves nothing, so probe while the turn works
   docker compose exec --user "$uid" usagefoundry sh -c '
     for p in $(ls /proc | grep "^[0-9][0-9]*$"); do
       cfg=$(tr "\0" "\n" < /proc/$p/cmdline 2>/dev/null |
@@ -4722,926 +1772,19 @@ through before trusting this unattended:
         else echo "ok: not readable"; fi ;;
       esac
     done'
-  # expect "ok: not readable", and `ls -ldn` of the directory to show group
-  # 65533 rather than the agents' gid. A run that finds no --mcp-config argv at
-  # all has proved nothing: the window is one turn, so send the chat message
-  # first and probe while it is still working.
-
-  # #83 — with UF_AUTH_TOKEN set and a run under live enforcement
-  #   task the agent with:  env | grep OTEL_EXPORTER_OTLP_HEADERS
-  # expect a bearer that is not UF_AUTH_TOKEN, and telemetry still on the
-  # run page and the dashboard card
+  # #83 task the agent with `env | grep OTEL_EXPORTER_OTLP_HEADERS`: expect a
+  # bearer that is not UF_AUTH_TOKEN
   ```
 
-  Then the half that is not a permission check, and is the way this breaks if
-  it breaks: **a run still has to work**. Start an isolated run on a git
-  repository and confirm it commits — that is `git worktree add`, the
-  `.uf-worktrees` store and `seedWorktree`'s copies all going through
-  `chownForChild`, and a `git commit` inside the operator's own `.git` as the
-  dropped uid. Then a non-isolated run in a plain folder, a review, a chat turn
-  and a merge from the queue. The specific unknown worth naming: **macOS Docker
-  Desktop**, whose bind-mount ownership remapping was written for a container
-  whose *process* is the mounted uid, and which now sees a root process
-  spawning children that are not. If writes fail there, the arrangement to
-  compare against is `user: "${UF_UID:-1000}:${UF_GID:-1000}"` with
-  `UF_AGENT_UID`/`UF_AGENT_GID` cleared, which is the previous behaviour whole
-  and which the app detects and reports at boot.
+- **The `/api/mcp` middleware exemption under a real `UF_AUTH_TOKEN`.** Only
+  the route's capability check ran, with auth off (no edge runtime there).
 
-  One thing is known-not-closed rather than unverified, and is in
-  `docs/security.md` rather than here: an agent can still read
-  `~/.claude/.credentials.json`, because it is what a work cycle bills against,
-  and only a per-run credential Claude Code does not have would close it.
-
-  The MCP capability *path* is still readable out of `/proc/<pid>/cmdline` and
-  always will be — what changed is that the file it names is owned by
-  `UF_CHAT_GID` and mode 0040, so the path leads somewhere the reader cannot
-  open. That is a group check rather than a second Claude credential, and it is
-  unit-tested at `chat.test.ts` ("hands the config to a group…") and
-  `privsep.test.ts` (`resolveChatGid`) — but a unit test in one process has one
-  uid and **cannot observe the refusal**, which is why the probe above exists and
-  why this bullet is on this list rather than in the verified section.
-
-  One thing that is *not* on this list and used to be: `npm run build` failing
-  on a clean tree with `TypeError: generate is not a function`. That is the
-  inherited `__NEXT_PRIVATE_STANDALONE_CONFIG` trap described further down, not
-  the privilege split and not this repository — build with `env -u
-  __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` before reading a build
-  failure here as evidence about anything above.
-- **The work-cycle deadline against a real `claude`.** What *is* pinned is the
-  mechanism: `src/lib/cycleDeadline.test.ts` drives `runIteration` against a real
-  child that prints nothing and never exits, and asserts that the promise settles,
-  that the child was signalled rather than left to its own way out, and that the
-  reason reaches the run log — with a control that keeps a child printing every
-  100ms alive past the same deadline, which is what says the clock is silence
-  rather than wall time. Both were watched to fail with the watchdog disabled.
-  What has **not** happened is any of it against Claude Code itself: no real
-  `claude` has been observed hanging, so whether one that does is reaped by
-  `SIGINT` (and still prints its `result` event, which is the difference between
-  the cycle's cost being measured and being reconciled) or only by the `SIGKILL`
-  eight seconds later is unknown, and the 120-minute default has been reasoned
-  about rather than measured against a real workload's quiet stretches. Docker is
-  not available in the environment this was written in, so the container path is
-  unrun: `docker compose up --build`, then start a run whose task blocks — a task
-  that runs `sleep 100000` inside a tool call is the shape it was written for —
-  with **Silent cycle limit** set to five minutes, and confirm the run ends
-  `failed` naming the deadline, that its folder frees, and that a queued run
-  behind it starts.
-- **The container's own resource limits.** `docker-compose.yml` now declares
-  `mem_limit: ${UF_MEM_LIMIT:-10g}`, a `memswap_limit` equal to it,
-  `pids_limit: ${UF_PIDS_LIMIT:-2048}`, `cpus: ${UF_CPUS:-0}` and the server's
-  own `NODE_OPTIONS` heap ceiling beside them. `deployment.test.ts` pins the
-  heap ceiling against the memory limit and `memswap_limit` against `mem_limit`,
-  but not one of them has been applied by a real Docker: the runs that added
-  them had no Docker at all, so what is here is the compose file parsing
-  correctly by eye and nothing more. The per-child memory figures README's
-  sizing table is built from are **estimates** and not measurements — the
-  reasoning is that a `claude` child is a Node process and a work cycle's agent
-  starts builds inside the same cgroup, which sets the shape of the arithmetic
-  but not its constants. Before trusting the numbers, that they are in force at
-  all:
-
-  ```bash
-  docker compose up -d --build
-  docker inspect --format '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.PidsLimit}} {{.HostConfig.NanoCpus}}' usagefoundry
-  docker exec usagefoundry cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/pids.max
-  docker stats --no-stream usagefoundry
-  ```
-
-  `memory.max` reading `max` means the limit is not in force — most likely
-  cgroup v1, where `mem_limit` lands at `/sys/fs/cgroup/memory/memory.limit_in_bytes`
-  instead. That `cpus: ${UF_CPUS:-0}` is accepted as "no quota" rather than
-  refused as a value is the one syntax question here, and it fails loudly at
-  `docker compose up` either way. Then start runs up to the configured cap and
-  watch `docker stats` for the real per-run footprint. The recovery half is
-  worth exercising once too — that the kill is confined to this container, and
-  that what comes back closes its runs out:
-
-  ```bash
-  docker exec usagefoundry node -e 'const a=[];for(;;)a.push(Buffer.alloc(1<<26))'
-  docker inspect -f '{{.State.OOMKilled}}' usagefoundry   # expect true
-  dmesg | tail                                            # expect no host process named
-  ```
-
-  `Buffer.alloc` on purpose: it allocates outside V8's old space, so this tests
-  the cgroup limit rather than the `--max-old-space-size` ceiling above it. Then
-  confirm `restart: unless-stopped` brought the container back and that
-  `reconcileOnBoot` closed out the runs it was carrying rather than leaving
-  folders claimed.
-- **The cap on the container's own log.** `docker-compose.yml` now declares
-  `logging: {driver: json-file, options: {max-size: ${UF_LOG_MAX_SIZE:-20m},
-  max-file: ${UF_LOG_MAX_FILE:-5}}}`, and `deployment.test.ts` pins that the
-  block exists, that the driver is named, that `max-size` x `max-file` holds a
-  day of the worst case, and that README states the same figures — but no
-  Docker has applied it, no line has been observed rotating, and the two rates
-  the size came from are **derived, not measured on a running container**.
-  `~270 B` a line is `JSON.stringify` of the five event shapes inside
-  json-file's own envelope, computed in a `node -e`; `~1,800 work cycles a day`
-  and `~11,000 tool events an hour` are README's own figures for a 25-run
-  fleet, not a count taken from a log file. That it is in force at all:
-
-  ```bash
-  docker compose up -d --build
-  docker inspect -f '{{json .HostConfig.LogConfig}}' usagefoundry
-  # expect {"Type":"json-file","Config":{"max-file":"5","max-size":"20m"}}
-  sudo ls -la /var/lib/docker/containers/$(docker inspect -f '{{.Id}}' usagefoundry)/
-  # expect *-json.log, and *-json.log.1 … .4 once it has wrapped
-  ```
-
-  `Type` reading anything else means the daemon overrode it, most likely a
-  `log-driver` in `/etc/docker/daemon.json`, which is the one place a host can
-  make this block a no-op. Then the numbers themselves, which need a busy
-  install rather than a fresh one: leave a fleet running, and compare
-  `du -c …-json.log*` after a day against the ~2 MB the ordinary rate predicts.
-  The storm figure is the one worth provoking deliberately once — a sandbox
-  policy that refuses every tool call, with `UF_SANDBOX` on and a profile that
-  denies broadly, should reach the 100 MiB ceiling in roughly a day and not in
-  an afternoon. Nothing here fails loudly either way: an overridden driver, a
-  wrong rate and a cap that never wraps all look identical from inside the app,
-  which does not read this file at all.
-- **The process budget refusing a real child.** `liveAssistChildren`,
-  `assistBudgetRefusal` and the deferral of a workflow block are covered by
-  `src/lib/assistBudget.test.ts` against a real database, and `npm run
-  typecheck` and `npm test` pass — but no browser has seen the refusal, and no
-  workflow block has actually been deferred and then woken. The wake is the part
-  worth watching: a block over the budget is left `waiting` rather than failed,
-  and what un-sticks it is `advanceInstances` being called when a review or a
-  chat turn settles. Before trusting it: set *Other Claude processes at the same
-  time* to 1, start a workflow whose orchestrator block is behind something
-  slow, open a chat and send a turn, and confirm the block sits `waiting` while
-  the chat is thinking and starts deciding within a moment of the chat settling.
-- **A failed tool result reaching the run page.** `toolResultFailures` is unit-
-  tested and `npm run typecheck` passes, and the `user`/`tool_result` shape it
-  reads was taken from real transcripts written by the pinned CLI (2.1.226) —
-  both the string `content` and the array-of-blocks one, with `is_error: true`
-  on each. What has **not** happened is a live `stream-json` stream reaching
-  this branch: transcripts are the *persisted* form of those messages, so that
-  `parent_tool_use_id` sits on the envelope of a forwarded one is still the
-  assumption the `subagent` branch already makes, and no browser has rendered a
-  `tool_error` row. Before trusting it: start a run whose task fails a command
-  on purpose (`git push` to a repository the token cannot reach is the case it
-  was written for) and confirm the log shows one danger row naming the tool,
-  the command and the error — and that a run whose commands all work gains no
-  new rows at all.
-- **The whole of "The agent's own report" above — including that it compiles.**
-  It was written by a run whose permission allowlist carried no `npm`, so
-  `npm run typecheck`, `npm test` and `npm run build` were never executed against
-  `src/lib/cycles.ts`, `src/components/Markdown.tsx`,
-  `src/components/RunOutput.tsx` or their two test files. They were read for type
-  errors by hand and by nothing else, and no browser has rendered the card. The
-  same run could not reach `gh`, so the issue it was written from was never read
-  either — what is here follows the task text's summary of it. Run the three
-  commands and open one finished run's page before trusting any of it.
-- **Every part of a workflow schedule that is not the decision function.**
-  `decideSchedule`, `nextOccurrence`, `normalizeScheduleInput` and
-  `scheduleRefusal` are unit-tested — including a missed window, an overlap
-  refusal, a paused schedule and both DST boundaries in Europe/Berlin — and
-  `npm run typecheck`, `npm test` and `npm run build` all pass. What has **not**
-  happened is a clock reaching a fire time: no schedule has ever actually
-  started a workflow, no browser has rendered the schedule card or its form, and
-  `reconcileSchedulesOnBoot` has not been watched closing out a real missed
-  window across a container restart. The run it was written in has no Docker, so
-  the restart path in particular is reasoning plus a unit test and nothing else.
-  Before trusting it unattended: set a schedule a few minutes out on a cheap
-  workflow, watch it fire once, then stop the container over the next occurrence
-  and confirm the card says *missed* and that nothing started on boot.
-- **The Usage by period card in a browser.** The rollup behind it was exercised
-  against 9,200 real turns (see *Verified*) and `npm run typecheck` and
-  `npm test` both pass, but no browser has rendered it: the sandbox it was
-  written in cannot execute Next's edge runtime at all (`EvalError: Code
-  generation from strings disallowed`, the same limitation noted below for
-  `/api/mcp`), which takes `next build` and every page request with it. What
-  has not been seen is the layout — the tab strip beside the card title at a
-  narrow width, a fourteen-row daily table, and a meter reading 798% of a
-  pro-rated day, which is a real figure from those transcripts and clamps to a
-  full bar.
-- **Everything about the multi-repository sweep that needs Docker or a second
-  repository.** Four changes landed together (#77, #76, #70, #67);
-  `npm run typecheck` and `npm test` pass and each carries a regression test that
-  was watched failing before the fix. What has **not** happened:
-  - `docker compose config` and `docker compose up` with a fifth workspace slot
-    in `.env`. The refusal is unit-tested from the app's side and
-    `deployment.test.ts` pins `MOUNTED_WORKSPACE_SLOTS` against the volume lines,
-    but no compose has interpolated `UF_UNMOUNTED_WORKSPACES`. Run
-    `cp .env.example .env`, fill `UF_WORKSPACE`, add `UF_WORKSPACE_5_NAME=Extra`,
-    then `docker compose config | grep UF_UNMOUNTED_WORKSPACES` (it should carry
-    the name) and `docker compose up` (the container should exit naming it).
-    Then unset it and confirm a four-slot install boots exactly as before, and
-    that the `docker-compose.override.yml` recipe in `docs/install.md` — which
-    clears that variable — really does mount a fifth slot.
-  - A nested seed pattern reaching a real checkout. `planSeedCopies` is pure and
-    tested against a fabricated tree; no `git worktree add` has been followed by
-    a copy of `apps/web/.env`. Start an isolated run on a monorepo with
-    `apps/web/.env` gitignored, confirm the file arrives and the log names it,
-    then remove the pattern and confirm the log says *nothing seeded* and counts
-    the gitignored files it did not match — rather than the old silence.
-  - A per-repository GitHub token authenticating. The selection is pure and
-    tested; no `git push` has been attempted with one. With two throwaway
-    repositories and two fine-grained tokens, confirm a run in A can push to A
-    and cannot push to B, and that with `UF_GITHUB_TOKEN` blank a repository no
-    entry names gets no credential at all.
-  - Two repositories' branches landing at once. The selector is driven against a
-    real database and the ordering within one repository is pinned, but no two
-    `landRun` calls have overlapped. Queue a conflicting branch with auto-resolve
-    on in one repository and a clean branch in another, and confirm the second
-    lands while the first is still resolving — and that two branches in *one*
-    repository still land strictly one after the other.
-- Whether `claude -p` flushes its `result` event on `SIGINT`. If it does, an
-  interrupted cycle keeps its measured cost and the transcript reconciliation
-  becomes a fallback rather than the norm.
-- **A work cycle actually stopping at its `--max-budget-usd` ceiling.**
-  `buildArgs` now hands each cycle what is left of `maxRunCostUSD`, and the loop
-  ends the run on `result.subtype === "error_max_budget_usd"`. The argv is
-  unit-tested in both directions and `npm run typecheck` and `npm test` pass,
-  but no billed cycle has been run into the ceiling. Two things are reasoned
-  rather than measured: that the pinned CLI honours the flag on a `-p` run at
-  all — evidenced by `chat.ts` passing it to the same binary, and by the subtype
-  already being named in this repository as one it emits — and *how far past*
-  the ceiling a cycle gets before the CLI notices, which the acceptance
-  criterion assumes is one model turn and which nothing here has watched. Also
-  unseen: what the CLI writes into `result.result` when it stops for this
-  reason. Nothing depends on that text — the subtype is what the loop reads,
-  deliberately, and it is read before `isUsageLimit` ever sees the sentence —
-  but it is what the operator ends up reading in the run log. Set
-  `maxRunCostUSD` to something small on a task that will exceed it in one cycle,
-  and confirm the run ends `stopped` naming the spending limit rather than
-  `failed`, and that it does not park.
-- **The chat's `/api/mcp` middleware exemption under an actual `UF_AUTH_TOKEN`.**
-  The end-to-end run above was done with auth off, because the sandbox it was
-  done in cannot execute Next's edge runtime at all (`EvalError: Code generation
-  from strings disallowed`), which takes `middleware.ts` out of the picture along
-  with the exemption. The capability check in the route itself is what was
-  exercised — every tool call carried one and was accepted. What has *not* been
-  watched is a token-protected deployment letting an unauthenticated `/api/mcp`
-  request through to that check. Worth ten minutes with `UF_AUTH_TOKEN` set
-  before trusting it, since the failure mode if the exemption is wrong in the
-  other direction is a chat whose every tool call 401s.
-- **The chat against a repository with a large number of open issues.**
-  `MAX_PENDING_PROPOSALS` (25) and `MAX_REMOTES_READ` (25) were reasoned about
-  rather than hit. What a chat does when it reaches the proposal cap mid-answer —
-  whether it reports the refusal usefully or simply stops — has not been seen.
-- **Ordered proposals and proposed workflows, against a real CLI.**
-  `planApprovalBatch` (the creation order and what each proposal resolves to) and
-  `planWorkflowProposal` / `summarizeProposedGraph` (what a graph becomes and
-  what the card shows) are unit tested, including the cascade behind an
-  unresolvable label, a loop among the proposals, a duplicate label and a
-  template deleted between the proposal and the click. The storage round trip —
-  the five columns `migrate()` adds and the JSON `proposalDeps` reads back — is
-  pinned against a temporary database. What has not happened is a real turn:
-  no CLI has called `propose_workflow` or passed a `dependsOn`, so the shape of
-  the tool schemas is unproven in the one way that matters. Three things to
-  watch. Whether the model reaches for `dependsOn` where the folder claim
-  already serialises the work, which buys a slower queue for nothing; whether it
-  proposes an orchestrator block where two run blocks would have done, since that
-  is the one block whose runs nobody approves individually; and whether a
-  workflow card with eight blocks is still read rather than scrolled past, which
-  is the whole basis for letting a model write a graph at all.
-- **The chat's inspection tools, and proposals with no template.** `get_run`,
-  `get_run_diff`, `get_usage`, `list_proposals` and `save_template` answer from
-  the same functions the pages already use, and they typecheck — but no real CLI
-  has called one. Two things to watch. Whether a turn asked about three runs
-  stays inside `chatTurnBudgetUSD` now that a single tool call can return 60KB
-  of patch; and whether the untemplated path gets used where a template would
-  have been better, since it is the branch with no form behind it and its guard
-  set is the one thing on a proposal card an operator has to *read* rather than
-  recognise.
-- **That an unrestricted chat stays an orchestrator.** It now runs
-  `bypassPermissions` with no tool list, so the only thing stopping it fixing a
-  one-line bug itself — in a checkout you may also be working in — is the
-  paragraph in `systemPrompt()` telling it that its job is to look and propose.
-  That has not been tested against a real CLI, and it is the assumption this
-  whole feature now rests on. Two things to watch, both of which show up as a
-  dirty working tree rather than as an error: whether it edits when a fix is
-  smaller than the proposal describing it, and whether it runs `git` writes
-  while investigating (it has the credentials to push, since `githubEnv()`
-  reaches this child).
-- **The three words an unhalted instance now reads as, in a browser.**
-  `instanceStatus` is unit tested pure, and the count it decides from — over
-  member runs *and* the ledger of blocks that are not runs yet — is tested
-  against a real database in `instanceReading.test.ts`, including a graph whose
-  runs have all settled while a deferred block is still to wake. What has not
-  happened is anyone seeing the workflow page render them: `working`,
-  `finished` and `blocked` replaced a single green `started` badge in one table
-  cell, and the cell is now one lookup pair plus `outcomeDetail` rather than
-  four conditional blocks. Nothing here can start or stop an agent, so the
-  failure available is cosmetic — a badge tone that reads wrong, or a clause
-  that renders empty. What a human should check, on the workflow's own page:
-  a graph mid-flight says `working` with a count, the same graph after its last
-  block settles says `finished` with no clause, and a graph whose `on-success`
-  dependent was written off says `blocked` with the number that never ran.
-- **Stopping a whole workflow instance against real runs.** `haltPlan` — which
-  members a stop selects and what each becomes — is unit tested over an instance
-  holding one running, one queued, one parked, one waiting, one completed and one
-  failed block, plus a stop arriving mid-instantiation and a second stop on an
-  instance already stopping. The writes around it typecheck and nothing else has
-  been exercised: no child has been signalled by `stopInstance`, and the sandbox
-  it was written in cannot run this app at all — `npm run dev` starts and every
-  request 500s with `EvalError: Code generation from strings disallowed`, the
-  same edge-runtime limitation noted above for `/api/mcp` and the period card,
-  which takes `instrumentation.ts` and the middleware with it. What a human
-  should run, against a scratch `DATA_DIR`, `CLAUDE_HOME` and workspace, with
-  `CLAUDE_BIN` pointed at a stub that speaks `stream-json` and stays alive:
-
-  ```bash
-  docker compose up --build          # or: npm run dev, where the edge runtime works
-  # Settings → 1 concurrent run, so one block queues behind another.
-  # Save a workflow: a quick block, a slow one, a second slow one, and a fourth
-  # set to start after the first slow one. Press Run, wait for one `running`,
-  # one `queued` and one `waiting`, then press Stop all.
-  ```
-
-  Five things to watch, none of which the unit test can see. That the signalled
-  child actually dies and its run lands `stopped` rather than `failed` — a
-  SIGTERM'd child closes with a null code that reads as `-1`, and the `cancelled`
-  check ahead of the exit-code test is what keeps a deliberate stop from being
-  filed as a crash. That a killed cycle's spend arrives in `spent_usd_est` and
-  not in `spent_usd`. That the block which was `waiting` reads `blocked` with a
-  reason naming the workflow, and that nothing was promoted into `running` on the
-  way out. That a stopped run's uncommitted work is still in its checkout
-  afterwards, offered by the run page's Commit under that run's own branch. And
-  that neither halted block can be restarted from its own run page: no *Try
-  again* on the one that was waiting, no *Resume* on the one that was stopped,
-  and `POST /api/runs/<id>/reopen` against either answers 400 naming the
-  workflow. That last one is unit tested against the database — `stopInstance`,
-  then `reopenRun` and `reviveBlockedDependents` — but the page's own gate is
-  only typechecked.
-- **A workflow-wide budget tripping against real spend.**
-  `evaluateInstanceBudget` is unit tested over the cap unreached, reached
-  exactly, reached only once a block's in-flight cycle is counted, reached on
-  reconciled estimates alone with `spent_usd` still at zero, a fraction guard
-  with no ceiling, a fraction guard satisfied by the provider's own percentage
-  with no ceiling configured, a window that falls back under the guard after
-  tripping, and the ordering that reports spend ahead of a window. What is *not*
-  exercised is any of the machinery around it: no instance has been halted by a
-  guard rather than by a person, and `instanceSpend` has never summed a real
-  `otlp_requests` row. Same sandbox limitation as the entry above. What a human
-  should run, on the same stub setup:
-
-  ```bash
-  # Save a two-block workflow with a workflow spending limit of about half
-  # what one block costs, and both blocks set to several work cycles.
-  # Press Run and watch the instance page.
-  ```
-
-  Four things to watch. That the second block never starts, and that the first
-  one is halted at a cycle boundary with the instance recording *stopped by its
-  budget guard* rather than *by you*. That the guard's figure on the instance
-  page moves **during** a cycle and the measured one does not — that gap is the
-  telemetry door, and a guard reading zero because nothing arrived looks exactly
-  like a guard that was never reached. That `runs.spent_usd` still sums to what
-  the CLIs reported, with the estimate beside it and not inside it. And that a
-  workflow saved with a fraction guard and no ceiling is refused **at Run**, by
-  name, rather than starting and halting a moment later.
-- **A 413 from the ingest route, on the wire.** `readCappedBody` and the order
-  the route answers in are unit-tested (`otlp.test.ts`), and the whole build
-  compiles, but no HTTP request has been made against a running server: what a
-  unit test cannot say is whether Next's own request handling reaches the
-  handler at all for a body of this size, or refuses it first with something
-  else. Docker was unavailable where this was written. What a human should run,
-  against a container with a live run so a valid ingest token exists:
-
-  ```bash
-  # Take the bearer from the run's own environment:
-  #   task the agent with:  env | grep OTEL_EXPORTER_OTLP_HEADERS
-  TOKEN=<the bearer that prints>
-  head -c 5000000 /dev/zero | tr '\0' 'a' > /tmp/oversized
-  curl -si -X POST http://127.0.0.1:3000/api/otlp/v1/logs \
-    -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-    --data-binary @/tmp/oversized | head -1
-  curl -si -X POST http://127.0.0.1:3000/api/otlp/v1/logs \
-    -H 'Authorization: Bearer nonsense' \
-    --data-binary @/tmp/oversized | head -1
-  ```
-
-  Three things to watch. That the first is `413` and its body names
-  `limitBytes`, rather than the `200 {"partialSuccess":{}}` every other
-  unreadable payload gets. That the second is `401` — an unauthenticated caller
-  is refused before the body is read, so the size never enters into it. And that
-  `request_log` has grown by nothing across both, which is the constraint the
-  route inherits from `/api/logout`: an exempted path's own refusal must not
-  spend a capped table's window.
-- **An orchestrator block, end to end.** Nothing about it has been run. The two
-  decisions are unit tested — `planEmission` over the cap on both sides, a
-  folder the mount check refuses, a spec graph that loops, a dependency naming a
-  run outside the emission, and an empty emission; `planInstanceStep` over a
-  block spawning, a block held while its runs are still going, the fan-in onto
-  every run that was emitted, an empty emission cascading down a chain with one
-  sentence per link, and a node that is already a run never being created twice
-  — and `npm run typecheck` and `npm test` pass. Everything around them
-  typechecks and has never executed: no `claude` child has been spawned by
-  `startBlockTurn`, no `emit_runs` call has reached `/api/mcp`, and no run has
-  been created by a block. Same sandbox limitation as the two entries above, and
-  Docker is unavailable here as well. What a human should run, against a scratch
-  `DATA_DIR`, `CLAUDE_HOME` and workspace:
-
-  ```bash
-  docker compose up --build          # or: npm run dev, where the edge runtime works
-  # Save a workflow: one orchestrator block over a repo with a few obvious
-  # small jobs in it, fan-out 2, under a template you trust; then one ordinary
-  # block set to start after it. Press Run and watch the instance page.
-  ```
-
-  Six things to watch, none of which the unit tests can see. That the block's
-  turn is offered `emit_runs` and *not* `propose_run` — `tools/list` is per
-  subject, and a block that can propose is a block whose work stops at a card
-  nobody will click. That what it emits actually starts, under the template's
-  guards and not something else: check the run's permission mode and budget
-  against the template rather than against the block's brief. That a folder
-  outside the block's workspace comes back to the model as a sentence it can act
-  on rather than as a failed run. That the block behind it is created only once
-  every emitted run has settled, and is `blocked` with a naming reason if the
-  block emitted nothing. That the block's own cost lands on the block row and in
-  the instance total, and nowhere near `runs.spent_usd` or the dashboard meters.
-  And that *Stop all* while the block is still deciding kills that child and
-  leaves no run created afterwards — the guarded UPDATEs are what should refuse
-  a late emission, and a run appearing after the page says *stopped* is the
-  failure this whole ordering exists to prevent.
-
-  Seventh, added after the first thing an operator hit was that a block ran,
-  started nothing and left no account of it: that the block's **reply** is on
-  the instance page, and that a refused `emit_runs` shows up there as its own
-  line. `blockSettlement` is unit tested — the reply kept, a failed turn's text
-  recorded as the failure rather than twice, a turn that emitted before failing
-  *not* written off as `failed`, notes taken during the turn surviving the
-  settle, denials deduplicated — and the two places that write a note during a
-  turn have not executed. Worth checking against a real turn that the reply is
-  non-empty (the CLI's `result` field, read by `parseTurnOutput`), and that a
-  block given a folder outside its workspace ends with both the refusal line and
-  whatever the model said about giving up.
-
-  Eighth, and the same shape of gap one level on: that the runs a block started
-  are **watchable** from the instance page. They were always listed, mixed into
-  the graph's own blocks with a *started by* line; they now have their own table,
-  each row carrying the folder the model chose within the block's mount, when the
-  run started, and the cycle it has open — `fmtCycleInFlight`, without which a
-  run tens of minutes into its first cycle reads `0/1` and `$0.00`, which is what
-  a run that was marked running and never started reads. All of that typechecks
-  and no browser has rendered it. Three things to watch against a real fan-out:
-  that the folder line names the folder the run is actually in (an emitted run is
-  the one case where that is not derivable from the saved graph), that a run
-  working right now shows its cycle in flight and a finished one shows none, and
-  that the count under *Runs* on the workflow page moves as the block emits — it
-  is the number of runs the instance holds, which for a graph with an
-  orchestrator block in it is not the number of blocks.
-- **The external validator, end to end. Nothing about it has been run against a
-  real `claude`.** The four pure decisions are unit tested and the rest
-  typechecks and builds; no verdict has ever been produced by the pinned CLI
-  through `spawnAssist` on this install, and `docs/verification.md` already
-  records that **no real `claude` has been run through the assist path at all** —
-  this is the first thing to make that path automatic, which raises the stakes of
-  that line rather than settling it. What the design rests on is
-  `scripts/validator-spike/RESULT.md`: 34 of 37 on a held-out set with zero
-  false-finished, judged through the harness's own subagent transport, one sample
-  per case, on 40 `completed` runs judged against `runs.task` rather than against
-  a board task. Six things to watch, in the order they would bite.
-  **Does a verdict parse at all** — the whole gate turns on one fenced JSON block
-  arriving at the end of a `--permission-mode plan` reply, and every failure to
-  read one closes the task silently, so the first real check is a `run_reviews`
-  row with a non-null `verdict`. **Does the task actually close on `finished`**,
-  and does the close carry `completed_by_run_id` — the close goes through
-  `updateTask` with the run as the actor, so a run whose claim has lapsed is
-  refused by `taskTransitionRefusal` and the sentence lands on the run's log
-  rather than in a tool result. **Does the boundary wait, and for how long** — the
-  measured median is 49.5s and this holds the run's folder and slot for it;
-  anything approaching the eleven-minute bound means the row stopped being
-  written rather than that the child was slow. **Does an unfinished verdict buy
-  exactly one cycle** — `validation_cycles` should read 1 after the first grant
-  and the run should end at the ceiling, and the shape that would show a defect is
-  a run whose counter climbs on a verdict it was already granted a cycle for.
-  **Is the re-tuned preference section doing what the untuned one did** — the
-  spike's numbers are numbers about a prompt whose "be suspicious rather than
-  generous" paragraph this change replaced, deliberately and under
-  `external-validator.md` §7's rule, so the agreement figure is inherited rather
-  than re-measured and the honest statement is that **the shipped prompt has never
-  been scored**. Re-running `scripts/validator-spike/score.mjs` against the
-  shipped text is the measurement that would settle it. And **what the ceiling
-  now counts**: `installSpend` reads `run_reviews.cost_usd` for the first time, so
-  an install with a daily limit and a history of reviews will read higher against
-  that limit than it did before this change, immediately and with no run having
-  spent anything new.
-- **Stopping a chat turn, in either of its two forms.** `staleTurn` is unit
-  tested and the rest typechecks, but no real CLI child has been signalled by
-  `cancelChatTurn` and no sweep has fired against a live row. Two things to
-  watch. Whether the SIGINT/SIGTERM/SIGKILL ladder actually reaches a chat
-  child's whole process group the way it does an agent's — the chat spawns
-  `detached` under the same `killProcessGroup` setting, so it should, but the
-  agent path is the one that has been watched. And whether the sweeper ever
-  fires on a turn that was merely slow: it waits a minute past the silence
-  bound, and the in-closure timer should have settled the row long before, so an
-  entry saying the chat "produced nothing for 15 minutes" that arrives with no
-  preceding kill means the two paths disagree about when the turn was last heard
-  from. Putting a row into `thinking` by hand (`sqlite3 $DATA_DIR/usagefoundry.db
-  "update chat_sessions set status='thinking', turn_started_at=…, partial_at=…
-  where id=…"`) and loading `/chat` exercises the no-child half of both without
-  spending anything.
-- **The silence bound on a turn, in every one of its three places.** The change
-  from a wall clock to an idle bound is unit tested where it is pure —
-  `staleTurn` against a row, the `<synthetic>` latch against a stream — and
-  nothing else about it has been run against a real child. Four things to watch,
-  and the first two are the ones that would be silent. Whether a long working
-  turn now survives: a turn that runs past fifteen minutes while still producing
-  output should never be stopped, and the way to see it is a brief that takes a
-  while ("read every repository under the mount and summarise each") plus the
-  "last output …" figure beside *Thinking…* staying small while the elapsed
-  clock passes 15:00. Whether the two enforcers still agree: the in-closure timer
-  re-arms on bytes and `staleTurn` reads `partial_at`, so a turn killed by the
-  sweeper a minute after the timer should be impossible, and a thread that ends
-  with the sweeper's wording having never been signalled is the pair drifting.
-  Whether `partial_at` actually moves during a long tool call — it is stamped per
-  event and a silent tool call produces none, which is intended, but a turn
-  running a fifteen-minute build is the case where the bound and a legitimate
-  silence meet. And whether the capability outlives what it should: it is minted
-  with no expiry now, so a tool call late in a very long turn should still be
-  answered, and `/api/mcp` returning 401 mid-turn would mean the revocation fired
-  early.
-- **The `chat_proposals` rebuild on a database that predates it.** Dropping the
-  NOT NULL from `template_id` needs a table rebuild, which was exercised against
-  SQLite directly — rows preserved, index recreated, foreign key and its cascade
-  intact, a null `template_id` accepted afterwards — but not through
-  better-sqlite3 in a running container, because the environment it was written
-  in has a native module built for another platform. The first `docker compose
-  up` on an existing `.data` is the test. What *is* now covered, through
-  better-sqlite3 and the real `open()`/`migrate()` path, is the **interruption**:
-  `schemaMigration.test.ts` drives the rebuild with a throw injected after each
-  statement in turn and asserts every row survives, and it puts the on-disk
-  residue of a pre-transaction crash (the renamed table) in front of a second
-  boot and asserts the rows come back. The happy path on a real upgraded volume
-  is still the part nobody has watched.
-- **The derived 5-hour boundary against a live `/usage` reading.** Removing the
-  hour rounding was argued from the CLI's own header handling and rendering, not
-  from watching the two side by side, and what is left over — the opening turn's
-  latency, and any window opened by a surface with no local transcript — has
-  never been measured against the real reset time. A residual offset that is
-  *steady* is the tell that the rule is still wrong somewhere; one that varies
-  run to run is the invisible usage this app already documents. Until someone
-  compares them, the override in Settings is the answer to a disagreement.
-- **What a subscription-limit refusal actually says.** The `<synthetic>` marker
-  is confirmed from a real record on this machine, but the only refusal ever
-  seen here is `Not logged in · Please run /login`. The wording `isUsageLimit()`
-  matches was read out of the shipped binary's own strings, not observed on the
-  wire, and the `usage limit reached|<epoch>` form the ecosystem keys on is not
-  in that binary at all. A refusal it fails to classify still reports honestly —
-  it just fails instead of waiting. The `error` run event records the text, the
-  exit code and whether the pattern matched, so the first real occurrence is
-  enough to correct it.
-- Whether a refusal ever arrives on stderr alone rather than as a `<synthetic>`
-  assistant turn. `refusalInStderr` covers that case but has never fired.
-- **What a dropped stream does to the cycle around it.** The five sentences
-  `isTransientApiError` matches were read out of the shipped binary's own
-  strings, and one of them (`Connection closed mid-response`) is confirmed from
-  a real run — which this app then filed as `failed`. The binary also shows the
-  CLI finalising a partial response and carrying on rather than aborting, which
-  is why a cycle that still reports success is now treated as having recovered.
-  What has not been watched end to end is which of the two paths that real run
-  actually took, or whether `--resume` accepts a session a drop truncated
-  mid-turn — and so whether a retry carries on or lands in the resume-failure
-  ladder above. Every outcome is recorded either way: a recovery is a log line
-  naming the error, each retry is an `error` event carrying its backoff, and the
-  stop reason names the attempt count if all of them fail.
-- Whether `claude --resume` accepts a session whose transcript was truncated by
-  a mid-turn kill. The recovery ladder retries once and then stops, naming the
-  command — it deliberately does not start a fresh session. That ladder now also
-  covers a run picked up by hand rather than only one coming back from a pause,
-  which makes this the failure an operator is most likely to meet: a run that
-  cannot be resumed cannot be reopened into either, and the manual command is
-  the only way out of it.
-- **Switching threads in the Orchestrator, in a browser.** The proposal
-  selection is now cleared where the "Earlier chats" button switches thread, and
-  a batch whose ids are none of the target chat's is a 400 naming which of them
-  belong to another thread rather than a 200 claiming they were already decided.
-  The sentence that refusal is written with is unit-tested; the click that
-  produces it, and the red banner the page then shows, have not been watched.
-- **Which session id `claude -p --resume <id>` reports back.** Every cycle's
-  stream is read for one and the run adopts it; a value differing from the one
-  passed to `--resume` is written to the run log and otherwise treated as
-  normal, because nothing here has watched a real resume on the wire. If it
-  turns out the CLI always mints a fresh id, that line is noise and should
-  become a debug-level detail rather than a log entry per resumed cycle.
-- Whether a session id reported by an `init` event that is then killed seconds
-  later is resumable at all. It is now persisted, so such a run is reopened as a
-  continuation rather than a restart — which is the point — but the conversation
-  it attaches to holds only the original task, and a continuation prompt that
-  restates nothing is relying on that first user turn having been flushed.
-- A run parking and resuming across a real 5-hour boundary, in the same
-  worktree, on the same branch, with its commits intact.
-- A paused run surviving `docker compose restart`, and a stale one being closed
-  out once past `resumeGraceHours`.
-- A parked run taking its folder back: that it stays parked while the run that
-  took the folder is still working, and starts within a sweep of that one
-  finishing. The hand-over in the other direction — a new run starting straight
-  away instead of queuing — was reproduced against the live container.
-- Resuming a finished run into a real agent: that `--resume` picks the session
-  back up, and that an isolated one lands in its own checkout still on its own
-  branch. The refusals around it — an exhausted cycle or spend limit, a checkout
-  another run has taken — were checked against the live container.
-- Picking a `completed` run back up with a follow-up message: that the note
-  arrives as the next turn of the same conversation rather than as a new task,
-  and that leaving it blank sends the DONE pushback only to a run whose agent
-  really replied `DONE` — a run that merely used up its work cycles gets the
-  continuation. The branch that decides this is unit-tested, and the column it
-  reads was watched being written end to end against a *stub* CLI printing the
-  two `stream-json` events the loop reads. Neither the recording nor the
-  delivery has been through a real `claude`.
-- `detached: true`: that Ctrl-C during `npm run dev` still kills the agent (via
-  the new `instrumentation.ts` handler) and that a long command the agent
-  started dies with it.
-- **A review or a conflict resolution against the real CLI.** The spawn, the flags, the JSON result shape
-  and the accounting were exercised with a stub that prints the same object the
-  `stream-json` `result` event carries — but no real `claude -p … --output-format
-  json --permission-mode plan` has been run through this path, so neither the
-  quality of the review nor `plan` mode's behaviour in print mode is confirmed.
-  The same goes for whether a real agent under `acceptEdits` resolves conflict
-  markers well; that it cannot get a bad resolution *committed* is verified.
-- Landing inside the container, where git is 2.39 rather than the 2.50 the
-  scratch repositories above were driven with. `merge-tree --write-tree` and its
-  conflict format both date from 2.38, and an older git is reported rather than
-  guessed at, but that path has not been run against 2.39 itself. The conflict
-  *types* are the part most likely to differ: they come from the `-z`
-  informational records, whose field layout was captured from 2.50. A 2.39 that
-  writes them differently loses the type and the explanation and still lists
-  every conflicting file, because that list comes from the stage records — but
-  which of those two happens on 2.39 is unconfirmed.
-- A repository large enough to hit the diff's size budget in the wild.
-- **Committing and purging through the app itself.** The two git formats they
-  turn on are confirmed against 2.39.5 above, and the three decisions
-  (`parseStatusZ`, `commitRefusal`, `purgeRefusal`) are unit-tested — but no
-  branch has been committed to or purged through a running server, so the
-  wiring in between is unconfirmed: whether the leftovers a real agent leaves
-  come back as the list the card renders, whether the commit satisfies
-  `ensureWorktree`'s reuse check on the next run into that slot, and whether a
-  purged slot is re-created cleanly rather than tripping the "checkout is gone"
-  guard for a run that had already worked in it. That entry used to add that
-  `next build` could not be run at all, failing with `TypeError: generate is not
-  a function` on the unmodified tree — which was true and was **not** about this
-  repository. That error is `config.generateBuildId` being undefined, and it is
-  undefined because a run started from inside a UsageFoundry container inherits
-  `__NEXT_PRIVATE_STANDALONE_CONFIG` from the server supervising it: `loadConfig`
-  returns that JSON verbatim instead of loading `next.config.ts` and applying
-  defaults, and a serialized config cannot carry a function. `env -u
-  __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` builds cleanly, standalone
-  output included. Worth knowing before reading a build failure in any run this
-  app spawns as evidence about the tree — the same class of trap as the bare
-  `npm ci` that silently skips devDependencies under this image's
-  `NODE_ENV=production`.
-- **The Live from runs card in a browser, fed by a real telemetry-enabled run.**
-  Its query was driven against a real database through the real ingest route and
-  its markup was rendered and read, but the batches were synthesised from the
-  captured payload rather than pushed by a live `claude -p`, and the card has
-  not been *looked at* on the page. What that leaves unconfirmed is how it reads
-  next to the meters — whether the separation is as plain on screen as it is in
-  the copy — and whether the figure visibly moves during a single work cycle at
-  the 5s poll.
-- **The in-flight cycle line on a real run.** `runs.active_iteration` is written
-  at the spawn and cleared when the cycle returns, and `fmtCycleInFlight` is
-  unit-tested for every branch including the stale-row one — but no agent has
-  been started through a running server to watch the card go from nothing to
-  "cycle 1 of 2 in flight" and back to a plain count between cycles. Two things
-  to watch: that the line disappears during the pre-cycle transcript scan rather
-  than lingering over finished work, and that a run killed with the container
-  down comes back reading `failed` with no cycle claimed. Start a run and open
-  `/runs` during cycle 1.
-- The new-run form's template UI driven through a browser: that loading a
-  template fills every field, that *Start another like this* pre-fills from a
-  run without the folder and settings loaders racing it, and that the two
-  banners — a carried live-enforcement mode, a carried `bypassPermissions` —
-  appear on load and clear when the control is touched. The routes underneath
-  were exercised directly; only the client wiring is unconfirmed.
-- The *Earlier chats* rows in a browser. Each one is now two lines — a
-  truncating title, then the time and a *waiting* badge — because a single
-  truncated line in the 360px column was all title. The metadata sits outside
-  the truncating element and every utility it needs is in the built stylesheet,
-  but no browser has rendered it at that width, so how the two-line rows read
-  against the 6px gap between them is unmeasured.
-- **The image with `gh` in it.** The install layer, the checksum check and the
-  arch mapping have not been built — no Docker on the machine this was written
-  on — so `docker compose up --build` is the first thing to run against this.
-- A real agent using the token: a `git push` of a run's branch, and a `gh` call
-  that needs authentication. The credential block itself was driven into a real
-  git (above); what has not been watched is the CLI's own git picking it up out
-  of the environment mid-run.
-- The chat page recovering from a dropped request, in a browser. That a rejected
-  `fetch` comes back as a result rather than a rejection is unit-tested, and the
-  `finally` that clears `busy` is plain control flow — but nobody has stopped the
-  server, pressed Send, and watched the composer, Approve, Reject and Select-all
-  stay usable with the reason on screen.
-- **The chat page's failed-poll notice in a browser.** A poll that fails now
-  puts a sentence on the page and stops the thread claiming to be thinking, and
-  the sentence itself is unit-tested — but no browser has been pointed at a
-  stopped server or at a `UF_AUTH_TOKEN` deployment with the `uf_session` cookie
-  deleted, which are the two reproductions. What that leaves unconfirmed is the
-  client wiring rather than the copy: that the notice appears within one poll,
-  that it clears on the next successful one, and that a page opened while the
-  server is down recovers by itself once the server is back.
-- The chat page's "Earlier chats" list going stale-free in a browser. The route
-  it polls now answers with the list, and that is unit-tested against the
-  handler itself — what has not been watched is the sidebar picking up a title
-  and a waiting count on the 10s poll without a reload.
-- **That a fresh `usagefoundry-data` volume is writable under a non-1000
-  `UF_UID`.** The image marks `/data` mode 0777 so that Docker copies a
-  world-writable root onto the volume when it first creates it; that Docker does
-  copy the mount point's mode and not only its ownership is the step this rests
-  on, and no `docker build` has been run since the change — Docker was not
-  available on the machine it was made on. `src/lib/deployment.test.ts` pins the
-  image and compose halves against each other, which is a different claim. The
-  check is four commands, on a Linux host where `id -u` is not 1000:
-
-  ```bash
-  UF_UID=1001 UF_GID=1001 UF_PORT=3100 UF_CONTAINER_NAME=usagefoundry-uidtest \
-    docker compose -p uf-uidtest up --build -d
-  docker compose -p uf-uidtest exec usagefoundry ls -ld /data   # expect drwxrwxrwx
-  curl -fsS localhost:3100/api/usage >/dev/null && echo OK      # with UF_AUTH_TOKEN blank
-  docker compose -p uf-uidtest down -v
-  ```
-
-  `UF_PORT`/`UF_CONTAINER_NAME` are there because `container_name` is *not*
-  namespaced by the compose project, so without them this collides with an
-  instance already running. Run it a second time with the two uid variables
-  unset to confirm the 1000 default is unchanged.
-- **The workflow canvas in a browser.** `/workflows`, `/workflows/new`,
-  `/workflows/<id>` and `/workflows/<id>/edit` each answered 200 in `next dev`
-  and the canvas is in the server-rendered markup; `/api/workflows/validate` was
-  driven by hand through every refusal it exists to surface (see *Verified*).
-  What no browser has done is *touch* it, and that is the whole of this feature:
-  the drag, the link gesture, the keyboard routes and the layout that is stored
-  per browser are all unexercised. Five things to try first — dragging a block
-  off the palette and dropping it; dragging from one block's *Link* handle onto
-  another; doing the same two with the keyboard only, which is the claim most
-  worth disproving; pressing Delete on a link's control; and reloading the page
-  to confirm the arrangement came back. Every graph the canvas can produce is
-  still checked by the same function *Save* checks it with, so the risk here is
-  a gesture that does not work, not a graph that should not have been saved.
-- **A workflow saved before the canvas, opened on it.** The layout for one is
-  derived rather than stored, and the derivation is unit-tested, but no
-  pre-canvas row has been opened in a browser and saved back. What to confirm is
-  that the links are all still there afterwards: nothing migrates the graph, so
-  they should be, and that is exactly the claim worth checking once.
-- **A workflow instantiated against the real CLI.** Every run in the *Verified*
-  entry above came from a stub, deliberately: it is the loop, the folder claims,
-  the dependency wiring and the branch hand-over that were being tested, and a
-  real agent adds spend without adding coverage of any of them. What a stub
-  cannot show is a real work cycle's timing — in particular whether the
-  `on-success` dependent's first `git log` shows its predecessor's commits, since
-  the stub committed nothing. Run a two-block workflow with a branch hand-over
-  and read the second run's opening prompt.
-- **Everything about the server lock that needs two live processes.** The
-  decisions are pure and unit-tested — `lockVerdict`, `heartbeatVerdict`,
-  `ownershipRefusal` — and `dataDirClaim.test.ts` drives the real `claimDataDir`
-  and the real `heartbeat` against a temporary data directory. What has **not**
-  been run is two servers sharing one `DATA_DIR`: that a non-owner boots,
-  serves every page, answers 503 on `/api/health`, shows the banner and refuses
-  Start, Run, Approve and Land; and that a `SIGSTOP`/`SIGCONT` on the owner for
-  longer than `STALE_MS` ends with the stalled process reporting the loss and
-  refusing to write rather than restamping the lock. Both need Docker, or two
-  terminals and a shared directory.
-- **`STALE_MS` against a measured stall.** It is now derived from
-  `GIT_SYNC_TIMEOUT_MS` rather than chosen, and a unit test pins that it exceeds
-  one synchronous git call — but the multiplier (six) is reasoned from how many
-  git children one admission can make, not measured against a profile of a busy
-  server. Nothing has been timed under 25 concurrent runs.
-- **The shutdown reconciling its cycles under Docker.** `shutdown.test.ts`
-  drives a real run to `running` against a stubbed child, calls the real
-  `shutdownRuns`, and asserts the estimate landed and the active-cycle columns
-  cleared — but with a fake `spawn`, so what it cannot show is a real
-  `docker compose restart`: whether `stop_grace_period: 30s` is enough for the
-  ladder plus a transcript scan on a large history, and whether a real Claude
-  Code handling `SIGINT` prints its `result` event (which would make the cycle's
-  cost measured rather than estimated). Run `docker compose up -d`, start a run,
-  `docker compose restart`, and read `spent_usd_est`, `active_iteration` and
-  `status` out of the database.
-- **Backup and restore inside Docker.** Everything above was driven against real
-  databases and the real scripts, but never through the container — Docker is
-  not available where this was written, so what has *not* been exercised is the
-  packaging: that the runner image carries `scripts/` and can resolve
-  `better-sqlite3` out of the standalone bundle, that `sqlite3` is on the PATH,
-  that `/backups` is writable by the uid compose runs as (Docker creates a
-  missing bind source owned by root, which the repository's shipped `./backups`
-  is there to avoid), and that a restore through `docker compose run` reaches a
-  volume the app is not holding. `deployment.test.ts` pins the Dockerfile and
-  the compose file against each other, which is as far as a test here can get.
-  The four commands that check it for real:
-
-  ```bash
-  docker compose up -d --build
-  docker compose exec usagefoundry which sqlite3
-  docker compose exec usagefoundry node scripts/backup-db.mjs /backups
-  ls -la backups/
-  # then, with the app stopped:
-  docker compose down
-  docker compose run --rm --entrypoint node usagefoundry \
-    scripts/restore-db.mjs /backups/usagefoundry-<stamp>.db
-  docker compose up -d
-  ```
-
-  Worth doing the destructive half at least once on an install you do not mind
-  losing: `docker compose down -v` between the backup and the restore is the
-  case the whole path exists for, and it is the only way to find out that the
-  fresh volume's permissions are right.
-- **The rollback path.** It is written to be unreachable — the graph, the
-  templates, the mounts, every folder and both ends of every branch hand-over are
-  checked before the first `createRun` — and nothing contrived reached it in
-  testing, so the stop-everything-and-record-`failed` branch has never actually
-  run. The cheapest way to exercise it is to delete a mount from
-  `WORKSPACE_ROOTS` between the pre-flight and the pass, which is not a thing an
-  operator can do; short of that, read it rather than trust it.
-- **That a transcript's filename is its session id.** The retention sweep takes
-  the session id from the file's basename, which is how the pinned CLI (2.1.226)
-  names one — checked against every `.jsonl` in a real `~/.claude/projects`, not
-  read from a specification, and it is the id the file's own first record
-  carries. What has *not* been exercised is a CLI that names one differently:
-  the mtime horizon is what actually protects a session in use, so a basename
-  that stopped matching would cost the extra protection for a session a live run
-  or a chat still holds, not correctness of the age test. Before trusting the
-  sweep on a moved pin, list the tree and compare a handful of basenames against
-  `sessionId` in each file's first line.
-- **A pruned transcript's run being reopened.** `sweepTranscripts` clears
-  `runs.session_id` on the terminal runs whose file it removed, so the pick-up
-  takes the documented restart path — `nextPrompt` with `priorWorkNotice` — and
-  both halves are unit-tested separately. What has not happened is the whole
-  sequence against a real CLI: prune, press **Try again**, and confirm the first
-  cycle opens with the task and the branch notice rather than failing on a
-  `--resume` into a session that is gone.
-- **The `VACUUM` command in `README.md`.** Written against the compose file and
-  the Dockerfile rather than executed — Docker was not available where it was
-  added, the same gap as the backup entry above. Two things in it are the ones to
-  check first: that `docker volume ls -q | grep usagefoundry-data` names exactly
-  one volume on the reader's machine (compose namespaces it with the project
-  name, and a second instance started under `docker compose -p` would give two),
-  and that the `alpine` + `apk add sqlite` container leaves the database file's
-  ownership alone — the runner image carries `sqlite3` for the restore script's
-  sake, but this command runs with the app's own container stopped, which is why
-  it reaches for a separate one.
-- **Everything about a saved agent that is not one of the seven probes above.**
-  No `claude` child has ever been spawned with either flag *from this app*: the
-  probes were run by hand, outside it. No browser has rendered the run form's
-  *Agent* row, the Settings default, the canvas inspector, the chat's `@`
-  popover, the *Agent work* card or the dashboard's origin marks, and no request
-  has created, edited or deleted a row over HTTP — which matters more than usual,
-  because `/api/agents` is the only way to define one at all. Four specific
-  things are still open, each of which changes what a page says rather than what
-  it does:
-  - **The two remaining drops.** An empty name registering as an empty entry, and
-    a `--agents` value that is not JSON being ignored outright, were both
-    measured under `--agents` alone and have not been re-checked under `--agent`.
-    Wrong either way, the refusal is stricter than it needs to be — the safe
-    direction, and still a form saying no for a reason that has stopped being
-    true.
-  - **Whether a `--agent` session records that agent's name on its own turns**,
-    or leaves them in `(main thread)`. `byAgent` and `agentSpend` report whatever
-    the transcript says and infer nothing, so this decides what the two cards
-    read and no branch depends on the answer. Both now say so in words rather
-    than waiting on it: the run's *Agent work* card names what the run was
-    started as and states that the rows may sit wholly under that name or wholly
-    under `(main thread)`, and the dashboard's column is *Agent* rather than
-    *Sub-agent* with a footnote saying `(main thread)` is a turn carrying no
-    agent name. Either answer leaves both correct, which is the point — what
-    would have been wrong is a card whose wording only made sense under one.
-  - **Whether a `--agent` session delegates at all.** If it does, the forwarding
-    and the split cover it unchanged; if it does not, that machinery goes quiet
-    rather than wrong. The ambient definitions reach it either way.
-  - **Whether a member's own `tools` list would beat the `PROCESS_KILLERS` deny.**
-    Deny is verified to beat `--permission-mode` for the main thread and has been
-    watched against nothing else. It is why the field is refused at save rather
-    than stored and narrowed, under either flag.
-- **Declaring the `settings.json` `agent` key, which is measured (see *Verified*)
-  and deliberately not built.** The fact belongs in the same sentence the ambient
-  definitions get — the registry is a part of the set and not the whole of it —
-  and it is more than a sentence, which is why it is written down instead. What
-  it would take: a read of `$CLAUDE_CONFIG_DIR/settings.json` in `agents.ts`
-  beside `listAmbientAgents` (try/catch to null, that function's rule, since it
-  feeds copy rather than a decision); a field on `GET /api/agents` beside
-  `agents` and `ambient`, and its DTO; a second argument on
-  `describeAmbientAgents` and its four call sites. The awkward half is the copy
-  rather than the plumbing: that sentence sits under a *picker*, and choosing an
-  agent there is exactly what overrides the key — so it would have to be
-  conditional on the control's current value to avoid being false half the time,
-  while the two children where the key actually bites, a chat turn and a review,
-  have no picker to hang it on. The cheap first move is probably not the picker
-  at all but the Settings page, where the app already declares the ambient set
-  once and where "your `~/.claude` starts every agentless child as *X*" is a true
-  sentence with no control to contradict it.
-- **The sandbox reporting, all of it except the three markers a failure wrote.**
-  `sandboxRefusal` and `sandboxArrangement` are unit-tested in both directions
-  and `npm run typecheck`, `npm test` and `next build` all pass. One provenance
-  changed on 2026-08-19 and only one: the three `bwrap:` markers were read off
-  this install's own `run_events` after the fifteen-hour failure in *Verified*
-  above, so those three are transcribed rather than guessed. The CLI's own six
-  were **read out of the pinned binary with `strings` and have still never been
-  executed** (`proposals/implemented - Sandboxing/10-validation.md`, "What this validation did
-  not check"). Three separate things are unverified, and the first is the one
-  that matters:
-
-  **Whether the strings the detector matches are the strings the CLI actually
-  emits into a tool result.** Nothing here has seen one, and the failure above
-  did not change that: what it produced was `bwrap`'s own stderr, from a `bwrap`
-  the CLI spawned and which exited before doing anything, and not a single
-  sandbox message written by the CLI itself. The rest of Phase 2 of
-  `proposals/implemented - Sandboxing/09-implementation-sketch.md` — bubblewrap, `socat`, the
-  seccomp `security_opt` and a managed policy — now exists and has been started;
-  capture the real text before trusting the table:
-
+- **No sandbox has confined a tool call from this app; no `sandbox` event has
+  fired.** Every `bwrap` it caused exited 1 unexecuted; the 15-hour run logged
+  484 `tool_error` and 0 `sandbox` rows. Unseen: any CLI-written marker (six
+  read by `strings`), the credential deny from a run, the boot line past `none`,
+  `enableWeakerNestedSandbox` read by any `claude`, seccomp past `bwrap`. Probe:
   ```sh
-  # uid out of the container: a UF_UID default written here would expand in
-  # your own shell, which .env never reaches (#147). Shape corrected
-  # 2026-09-08; the check itself was not re-taken.
   uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
 
   # A command the policy refuses, read off the wire rather than off a page.
@@ -5649,409 +1792,35 @@ through before trusting this unattended:
     claude -p "run: touch /etc/uf-probe" --output-format stream-json --verbose' \
     | jq -r 'select(.type=="user") | .message.content[]?
              | select(.is_error == true) | .content'
+  # Then compare what it prints against MARKERS in src/lib/sandbox.ts
+  # and add what is missing.
   ```
 
-  Then compare what it prints against `MARKERS` in `src/lib/sandbox.ts` and add
-  what is missing. Expect the common case — a path outside the allowlist — to
-  come back as a bare `EACCES`/`Permission denied` with nothing sandbox-shaped
-  in it at all: that is why the matcher deliberately does not match those words,
-  and closing that gap needs whatever distinguishing text this command actually
-  shows, not a looser matcher.
+- **No sandbox has ever honoured the per-run write set.** Unrun: run A writing
+  into a concurrent run B's `.uf-worktrees/<slot>` via `Bash` and `Write`, and
+  `--settings` merging with the managed file. The set left out `/tmp`,
+  `$HOME/.npm` and `$GOPATH` until 2026-08-19; that it now suffices is argued,
+  not measured. Open dependency: a stock `settings.json` lets a run widen it.
 
-  **Whether the event reaches the two places it is supposed to.** The emit is on
-  the same path as `tool_error` and the rendering is a case in the same switch,
-  so both are ordinary — but neither has been watched, and the one chance this
-  install had at it went by: across the fifteen-hour window above, `run_events`
-  took 484 `tool_error` rows and **zero** `sandbox` rows. That is a matcher with
-  no `bwrap:` needle in it at the time rather than an emit path that failed, and
-  the three needles are what closes it *next* time — but no `sandbox` row has
-  ever been written by anything. With a policy in place, start a run whose first
-  command the policy refuses and confirm both:
-
-  ```sh
-  docker compose logs usagefoundry | grep run.sandbox_refusal   # one JSON line
-  sqlite3 "$DATA_DIR/usagefoundry.db" \
-    "SELECT kind, count(*) FROM run_events WHERE kind IN ('tool_error','sandbox')
-       GROUP BY kind;"     # expect the tool_error row to still be there too
-  ```
-
-  and that the run page shows a `sandbox` line *beside* the failed call rather
-  than instead of it.
-
-  **The image's three sandbox dependencies, the generated policy and the
-  seccomp profile — built, started and applied at last, and still not one
-  confined tool call.** The image now carries `bubblewrap` and `socat` on the
-  apt line and `@anthropic-ai/sandbox-runtime` pinned beside the CLI;
-  `docker-entrypoint.sh` writes `/etc/claude-code/managed-settings.json` when
-  `UF_SANDBOX=1`; `docker-compose.yml` carries a commented `security_opt` line
-  and `uf-seccomp.json` beside it. What is measured, all of it on 2026-08-18/19
-  and all of it in *Verified* above: the image builds and boots with
-  `UF_SANDBOX=1`, the policy file is written correctly, both binaries are
-  present and executable (the CLI's own `access(X_OK)` probe passing is what
-  says so), the profile is accepted by a real daemon and lets `bwrap` build a
-  namespace, and the CLI does wrap `Bash` in one. What is **not** measured is
-  any of it working together: every `bwrap` this app has caused to run exited 1
-  without executing anything, so no policy has confined a tool call, no
-  allowlist has been consulted by a kernel, and the reporting above is still
-  unexercised. What was checked before any of that, and is what could be:
-  `npm run typecheck`, `npm test` and `next build` pass, `sh -n` and `dash -n`
-  accept the entrypoint, the policy generator was lifted out and run under
-  `dash` against a temporary directory once per branch it has — off, on,
-  `warn`, a domain list, a rejected domain, an unrecognised `UF_SANDBOX`, and
-  the removal on the way back down — and `@anthropic-ai/sandbox-runtime@0.0.71`'s
-  published tarball really does carry `vendor/seccomp/arm64/apply-seccomp` and
-  `.../x64/apply-seccomp`.
-  **Docker was not available in the container this section was written in** — no
-  `docker` binary, no `/var/run/docker.sock`, `apt-get` needing a root it had
-  not got, and `unshare --user` answering `Operation not permitted` — which is
-  why it stood unexecuted as long as it did. Two of the commands below now have
-  answers and are marked with them; **the rest have not been run**, and neither
-  has anything in `scripts/sandbox-probe/`, which the entry below on the CLI's
-  own sandbox carries and which runs the sketch's questions 0-8 outside this
-  app's own wiring:
-
-  ```sh
-  # 0. are the two apt packages installable in this image at all? Dockerfile:92
-  #    removes the apt lists, so this could not be answered from inside one.
-  #    ANSWERED 2026-08-19: yes — both are in the shipped image and executable,
-  #    which is what the CLI's own access(X_OK) probe passing establishes.
-  apt-get update && apt-cache policy bubblewrap socat
-
-  # 1. does bubblewrap work under the relaxed profile? (uncomment security_opt)
-  #    ANSWERED 2026-08-19, both uids: BWRAP-BLOCKED without the profile,
-  #    BWRAP-OK with it, on Engine 29.7.2 / kernel 6.12.76-linuxkit. `--proc
-  #    /proc` still fails under it, which is what enableWeakerNestedSandbox is
-  #    for — see Verified.
-  docker compose exec usagefoundry \
-    bwrap --unshare-user --ro-bind / / --dev /dev true && echo BWRAP-OK
-
-  # 2. Phase 2's own four, from proposals/implemented - Sandboxing/09-implementation-sketch.md
-  docker compose up --build
-  # uid out of the container: a UF_UID default written here would expand in
-  # your own shell, which .env never reaches (#147). Shape corrected
-  # 2026-09-08; the check itself was not re-taken.
-  uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
-  docker compose exec --user "$uid" usagefoundry \
-    sh -c 'echo x >> /etc/claude-code/managed-settings.json'   # expect denied
-  docker compose exec --user "$uid" usagefoundry \
-    sh -c 'echo x >> ~/.claude/settings.json; rm -f ~/.claude/settings.json'
-                                                               # expect both denied
-  docker compose exec --user "$uid" usagefoundry \
-    sh -c 'ls ~/.claude/projects >/dev/null && touch ~/.claude/projects/.probe'
-                                                               # expect BOTH to work
-  docker compose logs usagefoundry | grep -i sandbox           # expect the boot line
-  ```
-
-  The second of those four **fails on a stock install and is not a regression**:
-  making `~/.claude` root-owned while handing back the entries the CLI writes is
-  a second switch, `UF_LOCK_CLAUDE_HOME`, and it is off unless the operator sets
-  it — see the entry on it below, which carries that check and three more. With
-  it off, `~/.claude/settings.json` is writable by the agents and is an honored
-  source for `sandbox.filesystem`, so a run can widen the filesystem half of the
-  policy from inside itself. It cannot widen the credential deny (a separate
-  list), and it cannot widen the domain list once `UF_SANDBOX_ALLOWED_DOMAINS`
-  names one, because that also sets `allowManagedDomainsOnly`.
-
-  **Whether the generated policy resolves to a sandbox at all.** This is the
-  failure that would be quietest of the lot, and it is unverified in both
-  directions. The CLI hands a command back **unwrapped** when the whole policy
-  amounts to nothing — read out of the pinned binary as
-  `if(!n&&!M&&!N&&!D&&!U) return t;`, where the five terms are a network
-  restriction, a read deny or masked file, a write config, an env-var change
-  and a git-safe-directory list — and `failIfUnavailable` does not catch it,
-  because a sandbox nothing was asked of is not one that failed. The policy
-  generated here always names a `credentials.files` deny and two `denyRead`
-  paths, both of which feed that second term, so on this reading it can never
-  short-circuit. **Narrowed on 2026-08-19 and not closed**: through the failure
-  in *Verified*, every `Bash` call came back as `bwrap`'s own error, which is a
-  wrapper the CLI built rather than a command it handed back — so this policy
-  does not short-circuit on this build, at least for `Bash`. What that says
-  nothing about is the deny working, since no `bwrap` this app has caused ever
-  reached an `exec`. Confirm the rest from the outside rather than by re-reading
-  the binary:
-
-  ```sh
-  # uid out of the container: a UF_UID default written here would expand in
-  # your own shell, which .env never reaches (#147). Shape corrected
-  # 2026-09-08; the check itself was not re-taken.
-  uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
-  docker compose exec --user "$uid" usagefoundry \
-    sh -c 'cat ~/.claude/.credentials.json'   # expect denied, with the session
-                                              # still billing on the next cycle
-  docker compose exec --user "$uid" usagefoundry \
-    sh -c 'cat /data/usagefoundry.db > /dev/null'          # expect denied
-  ```
-
-  A `cat` of the credential that **succeeds** from inside a run while the
-  policy is in place is the whole signal: it means the wrapper short-circuited
-  and no `bwrap` ran, whatever the boot line says.
-
-  **Three things about the policy's content that are reasoning, not
-  measurement.** It writes `denyRead` and never `allowWrite`/`denyWrite`,
-  because a write config of any kind makes the CLI bind `/` read-only and
-  rw-bind only the allow set — so a deny-write list with no allow list is a
-  read-only filesystem and a fleet that fails on its first `npm install`. It
-  sets `allowUnsandboxedCommands: false`, whose documented default is `true`,
-  on the grounds that a model able to pass `dangerouslyDisableSandbox` makes
-  the rest advisory. And it always writes `failIfUnavailable` explicitly,
-  because the binary says two different things about its default — the settings
-  schema documents `false`, the normaliser rewrites an enabled policy that
-  omits it to `true`. All three are readings of one build.
-
-  **A fourth, added on 2026-08-19 and the newest of them.**
-  `enableWeakerNestedSandbox: true` is now written unconditionally, because the
-  argv shape the CLI builds without it cannot mount a procfs in this container.
-  What that rests on is in *Verified*: `bwrap` run by hand with each of the two
-  shapes read out of the binary. **No `claude` has ever read that key** — no
-  session has chosen a shape, no namespace has been built by the CLI, and the
-  name is honest about the price whenever one is: the sandboxed command sees
-  this container's `/proc`, so a sibling agent's processes are visible in it.
-
-  **The seccomp profile, applied to a daemon at last and still short of what it
-  is for.** `uf-seccomp.json` is generated by
-  `scripts/make-seccomp-profile.py` from Docker v28.5.2's own default profile
-  with six syscalls ungated — `clone`, `clone3`, `unshare`, `mount`, `umount2`,
-  `pivot_root` — and the three rules that exist only to constrain
-  `clone`/`clone3` for a container without `CAP_SYS_ADMIN` removed, so the
-  resulting filter does not depend on how libseccomp merges a narrow rule with a
-  wide one. That much is mechanical, was checked by re-reading the generated
-  file, and is now also byte-for-byte reproducible from that source (*Verified*).
-  Three of the four things that were unverified after it are now measured: Docker
-  accepts the profile and applies it as a narrowed filter rather than as
-  `unconfined`, `bwrap` starts under it at both uids, and the six are enough for
-  every operation the CLI's two argv shapes ask for **except** `--proc /proc` —
-  which ungating a seventh syscall would not fix, because `mount` is already
-  ungated here and the refusal comes from the kernel's `mount_too_revealing`
-  check over Docker's masked `/proc` rather than from the filter;
-  `enableWeakerNestedSandbox` is the way around it. What is still unverified:
-  that nothing *else* in the image needs a syscall this profile's *unmodified*
-  rules withhold, since nothing but `bwrap` and a boot have been exercised under
-  it; and the forward case, a bubblewrap reaching for `open_tree`/`move_mount`
-  instead of the classic mount API 0.8 uses, which would fail loudly and need
-  them added. One trap in the regeneration line, and it is measured: `python3
-  scripts/make-seccomp-profile.py "v$(docker version --format '{{.Server.Version}}')"`
-  **404s on any 29.x engine**, because moby publishes no `v29` tag. The shipped
-  file has to stay the newest tagged default until it does.
-
-  **What the boot line and the Settings row say once there is something to
-  report.** Only the `none` reading has ever been *read*, which is every stock
-  install and is why it is the one that had to be right. An install with
-  `/etc/claude-code/managed-settings.json` present has since run for fifteen
-  hours (*Verified*), so the other readings were reachable — but nobody recorded
-  what its boot line or its Settings row said, which leaves this exactly as
-  unmeasured as it was and is the cheapest of the gaps here to close. The other
-  three are reasoning: `docker compose logs usagefoundry | grep '\] sandbox:'` should
-  change wording as soon as `/etc/claude-code/managed-settings.json` exists, an
-  `{"sandbox":{"enabled":true}}` with nothing under it should read **enabled but
-  empty** on Settings rather than on, and a file that is present and unparsable
-  should read **unknown** rather than none. All three are one `docker compose
-  exec` and a reload apiece, and none of them costs a billed cycle.
-
-- **The per-run write set, which nothing has ever honoured.** `sandboxSettings`
-  and `sandboxArgs` (`src/lib/orchestrator.ts`, beside `buildArgs`) name what
-  each `claude` child may write — the work cycle's own checkout and its
-  repository's `.git`, the reviewer's nothing-at-all, the conflict resolver's
-  throwaway checkout, the chat's every mount — and `CLAUDE_CONFIG_DIR` in all
-  four, because that is the metering path. They are unit-tested in
-  `orchestrator.test.ts` for the three assertions
-  `proposals/implemented - Sandboxing/09-implementation-sketch.md` names (the run's own
-  checkout writable, a **sibling run's** not, `CLAUDE_CONFIG_DIR` writable) plus
-  the two ways the overlay can be a boundary that is not there — a path the
-  CLI's Linux filter would drop as a glob, and a set that resolved to nothing —
-  and `npm run typecheck` and `npm test` pass. Both assertions were watched to
-  fail before they passed: dropping `CLAUDE_CONFIG_DIR` from the set fails the
-  metering case and the reviewer's, and naming the checkout *store* instead of
-  the checkout fails the sibling case.
-
-  What has **not** happened is any of it against a sandbox that ran. No
-  `--settings` overlay has ever confined anything: the only `bwrap` processes
-  this app has ever caused are the ones in *Verified* that exited 1 before
-  executing a command, and the ones run by hand outside it. So the by-hand check
-  that `09-implementation-sketch.md` asks for — two concurrent runs, A asked to
-  write into B's checkout, the tool call fails — is **unrun**, and these are its
-  commands:
-
-  ```sh
-  # With UF_SANDBOX=1, the security_opt line uncommented, and the image built.
-  docker compose up -d --build
-  docker compose logs usagefoundry | grep '\] sandbox:'   # expect "on", not "none"
-
-  # Start two isolated runs on one repository, then from run A's task:
-  #   ls /workspace/.uf-worktrees/                 # find B's slot
-  #   touch /workspace/.uf-worktrees/<B-slot>/probe    # expect the tool call to fail
-  #   touch ./probe                                    # expect this one to work
-  # and from B's, the same two the other way round. Then, on run A's page,
-  # confirm the failed call is on the log rather than only in the transcript.
-  ```
-
-  Two things to read the result against before believing it. A denial from a
-  mount namespace comes back as a bare `EACCES`, which `sandboxRefusal`
-  deliberately does not match, so the log line to expect is `tool_error` and not
-  `sandbox` — a run whose write into a sibling merely *fails* is the whole
-  signal. And a `touch` that **succeeds** does not by itself mean the overlay was
-  ignored: see the two open questions below, either of which produces exactly
-  that.
-
-  **The dependency this does not close, and nothing should be read as a boundary
-  until it does.** `~/.claude/settings.json` is an honored source for
-  `sandbox.filesystem` and is writable by `UF_AGENT_UID` on a stock install
-  (`10-validation.md`, finding 1), so a run can append
-  `{"sandbox":{"filesystem":{"allowWrite":["/"]}}}` and every later session — its
-  own and every sibling's — is confined to nothing. Root-owning `~/.claude`
-  itself and handing back the entries the CLI writes has since landed, as
-  `UF_LOCK_CLAUDE_HOME=1` in `docker-entrypoint.sh` — **off by default**, because
-  it runs against a bind-mounted host directory the operator also uses outside
-  the container, and every entry missed shows up as a dashboard of zeros rather
-  than an error. With it off, which is every stock install, the per-run overlay
-  still narrows a policy a run can widen from inside itself. The probe is two
-  lines and costs no billed cycle:
-
-  ```sh
-  # uid out of the container: a UF_UID default written here would expand in
-  # your own shell, which .env never reaches (#147). Shape corrected
-  # 2026-09-08; the check itself was not re-taken.
-  uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
-  docker compose exec --user "$uid" usagefoundry sh -c \
-    'echo "{\"sandbox\":{\"filesystem\":{\"allowWrite\":[\"/tmp/uf-probe\"]}}}" \
-       >> ~/.claude/settings.json'                  # expect denied only with
-                                                    # UF_LOCK_CLAUDE_HOME=1
-  ```
-
-  The entry below carries that check and the rest of what that switch needs.
-
-  **And the question nobody has answered either way: whether the CLI's sandbox
-  wraps the session or only Bash** (`09-implementation-sketch.md`, Phase 1
-  question 3, never executed). If it is Bash-only, a model using `Edit` against a
-  sibling's path is unconfined whatever the write set says — and that is a
-  likelier shape for a confused run than a shell command is. The evidence points
-  both ways: the Bash tool's own prompt text says "your command will be run in a
-  sandbox", and a `getFsReadConfig` export is the shape a *file tool* consults
-  (`10-validation.md`, #19). Nothing in this app asserts either answer. The check
-  is the same two runs as above, with the write into B's checkout made once
-  through `Bash` and once through `Write`.
-
-  **Three smaller unknowns of the same kind.** Whether `--settings` as JSON on
-  the argv *merges* with `/etc/claude-code/managed-settings.json` rather than
-  standing in for other sources — read out of the binary's source list
-  (`flagSettings` beside `userSettings` and the managed file), never executed.
-  Whether the write set is wide enough for a cycle to *work*. It named the
-  checkout, the repository's `.git` and the config directory and nothing else,
-  which left `/tmp`, `$HOME/.npm` and `$GOPATH` outside it; all three are in it
-  as of 2026-08-19 — `/tmp` for every child, beside `CLAUDE_CONFIG_DIR`, because
-  the CLI writes its shell snapshots and temporary files there and a child that
-  cannot write it has a `Bash` tool failing for a reason unrelated to the task;
-  the two caches for the two children that build, the work cycle and the
-  conflict resolver. **That is an argument about where a toolchain writes, not a
-  measurement**: no `npm install` and no `go build` has ever run inside a
-  sandbox that started, the binary still binds `/` read-only and rw-binds only
-  the allow set once any write config exists, and a set that is still too narrow
-  shows up the same way it would have before — inside a tool call, in a run the
-  loop reads as ordinary work. It remains the first thing to run after the
-  sibling check above. And whether the overlay's paths survive a rename: they
-  are the row's own recorded paths, so a
-  checkout moved underneath a live run would be confined to where it used to be.
-
-- **`SEARCH_TOOLS` on a real spawn from this app.** That naming `Grep` and
-  `Glob` on `--allowedTools` puts both back in the tool list is measured
-  (*Verified*) — on two `system:init` events, one in a throwaway container and
-  one on the real image in the live container, both with nothing but the two
-  tool names on the flag; a third, in a throwaway container, adds the two
-  `Bash(git …:*)` grants in front of them and still lists both, and a fourth
-  does the same under `--permission-mode plan`. What none of them is, is a
-  spawn from this app.
-  `src/lib/orchestrator.ts` now carries them on one `--allowedTools` at every
-  `claude` spawn: `buildArgs` after `ISOLATED_GIT_TOOLS`, `review.ts`'s
-  `spawnAssist` before the operator's list, and `chat.ts`. `npm run typecheck`
-  passes and the argv is unit-tested in `orchestrator.test.ts`. Two things
-  nobody has watched. The mixed list and `plan` mode are settled above for the
-  *tool list*; what is not is whether the mixed list still grants the two git
-  **commands** it also names, which is the isolated work cycle's argv and the
-  one the git grant was measured without. Whether they appear in a
-  `bypassPermissions` chat turn, where the flag has no prompt to skip and is
-  there purely for the opt-in. And whether `--resume` keeps them at cycle 2, the
-  way `--plugin-dir` does not — it is on every cycle's argv either way, so a
-  drop would be invisible rather than harmful. The cheap check is the
-  `system:init` event of any real run, which is where the 469 above were
-  counted:
-
-  ```sh
-  sqlite3 "$DATA_DIR/usagefoundry.db" \
-    "SELECT payload FROM run_events
-       WHERE kind='log' AND payload LIKE '%system:init%'
-       ORDER BY id DESC LIMIT 1;" | grep -c Grep
-  ```
-
-  One thing this deliberately does not claim: the removal of `spawnAssist`'s
-  emptiness guard is safe because the list can no longer be empty, which is a
-  statement about this codebase and not about the CLI.
-
-- **Root-owning `~/.claude`, which no container has ever done and which changes
-  a directory on the operator's own host.** `UF_LOCK_CLAUDE_HOME=1` makes
-  `docker-entrypoint.sh` give `$CLAUDE_CONFIG_DIR` and its `settings.json` to
-  root, after handing back the entries the CLI writes (`projects sessions todos
-  shell-snapshots history.jsonl .credentials.json .claude.json backups`). It is
-  off by default and skipped when `UF_AGENT_UID` is unset.
-
-  What was checked, and it is all short of the thing itself: `npm run typecheck`
-  and `npm test` pass (neither reads a shell script, so they say nothing about
-  this); `sh -n` and `dash -n` accept the file; and the block was driven under
-  `dash` through **eighteen scenarios** with `chown`, `stat`, `id` and `setpriv`
-  replaced by stubs that record what *would* have been changed — off with an
-  untouched home, on with everything already the agent's, a missing `projects/`,
-  a root-owned entry that hands back, one that cannot, a directory chown that
-  fails after `settings.json` was taken (the revert), an agent that can no
-  longer write `projects/` or read `settings.json` (the undo, including the case
-  where `settings.json` was root's from an earlier boot rather than this one), a
-  chown that reports success while the agent can still write (the `fakeowner`
-  case), a `setpriv` that cannot run at all (the lock is kept and the boot line
-  says it was never checked), no `settings.json` at all, not running as root, no
-  `UF_AGENT_UID`, a value that is not `1`, off after a lock, off against a
-  `~/.claude` that is root's all the way down, and a hand-back on the way down
-  that fails. Every branch printed
-  what it should and no branch chowned anything it should not have. **That is a
-  control-flow harness and not a kernel**: no ownership was changed anywhere, by
-  anything, at any point — the container was never built and never started,
-  because this run had no `docker` binary, no `/var/run/docker.sock`, no root
-  for `apt-get`, and `unshare --user` answering `Operation not permitted`.
-
-  Three things about the CLI *were* measured, against the pinned 2.1.226 with a
-  throwaway `CLAUDE_CONFIG_DIR`, and they are why the list above is what it is.
-  A session start creates `.claude.json`, `backups/`, `projects/` and
-  `sessions/` at the top level of that directory before it has authenticated —
-  `.claude.json` lands *inside* it precisely because `CLAUDE_CONFIG_DIR` is set,
-  which is not where it sits on a host that has not set it. A session started
-  against a config directory whose **top level is not writable** but whose
-  entries exist runs to the API and fails only on the credential, creating
-  nothing and complaining about nothing. And the binary's own atomic writer —
-  temp file, then rename — falls back to an in-place `O_TRUNC` write when the
-  rename fails with `EACCES`, which is why rewrites of top-level files the
-  agents still own survive a directory they no longer do.
-
-  What none of that touches is whether a real container comes up, whether the
-  ownership reaches the kernel that enforces it, and whether a work cycle still
-  meters. Every command below is for a human and **none has been run**:
-
+- **Root-owning `~/.claude` (`UF_LOCK_CLAUDE_HOME=1`) has never run in a
+  container.** Unknown: that the kernel enforces it (`fakeowner` on macOS may
+  void it), that cycles still meter, what it does to the host's `~/.claude`.
+  Not read-only: credentials stay readable; `remote-settings.json` and
+  `policy-limits.json`, not fully traced, stay agent-owned. Steps, none run:
   ```sh
   # 0. the shipped state first — with UF_LOCK_CLAUDE_HOME unset, nothing changes
   docker compose up -d --build
   docker compose logs usagefoundry | grep UF_LOCK_CLAUDE_HOME    # expect nothing
-  # uid out of the container: a UF_UID default written here would expand in
-  # your own shell, which .env never reaches (#147). Shape corrected
-  # 2026-09-08; the check itself was not re-taken.
   uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
   docker compose exec --user "$uid" usagefoundry sh -c \
-    'test -w ~/.claude/settings.json && echo BAD-writable'       # expect BAD-writable
+    'test -w ~/.claude/settings.json && echo BAD-writable'   # expect BAD-writable
 
-  # then set UF_LOCK_CLAUDE_HOME=1 in .env and restart — compose forwards it,
-  # and there is nothing else to edit
+  # then set UF_LOCK_CLAUDE_HOME=1 in .env and restart
   docker compose up -d
   docker compose exec usagefoundry sh -c 'echo "[$UF_LOCK_CLAUDE_HOME]"'
-  # expect [1], and check it anyway: compose forwards by name and has no
-  # env_file, so a variable that did not arrive is indistinguishable from a
-  # switch that is off
+  # expect [1]: compose forwards by name and has no env_file
   docker compose logs usagefoundry | grep UF_LOCK_CLAUDE_HOME
   # expect "…is root-owned: a run cannot rewrite or replace its settings.json…"
-  # a refusal instead names the entry, the owner it wanted and the owner it saw
 
   # 1 + 2. the two the sketch names (09-implementation-sketch.md:274–284)
   docker compose exec --user "$uid" usagefoundry \
@@ -6067,128 +1836,28 @@ through before trusting this unattended:
     sh -c 'ls ~/.claude/projects >/dev/null && touch ~/.claude/projects/.probe'
                                                           # expect BOTH to work
   docker compose exec --user "$uid" usagefoundry \
-    sh -c 'cat ~/.claude/settings.json >/dev/null'   # expect it to work: hooks,
-                                     # permission rules and env are in that file
-  docker compose exec --user "$uid" usagefoundry \
-    sh -c 'rm -f ~/.claude/projects/.probe'                  # tidy up after it
-  ```
+    sh -c 'cat ~/.claude/settings.json >/dev/null'           # expect it to work
+  # then run a real work cycle and confirm the dashboard's figures move
 
-  Then the part no permission check reaches: **run a real work cycle** and
-  confirm the dashboard's figures move. `projects/` is `transcripts.ts`'s scan,
-  so a hand-back that half-worked is a fleet that looks idle rather than an
-  error — the two together (a cycle that commits, and a window that grows) are
-  the only evidence this did not break metering. A chat turn and a review are
-  worth one pass each for the same reason.
-
-  **The check the sketch does not name, and this change makes necessary: your
-  own Claude Code, on the host, outside this container.** `~/.claude` is a bind
-  mount of your home directory, so this changes what your own tools may do
-  there. From a host shell, not `docker compose exec`:
-
-  ```sh
+  # from a host shell, not docker compose exec
   ls -ld ~/.claude ~/.claude/settings.json
   # Linux: expect root:<your gid> 0750, and root:<your gid> 0640 on the file
-  ls ~/.claude/projects >/dev/null && echo ok      # expect ok — still yours
   claude -p 'say hi'                               # expect a normal answer
-  touch ~/.claude/probe                            # expect Permission denied
-  ```
 
-  What you have given up, and it is not nothing: you can no longer create
-  anything at the top level of `~/.claude`, and you can no longer edit
-  `~/.claude/settings.json` — including through `/config`, which will fail — from
-  your own account. `sudoedit ~/.claude/settings.json` is the way to change it
-  while this is on. If your host `~/.claude` is *fresh* rather than one Claude
-  Code has been using, expect breakage instead: a directory it has not created
-  yet (`todos/`, `statsig/`, `file-history/`, whatever the version wants) cannot
-  be created under a root-owned parent, and the failure will be inside a tool
-  call rather than on your screen. The boot names the ones it knows about, once.
-
-  The way back, which should also be exercised once before you need it:
-
-  ```sh
-  # clear UF_LOCK_CLAUDE_HOME in .env, then
+  # the way back: clear UF_LOCK_CLAUDE_HOME in .env, then
   docker compose up -d
   docker compose logs usagefoundry | grep UF_LOCK_CLAUDE_HOME
   # expect "off — gave /home/node/.claude back to <uid>:<gid>"
-  ls -ld ~/.claude                                 # expect your own uid, 0700
-  # and if that ever fails to run — two paths, no -R, because nothing below
-  # them was taken:
+  # and if that ever fails to run — two paths, no -R:
   sudo chown "$(id -u):$(id -g)" ~/.claude ~/.claude/settings.json
   sudo chmod 0700 ~/.claude && sudo chmod 0600 ~/.claude/settings.json
   ```
 
-  **On macOS this may do nothing at all, in either direction.** Docker Desktop
-  emulates bind-mount ownership (`fakeowner` on every mount here —
-  `10-validation.md`, finding 14), so the `chown` may not reach the host files
-  and may not confine the agents. The entrypoint asks an agent's own uid, with
-  `setpriv`, whether it can still write the directory and the file, and prints
-  `…the ownership change did not reach the kernel that enforces it…` when the
-  answer is yes. Read that line before believing any of this is in force; the
-  `echo x >> ~/.claude/settings.json` above is the check that settles it.
-
-  One thing that is **not** closed by this and should not be read into it: a run
-  can still read `~/.claude/.credentials.json` (it is the credential it bills
-  against),
-  and every other entry under `~/.claude` — `CLAUDE.md`, `agents/`, `rules/`,
-  `plugins/` — keeps the owner it had, which is the agents'. This closes the
-  file the CLI resolves a *sandbox policy* from, and the hooks and permission
-  rules beside it in that same file. It does not make `~/.claude` read-only.
-
-  **And an open question this raised, which nothing here answers and nothing
-  here acts on.** Two more server-pushed files sit in that directory and stay
-  the agents' under this: `remote-settings.json` (`{"channelsEnabled":true}` on
-  the install this was written on) and `policy-limits.json` (`restrictions`,
-  `compliance_taints`). The first is reachable from the *managed* source list
-  the sandbox policy is built from — the binary's provider resolver has a
-  `remote` branch beside `helper`/`plist`/`hklm`/`file` — but the loader in
-  front of it reads `if(!ije()&&yrs!==!0)return null` with `ije(){return}`, so
-  it yields nothing unless an internal flag is set, and what sets it was not
-  traced. If it is ever live, it is a *managed*-tier source that an agent owns,
-  which would outrank the file this locks. Root-owning it was deliberately not
-  done: the CLI refreshes it from the server as the agent's uid, so taking it
-  would break org-managed settings on exactly the installs that have them, to
-  close a hole nobody has shown is open. `policy-limits.json` was not traced at
-  all. Both are worth an hour against a live binary before anyone calls the
-  policy surface closed.
-- **The CLI's own sandbox — read out of the binary, and executed in exactly two
-  places.** `proposals/implemented - Sandboxing/02x-option-cli-sandbox.md` establishes that the
-  pinned CLI (2.1.226) implements a bubblewrap sandbox configured by `sandbox.*`
-  settings keys, and `08-recommendation.md` recommends adopting it. All of that
-  was read out of the binary's strings with `strings`, and until 2026-08-19 not
-  one line of it had been run. What has been run since is narrow, is in
-  *Verified* above, and is three things: `bwrap` itself, with and without the
-  seccomp profile and with each of the two argv shapes the binary contains; one
-  install that ran fifteen hours with `UF_SANDBOX=1` and a sandbox that never
-  started; and three hand-run `claude -p` calls against one that did, of which
-  one ran a shell command through it and one was refused the credentials file
-  its own uid owns. **No work cycle has run inside a sandbox that started** —
-  nothing this app spawned has met a live policy, so no per-run `--settings`
-  overlay has ever been honoured and the network allowlist has never been
-  exercised at all. What depends on those answers is the wiring in the entries
-  above and whatever gets built after it. No stock install enables a sandbox either: `UF_SANDBOX=1` is opt-in and
-  off unless the operator sets it.
-
-  The harness is `scripts/sandbox-probe/` — a throwaway image on the same base
-  and the same CLI pin, a seccomp profile that is Docker's default plus user
-  namespaces, and one script that runs questions 0-8 of
-  `proposals/implemented - Sandboxing/09-implementation-sketch.md:134`-`200` and prints one
-  transcribable line each. `scripts/sandbox-probe/RUNBOOK.md` is the ordered
-  list of what to run, on which machine, and what each answer decides; steps 4
-  and 5 are billed. Its own answer logic is exercised against stubs by
-  `scripts/sandbox-probe/probe.test.sh` (37 assertions, no Docker and no
-  money) — which measures the harness and says nothing about the CLI.
-  **Nothing in that directory has been run against a container**, and one of its
-  questions is now known to be under-specified: `probe.sh:521` gives Q2 two
-  outcomes, `REFUSED` and `RAN-UNSANDBOXED`, and production showed a third — a
-  session that starts, reports nothing, and fails every command inside a `bwrap`
-  that exited first. The probe cannot reach it, because it asks Q2 in an image
-  with **no** bubblewrap, which is the one kind of unavailability the CLI's
-  `access(X_OK)` check does detect. An installed `bwrap` the kernel refuses
-  reads to that check as available.
-
-  **Three rows below are answered, none of them by this script**, and the rest
-  are not. Fill those in from the script's last block, and record the CLI,
-  bubblewrap and kernel versions it prints with them:
+- **No work cycle has run in a started sandbox, the network allowlist never
+  ran, and `scripts/sandbox-probe/` has never met a container.** CLI 2.1.226's
+  sandbox and the policy choices built on it are readings of the binary.
+  `probe.test.sh`'s 37 stub assertions test the harness only; `probe.sh`'s Q2
+  cannot reach the failure production showed. Results (Q3, Q8d decide shape):
 
   | Question | Answer | Recorded |
   |---|---|---|
@@ -6205,1388 +1874,262 @@ through before trusting this unattended:
   | Q8c — does one bubblewrap start inside another? | *(unmeasured)* | |
   | Q8d — does the CLI's own bubblewrap start inside one we started? | *(unmeasured)* | |
 
-  Q3 and Q8d are the two that decide the shape rather than refine it: together
-  they say whether the vendor's sandbox stands alone, is replaced by a wrapper
-  this app puts around the whole `claude` process, or composes with one. The
-  others each move a phase of the plan; RUNBOOK.md's table says which. The three
-  answered rows do not make the script redundant: Q8a is the one thing above
-  that nothing has recorded — nobody has read the bubblewrap version this image
-  actually carries — and the script prints it beside every other answer, which is
-  what makes a re-reading of this table possible on the next pin.
-
-- **Whether a real agent uses the `NEEDS_REVIEW` sentinel when it should, and
-  withholds it when it should not.** The `needs-review` ending is decided
-  entirely by a token in the agent's own final text, so what the wording of
-  `NEEDS_REVIEW_NOTICE` actually produces is the whole feature — and nothing in
-  this repository can measure it. The matcher, the precedence, the prompt
-  composition, the loop stop and the edge semantics are unit-tested; the model's
-  *behaviour* against them is reasoned from `COMPLETION_NOTICE`'s measured
-  precedent (251 runs) and from `DEFAULT_DONE_PUSHBACK_PROMPT`'s stated failure
-  mode, and reasoned is not measured. Two directions to watch on the first real
-  one, and they fail differently: an agent that reports it under-generously
-  spends its whole cycle cap against a wall exactly as before, which is the
-  status quo and costs money; an agent that reports it cheaply — because a task
-  is large, unclear or tedious — turns completions into a queue of questions for
-  a person, which costs more than money. The reason string is the evidence
-  either way: a good one names a thing and a fix, a bad one has tried nothing.
-  Also unmeasured, and cheaper: the collision, where a run whose *task* discusses
-  this feature carries the literal token and ends in one cycle. That is bounded
-  by design rather than closed — the sentinel is spelled unlike the stored
-  status and must be alone on its line — and it costs one run ending early with
-  its own text recorded, visible and reopenable in one click.
-- **Everything on the `needs-review` path that needs a browser or a running
-  container.** No `claude` child has ever reported the sentinel to this app. Not
-  rendered: the amber badge and its glyph on the runs list, the run page, the
-  workflow instance page and the dashboard telemetry card; the **Needs review**
-  filter segment; the agent's own reason under the state card; the warn-toned log
-  line for the transition. Not exercised against a database: that the ending
-  stamps `finished_at` and frees its folder so a queued run starts, that a second
-  run may be created to continue such a run's branch, that Resume accepts one and
-  clears its reason, that neither bulk pick-up offers it, and that Land, Delete,
-  Purge and a conflict resolution are all still permitted on its branch. Docker
-  was unavailable in the container this was implemented in, so the
-  `docker compose up --build` half of the real verification loop has not been run
-  against any of it.
-- **The Knowledge base settings section in a browser.** The section, its mount
-  picker, its subpath field and the figures panel typecheck and build, and the
-  route behind them is measured in the entry above — but nothing has rendered
-  them. Four states are drawn and none has been seen: nothing configured, a
-  mount that is gone (the picker keeps the stored id as *Folder no longer
-  mounted* and Save then refuses it by id), a vault that scanned, and a walk
-  that hit its cap. The third of those is also the only place `truncated` shows,
-  and no vault reachable from here is large enough to produce it — the cap is
-  5,000 notes and the vault measured above holds 773 — so the `≥` prefix and the
-  Truncated badge have never been on screen. Docker was unavailable in the
-  container this landed from, so the `docker compose up --build` half of the
-  loop was not run against any of it.
-- **Every part of the Knowledge page that needs a browser.** The entry above
-  measured its routes and its renderer; no pixel of it has been seen, and the
-  parts that carry the most behaviour are exactly the parts a server response
-  cannot show. Specifically unverified: that a click on a wikilink is caught by
-  the delegated handler on the page's wrapper and opens that note rather than
-  navigating away; that a modified click (⌘, ctrl, shift, middle) is still let
-  through to the browser; that **Back** returns to the previous note, which
-  rides on `popstate` and on nothing else; that the 250ms search debounce feels
-  like a search box rather than a stutter; that the note column and its
-  links/frontmatter column sit side by side above `md` and stack below it; that
-  the browse table's `Table stack` fallback actually stacks with a label on
-  every cell rather than becoming a column of unnamed figures; and that the
-  not-configured branch renders as a warn Notice above a Settings link — the
-  route half of that state answered correctly, but the branch that draws it has
-  never run. The Obsidian constructs added on 2026-08-22 are unseen in the same
-  way and the measurement above is explicitly *not* a substitute: it counts what
-  reached the DOM, so it says a callout is a box with the right border token and
-  says nothing about whether four tones are distinguishable at 8% tint, whether
-  a `<summary>` inside a callout looks like a fold, whether a note's table
-  actually stacks below `md` rather than scrolling, whether a disabled checkbox
-  reads as "not yours to press" or as broken, or whether three levels of list
-  nesting stay legible in the note column's width. The graph region's `min-h-[20rem]` is gone with the placeholder
-  that earned it: the canvas and both of its empty states are `aspect-[4/3]`,
-  so what used to be "dropping a canvas in must not reflow the page" is now
-  "the box is the same shape before and after the vault loads, at every width".
-  That is a stronger claim and it is unseen in exactly the same way — the box's
-  height now follows the pane's width, and nobody has looked at what 4:3 comes
-  out as on a wide window, where it is taller than the `32rem` it replaced.
-  Docker was unavailable in the container this landed from, so the
-  `docker compose up --build` half of the loop was not run against any of it.
-
-  The chrome pass of 2026-08-22 puts five more behaviours on this same list, and
-  a build can see none of them. **That opening a note brings it to the reader**:
-  the note is now the page's first block, and a click on a list row, on a
-  wikilink inside a body or on a graph node scrolls that block into view and
-  moves focus onto it. What wants looking at is whether the smooth scroll from
-  the health cards at the bottom of the page reads as travel rather than as a
-  jolt, whether `scroll-mt-4` is enough to clear the pane's top edge, and
-  whether a focus ring around a whole region is feedback or noise. A mouse click
-  should draw no ring at all, because `:focus-visible` is heuristic on a
-  programmatic focus and nothing here overrides it, but that heuristic is the
-  browser's and it has not been watched in one. **That the reduced-motion branch
-  is taken**, which is the one place on this page that reads the query in script
-  rather than in CSS, because the blanket in `@layer base` cannot reach a
-  `scrollIntoView`. **That 180ms is the right threshold** before a second read
-  admits itself with a spinner in the heading: long enough to stay silent on a
-  local read, short enough that a slow one does not read as unanswered. Both
-  ends of that are reasoned from `--motion-base` and measured against nothing.
-  **That the frontmatter list stacks** key over value below `md`, where it was a
-  fixed 10rem column whose keys were truncated. And **that a tag reads as a
-  chip**: `Badge` uppercases visually, and a vault's tags are lowercase
-  hierarchical paths, so whether `#TOPIC/ENGINEERING/STANDARDS` in a table cell
-  scans or shouts is a judgement nobody has made with their eyes. All five are
-  `/knowledge` only; the pass touched no other page and no kit component.
-- **A run actually answering out of the vault, and the generated directory's
-  ownership under privilege separation.** The delivery is measured — the entry
-  above shows the skill reaching the model's skill list from `--plugin-dir`, and
-  three `buildArgs` cases pin that it is on the argv on a first cycle and a
-  resumed one — but no work cycle has been spawned with it and no model has been
-  asked a question it should have answered from a vault. The three behaviours
-  that matter are all *inside* the model and none of them can be typechecked:
-  that it invokes the skill rather than answering from its own knowledge, that
-  it **stops and reports** when the path cannot be read instead of quietly
-  answering anyway, and that it carries the confidence grade through into what
-  it says. The first two are the whole point of the feature and the second is
-  the one that fails invisibly.
-
-  The other half is `writeVaultSkill`'s claim about ownership. The generated
-  directory is written root-owned and 0755 so that every agent uid can read it
-  and none can write it — a sibling able to rewrite a SKILL.md could put words
-  into another run's mouth — and that is reasoned from `chat.ts`'s `/run/uf-mcp`
-  precedent, not measured: nothing here ran with `UF_AGENT_UID` set, so the
-  fallback to `os.tmpdir()` is the only branch that has ever executed. Before
-  trusting this unattended, on a separated install: `stat` the directory under
-  `/run/uf-skills`, read the SKILL.md as the agent uid, and try to write it.
-  Docker was unavailable in the container this landed from, so the `docker
-  compose up --build` half of the loop was not run against any of it, and the
-  vault-skill switch in Settings has been typechecked and built but never
-  rendered — including the state that matters most, which is the switch refused
-  and disabled with no knowledge base configured.
-- **Every part of the graph view that needs a browser, which is all of it that
-  is visible.** The entry in the section above — the graph view's server half
-  and its arithmetic — measures the route, the payload and the simulation
-  against the real vault, and stops exactly where a canvas begins.
-  Chromium was installed into a scratch directory and refused to launch —
-  *Host system is missing dependencies to run browsers* (libnss3, libnspr4,
-  libgbm1, libasound2) with no `sudo` and no package index to install them
-  from — so **the frame rate the feature is specified in terms of has not been
-  measured, only the arithmetic underneath it**. Nothing here has been seen
-  drawn. Specifically unverified, and each fails in its own quiet way: that
-  the colour probe returns an `rgb(...)` a 2D context accepts rather than the
-  `light-dark()` source text `getComputedStyle` hands back for a custom
-  property — the failure is a canvas that renders in whatever colour was last
-  set, not an exception; that the probe re-runs on a `data-theme` change and on
-  a `prefers-color-scheme` change, which is the only thing keeping the graph
-  from staying in the old theme's palette until something else forces a
-  rebuild; that the device-pixel backing store makes the lines crisp rather
-  than soft; that the two batched `stroke()` calls draw the same picture as the
-  ten thousand separate ones they replaced, apart from the loss of
-  self-compositing that was accepted deliberately; that the rAF actually stops
-  when the layout cools, which is a warm laptop rather than a wrong picture;
-  that a wheel zooms about the pointer, a drag pans, a dropped node stays
-  dropped, and a hover dims what it should; and that the labels ramp in at the
-  fade threshold instead of the whole vault's titles appearing between one
-  wheel notch and the next. Before trusting it: open `/knowledge` in a browser,
-  watch the frame counter in the devtools performance panel through a settle
-  with tags on, then drag, drop, zoom out past the fade threshold and switch
-  the theme.
-
-  **Two things about the wheel are newer than the rest of this entry and
-  unmeasured in their own right.** The listener is registered natively with
-  `{ passive: false }` rather than through React's `onWheel`, because React
-  attaches `wheel` at the root as a passive listener and discards a
-  `preventDefault()` from a synthetic handler — so before the change the
-  gesture zoomed the graph *and* scrolled the pane behind it, and after it the
-  canvas is supposed to take the gesture whole. Nothing has confirmed either
-  half: that the page no longer moves under a wheel over the canvas, or that
-  the pane still scrolls normally the moment the pointer leaves it. And
-  `LINE_HEIGHT_PX` is an estimate — Firefox reports a mouse wheel in
-  `DOM_DELTA_LINE` and everything else in pixels, and 16 is a plausible line
-  box at this app's 13px body rather than a figure read off an engine. **The
-  two zooms have never been held side by side**, so what is unknown is whether
-  a notch travels the same distance in Firefox as it does in Chrome — a wrong
-  constant here is a zoom that feels twitchy or sluggish in one browser only,
-  which is invisible from the other. **The 7.3MB payload is the other thing a browser would price**:
-  the route was not changed for this and its shape is the shape the reader
-  already published, but decode and parse of that JSON is a cost nothing here
-  has measured, and it is paid once per page load rather than per frame.
-
-  **The box now takes the row's height rather than a fixed ratio, and that is
-  three CSS claims nothing here has watched resolve.** The canvas column was
-  4:3 while the panel beside it is taller than that at every width the two fit
-  side by side, so a few hundred pixels of empty card sat under the graph and
-  the row's height was being decided by a column of sliders. The card is now a
-  one-cell grid holding a `self-start aspect-[4/3]` sizer and the graph in the
-  same cell. Unverified: that a lone auto row really does stretch to a card
-  taller than its content (`align-content: normal` behaving as `stretch`),
-  which if it does not leaves the box exactly where it was and the change is
-  merely inert; that the sizer's ratio still floors the row when the panel is
-  the *shorter* column — every width below `lg` stacks, so this is the wide
-  window with the panel collapsed, and a failure there is a graph squashed to
-  the panel's height; and that the `ResizeObserver` redraws at the new size
-  rather than leaving the old backing store stretched, which is a soft picture
-  and not a missing one. The canvas element was moved to `absolute inset-0` in
-  the same change and that one is a *fix* for a fault the layout would
-  otherwise have introduced rather than a new risk: the observer writes the
-  measured height back as an inline `style.height`, so an in-flow canvas is a
-  child holding up the host's intrinsic height and the box would have ratcheted
-  — growing with the panel and never coming back down. Nothing has watched it
-  come back down either. To check all four: open `/knowledge` wide, switch the
-  graph between **Whole vault** and **This note** (which adds and removes four
-  panel rows), and narrow the window past `lg`.
-
-  **The tag seed writes to `localStorage` once and has no second chance.** The
-  colour groups now seed themselves from the vault's most-used tags, and the
-  moment is exactly one: nothing stored, and the first graph fetch has just
-  come back with something in it. `graphTags`, `tagGroups` and the query they
-  write are unit-tested; the *timing* is not testable here and is what can fail
-  quietly. Three orderings to watch, all in a browser with the key
-  `uf.knowledge-graph` cleared: that a first visit lands seven `tag:` groups
-  and the graph opens painted; that a second visit with every group removed by
-  hand comes back with them still removed rather than reseeded, which is the
-  whole reason the flag reads storage rather than the group list; and that a
-  first visit whose graph fetch *fails* still persists a slider moved
-  afterwards — the persist is held back while a seed is owed, and the error
-  branch is the only thing that releases the hold.
-
-- **The whole of the 2026-08-23 pass, because none of it ran against a real
-  agent or a rebuilt container.** The entries in the section above are
-  measurements of the container as it *was*, of the transcript corpus, and of
-  the CLI bundle. Nothing after them was executed: no `docker compose up
-  --build`, no browser, no billed run. Five things follow, and they fail
-  differently.
-
-  - **That `--plugin-dir` registers a plugin's hooks is now observed** — see the
-    entry above, which supersedes what stood here — **but only for
-    `SessionStart`, and `readGuard`'s hook is `PreToolUse`.** The general claim
-    the read guard rested on has held; its own event has still never been seen
-    to fire, and cannot be seen from here, because the CLI emits a
-    `hook_response` for `SessionStart` and `Setup` alone. So the guard may still
-    do nothing whatever when an operator switches it on, and the symptom is
-    indistinguishable from the setting being off — which is how it ships.
-    Settling it costs the same one billed run it always did, now narrowed:
-    switch `readGuard` on, spawn a cycle that reads one file twice, and confirm
-    the second read is refused. A refusal is the only channel this hook has that
-    the stream does not filter out.
-  - **The fresh-start lever's saving is unmeasured, and the measurement that
-    would settle it is a specific one.** `freshStartContextTokens` opens a cycle
-    without `--resume` past a threshold, trading tokens for re-discovery; the
-    prices either side of that trade are measured (a two-cycle run averaged
-    $19.19 against $10.05 for one; 12.0c a call early against 20.4c late) and
-    the *net* is not. What would settle it is a matched pair of runs on one
-    task, one arm each way, compared on total spend **and** on whether the task
-    finished. Never a within-run before/after: cost per call climbs with
-    position all on its own, so the second half of any run is dearer than the
-    first whatever this setting says — the same trap the `--autocompact` entry
-    above records as a phase contrast.
-  - **The file-cost notice has never been seen on a real argv, and not one
-    avoided read has been measured.** What is measured is the price of the reads
-    it is trying to prevent — `orchestrator.ts` at ~116,000 tokens read 496
-    times across 78 runs, `workflows.ts` 68,000 over 185 — and the arithmetic
-    that one avoided full read of the first is worth about $3.19 in the re-reads
-    and cache writes behind it. That an agent handed a price list reads less is
-    the claim, and it is untested. Its opposite failure is cheap to check and
-    has not been checked either: that `runs.file_cost_notice` is byte-identical
-    on cycle 1 and cycle 2 of one run, since a notice that drifted inside a run
-    would cold-start a 190,000-token prefix and cost far more than it could
-    save.
-  - **No page has been rendered from this build.** The new dashboard card
-    (*What filled the context*) and the counterfactual column beside the agent
-    breakdown, the narrower runs-list and workflows-list payloads, the run
-    page's poll standing down on a terminal row, and the Land row's wrapped
-    select are verified by types and arithmetic only. The Land fix has one
-    measurement under it and it is of the stylesheet rather than of the row:
-    `.w-auto` is emitted at byte 15178 and `.w-full` at 15197 with the same
-    specificity, so the later one won and the select resolved to 100% whatever
-    the call site passed. Nobody has seen the button come back onto its row.
-  - **The graph route's "after" byte figure is computed from the new code**,
-    as the entry above says, rather than curled from a server — and the same is
-    true of the workflow list's. Both are the arithmetic that justified the
-    change, not a reading of the change.
-
-- **The Files tab's touched/changed reconciliation, in a browser.** New:
-  `src/lib/runTouchScan.ts` (the `run_events` scan), `src/lib/runTouches.ts`
-  (the pure reconciliation), `GET /api/runs/[id]/touched`,
-  `src/components/RunTouches.tsx`, rendered under `RunDiff` on the run page's
-  tab — whose label is now **Files** rather than Changes, the `RunTab` value
-  still `"changes"`. **No browser was opened and no container was started**, so
-  nothing below has been *seen*.
-
-  What **is** checked, and it is more than types for once: the scan's SQL was
-  run against a real SQLite database — `better-sqlite3` in process, an in-memory
-  `runs`/`run_events` pair loaded with ten hand-written `kind: "tool"` payloads
-  — and it returned what the design claims. `/w/repo/src/a.ts` and
-  `/w/.wt/repo-1/src/a.ts` collapsed to one `src/a.ts` row with `calls: 3`,
-  which is the worktree-relativisation working; a `NotebookEdit` came back as
-  `nb.ipynb` from `$.input.notebook_path`; `/tmp/scratch.txt` came back with
-  `outside: 1`; a `Bash` carrying only `command` and a `Grep` carrying `path`
-  (a *directory*) were both excluded, as was a `kind: "log"` row; and
-  `subagent`/`parentToolUseId` survived. That was a throwaway script, not a
-  committed test — `runTouches.test.ts` covers the pure half only, nine cases.
-  Plus `typecheck` (exit 0), `npm test` (**1,805 tests / 266 suites / 0
-  failures**) and `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` (exit
-  0, `/api/runs/[id]/touched` listed at 270 B).
-
-  The click list, at 1280px and again at 390px, where `Table stack` takes over
-  and the column heads leave the screen:
-
-  1. Open a finished, worktree-isolated run's **Files** tab. The tab is labelled
-     Files, not Changes; the strip still has its five labels in their order.
-  2. Under "What changed" there is a second card, **What it touched**, whose
-     header prints a distinct-file count and a work-cycle count and says a call
-     was *attempted*. **Write both numbers down** — they are what the deferred
-     file-by-cycle grid in `proposals/SessionFlow/` is waiting on, and nothing
-     else in this app prints them.
-  3. Groups appear in the order: changed-but-never-named, then named-and-changed
-     (behind a closed `Disclosure`), then named-not-changed, then outside the
-     checkout. An empty group is absent rather than an empty box.
-  4. A row with no calls at all — anything in the first group — shows an em dash
-     in Reads and Writes, never `0`. At 390px each figure is named by its own
-     `Td` label and the path is the unlabelled headline.
-  5. A run that delegated shows a sub-agent's name in **By**; a file both the
-     main thread and a sub-agent reached shows both, comma-separated.
-  6. Open a **non-isolated** run's Files tab: the diff is the folder's current
-     state, and the reconciliation should still render against it.
-  7. Open a run whose branch is gone (`kind: "none"` from the diff route). The
-     card still renders — its two figures and its empty states are facts about
-     the events, not about the diff — but it drops to **two** groups, named by
-     a tool call and named outside the checkout, with a warn notice carrying the
-     diff's own reason. Neither "changed, never named" nor "named, and not
-     changed" may appear: the changed set is *unknown* there rather than empty,
-     and either label over it is the reconciliation asserting the thing it was
-     built to check. This is the entry most likely to be wrong, because it is a
-     condition on a prop rather than anything the route answers.
-  8. Set `eventRetentionDays` low, let the sweep run, reopen a terminal run past
-     the horizon: the card says its tool events were removed on the horizon and
-     does **not** draw an empty list. The diff above it is unaffected — a
-     checkout is kept on its own clock.
-  9. A run that made only `Bash` calls says "No tool call in this run's log
-     named a file", which is a different sentence from 8.
-  10. Watch the network panel: `/api/runs/[id]/touched` is fetched **once** on
-      opening the tab and never again. It must not join the 3-second poll.
-
-- **The whole of `ask_operator` — the server half of a chat that asks the
-  operator a question.** **No CLI was run, no browser was opened and no
-  container was started**, so nothing below has been *seen*. Docker is not
-  available in the container this was written in, which means the
-  `docker compose up --build` half of the verification loop could not be
-  attempted at all rather than having been skipped. What was run, on this
-  branch: `NODE_ENV=development npm ci --include=dev` (exit 0),
-  `npm run typecheck` (exit 0) and `npm test` (**1,824 tests / 272 suites / 0
-  failures**). `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` was
-  **not** run, so the new route file has never been through the Next.js build —
-  only through `tsc`. There is also no UI — that is a separate run continuing
-  this branch — so no question has ever been rendered and `POST
-  /api/chat/[id]/questions` has never been called by anything but a unit test.
-  **The tool is on the wire before the panel is**, which is a real state a live
-  install can be in: a chat that asks now leaves a row nothing draws, and the
-  operator sees only the reply saying what was asked. It does not jam — the
-  next ordinary message supersedes every open question, so the five-question
-  cap cannot be reached and held — but until the panel lands the answer reaches
-  the model only as whatever the operator types next, without the question
-  quoted above it.
-
-  **Both of the paragraph above's gaps are closed by the entry below it**, which
-  is the run that built the panel: the build was run (exit 0), and the card has
-  now been rendered and clicked. Everything else in this entry stands — in
-  particular the two load-bearing unknowns, which are about a model and a CLI
-  and which no amount of rendering can settle.
-
-  **The load-bearing unknown is whether the pinned CLI stops when it is told
-  to.** A tool call cannot block on a click: `CHAT_TIMEOUT_MS` is ten minutes
-  and an overrunning turn is killed with its answer discarded, so `ask_operator`
-  records its rows and returns at once. Everything that then makes the turn
-  *end* is prose — the tool description, and the result text saying in as many
-  words that no answer is coming back through it. Neither is a mechanism, and
-  what a model that reads it the other way does is call the tool again, which
-  the pending-question cap turns into a refusal rather than a loop but which
-  still spends the turn. That is the same class of assumption as "an
-  unrestricted chat stays an orchestrator" further up this list, and it wants
-  the same test: ask the chat something under-specified, watch whether it asks
-  once and stops.
-
-  **The second is whether the next turn knows what it is answering.** A question
-  asked in one turn and answered in the next is the same conversation to the
-  model only if `--resume` carries the tool call, which has not been measured
-  here. The answer message quotes each question above the answer to it
-  *precisely* because it might not — but that quoting has never been read by a
-  real child, so what is unverified is whether the model treats it as its own
-  question or as the operator narrating one.
-
-  Four smaller things, none of them measured. `MAX_OPEN_QUESTIONS` (5) and
-  `MAX_QUESTION_CHOICES` (8) are argued from `MAX_PENDING_PROPOSALS`' reasoning,
-  not from watching anyone answer anything. What an exchange *costs* is
-  unknown and is not free — a question is a whole extra turn each way, against
-  `chatTurnBudgetUSD` twice. The `chat_questions` statement is a
-  `CREATE TABLE IF NOT EXISTS` and `SCHEMA_VERSION` was deliberately not bumped,
-  which follows `db.ts`'s own rule for an additive migration but has only been
-  run against databases this suite created. And a stranded turn whose capability
-  is still live can in principle write a question into a chat the row already
-  says is idle; the answer path is idempotent against it and the pending cap
-  bounds it, but that window has not been reproduced.
-
-- **The operator's half of `ask_operator` — the card in the thread, the chat
-  list's marker, and the paragraph telling the model when to ask.** **No
-  container was started and no `claude` child was ever spawned on this path**;
-  Docker is not available in the container this was written in, so the
-  `docker compose up --build` half of the loop could not be attempted at all
-  rather than having been skipped. Run on this branch:
-  `NODE_ENV=development npm ci --include=dev` (exit 0), `npm run typecheck`
-  (exit 0), `npm test` (**1,832 tests / 272 suites / 0 failures**) and
-  `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` (exit 0, with
-  `/api/chat/[id]/questions` listed and `/chat` at 11.4 kB).
-
-  Unlike the entry above, this one **was rendered**, and it is worth saying how,
-  because the arrangement is reusable and none of it is the shipped one. A
-  scratch `DATA_DIR` was seeded with five threads by hand, `next dev` was run
-  against it on a spare port, and Chromium was driven over it with Playwright at
-  1440×1000 and again at 390. Two environment facts had to be worked around and
-  neither is in `CLAUDE.md`: `NODE_ENV=production` is set in this container and
-  makes `next dev` answer **every** request with an `EvalError` out of the edge
-  runtime's instrumentation chunk — a blanket 500 with nothing on the page, and
-  a third member of the same family as the two traps that file already records
-  — and `UF_AUTH_TOKEN` is set both in the environment and in `.env`, so
-  `UF_ALLOW_NO_AUTH=1` does *not* open the app: `middleware.ts` gates purely on
-  the token being non-empty, and exporting it **empty** is what turns the gate
-  off. That is why every screenshot carries the red "Authentication is off"
-  banner.
-
-  What was seen: a single open question with three choices and a text field; a
-  three-question card with hairlines between the questions; an
-  answered-and-overtaken pair sitting directly above the `Answers to your
-  questions:` message that settled it; a question asked while its own turn was
-  still running, with every control out and the reason said; a question with no
-  choices and no typed answer, saying so and pointing at the composer; a refused
-  answer drawn on the card rather than under the composer, with every control
-  released again; and the thread list showing `asked you` and `asked you 3`.
-  Dark and 390px both hold, and all four text controls on the card measure 16px
-  below `md`, which is the platform floor `CONTROL_BASE` exists for.
-
-  The click wiring was exercised with `POST /api/chat/[id]/questions`
-  **intercepted in the browser**, deliberately, because the real route reaches
-  `sendChatMessage` and spawns a billed child. Asserted against the captured
-  request bodies: one press of a choice on the only open question sends exactly
-  `{"answers":[{"id":…,"answer":"pnpm"}]}` and nothing else; the same press
-  beside two open siblings sends **nothing at all** and only marks the button
-  `aria-pressed`; the row's own button then sends all three in the order they
-  are drawn; and Enter inside one question's field answers that question alone
-  and does not also send the composer's draft.
-
-  **What that arrangement cannot show is the half that spends money.** No answer
-  has ever reached a real turn: `answerChatQuestions` → `sendChatMessage` →
-  `claude -p` is driven only by the unit tests, so the first real proof that an
-  answer resumes the session and that the model reads the quoted questions as
-  its own is still the one the entry above is waiting for. Nothing here
-  discharges it. Nor has any model ever *called* `ask_operator` — the
-  system-prompt paragraph added by this run (only what the operator alone knows;
-  prefer a stated assumption; one is a question where four is a form) is written
-  against the same reasoning as `MAX_OPEN_QUESTIONS` and is equally unmeasured,
-  which matters more than usual because it is paid for on **every** turn and its
-  failure in the other direction — a chat that stops proposing and starts
-  interviewing — looks like the feature working. Three smaller things went
-  unchecked: no screen reader was run over the card, so `aria-pressed` and the
-  transcript's `role="log"` announcing a card's arrival are reasoned rather than
-  heard; the shared `busy` flag disabling the composer and the approve row while
-  an answer is in flight was never seen against a slow response, only against an
-  instant stub; and the `prefers-reduced-motion` path was not exercised, on the
-  grounds that nothing on this card moves — `ui-transition` and `Button`'s busy
-  ring are both already under `@layer base`'s blanket.
-
-  The click list, at 1440px and again at 390:
-
-  1. Ask the orchestrator something genuinely under-specified — "propose a run
-     to fix the flaky tests" in a repo whose lockfile and CI disagree. Wait for
-     the turn. A card headed **Waiting on you** appears at the foot of the
-     thread, *below* the reply, never above it.
-  2. Press a choice. It sends on that one press. The thread carries on, the card
-     stays where it is showing **You answered …**, and the message it produced
-     sits directly beneath it quoting the question. Both are meant to be there —
-     the card is the question as asked, the message is the text the model was
-     sent.
-  3. Ask something that produces two or more questions. Now a press does **not**
-     send: it marks the choice, and the button at the foot of the card reads
-     `Answer 2`. Leave one blank and send: the message says `(not answered)`
-     against it and its row reads **Overtaken by what you said next**, in muted
-     grey and never in red.
-  4. With a question open, type an ordinary message into the composer and send
-     it. The footer said what would happen; check it did — every open question
-     goes to *overtaken*, not to answered, and no card is left pressable.
-  5. Reload with a card on screen in a second tab, answer it there, then press a
-     choice in the first. The refusal appears **on the card**, in red, and every
-     button on it comes back enabled.
-  6. Open the **Chats** tab. A thread with questions open says `asked you` (or
-     `asked you 3`) in accent beside its time, distinct from the `N waiting`
-     chip, which counts proposals.
-  7. Watch the network panel with a question open and nothing else happening:
-     the poll stays at **10 seconds**. It must not speed up — nothing on the
-     server can answer — and it must not stop, because another tab can.
-  8. At 390px: the chips wrap rather than overflowing, the hairlines still
-     separate the questions, and tapping the text field does not zoom the page
-     in and leave it there.
-
-- **A process that does not own the data directory no longer closes out the
-  owner's runs on its way out.** `shutdownRuns` was registered as the
-  `SIGINT`/`SIGTERM` handler outside `instrumentation.ts`'s ownership branch and
-  carried no gate of its own, so the second process — the dev server an agent
-  starts against an inherited `DATA_DIR`, restarted by `next dev` on every file
-  change — ran the entire shutdown reconciliation against the owner's database
-  on each exit: a `shutdown` event and its outbound webhook for every `running`
-  row install-wide, `restart_closed = 1`, and `active_started_at` cleared on
-  cycles whose agents were still working and still billing. The last of those
-  fails **open**, which is why this was worth a fix rather than a note —
-  `installBudget` and a workflow instance's budget both bound
-  `telemetrySpendSince` below by that column, so a stray dev server widened two
-  ceilings at once with nothing on any page saying so. The gate is
-  `mayWriteDataDir()` at the top of `shutdownRuns`, read at the write like every
-  other writer in the app rather than captured at boot, returning
-  `{ signalled: 0, closed: 0, recovered: 0 }`; `killAllAgents` is still
-  unconditional, because those children are this process's whatever the lock
-  says.
-
-  **Not verified by hand:** no two-process reproduction was run and no container
-  was built — this checkout has no Docker, and the second server is only worth
-  watching against a real billed agent in the first. What was run, on this
-  branch: `NODE_ENV=development npm ci --include=dev` (exit 0),
-  `npm run typecheck` (exit 0) and `npm test` (**1,906 tests / 281 suites / 0
-  failures**), the last of which includes a new fourth case in
-  `shutdown.test.ts`. That case was run against the unfixed function first and
-  observed to fail on its first assertion, with `shutdownRuns` returning
-  `closed: 1, recovered: 1` and the seeded row's `restart_closed`,
-  `active_started_at` and `spent_usd_est` all rewritten by a process that had
-  been refused the directory. It makes itself a non-owner the way a real second
-  server becomes one — a lock file naming a live pid that is not ours, then
-  `claimDataDir()` — rather than by stubbing the gate.
-
-- **The context composition series, and the winnow pin it needed (2026-09-04).**
-  `winnow context` does not exist at the old pin `0384486` and fails there as an
-  unknown command, so the pin moved to `0421da5` — forty-three commits — and all
-  four subcommands this app spawns were re-read at the new one against a real
-  8.7 MB transcript on the `safe run --` path, not just the new one. `treat -rx
-  aggressive`'s dry run still prints `Before 434.2K tokens 8.73MB` and `Saved 0
-  tokens (0.0%) 4.30MB freed`, which is the shape `parseTreatEstimate` matches
-  and the zero token column its second case exists for; `plan --tier CB --json`
-  still carries all eight fields `parsePlan` reads (`selection.tier` CB,
-  `results.tool_calls` 185, `results.stripped` 3, `bytes.removed` 104,863,
-  `bytes.pointer_overhead` 517, `bytes.net` 104,346, `arithmetic.suffix_bytes`
-  4,078,388, `arithmetic.break_even_turns` 722.6); `fork --tier CB --json` still
-  carries `written`, `new_session_id`, `out`, `cold_age`, `refusals` and `plan`.
-
-  **`docker compose build` completed at the new pin**, and the image was then
-  driven directly: `winnow context --help` resolves inside it, and the app's own
-  argv — `safe run -- context <path> --depth 1 --json` under `WINNOW_ORCHESTRATOR=1`
-  and the app's `WINNOW_DATA_DIR` — returned a body on stdout with **stderr
-  empty**, which the compiled `parseComposition` then read: window 433,331
-  exact, and six bands summing to exactly that — tool traffic 185,525
-  (estimated), prefix 146,870 (derived), retained reasoning 72,903 (derived),
-  standing configuration 15,718 (estimated), conversation 2,068 (estimated),
-  unattributed 10,247 (residual). The sum holding is the property worth
-  recording: the residual is one of the bands, so a parse that dropped a node
-  would still draw a plausible stack that quietly stops short of its own total.
-  Timed at ~0.12 s on that transcript, which is what makes it affordable on the
-  guard tick at all.
-
-  A note on the direct invocation, because it looks alarming and is not: `python
-  -m winnow context --help` run **outside** `safe run` printed *"protecting every
-  Claude Code session globally (7 new hook(s) wired into ~/.claude/settings.json)"*.
-  `safe run` sets `WINNOW_NO_GLOBAL_INIT=1` itself, with that exact bind mount
-  named in its own reason, and every spawn in `contextPruning.ts` goes through
-  it. Nothing in this app can reach the ungated path.
-
-  The palette is the other computed half. The six band tokens were **validated
-  by script rather than judged by eye**, in both modes and against the surface
-  they are drawn on (`--bg-raised`, `#ffffff` and `#2a2a2d`): every adjacent
-  pair clears the CVD floor at 14.8 ΔE deutan in light and 12.6 protan in dark,
-  every step sits inside its mode's lightness band, and each clears 3:1. The
-  order the bands stack in was chosen by searching the orderings for the best
-  worst-adjacent separation, not picked.
-
-  The component was **rendered in a browser** in both themes and in all three of
-  its states — a fourteen-reading series with a prune in it, a lone reading, and
-  pruning switched off — and two defects came out of looking at it that no
-  assertion had: the legend truncated four of six band names at 21rem in two
-  columns ("retained reaso…", "standing confi…"), and the 1.5-unit separator
-  stroke was most of the `conversation` band, which runs about 1% of the window.
-  A third came out of writing the tests: a `<title>` whose children are an array
-  renders **empty** in React, warning on the console and nothing else, so every
-  band's tooltip was blank behind well-formed markup.
-
-  **Not yet verified by hand:** the loop has not been watched taking one. Nothing
-  here drove `checkContextCeilings` against a live run, so no row has been
-  written to `context_compositions` by the tick that is supposed to write it, and
-  the pacing — `COMPOSITION_REMEASURE_GROWTH_TOKENS`, and the absolute distance
-  that is meant to catch the drop after a prune — has been reasoned about and
-  unit-tested and not observed. The stack was drawn from **synthetic** readings,
-  never from stored ones, so the path from the table through `compositionSeries`
-  to the page is proven only by its types. And the anchor divergence this feature
-  documents — winnow taking the last priced request where the sample takes the
-  last main-thread one — has been read out of both implementations rather than
-  measured: no reading has been taken while a sub-agent was running, which is the
-  one condition under which the two figures are supposed to disagree.
-
-- **The reading moved to depth 3, and what a depth-3 body actually looks like
-  (2026-09-04).** The entry above verified the app's argv at `--depth 1`; the
-  reading is now `--depth 3` and the body was measured rather than inferred from
-  the flag's help text. `python -m winnow context <transcript> --depth 3 --json`
-  was run at the pinned ref against the four largest transcripts on this machine
-  — 7.2 MB, 9.2 MB, 10.4 MB and 12.9 MB of JSONL — and returned **18 KB to 29 KB**
-  of JSON carrying **72 to 110 sub-nodes**, with **at most 29 children under any
-  one parent**. That settles the open question in `contextComposition`'s stdout
-  bound, which said in as many words that its 4 MB was written against a future
-  `--depth` and not against depth 1: **4 MB is still right**, with two orders of
-  headroom, because the body grows with the number of *distinct* artefacts and
-  not with the transcript. `COMPOSITION_CHILDREN_PER_NODE` at 64 therefore does
-  not fire on anything on this install and exists for the session that reads a
-  thousand files.
-
-  The node shape was read off those bodies rather than assumed. A node carries
-  `label`, `tokens`, `kind`, `share`, `note` and `children`, and **there is no
-  count field**: the repeat is welded onto the label by `context.py`'s
-  `decorate()` as the key, two spaces, `×`, and the count, from the third level
-  down and only where the count exceeds one — `Edit  ×43`, `$ grep  ×19`,
-  `/workspace/repo/src/lib/db.ts  ×3`. `splitRepeat` lifts it back off, anchored
-  on the whole label so it is a no-op on anything winnow did not decorate,
-  including `--by-path`'s `path  ×3 (Read ×2, Edit)` override, which this app
-  does not ask for.
-
-  Three things were then driven end to end against the real pinned winnow at
-  `/opt/winnow`, compiled, on a temporary `DATA_DIR`. `contextComposition` itself,
-  through `winnow safe run -- context <path> --depth 3 --json`, returned a full
-  three-level tree on a real 1.3 MB transcript. `recordComposition` followed by
-  `contextOccupancy` over two readings of the same body left **six** rows in
-  `context_composition_children` — the newest reading's tree and no other — with
-  the earlier reading's slices carrying empty `children`, the `×3` arriving as
-  `repeat: 3` beside a once-read file's `null`, and the same second-level key
-  (`Read results`) under two different provenances resolving to two subtrees
-  rather than one. And `sweepRunEvents` over a settled run past the horizon
-  reported **10** — four bands plus six tree rows — and emptied the children
-  table, which is the clause that stops a tree outliving the run it describes.
-
-  **Not yet verified by hand:** everything the entry above leaves open is still
-  open — no row has been written by the live tick, and the anchor divergence is
-  still read out of two implementations rather than measured. Two more are this
-  change's own. Nothing has drawn the tree: the detail view that renders these
-  children is the next run on this branch, so the path from
-  `context_composition_children` through `attachChildren` to a page is proven by
-  a compiled round-trip and by types, and not by looking at anything. And the
-  per-node cap has never fired on real output — the case that pins it feeds 200
-  synthetic children in shuffled order, because no transcript on this machine
-  produces more than 29 under one parent.
-
-- **2026-09-04 — picking a band on the Context panel and reading what is inside
-  it.** `src/components/ContextOccupancy.tsx`. The legend rows became
-  `aria-pressed` toggles sized to `--control-h`, the bands answer a pointer as a
-  shortcut, and the picked provenance draws the newest reading's subtree under
-  the chart: largest first at every level, each row with its tokens, its share of
-  its **own parent**, winnow's `kind` word and the repeat count where winnow
-  attached one. `npm run typecheck` clean; `npm test` 2131 pass / 0 fail over 324
-  suites, of which `ContextOccupancy.test.tsx` is 36 pass / 0 fail and six of
-  those are new; `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` clean, and
-  the emitted stylesheet was read for every class this added — `bg-selection`,
-  `hover:bg-fill-hover`, `active:bg-fill-active`, `min-h-[var(--control-h)]`,
-  `max-md:min-h-11`, `-mx-1.5`, `bg-inset`, `border-line` are all present, which
-  is the check `conventions.md` requires because Tailwind emits nothing at all
-  for a spelling it does not know.
-
-  **Operated in the real app, with a browser.** Not Docker — that is still the
-  gap below — but the whole stack under it: `npm run build`, then `npm start`
-  against a scratch `DATA_DIR` seeded with one run, 22 samples, a prune receipt
-  and two composition readings whose newest carries a two-level tree, then
-  Chromium driven over `/runs/<id>`. So this is the built bundle, the real route,
-  the real `/api/runs/[id]` handler, the real DTO and real client hydration in
-  the inspector column — everything a compose run would exercise except the
-  container and a real winnow. Twenty-four assertions, all passing:
-
-  - Six legend `<button>`s, none pressed and no detail region on arrival.
-  - A click opens exactly one; `aria-pressed` lands on the row that was clicked;
-    `aria-controls` appears and names a node that is in the document.
-  - The region says when the reading was taken, draws the artefact level under
-    the tool that read it, shows `seen 4×`, and contains no "other" row.
-  - The top level came back largest first — `Read`, `Bash`, `mcp__winnow__context`
-    — from rows SQLite handed over in insertion order.
-  - The shortfall is stated: "These rows come to 89% of tool traffic".
-  - Picking a second band swaps the region and leaves exactly one pressed; the
-    first row lets go. Picking the open one again closes it and the region goes.
-  - `prefix`, which has no children in that reading, says so rather than
-    rendering an empty list.
-  - Reached by **Tab**, a row matches `:focus-visible` and wears `2px solid` at
-    `2px` offset; **Space** opens it and **Enter** closes it; Tab walks all six
-    in order, top to bottom.
-  - No element in the region carries a class matching `danger|warn|success|critical`.
-
-  Five more against the same server, at 420px and with the run put back to
-  `running` so the page polls: a legend row measures exactly **44px** under `md`
-  and opens there; the page fetched three times in eleven seconds with a region
-  open; the region was still open afterwards and its rows were byte-identical, so
-  the poll neither closes it nor reorders it. That narrow pass is also where the
-  **live** wording was seen for real — "at the one reading taken 29m ago", older
-  than the "read just now" at the top of the card, which is the whole point of
-  the sentence.
-
-  Both themes were then photographed inside the real inspector column at 1440px.
-  Before that, a `renderToStaticMarkup` harness dressed in the built stylesheet
-  covered the states the seeded run cannot reach — the residual, a reading with
-  no tree at all, and both absences — and it is what found the one real defect in
-  this change: `DetailRows` built each row's children and never rendered them, so
-  the artefact level was silently missing while the tool level rendered perfectly
-  and nothing failed.
-
-  **A third environment trap, worth the next agent's time.** `npm run dev` cannot
-  compile CSS in this container: `@tailwindcss/postcss` dies with `EvalError:
-  Code generation from strings disallowed for this context`, `globals.css` then
-  fails webpack's parse at the first `@layer`, and every page answers 500. It is
-  not the repository and not a stale `.next` — `next build` is clean on the same
-  tree. Use `npm run build && npm start` to look at the app here. The server also
-  needs `UF_AUTH_TOKEN` set to a scratch value (never the one in `.env`) and the
-  browser sending `authorization: Bearer <it>`, since `middleware.ts` gates every
-  route; and each Bash call gets its own network namespace, so the server and
-  whatever talks to it must be started in **one** call.
-
-  **Not yet verified by hand:** `docker compose up --build`, which is the real
-  smoke test and is unavailable here. No **real winnow tree** has been drawn —
-  every label, `kind` and repeat count above was seeded by hand, so nothing
-  confirms that a genuine depth-3 body produces rows that fit 21rem; the longest
-  synthetic path wrapped mid-token, which is `break-words` behaving correctly and
-  may still read badly against real paths. The shortfall sentence has not been
-  seen against a store that actually dropped a tail, because
-  `COMPOSITION_CHILDREN_PER_NODE` has never fired on this install — the 89% above
-  comes from seeded children that do not sum, which exercises the sentence but
-  not the cap. The `aria-live` line has never been heard by a screen reader. And
-  the poll never delivered a *changed* composition under an open region: the
-  seeded readings are fixed, so what was proven is that eleven seconds of polling
-  leaves the rows alone, not what a genuinely new reading does to them.
-
-  **What a human should run.** `docker compose up --build`, open a run with
-  context pruning switched on that has been going long enough for a composition
-  reading — `/runs/<id>`, the **Context** card in the right-hand inspector, below
-  the sparkline and its stacked composition chart. Click a legend row, say **tool
-  traffic**: the row takes a blue wash and a panel opens directly under the six
-  rows, headed "Inside tool traffic, at the one reading taken *N*m ago — not the
-  span the bands cover", then one row per tool with its tokens and its percentage
-  of the band, each with its own files indented under it and `exact · seen 4×`
-  where a file was read more than once. Click the same row again: it closes.
-  Click a different row while it is open: the panel stays put and its contents
-  change, and only one row is washed. The one thing no seeded run could show:
-  leave a region open on a run that is still growing until a **new composition
-  reading** lands, and confirm the rows swap to it without the region closing and
-  without the age in its header going stale.
-
-- **The dashboard's top row, measured in a browser rather than reasoned about.**
-  The row went from two columns to three — the window card, the hoisted
-  first-party figure, the context-control tile — and the operator's constraint
-  was that the window card be at most half the row and not much less. The
-  built stylesheet was loaded into headless Chromium against the real shell
-  geometry (a 14rem sidebar, `main`'s `sm:px-5` gutters) with the exact classes
-  `page.tsx` emits, and each track's `getBoundingClientRect().width` read at
-  eight viewports. At 1920/1600/1440/1280 the window card is **50.0%** of the
-  row to one decimal (828 of 1656, 668 of 1336, 588 of 1176, 508 of 1016), the
-  tile is **256px** at all four, and the live card takes 540/380/300/220. At
-  1180 and 1024 the row is the old two-column one and the live card spans it
-  underneath — which is the whole reason the three-column template starts at
-  `xl` rather than `lg`: **half of a 760px row leaves the middle track 85px**,
-  which is not a card. Below `lg` all three stack full-width, unchanged. The
-  card itself was rendered through `renderToStaticMarkup` into the same
-  stylesheet at 540, 300 and 220px and screenshotted: legible at all three, the
-  totals line wrapping under the figure below about 500px, no overflow.
-
-  **Not yet verified by hand:** nothing here is the real page. The measurements
-  are of the emitted CSS against a stand-in for the shell, not of `/` with
-  transcripts behind it, so what is unproven is the *composition* — how a
-  half-width window card and its hero meter sit against a short card and a
-  short tile, and whether the row's ragged bottom edge under `items-start`
-  reads as deliberate at 1920. Nor has the `lg`-to-`xl` band been seen with
-  content in it: the full-width live card under the meters was measured, never
-  looked at. A human should open `/` at 1920 and at about 1100, with a run in
-  flight so the `working` badge and a moving figure are both present.
-
-- **The collapsed live-telemetry card, rendered at the width its cell actually
-  has — 2026-09-04.** The dashboard carried this card twice: the headline in the
-  top row, the same headline plus the per-run table in a band about 4,000px
-  down. The operator kept the top one and asked for the table to come with it,
-  and the question that could not be answered by reading the source is width —
-  the cell is `minmax(0,1fr)` from `xl`, **533px** at 1920, against the 1641px
-  the band had. `renderToStaticMarkup` through the built stylesheet in headless
-  Chromium, six runs of eight listed and the widest figure each column plausibly
-  holds (`$42.19`, 128 requests, a `needs-review` badge, `4h 0m ago`): at 533px
-  **all five columns fit** — nothing wrapped, nothing clipped, no sideways
-  scroll needed, and the totals line still beside the dollar figure rather than
-  under it. At a 390px viewport `Table stack`'s media query turns each run into a
-  labelled block and `ListView box="scrolling"` releases its overflow, so the
-  narrow case is the same one every other stacking table on the dashboard has.
-  No column was dropped or condensed to fit.
-
-  **Not yet verified by hand:** nothing here is the real page — this container
-  cannot read the database the dashboard draws from, so the card was rendered
-  alone against a stand-in for the cell rather than in the row. What is unproven
-  is the composition: the row's bottom edge under `items-start` now that the
-  middle card is six table rows taller than the 16rem tile beside it, and the
-  phone case, where a stacked six-run list now sits between the meters and
-  everything below them. A human should open `/` at 1920 and at about 390 with a
-  run in flight.
-
-- **The Codex CLI installs and runs on this image's base, measured on arm64
-  only.** 2026-09-05, `docker run --rm node:22-bookworm-slim`: `npm install -g
-  @openai/codex@0.153.4` then `codex --version` prints `codex-cli 0.153.4`, and
-  `/usr/local/lib/node_modules/@openai` is 279 MiB on disk. The platform binary
-  arrives through `optionalDependencies` gated on `os`/`cpu` — the wrapper alone
-  has nothing to run — which is why the Dockerfile block ends in a version check
-  rather than in the install.
-
-  **Not yet verified by hand:** the image itself has not been rebuilt. Nothing
-  here is `docker compose up --build`, the amd64 figures (~335 MB unpacked, a
-  123 MB download) are the registry's own metadata rather than a build, and no
-  agent has run `codex` from a work cycle. That it arrives signed out is
-  reasoned from `childEnv`'s strip rather than observed, and `codex` under
-  `UF_SANDBOX=1` has not been tried at all — bubblewrap binds everything outside
-  the working directory read-only, and whether a tool that wants `$HOME/.codex`
-  survives that is exactly the shape of question `playwright install` answered
-  badly.
-
-- **A second provider's work cycle, built whole and never once run,
-  2026-09-05.** `runs.provider` now selects between two `CycleAdapter`s and the
-  Codex one was written against the binary rather than against a document:
-  `codex --version` says **`codex-cli 0.153.4`**, and every flag the adapter
-  emits (`exec --json`, `--skip-git-repo-check`, `--ignore-user-config`, `-m`,
-  `-C`, `-s read-only|workspace-write`, `-c approval_policy="never"`,
-  `--dangerously-bypass-approvals-and-sandbox`, `--add-dir`,
-  `--output-last-message`, `resume`) was confirmed present in that version's
-  `codex exec --help` before it was emitted. The `pkill`/`killall` denial was
-  the one thing measured rather than read: Codex has no `--disallowedTools`, so
-  the denial is a Starlark rules file, and `codex execpolicy check -r <file>
-  pkill node` answers `{"decision":"forbidden"}` for the `prefix_rule` spelling
-  the app writes, while `rule(...)` and `define_program(...)`, which read like
-  the same thing, do not parse in 0.153.4 at all. Rules are discovered only from
-  `$CODEX_HOME/rules/*.rules`; there is no flag naming a file, which is why
-  `prepareCodexRules` writes into the agent uid's own home and why a cycle whose
-  rules file could not be written is refused rather than started. The sandbox
-  mapping never widens: `plan` and `default` both take `read-only`,
-  `acceptEdits` takes `workspace-write`, and only `bypassPermissions` reaches
-  the dangerous flag, pinned as whole argv arrays in `orchestrator.test.ts` so a
-  mode cannot drift up a row. Spend is withheld rather than guessed:
-  `turn.completed.usage` carries token counts and no money, so the `+=` is
-  skipped, `providerReportsSpend` gates every rendering of the column, and the
-  runs list, the run page, the reopen form's spending limit and the two MCP run
-  answers all say unknown instead of `$0.00`. Those four renderings were seen:
-  the app was built (`env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build`,
-  exit 0), served by `next start` against a scratch `DATA_DIR` holding one
-  seeded Codex run beside one seeded Claude run, and screenshotted in headless
-  Chromium; the Codex row shows `148.2k` tokens against a dash where the Claude
-  row shows `92.1k` against `$1.37`, with no console or page errors. `npm run
-  typecheck` is clean and `npm test` is 2185 passing, 0 failing.
-
-  **Not yet verified by hand:** **the entire live path.** `codex login status`
-  says **"Not logged in"** on this machine, so not one Codex work cycle was ever
-  spawned, and everything below was written from `--help` output, from
-  `execpolicy check`, and from rollout files, never from a cycle that ran.
-
-  - **That a cycle spawns at all, and that its argv is accepted.** Nothing has
-    ever executed `CODEX_ADAPTER.bin` with `buildCodexArgs`' output. Sign in as
-    the agent uid (`CODEX_HOME=<the app's> codex login`), start a run with
-    Provider set to Codex, and read the argv the spawn logged.
-  - **Every event name the stream parser branches on.** `thread.started`,
-    `turn.started`, `turn.completed`, `turn.failed`, `item.started`,
-    `item.updated`, `item.completed` and `error` were taken from the schema and
-    from event shapes, not from a stream this app read. Run
-    `codex exec --json -s read-only -C /some/repo "say hello"` and compare the
-    line types against the `switch` in `handleCodexStreamLine`.
-  - **That the session id `thread.started` carries is the one `resume` takes.**
-    `runs.session_id` holds it and a second cycle passes it back. Run a cycle,
-    note the id, then `codex exec resume <id> "continue"` by hand.
-  - **That `--output-last-message` is written, and is the final assistant
-    message.** The `DONE` contract reads that file. Run a cycle with
-    `-o /tmp/last.txt` and read it.
-  - **That the sandbox mapping binds what it claims.** `workspace-write` with
-    `-C <root>` and `--add-dir <vault>` should permit a write inside both and
-    refuse one outside. Run a cycle asking for a write to `/etc/uf-probe` under
-    `acceptEdits` and confirm it is refused; the rollout file under
-    `$CODEX_HOME/sessions/YYYY/MM/DD/` records the `sandbox_policy` and
-    `writable_roots` that were actually applied.
-  - **That the rules file is loaded by a spawned cycle rather than only by
-    `execpolicy check`.** Ask a cycle to run `pkill -f something` and confirm it
-    is refused. This is the one that matters most: a rules file in a dialect
-    Codex does not know loads as **zero rules**, silently.
-  - **That `--ignore-user-config` does not also discard the rules file.** The
-    two were confirmed to be different mechanisms from `--help` and from the
-    execpolicy source layout, never together in one run.
-  - **That the notices survive as prompt text.** `codex exec` has no
-    `--append-system-prompt`, so `SELF_HOSTING_NOTICE` and the commit-identity
-    notice ride the first turn's prompt. Ask a cycle "what were you told about
-    restarting containers" and see whether it can answer.
-  - **What a Codex run's own wall looks like.** No refusal classifier was
-    written for it (constraints C3 and C4 stay Claude-only), so a rate limit or
-    an exhausted credit on a Codex run is still filed under Claude's sentences.
-    Exhaust a Codex account and read `stop_reason`.
-
-> **The chat has never been shown a workspace holding more than twenty-five git
-> repositories.** `list_folders`' `folders` and `offset` parameters, the
-> per-folder `repoUnread` mark and the `repoLookups` block carrying `nextOffset`
-> are covered by `remoteReads.test.ts` over the pure selection beneath them and
-> by nothing else: no scan on this machine has reached the cap, so nothing has
-> watched a model read `notRead` and call back with the offset it was handed.
-> What is verified is that the selection pages, that the union of the pages is
-> every repository, and that a key naming no folder comes back named. What is
-> not is that the tool description persuades a model to ask for the rest — and
-> the failure if it does not is the one this change was made about, a repository
-> the chat reports as unidentifiable, except that the payload now says which
-> ones it never looked at.
-
-- **A drawn workflow cannot be discarded without being asked — 2026-09-07,
-  Chromium 1400×900 against a production build of this branch.** Every exit the
-  editor has was pressed with a block on the canvas and a name typed. The
-  sidebar's `next/link`, the breadcrumb above the heading, the Cancel button,
-  ⌘3, and quick open (⌘K, "Runs", Return) each left the URL on
-  `/workflows/new` and raised *Discard unsaved changes?*; **Keep editing**
-  returned to the graph with the name still in the field, **Discard** navigated.
-  A Ctrl-click on the same sidebar link raised nothing, which is the case that
-  must not prompt — it opens a tab and the editor stays. `page.close({
-  runBeforeUnload: true })` produced a `beforeunload` dialog, so the tab is
-  covered too. On the same build an untouched `/workflows/{id}/edit` navigated
-  away with no prompt at all, and one whose name was changed and then typed back
-  to what was stored navigated with no prompt again: the round trip through
-  `toBlocks` and `draftToGraph` lands on itself, which is the failure that would
-  otherwise teach the operator to dismiss the dialog unread. **Browser Back was
-  not covered and was not tested**, deliberately: see
-  `docs/agent/workflows-and-schedules.md` for why `popstate` is left alone.
-
-- **What a migration finds now outlives the stdout it was printed to,
-  2026-09-07.** All four findings — the `downgrade` verdict, the
-  `chat_proposals_old` this build cannot read, the one it can and recovered, and
-  any other `*_old` table — were driven against a real SQLite file by reopening
-  the database, which is what `migrate()` runs against on a restart, and each
-  writes one `ops_events` row under the event `schema.fault` beside the
-  `console.error` it already wrote. The five cases are in
-  `schemaMigration.test.ts` and all five fail with the row-writing line removed
-  and the printing left in place, which was run both ways: `# fail 5` before,
-  `# pass 16` after. What they pin beyond the INSERT is the ordering, which is
-  the part that is silent when it is wrong — the `ops_events` CREATE is the
-  first statement in `migrate()` because the downgrade is found before this file
-  has any other table, and the write takes the caller's connection because
-  `db()` from inside the `open()` that has not returned recurses without end.
-  The de-latching case asserts both halves at once: after the fault is cleared
-  and the database reopened, the row is still there and `schemaFaultsThisBoot()`
-  is empty. `npm run typecheck` is clean, `npm test` is 2294 passing / 0
-  failing, and `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` exits 0.
-
-  **Not yet verified by hand:** **no container was involved.** Docker was not
-  available in the session that wrote this, so what has never been seen is the
-  finding on a real boot — the line in `docker compose logs`, the row surviving
-  the `docker compose restart` that erases those logs, and the `schemaFaults`
-  array on `GET /api/status`. The whole check is three commands against a live
-  install: `docker compose exec app node -e
-  "require('better-sqlite3')('/data/usagefoundry.db').pragma('user_version =
-  99')"`, then `docker compose restart app`, then
-  `curl -s -H "Authorization: Bearer $UF_STATUS_TOKEN"
-  http://127.0.0.1:3000/api/status | jq .schemaFaults` — which should carry one
-  `downgrade` entry naming file version 99 against this build's, and `docker
-  compose logs app | grep schema` the sentence beside it. A second `docker
-  compose restart` clears it, because `migrate()` stamps `SCHEMA_VERSION` on the
-  way out, and that is the de-latching the test asserts in the small.
-
-- **What one poll of an open chat thread reads, 2026-09-07.** The chat page
-  re-asked `GET /api/chat/[id]` for the whole conversation every three seconds
-  for as long as it was open, so the cost of holding a chat on screen rose with
-  the chat. Measured on this tree against a throwaway database built by
-  `migrate()`, two threads of equal length and messages of 400 characters, the
-  body of one poll: at **500 messages, 246,362 bytes to 1,136**; at **2,000
-  messages, 1,004,522 bytes to 1,137**. The two figures after are the result —
-  the poll is now flat in the length of the thread, and what is left of it is
-  the thirty-thread sidebar, which is bounded and deliberate. `EXPLAIN QUERY
-  PLAN` on the same database, before and after: `SEARCH chat_messages USING
-  INDEX idx_chat_messages_chat (chat_id=?)` with `USE TEMP B-TREE FOR ORDER BY`
-  for **both** the whole-thread and the cursored read — the cursor alone shrank
-  the response and left the work where it was — against `SEARCH chat_messages
-  USING INDEX idx_chat_messages_seq (chat_id=? AND seq>?)` and no sort. The
-  first read of a thread is unchanged except for the `seq` each message now
-  carries: 246,362 to 251,271 bytes at 500 messages, 2.0% more, paid once per
-  thread opened rather than twenty times a minute.
-
-  **Not yet verified by hand:** nothing here is the real page. The append path
-  is covered by unit tests over `mergeMessages` and by three route tests that
-  fail with the cursor removed, but no browser has held a chat open across a
-  turn landing — so what is unproven is the sequence on screen: that a reply
-  arriving mid-turn appends rather than replaces, that the unseen-count and the
-  follow-the-reader scroll still behave when the poll's answer is a tail, and
-  that switching threads while a poll is out draws the new conversation whole. A
-  human should open `/chat`, send a message to a thread with some history, and
-  watch the reply land. That is the fourth item of the release pass below — the
-  chat turn's live view, in a region that also polls — and what that region
-  polls for is now a tail rather than the conversation.
-
-- **A four-item release pass is now written down, and nothing has performed it.**
-  `proposals/UIChecks/` sorted this app's interface claims by the cheapest
-  instrument that could decide each one — arithmetic over the declared tokens,
-  `renderToStaticMarkup` over the emitted markup, a DOM for events, a real engine
-  for layout, and a person for what is left — and the last of those is the only
-  class with no instrument in this repository at all. This is that class written
-  as a **procedure** rather than left as a memory: performed page by page before a
-  release, at two widths. It is deliberately not a general "check the UI"
-  instruction. Each of the four items is bound to something this app has already
-  got wrong, and each names ground no assertion here reaches. The pages are the
-  nineteen under `src/app/**/page.tsx` — `/`, `/account`, `/agents`, `/branches`,
-  `/chat`, `/dreaming`, `/knowledge`, `/login`, `/runs`, `/runs/[id]`,
-  `/runs/[id]/conflicts`, `/runs/[id]/touched`, `/runs/new`, `/settings`,
-  `/workflows`, `/workflows/[id]`, `/workflows/[id]/edit`,
-  `/workflows/[id]/instances/[instanceId]`, `/workflows/new` — and the pass is
-  each item across all of them rather than each page across all four items,
-  because the items need different states seeded and the pages do not.
-  **Nothing below has been performed**, so the one number that would say whether
-  writing it was worth the afternoon — how many pages fail it the first time —
-  does not exist.
-
-  1. **Every page at 390px: nothing scrolls the body sideways, no control is
-     clipped, and every `stack`ed table names its own fields.** This is the item
-     with a recorded failure behind it rather than a worry: `434c235` moved the
-     Land card's strategy select onto a wrapper because Tailwind emits `.w-auto`
-     ahead of `.w-full`, so the `w-auto` beside it lost silently and the select
-     took the whole row (`src/components/RunLand.tsx:623-636`). Nothing saw that
-     but a person at a narrow window, and nothing that runs could have: a class
-     string is a string until an engine cascades it. The same shape is why the
-     runs list stayed 916px wide however narrow the window got and why
-     `SegmentedControl` carries `max-md:flex-wrap`.
-     `src/components/ui/Table.test.tsx` pins that a stacked cell names its own
-     field *in the markup*; whether that label is on screen, unclipped and
-     beside its value at 390px is layout, and the survey
-     counted 222 viewport-conditional classes deciding it, none of them exercised
-     by anything in `npm test`.
-  2. **Every page in both themes, and once with the app on "Match system" while
-     the OS appearance changes.** Three theme states, not two: an absent
-     `[data-theme]` follows the OS through `color-scheme` and `light-dark()`, and
-     the two explicit values override it — so the OS switch is a fourth thing to
-     do and it is the boundary that fires no React render. What a person is
-     deciding here is not contrast: that is settled by arithmetic over the
-     declared tokens in `proposals/OperatorInterface/`, better than a browser
-     settles it, and this item must not quietly become an accessibility pass.
-     What is left is whether the page *reads* in the theme the operator actually
-     runs it in, and one mechanism that only a rendered page shows — a `<canvas>`
-     probes its colours rather than inheriting them, so a toggle with one open
-     must re-probe without a reload. That is already asked of the path map at
-     item 11 of its own pass above and is asked of no other canvas on this list.
-  3. **Tab through each page's primary flow; the focus ring is visible on every
-     stop, and the order is the order the page reads in.** The ring is one
-     token used everywhere, and `proposals/OperatorInterface/` names the reading
-     of its alpha — whether it is loud enough for somebody who looks at it all
-     day — as the single judgement that would overturn that survey's
-     recommendation. A judgement rather than a measurement, which is what puts it
-     here. Three places to be deliberate. Inside the sidebar drawer, quick open
-     and any `Sheet`, the trap and the Esc route are the browser's because all
-     three are native `<dialog>`s, so what is being checked is that nothing here
-     has broken them rather than that they exist. On the settings page, where the
-     search focuses a control it scrolled into view. And through the one
-     `keydown` listener the shell registers: ⌘1…⌘9 and ⌘K are bound, ⌘↩ is
-     deliberately bound to nothing so a form's own commit chord keeps working,
-     and a keystroke that disappears in a text field looks exactly like a dropped
-     character.
-  4. **The four controls that need state to exist at all, exercised one at a
-     time.** They are on this list because no automated option reaches them
-     without seeding, which is the same reason they have sat unrendered above.
-     A **queued run's priority input**, which needs a run actually sitting in the
-     queue behind `maxConcurrentRuns`, and whose `draft === null` rule decides a
-     value on screen rather than throwing. The **Backups row's `unreadable`
-     state** on the Storage card, which needs a directory this server cannot
-     read and does not appear at all otherwise. The **chat turn's live view**,
-     whose whole point is what it looks like while it moves, in a region that
-     also polls — a still frame is not the check. And the **Deliver button** —
-     `canDeliver` at `src/components/RunLand.tsx:360`, drawn as **Open pull
-     request** on the Land card — which is the one of the four that is **no
-     longer open**: it was pressed against a real GitHub remote and opened a
-     real pull request, and that is recorded above. It stays named here because
-     a release pass is a procedure rather than a backlog, and because what was
-     exercised was the path where the branch, the remote and the credential are
-     all present.
-
-- **The intake filter's launcher, and the container's memory at rest, measured
-  2026-09-10.** Idle with no run, four minutes after boot: `docker stats`
-  576 MiB; `next-server` 441 MB RSS (381 MB anonymous, of which the transcript
-  cache is 168 MB at a measured 697 B per turn and 164 B per tool call —
-  `config.ts` says 330); the `uv run --frozen --project /workspace/winnow`
-  parent of the intake filter 199 MB RSS (178 MB anonymous, VmHWM equal to
-  VmRSS) beside a 23 MB filter; and `docker stats` drifting to 1.35 GiB an hour
-  later with still no run, the difference being virtiofs `fuse_inode` and
-  `dentry` slab from walking the bind mounts. `uv run` does not exec: it syncs,
-  spawns and waits, and the waiter was the process that had just built the
-  virtualenv. `docker-entrypoint.sh` now runs `uv sync --frozen --project`
-  (which exits) and then the virtualenv's own `python -m winnow filter`, under
-  the same `winnow_filter_as_agent` wrapper and the same seven-entry
-  environment, written once. Checked by hand on the rebuilt container: the boot
-  log shows the sync creating `/home/node/.winnow-venv` and building winnow;
-  `ps` shows `python -m winnow filter` at uid 1000, 23 MB, with no `uv`
-  process; `winnow.__file__` resolves into `/workspace/winnow/src`; the proxy
-  answers on 8789 and the ledger's 54,145 lines are intact; cgroup `anon` fell
-  from 578 MB to 390 MB and `docker stats` from 576 to ~410 MiB after a full
-  cold scan. On a plain `docker restart` the wrapper only ever held ~29 MB, so
-  the saving is the `compose up --build` one, which is the deployment path.
-  **Two other readings from the same day belong here because each was mis-read
-  first.** The +214 MB heap on a dashboard poll is not the transcript scan (a
-  memo miss is +13-15 MB on the container's Node 22) but `intakeFilter.ts`
-  reading its 102 MB ledger whole once a minute; and the server's 1,531 MB
-  high-water mark is not the transcript scan either (~650 MB at any heap
-  ceiling, measured on the host at 512/1024/2048) but the dreaming pane's cold
-  whole-file read under V8's growing factor of 4.0 at a 2048 MB ceiling —
-  1,268 MB at 2048 against 656 MB at 1024 in a throwaway node:22 container.
-  This install's `.env` now sets `UF_NODE_HEAP_MB=1024` and `UF_MEM_LIMIT=6g`
-  (the Docker Desktop VM here is 8 GiB, so the shipped 10g never fired — the
-  2026-09-07 OOM), with `maxConcurrentRuns` lowered to 2 to keep the compose
-  arithmetic true; the shipped defaults are unchanged and their move is on the
-  task board.
-
-  **Not yet verified by hand:** the `/opt/winnow/src` branch of the launcher
-  (an install built with the vendored copy and no `WINNOW_FILTER_PATH`) was not
-  booted — it is the branch that did not change, but the loop around it did; a
-  sync failure's retry path has not been exercised; no work cycle has run
-  through the rebuilt filter yet, so "agents routed through it" rests on the
-  boot line and the proxy answering rather than on a ledger line written by a
-  real request; and the 1024 figure for the server itself is derived from the
-  throwaway container, not observed on a dreaming cold scan in the rebuilt
-  server.
-
-- **The class of every interface defect found from here on is recorded here, and
-  the running list has five entries.** This is a measurement rather than a
-  convention for its own sake, and it exists because the argument it settles is
-  currently resting on a sample of size one. `proposals/UIChecks/` recommends
-  reaching for a real engine — the expensive class — and its whole case for
-  doing so is the `w-auto`/`w-full` ordering in `src/components/RunLand.tsx`.
-  One defect. If the next three interface defects are **state machines** rather
-  than **layout**, then jsdom is the right instrument, the recommendation was
-  aimed at the wrong class, and the cheapest thing that would have said so is a
-  line per defect written at the moment somebody already knows the answer. There
-  is no published measurement of this ratio for anybody's codebase, so nothing
-  can be borrowed and the only way to have it is to keep it.
-
-  **What to record.** One line, appended to the list below, when an interface
-  defect is found — by a person looking, by a bug report, or by a check that
-  fails. It names what was wrong, where, how it was found, and its **class**,
-  using the five in
-  `proposals/UIChecks/01-what-only-a-rendered-page-decides.md` because they are
-  the ones the argument is phrased in: **A** decidable from the source text
-  (declared values standing in a relation, e.g. contrast); **B** decidable from
-  static markup (what element and what classes a component emits for given
-  props); **C** a state machine — needs a DOM and events but not layout (a
-  disclosure that will not toggle, a draft a poll overwrites, focus landing in
-  the wrong place); **D** layout — needs a real engine (a box that scrolls
-  sideways, a class that lost a cascade, a `sticky` footer behind a keyboard);
-  **E** needs a person (whether the copy is right, whether the reading order
-  makes sense, whether a ring reads as loud). Record the class of the **defect**,
-  which is the cheapest instrument that could have caught it — not the class of
-  the thing that happened to find it, since a person finds class D defects all
-  the time and that is the fact being measured. A defect that two instruments
-  could have caught takes the cheaper letter. When the letter is genuinely
-  arguable, say so on the line rather than picking one, because an honest "C or
-  D" still tells a later reader which half of the argument it lands in and a
-  confident wrong letter does not.
-
-  **The list.**
-
-  - **2026-08-23, `434c235`, class D.** The Land card's strategy select took the
-    whole row on a narrow window: Tailwind emits `.w-auto` ahead of `.w-full`,
-    so the `w-auto` written beside it lost silently and neither the markup nor
-    the type checker could say so. Found by a person at a narrow window; fixed
-    by moving the width onto a wrapper (`src/components/RunLand.tsx:623-636`).
-  - **2026-09-09, `ea1c65c`, class E, arguably A.** `Meter` composed one
-    explanation for its hatched upper band — "once unpriced models are charged"
-    — and announced it at every meter drawing one. That is what the band is at
-    four of the seven call sites; at the install meter, the workflow instance's
-    "Spent across blocks" and the run page's "Spend" bar it is spend reconciled
-    for a work cycle that stopped before reporting, plus telemetry for the ones
-    still going. A screen reader was given a fluent, specific reason that does
-    not hold on the meter it was reading. Found by reading the component against
-    its call sites; fixed by taking the sentence from the caller as `upperHint`,
-    with a mechanism-free default (`src/components/Meter.tsx`). **The letter is
-    genuinely arguable and both halves are worth saying.** Nothing had to be
-    rendered — the component and its seven call sites are the whole of the
-    evidence, which is A's cheapness — but no instrument decides that a sentence
-    is *false about a figure*; that needs somebody who knows what
-    `spentGuardUSD` is, which is E. Either way it is not D, and the list's first
-    entry was D. Verified by assertion on the rendered `aria-valuetext` and by
-    nothing else: no screen reader has been run over any of these meters.
-  - **2026-09-09, class D.** The live tool strip (`src/components/RunActivity.tsx`)
-    put the call's name, its command, a retry sentence and a duration on one
-    wrapping row. At 1280px that reads; at the 358px a 390px phone leaves inside
-    the pane, the flex row squeezed the command to 63px — six characters of a
-    path — while `retrying, attempt 2 of 3` kept its full 132px, because a
-    `truncate`d `flex-1` child yields to siblings that cannot shrink. Nothing
-    overflowed and nothing scrolled sideways, so the defect was a legible row
-    that had silently stopped saying anything. Found by measuring the rendered
-    row at both widths against a scripted `CLAUDE_BIN` holding two tool calls
-    open; fixed with `max-md:order-last max-md:basis-full` on the command, which
-    gives it the full 328px on its own line below the breakpoint and leaves
-    every wider window pixel-identical. Measured after the fix: 43px rows at
-    390px, 22px at 1280px, no sideways scroll at either.
-
-  - **`Meter`'s head joined a dollar amount and a percentage with an en dash —
-    class B.** A caller may replace the head's percentage with `value` (money,
-    or a pair like "2/5"), and a caller may add a second, higher `upperFraction`
-    reading for the guard's figure; the second was formatted as a percentage
-    whatever the first was, so the two money-shaped meters that do both read
-    `$12.40 - 18.9%`, two units presented as one range. `aria-valuetext` had it
-    the other way round and spoke two percentages, neither of them the figure on
-    screen. Decidable from the static markup of one component, which is what
-    `Meter.test.tsx` now asserts; the fix makes the band undrawable rather than
-    mis-spelled, so a future caller that overrides `value` and says nothing
-    about the band loses the band instead of gaining a wrong one.
-
-  - **2026-09-10, `92e53b0` / `daf7956` / `938ee57`, class D.** Three defects on
-    the run surface at 390px, all invisible above the breakpoint and none of
-    them anything a type checker or a page load could see. (i) Every wide
-    picker on the new-run form (`src/app/runs/new/page.tsx`) kept its 256px
-    desktop width after `ListRow` wrapped it onto a line of its own, so the
-    model picker read `Inherit — Claude Code's own c…` on a phone: a control
-    that clipped its own value while 288px of line sat empty beside it. (ii)
-    The enforcement choice on the same page overflowed its card in *both*
-    directions, `Between cycles` hanging off the left edge — `SegmentedControl`
-    carries `max-md:flex-wrap`, but it is `inline-flex` inside `ListRow`'s
-    `shrink-0` control side, and a shrink-to-fit box has no width to wrap
-    against, so its own mobile rule could never fire. (iii) The run list's task
-    link (`src/app/runs/page.tsx:428`) is the only way into a run once the
-    table stacks, and one line of text is a 20px target. Found by measuring
-    every element's box and every control's height against the rendered
-    standalone bundle at 390px and 768px, with a scripted `CLAUDE_BIN` and a
-    throwaway git repository as the mount. Fixed at the call sites — a width on
-    each wrapper, a wrapper around the segmented control, and padding plus an
-    equal negative margin on the link so the hit area grows and the layout does
-    not. Measured after: no element past the viewport at either width, no
-    control under 44px below the breakpoint, link 44px at 390/767px and 20px at
-    768/1280px, and `npm run smoke-pages` clean over the standalone bundle.
-    A fourth, `640dbb2`, same class, found on the same pass once the map had
-    nodes to draw: below `lg` both sub-pages fall to one implicit grid column,
-    and an `auto` track will not shrink under its content's min-content width —
-    ~362px against the 316px a 390px screen leaves inside the card — so the
-    track hung past the card and took the right edge of the map and the last
-    control under the replay row off the screen. It reached neither instrument
-    that would normally catch it: nothing scrolled sideways, because an
-    ancestor clips, and `smoke-pages` draws that page with an empty map. Fixed
-    by spelling the column `minmax(0,1fr)`, which is what the `lg` rule beside
-    it already says.
-    **What (ii) really is is a `ui/List.tsx:153` defect** — `max-md:min-w-0
-    max-md:shrink` on the control side makes every over-wide control on every
-    `ListRow` in the app wrap instead, which was measured to work and then
-    reverted, because that layer belongs to another run. The call-site wrapper
-    fixes this page and leaves the same trap set everywhere else.
-  - **2026-09-10, class B, with a data half that is no class at all.** The
-    context composition stack on the run page drew standing configuration,
-    prefix and conversation at zero height from the fifth reading on — three
-    provenances in the legend, absent from the picture — which the operator
-    read as tool traffic and retained reasoning pushing the rest out of the
-    window. Found by a person looking at run `5b967a08`; decidable from the
-    static markup, where the three paths' top edge equalled their bottom at
-    the rightmost x, and now asserted that way in `ContextOccupancy.test.tsx`.
-    The markup was wrong because the data was: the parse floored winnow's
-    residual at zero, so the bands summed past the window the axis was sized
-    to. That half is a pure function with a silent failure, and sits in
-    `contextPruning.test.ts` on the suite's usual grounds rather than here.
-  - **2026-09-11, `87259bf` then `1cd7966`, class D.** The branches table's
-    State column (`src/app/branches/page.tsx`) draws a `whitespace-nowrap`
-    badge over `UncommittedNote` (`src/components/BranchWork.tsx`), in a
-    `min-w-[140px]` column that floored at 120px of content width once the
-    `Td`'s own 10px padding is taken off both sides — a floor sized for the
-    badge, from before the note existed. Every string the note renders is
-    wider than 120px, so it always wrapped to two lines. Reported by a
-    VisualEdit handoff anchored on a rendered 140×70px cell; confirmed by
-    rendering the real `Badge`/`Table`/`UncommittedNote` components with the
-    project's own compiled CSS in a headless browser (the live page needs
-    real branch and checkout data this run did not have), which also
-    measured that no single word — "UNCOMMITTED" at 85.5px, the widest —
-    comes close to the 120px floor, so nothing was breaking mid-word. Not
-    decidable from the static markup: the wrap point depends on the
-    browser's line-breaking algorithm against real font metrics, which is
-    what needed the engine. **First fix (`87259bf`) was wrong and was
-    reported back as still broken.** `text-balance` on the note changed
-    *where* it broke — "5 UNCOMMITTED" / "IN THE CHECKOUT" instead of
-    "…IN" / "THE CHECKOUT" — but not *whether* it broke, and a `min-w` is a
-    floor that never grows on its own: the `w-full` Branch column beside it
-    absorbs every pixel the State column doesn't ask for, at any viewport,
-    so the note wrapped at 2128px exactly as it did at 780px. Widening the
-    viewport was the check that caught the first fix being cosmetic and
-    should have been run before calling it done. Fixed for real (`1cd7966`)
-    by raising the floor itself to 240px, measured against the compiled
-    font to hold the fixed message and ordinary counts ("127 uncommitted…")
-    on one line at every width from 780px to 2128px; `text-balance` stays as
-    a fallback for a count long enough to overflow even that (measured
-    "9999 uncommitted in the checkout" still fits at 240px).
-  - **2026-09-11, class D, the same cell again and a different cause.** Under
-    the ascii skin every badge on `/branches` carrying a `Mark` — the State
-    column's and the merge queue's, 61 of 61 on the live page — broke over
-    three lines, `[` / mark / `merged]`. The skin turns `.uf-badge` from
-    `inline-flex` to `inline` (`src/app/globals.css`), and Tailwind's
-    preflight makes every `svg` `display: block`: harmless as a flex item,
-    but a block inside an inline splits it into anonymous boxes, so the break
-    held at every column width. That is why neither fix above touched it, and
-    why the headless render behind them never showed it — it drew the default
-    skin. Reported by the operator with a screenshot after `1cd7966`;
-    confirmed on the running container by setting `data-skin="ascii"` on the
-    live page (every such badge 44–45px tall, its `svg` computing to
-    `block`). Fixed with one rule beside the badge's own, `.uf-badge > svg {
-    display: inline; margin-inline-end: 1ch }`, the margin standing in for
-    the gap `inline` dropped. Measured with that rule injected into the same
-    page: 0 of 61 over one line, no sideways scroll; `next build` emits it.
-    Class D rather than B because the markup is identical in both skins —
-    only the cascade, preflight against the skin block, decides it.
-
-  **And this is not "the interface is now checked".** Even with the pass above
-  written down and the smoke pass `proposals/UIChecks/09-recommendation.md`
-  recommends in place, the classes stand at: A by arithmetic, B by
-  assertion, D at a floor, E by a person, and **C — the state machines — covered
-  by nothing at all**. That hole is deliberate and it is written here so a green
-  `npm test` cannot be read as covering it. The list above is the thing that
-  would tell a future reader whether leaving it open is still the right call.
-
-- **The context composition stack clipped its top bands, and the parse behind
-  it floored a signed figure (2026-09-10).** Found on run `5b967a08` by the
-  operator, who read the picture as tool traffic and retained reasoning pushing
-  the rest of the context out of the window. Measured before anything was
-  touched: the eight stored readings summed past their windows on every reading
-  after the first — 107,087 against 75,743 at the second, 324,569 against
-  243,678 at the last — with `unattributed` stored at 0 on all eight; in the
-  rendered SVG, standing configuration, prefix and conversation had their top
-  edge equal to their bottom at the rightmost x (y = 5, the chart's top), and
-  the aria label's shares summed to 133%. `winnow context --depth 2 --json`,
-  run directly against the same transcript inside the container, reported a
-  256,579 exact window, provenances summing to 338,401, and `unattributed` at
-  **−17,969** with 63,853 of shed added back — nineteen shedding events, one of
-  50,582 at the early-end cut — and `context.py` says in as many words that the
-  residual "is allowed to be negative" and that 423 of the 922 anchored
-  sessions on its author's machine have one. The prefix stood at 14,392 on all
-  eight readings and standing configuration grew from 18,098 to 44,511, so
-  nothing was displaced: the picture was the clip. Fixed in three places and
-  repaired in one. `parseComposition` keeps the residual's sign and takes it as
-  the window less the provenances — −81,822 on that transcript, differing from
-  winnow's printed node by exactly the shed; `CompositionStack` sizes its axis
-  to the taller of the window and the bands, hatches the excess in the
-  residual's own fill, stripes the residual's legend swatch, prints the signed
-  figure and carries one caption while there is a strip; `fmtTokens` scales
-  and signs a negative; and `migrate()` takes every stored residual again
-  against its reading's window on every boot. The repair statement was driven
-  against the eight readings in a scratch database first: every sum equal to
-  its window, an already-correct reading untouched, the same result on a
-  second pass. Then `docker compose up --build`, and the same page: the API
-  returned all eight readings summing to their windows with residuals from −1
-  to −80,891, every band had height at the rightmost x — conversation
-  5.00–5.85, prefix 5.85–9.26, standing configuration 9.26–19.82 — the hatched
-  strip ran from the window at y 24.19 up to the top, the legend read
-  `unattributed −80.9k` behind a striped swatch, and the caption was on the
-  page. `npm run typecheck` clean; `npm test` 2,618 tests with one failing —
-  `backupRestore.test.ts`'s "leaves the database that was there when the copy
-  dies part-way", which fails identically on the tree before this change and
-  is not touched by it. The new component case was compiled against the old
-  chart and failed there, at `conversation`.
-
-  This closes two items the 2026-09-04 entries left open. The tick **does**
-  write `context_compositions`: eight readings on this run, paced by growth,
-  with one taken a minute after the early-end cut at 30 minutes — the absolute
-  distance catching the drop, as reasoned — and the path from the table
-  through `compositionSeries` to the page draws stored rows, which until this
-  run had been proven only by its types.
-
-  **Not yet verified by hand:** nothing has drawn a strip at 390px — it sits
-  inside the same `viewBox` as the bands, so the layout argument is unchanged,
-  and that is an argument rather than a measurement. And the one-line polish
-  in `describeComposition` that spells the residual's negative share with the
-  same minus as its figure went in after the container was rebuilt, and has
-  been seen only by the test build.
-
-There is no linter run in this repo, and `npm test` covers a deliberately short
-list: the folder-collision predicate, which queued runs may start, the budget
-policy, how a provider refusal is classified and backed off from, which prompt a
-work cycle spawns with, which argv a Codex work cycle spawns with and what its
-stream parser makes of each event, the process-kill denial written for the
-provider that cannot carry one on a flag, the GitHub credentials handed to a work cycle, that a
-work cycle started as a saved agent both defines and selects it and moves none of
-what bounds the run, how a
-run's diff is parsed and budgeted, whether a saved graph of run blocks can run at
-all and the order its runs are created in, what a save would keep of a drawn one
-and which clicks would take it with them before it is saved, when a branch may be landed, what a
-queued merge does with the branch it reaches, what counts as a conflict marker — both
-for deciding whether one was really resolved and for deciding what to show, what
-the orchestrator chat may ask its operator, what an answer to it settles, where
-a question is drawn in the thread that shows it and what one poll of an open thread
-reads against how long that thread already is — and
-the three renderings that would lie quietly about a number: an unconfigured
-ceiling, a first-party figure shown beside the meters, and a context stack whose
-bands claim more than the window they are drawn against. Two entries are
-neither a function nor a rendering: the order a chat's thread renders in, driven
-against a real database because what it pins is in the SQL rather than in any
-function — as is what an operator's message does to a question the chat left
-open, which is the same table and the same argument; and that the image leaves the data volume writable by whatever uid
-compose runs the container as, which is otherwise checked by nothing here and
-fails only on Linux, only under a non-1000 `UF_UID`, and only by refusing every
-data route. A third is the backup round trip, which is neither of those either:
-it drives the two shipped scripts against a real database with a write
-transaction open, because a snapshot that quietly omits the newest runs opens
-cleanly and passes every other check there is. `npm run typecheck`
-plus a `docker compose up --build` smoke test is still the real verification
-loop, and the list above records what was checked by hand.
+- **`enableWeakerNestedSandbox: true` has never been read by a `claude`, and
+  its price applies once one does.** Written unconditionally since 2026-08-19
+  because the other argv shape cannot mount a procfs here; a sandboxed command
+  then sees the container's `/proc`, so a sibling agent's processes are
+  visible to it.
+
+### Container and environment
+
+- **That the next boot after a failed restore comes up green on an empty path
+  was not executed**; it follows from `db.ts`'s unconditional
+  `new Database(DB_PATH)` and wants a container.
+
+- **Go on amd64, and a real agent building Go, are unchecked:** the amd64
+  branch and digest were never built; only a shell has built Go in the image.
+
+- **`jq` has not run inside a CLI-wrapped `Bash` call**, only in `bwrap`
+  command lines.
+
+- **The image has not been built since `npm run build` gained its wrapper.**
+  `scripts/redirect-dist-dir.mjs` was measured to do nothing on `overlayfs`,
+  which `/app` is on, so the builder should reach `next build` as before; that
+  is an argument, not a measurement (no docker client). Settle: `docker
+  compose up --build`.
+
+- **`RELAY_PORT` and `RELAY_BIND` have never reached a container.** They are
+  in compose's `environment:`, statically reconciled by `deployment.test.ts`;
+  unseen are compose substituting them, the relay inheriting them and delivery
+  on a moved port. Settle with `RELAY_PORT=9000`: `printenv`, then a notifying
+  run's message must arrive: the listening line looked healthy while none did.
+
+- **No second machine has reached a LAN install, and no browser has signed in
+  to one.** Client isolation is not ruled out, and `curl` cannot see the
+  `Secure`-cookie failure. From another machine, run
+  `curl -sf http://<host>:3000/api/health`, sign in and reload; a bounce to
+  `/login` means `UF_COOKIE_SECURE` is not `0`.
+
+- **`/api/status` has not been polled on an install with runs in flight.**
+  `npm test` covers it on a six-row database; its cost at size is reasoned. No
+  browser drew the restart banner, and no monitor has scraped a stdout JSON
+  line or checked one for a prompt, path or token:
+  `docker logs usagefoundry --since 1h | grep '^{' | jq -c .`
+
+- **Docker has never run the container's `HEALTHCHECK`.** `/api/health` is
+  tested both ways and `deployment.test.ts` pins the directive, but the image
+  was never built. Settle with `docker inspect --format '{{json
+  .State.Health}}' usagefoundry`; after `kill -STOP 1` it should read
+  `unhealthy` within ~3 min. Docker reports that and restarts nothing.
+
+- **No Docker has applied the container's resource limits.** `mem_limit`,
+  `memswap_limit`, `pids_limit`, `cpus` and the heap ceiling parse by eye only;
+  README's per-child memory figures are estimates. `memory.max` reading `max`
+  means not in force (likely cgroup v1). The OOM kill and `reconcileOnBoot`
+  after it are unexercised.
+  ```bash
+  docker inspect --format '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.PidsLimit}} {{.HostConfig.NanoCpus}}' usagefoundry
+  docker exec usagefoundry cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/pids.max
+  docker stats --no-stream usagefoundry
+  docker exec usagefoundry node -e 'const a=[];for(;;)a.push(Buffer.alloc(1<<26))'
+  docker inspect -f '{{.State.OOMKilled}}' usagefoundry   # expect true
+  dmesg | tail                                            # expect no host process named
+  ```
+
+- **No Docker has applied the container's log cap.** `json-file`, 20m × 5, is
+  pinned by `deployment.test.ts`, but no line has been seen rotating; ~270 B a
+  line and README's 25-run fleet rates are derived, not measured. A daemon
+  `log-driver` in `/etc/docker/daemon.json` would silently override it.
+  ```bash
+  docker inspect -f '{{json .HostConfig.LogConfig}}' usagefoundry
+  # expect {"Type":"json-file","Config":{"max-file":"5","max-size":"20m"}}
+  ```
+
+- **The image with `gh` in it.** The install layer, the checksum check and the
+  arch mapping have not been built — no Docker on the machine this was written
+  on — so `docker compose up --build` is the first thing to run against this.
+
+- **That a fresh `usagefoundry-data` volume is writable under a non-1000
+  `UF_UID`.** `/data` is 0777, relying on Docker copying that mode onto a new
+  volume; no `docker build` since. On Linux with `id -u` not 1000, then again
+  with both uid variables unset:
+  ```bash
+  UF_UID=1001 UF_GID=1001 UF_PORT=3100 UF_CONTAINER_NAME=usagefoundry-uidtest \
+    docker compose -p uf-uidtest up --build -d
+  docker compose -p uf-uidtest exec usagefoundry ls -ld /data   # expect drwxrwxrwx
+  curl -fsS localhost:3100/api/usage >/dev/null && echo OK      # with UF_AUTH_TOKEN blank
+  docker compose -p uf-uidtest down -v
+  ```
+
+- **Backup and restore inside Docker.** Driven against real databases and the
+  real scripts, never through the container; a restore after
+  `docker compose down -v` is the case it exists for.
+  ```bash
+  docker compose up -d --build
+  docker compose exec usagefoundry which sqlite3
+  docker compose exec usagefoundry node scripts/backup-db.mjs /backups
+  ls -la backups/
+  # then, with the app stopped:
+  docker compose down
+  docker compose run --rm --entrypoint node usagefoundry \
+    scripts/restore-db.mjs /backups/usagefoundry-<stamp>.db
+  docker compose up -d
+  ```
+
+- **The `VACUUM` command in `README.md`**, never executed; check it names one
+  `usagefoundry-data` volume and leaves the database file's ownership alone.
+
+- **The launcher's `/opt/winnow/src` branch was not booted, a sync failure's
+  retry is unexercised, and no work cycle has run through the rebuilt filter
+  (2026-09-10)**; routing rests on the boot line and the proxy answering. The
+  1024 MB server heap figure is derived, not seen on a dreaming cold scan.
+
+### Interface
+
+- **The layout sweep has not been re-run since the layout below 768px
+  changed** (drawer source list, seventeen tables stacking at `md`).
+
+- **No after-change payload from the 2026-08-23 pass has been read from a
+  server.** The "after" sizes (graph 734,233 bytes, workflow list 471) are
+  re-serialisations of the one baseline capture, and the readings of the
+  sixteen changes, made in parallel against it, do not compose.
+
+- **The orchestrator's `lg` layout has not been seen in a container,
+  2026-08-27.** Docker was unavailable: the CSS rests on a clean `npm run
+  build` and a grep of the emitted classes. The error banners were injected
+  into the DOM, not produced by a failing poll.
+
+- **The shared layer's 390px pass (2026-09-10) was never on a real phone or
+  with a keyboard up**; the long-label `Meter` case was a fixture only.
+
+- **The ascii skin (2026-09-11) has been looked at narrowly.** Of 22 routes,
+  eight were looked at for the tokens and four for the kit primitives, the
+  rest load-asserted; only the dashboard at 1920; the live flip (task
+  `d8e5f614`) was never driven; `smoke-pages` is default-skin only
+  (`4e6dd0b9`). No second browser (where `█` measures 0.602em), touch, zoom
+  or screen reader.
+
+- **Open under the ascii skin, 2026-09-11.** Five findings stay on the board,
+  among them `New run` clipped off at 390px in both skins; `ListView`'s real
+  borders still mismatch at 1920, where dark was not re-measured. The
+  in-flight marks were seen in Chromium, dark, 1280px only; the charts ran on
+  intercepted responses, `RunConflictMap` only empty; the meter fit was
+  exercised at one glyph advance.
+
+- **The ascii head-rule and sparkline fixes were checked on scratch pages**:
+  `/account`'s table did not render (no transcript data) and run `d02b9e40`
+  was never loaded, so neither reviewer's own page has been seen fixed.
+
+- **No other sheet has been seen at 390px, and none on a real phone or with a
+  software keyboard up**, the case `--keyboard-inset` and the `100dvh` cap are
+  for. Of the eleven other files that open one, only Codex's `Use API key` has
+  been opened, width unrecorded; the workflow pass did not trigger
+  `WorkflowEditor`'s or `WorkflowSchedule`'s confirmations.
+
+- **The narrow workflow surface has never been touched by a real finger**:
+  thumb reach, a 44px row at the foot of a long list, and whether the list
+  reads as an ordering are unjudged. On a phone: link two non-adjacent blocks
+  of a six-block graph at `/workflows/[id]/edit`, watching the arming state
+  while scrolling, then change a schedule at `/workflows/[id]`.
+
+- **The Settings mobile pass has never been on a phone or tapped, and its
+  stacked calibration table has never shown a real scan.** With no
+  transcripts `Scan history` gives no suggestion; the table was seen only with
+  `cal` seeded by a reverted local patch. No sheet here but Codex's `Use API
+  key` has been opened.
+
+- **Two widened new-run pickers, template (`runs/new/page.tsx:1388`) and agent
+  (`:1547`), were never seen at 390px** (settle: save one of each, open
+  `/runs/new`); they match the four measured by construction. Nothing in that
+  pass was tapped. At 390px the touched and conflicts maps held two and one
+  file nodes: no folded directory, `modify/delete` node or open inspector.
+
+- **The touched map has never been looked at on a real run.** Its 300-file fold
+  has never fired on real data, and none of the hand checks is done: CPU idle
+  and reduced motion, the node legend, labels, gestures, one-cycle, swept and
+  no-diff states, folding, theme switching, 390px.
+
+- **Touch replay has never been scrubbed on a real run.** Open: whether the halo
+  is findable in motion, whether the wash reads as progress or noise, whether
+  `TARGET_SECONDS = 20` (chosen by reasoning, not watching) suits a real run's
+  length, and that space neither double-toggles Play nor scrolls the page.
+
+- **The four frontend reachability fixes have never been rendered.** Paged runs
+  list, quick-open search, run-log filter and settings search, ~900 lines of
+  page code on `uf/usagefoundry-721638d11c0b-1-41e5e190`, rest on typecheck,
+  `npm test` (1,660 tests / 245 suites / 0 failures) and the build at `a34e56b`.
+  No page tests, jsdom or CI browser.
+
+- **The runs list and ⌘K search have never been driven in a browser.** Open:
+  paging without repeats, Failed over the whole history, debounced search, the
+  24-hour boundary (one fold request a minute), old runs in ⌘K.
+  `/api/runs?status=nope` should answer `Unknown run status: nope`.
+
+- **The run log's filter and the settings field search have never been
+  rendered.** They rest on six unit cases (`matchesLogFilter`,
+  `logFilterActive`) and the build; the settings search has no unit test, as it
+  reads `textContent`. Open: counts and truncation hint, Jump to live, results
+  opening closed Prompts folds, the unsaved dialog, 390×844.
+
+- **The run log's background-task panel (`RunTasks.tsx`) has never been
+  rendered.** Only its reducer is tested (18 cases in `runTasks.test.ts`). Open
+  it on run `eadfe9f2-ac96-4c44-b59a-fbb3c9341871`, which has real
+  `system:task_*` events; the empty, cut-replay, stopped-task and 390×844 states
+  are unchecked.
+
+- **No stacked table has been opened in a browser.** Unseen at 390×844: no
+  sideways scroll, and the branches bar above its arithmetic-chosen
+  `max-md:h-80` spacer. `max-md:last:border-b-0` is not recorded in the CSS,
+  and 1440px unchanged rests on `Table.test.tsx` alone.
+
+- **The chat surface has met no real device and no interaction.** Unknown:
+  whether 24px between Reject and Approve (chosen, not measured) keeps a thumb
+  off a billed run, and whether the sticky composer holds on iOS Safari.
+  Nothing pressed a choice, approved, sent a message or opened the drawer.
+
+- **The mobile form pass was reasoned from platform docs and never watched.**
+  On a real iOS device: tapping a `/runs/new` field must not zoom, and the
+  composer, save bar and `Sheet` buttons must stay above the keyboard, with
+  `--keyboard-inset` back to `0px` on blur. 44px targets at ≤767px are
+  unmeasured, and 1440px unchanged is by argument.
+
+- **The density restructure is unseen below about 390px and unmeasured at
+  1440px.** The browser would not resize, and none of the five build runs had
+  Docker. Also unseen: the `Land N branches` confirmation, the fixed-bar
+  strategy picker, `Disclosure`s opening and closing, and Approve sending
+  exactly the displayed ids through a real thread.
+
+- **The band picker has not run under `docker compose up --build` or drawn a
+  real winnow tree (2026-09-04).** Labels and repeats were seeded, the shortfall
+  sentence has not met a dropped tail, `aria-live` is unheard, and no new
+  reading has arrived under an open region. Settle: hold a region open on a
+  growing pruning run until a reading lands; rows swap, region and age hold.
+
+- **The dashboard's top row has not been seen as the real page**, with
+  transcripts behind it: its composition, the ragged bottom edge under
+  `items-start` at 1920 and the `lg`-to-`xl` band with content are unlooked-at.
+  Open `/` at 1920 and about 1100 with a run in flight.
+
+- **The live-telemetry card has not been seen in the real row (2026-09-04)**:
+  its bottom edge beside the 16rem tile, and the phone case with a six-run list
+  between the meters and everything below. Open `/` at 1920 and about 390 with
+  a run in flight.
+
+- **The four-item release pass is written down and nothing has performed
+  it**, so how many of the nineteen `src/app/**/page.tsx` pages fail it is
+  unknown. Each item runs across every page, at two widths:
+  1. Every page at 390px: no sideways body scroll, no clipped control, every
+     `stack`ed table naming its own fields — the class of `434c235`'s Land
+     select, where `.w-auto` (byte 15178) lost to `.w-full` (byte 15197).
+  2. Every page in both themes, and on "Match system" while the OS appearance
+     changes; a `<canvas>` must re-probe its colours without a reload.
+  3. Tab through each primary flow: the focus ring visible at every stop, in
+     the order the page reads.
+  4. The controls that need state: a queued run's priority input, the Backups
+     row's `unreadable` state, the chat turn's live view. The fourth, Deliver,
+     is no longer open: it opened a real pull request, on the one path where
+     branch, remote and credential are all present.
+
+- **The composition stack's hatched overflow strip has not been drawn at
+  390px.** It sits in the same `viewBox` as the bands, which is an argument,
+  not a measurement.
