@@ -1,6 +1,11 @@
 "use client";
 
 import type { ReactNode } from "react";
+// Relative, like `Field`'s import of `Hint` and for the same reason: nothing
+// rewrites the `@/` alias in `npm test`'s CommonJS build, so a *value* imported
+// through it resolves at typecheck and throws MODULE_NOT_FOUND the moment a
+// test reaches the file. Type-only imports are erased and never show it.
+import { AsciiFrame, type AsciiFrameTone } from "./AsciiFrame";
 
 /**
  * `emphasis` is the point of this component. Every card in the app previously
@@ -31,6 +36,24 @@ const EMPHASIS: Record<CardEmphasis, string> = {
   quiet: "p-4",
 };
 
+/**
+ * The same ladder under the ascii skin, where two of its three rungs are the
+ * shadow and the skin sets every elevation to nothing.
+ *
+ * So the frame carries what the shadow carried, which is the trade
+ * `globals.css` records beside `--corner-sm` — and it is a compression rather
+ * than a translation: `default` and `quiet` differ by `shadow-e1`, which is
+ * "barely more than a seam" by design, and the skin has exactly two tones that
+ * were measured to be read as a frame. A third invented for this rung would be
+ * a contrast figure nobody checked. The padding step `primary` also carries is
+ * untouched and is what still separates it below the breakpoint.
+ */
+const FRAME_TONE: Record<CardEmphasis, AsciiFrameTone> = {
+  primary: "strong",
+  default: "faint",
+  quiet: "faint",
+};
+
 export function Card({
   children,
   emphasis = "default",
@@ -46,8 +69,12 @@ export function Card({
     // cards inside a grid and pushed every card but the first down 24px.
     // A card is a surface anyway, not a document section.
     <div
-      className={`rounded-lg border border-line bg-surface ${EMPHASIS[emphasis]} ${className}`}
+      className={`uf-framed rounded-lg border border-line bg-surface ${EMPHASIS[emphasis]} ${className}`}
     >
+      {/* Before the content and never after it, so the card's own children
+          paint over the edge rather than under it — a figure that happened to
+          reach the gutter would otherwise be crossed out by a `│`. */}
+      <AsciiFrame tone={FRAME_TONE[emphasis]} />
       {children}
     </div>
   );
