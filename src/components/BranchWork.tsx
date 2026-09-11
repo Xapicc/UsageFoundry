@@ -20,6 +20,16 @@ import type { BranchSummaryDTO } from "../lib/apiTypes";
  * `heldByCheckout` is what separates the two nulls. Nothing holding the branch
  * has nothing to report, and that row stays blank; a held row with no count is
  * a probe that was skipped or a `git status` that failed, and says so.
+ *
+ * `text-balance` is here because the branches table's State column is a
+ * 140px `min-w` floor sized for the badge above this line, not for this
+ * sentence: at its 120px content width (the `Td`'s own 10px padding on
+ * every side) every string this returns wraps to two lines regardless, and
+ * the browser's default greedy fill was breaking "in the checkout" across
+ * them — "5 UNCOMMITTED IN" / "THE CHECKOUT" — rather than keeping the
+ * phrase intact on one line. `text-balance` doesn't change whether it
+ * wraps, only where; measured against the same column, it holds "in the
+ * checkout" together on the second line instead.
  */
 export function UncommittedNote({ branch }: { branch: BranchSummaryDTO }) {
   if (branch.uncommitted === null) {
@@ -29,14 +39,14 @@ export function UncommittedNote({ branch }: { branch: BranchSummaryDTO }) {
     // The wording is the storage table's own — the page must not grow a second
     // name for a status it could not get.
     return (
-      <div className="mt-1 text-2xs uppercase tracking-wide text-ink-muted">
+      <div className="mt-1 text-balance text-2xs uppercase tracking-wide text-ink-muted">
         Checkout could not be read
       </div>
     );
   }
   if (branch.uncommitted === 0) return null;
   return (
-    <div className="mt-1 text-2xs font-semibold uppercase tracking-wide text-warn">
+    <div className="mt-1 text-balance text-2xs font-semibold uppercase tracking-wide text-warn">
       {branch.uncommitted} uncommitted in the checkout
     </div>
   );
