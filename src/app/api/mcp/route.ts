@@ -46,9 +46,16 @@ import {
   updateTask,
   TASK_ORIGINS,
   TASK_STATUSES,
+  type TaskActor,
   type TaskOrigin,
   type TaskStatus,
 } from "@/lib/tasks";
+import {
+  addTaskComment,
+  listTaskComments,
+  MAX_TOOL_TASK_COMMENTS,
+  type TaskComment,
+} from "@/lib/taskComments";
 import { completeTaskWithValidation } from "@/lib/validation";
 import {
   createTemplate,
@@ -378,7 +385,7 @@ const SHARED_TOOLS = [
 /**
  * Everything a work cycle gets, and the whole of it.
  *
- * **Three tools, and what is absent is the design.** A run does not get
+ * **Four tools, and what is absent is the design.** A run does not get
  * `SHARED_TOOLS`: not `list_runs`, not `get_run_diff`, not `list_folders`, and
  * deliberately not `list_tasks` — a work cycle is an unattended agent that was
  * pointed at one folder and given one brief, and the whole backlog is neither
@@ -393,6 +400,13 @@ const SHARED_TOOLS = [
  * off **the capability token**. No tool below takes a run id, and that is not an
  * omission: a `runId` argument would be a work cycle able to close every task on
  * the board by guessing an id out of a list.
+ *
+ * `comment_on_task` is the fourth and the one that takes a *task* id without
+ * being held to the same rule, which is a smaller claim than it looks: a note
+ * moves nothing, its author is recorded from the token, and the worst a
+ * misdirected one can do is put a sentence signed by this run on a task it was
+ * not working. `complete_task` is where an id out of a list closes work nobody
+ * did, and that one is still checked against `claimed_by_run_id`.
  */
 const RUN_TOOLS = [
   {
@@ -474,6 +488,45 @@ const RUN_TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    // The half of the board a run could not reach before: the operator writes a
+    // note on the task and the run reads it out of `list_my_tasks`, which is why
+    // this rides a tool call rather than the appended system prompt. A thread
+    // injected into that prompt would rewrite the cached prefix every cycle.
+    //
+    // It moves nothing, and the description has to say so: a model handed the
+    // one write on this surface that is not `create_task` will otherwise read it
+    // as a way of closing something without calling `complete_task`.
+    name: "comment_on_task",
+    description:
+      "Write a note on a task: an answer to something the operator asked " +
+      "there, what you found, or why the brief is harder than it reads. It " +
+      "moves nothing — it cannot close, claim, drop or re-prioritise a task, " +
+      "and it does not mark the task as touched. Use complete_task to finish " +
+      "the task you hold. Notes are permanent and cannot be edited or deleted, " +
+      "and yours is recorded as written by this run.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: {
+          type: "string",
+          description:
+            "An id from list_my_tasks — one you hold, or one open in this " +
+            "folder that your work has something to do with.",
+        },
+        body: {
+          type: "string",
+          description:
+            "What you have to say, written for somebody who cannot see your " +
+            "work: name files and symbols rather than 'the change above'. If " +
+            "it is a new piece of work rather than a note about this one, call " +
+            "create_task instead.",
+        },
+      },
+      required: ["taskId", "body"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 /** Tools only the orchestrator chat gets. None of them starts anything. */
@@ -540,6 +593,46 @@ const CHAT_TOOLS = [
         },
       },
       required: ["title", "body"],
+      additionalProperties: false,
+    },
+  },
+  {
+    // Beside `create_task` and here for its reason: a chat turn has an operator
+    // at the keyboard, so a note it wrote is one somebody sees within the
+    // minute. A block is refused this for the same reason it is refused
+    // `create_task` — see `subjectRefusal`.
+    //
+    // It is the way a chat says something about a task without replacing it. The
+    // description says what it cannot do because the alternative is a model
+    // reading the one write beside `create_task` as a way around
+    // `taskTransitionRefusal`: this cannot close, claim, drop or re-prioritise
+    // anything, and it does not even mark the task as moved.
+    name: "comment_on_task",
+    description:
+      "Write a note on a task already on the board: what you found out about " +
+      "it, why it is harder than it reads, the decision this conversation took " +
+      "about it. It moves nothing — it cannot mark a task done, claimed or " +
+      "dropped, cannot change its priority and does not count as the task " +
+      "being touched. Use it for something worth saying about an existing " +
+      "brief; if it is a new piece of work, call create_task. Notes are " +
+      "permanent and cannot be edited or deleted, and yours is recorded as the " +
+      "chat's rather than the operator's.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: {
+          type: "string",
+          description: "An id from list_tasks or get_task.",
+        },
+        body: {
+          type: "string",
+          description:
+            "What you have to say, written for somebody with none of this " +
+            "conversation: name files, ids and decisions rather than 'the " +
+            "thing above'.",
+        },
+      },
+      required: ["taskId", "body"],
       additionalProperties: false,
     },
   },
@@ -1247,6 +1340,21 @@ function subjectRefusal(subject: CapabilitySubject, name: string): string {
         "turn or the operator."
       );
     }
+    // `create_task`'s refusal one field along, and refused on its own ground
+    // rather than by omission: a note is permanent, it is attributed, and a
+    // block's turn is unattended, so a thread it wrote to is one the operator
+    // meets already answered by something nobody was reading. Naming what a
+    // block *can* still do with the board is what stops this reading as "the
+    // taskboard is not yours".
+    if (name === "comment_on_task") {
+      return (
+        "comment_on_task is not available to an orchestrator block: a note is " +
+        "permanent and cannot be edited or deleted, and nobody is watching " +
+        "this workflow to read one written unattended. You can read the board " +
+        "with list_tasks and get_task, and name a task on a run you emit — the " +
+        "run that does the work can write on it."
+      );
+    }
     return `${name} is not available to an orchestrator block. Use emit_runs.`;
   }
 
@@ -1271,9 +1379,9 @@ function subjectRefusal(subject: CapabilitySubject, name: string): string {
   }
   return (
     `${name} is not available to a work cycle. A run can list the tasks it ` +
-    "holds, complete one of those, and file a new one — it cannot start work, " +
-    "approve anything or touch another run. Anything else belongs in your " +
-    "reply, which the operator reads."
+    "holds, complete one of those, write a note on one and file a new one — it " +
+    "cannot start work, approve anything or touch another run. Anything else " +
+    "belongs in your reply, which the operator reads."
   );
 }
 
@@ -1705,6 +1813,15 @@ async function callTool(
       return subject.kind === "run"
         ? createTaskForRun(args, subject.runId)
         : createTaskTool(args, chatId!);
+
+    // Shared by name between a chat and a work cycle, and the only difference
+    // between the two callers is the author the row records — which is taken
+    // from the subject here and can be taken from nowhere else. `block` never
+    // reaches this line: the gate above refuses a tool that is not on its list.
+    case "comment_on_task":
+      return subject.kind === "run"
+        ? commentOnTask(args, { kind: "run", runId: subject.runId })
+        : commentOnTask(args, { kind: "chat" }, chatId!);
 
     // Narrowed rather than asserted, for `emit_runs`' reason: the gate above
     // proves the tool is on this subject's list, and the union is what makes the
@@ -2279,12 +2396,20 @@ function getTaskTool(args: Record<string, unknown>) {
   }
 
   const links = runLinksForTasks([task.id]).get(task.id);
+  const thread = listTaskComments(task.id, MAX_TOOL_TASK_COMMENTS);
   return text(
     JSON.stringify(
       {
         taskId: task.id,
         title: task.title,
         body: task.body,
+        // The thread, because this is the unclipped door and a note the
+        // operator wrote on a task is part of what the task asks for. Oldest
+        // first with the oldest dropped when it does not fit — `listTaskComments`
+        // carries why that end and not the other.
+        comments: thread.comments.map(toolComment),
+        commentsShown: thread.comments.length,
+        commentsTotal: thread.total,
         status: task.status,
         priority: task.priority,
         origin: task.origin,
@@ -2306,6 +2431,80 @@ function getTaskTool(args: Record<string, unknown>) {
       null,
       1,
     ),
+  );
+}
+
+/**
+ * One note as a tool result carries it.
+ *
+ * `author` rather than a run id, because that pairing is the whole of what the
+ * column records and a model handed a bare id would attribute a note to whoever
+ * it guessed. The body is **whole** and not clipped, which is the one place this
+ * departs from `bodyPreview` beside it: a work cycle has no `get_task`, so there
+ * is no second call that would return the rest, and a clipped note is an
+ * instruction it can never finish reading.
+ */
+function toolComment(comment: TaskComment) {
+  return {
+    author: comment.author,
+    authorRunId: comment.authorRunId,
+    body: comment.body,
+    at: new Date(comment.createdAt).toISOString(),
+  };
+}
+
+/**
+ * Write a note on a task, as whichever subject is asking.
+ *
+ * **The author is the subject's and never the call's**, which is this tool's
+ * whole authorisation and the reason both callers go through one function: two
+ * handlers would be two places an actor is assembled, and the one that got it
+ * wrong would produce a thread saying the operator wrote what a model did.
+ * `normalizeTaskCommentInput` refuses an `author` off the wire by name for the
+ * same reason.
+ *
+ * **It moves nothing**, and nothing here may make it: no `updateTask`, and in
+ * particular no touch of `tasks.updated_at`, which the board sorts on — a note
+ * that reordered the board would read as a move on every surface drawing it.
+ * `taskTransitionRefusal` stays the whole of the board's authority model and
+ * this is not a second answer to it.
+ *
+ * A task that is not there is refused in `taskRefusal`'s wording rather than one
+ * written here, so a mistyped id reads the same as it does at `get_task`, at a
+ * proposal and at an emission.
+ */
+function commentOnTask(
+  args: Record<string, unknown>,
+  actor: TaskActor,
+  chatId?: string,
+) {
+  const taskId = String(args.taskId ?? "").trim();
+  const written = addTaskComment(taskId, args, actor);
+
+  if (!written.ok) {
+    if (written.kind === "missing") {
+      return text(taskRefusal(taskId, currentTaskKnowledge()) ?? "", true);
+    }
+    return text(written.error, true);
+  }
+
+  const task = getTask(taskId);
+  if (chatId) {
+    // On the thread, `create_task`'s rule: the operator's transcript is where
+    // anything the chat wrote outside the conversation has to appear, or a task
+    // that grew a note has no trace on the page that grew it.
+    appendMessage(
+      chatId,
+      "system",
+      `The chat wrote a note on the task “${task?.title ?? taskId}”. Nothing ` +
+        "about the task itself changed.",
+    );
+  }
+
+  return text(
+    `Written on “${task?.title ?? taskId}”. The note is permanent and cannot ` +
+      "be edited or deleted. Nothing about the task changed — it has the same " +
+      "status, the same priority and the same owner it had before.",
   );
 }
 
@@ -2426,6 +2625,18 @@ function listMyTasks(runId: string) {
         // is cut, read by the operator's board and by this tool alike.
         held: mine.held.map((t) => {
           const row = taskListItemDTO(t);
+          // The thread on `held` and deliberately not on `openInFolder`: a note
+          // is what the operator said about the task *this run is doing*, and
+          // it is the only way one reaches a cycle — the appended system prompt
+          // is frozen against the cached prefix and cannot carry a thread that
+          // changes between cycles. Notes on a task the run may not act on
+          // would be tokens spent on somebody else's conversation.
+          //
+          // One query per held row rather than one for the set. `held` is
+          // capped at `MAX_RUN_TASKS` and this is a tool call rather than a
+          // ten-second poll, so the N+1 the board's own listing refuses is
+          // bounded here at twenty reads nothing repeats.
+          const thread = listTaskComments(t.id, MAX_TOOL_TASK_COMMENTS);
           return {
             taskId: row.id,
             title: row.title,
@@ -2433,6 +2644,9 @@ function listMyTasks(runId: string) {
             bodyClipped: row.body.length < t.body.length,
             status: row.status,
             priority: row.priority,
+            comments: thread.comments.map(toolComment),
+            commentsShown: thread.comments.length,
+            commentsTotal: thread.total,
           };
         }),
         openInFolder: mine.openInFolder.map((t) => {
@@ -2455,8 +2669,8 @@ function listMyTasks(runId: string) {
         // ids will reach for the nearest one, and only one of them is closeable.
         note:
           "complete_task works on held only. Nothing here can close, claim or " +
-          "drop anything in openInFolder — file a new task if one of those " +
-          "needs saying something about.",
+          "drop anything in openInFolder — comment_on_task if one of those " +
+          "needs a note, or create_task if it is work of its own.",
       },
       null,
       1,
