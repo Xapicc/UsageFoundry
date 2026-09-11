@@ -557,6 +557,26 @@
 :root[data-skin="ascii"] .uf-framed { position: relative; }
 :root[data-skin="ascii"] .uf-unboxed { border-color: transparent; }
 
+/* The 1px the rule above keeps is still 1px of *layout*, and an absolutely
+   positioned frame is placed against its host's **padding** box — so the
+   `-0.5em` in `AsciiFrame` lands the stroke a pixel inside the edge it is
+   replacing whenever the host wears a border, while the same frame on a
+   border-less host (`ListGroup`'s wrapper) lands it on the edge. One frame,
+   two answers, and which you get depends on a class the frame cannot see.
+
+   Measured on `/` at 1920x963, DPR 2, ascii, light: a card whose border box
+   ended at x=1900.00 inked its `│` on device columns 3797-3798 — centre
+   css 1898.73, a pixel further in than a group box ending at x=1883.00, which
+   inked at 3765-3766, centre css 1882.73. Device column 3799 was still card
+   fill: the light halo the `-0.5em` was introduced to remove, down to its last
+   pixel but not gone. Backing the border out of the inset closes both.
+
+   Keyed on `uf-unboxed` because that class *is* the statement "this host still
+   has a border the skin painted out" — and `1px` rather than the host's own
+   width because the rule above is what makes a literal safe here: a box keeps
+   its 1px under this skin, so there is no second figure to read. */
+:root[data-skin="ascii"] .uf-unboxed > .uf-ascii-frame { inset: calc(-0.5em - 1px); }
+
 /* `[ok]`, not a pill. The brackets are generated content rather than two more
    spans because a span would be a flex item and would take the badge's `gap`
    with it; punctuation is also the one kind of decorative character a screen
