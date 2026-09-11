@@ -69,11 +69,13 @@ export function Card({
     // cards inside a grid and pushed every card but the first down 24px.
     // A card is a surface anyway, not a document section.
     <div
-      className={`uf-framed rounded-lg border border-line bg-surface ${EMPHASIS[emphasis]} ${className}`}
+      className={`uf-framed uf-unboxed rounded-lg border border-line bg-surface ${EMPHASIS[emphasis]} ${className}`}
     >
-      {/* Before the content and never after it, so the card's own children
-          paint over the edge rather than under it — a figure that happened to
-          reach the gutter would otherwise be crossed out by a `│`. */}
+      {/* The frame is positioned, so it paints above everything in flow here
+          whichever order it is written in — which is why it may only ever
+          occupy the card's own padding, and why `uf-framed` is granted to this
+          element and to nothing inside it. A positioned child would paint over
+          the edge instead. */}
       <AsciiFrame tone={FRAME_TONE[emphasis]} />
       {children}
     </div>

@@ -484,15 +484,23 @@
    answer a question it is never told the answer to. */
 :root[data-skin="ascii"] .uf-plain { display: none; }
 
-/* A surface that wears a frame. `position` is granted only under the skin
-   because it is not free: `relative` on every card in the app would move
-   whatever a page has absolutely positioned inside one, and there are
-   twenty-two pages of them. `border-color` rather than `border-width`, so the
-   box keeps its 1px and nothing reflows when the skin changes. */
-:root[data-skin="ascii"] .uf-framed {
-  position: relative;
-  border-color: transparent;
-}
+/* Two classes and not one, which is a distinction that cost a frame nobody
+   could see: a positioned element paints above every non-positioned box, so an
+   `AsciiFrame` sits over its host's content — harmless, since it only ever
+   occupies the padding — but *under* any later sibling that is itself
+   positioned. `ListGroup` wearing one class on the wrapper and the same class
+   on the filled box inside it made that box positioned, and `--bg-grouped`
+   painted the frame out. So `uf-framed` is granted to the host and to nothing
+   else, and a box that merely has to stop drawing its own edge takes
+   `uf-unboxed`.
+
+   `position` is granted only under the skin because it is not free: `relative`
+   on every card in the app would move whatever a page has absolutely
+   positioned inside one, and there are twenty-two pages of them.
+   `border-color` rather than `border-width`, so a box keeps its 1px and
+   nothing reflows when the skin changes. */
+:root[data-skin="ascii"] .uf-framed { position: relative; }
+:root[data-skin="ascii"] .uf-unboxed { border-color: transparent; }
 
 /* `[ok]`, not a pill. The brackets are generated content rather than two more
    spans because a span would be a flex item and would take the badge's `gap`
@@ -590,6 +598,11 @@
 :root[data-skin="ascii"] .uf-segment {
   gap: 0;
   border-color: transparent;
+  /* `rounded-[4px]` is an arbitrary value and so a literal in the emitted
+     utility — `--corner-sm` cannot reach it, which is the class of corner
+     globals.css already counts beside `--corner-sm` as the component's own to
+     flatten. This is that component. */
+  border-radius: 0;
   padding-inline: 0.25rem;
 }
 :root[data-skin="ascii"] .uf-segment::before { content: "["; }

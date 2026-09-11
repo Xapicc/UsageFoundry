@@ -133,7 +133,7 @@ export function Sheet({
         // reach `display`, and a `display` on the element would outrank the
         // UA's `dialog:not([open]) { display: none }` and leave a closed sheet
         // lying across the page — the same reason nothing else here sets one.
-        className="uf-framed sheet-enter mx-auto w-[min(34rem,calc(100%-2rem))] rounded-b-lg border border-t-0 border-line bg-surface shadow-e3 max-md:w-full"
+        className="uf-unboxed sheet-enter mx-auto w-[min(34rem,calc(100%-2rem))] rounded-b-lg border border-t-0 border-line bg-surface shadow-e3 max-md:w-full"
         // The panel scrolls, not the viewport-sized dialog around it: a long
         // sheet has to stay reachable without the page behind it moving. That
         // is also what keeps Cancel and the default action reachable with a

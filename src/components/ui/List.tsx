@@ -64,7 +64,7 @@ export function ListGroup({
           one place this component deliberately does not draw one. */}
       <div className="uf-framed">
         <AsciiFrame />
-        <div className="uf-framed divide-y divide-line rounded-lg border border-line bg-grouped">
+        <div className="uf-unboxed divide-y divide-line rounded-lg border border-line bg-grouped">
           {children}
         </div>
       </div>
