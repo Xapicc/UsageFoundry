@@ -69,7 +69,17 @@ export function AsciiFrame({ tone = "faint" }: { tone?: AsciiFrameTone }) {
       // `display` is deliberately absent: `.uf-ascii` states it in both
       // directions from globals.css, and a Tailwind display utility here would
       // be a second answer to the same question in a different file.
-      className={`uf-ascii uf-ascii-frame pointer-events-none absolute inset-0 select-none flex-col overflow-hidden text-sm leading-none ${TONE[tone]}`}
+      // `-0.5em` and not `inset-0`, which is what this shipped at. A
+      // box-drawing glyph's stroke runs down the *middle* of its em box, so a
+      // frame laid flush inside the surface draws its line half a character in
+      // from the edge it is replacing: measured on `/agents` in dark, the card
+      // surface began at x=16 and the stroke stood at x=23, leaving a 7px band
+      // of card outside its own border on all four sides — a light halo around
+      // every box in the app, in both schemes. Pulled out by half, the stroke
+      // lands where the 1px border was. The half that then hangs outside is the
+      // glyph's empty side, so nothing is drawn there and nothing is clipped:
+      // `AsciiEdge` below is the same correction for a single edge.
+      className={`uf-ascii uf-ascii-frame pointer-events-none absolute -inset-[0.5em] select-none flex-col overflow-hidden text-sm leading-none ${TONE[tone]}`}
     >
       <span className="flex">
         <span>┌</span>

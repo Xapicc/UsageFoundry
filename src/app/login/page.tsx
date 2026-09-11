@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { AsciiArt, MARK } from "@/components/ui/AsciiArt";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Field";
@@ -53,9 +54,14 @@ export default function LoginPage() {
         {/* The first thing anyone sees of this app. The mark and the name are
             the whole of it — there is one field below and nothing to choose. */}
         <div className="mb-4 flex items-center gap-2.5">
+          {/* The sidebar's pair, and for the sidebar's reason: this tile is
+              `rx="6"`, an SVG attribute no token can reach, so under the ascii
+              skin it is the only rounded filled object on a page that has
+              squared everything else off. This is the one page the source list
+              is not on, which is exactly why it was missed. */}
           <svg
             viewBox="0 0 24 24"
-            className="h-7 w-7 shrink-0"
+            className="uf-plain h-7 w-7 shrink-0"
             aria-hidden
             focusable="false"
           >
@@ -64,6 +70,7 @@ export default function LoginPage() {
             <rect x="10.5" y="9.5" width="3" height="8.5" rx="1.5" fill="#fff" />
             <rect x="15" y="6" width="3" height="12" rx="1.5" fill="#fff" />
           </svg>
+          <AsciiArt art={MARK} className="w-7 shrink-0 text-accent" />
           <h1 className="text-xl font-semibold tracking-tight">UsageFoundry</h1>
         </div>
 
