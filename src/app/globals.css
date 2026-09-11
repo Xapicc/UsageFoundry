@@ -267,6 +267,52 @@
       env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)
   );
 
+  /* The four things the ascii skin retunes that are not colours, held here
+     rather than written as literals in @theme inline below.
+
+     `inline` is what forces the split, and in the opposite direction from the
+     colours: a theme entry whose value is a `var()` emits
+     `border-radius: var(--corner-sm)` into the utility and resolves per
+     element, while a literal is *baked in* — `rounded-sm` emitted
+     `border-radius: 6px` and `shadow-e1` emitted its offsets and colours
+     directly, so no later selector could reach either. Measured in the emitted
+     stylesheet rather than assumed. 127 radius call sites and 43 shadow ones
+     read these through their utilities, and none of them changes name.
+
+     The elevations are `0 0 #0000` under the skin rather than `none`, which is
+     Tailwind's own spelling of an absent shadow and the only one that is valid:
+     `box-shadow` takes `none` as a sole value, and the utility composes five
+     comma-separated slots, so a `none` in one of them makes the whole
+     declaration invalid at computed-value time. That happens to paint nothing,
+     which is the failure being avoided — it paints nothing for a reason nobody
+     wrote down and that a future slot ordering could change.
+
+     One thing the indirection costs: Tailwind inserts its
+     `var(--tw-shadow-color, …)` hook by parsing a colour out of the theme
+     value, and it cannot parse one out of a var(), so `shadow-e2/20` and the
+     like no longer recolour. `grep -rnE "shadow-(e1|e2|e3|bar|press)/" src/`
+     finds no call site, and a per-call-site shadow colour is not something this
+     kit offers — but it would now fail silently rather than loudly. */
+  --corner-sm: 6px;
+  --corner-lg: 10px;
+  --elevation-1: 0 0.5px 1px light-dark(rgb(0 0 0 / .05), rgb(0 0 0 / .28));
+  --elevation-2: 0 1px 2px light-dark(rgb(0 0 0 / .06), rgb(0 0 0 / .38)),
+                 0 4px 12px -4px light-dark(rgb(0 0 0 / .07), rgb(0 0 0 / .34));
+  --elevation-3: 0 2px 6px light-dark(rgb(0 0 0 / .08), rgb(0 0 0 / .44)),
+                 0 16px 40px -12px light-dark(rgb(0 0 0 / .22), rgb(0 0 0 / .64));
+  --elevation-bar: 0 -1px 2px light-dark(rgb(0 0 0 / .06), rgb(0 0 0 / .38)),
+                   0 -4px 12px -4px light-dark(rgb(0 0 0 / .07), rgb(0 0 0 / .34));
+  --elevation-press: inset 0 1px 2px light-dark(rgb(15 23 32 / .16), rgb(0 0 0 / .40));
+  --family-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", ui-sans-serif,
+    system-ui, "Segoe UI", Inter, sans-serif;
+  --family-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  /* Unitless, and it has to stay that way: every heading in the legacy layer
+     below states a font-size and no line-height, so it inherits this one. A
+     length here would give a 20px <h1> the body's line box and overlap its own
+     wrapped lines. Character art wants exactly 1, which is Tailwind's own
+     `leading-none` at the call site rather than a figure here. */
+  --leading-ui: 1.5;
+
   /* Consumed only by the legacy layer below; delete with the last rule
      that reads them. Everything new reads the @theme names instead. */
   --radius: 10px;
@@ -308,6 +354,82 @@
    Geometry only. Every *component* variant in this app stays a typed prop with
    a Record lookup — see the note on that in CLAUDE.md. */
 :root[data-sidebar="collapsed"] { --sidebar-w: var(--sidebar-w-rail); }
+
+/* ------------------------------------------------------------------ */
+/* The ascii skin                                                      */
+/* ------------------------------------------------------------------ */
+
+/* A second axis rather than a fourth theme. `data-skin="ascii"` sits beside
+   `data-theme`, absent when the skin is off, so all six combinations stay
+   reachable — an ascii skin offered as a fourth value on the appearance control
+   would make ascii-light and ascii-dark unreachable and would throw the OS
+   setting away the moment it was switched on.
+
+   It rides in the same pre-paint script as the other two, for a louder version
+   of the reason the theme does: a monospace family and a 0 radius arriving one
+   frame after load reflow every box on the page rather than recolouring them.
+
+   This is the third attribute on :root and the first that changes more than
+   geometry and `color-scheme` — docs/agent/conventions.md had written those two
+   as the closed list, and the amendment there records the extension. What keeps
+   it from being the precedent that rule guards against: no component reads
+   `data-skin`, nothing here is a component variant, every token keeps the name
+   its call sites already read, and the block only restates values the default
+   skin already states.
+
+   There is deliberately no [data-skin="ascii"][data-theme="light"] rule.
+   Every declaration below either carries no colour or points at a token that is
+   already a light-dark(), so the three theme states keep resolving underneath
+   this exactly as they do without it — which is also what makes "Match system"
+   still mean the OS while the skin is on. */
+:root[data-skin="ascii"] {
+  /* Monospace everywhere, in one declaration, because every proportional
+     reader in the app goes through --font-sans and `body` is what the rest
+     inherits from. The stack is the one the app already ships: ui-monospace
+     first, no webfont, no new dependency. A cut of a font with U+2500–257F
+     drawn to one advance width is what character art eventually wants, and it
+     is a later decision — nothing here may make the app depend on a download,
+     because a frame whose glyphs fall back to a second font is a frame with
+     gaps in it. */
+  --family-sans: var(--family-mono);
+
+  /* Flat in both senses: square corners, and nothing cast off the page. This
+     takes the carrier away from Card's `emphasis` ladder, which separates
+     `primary` from `default` from `quiet` by shadow step — under this skin the
+     frame does that work, which is why the two tones below are the part of this
+     block that had to be measured. */
+  --corner-sm: 0;
+  --corner-lg: 0;
+  --elevation-1: 0 0 #0000;
+  --elevation-2: 0 0 #0000;
+  --elevation-3: 0 0 #0000;
+  --elevation-bar: 0 0 #0000;
+  --elevation-press: 0 0 #0000;
+
+  /* The frame tones, and why they are the *text* ramp rather than two new
+     greys: under this skin a frame is ─ │ ┌ ┐ └ ┘ ═ set as characters, so the
+     border tokens are text colours in practice, and --fg-faint and --fg-muted
+     are the two tones in this palette that were already drawn to be read.
+
+     Measured as text against all four surfaces in both schemes — sixteen
+     pairs. The faint tone clears 3:1 everywhere (worst 3.19:1, light on --bg;
+     3.72:1 is the dark worst, on --bg-grouped) and the strong tone clears
+     4.5:1 everywhere (worst 4.87:1, light on --bg). So a frame drawn in the
+     faint tone meets the floor for a graphical object and anything that has to
+     be *read* takes the strong one. The faint tone is deliberately not pushed
+     to 4.5:1: it is also every 1px hairline in the app until the components are
+     rewritten, and a hairline at body-text contrast is the loudest thing in the
+     card rather than its edge. */
+  --border: var(--fg-faint);
+  --border-strong: var(--fg-muted);
+
+  /* Tighter than the 1.5 a proportional face wants, and still unitless for the
+     reason written beside --leading-ui: the headings inherit it. The grid that
+     joins a stack of │ into one continuous vertical is line-height exactly 1,
+     which is `leading-none` on the element that is art — not a figure here,
+     where it would overlap every wrapped heading in the app. */
+  --leading-ui: 1.35;
+}
 
 @layer components {
   /* The rail centres its glyphs and its labels stop being drawn — but they
@@ -386,10 +508,11 @@
 
   /* -apple-system first, so macOS resolves SF rather than whatever `system-ui`
      maps to under a remapped default. ui-sans-serif stays behind it as the
-     standard spelling for everything else. */
-  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", ui-sans-serif,
-    system-ui, "Segoe UI", Inter, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+     standard spelling for everything else. Both stacks are spelled out beside
+     --family-sans in :root — see the note there for why the value cannot live
+     here. */
+  --font-sans: var(--family-sans);
+  --font-mono: var(--family-mono);
 
   /* Replaces ten hardcoded sizes, two of which were half-pixels. 11.5px -> 12
      and 12.5px -> 13 are the only intended visual changes in this commit. */
@@ -415,8 +538,8 @@
   --text-2xl: 1.625rem;   /* 26 — headline figure */
   --text-2xl--line-height: 1.2;
 
-  --radius-sm: 6px;
-  --radius-lg: 10px;
+  --radius-sm: var(--corner-sm);
+  --radius-lg: var(--corner-lg);
 
   /* Three steps, retuned to what AppKit actually casts. e1 used to be a 1px
      web-card drop shadow, which put every `default` card a visible distance off
@@ -428,21 +551,21 @@
      e2 keeps a default card and a `primary` one distinguishable, and e3 is the
      one real elevation — a sheet in the top layer, where the shadow is what
      says the pane behind it is inert. Both are two-part: a tight contact
-     shadow plus a wide soft one, because a single blur reads as a glow. */
-  --shadow-e1: 0 0.5px 1px light-dark(rgb(0 0 0 / .05), rgb(0 0 0 / .28));
-  --shadow-e2: 0 1px 2px light-dark(rgb(0 0 0 / .06), rgb(0 0 0 / .38)),
-               0 4px 12px -4px light-dark(rgb(0 0 0 / .07), rgb(0 0 0 / .34));
-  --shadow-e3: 0 2px 6px light-dark(rgb(0 0 0 / .08), rgb(0 0 0 / .44)),
-               0 16px 40px -12px light-dark(rgb(0 0 0 / .22), rgb(0 0 0 / .64));
+     shadow plus a wide soft one, because a single blur reads as a glow.
+
+     All five values are spelled out beside --elevation-1 in :root, for the
+     reason written there. */
+  --shadow-e1: var(--elevation-1);
+  --shadow-e2: var(--elevation-2);
+  --shadow-e3: var(--elevation-3);
   /* e2 cast upwards, for a bar pinned to the bottom of the viewport. Depth is
      what separates "floating above the page" from "the card is sliced in
      half", and the direction has to match where the element actually is. */
-  --shadow-bar: 0 -1px 2px light-dark(rgb(0 0 0 / .06), rgb(0 0 0 / .38)),
-                0 -4px 12px -4px light-dark(rgb(0 0 0 / .07), rgb(0 0 0 / .34));
+  --shadow-bar: var(--elevation-bar);
 
   /* A pressed control is *recessed*, not merely darker. Inset, so the button
      does not move and nothing around it reflows. */
-  --shadow-press: inset 0 1px 2px light-dark(rgb(15 23 32 / .16), rgb(0 0 0 / .40));
+  --shadow-press: var(--elevation-press);
 
   /* Two curves. `standard` decelerates into rest — the right shape for a state
      that is settling (hover, focus, a colour swap). `entrance` overshoots
@@ -586,7 +709,7 @@
     color: var(--fg);
     font-family: var(--font-sans);
     font-size: var(--text-base);
-    line-height: 1.5;
+    line-height: var(--leading-ui);
     -webkit-font-smoothing: antialiased;
   }
 
