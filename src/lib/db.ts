@@ -2326,6 +2326,50 @@ function migrate(db: Database.Database) {
       ON tasks(mount_id, folder);
   `);
 
+  // Notes on a task: what the operator, a chat turn or a run has to say about a
+  // brief without changing what the brief is.
+  //
+  // **Append-only, and there is no column that would let it be anything else.**
+  // No `updated_at`, no `deleted_at`, no `edited_by`: a thread three parties
+  // write to is a record of what was said, and an edit would leave a run acting
+  // on text that is no longer there with nothing anywhere saying it changed.
+  // What that costs is that a mistaken note stays, answered by the next one.
+  //
+  // `ON DELETE CASCADE` is the one way a comment goes away, and it is the only
+  // foreign key on this path that could be a cascade: unlike the three run id
+  // columns above, the row it points at *is* deleted — by the operator, and by
+  // nobody else — and a thread outliving its task is orphaned prose no surface
+  // can place. `parent_task_id`'s `SET NULL` is the opposite case for the
+  // opposite reason: there the child is the thing worth keeping.
+  //
+  // `author` is the closed set `operator | chat | block | run`, recorded from
+  // the door the write arrived at and never read off a request — `origin`'s rule
+  // on the row above, and see `normalizeTaskCommentInput` in taskComments.ts.
+  // `author_run_id` is set only when a run wrote it, and it is the capability
+  // token's id rather than an argument; a note claiming to be another run's is
+  // the failure that column exists to make impossible.
+  //
+  // Deliberately **no** `task_id` write-back: a comment does not touch
+  // `tasks.updated_at`. That column means the task moved and the board sorts on
+  // it, so a note would reorder the board and read as a move — see
+  // docs/agent/taskboard.md.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS task_comments (
+      id            TEXT PRIMARY KEY,
+      task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      author        TEXT NOT NULL,
+      author_run_id TEXT,
+      body          TEXT NOT NULL,
+      created_at    INTEGER NOT NULL
+    );
+    -- One thread, oldest first, which is the only read this table has. The pair
+    -- is what keeps a task's own notes together on disk and the ordering off a
+    -- sort, and \`created_at\` is ascending here because that is the direction a
+    -- thread is read in — the cap takes from the old end instead.
+    CREATE INDEX IF NOT EXISTS idx_task_comments_thread
+      ON task_comments(task_id, created_at);
+  `);
+
   adoptModelsInUse(db);
 
   // Anything still wearing the rebuild suffix after the one rebuild above has
