@@ -2370,6 +2370,54 @@ function migrate(db: Database.Database) {
       ON task_comments(task_id, created_at);
   `);
 
+  // "This task waits for that one." Two ids and a timestamp, and the columns
+  // that are *not* here are the whole design.
+  //
+  // Two columns rather than a JSON blob on `tasks`, which is run_deps' choice
+  // above for run_deps' reason: this is queried from **both** ends — "what is
+  // this task waiting for" draws a row, and "what does closing this release"
+  // is the question an operator asks before they close anything — so it has to
+  // be indexable, and a blob would make the second end a scan of every task
+  // the install has ever filed. The primary key over the pair is what makes a
+  // repeated write idempotent rather than a second edge; see `addTaskDep`.
+  //
+  // **No `edge` column, and its absence is the decision.** run_deps carries
+  // 'on-success' | 'on-finish' because it gates a *start*: something is waiting
+  // on the answer, so the condition has to be explicit. This edge gates
+  // nothing — it is advisory, a task whose dependencies are open is *shown* as
+  // blocked and nothing anywhere refuses to claim, start or close it — so
+  // there is one kind of edge and no condition to state. The day something
+  // here holds a task back is the day that stops being true, and it is a
+  // decision about the board's authority model rather than a column.
+  //
+  // **No author and no `created_by`.** An edge is not a claim about who
+  // noticed the ordering, and the three doors that can write one (the
+  // operator's route, a chat turn, a work cycle) all write the same fact. What
+  // *is* gated is removal, and it is gated by there being only one door that
+  // does it — see docs/agent/taskboard.md.
+  //
+  // `parent_task_id` on the row above is a different relation and stays one: a
+  // run filed a task while working another. That is provenance, not "this
+  // blocks that", and nothing reads the two together.
+  //
+  // Both ends cascade, run_deps' reasoning: a task *is* deleted — by the
+  // operator, and by nobody else — and an edge naming a row that is gone is a
+  // dependency no reader can place and no walker can resolve.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS task_deps (
+      task_id    TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      depends_on TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (task_id, depends_on)
+    );
+    -- The other end. The primary key already indexes (task_id, depends_on),
+    -- which answers "what is this waiting for"; this one answers "what is
+    -- waiting for this", which is the read a board makes for every row it
+    -- draws and the one that would otherwise be a table scan per row.
+    CREATE INDEX IF NOT EXISTS idx_task_deps_depends_on
+      ON task_deps(depends_on);
+  `);
+
   adoptModelsInUse(db);
 
   // Anything still wearing the rebuild suffix after the one rebuild above has
