@@ -605,8 +605,20 @@
 
 /* A grid rather than a list of rows: the column separator is what the default
    skin deliberately does not draw, and it is the mark that makes a table read
-   as one under this skin. `double` under the head is `═` — two lines with a
-   gap, which is what the character is — against `─` between the rows.
+   as one under this skin.
+
+   The head rule is the component's own `border-b` and nothing else. This skin
+   used to double it into `═` — `border-bottom: 3px double` — and a CSS
+   `double` border at that width is exactly 1px of ink, 1px of gap, 1px of ink,
+   which is the character but reads on screen as two rules under the heading
+   row rather than one mark. Reviewed against the running app 2026-09-11 and
+   reversed; `─` between the rows carries the grid on its own. Do not restore
+   it — a head that needs more weight takes a colour, not a second line.
+
+   A sticky head draws 2px of ink here rather than 1px, because the inset
+   shadow the call sites add lands immediately above the border instead of on
+   it. That is what the default skin does too, so it is one rule drawn thicker
+   and not this skin's to override.
 
    Below the breakpoint a `stack` table is one block per record and has no
    columns left to separate, so the vertical rules come off. It is keyed on the
@@ -616,10 +628,6 @@
 :root[data-skin="ascii"] .uf-table th,
 :root[data-skin="ascii"] .uf-table td { border-right: 1px solid var(--border); }
 :root[data-skin="ascii"] .uf-table tr > :last-child { border-right-width: 0; }
-:root[data-skin="ascii"] .uf-table th {
-  border-bottom-style: double;
-  border-bottom-width: 3px;
-}
 @media (width < 48rem) {
   :root[data-skin="ascii"] .uf-table[role="table"] th,
   :root[data-skin="ascii"] .uf-table[role="table"] td { border-right-width: 0; }
