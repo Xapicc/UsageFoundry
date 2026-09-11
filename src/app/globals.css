@@ -649,6 +649,23 @@
   border-color: transparent;
   border-radius: 0;
   background: none;
+  /* A bar is one unbreakable word, so its min-content width is the whole bar —
+     and a card is a grid item, whose automatic minimum size is exactly that.
+     A bar wider than its column therefore does not overflow, it *widens the
+     column*, and the first cut of this pushed the dashboard's whole left column
+     past a 390px viewport. `AppShell` clips rather than scrolls, so nothing
+     scrolled sideways and `smoke-pages` stayed green while the card's right
+     edge was off screen.
+
+     Containment is what stops that propagation: the track's inline size is
+     computed as if it were empty, which is the width it would have had anyway,
+     and the bar can no longer be consulted for it. `Meter`'s cell counts are
+     budgeted to fit without this — it is the backstop for a viewport or a
+     minimum font size they were not budgeted against, and it fails the right
+     way round. The bar hangs over the card's edge, which is visible; the
+     alternative is clipping it, which quietly draws a fuller bar than the
+     reading. */
+  contain: inline-size;
 }
 
 @layer components {

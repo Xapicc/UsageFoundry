@@ -84,10 +84,25 @@ const SIZE: Record<
      *
      * Fixed rather than fitted to the card, because nothing can measure the
      * card without a layout pass, and a bar that reflowed its own resolution
-     * mid-render would change what it says. The ceiling is the narrowest place
-     * any of them lands: 34 characters at the 14px monospace this is set in is
-     * ~286px, against ~326px inside a card at the 390px viewport — so `hero`,
-     * the widest, still clears it with the brackets on.
+     * mid-render would change what it says.
+     *
+     * So the count is budgeted against the **widest a cell can be**, which is
+     * not the monospace advance and was measured rather than assumed: this app
+     * downloads no font on purpose, every stack it ships falls back for
+     * U+2580–259F, and the face that answers draws one glyph per em. At
+     * `text-sm` that is 14px a cell against the 7px an ASCII character takes
+     * here, and the first cut of this — sized at the monospace advance — drew a
+     * hero meter 462px wide inside a 326px card and pushed the dashboard's
+     * whole column past the viewport at 390px. Nothing scrolled sideways and
+     * `smoke-pages` stayed green, because `AppShell` clips rather than scrolls.
+     *
+     * 326px is that budget: a 390px viewport, less the page's `px-4` and the
+     * card's `max-md:p-4`. `(cells + 2) * 14 <= 326` allows 21, and the ladder
+     * below stops short of it so a browser with a larger minimum font size has
+     * somewhere to go. `.uf-meter` carries `contain: inline-size` for the case
+     * that budget is still wrong somewhere — the bar then hangs over its card
+     * rather than widening it, which is ugly and visible, where clipping it
+     * would quietly draw a fuller bar than the reading.
      */
     cells: number;
   }
@@ -99,7 +114,7 @@ const SIZE: Record<
     value: "text-xs",
     upper: "text-xs",
     detail: "mt-1.5",
-    cells: 16,
+    cells: 12,
   },
   default: {
     root: "mt-3",
@@ -108,7 +123,7 @@ const SIZE: Record<
     value: "text-sm",
     upper: "text-xs",
     detail: "mt-2",
-    cells: 24,
+    cells: 16,
   },
   hero: {
     root: "mt-3",
@@ -117,7 +132,7 @@ const SIZE: Record<
     value: "text-lg",
     upper: "text-sm",
     detail: "mt-2",
-    cells: 32,
+    cells: 20,
   },
 };
 

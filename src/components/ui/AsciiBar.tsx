@@ -6,7 +6,7 @@
  *     [██████████▒▒▒░░░░░░░]
  *
  * `█` is what was measured, `▒` is the span this app estimated on top of it,
- * `░` is headroom, and `?` is a reading with no ceiling to measure against.
+ * `░` is headroom, and `╳` is a reading with no ceiling to measure against.
  * The first three are `Meter`'s own split drawn in pixels — solid fill, hatched
  * band, empty track — so no call site has to learn a second vocabulary.
  *
@@ -15,10 +15,21 @@
  * width: the same texture as the band, distinguished from it only by covering
  * the whole track, which is as close to a reading as a non-reading can look. A
  * shade character here would inherit exactly that, and at 16 cells the
- * difference between "hatched whole" and "empty" is two tones of grey. `?`
- * cannot be read as a level at all, which is the property that matters — a
- * meter with no ceiling must not become a full bar, an empty bar or a zero, and
- * `DEFAULTS` ships without one on purpose (docs/agent/metering.md).
+ * difference between "hatched whole" and "empty" is two tones of grey. A row of
+ * `╳` is struck-out rather than filled and cannot be read as a level at all,
+ * which is the property that matters — a meter with no ceiling must not become
+ * a full bar, an empty bar or a zero, and `DEFAULTS` ships without one on
+ * purpose (docs/agent/metering.md).
+ *
+ * It is a box-drawing character and not `?` for a reason that is invisible from
+ * the source and was measured in the browser: on a stack that falls back for
+ * U+2500–259F — which is every stack this app ships, since `globals.css`
+ * deliberately downloads no font — the blocks arrive from a second face at one
+ * advance width per glyph while ASCII keeps the monospace face's own. Here that
+ * is 14px against 7px at `font-size: 14px`. A `?` track is therefore *half the
+ * length* of a `█` one, so a meter would change width when its ceiling was
+ * unset, on the same card as meters that did not. `╳` is U+2573, out of the
+ * same block as the frame's own glyphs, and measures the same 14px.
  *
  * `aria-hidden`, and every caller keeps its real figure as text elsewhere in the
  * markup. A screen reader must get "62.0%", never twenty block characters: the
@@ -31,7 +42,7 @@
 const FILLED = "█";
 const BAND = "▒";
 const EMPTY = "░";
-const NO_CEILING = "?";
+const NO_CEILING = "╳";
 
 /**
  * The three runs of characters, or `null` for a reading with no ceiling.

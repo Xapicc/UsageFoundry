@@ -114,11 +114,32 @@ test("the drawn string is the cell counts and nothing else", () => {
 test("no ceiling draws no level at all, rather than a level nobody can read", () => {
   // A full bar, an empty bar and a zero are all measurements, and so is any
   // shade between them — at 16 cells the hatch the pixel meter uses for this
-  // differs from an empty track by two tones of grey. `?` is the one mark here
-  // that cannot be mistaken for a quantity.
+  // differs from an empty track by two tones of grey. A struck-out track
+  // cannot be mistaken for a quantity.
   const html = renderToStaticMarkup(<AsciiBar fraction={null} cells={CELLS} />);
-  assert.equal(barText(html), `[${"?".repeat(20)}]`);
+  assert.equal(barText(html), `[${"╳".repeat(20)}]`);
   assert.doesNotMatch(html, /[█▒░]/, "no run of the bar may read as a reading");
+});
+
+test("an unknown bar is the same width as a bar with a reading", () => {
+  // Not cosmetic and not free: the blocks come from a fallback face at one
+  // glyph per em while ASCII keeps the monospace advance, so a `?` track is
+  // half the length of a `█` one. A meter that changed width when its ceiling
+  // was unset would do it beside meters that did not, on the same card.
+  const unknown = barText(renderToStaticMarkup(<AsciiBar fraction={null} cells={CELLS} />));
+  const known = barText(renderToStaticMarkup(<AsciiBar fraction={0.5} cells={CELLS} />));
+  assert.equal(unknown.length, known.length);
+  // Same length is necessary and not sufficient: it is the same length in
+  // *characters*, and an ASCII mark would draw that at half the width. The mark
+  // has to come from the same U+2500-U+259F range the fills do, which is what
+  // makes the character count and the drawn width the same question.
+  for (const glyph of unknown.slice(1, -1)) {
+    const code = glyph.codePointAt(0) ?? 0;
+    assert.ok(
+      code >= 0x2500 && code <= 0x259f,
+      `U+${code.toString(16)} is not from the block the fills are drawn from`,
+    );
+  }
 });
 
 test("only the measured run takes the caller's colour", () => {
@@ -169,7 +190,7 @@ test("a meter's blocks never reach the accessibility tree", () => {
 test("a meter with no ceiling draws the hatch in both skins and claims no number", () => {
   const html = renderToStaticMarkup(<Meter label="Session" fraction={null} />);
   assert.match(html, /hatched/, "the pixel skin's indeterminate fill");
-  assert.match(barText(html), /\[\?+\]/, "and the ascii skin's");
+  assert.match(barText(html), /\[\u2573+\]/, "and the ascii skin's");
   assert.doesNotMatch(html, /[█▒░]/);
   assert.doesNotMatch(html, /aria-valuenow/);
 });
@@ -189,9 +210,9 @@ test("each size draws its own fixed width", () => {
     );
     return /\[(█+)\]/.exec(barText(html))?.[1].length;
   };
-  assert.equal(cells("compact"), 16);
-  assert.equal(cells("default"), 24);
-  assert.equal(cells("hero"), 32);
+  assert.equal(cells("compact"), 12);
+  assert.equal(cells("default"), 16);
+  assert.equal(cells("hero"), 20);
 });
 
 test("a meter whose band the head cannot spell draws no band in either skin", () => {
