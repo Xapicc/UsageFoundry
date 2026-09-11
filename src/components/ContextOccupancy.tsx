@@ -334,14 +334,22 @@ function Sparkline({
         role="img"
         aria-label={describeSeries(samples, prunes, ceilingTokens, peak)}
       >
-        {/* The floor of the scale, so a line low in the box is visibly low
-            rather than floating. */}
-        <path
-          d={`M${PAD_X} ${baseline}H${VIEW_W - PAD_X}`}
-          className="stroke-line"
-          strokeWidth="1"
-          fill="none"
-        />
+        {/* No floor is drawn, and that is a decision rather than an omission.
+            A rule at `baseline` is zero tokens — a reading no series approaches
+            — so it carries nothing, and the only tone available for it is
+            `--border`: this app's divider token, at the same 1px, spanning the
+            same width as the `border-t border-line` the inspector draws between
+            every pair of its blocks. It therefore *was* a divider to the eye,
+            and on a short series — one work cycle, no polyline yet — it was the
+            only solid mark on the chart, sitting directly above the legend and
+            reading as a section rule dropped into the middle of the panel.
+            Drawing it quieter is not available either: `globals.css` records
+            `--fg-faint` at 3.19:1 in its worst pair and deliberately no higher
+            because it is every hairline in the app, so anything fainter is
+            under the 3:1 a graphical object owes. The scale is stated twice
+            without it — the ceiling rule is on the chart and the legend under it
+            carries that figure in words. `PAD_BOTTOM` stays: `baseline` is still
+            the coordinate the prune markers hang from. */}
 
         {/* The ceiling. Dashed rather than tinted, because the legend under the
             chart names it in words and a reader who cannot separate the two
