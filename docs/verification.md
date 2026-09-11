@@ -7439,6 +7439,26 @@ through before trusting this unattended:
     residual at zero, so the bands summed past the window the axis was sized
     to. That half is a pure function with a silent failure, and sits in
     `contextPruning.test.ts` on the suite's usual grounds rather than here.
+  - **2026-09-11, `87259bf`, class D.** The branches table's State column
+    (`src/app/branches/page.tsx`) draws a `whitespace-nowrap` badge over
+    `UncommittedNote` (`src/components/BranchWork.tsx`), in a `min-w-[140px]`
+    column that floors at 120px of content width once the `Td`'s own 10px
+    padding is taken off both sides — a floor sized for the badge, from
+    before the note existed. Every string the note renders is wider than
+    120px, so it always wraps to two lines, and the browser's default greedy
+    fill was breaking mid-phrase — "5 UNCOMMITTED IN" / "THE CHECKOUT" —
+    rather than keeping "in the checkout" together. Reported by a VisualEdit
+    handoff anchored on a rendered 140×70px cell; confirmed by rendering the
+    real `Badge`/`Table`/`UncommittedNote` components with the project's own
+    compiled CSS in a headless browser (the live page needs real branch and
+    checkout data this run did not have), which also measured that no single
+    word — "UNCOMMITTED" at 85.5px, the widest — comes close to the 120px
+    floor, so nothing was breaking mid-word. Not decidable from the static
+    markup: the wrap point depends on the browser's line-breaking algorithm
+    against real font metrics, which is what needed the engine. Fixed with
+    `text-balance` on the note, which does not change whether it wraps, only
+    where — measured after, on the same rendered column: "5 UNCOMMITTED" /
+    "IN THE CHECKOUT", the phrase intact on its own line.
 
   **And this is not "the interface is now checked".** Even with the pass above
   written down and the smoke pass `proposals/UIChecks/09-recommendation.md`
