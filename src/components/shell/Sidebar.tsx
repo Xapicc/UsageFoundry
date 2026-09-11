@@ -4,6 +4,8 @@ import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "@/components/ui/Icon";
+import { AsciiArt, MARK, WORDMARK } from "@/components/ui/AsciiArt";
+import { AsciiEdge } from "@/components/ui/AsciiFrame";
 import { PANES, activePane } from "@/components/shell/panes";
 
 /** Read by the pre-paint script in layout.tsx as well — keep them in step. */
@@ -137,8 +139,14 @@ export function Sidebar({
       // drawer is a different element with a different control, and two nodes
       // sharing one id is an aria-controls that points at either of them.
       id={variant === "docked" ? SIDEBAR_ID : undefined}
-      className={`${ROOT[variant]} flex-col border-r border-line bg-inset`}
+      // `uf-framed` and `uf-unboxed` are the pair `Card` wears, for the reason
+      // it wears both: the first grants the host a `position` nothing can paint
+      // over and the second stops the 1px edge drawing under the character one.
+      // The border keeps its width either way, so the column is the same width
+      // in both skins and nothing beside it moves on a toolbar click.
+      className={`${ROOT[variant]} uf-framed uf-unboxed flex-col border-r border-line bg-inset`}
     >
+      <AsciiEdge side="right" />
       <div
         className="app-drag flex shrink-0 items-center gap-2 overflow-hidden px-3"
         style={{
@@ -151,7 +159,16 @@ export function Sidebar({
           paddingLeft: "max(0.75rem, env(titlebar-area-x, 0px))",
         }}
       >
+        {/* Both marks are in the markup and globals.css turns one off, which is
+            the pairing the rest of this skin uses. The SVG's tile is `rx="6"`,
+            an attribute no token can reach, so under the ascii skin it would be
+            the one rounded object left on a squared-off page. */}
         <BrandMark />
+        <AsciiArt art={MARK} className="w-9 shrink-0" />
+        {/* Never `aria-hidden`, and this is the sentence the art above depends
+            on: it is the app's accessible name, and the wordmark at the foot of
+            this list is a picture of it. The rail keeps it as `sr-only` rather
+            than removing it, for the same reason. */}
         <span
           className={`${COLLAPSE_LABEL[variant]} truncate text-sm font-semibold tracking-tight text-ink`}
         >
@@ -179,7 +196,10 @@ export function Sidebar({
                   aria-keyshortcuts={pane.shortcut ? `Meta+${pane.shortcut}` : undefined}
                   onClick={onNavigate}
                   className={
-                    `${COLLAPSE_ROW[variant]} ui-transition flex min-h-[var(--control-h)] ` +
+                    // `uf-pick` on both variants, unlike the collapse hook
+                    // above it: the marker is what says which row you are on,
+                    // and the drawer needs that as much as the docked list.
+                    `${COLLAPSE_ROW[variant]} uf-pick ui-transition flex min-h-[var(--control-h)] ` +
                     // A row is aimed at with a finger below the breakpoint, so
                     // it takes the 44px target the doc records there; above it
                     // the pointer keeps the 32px control height every other
@@ -198,6 +218,21 @@ export function Sidebar({
           })}
         </ul>
       </nav>
+
+      {/* The wordmark sits under the list rather than over it, because the
+          strip above is `--toolbar-actual` tall so that the source list's head
+          and the toolbar beside it are on one line, and eleven rows of art do
+          not fit in it — a taller strip here would put the two halves of the
+          window out of step.
+
+          No wrapper around it: the padding is on the art's own box, which is
+          what `.uf-ascii` sets `display: none` on, so the default skin gets no
+          element and no empty 16px at the foot of the list rather than a hidden
+          child inside a box that still takes the room. */}
+      <AsciiArt
+        art={WORDMARK}
+        className="uf-sidebar-wordmark shrink-0 px-3 pt-2 pb-4 text-ink-faint"
+      />
     </div>
   );
 }

@@ -373,13 +373,13 @@ export function QuickOpen({
                     // the Open button is a formality — so it takes the 44px
                     // target below the breakpoint that every other tappable
                     // row in the shell does. See Sidebar's pane link.
-                    "ui-transition mt-0.5 flex min-h-[var(--control-h)] max-md:min-h-11 cursor-pointer " +
+                    "uf-pick ui-transition mt-0.5 flex min-h-[var(--control-h)] max-md:min-h-11 cursor-pointer " +
                     `items-center gap-2 rounded-[6px] px-2 text-sm ${ITEM[state]}`
                   }
                 >
                   <span className="truncate">{item.label}</span>
                   {item.detail && (
-                    <span className={`ml-auto truncate text-xs ${DETAIL[state]}`}>
+                    <span className={`uf-pick-detail ml-auto truncate text-xs ${DETAIL[state]}`}>
                       {item.detail}
                     </span>
                   )}

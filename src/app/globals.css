@@ -479,6 +479,42 @@
 .uf-ascii { display: none; }
 :root[data-skin="ascii"] .uf-ascii { display: inline; }
 :root[data-skin="ascii"] .uf-ascii-frame { display: flex; }
+
+/* Character art sized to its container: the wordmark in the source list, and
+   the mark in the strip above it.
+
+   The divisor is the column count and nothing else, because a cell here is one
+   full em — `docs/agent/conventions.md`'s character-art bullet has the
+   measurement, and the marketing site's own rule divides by `cols × 0.6`
+   because it ships a font this app deliberately does not.
+
+   `container-type: inline-size` is both halves of this. It is what `100cqw`
+   reads, and it is the containment that stops a block of art — one unbreakable
+   word per row — being consulted for its parent's width, which is the trap the
+   same bullet records. `overflow: hidden` is the visible failure to prefer over
+   the silent one: if a browser's minimum font size ever floors the calc, the
+   art is cut off rather than laid across the page. */
+:root[data-skin="ascii"] .uf-ascii-art {
+  display: block;
+  container-type: inline-size;
+  overflow: hidden;
+}
+:root[data-skin="ascii"] .uf-ascii-art > pre {
+  white-space: pre;
+  /* Exactly 1, so a stack of full blocks joins into one shape rather than
+     eleven stripes — the same reason `AsciiFrame` sets `leading-none`. */
+  line-height: 1;
+  font-variant-ligatures: none;
+  width: max-content;
+  font-size: min(var(--ascii-cap, 18px), calc(100cqw / var(--ascii-cols, 48)));
+}
+/* 48 cells will not fit a 56px rail, and the sliver it would compute to is
+   worse than nothing. Unlayered with the rules above rather than beside the
+   other two `[data-sidebar="collapsed"]` rules in `@layer components`, because
+   a layered rule loses to the unlayered `display: block` it has to overrule. */
+:root[data-skin="ascii"][data-sidebar="collapsed"] .uf-sidebar-wordmark {
+  display: none;
+}
 /* The other half of the pair: the mark the character replaces. Both are drawn
    in the markup and one of them is always off, which is what lets a component
    answer a question it is never told the answer to. */
@@ -662,6 +698,49 @@
      hangs over the card's edge, which is visible — the alternative is clipping
      it, which quietly draws a fuller bar than the reading. */
   contain: inline-size;
+}
+
+/* A row that says "this is the one" with an accent fill says it with a marker
+   here: `>` against a space, one ASCII character either way, so nothing moves
+   when the selection does — the same state-invariance the switch's `[x]`/`[ ]`
+   and the segment's brackets were sized for.
+
+   Two components wear it, and the attribute is what tells them apart rather
+   than a second class: the source list marks its row `aria-current="page"` and
+   quick open marks its option `aria-selected`, and both were already doing so
+   for a screen reader. This reads that state, it does not create it — no ARIA
+   is reachable from this block, which is the line the header of this section
+   keeps.
+
+   `filter` goes with the fill. The sidebar's active row brightens on hover,
+   which is a fill effect; left standing with no fill under it, it would tint
+   the row's *text* on hover and nothing else. The two translucent washes come
+   back on the states that had them, so all four survive the skin. */
+:root[data-skin="ascii"] .uf-pick {
+  background: none;
+  filter: none;
+}
+:root[data-skin="ascii"] .uf-pick::before { content: " "; white-space: pre; }
+:root[data-skin="ascii"] .uf-pick[aria-current="page"],
+:root[data-skin="ascii"] .uf-pick[aria-selected="true"] { color: var(--accent); }
+:root[data-skin="ascii"] .uf-pick[aria-current="page"]::before,
+:root[data-skin="ascii"] .uf-pick[aria-selected="true"]::before { content: ">"; }
+:root[data-skin="ascii"] .uf-pick:hover  { background: var(--fill-hover); }
+:root[data-skin="ascii"] .uf-pick:active { background: var(--fill-active); }
+/* The chip on a quick-open row states the pane's chord or the run's status, and
+   it is quiet in both states — the highlighted one only ever said `--tint-fg`
+   because it sat on the accent fill that is now gone. */
+:root[data-skin="ascii"] .uf-pick-detail { color: var(--fg-faint); }
+
+/* The ⌘K chip in the toolbar. Its own box goes because the button around it
+   has become `[ Quick open ⌘K ]` and a bordered chip inside a bracketed label
+   is two frames deep for one control. `border-radius` by hand because
+   `rounded-[4px]` is an arbitrary value and so a literal, which is the class of
+   corner counted beside `--corner-sm` as the component's own to flatten. */
+:root[data-skin="ascii"] .uf-kbd {
+  border-color: transparent;
+  border-radius: 0;
+  background: none;
 }
 
 @layer components {

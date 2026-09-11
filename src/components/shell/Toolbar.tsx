@@ -5,6 +5,7 @@ import { SkinToggle } from "@/components/SkinToggle";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
+import { AsciiEdge } from "@/components/ui/AsciiFrame";
 import { SIDEBAR_DRAWER_ID, SIDEBAR_ID } from "@/components/shell/Sidebar";
 import { toolbarAction, toolbarTitle } from "@/components/shell/panes";
 
@@ -47,7 +48,10 @@ export function Toolbar({
       // width — the tighter gap below the breakpoint is what it has left to
       // give back to the title before it starts eating words.
       className={
-        "app-drag flex shrink-0 items-center gap-3 border-b border-line " +
+        // The sidebar's pair, for the sidebar's reason: the underline becomes a
+        // row of `─` and the 1px one stops being drawn, without either of them
+        // changing the strip's height.
+        "app-drag uf-framed uf-unboxed flex shrink-0 items-center gap-3 border-b border-line " +
         // Below the breakpoint the source list is a drawer, so it is absorbing
         // none of the window's left edge and the sum below must subtract
         // nothing. An installed window narrowed past this point is the only
@@ -71,6 +75,8 @@ export function Toolbar({
           "max(0.75rem, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)))",
       }}
     >
+      <AsciiEdge side="bottom" />
+
       {/* Two controls in the same place, because the one button does two
           different things either side of the breakpoint: above it there is a
           docked source list to collapse to a rail, below it there is no docked
@@ -130,7 +136,7 @@ export function Toolbar({
               and `aria-keyshortcuts` above already carries it for anyone who
               has one. */}
           <span className="max-md:sr-only">Quick open</span>
-          <kbd className="mono rounded-[4px] border border-line bg-inset px-1 text-2xs text-ink-faint max-md:hidden">
+          <kbd className="uf-kbd mono rounded-[4px] border border-line bg-inset px-1 text-2xs text-ink-faint max-md:hidden">
             ⌘K
           </kbd>
         </Button>
