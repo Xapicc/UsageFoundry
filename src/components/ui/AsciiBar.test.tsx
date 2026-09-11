@@ -21,6 +21,15 @@ import { Meter } from "../Meter";
 
 const CELLS = 20;
 
+/**
+ * The bar as a reader of the *screen* sees it: the runs are separate spans, so
+ * that only the measured one takes the severity colour, and the markup between
+ * them is not part of the picture.
+ */
+function barText(markup: string): string {
+  return markup.replace(/<[^>]*>/g, "");
+}
+
 test("a true zero fills nothing and a true one fills everything", () => {
   assert.deepEqual(meterCells(0, null, CELLS), { filled: 0, band: 0, empty: 20 });
   assert.deepEqual(meterCells(1, null, CELLS), { filled: 20, band: 0, empty: 0 });
@@ -99,17 +108,35 @@ test("the drawn string is the cell counts and nothing else", () => {
   const html = renderToStaticMarkup(
     <AsciiBar fraction={0.25} upperFraction={0.5} cells={CELLS} />,
   );
-  assert.match(html, /\[█{5}▒{5}░{10}\]/);
+  assert.equal(barText(html), "[█████▒▒▒▒▒░░░░░░░░░░]");
 });
 
-test("no ceiling draws neither an empty bar nor a full one", () => {
-  // Both of those read as a measurement. The whole bar is the hatch character,
-  // which is the same mark the band uses for "estimated" — the one vocabulary
-  // this skin has for "we cannot put a number on this".
+test("no ceiling draws no level at all, rather than a level nobody can read", () => {
+  // A full bar, an empty bar and a zero are all measurements, and so is any
+  // shade between them — at 16 cells the hatch the pixel meter uses for this
+  // differs from an empty track by two tones of grey. `?` is the one mark here
+  // that cannot be mistaken for a quantity.
   const html = renderToStaticMarkup(<AsciiBar fraction={null} cells={CELLS} />);
-  assert.match(html, /\[▒{20}\]/);
-  assert.doesNotMatch(html, /█/, "unknown must not read as a reading");
-  assert.doesNotMatch(html, /░/, "and must not read as headroom either");
+  assert.equal(barText(html), `[${"?".repeat(20)}]`);
+  assert.doesNotMatch(html, /[█▒░]/, "no run of the bar may read as a reading");
+});
+
+test("only the measured run takes the caller's colour", () => {
+  // The band is this app's own estimate and the track is headroom; neither is
+  // the reading, and a bar tinted end to end by severity presents all three as
+  // one measurement. Same split the pixel meter makes, where the hatch and the
+  // track are drawn off the border ramp and only the fill is `bg-danger`.
+  const html = renderToStaticMarkup(
+    <AsciiBar
+      fraction={0.4}
+      upperFraction={0.8}
+      cells={CELLS}
+      fillClassName="text-danger"
+    />,
+  );
+  const fill = /<span class="text-danger">([^<]*)<\/span>/.exec(html);
+  assert.ok(fill, "the fill is its own span");
+  assert.match(fill[1], /^█+$/, "and nothing but blocks is inside it");
 });
 
 test("the characters are hidden at the root, not one run at a time", () => {
@@ -126,8 +153,9 @@ test("the characters are hidden at the root, not one run at a time", () => {
  */
 test("a meter's blocks never reach the accessibility tree", () => {
   const html = renderToStaticMarkup(<Meter label="Session" fraction={0.62} />);
-  const bar = /<span aria-hidden="true"[^>]*>\[[█▒░]+\]<\/span>/.exec(html);
+  const bar = /<span aria-hidden="true"[^>]*>\[.*?\]<\/span>/s.exec(html);
   assert.ok(bar, "the bar is in the DOM under both skins");
+  assert.match(barText(bar[0]), /^\[[█▒░]+\]$/);
   assert.doesNotMatch(
     html.replace(bar[0], ""),
     /[█▒░]/,
@@ -141,8 +169,8 @@ test("a meter's blocks never reach the accessibility tree", () => {
 test("a meter with no ceiling draws the hatch in both skins and claims no number", () => {
   const html = renderToStaticMarkup(<Meter label="Session" fraction={null} />);
   assert.match(html, /hatched/, "the pixel skin's indeterminate fill");
-  assert.match(html, /\[▒+\]/, "and the ascii skin's");
-  assert.doesNotMatch(html, /█/);
+  assert.match(barText(html), /\[\?+\]/, "and the ascii skin's");
+  assert.doesNotMatch(html, /[█▒░]/);
   assert.doesNotMatch(html, /aria-valuenow/);
 });
 
@@ -159,7 +187,7 @@ test("each size draws its own fixed width", () => {
     const html = renderToStaticMarkup(
       <Meter label="w" fraction={1} size={size} />,
     );
-    return /\[(█+)\]/.exec(html)?.[1].length;
+    return /\[(█+)\]/.exec(barText(html))?.[1].length;
   };
   assert.equal(cells("compact"), 16);
   assert.equal(cells("default"), 24);

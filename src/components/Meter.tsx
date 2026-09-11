@@ -332,7 +332,8 @@ export function Meter({
           fraction={fraction}
           upperFraction={hasUpper ? upperFraction : null}
           cells={sz.cells}
-          className={`text-sm ${known ? SEVERITY_TEXT[severityFor(fraction)] : "text-ink-muted"}`}
+          className="text-sm"
+          fillClassName={known ? SEVERITY_TEXT[severityFor(fraction)] : ""}
         />
       </div>
       {/* `text-ink-muted`, not `text-ink-faint`: this line names the ceiling the

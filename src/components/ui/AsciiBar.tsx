@@ -6,11 +6,19 @@
  *     [██████████▒▒▒░░░░░░░]
  *
  * `█` is what was measured, `▒` is the span this app estimated on top of it,
- * `░` is headroom, and a whole bar of `▒` is a reading with no ceiling to
- * measure against. That is the same three-way split `Meter` already draws in
- * pixels — solid fill, hatched band, empty track, hatched whole — so no call
- * site has to learn a second vocabulary, and a reader who has seen one skin can
- * read the other.
+ * `░` is headroom, and `?` is a reading with no ceiling to measure against.
+ * The first three are `Meter`'s own split drawn in pixels — solid fill, hatched
+ * band, empty track — so no call site has to learn a second vocabulary.
+ *
+ * The fourth is the one place this skin says *more* than the pixel meter rather
+ * than the same thing in characters. There, no ceiling is the hatch at full
+ * width: the same texture as the band, distinguished from it only by covering
+ * the whole track, which is as close to a reading as a non-reading can look. A
+ * shade character here would inherit exactly that, and at 16 cells the
+ * difference between "hatched whole" and "empty" is two tones of grey. `?`
+ * cannot be read as a level at all, which is the property that matters — a
+ * meter with no ceiling must not become a full bar, an empty bar or a zero, and
+ * `DEFAULTS` ships without one on purpose (docs/agent/metering.md).
  *
  * `aria-hidden`, and every caller keeps its real figure as text elsewhere in the
  * markup. A screen reader must get "62.0%", never twenty block characters: the
@@ -23,6 +31,7 @@
 const FILLED = "█";
 const BAND = "▒";
 const EMPTY = "░";
+const NO_CEILING = "?";
 
 /**
  * The three runs of characters, or `null` for a reading with no ceiling.
@@ -81,33 +90,55 @@ function fillCells(fraction: number, cells: number): number {
   return Math.min(cells - 1, Math.max(1, Math.round(clamped * cells)));
 }
 
+/**
+ * Three tones, because the pixel meter has three and they carry the split
+ * `docs/agent/metering.md` calls shown-versus-guard: only the solid fill is the
+ * measurement, so only the solid fill takes the severity colour. The band is
+ * `--border-strong`'s tone, which is what the pixel hatch is drawn in, and the
+ * track is the quiet one — a bar whose headroom was tinted amber would read as
+ * a second, larger reading in the same colour as the first.
+ */
+const BAND_TONE = "text-ink-muted";
+const TRACK_TONE = "text-ink-faint";
+
 export function AsciiBar({
   fraction,
   upperFraction,
   cells,
+  fillClassName = "",
   className = "",
 }: {
   fraction: number | null;
   upperFraction?: number | null;
   /** Fixed, and chosen by the caller against the width it has to sit in. */
   cells: number;
+  /** The measured run's own colour. Never reaches the band or the track. */
+  fillClassName?: string;
   className?: string;
 }) {
   const runs = meterCells(fraction, upperFraction, cells);
-  const body = runs
-    ? FILLED.repeat(runs.filled) + BAND.repeat(runs.band) + EMPTY.repeat(runs.empty)
-    : BAND.repeat(cells);
 
   return (
     <span
       aria-hidden="true"
       // `display` is left to globals.css, which states it in both directions —
       // a Tailwind display utility here would be a second answer to the same
-      // question in a different file. `tabular-nums` is pointless on blocks and
-      // `leading-none` is what keeps a bar the height of one row.
-      className={`uf-ascii select-none whitespace-pre leading-none ${className}`}
+      // question in a different file. `whitespace-pre` because a run of blocks
+      // is one word to the line breaker only by accident, and `leading-none` is
+      // what keeps a bar the height of one row.
+      className={`uf-ascii ${TRACK_TONE} select-none whitespace-pre leading-none ${className}`}
     >
-      [{body}]
+      [
+      {runs === null ? (
+        <span className={BAND_TONE}>{NO_CEILING.repeat(cells)}</span>
+      ) : (
+        <>
+          <span className={fillClassName}>{FILLED.repeat(runs.filled)}</span>
+          <span className={BAND_TONE}>{BAND.repeat(runs.band)}</span>
+          {EMPTY.repeat(runs.empty)}
+        </>
+      )}
+      ]
     </span>
   );
 }
