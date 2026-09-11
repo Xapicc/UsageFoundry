@@ -1403,7 +1403,15 @@ function BranchTable({
               <Th scope="col" className="min-w-[56px]">
                 <span className="sr-only">Land</span>
               </Th>
-              <Th scope="col" className="min-w-[140px]">
+              {/* 240px, not the badge's own ~70px: `UncommittedNote` draws
+                  underneath the badge in this column, and measured against
+                  the compiled font, "127 uncommitted in the checkout" needs
+                  about 198px, plus the `Td`'s 20px of padding. A narrower
+                  floor left the note wrapping at every viewport width, since
+                  a `min-w` floor never grows on its own — the branch column
+                  next to it is `w-full` and takes every pixel this one
+                  doesn't ask for. */}
+              <Th scope="col" className="min-w-[240px]">
                 State
               </Th>
               <Th scope="col" className="w-full">
