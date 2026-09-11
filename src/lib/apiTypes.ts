@@ -3792,10 +3792,74 @@ export interface TaskDTO {
   runIds: string[];
   /** Runs naming this task. May exceed `runIds.length`, which is capped. */
   runCount: number;
+  /**
+   * Notes written on this task, so a board can draw the count without a second
+   * request per row.
+   *
+   * Uncapped, because it is a count rather than a list: `runCount`'s rule, and
+   * the thread itself is what `GET /api/tasks/[id]/comments` answers with. Zero
+   * and "nobody has read the thread" are deliberately not told apart — there is
+   * nothing to tell apart, since a task with no notes and a task whose notes
+   * were not asked for are the same row.
+   */
+  commentCount: number;
   createdAt: number;
   updatedAt: number;
   closedAt: number | null;
 }
+
+/** Mirrors `TaskCommentAuthor` in `taskComments.ts`: which door wrote a note. */
+export type TaskCommentAuthorDTO = "operator" | "chat" | "block" | "run";
+
+/**
+ * One note on a task.
+ *
+ * `authorRunId` is set **only** when `author` is `"run"`, and it is the run's
+ * capability token's id rather than anything the write named — see
+ * `normalizeTaskCommentInput`. A surface drawing a note attributes it to the
+ * author and never to a run id it found beside one, because that pairing is what
+ * the column exists to make checkable.
+ *
+ * There is no `updatedAt` and there will not be one: the thread is append-only,
+ * so a note's only timestamp is when it was written.
+ */
+export interface TaskCommentDTO {
+  id: string;
+  taskId: string;
+  author: TaskCommentAuthorDTO;
+  authorRunId: string | null;
+  body: string;
+  createdAt: number;
+}
+
+/**
+ * One task's thread, as `GET /api/tasks/[id]/comments` answers it.
+ *
+ * `TaskListDTO`'s shape without an `offset`, and the absence is the decision:
+ * a thread is read whole from the top, so there is no second page to ask for and
+ * `total` above `limit` is a notice rather than a cursor. What a cap drops is
+ * the **oldest** end — the reply still reads oldest first, and the notes it
+ * loses are the ones already answered. The day a thread needs paging is the day
+ * that trade stops holding, and the answer then is an offset from the new end
+ * rather than a larger cap.
+ */
+export interface TaskCommentListDTO {
+  comments: TaskCommentDTO[];
+  total: number;
+  limit: number;
+}
+
+/**
+ * Notes one request for a thread may carry, whatever it asks for.
+ *
+ * Here rather than in `taskComments.ts` for `MAX_TASK_PAGE`'s reason: the page
+ * that draws a thread asks for exactly this many and then says whether `total`
+ * was larger, and written twice it would report a whole thread it had not been
+ * sent. Well above any thread a person writes, because what it bounds is the
+ * pathological case — a run and an operator answering each other for a week —
+ * rather than the ordinary one.
+ */
+export const MAX_TASK_COMMENTS = 200;
 
 /**
  * The task a run was started for, as `GET /api/runs/[id]` answers for it.

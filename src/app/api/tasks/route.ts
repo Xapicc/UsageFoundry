@@ -12,6 +12,7 @@ import {
   taskDTO,
   taskListItemDTO,
 } from "../../../lib/tasks";
+import { commentCountsForTasks } from "../../../lib/taskComments";
 import { auditMutation } from "../../../lib/requestLog";
 import { jsonMaybeGzipped } from "../../../lib/http";
 import type { TaskListDTO } from "../../../lib/apiTypes";
@@ -86,9 +87,14 @@ export async function GET(req: Request) {
   // every ten seconds and a page is up to `MAX_TASK_PAGE` rows, so the per-row
   // read this replaces is an N+1 running on a timer.
   const links = runLinksForTasks(page.tasks.map((t) => t.id));
+  // One `GROUP BY` for the whole page, on the same grounds: the count is drawn
+  // on every row and a per-row read would be a second N+1 on the same timer.
+  const comments = commentCountsForTasks(page.tasks.map((t) => t.id));
 
   const body: TaskListDTO = {
-    tasks: page.tasks.map((t) => taskListItemDTO(t, links.get(t.id))),
+    tasks: page.tasks.map((t) =>
+      taskListItemDTO(t, links.get(t.id), comments.get(t.id)),
+    ),
     total: page.total,
     offset: page.offset,
     limit: page.limit,

@@ -1340,12 +1340,23 @@ export function runLinksForTasks(
  * answer the query gives for a task nothing was started for — the two are not
  * told apart because there is nothing to tell apart: the link is written when
  * the run is created and never later.
+ *
+ * `commentCount` is passed for the same reason and read through
+ * `commentCountsForTasks`. It is an argument rather than a call so that nothing
+ * in `tasks.ts` imports `taskComments.ts`: the dependency between the two runs
+ * one way, and a read here would close the loop for a number that is drawn
+ * beside a row rather than decided on.
  */
-export function taskDTO(task: Task, links?: TaskRunLinks): TaskDTO {
+export function taskDTO(
+  task: Task,
+  links?: TaskRunLinks,
+  commentCount?: number,
+): TaskDTO {
   const placed = task.folder ? describeFolder(task.folder) : null;
   return {
     runIds: links?.runIds ?? [],
     runCount: links?.runCount ?? 0,
+    commentCount: commentCount ?? 0,
     id: task.id,
     title: task.title,
     body: task.body,
@@ -1373,8 +1384,12 @@ export function taskDTO(task: Task, links?: TaskRunLinks): TaskDTO {
  * ellipsis, so a clipped value is the marked length rather than one character
  * over it and cannot be read as a whole brief.
  */
-export function taskListItemDTO(task: Task, links?: TaskRunLinks): TaskListItemDTO {
-  const dto = taskDTO(task, links);
+export function taskListItemDTO(
+  task: Task,
+  links?: TaskRunLinks,
+  commentCount?: number,
+): TaskListItemDTO {
+  const dto = taskDTO(task, links, commentCount);
   return {
     ...dto,
     body:
