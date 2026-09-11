@@ -164,7 +164,10 @@ export function Sidebar({
             an attribute no token can reach, so under the ascii skin it would be
             the one rounded object left on a squared-off page. */}
         <BrandMark />
-        <AsciiArt art={MARK} className="w-9 shrink-0" />
+        {/* `--accent` and not `--tint`: the SVG's bars are `--tint-fg` because
+            they sit on a filled tile, and there is no tile here — these are
+            text on the page, which is the split that token pair exists for. */}
+        <AsciiArt art={MARK} className="w-9 shrink-0 text-accent" />
         {/* Never `aria-hidden`, and this is the sentence the art above depends
             on: it is the app's accessible name, and the wordmark at the foot of
             this list is a picture of it. The rail keeps it as `sr-only` rather
@@ -335,7 +338,7 @@ function BrandMark() {
   return (
     <svg
       viewBox="0 0 24 24"
-      className="h-[22px] w-[22px] shrink-0"
+      className="uf-plain h-[22px] w-[22px] shrink-0"
       aria-hidden
       focusable="false"
     >
