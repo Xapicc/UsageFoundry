@@ -397,9 +397,25 @@
      takes the carrier away from Card's `emphasis` ladder, which separates
      `primary` from `default` from `quiet` by shadow step — under this skin the
      frame does that work, which is why the two tones below are the part of this
-     block that had to be measured. */
+     block that had to be measured.
+
+     `--radius-md` is Tailwind's own scale rather than this app's, and it is
+     here because Tailwind emits its scale as `var()`s too, so a later selector
+     reaches it. Three kinds of corner it cannot reach, counted in the emitted
+     stylesheet rather than guessed, because every one of them fails silently —
+     the page simply stays round:
+       `rounded-full` (48 call sites) is a static utility with a literal
+         3.40282e38px, and half of them *should* stay round anyway: a status
+         dot flattened into a square is a different mark.
+       bare `rounded`, `rounded-b`, `rounded-t` (26) are static utilities with
+         a literal .25rem.
+       `rounded-[3px]`, `rounded-[4px]`, `rounded-[6px]` (6) are arbitrary
+         values, which are literals by definition.
+     All three are call-site changes and belong to whoever rewrites the
+     component, not here. */
   --corner-sm: 0;
   --corner-lg: 0;
+  --radius-md: 0;
   --elevation-1: 0 0 #0000;
   --elevation-2: 0 0 #0000;
   --elevation-3: 0 0 #0000;
