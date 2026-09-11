@@ -804,6 +804,27 @@ is `docs/agent/testing.md`; interface defects and their classes are
   applies to the cwd and every ancestor. After the fill a linked worktree's
   `git status --porcelain` is empty.
 
+- **The `bwrap:` markers were pinned to a wording this install stopped
+  producing, 2026-09-11.** Every failed tool result in every session transcript
+  under `~/.claude/projects` carrying a `bwrap:` line: 945 of them, 223 of which
+  are `No permissions to create new namespace` and all 223 fall on 2026-08-18/19
+  — none since. The other 714, from 2026-08-25 to today, are mount-time and were
+  matched by nothing: `Can't create file at` (670), `Can't find source path`
+  (24), `Can't get type of source` (16), `Can't bind mount` (11), `Can't create
+  file at … Read-only file system` (1). Read off transcripts because `DATA_DIR`
+  is unreadable to an agent; the orchestrator writes one `tool_error` per failed
+  tool result, so this over-counts `run_events` by whatever retention has swept
+  and by the host's own non-UsageFoundry sessions. Two failed calls in the same
+  corpus carry `bwrap` and are not sandbox failures — a `ps` listing and a grep
+  of `docker-compose.yml` — which is why the needle added is `bwrap: Can't `
+  and not `bwrap: `.
+
+- **The settings row's failure note, end to end, 2026-09-11.** Against the
+  standalone build on a throwaway `DATA_DIR` with 14 seeded `sandbox` rows:
+  `/api/settings` returned the note under `env.sandbox.failureNote`, and
+  `/settings` drew it under an amber `ON` badge. Seeded rows, not a real
+  bubblewrap: nothing here ran a sandbox.
+
 - **The sandbox's tree-root list binds eleven dotfiles at the cwd only,
   2026-09-09.** Each is a character device `1,3`, and `git add -A` dies on
   `.bash_profile`; 6 of 47 idle checkouts kept all eleven as `0444` files.
@@ -1798,7 +1819,10 @@ measurement under *Verified* and cut the item down to what is still open.
   fired.** Every `bwrap` it caused exited 1 unexecuted; the 15-hour run logged
   484 `tool_error` and 0 `sandbox` rows. Unseen: any CLI-written marker (six
   read by `strings`), the credential deny from a run, the boot line past `none`,
-  `enableWeakerNestedSandbox` read by any `claude`, seccomp past `bwrap`. Probe:
+  `enableWeakerNestedSandbox` read by any `claude`, seccomp past `bwrap`. What
+  the probe below was for on the `bwrap:` side has since been answered off this
+  host's transcripts instead (2026-09-11, above), so what is still open here is
+  the CLI's own six and everything after the wrap: run it for those.
   ```sh
   uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
 
