@@ -21,15 +21,10 @@
  * a full bar, an empty bar or a zero, and `DEFAULTS` ships without one on
  * purpose (docs/agent/metering.md).
  *
- * It is a box-drawing character and not `?` for a reason that is invisible from
- * the source and was measured in the browser: on a stack that falls back for
- * U+2500–259F — which is every stack this app ships, since `globals.css`
- * deliberately downloads no font — the blocks arrive from a second face at one
- * advance width per glyph while ASCII keeps the monospace face's own. Here that
- * is 14px against 7px at `font-size: 14px`. A `?` track is therefore *half the
- * length* of a `█` one, so a meter would change width when its ceiling was
- * unset, on the same card as meters that did not. `╳` is U+2573, out of the
- * same block as the frame's own glyphs, and measures the same 14px.
+ * It is U+2573 and not `?` because an ASCII mark would draw at half the width of
+ * the blocks around it — see the character-art bullet in
+ * `docs/agent/conventions.md` for the measurement — so an unknown bar would be
+ * half the length of a bar with a reading, on the same card.
  *
  * `aria-hidden`, and every caller keeps its real figure as text elsewhere in the
  * markup. A screen reader must get "62.0%", never twenty block characters: the
