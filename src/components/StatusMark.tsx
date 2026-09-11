@@ -97,19 +97,27 @@ const GLYPH: Record<RunDTO["status"], ReactNode> = {
  * The same nine marks as characters, for the skin that has no vector in it.
  *
  * Each one echoes the shape above it rather than starting a vocabulary of its
- * own — filled `*` for the run that is spending, hollow `o` for the one that is
- * only alive, `=` for the pause bars, `!` for the bang that asks the reader for
- * something — because the shapes were chosen to be separable at a glance and
- * that is the property the port has to keep. Nine distinct characters, checked
- * against each other and not only against the SVG each replaces: `+` and `x`
- * are the two endings and read as opposites, `#` is the stop square, and
- * `blocked`'s `/` is the slash through the circle it is drawn as.
+ * own — hollow `o` for the run that is only alive, `=` for the pause bars, `!`
+ * for the bang that asks the reader for something — because the shapes were
+ * chosen to be separable at a glance and that is the property the port has to
+ * keep. Nine distinct marks, checked against each other and not only against
+ * the SVG each replaces: `+` and `x` are the two endings and read as opposites,
+ * `#` is the stop square, and `blocked`'s `/` is the slash through the circle
+ * it is drawn as.
+ *
+ * `running` is the one that is not a character. It was a motionless `*` while
+ * the same skin left a vector ring turning two components away, and it is now
+ * `.uf-spin`, the skin's one in-flight mark — the same one `Spinner` and
+ * `Button` draw. It is still filled, the way the circle above it is, and the
+ * quarter missing from it is what says the run has not finished; globals.css
+ * carries the measurements, including the one that keeps it to a single
+ * advance width and its frozen frame clear of the eight characters here.
  *
  * One advance width each, which under this skin's monospace is what keeps a
  * column of rows from stepping sideways by status.
  */
-const ASCII: Record<RunDTO["status"], string> = {
-  running: "*",
+const ASCII: Record<RunDTO["status"], ReactNode> = {
+  running: <span className="uf-spin" />,
   waiting: ">",
   queued: "o",
   paused: "=",

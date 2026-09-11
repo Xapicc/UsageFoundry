@@ -142,10 +142,18 @@ export function Button({
         {children}
       </span>
       {busy && (
-        <span
-          className={`absolute h-3.5 w-3.5 animate-spin rounded-full border-2 ${BUSY_RING[variant]}`}
-          aria-hidden
-        />
+        // The same pair every other skinned mark is: the ring for the plain
+        // skin, the character for the ascii one, both in the markup and one of
+        // them always off. `.uf-spin` is `Spinner`'s and `StatusMark`'s mark
+        // too — globals.css carries the reasoning — and it is absolute for the
+        // ring's reason, so the label underneath keeps reserving its width.
+        <>
+          <span
+            className={`uf-plain absolute h-3.5 w-3.5 animate-spin rounded-full border-2 ${BUSY_RING[variant]}`}
+            aria-hidden
+          />
+          <span className="uf-spin absolute" aria-hidden />
+        </>
       )}
     </button>
   );

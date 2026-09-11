@@ -236,13 +236,18 @@ export function LogLine({
  * beside it ("working", "streaming"), and that word is what carries the state.
  *
  * Frozen by prefers-reduced-motion, which is correct: the broken ring still
- * reads as "not finished", where a full ring would read as a bullet.
+ * reads as "not finished", where a full ring would read as a bullet. The
+ * character half beside it is chosen to keep that property — globals.css says
+ * how, on `.uf-spin`, and `StatusMark` and `Button` draw the same mark.
  */
 export function Spinner() {
   return (
-    <span
-      aria-hidden
-      className="inline-block h-2.5 w-2.5 animate-spin rounded-full border-2 border-line-strong border-t-accent"
-    />
+    <>
+      <span
+        aria-hidden
+        className="uf-plain inline-block h-2.5 w-2.5 animate-spin rounded-full border-2 border-line-strong border-t-accent"
+      />
+      <span aria-hidden className="uf-spin" />
+    </>
   );
 }
