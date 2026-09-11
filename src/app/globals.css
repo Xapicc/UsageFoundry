@@ -539,6 +539,62 @@
    answer a question it is never told the answer to. */
 :root[data-skin="ascii"] .uf-plain { display: none; }
 
+/* The one mark for "this is happening right now", where there used to be three
+   that shared no code: `Spinner`'s CSS ring, `Button`'s own hand-rolled one at
+   a different size in different colours, and `StatusMark`'s motionless `*`.
+   Two lines shaped exactly like `.uf-ascii`'s above — off by default, granted
+   by the skin — so the plain skin keeps all three of those and no component
+   has to read `data-skin`.
+
+   The frames are the four three-quarter blocks, U+259B ▛, U+259C ▜, U+259F ▟
+   and U+2599 ▙, and the notch travels clockwise, the way the ring it replaces
+   turns. Two measurements chose them, both in Chromium on this app's own
+   --family-mono at 13px, where an ASCII advance is 6.50px. The block range is
+   answered by more than one face — every quadrant glyph in U+2596–U+259F draws
+   13.00px, but `▀` and `▐` draw 9.22px — so the obvious rotation `▀ ▐ ▄ ▌`
+   would step sideways twice a cycle; the quadrants are the widest sequence
+   that keeps one advance width for every frame. And a block is *two* ASCII
+   advances there, which is why the box is `1ch` and the glyph is set at half
+   an em inside it: one column wide here, narrower wherever the reader's face
+   answers the block range at the mono advance (0.602em was measured on one),
+   and never wider. That is what keeps `StatusMark`'s column from stepping
+   sideways by status, which is the property its nine characters were picked
+   for, and what stops the word beside a `Spinner` moving every tick.
+
+   No keyframe fills forwards, so `prefers-reduced-motion` — which flattens the
+   duration to 0.01ms in @layer base and must not be defeated — freezes it on
+   the base value, `▛`. A block with a corner bitten out of it still reads "not
+   finished", which is the property `Log.tsx` records for drawing a *broken*
+   ring rather than a full one, and it is not `o`, `=`, `+`, `!`, `#`, `/`, `x`
+   or `>`.
+
+   150ms a frame, because a four-step rotation any slower reads as flipping
+   rather than turning. Deliberately not one of the --motion-* tokens: those
+   are durations for a transition that happens once. */
+.uf-spin { display: none; }
+:root[data-skin="ascii"] .uf-spin {
+  display: inline-block;
+  width: 1ch;
+  text-align: center;
+}
+:root[data-skin="ascii"] .uf-spin::before {
+  content: "▛";
+  font-size: 0.5em;
+  line-height: 1;
+  animation: uf-spin 600ms steps(1, end) infinite;
+}
+/* `steps(1, end)` rather than the default, so each glyph holds its whole
+   quarter: a discretely animated property otherwise flips at the midpoint of
+   the interval, which puts the cycle a twelfth of a turn out of phase with the
+   frozen frame. The implicit 100% keyframe is the base value above, which is
+   what closes the rotation. */
+@keyframes uf-spin {
+  0%   { content: "▛"; }
+  25%  { content: "▜"; }
+  50%  { content: "▟"; }
+  75%  { content: "▙"; }
+}
+
 /* Two classes and not one, which is a distinction that cost a frame nobody
    could see: a positioned element paints above every non-positioned box, so an
    `AsciiFrame` sits over its host's content — harmless, since it only ever
