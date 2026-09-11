@@ -52,17 +52,30 @@ export interface AsciiArt {
 const INK = "█";
 
 /**
- * Pads every row to the width of the widest and splits it into runs.
+ * Splits each row into runs, and **throws** on a row that is neither the art's
+ * full width nor deliberately blank.
  *
- * Padding is not tidiness: a ragged row would otherwise take its container's
- * width from a `cols` that does not describe it, and the whole block would
- * shear. Here it degrades to trailing gap instead.
+ * Padding a short row instead is the obvious thing and it is wrong here. The
+ * art is a hand-typed wall of identical-looking characters, so a row one cell
+ * short is invisible in the source; padded, it is invisible in the render too,
+ * because nothing shears and nothing throws — that row's right edge just
+ * quietly moves. Since every input is a module-level constant, refusing means
+ * the typo cannot reach a page: it takes the build down at import.
+ *
+ * An empty row is the exception and is spelled `""` — the band between USAGE
+ * and FOUNDRY. It is the one blank that is a decision rather than a slip, and
+ * being empty rather than short is what makes it tell itself apart.
  */
 function toArt(rows: readonly string[]): AsciiArt {
   const cols = rows.reduce((widest, row) => Math.max(widest, row.length), 0);
   return {
     cols,
-    rows: rows.map((row) => {
+    rows: rows.map((row, y) => {
+      if (row.length !== cols && row.length !== 0) {
+        throw new Error(
+          `ascii art row ${y} is ${row.length} cells wide, expected ${cols} (or 0 for a blank row)`,
+        );
+      }
       const runs: Run[] = [];
       for (const character of row.padEnd(cols, " ")) {
         const ink = character === INK;

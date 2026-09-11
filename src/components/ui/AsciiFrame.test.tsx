@@ -2,7 +2,8 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Card, CardTitle } from "./Card";
-import { AsciiFrame } from "./AsciiFrame";
+import { AsciiEdge, AsciiFrame } from "./AsciiFrame";
+import { AsciiArt, MARK, WORDMARK } from "./AsciiArt";
 import { Switch } from "./Field";
 import { StatusMark } from "../StatusMark";
 
@@ -108,5 +109,56 @@ test("a switch reports its state with aria-checked and never with `[x]`", () => 
     );
     assert.match(markup, /aria-checked="(true|false)"/);
     assert.equal(accessibleText(markup), "");
+  }
+});
+
+test("the shell's edges and its wordmark leave a reader nothing to hear", () => {
+  // Higher stakes than the boxes above, and the same mechanism: these three
+  // are in the *shell*, so whatever they announce is announced on all 22
+  // routes rather than on the one page that drew a card. The wordmark alone is
+  // 528 block characters, and it is the app's name — exactly the art a later
+  // edit is tempted to let carry the accessible name. It may not: the sidebar's
+  // own "UsageFoundry" text does, which is why that label is `sr-only` on the
+  // collapsed rail rather than removed.
+  for (const [what, element] of [
+    ["the source list's edge", <AsciiEdge side="right" />],
+    ["the toolbar's underline", <AsciiEdge side="bottom" />],
+    ["the wordmark", <AsciiArt art={WORDMARK} />],
+    ["the mark", <AsciiArt art={MARK} />],
+  ] as const) {
+    assert.equal(
+      accessibleText(renderToStaticMarkup(element)),
+      "",
+      `${what} is announced on every page in the app`,
+    );
+  }
+});
+
+test("a gap in the art is a transparent block, never a space", () => {
+  // The one invariant here that nothing else enforces, and the whole reason
+  // `AsciiArt.tsx` exists rather than the marketing site's file being copied:
+  // a space is *half* the width of a block on the fallback face this app gets
+  // for U+2580–259F — see the character-art bullet in
+  // docs/agent/conventions.md for the measurement — so a single literal space
+  // puts every letter after it in the wrong column. It is one character away
+  // from being undone by an edit that looks like a simplification.
+  //
+  // The art's other invariant, that no row is short, needs no test: `toArt`
+  // throws on one, the art is a module-level constant, so a ragged row takes
+  // this file's own import down and every test in it with it.
+  for (const [name, art] of [
+    ["WORDMARK", WORDMARK],
+    ["MARK", MARK],
+  ] as const) {
+    assert.ok(art.cols > 0, `${name} has no columns`);
+    for (const [y, runs] of art.rows.entries()) {
+      for (const run of runs) {
+        assert.match(
+          run.cells,
+          /^█+$/,
+          `${name} row ${y} emits something other than U+2588`,
+        );
+      }
+    }
   }
 });
