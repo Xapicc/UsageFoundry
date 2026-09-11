@@ -303,6 +303,15 @@ is `docs/agent/testing.md`; interface defects and their classes are
   `docker-entrypoint.sh` now exports `ENABLE_TOOL_SEARCH=1` (30,849). Sessions
   step up at 2026-08-24T14:05:19, when `WINNOW_FILTER=1` was first switched on.
 
+- **The intake filter held streamed responses back in 8 KB blocks, killing
+  long generations, 2026-09-11.** `proxy.py` relayed with `read(8192)`, which
+  on a chunked body reads until 8 KB arrive. Run `b511c547` lost one turn
+  twelve times across two processes, nine of them ending 300.0–300.6 s after
+  the attempt began — the floor CLI 2.1.260 puts under
+  `CLAUDE_STREAM_IDLE_TIMEOUT_MS`. winnow `4b1b7b1` relays with `read1`; a
+  held-upstream test fails before it and passes after. Reopened on it, the
+  run's first Write carried 32,827 bytes in a 2 min 53 s response, no retry.
+
 - **`--autocompact` creates the only compaction threshold, firing at ~167,000,
   2026-08-22.** 1,147 transcripts split at `ee93684`: before the flag, 604
   sessions (246 past 167,000) made zero `compact_boundary` records; after, 53
@@ -1263,6 +1272,12 @@ measurement under *Verified* and cut the item down to what is still open.
   only against unit tests and the ledger recounted in Python. The windowed
   `session`/`weekly` halves and the corrected path have typecheck and tests
   only; check that the 5-hour figure is not permanently `—`.
+
+- **No response over 300 s has been seen to finish through the fixed filter.**
+  Run `b511c547` was told to write in sections when it was reopened, so it
+  shows the path works, not that a long silent generation now survives —
+  which needs the API to send pings for `read1` to pass. Settled by a run
+  event log with a main-thread gap over 300 s and no `api_retry` in it.
 
 - **Lowering the ceiling from 300,000 to 200,000 was a judgement, 2026-08-25.**
   No `prune_receipts` or `netReceipt` comparison was taken across the two.
