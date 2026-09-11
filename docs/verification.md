@@ -544,6 +544,43 @@ is `docs/agent/testing.md`; interface defects and their classes are
   failing at either width. It asserts about *load* only and this change adds
   no page, so what it rules out is a route change having broken one.
 
+- **The thread and the board's count, in a real browser, 2026-09-11**: the half
+  the entry above says it does not cover. The standalone bundle served against a
+  throwaway `DATA_DIR` and a `CLAUDE_BIN` that cannot spawn, seeded through the
+  real routes, driven with the container's Chromium at 1280px and 390px.
+  `/tasks/[id]` drew four notes oldest first, one per author kind — `Operator`,
+  `Orchestrator`, `Workflow`, and `Run` with `9f2c1d3a` linking to `/runs/…` —
+  each carrying its own relative phrase, and a body's blank line survived as a
+  blank line, which is what `whitespace-pre-wrap` and no `Markdown` buys. **Both
+  widths: no console error, no sideways scroll.** The composer was pressed for
+  real: with an empty box the button reports `disabled`, with a draft it does
+  not, the click posted, the box came back empty, the note appeared and the
+  count beside the heading went 4 → 5 with the task's own title, priority and
+  `updated_at` unmoved. All three ways of having nothing were rendered rather
+  than reasoned about — a task with no notes drew the sentence naming who may
+  write one; a thread of **205** against `MAX_TASK_COMMENTS` = 200 drew *Showing
+  the newest 200 of 205 comments* over notes 6…205, which is the oldest end
+  dropped and the newest kept, measured rather than inferred; and
+  `/api/tasks/*/comments` aborted inside the page drew the failed-read notice
+  **and** *this is a failed request rather than an empty thread* with a retry,
+  the composer still on screen under it. On `/tasks` the count read `4 comments`
+  inside the Task cell at both widths, no seventh column appeared, and the task
+  with no notes drew nothing at all rather than a zero. Caveat: one browser
+  engine, and the **default** skin only — nothing here opened
+  `data-skin="ascii"`, which is board item `4e6dd0b9`.
+
+- **The whole gate for the thread's two surfaces, 2026-09-11**, on the worktree
+  mount: `NODE_ENV=development npm ci --include=dev` exit 0; `npm run typecheck`
+  exit 0; `npm test` **2654 tests, 2654 pass, 0 fail** across 413 suites; `env
+  -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` exit 0 with
+  `.next/standalone` written; `npm run smoke-pages` served
+  `.next/standalone/server.js` and reported **44/44 page loads clean, 0 of 22
+  pages failing**. The test count is unchanged from the entry above and that is
+  deliberate: this change is two rendered surfaces and one `Record` of four
+  words, and none of the three is a pure function with a silent failure mode,
+  which is the bar `docs/agent/testing.md` records. What covers it is the
+  browser entry above rather than a unit test.
+
 ### Workflows and schedules
 
 - **Workflows end to end, live dev server, stub CLI:** save refuses each bad
