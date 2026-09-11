@@ -501,9 +501,28 @@
 }
 :root[data-skin="ascii"] .uf-ascii-art > pre {
   white-space: pre;
-  /* Exactly 1, so a stack of full blocks joins into one shape rather than
-     eleven stripes — the same reason `AsciiFrame` sets `leading-none`. */
-  line-height: 1;
+  /* Under 1, and `AsciiFrame`'s `leading-none` is right for `AsciiFrame`, which
+     is the difference worth writing down. Measured in this container's
+     Chromium: `│` fills its em box top to bottom (ink 1.0000 of the font size),
+     so a column of it joins at line-height exactly 1. `█` does not — its ink is
+     **0.94** of the em — so eleven rows of it at line-height 1 are eleven rows
+     with a gap under each, and in the sidebar, where a cell is about 4px, that
+     6% antialiases into a light band across every row and the letterforms come
+     apart into dashes.
+     0.85 rather than 0.94 because 0.94 is not enough: at a 4px cell the line
+     box and the ink box each round to whole pixels independently, and 0.9 still
+     seamed on some rows. The extra is rasterisation slop, not a second
+     measurement. Rows overlap slightly as a result, which costs nothing when
+     every cell is the same solid glyph in the same colour. */
+  line-height: 0.85;
+  /* The same 6% again, on the other axis. `████` measures 400.00px of advance
+     for 394.00px of ink at 100px: a `█` is a 0.94 square sitting in a 1.0 em
+     box, so adjacent cells are drawn 6% apart horizontally as well, and without
+     this the wordmark is a lattice of separate squares rather than letters.
+     -0.08 rather than -0.06 for `line-height`'s reason — rounding at a 4px
+     cell — and the 8% of slack it leaves between the art and its container is
+     the margin that keeps `overflow: hidden` above from ever having to fire. */
+  letter-spacing: -0.08em;
   font-variant-ligatures: none;
   width: max-content;
   font-size: min(var(--ascii-cap, 18px), calc(100cqw / var(--ascii-cols, 48)));
@@ -644,8 +663,15 @@
 :root[data-skin="ascii"] .uf-segment::before { content: "["; }
 :root[data-skin="ascii"] .uf-segment::after  { content: "]"; }
 /* Restores what `gap: 0` took between a segment's glyph and its word. Inert
-   where the label is `sr-only`, which is out of flow. */
-:root[data-skin="ascii"] .uf-segment-label { margin-inline-start: 0.375rem; }
+   where the label is `sr-only`, which is out of flow.
+   `:not(:first-child)` because `option.icon` is optional and the glyph is the
+   only thing this gap is for: on a segment without one the label *is* the first
+   child, and the margin became an indent inside the brackets — `[ Log]`, with
+   the space on one side only. A `::before` is not a child, so the test still
+   reads what it means to. */
+:root[data-skin="ascii"] .uf-segment-label:not(:first-child) {
+  margin-inline-start: 0.375rem;
+}
 :root[data-skin="ascii"] .uf-segment-track {
   border-color: transparent;
   background: none;
