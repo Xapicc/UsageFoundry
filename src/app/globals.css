@@ -405,7 +405,7 @@
      stylesheet rather than guessed, because every one of them fails silently —
      the page simply stays round:
        `rounded-full` (48 call sites) is a static utility with a literal
-         3.40282e38px, and half of them *should* stay round anyway: a status
+         3.40282e38px, and some of them *should* stay round anyway: a status
          dot flattened into a square is a different mark.
        bare `rounded`, `rounded-b`, `rounded-t` (26) are static utilities with
          a literal .25rem.
