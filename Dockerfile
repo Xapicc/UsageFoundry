@@ -359,8 +359,21 @@ ENV PATH="/home/node/pytools/bin:${PATH}" \
 # beside `inspect` in that tree — no write path at all — so orchestrator-safe
 # mode allows it while a session is live, which is the whole reason it can be
 # asked on the guard tick.
+#
+# Moved 2026-09-11 from 0421da5, for the intake filter's relay. It read the
+# upstream response with `read(8192)`, which on a chunked body keeps reading
+# until 8 KB have arrived, so a sparse stream reached the agent in 8 KB lumps
+# or not at all — and Claude Code 2.1.260 aborts a response after 300 s with
+# no event. A long generation behind the filter therefore died at 300 s on
+# every retry: run b511c547 lost one turn that way twelve times across two
+# processes. The filter runs from this copy whenever no operator checkout is
+# mounted (the entrypoint's fallback postdates the 2026-08-28 note above), so
+# the pin is how a stock install gets the fix.
+#
+# Nothing `contextPruning.ts` parses moved: beside the relay, the only src/
+# change in the six commits is one number in `context`'s help text.
 ARG WINNOW_REPO=https://github.com/Xapicc/winnow.git
-ARG WINNOW_REF=0421da53d5087c1746c3101d0c97d0682d3094ac
+ARG WINNOW_REF=4b1b7b1fe9fb813afe1fe456e1476e104925ada2
 RUN set -eux; \
     if [ -z "${WINNOW_REF}" ]; then \
       echo "WINNOW_REF empty — building without winnow; context pruning will report unavailable"; \
