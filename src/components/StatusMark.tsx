@@ -2,7 +2,11 @@
 
 import type { ReactNode } from "react";
 import type { RunDTO } from "@/lib/apiTypes";
-import { STATUS_TONE, type BadgeTone } from "@/lib/format";
+// Relative because this component is now rendered in a test, and nothing
+// rewrites `@/` in `npm test`'s CommonJS build — the same reason the other
+// tested components import their helpers this way. `RunDTO` above is type-only
+// and is erased, so it stays as it is.
+import { STATUS_TONE, type BadgeTone } from "../lib/format";
 
 /**
  * A shape per run status, at the leading edge of a row the way a native list
