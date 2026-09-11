@@ -307,6 +307,17 @@ export interface SandboxDTO {
    * nothing asked for a sandbox, since there is then no such promise to report.
    */
   failIfUnavailable: boolean | null;
+  /**
+   * What the `sandbox` rows of the last day say, or null for none.
+   *
+   * A second fact and not a fifth state, because it answers a different
+   * question: `state` is what the policy file says and this is whether runs
+   * could live with it, and an install can honestly be `on` while every tool
+   * call it wrapped died. Optional because `sandboxArrangement` does not
+   * produce it — it reads a file and this reads the database, and the route is
+   * where the two meet.
+   */
+  failureNote?: string | null;
 }
 
 /**
