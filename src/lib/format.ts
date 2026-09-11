@@ -4,6 +4,7 @@ import type {
   AgentOriginDTO,
   RunDependencyDTO,
   RunDTO,
+  TaskCommentAuthorDTO,
   TaskDTO,
   TaskOriginDTO,
   TaskPriorityDTO,
@@ -312,6 +313,25 @@ export function fmtTaskOrigin(origin: TaskOriginDTO): string {
  * typecheck on the other.
  */
 export const TASK_ORIGIN_WORD: Record<TaskOriginDTO, string> = {
+  operator: "Operator",
+  chat: "Orchestrator",
+  block: "Workflow",
+  run: "Run",
+};
+
+/**
+ * Who wrote a note on a task, as the thread labels it.
+ *
+ * The same four words as `TASK_ORIGIN_WORD` and deliberately a second `Record`
+ * rather than a reuse of it, for the reason `TASK_COMMENT_AUTHORS` is its own
+ * closed set one module over: an origin is a fact about how a *task* came to
+ * exist and an author is a fact about one row of a thread, the two tables move
+ * independently, and a map shared between them would let a fifth word added for
+ * one of them reach a reader typed against the other. Typed against
+ * `TaskCommentAuthorDTO`, so the day that union widens this is a compile error
+ * rather than a note drawn with no name on it.
+ */
+export const TASK_COMMENT_AUTHOR_WORD: Record<TaskCommentAuthorDTO, string> = {
   operator: "Operator",
   chat: "Orchestrator",
   block: "Workflow",

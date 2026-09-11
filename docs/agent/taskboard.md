@@ -633,6 +633,41 @@ currently offer stays in the list as its own option, since a `<select>` whose
 value is absent resolves to the first option and an unrelated save would then
 move the task to a folder nobody picked.
 
+**The thread is drawn on the task's own page, and it does not poll either.**
+`TaskThread` in `src/app/tasks/[id]/page.tsx` reads
+`GET /api/tasks/[id]/comments` on arrival and again after a post it made itself,
+and there is no interval anywhere on that route. It holds a **second** draft
+beside the editor's, so the page's own reason applies to it twice over: a timer
+re-reading the thread could neither replace the composer's text without throwing
+away what is being typed nor leave it alone while redrawing the notes it answers.
+What that costs is a note written at another door while the page is open, and it
+is the same trade the row above already makes. A successful post refetches the
+**thread and nothing else**: the note did not move the task — no status, no
+priority, and deliberately not `updated_at` — so re-reading the row would redraw
+a heading nothing changed. Its three ways of having nothing are the board's, one
+table down: a failed read says *this is a failed request rather than an empty
+thread* and offers a retry, an empty thread says what a comment is and who may
+write one, and a thread longer than `MAX_TASK_COMMENTS` says how many of how many
+it is showing and which end is missing. The composer is drawn in all three,
+including the failed read — a thread that could not be read says nothing about
+whether a note can be written, and the door answers for that itself.
+
+**A note's body is drawn as the characters it is, and that is decided by the
+field above it rather than by what the text might be.** `whitespace-pre-wrap`,
+no `Markdown`, because the task's own brief on that page is drawn in a
+`Textarea` — the same text, unrendered. A thread rendering headings and links
+over a brief shown raw would claim a fidelity the field it answers does not
+have, and it would do it on the one surface whose whole point is that a run
+reads back exactly what somebody wrote. The day the brief itself is rendered is
+the day this follows it, and not before. The author is drawn as a word from
+`TASK_COMMENT_AUTHOR_WORD` and the run id beside it as a link, in that order and
+never the id alone: the pairing is what `taskComments.ts` records and this is
+where it is read back, so the word says who wrote the note and the id is a handle
+on the run that did. That map is a second `Record` holding the same four words as
+`TASK_ORIGIN_WORD` for the reason `TASK_COMMENT_AUTHORS` is a second closed set —
+the two tables move independently, and one map shared between them would let a
+fifth word added for either reach a reader typed against the other.
+
 **The three ways of having nothing are three different screens, and none of them
 is an empty list.** A board with nothing on it says a task is a brief anybody —
 the orchestrator, a workflow block, a work cycle, the operator — can file, and
