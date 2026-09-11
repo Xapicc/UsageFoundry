@@ -757,8 +757,14 @@
    `.uf-sidebar-row` and not `.uf-pick` alone: that hook is the *docked* list's
    only, so the drawer and quick open keep their markers while the rail is
    collapsed — `[data-sidebar]` is on `:root`, and a bare `.uf-pick` here would
-   reach both of them at 1280 with the rail in. */
-:root[data-skin="ascii"][data-sidebar="collapsed"] .uf-sidebar-row::before {
+   reach both of them at 1280 with the rail in.
+
+   `.uf-pick` is on the selector for weight and not for reach — every
+   `.uf-sidebar-row` already carries it. Without it this ties the
+   `[aria-current="page"]` rule below at (0,4,1) and loses on source order,
+   which left the marker on exactly the row it is drawn for: the rail's
+   inactive icons centred and its active one stayed 8px out. */
+:root[data-skin="ascii"][data-sidebar="collapsed"] .uf-pick.uf-sidebar-row::before {
   content: none;
 }
 :root[data-skin="ascii"] .uf-pick[aria-current="page"],
