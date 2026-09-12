@@ -1223,9 +1223,20 @@ is `docs/agent/testing.md`; interface defects and their classes are
   `fs.realpathSync` around the sandbox root — on macOS `/var` is a symlink to
   `private/var`, so `POST /api/runs` refused the seed with *"Folder is outside
   the \"workspace\" mount"* and the pass died before a browser opened.
-  **What it still does not cover:** `installed`, `unverified` and `failing`,
-  which need a database carrying matching `run_events` rows, and any assertion
+  **What it still does not cover:** `unverified` and `failing`, which need a
+  database carrying `run_events` rows of the right shape, and any assertion
   about interaction — this pass is about load, by decision.
+
+- **`installed`, composed against a real install's own history, 2026-09-12.**
+  The one tool declared here, `Xapicc/gh-layer10`, resolves at
+  `…/extensions/gh-layer10/gh-layer10` with the manifest's `tag: v0.1.0`, and
+  the observed layer counts **996 calls and 4 failures over 30 days**. That is
+  what caught the composition being wrong: keyed on `failures > 0` the row drew
+  `failing`, a warn badge on a working tool, and with `failing` narrowed to
+  `failures >= calls` the same numbers compose to `installed`. Measured by
+  running the shipped matcher against `/data/usagefoundry.db` in the container,
+  not by reading the page — **the running install is still serving the build
+  before that fix.**
 
 - **Layout sweep, production build, twelve widths 1440–380px, both themes,
   geometry read from the DOM:** it found and fixed three defects (a 0px gap, a
