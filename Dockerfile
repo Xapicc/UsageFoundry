@@ -121,6 +121,22 @@ ENV NODE_ENV=production \
 #                       which beside curl, python3, g++ and a Go toolchain is
 #                       a rounding error rather than a new reach.
 #
+#   libncurses6      — **not a tool, and that is why it is here rather than in a
+#                       stack.** A stack installs software; it cannot install a
+#                       shared library, because `apt-get` is refused as a verb
+#                       (`01d-` §3: it cannot be pinned per install or removed
+#                       cleanly) and nothing else in the format reaches a system
+#                       package. Swift's published Debian 12 toolchain links
+#                       against this one and Debian's slim image does not carry
+#                       it — measured 2026-09-12, a stack installed Swift
+#                       perfectly and every invocation died with
+#                       `swift: error while loading shared libraries:
+#                       libncurses.so.6`. It is ~400 KB and it is the platform
+#                       dependency of a language an operator may add, so the
+#                       image carries it whether or not they do. If a second
+#                       toolchain ever needs a second library the answer is the
+#                       same line, not a new mechanism.
+#
 # This costs roughly 250 MB, nearly all of it g++. A compiler in the runtime
 # image is a deliberate trade: the alternative is an agent that cannot install
 # dependencies, and a run that fails at step one is worth less than the layer.
@@ -128,7 +144,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       git ripgrep ca-certificates tini \
       python3 make g++ curl jq procps less sqlite3 \
-      bubblewrap socat \
+      bubblewrap socat libncurses6 \
  && rm -rf /var/lib/apt/lists/*
 
 # Two things git cannot work out for itself inside a container, both of which
@@ -741,10 +757,25 @@ EXPOSE 3000
 #                      the route touches SQLite and nothing else) and well below
 #                      the 20 s a single `gitSync` may legitimately hold the
 #                      loop for.
-#   --start-period=180s the first transcript scan re-aggregates the whole
-#                      history synchronously and can take a while on a large
-#                      one. Failures inside this window do not count towards
-#                      `retries`.
+#   --start-period=600s two things happen before this server answers anything.
+#                      The first transcript scan re-aggregates the whole history
+#                      synchronously and can take a while on a large one; and
+#                      the stack applier runs ahead of `exec "$@"`, because PATH
+#                      has to be final before any agent is spawned. Failures
+#                      inside this window do not count towards `retries`.
+#
+#                      Raised from 180s on 2026-09-12, when a stack first
+#                      declared a language toolchain rather than a linter: the
+#                      Swift tarball for Debian 12 is 1.05 GB and no three
+#                      minutes fetches that. Ten covers it on a ~25 Mbit/s link.
+#                      **A slower link is not broken and is not a loop.** The
+#                      probe starts failing, `docker ps` says "(unhealthy)", the
+#                      install finishes, the next probe passes and the state
+#                      goes back to healthy — nothing here restarts on health,
+#                      which is the paragraph below. That is the trade for not
+#                      making this number cover the worst link anybody has: a
+#                      start period long enough for that is a healthcheck that
+#                      has stopped being a signal for every other install.
 #   --interval=30s     often enough that a monitor watching `docker inspect`
 #                      learns within a minute or two; rare enough that the probe
 #                      itself is not a load.
@@ -762,7 +793,7 @@ EXPOSE 3000
 # operator's choice: an orchestrator's own policy, or a supervisor watching
 # `docker inspect --format '{{.State.Health.Status}}'`. Given how expensive a
 # restart is here, making that the operator's decision is the right default.
-HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=5 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=600s --retries=5 \
   CMD curl -fsS "http://127.0.0.1:${PORT}/api/health" > /dev/null || exit 1
 
 COPY docker-entrypoint.sh /usr/local/bin/uf-entrypoint

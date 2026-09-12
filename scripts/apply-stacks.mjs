@@ -78,16 +78,48 @@ export const TOOLBOX_DIR = "/var/lib/uf-stacks";
 /**
  * What the whole run may spend, and why it is not only a per-step timeout.
  *
- * `Dockerfile`'s `HEALTHCHECK --start-period=180s`: a boot that has not started
- * serving inside that begins burning retries and the container reads
- * `(health: starting)` and then `(unhealthy)`. Ten stacks each timing out
- * politely at a per-step ceiling is still a container past its start period, so
- * the ceiling is on the run as well, spent in declaration order.
+ * Ten stacks each timing out politely at a per-step ceiling is still a boot
+ * that took ten ceilings, so the ceiling is on the run as well, spent in
+ * declaration order.
+ *
+ * **Raised from two minutes on 2026-09-12, and the reason is a measurement.**
+ * The Swift toolchain for Debian 12 is 1,053,793,547 bytes — the smallest form
+ * in which that language arrives, since there is no partial toolchain — and two
+ * minutes could not have fetched it on any link. The old numbers were sized
+ * against `HEALTHCHECK --start-period=180s` alone, which is the right bound for
+ * an install whose largest artifact is a 3 MB linter and the wrong one for a
+ * language.
+ *
+ * What keeps a raised ceiling from costing every boot is that it is **not** the
+ * thing that catches a hung download any more: `curl` now aborts on *progress*
+ * rather than on wall clock (see `CURL_STALL_ARGS`), so an unreachable host
+ * fails in about thirty seconds whatever this number says. This is the ceiling
+ * for a transfer that is moving and merely enormous, and for a `tar` that has
+ * stopped.
  */
-export const TOTAL_BUDGET_MS = 120_000;
+export const TOTAL_BUDGET_MS = 30 * 60_000;
 
-/** What one `curl`, `tar` or `sha256sum` may spend. */
-export const STEP_TIMEOUT_MS = 45_000;
+/**
+ * What one `curl`, `tar`, `sha256sum` or package install may spend.
+ *
+ * Generous for the same reason and with the same guard in front of it. The two
+ * package verbs have no equivalent of `--speed-time`, so this is the whole of
+ * what bounds a `uv` or `npm` install that hangs — both carry their own network
+ * timeouts well inside it.
+ */
+export const STEP_TIMEOUT_MS = 20 * 60_000;
+
+/**
+ * How `curl` decides a download has stopped, as opposed to being slow.
+ *
+ * Under 1 KB/s for 30 seconds and it gives up. This is what replaced the wall
+ * clock as the real guard, and the difference matters in both directions: a
+ * 45-second ceiling cannot fetch a gigabyte on any link, and a 20-minute one
+ * would hold the boot for 20 minutes against a host that is simply not
+ * answering — on **every** restart, since a failed stack is retried rather than
+ * latched. Progress is the question actually being asked.
+ */
+const CURL_STALL_ARGS = ["--speed-limit", "1024", "--speed-time", "30"];
 
 /**
  * How much of a failing step's stderr the receipt carries.
@@ -352,7 +384,7 @@ function parsePackageStep(step, where) {
     if (typeof entry !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(entry)) {
       return refuse(`${where}.bin has an entry that is not a plain command name`);
     }
-    bin.push({ from: `bin/${entry}`, as: entry });
+    bin.push({ from: { amd64: `bin/${entry}`, arm64: `bin/${entry}` }, as: entry });
   }
   return { ok: true, step: { kind: step.kind, spec: step.spec, bin } };
 }
@@ -362,9 +394,17 @@ function parseArchiveStep(step, where) {
     if (!ARCHIVE_KEYS.has(key)) return refuse(`${where} has an unknown key "${key}"`);
   }
 
-  if (typeof step.url !== "string" || !step.url.startsWith("https://")) {
-    return refuse(`${where}.url is missing or is not an https:// URL`);
-  }
+  // A string, or the same per-architecture object `sha256` takes. The object
+  // form exists because tokens cannot express every publisher's layout: Swift
+  // serves `debian12-aarch64/…-debian12-aarch64.tar.gz` for one architecture
+  // and `debian12/…-debian12.tar.gz` for the other, where the second contains
+  // no architecture name at all — measured 2026-09-12, and
+  // `…/debian12-x86_64/…` is a 404. No expansion of `{arch}` or `{arch_uname}`
+  // produces both, and inventing a fifth token for "the part that vanishes on
+  // one architecture" would be a vocabulary nobody could guess. Reusing the
+  // shape beside it costs no new concept.
+  const url = archPair(step.url, `${where}.url`, (u) => typeof u === "string" && u.startsWith("https://"));
+  if (url.reason) return refuse(url.reason);
   if (step.checksums !== undefined && (typeof step.checksums !== "string" || !step.checksums.startsWith("https://"))) {
     return refuse(`${where}.checksums is not an https:// URL`);
   }
@@ -374,7 +414,10 @@ function parseArchiveStep(step, where) {
     return refuse(`${where} must carry exactly one of "checksums" and "sha256"`);
   }
 
-  const perArch = /\{arch\}|\{arch_uname\}/.test(step.url);
+  // One file per architecture, however it was spelled: a token that expands
+  // differently, or two urls written out. Both make a single digest a lie.
+  const perArch =
+    /\{arch\}|\{arch_uname\}/.test(url.value.amd64) || url.value.amd64 !== url.value.arm64;
   let sha256 = null;
   if (hasDigest) {
     if (typeof step.sha256 === "string") {
@@ -419,19 +462,30 @@ function parseArchiveStep(step, where) {
     for (const key of Object.keys(entry)) {
       if (!BIN_KEYS.has(key)) return refuse(`${where}.bin has an unknown key "${key}"`);
     }
-    if (typeof entry.from !== "string" || entry.from.length === 0) {
-      return refuse(`${where}.bin has an entry with no "from"`);
-    }
+    // A string, or the per-architecture pair `url` and `sha256` take. Needed for
+    // the same publisher and the same reason: Swift's tarball unpacks to
+    // `swift-6.3.3-RELEASE-debian12-aarch64/` on one architecture and
+    // `swift-6.3.3-RELEASE-debian12/` on the other, so the path to a binary
+    // inside it differs by a segment that is absent rather than different. Three
+    // fields now take this form, which is one idea — *anything that differs per
+    // architecture may be written per architecture* — rather than three.
+    const from = archPair(entry.from, `${where}.bin "from"`, (v) => typeof v === "string" && v.length > 0);
+    if (from.reason) return refuse(from.reason);
     if (typeof entry.as !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(entry.as)) {
       return refuse(`${where}.bin entry "as" is missing or is not a plain command name`);
     }
     // After normalisation, because `a/../../etc/passwd` is `../etc/passwd` and
-    // only one of the two spellings is obvious.
-    if (escapesRoot(entry.from)) return refuse(`${where}.bin "from" escapes {pkg}: ${entry.from}`);
-    bin.push({ from: entry.from, as: entry.as });
+    // only one of the two spellings is obvious. Both architectures are checked:
+    // a pair that escapes on one of them escapes.
+    for (const arch of ["amd64", "arm64"]) {
+      if (escapesRoot(from.value[arch])) {
+        return refuse(`${where}.bin "from" escapes {pkg}: ${from.value[arch]}`);
+      }
+    }
+    bin.push({ from: from.value, as: entry.as });
   }
 
-  return { ok: true, step: { kind: step.kind, url: step.url, checksums: step.checksums ?? null, sha256, unpack: step.unpack, bin } };
+  return { ok: true, step: { kind: step.kind, url: url.value, checksums: step.checksums ?? null, sha256, unpack: step.unpack, bin } };
 }
 
 /**
@@ -477,6 +531,36 @@ export function refuseEnv(key, value) {
  * escapes, and checking the authored string is what lets the refusal name the
  * line the author wrote.
  */
+/**
+ * A field as the two it always is underneath: one value per architecture.
+ *
+ * A plain value is both, which is every stack written before this existed and
+ * every one whose publisher spells the two the same way. The object form is for
+ * the ones who do not — and `sha256` has taken it since `01g-` §5.2, so this is
+ * the vocabulary the format already had rather than a new one.
+ *
+ * `ok` says what counts as a value at all, so one helper serves a url and a
+ * path without either learning about the other.
+ */
+function archPair(value, where, ok) {
+  const what = where.endsWith("url") ? "an https:// URL" : "a non-empty string";
+  if (ok(value)) return { value: { amd64: value, arm64: value }, reason: null };
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    for (const key of Object.keys(value)) {
+      if (key !== "amd64" && key !== "arm64") {
+        return { value: null, reason: `${where} has an unknown key "${key}"` };
+      }
+    }
+    for (const arch of ["amd64", "arm64"]) {
+      if (!ok(value[arch])) {
+        return { value: null, reason: `${where}.${arch} is missing or is not ${what}` };
+      }
+    }
+    return { value: { amd64: value.amd64, arm64: value.arm64 }, reason: null };
+  }
+  return { value: null, reason: `${where} is missing or is not ${what}` };
+}
+
 function escapesRoot(value) {
   if (value.startsWith("/")) return true;
   const normalised = path.posix.normalize(value);
@@ -778,7 +862,7 @@ function applyArchiveStep(step, context) {
   const { name, arch, root, deadline } = context;
   const pkg = path.posix.join(root, "pkg", name);
   const download = path.posix.join(pkg, ".download");
-  const url = expandTokens(step.url, { arch, name, root });
+  const url = expandTokens(step.url[arch] ?? step.url.amd64, { arch, name, root });
   const artifact = path.posix.basename(new URL(url).pathname);
   if (!artifact) return { ok: false, detail: `the url names no file: ${url}`, stderr: "", bytes: 0 };
 
@@ -795,7 +879,7 @@ function applyArchiveStep(step, context) {
   // `curl -fsSL` is `Dockerfile:171`'s own flag set. The two additions are this
   // design's and are worth one flag each here, because the URL came out of a
   // file a stranger wrote rather than out of a reviewed Dockerfile line.
-  const curl = ["curl", "-fsSL", "--proto", "=https", "--tlsv1.2", "-o", artifact, url];
+  const curl = ["curl", "-fsSL", "--proto", "=https", "--tlsv1.2", ...CURL_STALL_ARGS, "-o", artifact, url];
   const fetched = runAsAgent(curl, { cwd: download, timeoutMs: Math.min(STEP_TIMEOUT_MS, budget()) });
   if (!fetched.ok) return { ok: false, detail: `could not download ${url}`, stderr: fetched.stderr, bytes: fetched.bytes };
 
@@ -806,7 +890,7 @@ function applyArchiveStep(step, context) {
   const manifest = path.posix.join(download, "SHA256SUMS");
   if (step.checksums) {
     const checksumsUrl = expandTokens(step.checksums, { arch, name, root });
-    const got = runAsAgent(["curl", "-fsSL", "--proto", "=https", "--tlsv1.2", "-o", "SHA256SUMS", checksumsUrl], {
+    const got = runAsAgent(["curl", "-fsSL", "--proto", "=https", "--tlsv1.2", ...CURL_STALL_ARGS, "-o", "SHA256SUMS", checksumsUrl], {
       cwd: download,
       timeoutMs: Math.min(STEP_TIMEOUT_MS, budget()),
     });
@@ -843,9 +927,10 @@ function applyArchiveStep(step, context) {
   // is otherwise a `Permission denied` inside a tool call at the far end of a
   // green install.
   for (const entry of step.bin) {
-    const from = path.posix.join(pkg, expandTokens(entry.from, { arch, name, root }));
+    const declared = entry.from[arch] ?? entry.from.amd64;
+    const from = path.posix.join(pkg, expandTokens(declared, { arch, name, root }));
     const marked = runAsAgent(["chmod", "0755", from], { timeoutMs: 10_000 });
-    if (!marked.ok) return { ok: false, detail: `${entry.from} is not in the archive`, stderr: marked.stderr, bytes: marked.bytes };
+    if (!marked.ok) return { ok: false, detail: `${declared} is not in the archive`, stderr: marked.stderr, bytes: marked.bytes };
   }
 
   return { ok: true, detail: `${step.bin.length} binary${step.bin.length === 1 ? "" : " files"} from ${artifact}`, stderr: "", bytes: 0 };
@@ -914,31 +999,30 @@ function applyPackageStep(step, context) {
 }
 
 /**
- * An extracted binary, copied onto `PATH`. `Dockerfile:175`'s own idiom.
+ * What goes on `PATH`: a link into `{pkg}`, for every verb, always.
  *
- * A copy and not a link because what an `archive` unpacks is a self-contained
- * executable, and a copy is one fewer indirection for anything reading the
- * directory.
- */
-function copyOnto(from, target) {
-  return run(["install", "-m", "0755", from, target]);
-}
-
-/**
- * A package's entry point, linked onto `PATH` rather than copied there.
+ * **This replaced `install -m 0755` on 2026-09-12 and the reason is that a copy
+ * cannot carry a toolchain.** `npm install -g --prefix` writes its bin as a
+ * symlink into `lib/node_modules/`, and `install` follows one — measured, the
+ * copy throws on its first relative `require`. Swift is the same fault one size
+ * up: its driver resolves its resource directory from `/proc/self/exe`, so a
+ * `swift` copied out of `usr/bin/` looks for `../lib/swift` beside wherever it
+ * was copied to and finds nothing. A self-contained binary like `shellcheck`
+ * does not care either way, so one rule serves all three and there is no
+ * exception for somebody to find out about the hard way.
  *
- * `npm install -g --prefix` writes `{pkg}/bin/<cmd>` as a symlink into
- * `{pkg}/lib/node_modules/<package>/`, and `install` *follows* a symlink: the
- * copy would be the package's entry file sitting alone in a directory with none
- * of its siblings, so its first relative `require` fails. A `uv` console script
- * survives being copied — its shebang is absolute — but it is linked the same
- * way, because two link rules keyed on the verb is one rule with an exception
- * nobody would find.
+ * **It is also the louder failure**, which is what decided it once both worked.
+ * A reinstall that fails takes `pkg/` with it and leaves whatever is in `bin/`,
+ * because removals happen only for stacks no longer declared. The copy left the
+ * *previous version* there, working, claimed by no receipt — a stale tool
+ * reported as `unclaimed` while agents went on invoking it, which is the exact
+ * silent-wrong-version failure this whole mechanism exists to end. The link
+ * dangles instead, and a dangling command fails the moment anything runs it.
  *
- * As safe as the copy beside it: the link is root's, in a root-owned directory,
- * and it points into `{pkg}`, which `claimAndLink` has already taken for root
- * and narrowed. Removed first because `symlink` refuses an existing path, which
- * is the second boot of an unchanged stack.
+ * As safe as the copy was: the link is root's, in a root-owned directory, and it
+ * points into `{pkg}`, which `claimAndLink` has already taken for root and
+ * narrowed. Removed first because `symlink` refuses an existing path, which is
+ * the second boot of an unchanged stack.
  */
 function symlinkOnto(from, target) {
   try {
@@ -967,9 +1051,9 @@ function claimAndLink(stack, context) {
   const linked = [];
   for (const step of stack.install) {
     for (const entry of step.bin) {
-      const from = path.posix.join(pkg, expandTokens(entry.from, { arch, name, root }));
+      const from = path.posix.join(pkg, expandTokens(entry.from[arch] ?? entry.from.amd64, { arch, name, root }));
       const target = path.posix.join(binDir, entry.as);
-      const result = step.kind === "archive" ? copyOnto(from, target) : symlinkOnto(from, target);
+      const result = symlinkOnto(from, target);
       if (!result.ok) {
         return { ok: false, detail: `could not link ${entry.as}`, stderr: result.stderr, bytes: result.bytes };
       }

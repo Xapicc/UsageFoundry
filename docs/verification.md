@@ -1130,6 +1130,70 @@ is `docs/agent/testing.md`; interface defects and their classes are
   provider cache — and in particular the symlink it declines to follow — is
   reasoned from the code.
 
+- **A language toolchain as a stack, and the three format defects it exposed,
+  2026-09-12.** Swift 6.3.3 for Debian 12 was declared as an `archive` stack and
+  installed at boot: **1,053,793,547 bytes downloaded, checksummed and unpacked
+  in 45 seconds** (19:44:28 → 19:45:13 in the boot log), 3.3 GB on disk, server
+  ready 1.2s later, container healthy throughout. `swift --version` and
+  `swiftc --version` both answer `6.3.3` as uid 1000 off
+  `/var/lib/uf-stacks/bin`, and `swiftc main.swift -o hello && ./hello` printed
+  `swift works: 2`. The stack is on this install only — `stacks/*` is
+  gitignored and this repository deliberately ships no example.
+
+  It found three things the format had wrong, each of which had been invisible
+  because both worked examples were symmetric single-file publishers:
+
+  1. **`url` could not name both architectures.** Swift serves
+     `debian12-aarch64/…-debian12-aarch64.tar.gz` and
+     `debian12/…-debian12.tar.gz`; `…/debian12-x86_64/…` is a **404**, measured.
+     No expansion of `{arch}` or `{arch_uname}` produces a segment that is
+     *absent* on one architecture. `url` and a `bin` entry's `from` now take the
+     same per-architecture object `sha256` has taken since `01g-` §5.2, so this
+     is the format's existing vocabulary rather than a fifth token.
+  2. **`install -m 0755` cannot carry a toolchain.** Swift's driver resolves its
+     resource directory from `/proc/self/exe`, so a `swift` copied out of
+     `usr/bin/` looks for `../lib/swift` beside its new home and finds nothing.
+     Every verb now links rather than copies — which is also the louder failure,
+     since a failed reinstall used to leave the *previous* binary in `bin/`,
+     working, claimed by no receipt and drawn as `unclaimed`.
+  3. **The budgets were sized for a linter.** 45s per step and 120s per run
+     could not have fetched this on any link. They are now 20 and 30 minutes,
+     and the real guard moved from wall clock to progress — `curl --speed-limit
+     1024 --speed-time 30`, so an unreachable host still fails in about thirty
+     seconds rather than holding the boot for twenty minutes on every restart.
+     `HEALTHCHECK --start-period` went 180s → 600s with them.
+
+- **A stack cannot install a shared library, and the failure is total,
+  2026-09-12.** With Swift installed perfectly — receipt `ok`, both binaries
+  linked, digest verified — every invocation died with `swift: error while
+  loading shared libraries: libncurses.so.6: cannot open shared object file`.
+  `ldd` over the toolchain's front-ends named exactly one missing system
+  library. `apt-get` is refused as a verb (`01d-` §3) and nothing else in the
+  format reaches a system package, so the fix is one word in the `Dockerfile`'s
+  existing `apt-get install` line. This is the boundary of what a stack is for,
+  found by crossing it: a stack installs *software*, and a platform dependency
+  is the image's.
+
+- **A stack's `env` reached the server for the first time, 2026-09-12.** It had
+  only ever been written as `{}`. The Swift stack declares
+  `"SWIFTPM_CACHE_DIR": "{state}/swiftpm"`, the applier wrote
+  `/var/lib/uf-stacks/env.json` holding
+  `{"SWIFTPM_CACHE_DIR":"/var/lib/uf-stacks/state/swift/swiftpm"}` with `{state}`
+  expanded, and the boot logged *"stacks export SWIFTPM_CACHE_DIR to every
+  agent."* — which `instrumentation.ts` prints only for keys it actually set on
+  `process.env`. **The last link is still unobserved**: that an agent child sees
+  it rests on `childEnv` copying `process.env` and stripping nothing that
+  matches, which is unit-tested but has not been watched happening with a
+  stack's own variable. `docker compose exec` cannot show it — that is a
+  different process tree, and `process.env` mutations never appear in
+  `/proc/<pid>/environ`.
+
+- **An empty declaration directory fails loudly and alone, 2026-09-12.** A
+  `stacks/playwright/` directory with no `stack.json` sat beside the other two
+  throughout: `stack playwright: failed — stack.json could not be read (ENOENT)`,
+  `stacks: 2 ok, 1 failed`, and neither of the other two was affected. Not
+  contrived — it was already on this install, which is the better test.
+
 ### Container and environment
 
 - **Multiple workspaces:** slots list independently, a disabled one is skipped,
@@ -2567,15 +2631,13 @@ measurement under *Verified* and cut the item down to what is still open.
   same commit as the carrier would have meant the first thing this mechanism
   ever did was run a stranger's code.
 
-- **A stack's `env` block has never reached an agent.** The applier writes
-  `/var/lib/uf-stacks/env.json` and `src/instrumentation.ts` merges it into
-  `process.env` at boot, from where `childEnv` is what carries it onward — but
-  the one stack measured here declares no `env`, so the file has only ever been
-  written as `{}` and nothing has read a stack's variable out of a child. The
-  two halves that *are* measured are the refusals (`refuseEnv`, unit-tested) and
-  that `childEnv` passes `PATH` through (`orchestrator.test.ts`). Settle with a
-  stack declaring `"env": { "TF_PLUGIN_CACHE_DIR": "{state}/plugin-cache" }` and
-  `docker compose exec usagefoundry printenv TF_PLUGIN_CACHE_DIR`.
+- **A stack's `env` has reached the server but not yet an agent.** The write and
+  the merge are measured — see *Container and environment* — and what is left is
+  the last hop: `childEnv` copying it into a child. It strips nothing that
+  matches `SWIFTPM_CACHE_DIR` and is unit-tested for `PATH`, so this is reasoned
+  rather than observed. `docker compose exec` cannot settle it, being a
+  different process tree; it needs a real agent child and something that reports
+  its environment.
 
 - **Two stacks claiming one binary name has never happened outside a unit
   test.** `reconcile` marks both `conflicted` and links neither, which is

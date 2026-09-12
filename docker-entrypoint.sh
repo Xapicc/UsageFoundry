@@ -239,6 +239,18 @@ uv_install_tool() {
 # it would take the dashboard and every guard away from an operator whose
 # plugins may not need it.
 if [ -n "${UF_PY_TOOLS:-}" ]; then
+  # Superseded by a `uv-tool` stack, and still installed rather than refused.
+  #
+  # A stack does the same install into a root-owned toolbox instead of a volume
+  # every agent can write, records what happened in a receipt a restart does not
+  # destroy, and reads back on Settings > Tools. This variable predates all of
+  # that and keeps working, because an operator's tools going missing on an
+  # upgrade is exactly the failure this whole area exists to end. Said once per
+  # boot and only when the variable is set.
+  echo "[usagefoundry] UF_PY_TOOLS still works and is superseded by a uv-tool" \
+       "stack, which installs the same package where no agent can rewrite it" \
+       "and says on Settings > Tools whether it resolved. See docs/install.md." >&2
+
   # Split on spaces and "|" but *not* on commas, which is where this parts
   # company with UF_GH_EXTENSIONS: a comma is meaningful inside a version
   # specifier (`cozempic>=1.8,<2`), so accepting it as a separator would turn

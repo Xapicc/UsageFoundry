@@ -79,12 +79,28 @@ templates, applied where it belongs, and it is what keeps *"never a shell"*
 
 ```
 { "kind": "archive",
-  "url": "<https:// url, may contain {arch} or {arch_uname}>",
+  "url": "<https:// url, may contain {arch} or {arch_uname}>"
+         | { "amd64": "<https:// url>", "arm64": "<https:// url>" },
   "checksums": "<https:// url of the publisher's checksum manifest>",
   "sha256": "<64 hex chars>" | { "amd64": "<64 hex>", "arm64": "<64 hex>" },
   "unpack": "zip" | "tar.gz" | "none",
-  "bin": [ { "from": "<path inside the archive>", "as": "<name on PATH>" } ] }
+  "bin": [ { "from": "<path inside the archive>"
+                     | { "amd64": "<path>", "arm64": "<path>" },
+             "as": "<name on PATH>" } ] }
 ```
+
+> **AMENDED 2026-09-12: three fields take the per-architecture form, not one.**
+> `url` and `bin.from` joined `sha256`, and the reason is a publisher this
+> directory's two worked examples could not have found. Swift serves
+> `debian12-aarch64/…-debian12-aarch64.tar.gz` on one architecture and
+> `debian12/…-debian12.tar.gz` on the other — the segment is *absent* rather
+> than different, and `…/debian12-x86_64/…` is a 404 (measured). Both tokens
+> always expand to something, so neither can produce it, and the in-archive
+> directory carries the same asymmetry. Reusing the shape `sha256` already had
+> keeps this one idea — *anything that differs per architecture may be written
+> per architecture* — instead of a fifth token for "the part that vanishes".
+> A plain string still means both, so every stack written before this is
+> unchanged.
 
 Exactly one of `checksums` and `sha256` is required, and `sha256` is optional in
 the sense that `checksums` may stand in its place - never in the sense that a
@@ -225,8 +241,20 @@ the boot or the other stacks.
    zipped at `0755` extracts at `0644`, which would otherwise be a `Permission
    denied` inside a tool call at the far end of a green install.
 5. `chown -R root:root {pkg}` and `chmod -R go-w {pkg}`.
-6. `install -m 0755` each `bin` entry into `/var/lib/uf-stacks/bin/<as>`, as
-   root, which is `Dockerfile:175`'s own idiom for the same act.
+6. Link each `bin` entry into `/var/lib/uf-stacks/bin/<as>`, as root.
+
+   > **CORRECTED 2026-09-12: a symlink, not `install -m 0755`.** A copy cannot
+   > carry a toolchain — Swift's driver resolves its resource directory from
+   > `/proc/self/exe`, so a `swift` copied out of `usr/bin/` looks for
+   > `../lib/swift` beside its new home and finds nothing; and `npm install -g`
+   > writes its bin as a symlink into `lib/node_modules/`, which `install`
+   > follows into a file whose first relative `require` then fails. Both
+   > measured. A self-contained binary does not care either way, so one rule
+   > serves all three verbs and there is no exception to find out about the hard
+   > way. It is also the louder failure: a reinstall that fails takes `pkg/` and
+   > leaves `bin/`, so the copy left the *previous version* there, working and
+   > claimed by no receipt, which is the silent-wrong-version failure this
+   > directory exists to end.
 
 Steps 1 to 4 run under
 `setpriv --reuid="$UF_AGENT_UID" --regid="${UF_AGENT_GID:-$UF_AGENT_UID}"

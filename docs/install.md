@@ -175,6 +175,21 @@ refused.
 
 ### Python tools, and the plugins that need them
 
+> **Superseded by a `uv-tool` stack.** `UF_PY_TOOLS` still works and is not going
+> anywhere — tools vanishing on an upgrade is the failure this whole area exists
+> to end — but a stack does the same install somewhere no agent can rewrite it,
+> records what happened in a receipt a restart does not destroy, and reads back
+> on Settings → Tools. A stack saying the same thing as `UF_PY_TOOLS=ruff==0.14.1`
+> is four lines:
+>
+> ```json
+> { "schema": 1, "name": "py-lint",
+>   "install": [{ "kind": "uv-tool", "spec": "ruff==0.14.1", "bin": ["ruff"] }] }
+> ```
+>
+> The boot says this once when the variable is set. The rest of this section is
+> what the variable does, which is unchanged.
+
 The same mechanism one language over, and it exists for a plugin rather than for
 an agent. A Claude Code plugin registered through `--plugin-dir` speaks to you
 through its hooks; a hook that shells out to a Python command finds none here,
@@ -323,6 +338,21 @@ that survives a rebuild, which is where a tool's cache belongs — and `state`,
 which creates directories under it before the first run, for the tools that
 refuse to start without one.
 
+**When a publisher's two architectures are not the same shape**, `url` and a
+`bin` entry's `from` each take the per-architecture form `sha256` already has:
+
+```json
+"url": {
+  "amd64": "https://download.swift.org/…/debian12/…-debian12.tar.gz",
+  "arm64": "https://download.swift.org/…/debian12-aarch64/…-debian12-aarch64.tar.gz"
+}
+```
+
+Use it when no token can spell both. Swift is the case that needed it — its
+x86_64 download names no architecture at all, so `{arch}` and `{arch_uname}`,
+which always expand to *something*, cannot produce it. A plain string still
+means both, which is most publishers.
+
 **Two other kinds of step, for a tool that is a package rather than a
 download.** `uv-tool` is a Python package and `npm-global` is a Node one, and
 both take a spec and the commands it installs:
@@ -356,6 +386,24 @@ failing step's output verbatim, which a boot log cannot give you because the
 restart that made you look is the restart that destroyed it. A command sitting
 in the toolbox that no stack claims is listed too, under *Claimed by no entry*:
 nothing removes those, so something installed by hand outlives every restart.
+
+**A big toolchain is fine and the first boot is slow.** The applier has 20
+minutes for one step and 30 for the whole run, and `curl` gives up if a download
+drops under 1 KB/s for 30 seconds — so a stalled host fails in half a minute
+while a gigabyte that is moving is allowed to finish. Measured: Swift 6.3.3 for
+Debian 12 is 1.05 GB and installed in **45 seconds** on a fast link, unpacking
+to 3.3 GB. On a slower one the container may read `(unhealthy)` while it works,
+because the healthcheck's grace period is ten minutes; nothing restarts on that,
+and it goes back to healthy when the install finishes. Only the first boot after
+you add or change the declaration pays this — after that the digest matches and
+it is skipped.
+
+**A stack cannot install a system library.** If a tool needs one the image does
+not have, it installs perfectly and then dies on every invocation with
+`error while loading shared libraries`. That is a one-line change to the
+`Dockerfile` rather than anything you can put in a stack, and `apt-get` is
+deliberately not a verb — it cannot be pinned per install or removed cleanly.
+Swift needed exactly one, `libncurses6`, which the image now carries.
 
 **What goes wrong, and where you see it.** A bad checksum, a 404 or a
 `stack.json` that does not parse fails that stack alone: nothing is unpacked,

@@ -54,7 +54,8 @@ function repoRoot(): string {
 }
 
 interface ParsedBin {
-  from: string;
+  /** Per architecture, like `url` and `sha256`. A plain string parses to both. */
+  from: { amd64: string; arm64: string };
   as: string;
 }
 /**
@@ -64,8 +65,8 @@ interface ParsedBin {
  */
 interface ParsedStep {
   kind: string;
-  /** `archive` only. */
-  url?: string;
+  /** `archive` only. Normalised to one url per architecture, like `sha256`. */
+  url?: { amd64: string; arm64: string };
   checksums?: string | null;
   sha256?: { amd64: string; arm64: string } | null;
   unpack?: string;
@@ -157,7 +158,9 @@ describe("parseStack — what is refused before anything is downloaded", () => {
     if (!result.ok) return;
     assert.equal(result.stack.name, "terraform");
     assert.equal(result.stack.install.length, 1);
-    assert.deepEqual(result.stack.install[0].bin, [{ from: "terraform", as: "terraform" }]);
+    assert.deepEqual(result.stack.install[0].bin, [
+      { from: { amd64: "terraform", arm64: "terraform" }, as: "terraform" },
+    ]);
     assert.equal(result.stack.install[0].sha256, null);
     assert.deepEqual(result.stack.state, ["plugin-cache"]);
     assert.deepEqual(result.stack.deny, ["terraform apply", "terraform destroy"]);
@@ -231,6 +234,65 @@ describe("parseStack — what is refused before anything is downloaded", () => {
     const step = { ...TERRAFORM.install[0], sha256: "a".repeat(64) } as Record<string, unknown>;
     delete step.checksums;
     assert.match(refusal(parse({ install: [step] })), /one digest against a url/);
+  });
+
+  it("takes a url per architecture, for a publisher whose layout no token spells", () => {
+    // Swift, measured 2026-09-12: `debian12-aarch64/…-debian12-aarch64.tar.gz`
+    // on one architecture and `debian12/…-debian12.tar.gz` on the other, where
+    // the second names no architecture at all and `…/debian12-x86_64/…` is a
+    // 404. `{arch}` and `{arch_uname}` both expand to *something*, so neither
+    // can produce a url with the segment missing.
+    const step = {
+      ...TERRAFORM.install[0],
+      url: { amd64: "https://example.com/tool.tar.gz", arm64: "https://example.com/tool-aarch64.tar.gz" },
+      sha256: { amd64: "a".repeat(64), arm64: "b".repeat(64) },
+    } as Record<string, unknown>;
+    delete step.checksums;
+    const result = parse({ install: [step] });
+    assert.equal(result.ok, true, result.ok ? "" : (result as { reason: string }).reason);
+    if (!result.ok) return;
+    assert.deepEqual(result.stack.install[0].url, {
+      amd64: "https://example.com/tool.tar.gz",
+      arm64: "https://example.com/tool-aarch64.tar.gz",
+    });
+  });
+
+  it("refuses one digest against two urls, the same way it refuses one against a token", () => {
+    // The refusal that matters on this field: two urls are two files, and a
+    // single digest is then true of at most one of them — which installs on the
+    // author's architecture and fails the digest on the consumer's.
+    const step = {
+      ...TERRAFORM.install[0],
+      url: { amd64: "https://example.com/tool.tar.gz", arm64: "https://example.com/tool-aarch64.tar.gz" },
+      sha256: "a".repeat(64),
+    } as Record<string, unknown>;
+    delete step.checksums;
+    assert.match(refusal(parse({ install: [step] })), /one digest against a url/);
+  });
+
+  it("accepts one digest when both architectures name one file", () => {
+    // The control for the pair above: an object url whose two entries are the
+    // same url is one file, so a single digest is honest.
+    const same = "https://example.com/tool.tar.gz";
+    const step = {
+      ...TERRAFORM.install[0],
+      url: { amd64: same, arm64: same },
+      sha256: "a".repeat(64),
+    } as Record<string, unknown>;
+    delete step.checksums;
+    const result = parse({ install: [step] });
+    assert.equal(result.ok, true, result.ok ? "" : (result as { reason: string }).reason);
+  });
+
+  it("refuses a url object that is missing an architecture or names an extra one", () => {
+    for (const [url, pattern] of [
+      [{ amd64: "https://example.com/t.tar.gz" }, /url\.arm64 is missing/],
+      [{ amd64: "https://e.com/t", arm64: "https://e.com/t", riscv: "https://e.com/t" }, /unknown key "riscv"/],
+      [{ amd64: "https://e.com/t", arm64: "http://e.com/t" }, /url\.arm64 is missing or is not an https/],
+    ] as const) {
+      const step = { ...TERRAFORM.install[0], url } as Record<string, unknown>;
+      assert.match(refusal(parse({ install: [step] })), pattern);
+    }
   });
 
   it("accepts one digest when the url names one file", () => {
@@ -338,7 +400,9 @@ describe("parsePackageStep — one spec, one argument", () => {
     const result = parseWith(uv);
     assert.equal(result.ok, true, result.ok ? "" : (result as { reason: string }).reason);
     if (!result.ok) return;
-    assert.deepEqual(result.stack.install[0].bin, [{ from: "bin/ruff", as: "ruff" }]);
+    assert.deepEqual(result.stack.install[0].bin, [
+      { from: { amd64: "bin/ruff", arm64: "bin/ruff" }, as: "ruff" },
+    ]);
     assert.equal(result.stack.install[0].spec, "ruff==0.14.1");
   });
 
@@ -347,7 +411,9 @@ describe("parsePackageStep — one spec, one argument", () => {
     assert.equal(result.ok, true, result.ok ? "" : (result as { reason: string }).reason);
     if (!result.ok) return;
     assert.equal(result.stack.install[0].spec, "@musistudio/claude-code-router@1.0.66");
-    assert.deepEqual(result.stack.install[0].bin, [{ from: "bin/ccr", as: "ccr" }]);
+    assert.deepEqual(result.stack.install[0].bin, [
+      { from: { amd64: "bin/ccr", arm64: "bin/ccr" }, as: "ccr" },
+    ]);
   });
 
   it("refuses a spec that would be read as a flag rather than a package", () => {
