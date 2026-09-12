@@ -61,17 +61,55 @@ sentence would be the board telling you something happened to the work.
 A workflow block cannot write one. It runs unattended, and a permanent note from
 something nobody is watching is the same problem as a backlog from one.
 
+## What has to happen first
+
+A task can say it waits for another one. Draw the link on the task that waits,
+naming the one that has to be done first, and the board shows what it is waiting
+for and how many of those are still unfinished.
+
+**It is a note, not a gate.** Nothing is held back by it. A task with unfinished
+dependencies can still be claimed, started, worked and completed exactly as it
+could before, and no run anywhere is delayed, queued or ordered by it. It is
+there so you can see an ordering you would otherwise have to keep in your head,
+and so an agent reading a task can tell you it found the work rests on something
+unfinished. If you want work to actually happen in an order, start the runs in
+that order.
+
+A dependency clears when the other task is **done**. A task you *dropped* still
+counts as in the way — you did not do the work, and the ordering you wrote down
+still says it comes first — so the board shows you the dependency's own status
+beside it and you remove the link.
+
+The two tasks can be in different projects, which is the case worth the feature:
+a change in one repository waiting on a change in another is the ordering
+nothing else here would show you.
+
+A loop is refused, and the refusal names the loop it found so you can see which
+link to break. A task cannot depend on itself.
+
+**Only you can remove a link.** The orchestrator chat and a run can draw one —
+a run that discovers its task rests on unfinished work can record that, which is
+the point — but neither can take one away. A link is invisible once removed, and
+an agent quietly undoing an ordering you drew is the kind of thing you would
+never find out about.
+
+A dependency is not the same as the "filed while working on" link you see on a
+task a run created. That one records where a task came from; this one records
+what has to happen first. A task filed during another's work usually does not
+have to wait for it.
+
 ## Who else can reach it
 
 Three kinds of agent, each with a different half of the board.
 
 **The orchestrator chat** reads the board, files tasks, writes notes on them,
-and can name a task on a run it proposes to you. It cannot close anything.
+records that one task has to happen before another, and can name a task on a run
+it proposes to you. It cannot close anything and cannot remove a dependency.
 
 **A workflow block** reads the board and can name a task on a run it emits. It
-cannot file one and cannot write a note: a block runs unattended, and anything
-permanent written by something nobody is watching is one you meet already full of
-an agent's own idea of the work.
+cannot file one, cannot write a note and cannot draw a dependency: a block runs
+unattended, and anything permanent written by something nobody is watching is one
+you meet already full of an agent's own idea of the work.
 
 **A work cycle** — the agent doing the work — is off by default. Switch on
 *Let runs use the taskboard* in Settings and a run can:
@@ -81,10 +119,11 @@ an agent's own idea of the work.
 - mark **that** task complete, and only that one;
 - file a new task for something it found and should not fix itself;
 - write a note on a task, including one merely open in the folder it is working
-  in — and read the notes you have written on the task it holds.
+  in — and read the notes you have written on the task it holds;
+- record that one task has to happen before another.
 
-It cannot complete a task it was not given, start anything, approve anything,
-touch another run's work, or see the rest of your board. The refusal is enforced
+It cannot complete a task it was not given, remove a dependency, start anything,
+approve anything, touch another run's work, or see the rest of your board. The refusal is enforced
 against the run's own credential rather than against anything the agent says, so
 an agent that asks to close a task it does not hold is refused rather than
 believed.

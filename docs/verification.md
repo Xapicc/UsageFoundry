@@ -581,6 +581,30 @@ is `docs/agent/testing.md`; interface defects and their classes are
   which is the bar `docs/agent/testing.md` records. What covers it is the
   browser entry above rather than a unit test.
 
+- **Task dependencies, both doors, 2026-09-11** against the branch's own
+  `.next/standalone/server.js` and — for the tool surface — the same modules
+  loaded in process. On the **route**: an edge across two projects wrote with
+  `created: true` and both ends described down to `mountId`/`relPath`; the same
+  call again answered 200 with `created: false` and one edge still on the board;
+  a two-node and a three-node loop were both refused 400 naming the loop by
+  title (`“Ship the parser” → “Write the parser” → “Third” → “Ship the
+  parser”`); a self-edge, a `dependsOn` that is not a task and a `taskId` that
+  is not a task were refused 400/404/404 with three different sentences; `GET`
+  answered both directions and 404 on a task that is not there; closing the
+  dependency took `blockedByCount` 1 → 0 with the edge and its count standing;
+  `DELETE` answered 200 then **404** on the repeat; and deleting a task took the
+  edge on its other end with it. Nothing was logged at error level. On the
+  **tool surface**: `add_task_dependency` is on a chat's list and on a run's
+  five, absent from a block's and refused to one by name; the write, the repeat
+  and the loop answered in the three wordings above with `isError` set only on
+  the refusal; an unknown id came back in `taskRefusal`'s own words;
+  `get_task` carried the refs with their projects, `list_tasks` the two counts,
+  and `list_my_tasks` `waitingFor` on `held` only. **The advisory property was
+  measured rather than assumed**: a task with `blockedByCount` 1 was closed by
+  the operator's `PATCH` and a second one by a run's `complete_task`, both
+  reaching `done`. What this did not touch is a real CLI — no model has called
+  the tool over stdio, which is the standing item below.
+
 ### Workflows and schedules
 
 - **Workflows end to end, live dev server, stub CLI:** save refuses each bad
@@ -1553,6 +1577,30 @@ measurement under *Verified* and cut the item down to what is still open.
   CLI via `spawnAssist`. It rests on a spike's 34 of 37, zero false-finished
   (subagent transport, one sample per case, 40 runs judged against `runs.task`)
   on a prompt since replaced; the shipped prompt has never been scored.
+
+- **`add_task_dependency` has never been called by a model**, which is the
+  dependency half of the item above and has the same cost: it needs a billed
+  run. What is unmeasured is not the write — that was exercised through the
+  route handler and through the tool surface in process on 2026-09-11 — but
+  whether the descriptions do their job. The failure they are written against is
+  a model drawing an edge and then treating it as a gate: stopping work on a
+  task it holds, or reporting that a run cannot start. Settle it by giving a run
+  a task that waits on an open one after `docker compose up --build`, and
+  reading whether the cycle finishes the work it was given.
+
+- **No dependency has been drawn on a board with a real backlog on it.**
+  `MAX_TASK_DEP_LINKS` is 10 and the cap's direction — blocking dependencies
+  first, done ones dropped — was measured only against a hand-built twelve in
+  `taskDeps.test.ts`. Unknown is whether ten is the right number for a backlog
+  somebody actually accumulated, and nothing yet has produced a row whose
+  `dependsOnCount` exceeds `dependsOn.length` outside a fixture. Settle it by
+  filing a real project's tasks and reading `GET /api/tasks`.
+
+- **Nothing about dependencies has been drawn on screen.** This change is
+  storage, a route and two tool surfaces; the board does not render an edge yet,
+  and `docs/taskboard.md` describes the feature as it will read once it does.
+  `npm run smoke-pages` was deliberately not re-run, because no page changed.
+  Settle it with the run that draws it.
 
 ### Workflows and schedules
 
