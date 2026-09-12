@@ -437,6 +437,15 @@ against receipts, in lexical order of directory name, and within a stack in the
 file order of the `install` array:
 
 - a declaration whose digest matches an `ok` receipt: nothing, no network;
+- **a declaration whose digest matches a `failed` or `conflicted` receipt: try
+  again.** Only an `ok` receipt is a reason to skip. Added by this run's
+  validation pass ([22-validation.md](22-validation.md) §2.2): without it a
+  failed stack is attempted once and skipped forever, which makes the receipt set
+  a record of the boot that first failed rather than of this one — and
+  [01e-operator-surface.md](01e-operator-surface.md) §5.3's whole claim is that
+  the set de-latches on a boot, which is `src/lib/db.ts:184-189`'s own rule for
+  a reading a monitor is thresholding. The cost is one retried download per boot
+  on an install whose network is down, which is loud and correct;
 - a declaration with no receipt, or whose digest differs: remove `pkg/<stack>`,
   install afresh, relink, rewrite the receipt. `state/<stack>` is **kept**, so a
   version bump does not throw away a provider cache;

@@ -70,17 +70,17 @@ same line).
 **The ban is stale by one and it does not matter which way.**
 `src/components/shell/panes.ts:14-18` says *"**Nine is the ceiling** — ⌘1…⌘9 is
 nine digits and the list is eleven rows — so the last **two** rows have no digit
-at all"*, and names them API account and Settings; the audit at `:160` still
-describes `panes.ts` as ten rows. `grep -c "href:" src/components/shell/panes.ts`
+at all"*, and names them API account and Settings; the audit at `:159` still
+describes *"`panes.ts` is ten rows against ⌘1–⌘9"*. `grep -c "href:" src/components/shell/panes.ts`
 returns **11** at `68a8aa7`. So the audit undercounts by one, the price it warns
 about has already been paid twice rather than once, and a twelfth row would be
 the third. Either count forbids a pane.
 
 **Settings rather than Agents, and Agents is refused by name.** A toolchain looks
 like it belongs beside the things that decide what an agent can do, and that is
-exactly the placement `docs/agent/agents-and-templates.md` forbids: an agent
-carries a role and never a capability, and the field that would make it a
-capability is refused by name. A stack is install-wide (`01c-` §3, on
+exactly the placement `docs/agent/agents-and-templates.md:10` forbids: *"A saved
+agent … carries a role rather than a capability"*, and the field that would make
+it one — `tools` — *"is refused at save"*. A stack is install-wide (`01c-` §3, on
 `14-stack-object-model.md` §7's finding that all three per-run doors are closed),
 so it is not a property of an agent, a template or a run, and the only pane whose
 subject is the install itself is Settings.
@@ -107,13 +107,11 @@ places and does not rely on anybody opening Settings at all.
 One stack's receipt carries, per `01a-` §7, the declared name, the digest, the
 status, the applied timestamp, the binaries linked, the grants projected, the env
 exported, a per-step status and **the last 4 KB of the step's stderr**. A section
-row that can hold 4 KB of stderr is a row that has stopped being a row, and
-`docs/agent/conventions.md` is what a caller's class may not do to a component's
-spacing.
+row that can hold 4 KB of stderr is a row that has stopped being a row.
 
-This tree has already argued the same fork and taken the same side: the taskboard
-editor is a route rather than a card the board opens, and
-`docs/agent/taskboard.md` records why. The Tools section links out for the same
+This tree has already argued the same fork and taken the same side:
+*"The editor is a route, not a card the board opens above itself"*
+(`docs/agent/taskboard.md:779`). The Tools section links out for the same
 reason and **is never filled from the list row** — the detail page fetches the
 receipt itself, which is the second half of that argument.
 
@@ -176,9 +174,11 @@ A `Tools` section in Settings, registered in `SECTIONS`
 that is where the operator-declared things the container loads already sit.
 
 **Three groups, one per source, in this order: stacks, `UF_PY_TOOLS`,
-`UF_GH_EXTENSIONS`.** The grouping vocabulary is closed and
-`docs/agent/conventions.md` is what it may be — these are three sources, which is
-what a group is for, and the order is most-configurable first. One `ListGroup`
+`UF_GH_EXTENSIONS`.** *"Grouping has a closed vocabulary, and it is seven
+things"* (`docs/agent/conventions.md:51`, which routes the reasoning to
+`docs/agent/ui-density-audit.md`), and `ListGroup`
+(`src/components/ui/List.tsx:43`) is the one of the seven this is: three sources,
+labelled, in one list. The order is most-configurable first. One `ListGroup`
 row per tool: the name, the `summary` line from `stack.json` for a stack
 (`01b-` §2) or the declared spec for the other two, a badge, and the server's own
 sentence beside it. A stack's row links to `/settings/stacks/<name>`; a `UF_*`
@@ -322,7 +322,7 @@ named in the tree.** `src/lib/db.ts:184-189`:
 receipt set already is the per-boot reading**, provided a non-`ok` receipt is
 re-attempted on every boot rather than skipped. `01a-` §7's reconcile rules did
 not say so and this run has fixed them in place; see
-[22-validation.md](22-validation.md) §3.
+[22-validation.md](22-validation.md) §2.2.
 
 **The counts are the receipts and are not counted twice.** The same
 `readReceipts()` that `/api/tools` calls

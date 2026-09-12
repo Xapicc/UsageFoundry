@@ -267,9 +267,9 @@ route has both."* Through `jsonMaybeGzipped` like the other eighteen
 `Cache-Control` written at the call site, *"because the helper knows nothing
 about caching"* (same line).
 
-The detail is **never filled from the list row** — `docs/agent/taskboard.md` makes the same call for
-the task editor, and here it is load-bearing rather than stylistic, because the
-list deliberately does not carry the 4 KB of stderr.
+The detail is **never filled from the list row** — `docs/agent/taskboard.md:779`
+makes the same call for the task editor, and here it is load-bearing rather than
+stylistic, because the list deliberately does not carry the 4 KB of stderr.
 
 **Behind the master token, with no exemption.** `src/middleware.ts:114` exempts
 `/api/status` when `UF_STATUS_TOKEN` is set and nothing else; neither route is
