@@ -398,6 +398,13 @@ and it goes back to healthy when the install finishes. Only the first boot after
 you add or change the declaration pays this — after that the digest matches and
 it is skipped.
 
+**Go is a stack rather than part of the image**, and it is the worked example
+if you want one on disk: `stacks/go/stack.json` here fetches the same release
+the image used to, checked against Google's own published digest. Declare it if
+your agents work on Go repositories. Its module cache is *not* in the stack —
+`GOPATH` and `GOCACHE` still point at the named volume the image wires up, so
+adding or removing the stack never touches what you have already downloaded.
+
 **A stack cannot install a system library.** If a tool needs one the image does
 not have, it installs perfectly and then dies on every invocation with
 `error while loading shared libraries`. That is a one-line change to the

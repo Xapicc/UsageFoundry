@@ -192,36 +192,25 @@ RUN set -eux; \
     rm -rf /tmp/gh_*; \
     gh --version
 
-# Go, for the same reason as the compiler and `gh`: an agent pointed at a Go
-# repository otherwise discovers `go: command not found` inside a tool call, and
-# the run loop reads that as the agent deciding not to build. Installing it by
-# hand in a shell is not the fix it looks like — the writable layer survives a
-# `docker restart` and is discarded by the `docker compose up --build` this
-# project is deployed with, so the toolchain disappears on the next upgrade and
-# takes a working agent with it.
+# Go is **not** in this image, and that is a change rather than an omission.
 #
-# Same shape as the `gh` block above and for the same reasons: the release
-# tarball rather than Debian's `golang` (which is versions behind and pulls a
-# second gcc toolchain), one layer, and a checksum verified against Google's
-# own published digest because this container holds credentials. The digest is
-# fetched per version rather than pinned here so `--build-arg GO_VERSION=` is
-# genuinely usable; `go.dev/dl/…` serves HTML for that path, `dl.google.com/go/`
-# serves the bare hash.
-ARG GO_VERSION=1.26.6
-RUN set -eux; \
-    case "$(dpkg --print-architecture)" in \
-      amd64) goarch=amd64 ;; \
-      arm64) goarch=arm64 ;; \
-      *) echo "no go release for $(dpkg --print-architecture)" >&2; exit 1 ;; \
-    esac; \
-    cd /tmp; \
-    tarball="go${GO_VERSION}.linux-${goarch}.tar.gz"; \
-    curl -fsSL -O "https://dl.google.com/go/${tarball}"; \
-    sha="$(curl -fsSL "https://dl.google.com/go/${tarball}.sha256")"; \
-    echo "${sha}  ${tarball}" | sha256sum --check -; \
-    tar -C /usr/local -xzf "${tarball}"; \
-    rm "${tarball}"; \
-    /usr/local/go/bin/go version
+# It moved to a stack on 2026-09-12: `stacks/go/stack.json`, an `archive` step
+# fetching the same `dl.google.com/go/` release this block used to, checked
+# against the same published digest, linked into the toolbox that is already on
+# PATH. An operator who works on Go repositories declares it; one who does not
+# stops carrying 265 MB of compiler they never invoke.
+#
+# **What did not move is everything below.** `GOPATH`, `GOCACHE` and the named
+# volume compose mounts over them are still the image's, because they are where
+# an agent's *work* is cached rather than where the toolchain lives — moving
+# them into the stack's `{state}` would have orphaned every module an operator
+# had already downloaded, to no purpose. `BUILD_CACHE_DIRS` still reads
+# `$GOPATH` and still needs to.
+#
+# The failure this used to prevent is now one an operator can see coming, which
+# is the trade: without the stack an agent meets `go: command not found` inside
+# a tool call, exactly as before — but Settings > Tools says so first, and the
+# boot log says whether the stack installed.
 
 # Where Go keeps the two things it must not re-fetch on every run.
 #
@@ -236,8 +225,7 @@ RUN set -eux; \
 # go.mod requires a newer Go than this image ships then fetches it itself, into
 # the same persisted module cache, rather than failing the cycle on a version
 # nobody here can predict.
-ENV PATH="/usr/local/go/bin:${PATH}" \
-    GOPATH=/home/node/go \
+ENV GOPATH=/home/node/go \
     GOCACHE=/home/node/go/build-cache
 
 # `uv`, which is to Python what `gh extension install` is to gh: the installer

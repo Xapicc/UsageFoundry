@@ -1194,6 +1194,28 @@ is `docs/agent/testing.md`; interface defects and their classes are
   `stacks: 2 ok, 1 failed`, and neither of the other two was affected. Not
   contrived — it was already on this install, which is the better test.
 
+- **Go left the image for a stack, 2026-09-12.** The `ARG GO_VERSION` block and
+  `/usr/local/go/bin` came off the `Dockerfile` and `stacks/go/stack.json` took
+  their place — the same `dl.google.com/go/` release against the same published
+  digest, `{arch}` expanding to Go's own `amd64`/`arm64` spelling, so unlike
+  Swift this one needed no per-architecture form at all. After the rebuild:
+  `/usr/local/go` does not exist, `PATH` no longer names it, and as uid 1000
+  `go` resolves to `/var/lib/uf-stacks/bin/go`, reports `go1.26.6 linux/arm64`,
+  and `go build` produced a binary that printed `go works: 2`.
+
+  **`GOROOT` resolved to `/var/lib/uf-stacks/pkg/go/go`**, which is the symlink
+  question answered for a third toolchain: Go finds its root from
+  `os.Executable()`, which resolves the link, so the copy this applier used to
+  make would have left it looking for a root beside `bin/`. Swift, npm and Go
+  all need the link for the same reason and by three different mechanisms.
+
+  **The cache deliberately did not move.** `GOPATH` and `GOCACHE` are still the
+  image's and still point at `/home/node/go`, where compose mounts
+  `usagefoundry-gocache` — measured after the change: `node:node`, 436 MB, the
+  same modules as before. Moving them into the stack's `{state}` would have
+  orphaned every module an operator had already downloaded to no purpose, and
+  `BUILD_CACHE_DIRS` still reads `$GOPATH`. The stack's own `state/` is empty.
+
 ### Container and environment
 
 - **Multiple workspaces:** slots list independently, a disabled one is skipped,
