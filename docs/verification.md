@@ -1825,10 +1825,6 @@ measurement under *Verified* and cut the item down to what is still open.
   standalone bundle, with the settings row written in SQL; no real transcript
   lacking the breakdown has been seen.
 
-- **No `rate_limit_event` read off a real process**: the event was canned,
-  only `allowed` has been seen, no overage window, and `FirstRun` hides the
-  card on a machine with no transcripts.
-
 - **The metering figures measured on 2.1.226 have not been re-measured on
   2.1.260** (the pin moved 2026-09-04). Each parser degrades quietly, so a
   green build proves nothing about metering. One assist's 2.1.260 stdout has
