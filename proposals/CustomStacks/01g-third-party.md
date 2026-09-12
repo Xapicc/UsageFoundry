@@ -134,8 +134,8 @@ every row that is quiet is a row this design owes an answer.
 |---|---|---|---|
 | 1 | directory renamed on copy, so `name` mismatches | **loud** | parse refusal, `failed` receipt (`01b-` §3) |
 | 2 | schema key the consumer's version does not know | **loud** | unknown-key refusal (`01b-` §3) |
-| 3 | URL 404s - release deleted or retagged | **loud** | `curl -f` non-zero, `failed` receipt (`01b-` §4.1) |
-| 4 | digest mismatch - re-cut release, or a wrong digest | **loud** | step 2 ends the stack, nothing unpacked (`01b-` §4.2) |
+| 3 | URL 404s - release deleted or retagged | **loud** | `curl -f` non-zero, `failed` receipt (`01b-` §4 step 1) |
+| 4 | digest mismatch - re-cut release, or a wrong digest | **loud** | step 2 ends the stack, nothing unpacked (`01b-` §4 step 2) |
 | 5 | publisher's arch spelling is not `{arch}`'s | **loud, and it was a schema hole** | §5, fixed |
 | 6 | one digest against a per-arch URL | **quiet, and it was the worse hole** | §5, fixed |
 | 7 | two stacks claim one binary name | **loud** | both `conflicted`, neither linked (`01a-` §7) |
@@ -344,7 +344,7 @@ two rows to keep in step for no property either one gains.
 | `allow` | narrowed away from `apply` | **narrowed away from `-w`, for a different reason** |
 
 **Three of those rows are branches nothing had exercised**, and two of them were
-broken until §5. The `zip`-only executable-bit repair at `01b-` §4.4 is the third
+broken until §5. The `zip`-only executable-bit repair at `01b-` §4 step 4 is the third
 and it survives: `tar -xzf` preserves mode, so this stack needs it for neither
 step, and the `chmod 0755` is correct as an unconditional step rather than as a
 `zip` special case.

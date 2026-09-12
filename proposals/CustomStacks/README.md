@@ -229,7 +229,7 @@ Ordered by how much of the design each one moves.
    `22-validation.md` §5 command 2 settles it in five lines and **nothing in this
    repository has ever watched a volume outlive a rebuild.**
 3. **`acceptEdits` turns out to permit an arbitrary binary.** **Changes: one
-   deletable list.** `01c-` §4.2's grant projection and `21-` phase 4 both
+   deletable list.** `01a-` §4.2's grant projection and `21-` phase 4 both
    disappear, `01b-`'s `allow` field becomes optional decoration, and nothing
    else moves. The design is built for the worse answer precisely so that the
    better one costs a deletion - `22-validation.md` §5 command 1.

@@ -1,8 +1,10 @@
 # Implementation sketch
 
-**Five phases for the decided design**, in build order. The design is
-[01a-mechanism.md](01a-mechanism.md) and the four files beside it; this file is
-how it gets built and in what order. It replaces the sketch that phased
+**Five phases and a probe, for the decided design**, in build order. Phase 0
+ships nothing and is a measurement; phases 1 to 5 each ship. The design is
+[01a-mechanism.md](01a-mechanism.md) and the six files beside it - the format,
+reach, boundaries, the surface, the read-back and the third-party story; this
+file is how it gets built and in what order. It replaces the sketch that phased
 `20-recommendation.md`, which recommended building almost nothing and is
 superseded whole.
 
@@ -13,7 +15,7 @@ operator can see when it lands**, and **which functions earn a test**.
 whose failure mode is silent gets a unit test, and `docs/agent/testing.md`
 records what each existing one earned. That file *"names every existing one and
 the grounds each earned, and that is the bar, not a general convention to
-follow"* (`CLAUDE.md`). **Seven functions in this whole plan meet it**, named
+follow"* (`CLAUDE.md`). **Eight functions in this whole plan meet it**, named
 phase by phase and collected in §6.
 
 The bar is not "no I/O tests" - `src/app/api/health/route.test.ts` earned one by
@@ -76,7 +78,7 @@ file's honesty is the point of it and `01c-` §6 already writes the *Not yet
 verified by hand* sentence it replaces.
 
 **What it decides:** whether phase 4 exists. If an ungranted binary runs, phase 4
-is deleted and the design is the same minus `01c-` §4.2, which is a deletion
+is deleted and the design is the same minus `01a-` §4.2, which is a deletion
 rather than a redesign - *"which is why it is built assuming the worse answer"*
 (`01a-` §10).
 
@@ -216,7 +218,7 @@ receipts now feed the section phase 1 built.
 
 ### Which functions earn a test
 
-Two in the applier, both pure over lists:
+Three in the applier, all pure over their inputs:
 
 4. **`reconcile(declarations, receipts)`** - `01a-` §7's three rules: digest
    match is a no-op, digest mismatch is a reinstall keeping `state/`, a receipt
@@ -228,6 +230,12 @@ Two in the applier, both pure over lists:
    two new ones - a string `sha256` against an arch-varying `url`, and an object
    `sha256` missing a key - are exactly the kind that fail on somebody else's
    machine if they are wrong.
+6. **`parseReceipt(json)`** - [01f-](01f-read-back.md) §6's third. A receipt is
+   written by a shell script and read by TypeScript, which is a boundary, and
+   `CLAUDE.md`'s rule is to validate at boundaries and trust internal calls. The
+   branch that earns it is the truncated receipt a container killed mid-write
+   leaves behind: it must read `unreadable` and never a partial `ok`, because a
+   partial `ok` is the read-back reporting an install that did not happen.
 
 Plus three assertions in `src/lib/deployment.test.ts`, per `01a-` §9, in the
 style of the existing `:905`, `:978`, `:1029` and `:1137`:
@@ -293,11 +301,11 @@ destroyed the log line** (`src/lib/db.ts:182-184`).
 
 Two:
 
-6. **`expandTokens(value, arch)`** - four tokens now, two of them architecture
+7. **`expandTokens(value, arch)`** - four tokens now, two of them architecture
    spellings that differ (`01g-` §5.1: `dpkg --print-architecture` says `arm64`
    where `uname -m` says `aarch64`, measured in this container 2026-09-12). A
    wrong expansion is a 404 at boot, read once, on one architecture only.
-7. **`refuseEnv(key, value)`** - `01b-` §2.2's table. Every entry in it prevents
+8. **`refuseEnv(key, value)`** - `01b-` §2.2's table. Every entry in it prevents
    a *silent* failure by construction, which is the bar restated.
 
 **The conflict rule is `reconcile`'s** and is asserted there, in the test phase 2
@@ -399,7 +407,7 @@ commands get run for real and their answers go into `docs/verification.md` as
 
 ---
 
-## 6. The seven tests, collected
+## 6. The eight tests, collected
 
 | # | Function | Phase | The silent failure it prevents |
 |---|---|---|---|
@@ -408,8 +416,9 @@ commands get run for real and their answers go into `docs/verification.md` as
 | 3 | `composeState` | 1 | `installed` drawn over a `broken` resolution |
 | 4 | `reconcile` | 2 | removing a path the applier did not install |
 | 5 | `parseStack` | 2 | a refusal that does not fire, on somebody else's machine |
-| 6 | `expandTokens` | 3 | a 404 at boot on one architecture only |
-| 7 | `refuseEnv` | 3 | a variable set and then silently stripped by `childEnv` |
+| 6 | `parseReceipt` | 2 | a half-written receipt read as a partial `ok` |
+| 7 | `expandTokens` | 3 | a 404 at boot on one architecture only |
+| 8 | `refuseEnv` | 3 | a variable set and then silently stripped by `childEnv` |
 
 Plus **three `deployment.test.ts` assertions** in phase 2, of which the `C1`
 guard is the one whose absence is invisible, and **one repair** to

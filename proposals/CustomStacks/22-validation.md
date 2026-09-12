@@ -320,7 +320,7 @@ restart, expecting `pkg/`, `state/` and the link gone and nothing else touched.
 
 ### 5. The seccomp profile, which nothing has ever applied
 
-Moves: `01c-` §4.3's *"unaffected"*, which is reasoned from
+Moves: `01a-` §4.3's *"unaffected"*, which is reasoned from
 `src/lib/orchestrator.ts:5310` and `docker-entrypoint.sh:432` and has never been
 run under a profile.
 
