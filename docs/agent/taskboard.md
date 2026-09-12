@@ -853,6 +853,99 @@ word none. And it is **not** a link, unlike the run count beside it — that one
 the only handle its cell can give, where the title directly above this one is
 already a link to the page the thread is on.
 
+**The board draws an ordering as one line inside a cell it already has, and a
+column for it is refused for the count's reason above.** `DepLine` in
+`src/app/tasks/page.tsx` goes in the Task cell under the title, above the
+provenance — it is about the work rather than about where the brief came from,
+and `Blocked by` is the thing on this page somebody scanning a backlog is looking
+for. **Nothing at all when a task has no edges**, which is the Runs cell's
+decision one column over and matters more here: most rows have none, so a marker
+that drew on every row would be a column of the word none with a seventh `min-w`
+paid for it. It names **one** neighbour a side and counts past that — measured,
+not chosen: two a side rendered as six wrapped lines under a two-line title at
+1280px, because that cell is whatever the six min-width columns leave. The
+stacked layout at 390px would carry more and deliberately does not get more, or
+the same board would say different things on a phone and on a laptop. What
+decides between a name and a count is the **count**, never the list's length:
+`TaskDepsDTO`'s lists stop at `MAX_TASK_DEP_LINKS` and its counts do not, so a
+line reading the list would report a task waiting on fourteen things as one
+waiting on ten. The blocking half is `dependsOn.slice(0, blockedByCount)` and
+that is sound only because `depNeighbourhood` partitions the list blocking-first;
+the browser never re-tests a status, because `depIsBlocking` is a server module
+and a copy of "done clears an edge and nothing else does" over here is a second
+answer to when an ordering is satisfied. An ordering that has fully cleared still
+draws — as *After* rather than *Blocked by* — since a row that drew nothing for
+it would say this task was never put behind anything.
+
+**The task's own page draws the neighbourhood, and the canvas draws while the
+form writes.** `TaskDependencies` holds both, `TaskDepGraph` is the surface and
+`taskNeighbourhoodGraph` in `src/lib/taskDepGraph.ts` is what decides which nodes
+and arrows exist. The split is the point: **every gesture on the drawing is a
+navigation**, a node being a link to that task and nothing else being pressable,
+and adding and removing are a picker and a named button underneath. A canvas that
+could delete an ordering would put the one write on this board that no agent may
+make behind a drag which leaves nothing behind, and it would put it on the half
+of the pane that is hidden at 390px. `WorkflowCanvas` is an editor because a
+workflow has no other surface; these edges have a page each and a list naming
+them in words.
+
+The assembly is in `src/lib` rather than beside the component because **a graph
+assembled wrongly draws a plausible picture** — an arrow the wrong way round is a
+readable drawing of the opposite ordering, and nothing throws. Four rules, all
+asserted in `taskDepGraph.test.ts`. The arrow runs *from* the task that happens
+first, which is the reverse of the way `dependsOn` lists things and is what makes
+`autoLayout`'s layering mean something: everything left of a node is what it
+waits on. The second level expands **outwards only** — a dependency contributes
+its own dependencies and a dependent its own dependents — because expanding both
+ways at level one pulls in every *sibling*, which on a task half the board waits
+for is most of the board and is not an answer to anything the page asks. An edge
+is kept only when both its ends are already drawn, which is what the cone leaves
+at its rim, and an ordering *between* two of this task's own dependencies is kept
+for the same test's other half: they are both on the graph, and leaving it out
+draws a chain as two unrelated things. And a neighbourhood the caller did not ask
+for cannot widen the drawing or mark it clipped.
+
+Nothing on that surface is coloured by status. `conventions.md`'s rule, and the
+case for it is sharpest here: there is one kind of node and one kind of edge, so
+the whole drawing is border tones, the **accent** marks the anchor and the edges
+touching it — it is the app's "this is the one you are looking at" colour rather
+than a tone — and a node's status is a `Badge`, which is where a status tone
+belongs and where every other surface here already reads one. The anchor also
+says *This task* in words beside the halo, because a graph of four boxes is
+exactly where a reader who cannot tell two border tones apart loses the one thing
+the drawing is about. The sheet opens scrolled to the anchor rather than to the
+origin, since the layout puts everything in front of the task to its left and a
+chain three deep would otherwise open showing the dependencies and not the task
+they are for.
+
+**Three ways of having nothing again, and two of them are not the empty canvas.**
+A task with no edges gets the board's empty state — what an ordering is and that
+it is advisory — because a surface with nothing drawn on it says the drawing
+failed as readily as it says there is nothing to draw, and most rows here have no
+ordering at all. A neighbour whose own read failed leaves the graph one level
+short on that side and **says so**: what a reader would otherwise take for the
+end of the ordering is the request stopping, and the two look identical on a
+canvas. A neighbourhood clipped by `MAX_TASK_DEP_LINKS` says that too, on
+`TaskDepsDTO`'s own instruction that anything drawing the graph check the counts
+against the lists — an incomplete picture of an ordering does not look
+incomplete.
+
+The form renders a server refusal **verbatim**, which is the board's rule one
+page down and has a second reason here: the loop refusal *names the loop it
+found*, and that sentence is the only thing telling the operator which edge to
+break. Nothing in the browser pre-empts it. The one thing the page declines to
+send is a picker nobody has answered, and the one task the picker does not offer
+is the page it is on — a self-edge stays refused by name at the door, but
+offering the press is an interface asking for something it knows is not an
+ordering. Removal against a *dependent* is a request to that task's own route,
+because `DELETE /api/tasks/[id]/deps` always takes the waiting task in the path;
+a page that could only cut the edges it is the near end of would be half a door.
+`created: false` is drawn as *already recorded* rather than as a success, since a
+press answered with nothing cannot be told from one that did nothing. And **this
+page still does not poll** — the pane refetches the row after a write it made and
+claims nothing about what another door did meanwhile, holding a half-made choice
+across two selects for exactly the reason the editor above it holds a draft.
+
 **The three ways of having nothing are three different screens, and none of them
 is an empty list.** A board with nothing on it says a task is a brief anybody —
 the orchestrator, a workflow block, a work cycle, the operator — can file, and

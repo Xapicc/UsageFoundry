@@ -81,3 +81,12 @@ nothing about it.
   the operator with a screenshot; fixed with `.uf-badge > svg { display: inline;
   margin-inline-end: 1ch }` in `src/app/globals.css`. After: 0 of 61 over one
   line. D rather than B because the markup is identical in both skins.
+- **2026-09-12, class D.** The board's dependency line named two neighbours a
+  side, which in the Task cell (`src/app/tasks/page.tsx`, `DepLine`) rendered as
+  six wrapped lines under a two-line title: that cell is whatever six `min-w`
+  columns leave, about 150px at 1280px, and a task title is already two lines in
+  it. Found by screenshotting a seeded board at 1280px — the shape reads fine in
+  the source, where the line is one `<span>`. Cut to one named neighbour a side,
+  `NAMED_DEPS`, at both widths rather than more when stacked, so the fallback to
+  a count means the same thing on a phone and on a laptop. D rather than B
+  because nothing about the markup is wrong; the cell is just that narrow.

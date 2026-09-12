@@ -605,6 +605,66 @@ is `docs/agent/testing.md`; interface defects and their classes are
   reaching `done`. What this did not touch is a real CLI — no model has called
   the tool over stdio, which is the standing item below.
 
+- **The dependency drawing on both pages, in a real browser, 2026-09-12**: the
+  half the entry above says it does not cover. The branch's own
+  `.next/standalone/server.js` — the artifact the container ships — against a
+  throwaway `DATA_DIR` and a `CLAUDE_BIN` that cannot spawn, seeded through
+  `src/lib` with eight tasks across two projects and six edges forming a chain
+  three deep with a fork at the end, driven with the container's Chromium at
+  1280×1000 and 390×844. **Both widths: no console error, and
+  `scrollWidth − clientWidth` measured 0 on the document at each.** On `/tasks`
+  the line drew inside the Task cell under the title with no seventh column: a
+  row with four edges read *Blocked by 2 tasks · blocks 2 tasks*, a row with one
+  each read *After «title» · blocks «title»* with both titles as links, and the
+  task with no edges drew nothing at all. On `/tasks/[id]` the graph laid out
+  left to right with the arrows running from the task that happens first, the
+  anchor haloed and reading *This task* in words, a cross-project neighbour
+  naming `Main / RepoTwo` and the same-project ones naming nothing, and the
+  second level present — from the `Migrate` anchor, `Draw the task dependency
+  graph` was drawn two hops out through `Add the task_deps table`, with the edge
+  between those two in the border tone and only the edges touching the anchor in
+  the accent. **The form was pressed for real**, not reasoned about: adding
+  through the picker wrote the edge, answered *Recorded: this task now waits for
+  it*, redrew the graph with the new node in it and cleared the picker; asking
+  for a loop was refused with `taskDepRefusal`'s own sentence rendered whole —
+  *That would make a loop: “Add the task_deps table and its index” → “Migrate the
+  schema for task orderings” → “Draw the task dependency graph” → “Add the
+  task_deps table and its index”…* — with the picker's choice deliberately left
+  standing; and Remove took the edge away and left the empty state. A task with
+  no edges drew that empty state rather than an empty canvas. The 400 from the
+  refused write is the only console entry either page produced. Caveats: one
+  browser engine; the **default** skin here, with the ascii skin measured
+  separately below; the clipped-graph notice and the failed-neighbour notice
+  were not reproduced in the browser — both need more than `MAX_TASK_DEP_LINKS`
+  edges or an aborted request, and what covers them is
+  `taskDepGraph.test.ts`'s `clipped` assertions and the absent-neighbour case
+  rather than a rendered screen.
+
+- **The dependency pane under `data-skin="ascii"`, 2026-09-12.** The skin the
+  2026-09-11 `/branches` defect was found under, and the one this pane has most
+  to lose to: a `Badge` sits inside an absolutely positioned **fixed-height**
+  node box, so a badge that grew to three lines there would overflow rather than
+  reflow. Set through `localStorage["uf-skin"]` so `layout.tsx`'s blocking script
+  puts it on the element before anything hydrates, against the same standalone
+  bundle and seed as the entry above. **14 of 14 badges on one line at both
+  1280px and 390px**, measured as a bounding box against 2.2× the computed font
+  size rather than judged by eye; no console error, no sideways scroll; the
+  graph, the two lists and the form all drew. Caveat: the default and ascii
+  skins only, and one browser engine.
+
+- **The whole gate for the drawing, 2026-09-12**, on the worktree mount:
+  `NODE_ENV=development npm ci --include=dev` exit 0; `npm run typecheck` exit
+  0; `npm test` **2680 tests, 2680 pass, 0 fail**; `env -u
+  __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` exit 0 with `.next/standalone`
+  written; `npm run smoke-pages` served `.next/standalone/server.js` rather than
+  the `next start` fallback and reported **44/44 page loads clean, 0 of 22 pages
+  failing at either width**. The 26 tests over 2654 are `taskDepGraph.test.ts`
+  and they are the bar `docs/agent/testing.md` records rather than a convention
+  followed: `taskNeighbourhoodGraph` is a pure function whose every failure mode
+  draws a plausible picture — an arrow reversed is a readable graph of the
+  opposite ordering, a second level expanded the wrong way reads as a
+  neighbourhood, and none of them throws or fails a typecheck.
+
 ### Workflows and schedules
 
 - **Workflows end to end, live dev server, stub CLI:** save refuses each bad
@@ -1181,6 +1241,14 @@ is `docs/agent/testing.md`; interface defects and their classes are
   `Table stack` turns each run into a labelled block.
 
 ## Not yet verified by hand
+
+- **The graph at a size no hand-drawn ordering reaches.** Every reading above is
+  against eight tasks. `autoLayout` is bounded by the block count rather than run
+  to a fixed point, so it terminates, but nothing has measured what the sheet
+  costs at, say, the `MAX_TASK_DEP_LINKS` cap on both lists with every neighbour
+  expanded — 21 nodes, absolutely positioned, with an SVG over them. What would
+  settle it: seed one task with ten dependencies and ten dependents, give each of
+  those ten of its own, and time the first paint of `/tasks/[id]`.
 
 - **Nothing has watched a real `claude` child call `comment_on_task`.** Every
   assertion about this feature is against the route handlers in-process; what
