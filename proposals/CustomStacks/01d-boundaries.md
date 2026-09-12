@@ -123,7 +123,15 @@ a decision a person makes at a shell."*
 server starts, `createRun` may not `await` (`C7`), and the applier's agent-uid
 staging is safe only in the window where no agent process exists.
 
-**No per-run, per-folder, per-template or per-agent stack selection.** Every `ok`
+**No per-run, per-folder, per-template or per-agent stack selection.**
+> **SUPERSEDED for per-folder by [23-revision-per-repo-and-login.md](23-revision-per-repo-and-login.md) §2.**
+> The operator was asked and the answer is ten repositories inside one mount,
+> all needing different stacks. `14-` §7's argument below is true of the
+> *installation* and false of the *selection*, and it missed a fourth door that
+> ships today. Per-agent, per-template and per-run stay refused. Original text
+> follows.
+
+Every `ok`
 stack reaches every child. `14-stack-object-model.md` §7 found all three doors
 such a selector could attach to closed by name, and this design does not reopen
 them. If four mounted repositories genuinely need four toolchains, that is a new

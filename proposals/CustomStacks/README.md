@@ -89,6 +89,18 @@ was no other way.**
 
 ## The design
 
+> **Revised on 2026-09-12 by the operator's answers**, in
+> [23-revision-per-repo-and-login.md](23-revision-per-repo-and-login.md). Read it
+> beside the eight files below: it supersedes `01d-` §3's per-folder refusal and
+> `14-` §7's resolution, corrects the argument behind both, adds one field to
+> `01b-`'s schema and **replaces another - the grant is a deny-list, ruled by the
+> operator, and the tree supports it because deny is the only one of the two
+> flags verified to restrict anything**. It also moves the repository-to-stack
+> map into the web interface and **keeps the credential out of it** - refused on
+> `src/lib/config.ts:492-508`'s own grounds and the refusal accepted by the
+> operator, so the Tools card reports whether a secret is set and never holds
+> one. Everything else here stands.
+
 **Written on 2026-09-12 in eight files.** `01a-` through `01d-` are the design
 run's, against `baf051d`; `01e-` through `01h-` are the build run's, against
 `68a8aa7`. It decides rather than compares, and `01-constraints.md`'s fixed
@@ -204,15 +216,29 @@ follows is what would change *the design* - and each item names which part of it
 moves, because "this would overturn it" is not a useful thing to say about a
 mechanism that is being built either way.
 
-**Two of the five questions this list used to carry are closed and are not
-repeated below.** *Does A1 permit build-time layering?* - **ruled no**
-(`01a-` §2.4): a derived image cannot add a tool on a `docker compose pull`
-install, which is R1's own test. *What is the identity of a stack?* - **ruled**:
-the directory name, with the filesystem enforcing uniqueness (`01b-` §1).
+**Three of the five items this list used to carry were questions for the
+operator. They were asked on 2026-09-12 and all three are answered**, and what
+the answers move is [23-revision-per-repo-and-login.md](23-revision-per-repo-and-login.md)
+rather than this list. In short: the operator owns the compose directory and
+would rather not need to; **ten repositories inside one mount need ten different
+stacks**; and the install they expect to type is a login. The per-folder refusal
+falls, `14-` §7's argument for it was half wrong on the tree, and the schema
+gains one field for a credential it cannot express.
 
-Ordered by how much of the design each one moves.
+**Two earlier questions are closed and are not repeated below.** *Does A1 permit
+build-time layering?* - **ruled no** (`01a-` §2.4): a derived image cannot add a
+tool on a `docker compose pull` install, which is R1's own test. *What is the
+identity of a stack?* - **ruled**: the directory name, with the filesystem
+enforcing uniqueness (`01b-` §1).
 
-1. **The operator does not own the directory holding `docker-compose.yml`.**
+What is left is two commands nobody has run. Ordered by how much of the design
+each one moves, with the three answered items kept in place and struck through
+rather than deleted, so the record of what was decisive stays readable.
+
+1. ~~**The operator does not own the directory holding `docker-compose.yml`.**~~
+   **ASKED AND ANSWERED: they do own it**, and would rather not need to
+   (`23-` §6). Nothing is rebuilt; the preference is served by the same change
+   item 5 forces. Original text follows.
    **Changes: everything.** The whole carrier is a host bind mount beside that
    file (`01a-` §2.1). An install on a managed platform, or one the operator
    reaches only through this app's own UI, has no door at all, and the mechanism
@@ -233,21 +259,32 @@ Ordered by how much of the design each one moves.
    disappear, `01b-`'s `allow` field becomes optional decoration, and nothing
    else moves. The design is built for the worse answer precisely so that the
    better one costs a deletion - `22-validation.md` §5 command 1.
-4. **The operator expects to type `apt-get`, or a login, or a two-step install.**
+4. ~~**The operator expects to type `apt-get`, or a login, or a two-step install.**~~
+   **ASKED AND ANSWERED: a login** (`23-` §5). Not `apt-get`, so `01d-` §3's
+   refusal of system packages stands. The unit survives and gains a `secrets`
+   field, because `01b-` §2.2's `env` takes literal values only and the only
+   place to put a credential today is the artifact R2 says people copy.
+   Original text follows.
    **Changes: whether the unit is the right unit.** `01d-` §3 refuses system
    packages by name, and if that is what is actually wanted then a declarative
    artifact is answering a smaller question than the one being asked. **Still
    unasked.**
-5. **Four mounted repositories need four different toolchains.**
+5. ~~**Four mounted repositories need four different toolchains.**~~
+   **ASKED AND ANSWERED: yes, and wider than asked** - ten repositories inside
+   one mount, all different (`23-` §2). `01d-` §3's per-folder refusal falls;
+   `14-` §7's *"an installation cannot be per-folder"* is true of the install and
+   false of the selection, and it missed a fourth door that ships today,
+   `selectGithubToken` (`src/lib/config.ts:464-481`). Original text follows.
    **Changes: `01d-` §3's refusal of per-folder selection.** The design takes the
    one-stack reading - install-wide, per `14-` §7, which found all three per-run
    doors closed by name. If the reading is wrong, `18-option-repo-manifest.md` is
    where the question restarts. **Still unasked.**
 
-Items 1, 4 and 5 are questions for the operator rather than facts about the tree,
-they cost a sentence each, and **five runs of this directory have named them
-decisive without asking any of them.** Items 2 and 3 are commands, and
-`22-validation.md` §5 has both, in that order.
+Items 1, 4 and 5 were questions for the operator rather than facts about the
+tree, they cost a sentence each, **five runs of this directory named them
+decisive without asking any of them**, and the sixth asked. Items 2 and 3 are
+commands, `22-validation.md` §5 has both in that order, and **neither has been
+run.**
 
 ## Citation health
 
@@ -342,4 +379,5 @@ they are pinned by unit tests over file *contents*
 | [19-comparison.md](19-comparison.md) | superseded whole. §3's shape table is still a fact table; §4's scores are history |
 | [20-recommendation.md](20-recommendation.md) | superseded whole. It recommended building almost nothing |
 | [21-implementation-sketch.md](21-implementation-sketch.md) | **the build order**: five phases against the decided design, each naming what ships, the invariant it must not break, what the operator sees and which functions earn a test - plus the seven tests collected, what is not built and where it went, and what each phase leaves unverified |
+| [23-revision-per-repo-and-login.md](23-revision-per-repo-and-login.md) | **the operator's three answers and two rulings, and what they move**: the deny-list ruling with the two flags' measured behaviour behind it and the `01b-` §5 claim it corrects, the split between a repository map that may live in the app and a credential that may not; the per-folder refusal falling, the correction to `14-` §7's one-`PATH` argument and the fourth door it missed, the selector that already ships and its `repo_root` trap, the three shapes a per-repository install can take and which to build first, and the `secrets` field a login needs with the three refusals that come with it |
 | [22-validation.md](22-validation.md) | **this run's validation pass**: what was checked and how, seven findings fixed in place, two findings against the tree that were not, what was deliberately not re-validated, the Docker commands in the order they buy the most, and the reasoned-versus-observed accounting |

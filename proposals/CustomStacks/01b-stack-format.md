@@ -156,6 +156,15 @@ because the alternative is every stack author discovering that separately.
 
 ### 2.4 `allow`
 
+> **SUPERSEDED by [23-revision-per-repo-and-login.md](23-revision-per-repo-and-login.md) §9.**
+> The operator ruled the grant a **deny-list**. The field is `deny`, the applier
+> derives `Bash(<bin>:*)` for every binary the stack links, and deny beats it -
+> which is the half of the mechanism that is *verified* (`src/lib/agents.ts:216-218`),
+> where `--allowedTools` is additive and is not a gate
+> (`src/lib/cycleInvocation.ts:1203-1205`). The same-binary rule below carries
+> over to `deny` and there it stops a stack denying what it does not own.
+> Original text follows.
+
 Each entry is an argv prefix. The applier turns `"terraform plan"` into
 `Bash(terraform plan:*)` and appends it to the work cycle's `--allowedTools`,
 beside `ISOLATED_GIT_TOOLS = ["Bash(git add:*)", "Bash(git commit:*)"]`
@@ -307,6 +316,14 @@ because Terraform errors rather than creating that directory itself.
 `terraform plan -out=tf.plan` is covered by `terraform plan`; `terraform apply`
 matches no entry and falls back to `acceptEdits`, which will refuse it in a
 headless run. That is the design working, not failing.
+
+> **CORRECTED by [23-revision-per-repo-and-login.md](23-revision-per-repo-and-login.md) §9.2.**
+> *"which will refuse it in a headless run"* is **not verified** - it is the
+> exact proposition `01c-` §4's probe exists to measure, asserted here as fact.
+> Under the other outcome this example as published grants `terraform apply` to
+> every cycle in the repository it is mapped to. The field is now `deny`, and
+> this example's last block should read
+> `"deny": ["terraform apply", "terraform destroy"]`.
 
 **Adding this to an install is:** copy the directory into `./stacks/`,
 `docker compose up -d`. Nothing else. `git diff --name-only` over the commit is

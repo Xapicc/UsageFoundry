@@ -1,5 +1,14 @@
 # The read-back
 
+> **EXTENDED by [23-revision-per-repo-and-login.md](23-revision-per-repo-and-login.md) §9.4 and §10.3.**
+> Two rules are added to the four layers. **A stack with an empty `deny` renders
+> as granting every command of every binary it links, spelled out, never as a
+> blank field** - the grant became a deny-list, so the safe default inverted and
+> this is where that weight lands. And **the card lists every secret a stack
+> wants and whether each is set, never a value**: the credential stays in `.env`
+> by decision, and being unable to see whether it is set was the whole of what
+> the operator could not do before.
+
 **R5, which is the one gap the original survey agreed was real.** What the app
 reports about what is installed, where each part of that comes from, and how it
 stays true when somebody installs something by hand. The surface that draws it is

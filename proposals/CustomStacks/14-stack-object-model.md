@@ -236,6 +236,16 @@ half.
 
 ## 7. Where a stack may attach — and the three doors are each closed by name
 
+> **SUPERSEDED by [23-revision-per-repo-and-login.md](23-revision-per-repo-and-login.md) §2.**
+> Two things in this section did not hold. *"An installation cannot be per-folder
+> however the record is scoped"* is true of the installation and false of the
+> selection: `PATH` is per process and `childEnv` already merges a caller's
+> `extra` map last (`src/lib/orchestrator.ts:5698-5716`). And the three doors
+> below are not all of them — `selectGithubToken` (`src/lib/config.ts:464-481`)
+> is a per-folder capability selector that ships and is tested. The resolution
+> *"install-wide, always"* and its `allow` corollary are both superseded.
+> Original text follows.
+
 A stack is a **capability**. It is not a role, not a guard and not a budget. This
 app has an explicit position on where capabilities attach, and it is stated three
 times in three places:
