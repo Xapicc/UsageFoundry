@@ -33,12 +33,23 @@ export type SegmentedState = "selected" | "unselected";
  *
  * Weight is constant for the same reason: bolding the selected label changes
  * its width and the whole control reflows on every press.
+ *
+ * Exported because a second surface draws this vocabulary without being this
+ * component: `/settings`' section strip is a `<nav>` of anchors, so it cannot
+ * be a radiogroup of buttons, but it is the same object to look at and every
+ * treatment it had of its own was one the skin then had to be taught
+ * separately. `ButtonLink` sharing `Button`'s `VARIANT` is the same
+ * arrangement and the reason is the same one conventions.md gives for it.
+ *
+ * `not-disabled:` rather than `enabled:` for that sharing: `:enabled` matches
+ * form controls and an `<a>` is not one, so on the anchors every hover and
+ * press state here would emit and silently never match.
  */
-const SEGMENT: Record<SegmentedState, string> = {
+export const SEGMENT: Record<SegmentedState, string> = {
   selected: "border-line bg-bezel text-ink shadow-e1",
   unselected:
     "border-transparent bg-transparent text-ink-muted " +
-    "enabled:hover:bg-bezel-hover enabled:hover:text-ink enabled:active:shadow-press",
+    "not-disabled:hover:bg-bezel-hover not-disabled:hover:text-ink not-disabled:active:shadow-press",
 };
 
 /**

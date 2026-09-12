@@ -47,6 +47,7 @@ import { Toned } from "@/components/ui/Toned";
 import { ListGroup, ListRow } from "@/components/ui/List";
 import { Notice } from "@/components/ui/Notice";
 import {
+  SEGMENT,
   SegmentedControl,
   type SegmentedOption,
 } from "@/components/ui/SegmentedControl";
@@ -120,29 +121,6 @@ const SECTIONS = [
   { id: "storage", label: "Storage" },
   { id: "prompts", label: "Prompts" },
 ];
-
-type ChipState = "current" | "plain";
-
-/**
- * Whether a chip is the section you are standing in.
- *
- * The selected pair is `QuickOpen`'s, which is the app's existing answer for a
- * row that is the one a keypress would act on, rather than a second treatment
- * invented here.
- *
- * Both entries carry the whole of what differs — border, fill and label — for
- * the reason `conventions.md` states rather than as a style: a shared string
- * holding `bg-bezel` with `bg-tint` added per state is two `background-color`
- * utilities on one element, and the winner is Tailwind's own sort order rather
- * than anything written down here. The hover states belong to `plain` for the
- * same reason and a second one: a chip that is already selected has nothing to
- * answer the pointer with.
- */
-const CHIP: Record<ChipState, string> = {
-  current: "border-tint bg-tint text-tint-fg",
-  plain:
-    "border-line bg-bezel text-ink-muted hover:border-line-strong hover:bg-bezel-hover hover:text-ink",
-};
 
 /**
  * Which section anchor the location is standing on.
@@ -1774,6 +1752,17 @@ function CodexAccount() {
  *
  * The sentence is the server's, not this page's. It is the same one the boot
  * line prints, and a second copy written here is a second thing to keep honest.
+ *
+ * `failureNote` is the second sentence and the reason this row is not a switch
+ * either: a policy can be `on`, correct and unreachable at the same time, and
+ * for three weeks this install was exactly that — bubblewrap exiting before it
+ * execed anything, 714 tool calls that did nothing, and a row here that said
+ * `on` because the file it reads did say so. The note is drawn whenever the
+ * detector has fired in the last day and it moves the badge to `warn`, because
+ * an operator who reads one word off this row has to read the word that is
+ * true *today*. `danger` stays reserved for `empty`, which is the state where
+ * commands really do run unwrapped; a sandbox that stops work is expensive but
+ * it is not that. The words are the server's for the reason above.
  */
 function SandboxRow({ sandbox }: { sandbox: unknown }) {
   const read =
@@ -1798,10 +1787,17 @@ function SandboxRow({ sandbox }: { sandbox: unknown }) {
     unknown: "unknown",
   };
 
+  const failureNote = typeof read.failureNote === "string" ? read.failureNote : null;
+
   return (
     <EnvRow label="Sandbox">
-      <Badge tone={TONE[state]}>{WORD[state]}</Badge>{" "}
+      <Badge tone={failureNote ? "warn" : TONE[state]}>{WORD[state]}</Badge>{" "}
       <span>{read.detail}</span>
+      {failureNote ? (
+        // Its own block rather than another clause on the sentence above: the
+        // two disagree, and an operator has to be able to see that they do.
+        <span className="mt-1 block text-warn">{failureNote}</span>
+      ) : null}
     </EnvRow>
   );
 }
@@ -2502,9 +2498,29 @@ export default function SettingsPage() {
 
       {/* Plain anchors rather than `ButtonLink`: the pane is its own scroll
           region and the browser's native hash handling is what scrolls it, so
-          this stays out of the router. Bezeled rather than the recessed chips
-          it was — `--bg-inset` is the well a text field sits in, and a control
-          drawn in it reads as the same object at a glance. */}
+          this stays out of the router.
+
+          Drawn in `SegmentedControl`'s vocabulary and not converted to one.
+          What a `SegmentedControl` is is a `role="radiogroup"` of `<button>`s
+          with a roving tabindex and selection following focus, and every one
+          of those three is wrong here: these are destinations, so they have to
+          stay anchors to keep ⌘-click, middle click, copy-link and Back; a
+          radiogroup announces a value rather than a place, which is what
+          `aria-current` inside a `<nav>` is already saying correctly; and
+          arrow keys that select as they move would scroll the pane to a new
+          section on every press.
+
+          What it shares instead is the part that was the defect. The chips had
+          a third treatment of their own — a `--tint` fill with `text-tint-fg`
+          on the current one, `text-ink-muted` on `bg-bezel` on the rest — and
+          two of the three tone pairs in it did not clear 4.5:1: white on
+          `--tint` measured 4.21:1 in every theme, and the muted label on the
+          bezel measured 3.54:1 in dark. Neither was the ascii skin's doing
+          (both skins measured the same figure to two decimals; the mono face
+          only made the dark one easier to catch), and neither could be found
+          by `npm test` or `smoke-pages`. Borrowing `SEGMENT` is what stops
+          this row needing its own contrast budget, and `uf-segment` is what
+          gets it bracketed under the skin without a rule written for it. */}
       <nav
         aria-label="Settings sections"
         className="mb-6 flex flex-wrap gap-1.5 border-b border-line pb-4"
@@ -2527,11 +2543,17 @@ export default function SettingsPage() {
               href={`#${sec.id}`}
               onClick={() => setSectionHash(sec.id)}
               aria-current={current ? "true" : undefined}
-              className={`ui-transition inline-flex min-h-[var(--control-h)] max-md:min-h-11 items-center rounded-sm border px-2.5 text-xs font-medium no-underline shadow-e1 hover:no-underline ${
-                CHIP[current ? "current" : "plain"]
+              // `text-xs` against a segment's `text-sm`, and that is the one
+              // thing deliberately not shared: ten labelled chips is four
+              // rows at 390px rather than a group of five on a toolbar, and
+              // the size is what decides how much of the pane the map costs.
+              // `shadow-e1` is gone from here because `SEGMENT` carries it on
+              // the selected state, which is the whole of what it is for.
+              className={`uf-segment ui-transition inline-flex min-h-[var(--control-h)] max-md:min-h-11 items-center rounded-sm border px-2.5 text-xs font-medium no-underline hover:no-underline ${
+                SEGMENT[current ? "selected" : "unselected"]
               }`}
             >
-              {sec.label}
+              <span className="uf-segment-label">{sec.label}</span>
             </a>
           );
         })}

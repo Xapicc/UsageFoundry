@@ -117,10 +117,32 @@ const MARKERS: ReadonlyArray<{ needle: string; kind: SandboxRefusalKind }> = [
   // created: Docker masks parts of `/proc`, and a fresh procfs mount inside a
   // new user namespace is refused while those over-mounts hide the current view.
   { needle: "bwrap: Can't mount proc on", kind: "bwrap-failed" },
-  // Every other way bubblewrap says it could not build its namespace. Broad
-  // within its own sentence and safe to be: it is bwrap's own prefix, and the
-  // program is only ever on an argv this app's children did not write.
+  // The other wording for the namespace itself being refused. Broad within its
+  // own sentence and safe to be: it is bwrap's own prefix, and the program is
+  // only ever on an argv this app's children did not write.
   { needle: "bwrap: Creating new namespace failed", kind: "bwrap-failed" },
+  // Every other way bubblewrap says it could not *prepare* the namespace it was
+  // about to exec into — a mount point it cannot create, a source path that is
+  // not there, a bind mount the mount table will not take. One needle rather
+  // than four, because `Can't mount proc on` above was written as the only
+  // mount-time wording there would be and four more wordings arrived anyway.
+  //
+  // **Measured, not read**: since 2026-08-25 this is the whole of what this
+  // install produces. 714 failed tool calls in 18 days across five wordings,
+  // every one of them `bwrap: Can't …` and not one the namespace-creation line
+  // above, which stops dead on 2026-08-19 — the day the seccomp profile went on
+  // and bubblewrap started getting as far as its mounts. So the two entries
+  // above were already historical when they were written, which is how a
+  // detector that looked fixed recorded nothing for three weeks. The scan and
+  // its command are in `docs/verification.md`.
+  //
+  // Still a sentence rather than the bare `bwrap: ` prefix, for the reason the
+  // header gives: this file and its test now carry this literal too, and a run
+  // grepping its own source must not report a policy failure. What it costs is
+  // that a `bwrap:` line not beginning "Can't" is missed — the direction that
+  // loses a signal rather than inventing one, and the same trade every needle
+  // here already makes.
+  { needle: "bwrap: Can't ", kind: "bwrap-failed" },
   // The CLI's own tag on a wrap-time message. Broad on purpose and safe to be:
   // no ordinary tool failure carries it.
   { needle: "[Sandbox Linux]", kind: "sandbox-message" },
@@ -299,4 +321,72 @@ function readManagedSettings(): ManagedSettings {
 /** What confines this install right now. */
 export function currentSandbox(): SandboxDTO {
   return sandboxArrangement(readManagedSettings());
+}
+
+/* ------------------------------------------------------------------ */
+/* Whether that arrangement is working, from what runs recorded        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `sandbox` rows inside the window, and the newest one's words.
+ *
+ * The reading itself is `recentSandboxFailures` in `db.ts`, not here, and the
+ * split is load-bearing rather than tidy: `privsep.ts` imports this module to
+ * decide what a spawn gets, so this file is on `git.ts`'s import path, and
+ * pulling `db.ts` in behind it put `serverLock.ts` into a cycle with `git.ts`
+ * that left its stale-lock constant `NaN`. This module reads a file and says
+ * words about it; nothing here may reach the database.
+ */
+export interface SandboxFailureReading {
+  count: number;
+  hours: number;
+  /** The needle that matched and the tool's own text, or null for none. */
+  latest: { matched: string; reason: string } | null;
+}
+
+/**
+ * The sentence beside the arrangement when the detector has been firing.
+ *
+ * Pure and unit-tested, because it is the only place the two halves of this
+ * module are said in one breath and the words have to be checkable. Written
+ * here rather than on the page for the reason `SandboxRow` gives: a second copy
+ * of a sentence is a second thing to keep honest.
+ *
+ * What it must not say is "denied". Every marker is a sandbox that could not
+ * start, and bwrap exits before it execs, so what these failures cost is the
+ * work in those calls and not a boundary — the row above can go on saying `on`
+ * and be right about the policy while this says the policy is stopping work.
+ *
+ * The lever is named only when the words carry `new namespace`, which is what
+ * both namespace-refused needles say and neither mount-time wording does. That
+ * distinction is the whole reason to quote bwrap here: `unshare` being EPERM
+ * under Docker's default profile is fixed in `docker-compose.yml`, and a mount
+ * point bubblewrap could not prepare is not, so a note that named the seccomp
+ * profile for both would send an operator to edit a file that was not the
+ * problem. Anything unrecognised falls to the quoted line alone, which is the
+ * direction that says less rather than the wrong thing.
+ */
+export function sandboxFailureNote(reading: SandboxFailureReading): string | null {
+  if (reading.count < 1) return null;
+
+  const calls = reading.count === 1 ? "1 tool call" : `${reading.count} tool calls`;
+  const sentences = [
+    `${calls} died inside bubblewrap in the last ${reading.hours} hours, so this policy is stopping work rather than confining it.`,
+  ];
+
+  if (reading.latest) {
+    if (reading.latest.matched.includes("new namespace")) {
+      sentences.push(
+        "Under Docker that is the default seccomp profile refusing the namespace; " +
+          "docker-compose.yml carries the override that lifts it, commented out under security_opt.",
+      );
+    }
+    // Last, and never paraphrased: it is the one part of this an operator can
+    // check against the failed call itself. One line, because bwrap's first is
+    // the reason and the rest of the tool's output is on the `tool_error` row.
+    const line = reading.latest.reason.split("\n").find((l) => l.includes("bwrap:"));
+    sentences.push(`The newest said: ${(line ?? reading.latest.reason).trim()}`);
+  }
+
+  return sentences.join(" ");
 }

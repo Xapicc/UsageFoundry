@@ -236,8 +236,17 @@ const SANDBOX_REASON: Record<SandboxRefusalKindDTO, string> = {
   // The one clause here that is about a *tool call that did not happen*: bwrap
   // exits before it execs the command, so the words after this on the row are
   // what the agent was trying to do rather than what it did.
+  //
+  // "or its mounts" is load-bearing and was added the day the rest of this
+  // sentence stopped being true: every one of this install's failures since
+  // 2026-08-25 is a mount bubblewrap could not prepare rather than a namespace
+  // it could not create, and a row that named only the second would read as a
+  // seccomp problem to anyone who has met one. Which of the two it was is on
+  // the `tool_error` row directly above in bwrap's own words, and the lever for
+  // each is on the settings page's Sandbox row, which is where an operator with
+  // a file to edit is going anyway.
   "bwrap-failed":
-    "bubblewrap could not build the namespace the sandbox needs, so this command never ran",
+    "bubblewrap could not build the namespace the sandbox needs, or its mounts, so this command never ran",
   "sandbox-message": "the CLI's Linux sandbox reported this",
 };
 

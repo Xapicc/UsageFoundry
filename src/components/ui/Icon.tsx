@@ -57,7 +57,13 @@ export type IconName =
   // letterform against a prompt rather than two drawings of a window —
   // `display` is already the monitor in the control beside this one.
   | "text"
-  | "terminal";
+  | "terminal"
+  // The disclosure that holds both of the pairs above, below the shell's
+  // breakpoint. Deliberately none of `sun`, `moon`, `display`, `text` or
+  // `terminal`: every one of those is already an *option* inside the panel this
+  // opens, and a button wearing one of them reads as that option rather than as
+  // the way to all six combinations.
+  | "contrast";
 
 const GLYPH: Record<IconName, ReactElement> = {
   dashboard: (
@@ -206,6 +212,15 @@ const GLYPH: Record<IconName, ReactElement> = {
     <>
       <path d="M3.6 5.25 6.4 8l-2.8 2.75" />
       <path d="M8.4 11.25h4" />
+    </>
+  ),
+  // A circle with one half filled — the same mark the OS appearance panes use.
+  // The fill is stated here rather than on the <svg>, which is the set's rule
+  // for a glyph that is genuinely a solid shape; `dot` is the other one.
+  contrast: (
+    <>
+      <circle cx="8" cy="8" r="5.25" />
+      <path d="M8 2.75a5.25 5.25 0 0 1 0 10.5Z" fill="currentColor" stroke="none" />
     </>
   ),
 };

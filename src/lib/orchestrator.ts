@@ -4137,10 +4137,25 @@ export interface RunDependencyInput {
   continueBranch?: boolean;
 }
 
-/** The same edge as stored: the dependent, the dependency, the condition. */
-export interface DependencyLink {
+/**
+ * The two ids `dependencyCycle` walks, and the only fields it reads.
+ *
+ * `topologicalOrder`'s treatment below, for its reason: three graphs in this app
+ * now share one definition of what a loop is — run dependencies, a workflow's
+ * canvas, and the taskboard's edges — and typing the walker against
+ * `DependencyLink` would make the other two invent an `edge` kind neither has.
+ * A workflow node's edge has no condition and a task's edge deliberately has no
+ * column for one, so a required `edge` would be a fabricated value carried only
+ * to satisfy a signature. `runId` is named for the table the walker started in
+ * and is read as nothing but a node id.
+ */
+export interface DependencyNodeLink {
   runId: string;
   dependsOn: string;
+}
+
+/** The same edge as stored: the dependent, the dependency, the condition. */
+export interface DependencyLink extends DependencyNodeLink {
   edge: DependencyEdge;
   /** Whether this is the dependency whose branch the dependent takes over. */
   continueBranch?: boolean;
@@ -4237,8 +4252,15 @@ function unsatisfiableReason(dep: DependencyState, edge: DependencyEdge): string
  * `createRun` cannot construct a loop today — it mints the run's id after
  * reading the edges, so nothing can already point at it — and this check is
  * what keeps that true if a second writer ever appears.
+ *
+ * Typed against `DependencyNodeLink` rather than `DependencyLink`, so that
+ * "what counts as a cycle" has exactly one definition however many kinds of
+ * thing turn out to wait for each other. The canvas hands it node ids and
+ * `taskDeps.ts` hands it task ids; nothing in here treats either as a run.
  */
-export function dependencyCycle(links: readonly DependencyLink[]): string[] | null {
+export function dependencyCycle(
+  links: readonly DependencyNodeLink[],
+): string[] | null {
   const out = new Map<string, string[]>();
   for (const link of links) {
     const list = out.get(link.runId);

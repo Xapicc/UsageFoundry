@@ -81,3 +81,49 @@ nothing about it.
   the operator with a screenshot; fixed with `.uf-badge > svg { display: inline;
   margin-inline-end: 1ch }` in `src/app/globals.css`. After: 0 of 61 over one
   line. D rather than B because the markup is identical in both skins.
+- **2026-09-12, `dd66cfb`, class A.** `/settings`' section strip drew a third
+  chip treatment of its own — a `--tint` fill with `text-tint-fg` on the current
+  chip, `text-ink-muted` on `bg-bezel` on the other nine — and two of its three
+  tone pairs were below 4.5:1 as rendered: `--fg-muted` on `--bezel` at 3.54:1
+  in dark, which is the app's own tokens and fails unconditionally, and
+  `--tint-fg` on `--tint` at 4.21:1 in every theme, which is **not** — that pair
+  resolved to `AccentColorText`/`AccentColor` through the `@supports` block at
+  globals.css:330, and Chromium's default accent is `#0075ff`. On the declared
+  fallback the same pair is 5.22:1 light and 5.06:1 dark, so the current chip
+  failed only where the browser hands the app an accent that does. That is not
+  this strip's to fix and is filed separately; the strip stops depending on the
+  pair either way. Found by two reviewers under
+  the ascii skin, where the mono face made the dark one obvious; sampled from
+  rendered pixels, both skins measured the same figure to two decimals, so the
+  skin was not the cause — nothing under `:root[data-skin="ascii"]` reaches
+  these anchors' colours, only their corners. Fixed by drawing the strip in
+  `SegmentedControl`'s exported `SEGMENT` and adding `uf-segment`, which is also
+  what gets it bracketed under the skin; it stays a `<nav>` of anchors rather
+  than becoming a radiogroup. Before: 44 of 80 readings below 4.5:1 (10 chips ×
+  390/1280 × light/dark × ascii/default). After: 0 of 80, worst 4.87:1. A rather
+  than B because both pairs are declared values in a relation the source states.
+- **2026-09-12, class D.** The toolbar's right-hand group overflowed a 390px
+  window on `/`: `New run` sat at 378→446.2px in the default skin and
+  398→491.5px under ascii, clipped away by `AppShell`'s `overflow-hidden` with
+  no scrollbar, while the route title shrank to 0px and drew nothing. Both
+  skins, both themes; measured 2026-09-11, fixed 2026-09-12. The cause is
+  width, not the mono face — five 44px appearance segments and their gaps are
+  254px of a 366px strip. Found by measuring every control's bounding box
+  against the viewport in Chromium; `npm run smoke-pages` is blind to it,
+  because it compares the *document's* `scrollWidth` against `clientWidth` and
+  the shell clips rather than scrolls (filed separately as `adb32ab1`). Fixed
+  by moving both appearance pickers behind one 44px disclosure below the
+  breakpoint (`src/components/shell/Toolbar.tsx`); above it the panel is
+  `display: contents` and nothing moved. After: every control inside 390px on
+  all five routes measured, in both skins and both themes, panel open and
+  closed, and the title draws again — in full everywhere except `/` under
+  ascii, where it has 52.7px against a natural 59 and truncates visibly.
+- **2026-09-12, class D.** The board's dependency line named two neighbours a
+  side, which in the Task cell (`src/app/tasks/page.tsx`, `DepLine`) rendered as
+  six wrapped lines under a two-line title: that cell is whatever six `min-w`
+  columns leave, about 150px at 1280px, and a task title is already two lines in
+  it. Found by screenshotting a seeded board at 1280px — the shape reads fine in
+  the source, where the line is one `<span>`. Cut to one named neighbour a side,
+  in `depNames`, at both widths rather than more when stacked, so the fallback to
+  a count means the same thing on a phone and on a laptop. D rather than B
+  because nothing about the markup is wrong; the cell is just that narrow.

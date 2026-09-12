@@ -6,8 +6,11 @@ import {
   runLinksForTasks,
   taskDTO,
   updateTask,
+  type Task,
   type TaskActor,
 } from "../../../../lib/tasks";
+import { commentCountsForTasks } from "../../../../lib/taskComments";
+import { depsForTask } from "../../../../lib/taskDeps";
 import { auditMutation } from "../../../../lib/requestLog";
 
 export const runtime = "nodejs";
@@ -34,9 +37,27 @@ export async function GET(_req: Request, ctx: Ctx) {
   if (!task) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  return NextResponse.json({
-    task: taskDTO(task, runLinksForTasks([task.id]).get(task.id)),
-  });
+  return NextResponse.json({ task: withLinks(task) });
+}
+
+/**
+ * The three reads a task DTO is drawn from, in one place.
+ *
+ * Both handlers below answer with the same row and `chatDTO`'s rule applies to
+ * the count and the edges as much as to the links: two routes answering about
+ * the same task must not answer differently, and a `commentCount` present on the
+ * GET and absent from the PATCH would have the editor lose the count it was
+ * drawn with on every save. The neighbourhood is on that list for the same
+ * reason and one worse — a blocked reading that vanished on save would read as
+ * the edges having been removed by the edit.
+ */
+function withLinks(task: Task) {
+  return taskDTO(
+    task,
+    runLinksForTasks([task.id]).get(task.id),
+    commentCountsForTasks([task.id]).get(task.id),
+    depsForTask(task.id),
+  );
 }
 
 /**
@@ -71,9 +92,7 @@ async function patchHandler(req: Request, ctx: Ctx) {
   // The same shape the GET answers with, so the editor that saved does not
   // lose the links it was drawn with — `chatDTO`'s rule: two routes answering
   // about the same row must not answer differently.
-  return NextResponse.json({
-    task: taskDTO(updated.task, runLinksForTasks([updated.task.id]).get(updated.task.id)),
-  });
+  return NextResponse.json({ task: withLinks(updated.task) });
 }
 
 /**
