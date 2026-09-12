@@ -1772,6 +1772,36 @@ is `docs/agent/testing.md`; interface defects and their classes are
   a real phone, no touch, no zoom and no screen reader; dismissal was driven
   with synthetic Esc and mouse events, not a finger.
 
+- **The ascii skin's four glyphs are answered by more than one face, and a `╳`
+  bar drew 1.61x the bars beside it, 2026-09-12** (Chromium 151 via the globally
+  installed Playwright 1.62.1, a scratch page carrying the app's own
+  `--family-mono` at `--text-sm` = 13px, twenty cells). On the stack this
+  container resolves `--family-mono` to, all four of `█ ▒ ░ ╳` draw 13.00px
+  and `[ ] M 0` draw 6.50px, unchanged at every `devicePixelRatio` from 1 to 4 —
+  so the defect does *not* show here on the app's own stack, and the mechanism
+  does: on the same page `▀` and `▐` draw 9.21px against `█`'s 13.00px, which is
+  per-glyph fallback inside one run. Ask for `'Liberation Mono', monospace` and
+  the split lands on these four: `█ ▒ ░` at 7.80px with U+2573 left to another
+  face at 13.00px. Drawn as plain text that is a twenty-cell bar 171.67px wide
+  for every reading and 275.63px for no ceiling; with each run boxed to
+  `cells x cellPx` all six cases measured 171.66-171.67px, and on the app's own
+  stack all six measured 273.00px before and after, so the pin is a no-op where
+  the faces already agree. `overflow-x: clip` and `overflow: clip` measured
+  identical widths, and a 6x crop of the two against unpinned rows showed no
+  vertical shift or shaved ink in either. Then against the component itself, on
+  `/` at 1280px in the standalone bundle with the skin turned on and
+  `--family-mono` overridden to that stack: the four meters drew 694.45px in a
+  703px track and 975.36px in a 983px track, every bar in a track the same width
+  as its neighbour, readings and no-ceiling alike. Stripping the pin off that
+  same DOM — the classes and the inline widths, which is the markup as it was —
+  left the reading bar at 694.34px and threw the `╳` bars to 1146.63px and
+  1614.63px, 443.63px and 631.63px past the track each was fitted to. Caveat: the
+  harness is not in the tree, the container has no face that puts the defect on
+  the app's own stack so the skin was driven onto a second one by hand, and the
+  reported half of this — a band or track wider than the fill *within* one bar —
+  was not reproduced: nothing installed here answers `█ ▒ ░` at three different
+  widths. The fix covers that half by construction, unmeasured.
+
 ## Not yet verified by hand
 
 - **The graph at a size no hand-drawn ordering reaches.** Every reading above is
@@ -2960,3 +2990,22 @@ measurement under *Verified* and cut the item down to what is still open.
 - **The composition stack's hatched overflow strip has not been drawn at
   390px.** It sits in the same `viewBox` as the bands, which is an argument,
   not a measurement.
+
+- **The reported half of the ascii bar defect — a band or track drawing wider
+  per character than the fill *inside* one bar — was never reproduced.** The `╳`
+  half was (see the Verified entry of 2026-09-12), and the pin that fixes it
+  covers both by construction, but no face installed in this container answers
+  `█`, `▒` and `░` at three different widths, so nothing here has drawn the bar
+  the operator described. What would settle it is the operator's own browser,
+  or a face that splits the shade blocks from the full one; the reading itself
+  is one page:
+  ```bash
+  node -e '(async()=>{const{chromium}=require("/usr/local/lib/node_modules/playwright");
+  const b=await chromium.launch(),p=await b.newPage();
+  await p.setContent(`<span id=s style="font:13px/1 var(--family-mono,ui-monospace,monospace);white-space:pre"></span>`);
+  for(const g of ["\u2588","\u2592","\u2591","\u2573","["])
+    console.log(g, await p.evaluate(x=>{const e=document.getElementById("s");
+      e.textContent=x.repeat(16);return e.getBoundingClientRect().width/16},g));
+  await b.close()})()'
+  ```
+  Three different numbers across the first three is the unreproduced half.

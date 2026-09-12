@@ -155,9 +155,15 @@ test("only the measured run takes the caller's colour", () => {
       fillClassName="text-danger"
     />,
   );
-  const fill = /<span class="text-danger">([^<]*)<\/span>/.exec(html);
+  // The class is a list rather than the bare tone since every run also carries
+  // the box that pins it to a column, so the exact-attribute match that used to
+  // stand for "and nothing else wears it" is spelled out on its own line.
+  const fill = /<span class="[^"]*\btext-danger\b[^"]*"[^>]*>([^<]*)<\/span>/.exec(
+    html,
+  );
   assert.ok(fill, "the fill is its own span");
   assert.match(fill[1], /^█+$/, "and nothing but blocks is inside it");
+  assert.equal(html.match(/text-danger/g)?.length, 1, "and only it wears it");
 });
 
 test("the characters are hidden at the root, not one run at a time", () => {

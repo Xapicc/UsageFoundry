@@ -26,7 +26,11 @@ import { useLayoutEffect, useRef, useState } from "react";
  * It is U+2573 and not `?` because an ASCII mark would draw at half the width of
  * the blocks around it — see the character-art bullet in
  * `docs/agent/conventions.md` for the measurement — so an unknown bar would be
- * half the length of a bar with a reading, on the same card.
+ * half the length of a bar with a reading, on the same card. Staying inside the
+ * block and box-drawing ranges is necessary and not sufficient: which face
+ * answers is the reader's, and it answers per glyph. `CELL_BOX` is what makes
+ * the four take one width whatever they are answered by, and carries the
+ * measurement that says they do not.
  *
  * `aria-hidden`, and every caller keeps its real figure as text elsewhere in the
  * markup. A screen reader must get "62.0%", never twenty block characters: the
@@ -120,9 +124,12 @@ const MIN_CELLS = 8;
  * simply short, in a card several times its width, which is what was reported.
  *
  * `Math.floor` and not a round: this is the count that *fits*, and a cell over
- * is a bar hanging out of its card. The brackets are subtracted rather than
- * counted as two cells because they are ASCII and draw at half a block here —
- * assuming them is the same mistake one glyph smaller.
+ * is a bar hanging out of its card. The brackets stay subtracted as pixels
+ * rather than counted as two cells, and that is now the deliberate part: every
+ * cell inside the bar is pinned to one column by `CELL_BOX`, and the brackets
+ * are the one thing left drawing at whatever width their own face gives them —
+ * ASCII, half a block on the stacks measured, and not something this may assume
+ * on the stack it has not.
  */
 export function fittedCells(
   availablePx: number,
@@ -150,8 +157,40 @@ export function fittedCells(
 const RESIZE_SETTLE_MS = 120;
 
 /**
- * The cell count this bar should draw: `cells` until it has measured itself, and
- * what fits the box it is in after that.
+ * How many blocks the probe below draws before its width is divided back down.
+ * One glyph's rect is quantised to a sixty-fourth of a pixel, and that error is
+ * then multiplied by every cell of the bar it sizes.
+ */
+const PROBE_CELLS = 8;
+
+/** A cell count and the column its cells were fitted to, from one reading. */
+type Fit = { cells: number; cellPx: number };
+
+/**
+ * The advance `█` takes in *this* bar's own computed font.
+ *
+ * Built and thrown away inside the measurement, which is what makes a probe
+ * sound here where a standing one would not be: it inherits the family, the
+ * size and the `white-space` of the bar it is appended to, so there is no
+ * second font to assert anything about — and it exists for no frame, so
+ * nothing an unknown reading renders carries a block character it must not
+ * have.
+ */
+function measureCellPx(bar: HTMLSpanElement): number {
+  const probe = document.createElement("span");
+  probe.style.position = "absolute";
+  probe.style.visibility = "hidden";
+  probe.textContent = FILLED.repeat(PROBE_CELLS);
+  bar.appendChild(probe);
+  const width = probe.getBoundingClientRect().width;
+  probe.remove();
+  return width / PROBE_CELLS;
+}
+
+/**
+ * The cell count this bar should draw and the column one cell takes: the
+ * caller's `cells` and no column until it has measured itself, and what fits
+ * the box it is in after that.
  *
  * Three things make a measured count safe to act on here, and all three are
  * load-bearing:
@@ -164,9 +203,12 @@ const RESIZE_SETTLE_MS = 120;
  *   - **It settles once.** The count is a pure function of a width that does not
  *     move, so the first measurement is the answer; `fittedFor` is what stops a
  *     re-render from asking again.
- *   - **What it measures is what is drawn.** `cellPx` comes from dividing the
- *     drawn run by the number of cells in it rather than from a probe element in
- *     a font nobody asserted was the same one.
+ *   - **What it measures is one glyph.** Dividing the drawn run by the cells in
+ *     it, which is what this did, averages whatever the bar happened to be
+ *     holding at the moment it was laid out — so two bars in one column fitted
+ *     different counts wherever the four glyphs' faces disagree, and the bar
+ *     that averaged widest was the one drawn entirely in `╳`. `cellPx` is `█`
+ *     alone, for the reason `CELL_BOX` gives.
  *
  * The measurement is refused, leaving the caller's own count standing, whenever
  * there is nothing laid out to measure — which is every meter under the default
@@ -179,10 +221,12 @@ function useFittedCells(
   barRef: React.RefObject<HTMLSpanElement | null>,
   runsRef: React.RefObject<HTMLSpanElement | null>,
   cells: number,
-): number {
-  const [fitted, setFitted] = useState<number | null>(null);
+): { drawn: number; cellPx: number | null } {
+  // One piece of state and not two, because the count and the column it is in
+  // come out of the same reading and a render holding one of each would draw a
+  // bar sized by a width its cells were never fitted to.
+  const [fitted, setFitted] = useState<Fit | null>(null);
   const fittedFor = useRef<number | null>(null);
-  const drawn = fitted ?? cells;
 
   useLayoutEffect(() => {
     const bar = barRef.current;
@@ -193,18 +237,19 @@ function useFittedCells(
     const fit = () => {
       const available = track.clientWidth;
       if (fittedFor.current === available) return;
-      const runsPx = runs.getBoundingClientRect().width;
-      if (runsPx <= 0) return;
+      const cellPx = measureCellPx(bar);
+      if (cellPx <= 0) return;
       const next = fittedCells(
         available,
-        runsPx / drawn,
-        bar.getBoundingClientRect().width - runsPx,
+        cellPx,
+        bar.getBoundingClientRect().width -
+          runs.getBoundingClientRect().width,
       );
       if (next === null) return;
       // Only once a measurement has actually produced a count, so a bar that was
       // hidden when it was asked is asked again the next time the box moves.
       fittedFor.current = available;
-      setFitted(next);
+      setFitted({ cells: next, cellPx });
     };
 
     // Once before observing, because the first measurement is the one the first
@@ -220,9 +265,9 @@ function useFittedCells(
       window.clearTimeout(pending);
       observer.disconnect();
     };
-  }, [barRef, runsRef, drawn]);
+  }, [barRef, runsRef]);
 
-  return drawn;
+  return { drawn: fitted?.cells ?? cells, cellPx: fitted?.cellPx ?? null };
 }
 
 /** How many of `cells` a single 0–1 reading covers, both ends kept. */
@@ -243,6 +288,35 @@ function fillCells(fraction: number, cells: number): number {
  */
 const BAND_TONE = "text-ink-muted";
 const TRACK_TONE = "text-ink-faint";
+
+/**
+ * Every run is as wide as the cells in it, and a cell is one column — `cellPx`,
+ * which is `█`'s own advance and nothing else's.
+ *
+ * The four glyphs are not one face's. This app ships no font, so the face that
+ * answers each of them is the reader's and the fallback is resolved **per
+ * glyph**: measured 2026-09-12 in this container's Chromium at 13px on the
+ * app's own `--family-mono`, `▀` draws 9.21px against `█`'s 13.00px, and on a
+ * stack that resolves to `Liberation Mono` the split lands on these four —
+ * `█ ▒ ░` at
+ * 7.80px with U+2573 left to another face at 13.00px, which drew a twenty-cell
+ * `╳` bar 275.63px long beside 171.67px bars carrying a reading. Drawn as plain
+ * text a run is as wide as its glyphs happened to be, and *that* is what a
+ * reader compares against the bar above it.
+ *
+ * A run wider than its cells is cut at the boundary, which is the trade: the
+ * proportion the bar is a picture of stays exact and one glyph at the end of a
+ * run may not. The fill never pays it — the column is the block's own advance —
+ * and a dither or a cross cut short still reads as itself.
+ *
+ * `overflow-x` rather than `overflow`, because nothing here knows the reader's
+ * face and a face whose ink runs past the em box would lose its top and bottom
+ * to the second. Same remedy `.uf-spin` takes in `globals.css` and one decision
+ * further on: a spinner may sit narrower than its column, a bar may not,
+ * because a fill with gaps in it is a different reading — so the column is
+ * measured rather than the `1ch` a stylesheet can spell.
+ */
+const CELL_BOX = "inline-block overflow-x-clip";
 
 export function AsciiBar({
   fraction,
@@ -267,8 +341,13 @@ export function AsciiBar({
 }) {
   const barRef = useRef<HTMLSpanElement>(null);
   const runsRef = useRef<HTMLSpanElement>(null);
-  const drawn = useFittedCells(barRef, runsRef, cells);
+  const { drawn, cellPx } = useFittedCells(barRef, runsRef, cells);
   const runs = meterCells(fraction, upperFraction, drawn);
+  // No column until one has been measured, which leaves every run sized by its
+  // own glyphs — the server's render and the default skin, where the bar is the
+  // caller's budgeted count and nothing has been laid out to be wrong about.
+  const column = (n: number) =>
+    cellPx === null ? undefined : { width: `${n * cellPx}px` };
 
   return (
     <span
@@ -282,19 +361,35 @@ export function AsciiBar({
       className={`uf-ascii ${TRACK_TONE} select-none whitespace-pre leading-none ${className}`}
     >
       [
-      {/* The cells, and only the cells, in one box: dividing this by the count
-          inside it is what gives the drawn advance of a cell, and subtracting it
-          from the bar gives the two brackets. Both have to come off the glyphs
-          actually on the page — that is the whole point of measuring rather than
-          budgeting — and the brackets are not the same width as a cell. */}
+      {/* The cells, and only the cells, in one box: subtracting it from the bar
+          is what gives the two brackets, which have to come off the glyphs
+          actually on the page because they are not a cell's width. */}
       <span ref={runsRef}>
         {runs === null ? (
-          <span className={BAND_TONE}>{NO_CEILING.repeat(drawn)}</span>
+          <span className={`${CELL_BOX} ${BAND_TONE}`} style={column(drawn)}>
+            {NO_CEILING.repeat(drawn)}
+          </span>
         ) : (
           <>
-            <span className={fillClassName}>{FILLED.repeat(runs.filled)}</span>
-            <span className={BAND_TONE}>{BAND.repeat(runs.band)}</span>
-            {EMPTY.repeat(runs.empty)}
+            <span
+              className={`${CELL_BOX} ${fillClassName}`}
+              style={column(runs.filled)}
+            >
+              {FILLED.repeat(runs.filled)}
+            </span>
+            <span
+              className={`${CELL_BOX} ${BAND_TONE}`}
+              style={column(runs.band)}
+            >
+              {BAND.repeat(runs.band)}
+            </span>
+            {/* A box of its own now, where it was a bare text node, because the
+                track is a run like the other two and has to hold its cells. The
+                tone is still the wrapper's — the quiet one is what a bar is
+                drawn in, and the two above it are the departures. */}
+            <span className={CELL_BOX} style={column(runs.empty)}>
+              {EMPTY.repeat(runs.empty)}
+            </span>
           </>
         )}
       </span>

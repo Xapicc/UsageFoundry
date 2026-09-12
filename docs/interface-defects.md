@@ -127,3 +127,20 @@ nothing about it.
   in `depNames`, at both widths rather than more when stacked, so the fallback to
   a count means the same thing on a phone and on a laptop. D rather than B
   because nothing about the markup is wrong; the cell is just that narrow.
+- **2026-09-12, class D.** Under the ascii skin a meter with no ceiling drew
+  longer than every meter beside it: `AsciiBar` mixed U+2588/2591/2592 with
+  U+2573 and took one advance for all four, and the reader's face answers a
+  fallback **per glyph** — on the stack that resolves to `Liberation Mono` here,
+  `█ ▒ ░` draw 7.80px at 13px and U+2573 draws 13.00px, which is a twenty-cell
+  `╳` bar at 275.63px against 171.67px. `useFittedCells` doubled it: `cellPx` was
+  the drawn run divided by its cells, an average over whatever composition was on
+  screen, so the `╳` bar also fitted a different *count* from its neighbours.
+  Reported by the operator, who also described the band and track drawing wider
+  than the fill inside one bar — that half was not reproduced, because no face
+  installed here answers the three block glyphs at three widths. Fixed by boxing
+  each run to `cells × cellPx` with `overflow-x: clip` and measuring `cellPx`
+  off a transient `█` probe inside the bar, so the column is the block's own
+  advance and no glyph decides a width; `docs/verification.md` carries the
+  readings. D and not B because the markup was already correct — the same
+  character counts, from the ranges the file's own test pins — and only a real
+  engine with a real font stack says what they draw.
