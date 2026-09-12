@@ -67,8 +67,8 @@ Measured against the rule, by counting references:
 
 | Tool | `src/` | `scripts/` | Verdict |
 |---|---|---|---|
-| `codex` | **15 files**, including `src/lib/codexAuth.ts`, `src/lib/codexRules.ts`, `src/lib/cycleInvocation.ts` and three `/api/codex-auth/` routes | - | image. It is a run *engine* here, not a tool an agent happens to call |
-| `winnow` | **12 files**, including `src/lib/contextPruning.ts`, `src/lib/retention.ts`, `src/lib/intakeFilter.ts` | - | image, and it is the binary `Dockerfile:311-314` was written about |
+| `codex` | **15 files**, including `src/lib/codexAuth.ts`, `src/lib/codexRules.ts`, `src/lib/cycleInvocation.ts` and three `/api/codex-auth/` routes | none | image. It is a run *engine* here, not a tool an agent happens to call |
+| `winnow` | **12 files**, including `src/lib/contextPruning.ts`, `src/lib/retention.ts`, `src/lib/intakeFilter.ts` | none | image, and it is the binary `Dockerfile:311-314` was written about |
 | `playwright` | `src/lib/cycleInvocation.ts` | `scripts/smoke-pages.mjs` | image. `npm run smoke-pages` is a repository check and cannot depend on the operator having copied a directory |
 | `jq` | **none** | `scripts/file-health-check-issues.sh` | **the one misfiled tool**, and it still stays - see below |
 

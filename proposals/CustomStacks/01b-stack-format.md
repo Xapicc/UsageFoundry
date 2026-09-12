@@ -38,7 +38,7 @@ four production dependencies (`package.json`) and a format needing a fifth is a
 format this design cannot have. It is also what this tree already uses for
 operator-authored declarative data: `settings.json` under `DATA_DIR`, the CLI's
 `--settings`, and the managed settings the entrypoint writes at
-`docker-entrypoint.sh:423-440`. The objection that JSON cannot carry a comment is
+`docker-entrypoint.sh:423-441`. The objection that JSON cannot carry a comment is
 answered by the stack being a **directory**: prose goes in `README.md` beside the
 declaration, where it can be as long as it needs to be.
 
@@ -205,8 +205,9 @@ the boot or the other stacks.
    root, which is `Dockerfile:175`'s own idiom for the same act.
 
 Steps 1 to 4 run under
-`setpriv --reuid "$UF_AGENT_UID" --regid "$UF_AGENT_GID" --clear-groups`, the
-form `docker-entrypoint.sh:147` and `:218` already use. Steps 5 and 6 are root's.
+`setpriv --reuid="$UF_AGENT_UID" --regid="${UF_AGENT_GID:-$UF_AGENT_UID}"
+--clear-groups`, the form `docker-entrypoint.sh:147-148` and `:218-219` already
+use. Steps 5 and 6 are root's.
 `01a-` §6 gives the reason the split is safe here and would not be at run time.
 
 ---

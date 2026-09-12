@@ -67,7 +67,7 @@ the host filesystem, which is the same boundary that already protects `.env` and
 They are two paths because `C1` says they must be. A named volume takes its
 contents from the image exactly once, at creation, so anything the image ships at
 a volume's mount point is masked on every install that already exists and visible
-only on a fresh one (`Dockerfile:302-309`). **The image ships nothing under
+only on a fresh one (`Dockerfile:303-309`). **The image ships nothing under
 `/var/lib/uf-stacks`, ever**, and §9 puts a test on that sentence so breaking it
 is loud rather than silent.
 
@@ -90,7 +90,7 @@ volume for exactly this reason: `usagefoundry-winnow` is mounted at
 
 `bin/` is root-owned and agent-readable, and that is the opposite of the
 decision the two existing install loops take. Both of those run under
-`setpriv --reuid "$UF_AGENT_UID"` (`docker-entrypoint.sh:147`, `:218`), and
+`setpriv --reuid="$UF_AGENT_UID"` (`docker-entrypoint.sh:147-148`, `:218-219`), and
 `src/lib/deployment.test.ts:1045` pins the reason: *"installs as the uid that
 will run them, never as root"*, so an agent can remove or upgrade what it runs.
 
@@ -127,7 +127,7 @@ no tool. Nothing in the list below is ever touched again to add a tool.
 | `docker-compose.yml` | one mount, `${UF_STACKS_DIR:-./stacks}:/etc/uf-stacks:ro`, and one named volume `usagefoundry-stacks:/var/lib/uf-stacks` | the door itself, and it is not in the image |
 | `Dockerfile` | one `ENV PATH="/var/lib/uf-stacks/bin:${PATH}"`, and `scripts/apply-stacks.mjs` added to the `COPY` at `:570` | `PATH` must be final before the server starts (§4) |
 | `docker-entrypoint.sh` | one block that runs the applier before `exec "$@"` (`:1223`) | the applier is root and must precede the server |
-| `scripts/apply-stacks.mjs` | new, the applier | — |
+| `scripts/apply-stacks.mjs` | new, the applier | it is the mechanism |
 | `src/lib/stacks.ts` | new, reads the receipts | R5's data, not its surface |
 | `src/instrumentation.ts` | merge the applier's env file into `process.env` | §5 |
 
@@ -145,7 +145,7 @@ The `git diff --name-only` over the commit that adds Terraform is one line:
 `/workspace` is already mounted and needs no compose change at all, and the app
 already claims a hidden sibling directory inside it: `WORKTREE_STORE_DIR` is
 `.uf-worktrees`, dot-prefixed so `/api/folders` never offers it as a run target
-(`src/lib/orchestrator.ts:2360-2400`). It is rejected because **agents write
+(`src/lib/orchestrator.ts:2360-2382`). It is rejected because **agents write
 there**. A stack declaration an agent can edit is a way for one run to install
 software into every later run, and no sentence fixes that.
 
@@ -251,9 +251,10 @@ server's environment and strip prefixes and names that do not include `PATH`
 else passes through. The CLI needs PATH, HOME, CLAUDE_CONFIG_DIR, proxy and CA
 settings, and locale to function at all"* (`src/lib/orchestrator.ts:5628`).
 
-**This is already pinned by a test.** `src/lib/git.test.ts:88`,
-`it("passes PATH through so a repo-local hook resolves")`, asserts
-`assert.equal(env.PATH, process.env.PATH)` at `:96`. The `Dockerfile` half is
+**This is already pinned by a test.** `src/lib/git.test.ts:89`,
+`it("passes through what git needs and disables the credential prompt")`, asserts
+`assert.equal(env.PATH, process.env.PATH)` at `:97` - over `gitEnv` rather than
+`childEnv`, a distinction `01c-` §2 makes honestly. The `Dockerfile` half is
 pinned too: `src/lib/deployment.test.ts:1029`,
 `it("puts uv's launcher directory on the PATH a hook resolves through")`, which
 is the same assertion one layer down and is the shape the new line copies.
@@ -277,7 +278,7 @@ code:
 
 An arbitrary binary the CLI has never heard of is not read-only shell, so
 **this design assumes the worse answer: the grant is required.** The repair is
-the shape the argv builder already has. `cycleInvocation.ts:1190-1225` assembles
+the shape the argv builder already has. `cycleInvocation.ts:1193-1225` assembles
 `--allowedTools` from `ISOLATED_GIT_TOOLS` and `SEARCH_TOOLS` and states the rule
 in its own comment, that `--allowedTools` *names what skips the prompt, and
 everything else still follows the mode*. A third list joins them, built from the
@@ -360,8 +361,9 @@ that points into it.
 `bin/` and `pkg/` are root-owned so nothing an agent does can change what a later
 run executes; `state/` is agent-owned because tools write there. Install steps do
 **not** run as root: each step runs under
-`setpriv --reuid "$UF_AGENT_UID" --regid "$UF_AGENT_GID" --clear-groups` into
-`pkg/<stack>`, exactly as `docker-entrypoint.sh:147` and `:218` already do, and
+`setpriv --reuid="$UF_AGENT_UID" --regid="${UF_AGENT_GID:-$UF_AGENT_UID}"
+--clear-groups` into `pkg/<stack>`, exactly as `docker-entrypoint.sh:147-148`
+and `:218-219` already do, and
 only the final `chown -R root:root` and the `install -m 0755` link are root's.
 So a third party's `npm` postinstall script never executes as root.
 
@@ -397,7 +399,7 @@ it among the things this mechanism deliberately does not solve.
 **C7's four invariants.** `createRun`: untouched, nothing here is on the
 admission path. The two flags that must ride every cycle's argv: untouched, the
 stack grant is appended to `--allowedTools`, which is already rebuilt per cycle
-at `cycleInvocation.ts:1190-1225`, and **nothing about a stack is written into
+at `cycleInvocation.ts:1193-1225`, and **nothing about a stack is written into
 the appended system prompt**, because `runs.file_cost_notice` is a cached prefix
 generated once at `createRun` and text that differed between two cycles would
 cold-start a large context. `--add-dir`: no stack path is ever passed to it, so
@@ -456,9 +458,12 @@ to get right.
 **Two stacks claiming the same binary name: both lose it, neither silently.** The
 name is not linked, both receipts are marked `conflicted` and each names the
 other. Letting the lexically first win would hand the operator a version they did
-not choose with nothing to read; `docs/install.md:493-505` records this tree
-taking the same view of an ambiguous mount, where a silent fifth slot was turned
-into a refused boot. **This refuses the name and not the boot**, which is a
+not choose with nothing to read. `docs/install.md:819-822` records this tree
+taking the same view of an ambiguous mount, where a silent fifth slot *"used to
+be a silent no-op"* and *"now refuses the boot instead, naming the variable"*,
+because the silence *"reads exactly like a directory that is mounted and happens
+to be empty"* (`src/lib/config.ts:230-231`, which italicises its own *is*).
+**This refuses the name and not the boot**, which is a
 deliberate departure from that precedent: a mount is the app's subject, a stack
 is an accessory, and losing an accessory must not lose the install.
 

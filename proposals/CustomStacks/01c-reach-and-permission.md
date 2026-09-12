@@ -35,12 +35,20 @@ include `PATH`:
 > proxy and CA settings, and locale to function at all
 > `src/lib/orchestrator.ts:5628`, over the strip list at `:5698-5716`
 
-**The test that pins it is `src/lib/git.test.ts:88`**,
-`it("passes PATH through so a repo-local hook resolves")`, whose assertion is
-`assert.equal(env.PATH, process.env.PATH)` at `:96`. That is the sentence the
-task of finding it asks for: `PATH` passing through is not a property this design
-has to establish, it is one an existing test would fail on if somebody removed
-it.
+**The test that pins it is `src/lib/git.test.ts:89`**,
+`it("passes through what git needs and disables the credential prompt")`, whose
+assertion is `assert.equal(env.PATH, process.env.PATH)` at `:97`. So `PATH`
+passing through is not a property this design has to establish: it is one an
+existing test would fail on if somebody removed it.
+
+**With one honest caveat, which is a small finding of its own.** That test is
+over `gitEnv`, the environment for a `git` child, not over `childEnv`, the one
+every agent child gets. `childEnv` has three `describe` blocks in
+`src/lib/orchestrator.test.ts` and **none of them asserts anything about
+`PATH`** - `awk` over `NR>=4251 && NR<=4400 && /PATH/` returns nothing. For agent
+children the guarantee is the construction plus the docblock above, which is
+weaker than a test, and an assertion there is a fourth candidate for the test
+additions `01a-` §9 lists.
 
 One layer down, `src/lib/deployment.test.ts:1029`,
 `it("puts uv's launcher directory on the PATH a hook resolves through")`, pins
@@ -93,10 +101,13 @@ here is that **it is refused** - stated as an assumption, not as a finding.
 
 **The design under that assumption.** A stack's `allow` array is projected onto
 the work cycle's `--allowedTools`. The argv builder already has exactly this
-shape at `src/lib/cycleInvocation.ts:1190-1225`, which assembles
+shape at `src/lib/cycleInvocation.ts:1193-1225`, which assembles
 `["-p", prompt, "--output-format", "stream-json", "--verbose"]`, then `--model`,
 `--permission-mode`, then `--allowedTools` with `ISOLATED_GIT_TOOLS` and
-`SEARCH_TOOLS` spread into it, then `--disallowedTools` with `PROCESS_KILLERS`.
+`SEARCH_TOOLS` spread into it at `:1212-1216`, then `--disallowedTools` with `PROCESS_KILLERS`
+(`:710`). Note that `ISOLATED_GIT_TOOLS` is spread only when the run is
+isolated; the stack grants are unconditional, because a stack's tools do not
+depend on where the run's checkout is.
 The stack grants become a third spread list, derived from the receipts whose
 status is `ok`, and the builder's own comment is the rule that makes this safe:
 `--allowedTools` **names what skips the prompt, and everything else still follows
