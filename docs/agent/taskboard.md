@@ -137,7 +137,290 @@ are refused *by name* rather than dropped, on `normalizeAgentInput`'s grounds: a
 caller whose field was silently ignored believes it took effect.
 
 **Nothing on the board expires**, and the reasoning is in `retention.md` beside
-the sweeps that do not touch it.
+the sweeps that do not touch it. A task's **comments** expire with it and never on
+their own: `task_comments.task_id` is `ON DELETE CASCADE`, which is the one
+cascade on this path and the only foreign key here that could be one — unlike the
+three run id columns, the row it points at *is* deleted, by the operator and by
+nobody else, and a thread outliving its task is orphaned prose no surface can
+place. `parent_task_id`'s `SET NULL` is the opposite case for the opposite
+reason: there the child is the thing worth keeping.
+
+**A comment is append-only, and the absent columns are the design.** There is no
+`updated_at` on `task_comments`, no `deleted_at`, no `edited_by`, and no route,
+tool or function that changes a note once it is written — a comment goes away
+only when its task does. The reason is narrower than "an audit trail is nice": a
+thread here is written by three parties who cannot see each other, and the whole
+point of it is that a run reads what the operator said. An edit would leave a
+cycle acting on text that is no longer there, with the board showing the new text
+and nothing anywhere recording that it changed — which is the same class of
+failure as a stale claim, in a place where the evidence is the thing being
+changed. What that costs is that a mistaken note stays, answered by the next one,
+and the trade is deliberate: a thread is cheap and a run acting on a sentence
+nobody can produce any more is not. The day this needs a redaction the answer is a
+tombstoned row that says a note was withdrawn, never a mutation of the one that
+was read.
+
+**A comment's author is recorded, never claimed, and it is the same rule
+`origin` and `created_by_run_id` already carry one table over.** It comes from
+the door the write arrived at — the route's constant `OPERATOR`, the chat tool's
+subject, the run's capability token — and `normalizeTaskCommentInput` refuses
+`author` and `authorRunId` off the wire **by name** rather than dropping them, on
+`normalizeAgentInput`'s grounds. Both ways of getting it wrong are silent and
+both end as a sentence somebody acts on: a run's note recorded as the operator's
+is an agent's guess read as an instruction, and an operator's note carrying a run
+id is a thread asserting a run said something it did not. The `TaskActor` union
+is reused rather than a string beside an optional id, and that is what makes the
+second unrepresentable — `authorRunId` is derived from the actor in one function
+and can be read from nowhere else. `createdAt` is refused by name for a reason of
+this table's own: the thread is ordered by it, so a write that chose its own
+timestamp could place a note before the ones answering it and no reader could
+tell. `TASK_COMMENT_AUTHORS` is its own closed set rather than `TASK_ORIGINS`
+despite holding the same four words, `rowToTask`'s reason: every reader here is
+typed against it, and a widening made for one table would silently admit a word
+the other's `switch` has no case for.
+
+**A comment moves nothing, and specifically does not bump `tasks.updated_at`.**
+Nothing on this path calls `updateTask` and nothing on it may. That column means
+the task *moved* and `idx_tasks_board` and `listTasks` both sort on it, so a note
+would reorder the board and read as a move — a row jumping to the top of Open
+because somebody added a sentence is the board telling an operator something
+happened to the work. `taskTransitionRefusal` is untouched and is still the whole
+of the board's authority model: a comment claims nothing, closes nothing, changes
+no status and no priority, and every tool description on the MCP surface says so
+in as many words, because a model handed the one write beside `create_task` reads
+it as a way around that function unless told otherwise.
+
+**A clipped thread loses its oldest end, which is the one place this inverts
+`listTasks`' shape.** The rows come back oldest first — that is how a thread is
+read — but the cap is applied to a descending query which is then reversed, so
+what a reader loses is what has already been answered. A cap taking from the
+other end would hide the note somebody wrote a minute ago, which is the only one
+a run acting on the thread needs, and it would do it silently. `total` therefore
+travels beside the rows on a shortened diff's rule, and `TaskCommentListDTO`
+carries no `offset` at all: a thread is read from the top rather than paged, and
+the day one needs a second page the offset has to count from the *new* end, which
+is a different query rather than a larger number.
+
+**Comments reach a run through a tool call and never through the appended
+system prompt.** `TASKBOARD_NOTICE` is frozen against the cached prefix, on the
+file price list's rule — a run mid-flight across a deploy that gained one newline
+pays a cold prefix for it. A thread is the opposite of frozen: it changes between
+cycles, which is the entire reason an operator writes on a task a run is holding.
+Injected there it would rewrite that prefix on every cycle that gained a note,
+which is the most expensive possible way to deliver a sentence. So the run reads
+its threads out of `list_my_tasks`, on the `held` half and deliberately not on
+`openInFolder`: `held` is what this run may act on, where a note on a task it may
+only read about is tokens spent on somebody else's conversation. Bodies in a tool
+result are **whole** rather than clipped, which is the one place this departs from
+`bodyPreview` beside it — a work cycle has no `get_task`, so there is no second
+call that would return the rest, and a clipped note is an instruction it can
+never finish reading. `MAX_TOOL_TASK_COMMENTS` is the cap and the count travels
+beside it; the read is one query per held row rather than one for the set, which
+is the N+1 the board's own listing refuses and is admissible only because `held`
+is capped at `MAX_RUN_TASKS` and a tool call is not a ten-second poll.
+
+**`comment_on_task` takes a task id and is deliberately not held to
+`complete_task`'s rule, which is a smaller claim than it looks.** No tool on the
+run surface takes a *run* id and that is unchanged — the author is still the
+token's. What this one does take is an id off a list, and the reason that is safe
+here and not there is what the two writes do: `complete_task` against a guessed
+id closes work nobody did and the board then says it happened, where
+`comment_on_task` against a guessed id puts a sentence signed by this run on a
+task it was not working. The first is a state nothing can tell apart from the
+truth; the second is visible as exactly what it is. A run may therefore write on
+anything it can see, which includes `openInFolder` — the case that makes the tool
+worth having, since "I have just changed the thing this task is about" is a note
+about a task the run does not hold. A **block** is refused the tool outright, on
+`create_task`'s ground rather than by omission: a note is permanent and cannot be
+edited, its turn is unattended, and a thread it wrote to is one the operator meets
+already answered by something nobody was reading. Its refusal names what a block
+can still do with the board, on `subjectRefusal`'s rule.
+
+**The comment count is on `TaskDTO` and is passed rather than read.**
+`commentCountsForTasks` is one `GROUP BY` for a whole page, `runLinksForTasks`'
+shape and its reason — the board draws up to `MAX_TASK_PAGE` rows on a ten-second
+poll, so a per-row read is a second N+1 on the same timer. It reaches `taskDTO`
+as an argument so that nothing in `tasks.ts` imports `taskComments.ts`: the
+dependency between the two runs one way, and a read there would close the loop
+for a number that is drawn beside a row rather than decided on. Both task routes
+fill it, because `chatDTO`'s rule applies to a count as much as to a link — a
+`commentCount` on the GET and absent from the PATCH would have the editor lose it
+on every save. `taskComments.ts` is its own module rather than a fifth section of
+`tasks.ts` for the reason `fileCostNotice.ts` sits beside `orchestrator.ts`: that
+file is already the closed sets, the transition rule, the door, the storage and
+the wire for one table, and a second table's half pushed into it would bury
+`taskTransitionRefusal`, which is the function it exists to make findable.
+
+**A dependency is advisory, and that is the decision every other line about it
+rests on.** `task_deps` records that one task has to happen before another, and
+nothing in this app acts on it: there is no new status, no new refusal, and no
+task made unclaimable because something it waits for is open. A task whose
+dependencies are not all `done` is **shown** as blocked — `blockedByCount`,
+derived at read time in `depNeighbourhood`, never stored — and every actor that
+could claim, start, comment on or close it before still can.
+`taskTransitionRefusal` is untouched and is still the whole of the board's
+authority model; nothing in `taskDeps.ts` may consult it, extend it or become a
+second answer to it. What making this *enforcing* would cost is worth stating,
+because it looks like a small change and is not. It would need a fifth reading
+of "may this move" that is not in that one function — so either the function
+grows a dependency on a second table, or a second authority appears beside it,
+and the whole reason this board is safe to hand three kinds of agent is that
+there is exactly one place to read. It would make an ordering somebody typed
+into a deletion of a press: a task blocked by a dependency the operator dropped,
+or by one filed by a chat turn that misread the folder, is a task they can no
+longer claim, on the strength of a row nothing audited. And it would put a lock
+back in a feature that deliberately has none — `claimed` has no clock on it for
+reasons two paragraphs up, and an enforced edge is the same failure arriving
+through the other door, work held back by a record nobody is watching expire.
+The lever that exists is visibility, exactly as it is for a stale claim.
+
+**One kind of edge, and the absent condition column is the design.** `run_deps`
+carries `on-success`/`on-finish` because it gates a *start*: something is
+waiting on the answer, so what counts as satisfied has to be explicit on the
+wire — `dependencies.md` has that argument. This edge gates nothing, so there is
+nothing for a condition to decide, and a kind would be a field every reader has
+to branch on for no behaviour. `depIsBlocking` is the whole of what "satisfied"
+means here and it is one comparison: `done` clears an edge and nothing else
+does. **`dropped` deliberately still blocks.** A task somebody decided should
+not happen has not been *done*, and the ordering its dependent was given still
+says it comes first; reading `dropped` as satisfied would quietly mark a
+dependent ready on the strength of work nobody did, and unlike a wrong status
+that reading is drawn as a word rather than stored, so nothing anywhere would
+say so. What the operator gets instead is the dependency's own status beside it,
+so the thing in the way names itself and the edge can be removed.
+
+**`parent_task_id` is a different relation and stays one.** It records that a
+run filed a task while working another — provenance, and the answer to "where
+did this come from" — and it is not "this blocks that". Nothing reads the two
+together, nothing derives one from the other, and a future editor tempted to
+merge them should note that they disagree in both directions: a task filed
+during another's work usually does *not* have to wait for it, and two tasks with
+a real ordering between them usually have no parentage at all. The two are drawn
+differently for that reason and the doc for the page says which is which.
+
+**A self-edge is refused by name and a loop is refused at the write door, and
+the loop test is `dependencyCycle` rather than a second walker.** Both failures
+are silent: a self-edge stores happily, reads back as a task waiting for itself,
+and renders as a row permanently blocked by nothing a person can act on; a loop
+is worse and quieter, every task in it blocked for ever, each pointing at the
+next, with no surface in a position to notice that the set as a whole can never
+clear. The self-edge gets its own sentence rather than falling out of the walker
+because what a person has to do about it is different — there is no edge to
+break somewhere else, there is one press that was wrong. For the loop,
+`orchestrator.ts`'s `dependencyCycle` is the one definition of what a cycle is
+in this app, as its caller in `workflows.ts` already records; taking a second
+copy here would be two answers to one question, and the id pairs it walks are
+agnostic about what the ids are — it was generalised to `DependencyNodeLink` in
+this change for exactly that reason, because a task edge has no `edge` kind to
+supply and a fabricated one carried only to satisfy a signature is a lie in a
+type. It is handed the stored edges **plus the proposed one**, which is sound
+because this door is the only writer and the graph on disk is therefore already
+acyclic. The refusal **names the loop it found**, through titles the door passes
+in: a path drawn out of four UUIDs is a sentence nobody can act on.
+
+**A duplicate edge is not an error, and the answer says it was already there.**
+The primary key over the pair is what makes the insert idempotent —
+`ON CONFLICT DO NOTHING` rather than a read followed by an insert, since a
+check-then-insert is a window in which a second door writes the same pair — and
+`created` is read off the statement's own `changes` rather than a second read's
+guess. The distinction is not cosmetic: a caller told nothing cannot tell "I
+drew this" from "this was already drawn", which is exactly what a model retrying
+a tool call is acting on. **Removing an edge is the opposite and is a 404.** A
+repeated add is a caller restating something true; a remove that found nothing
+means the row the press was drawn against has changed underneath it, and a board
+told "done" would redraw itself as though the press had landed.
+
+**Edges across projects are allowed, and the wire carries which project each end
+is in.** A task in one folder blocking one in another is precisely the case an
+operator needs shown — it is the ordering they cannot see any other way — so
+nothing refuses it and `TaskDepRefDTO` carries `mountId`, `mountLabel` and
+`relPath` beside the title and the status. They are split by the same
+`describeFolder` `taskDTO` uses, so a task drawn as a row and the same task drawn
+as somebody else's dependency cannot disagree about where it is, and the stored
+`mount_id` travels rather than a resolved one on `taskDTO`'s rule: a mount the
+operator renamed leaves the task where it was filed and the label is what goes
+null. On the tool surface the same fields ride `get_task`'s refs, because
+"which repository is this waiting on" is not answerable from an id.
+
+**Adding an edge is available to chat and to a run; removing one is the
+operator's alone.** `add_task_dependency` is on both MCP surfaces — refused to
+an orchestrator block, which sees the board through one node of one workflow
+with nobody reading its reasoning — and **neither surface has a tool that
+removes an edge**. The gate is not a refusal to be found in a pure function: it
+is that the tool does not exist, and `DELETE /api/tasks/[id]/deps` behind the
+app's ordinary gate is the only door. A model silently undoing an ordering the
+operator drew is the quiet reversal the rest of this board's rules exist to
+prevent, and it is quieter here than anywhere else on the board — a status that
+moved leaves a status behind, a note that was written stays written, and an edge
+that has been removed leaves nothing at all saying it was ever there. The
+asymmetry is deliberate and is the same shape as the one on statuses: what an
+agent may *record* is wide, what it may *undo* is the operator's.
+
+**The edge records no author, and that absence is not an oversight.** Three
+doors write one, all three write the same fact, and an edge is not a claim about
+who noticed the ordering — where a *comment* is a sentence somebody later acts
+on, which is why that table records its author and refuses a body that names
+one. What would make an author column load-bearing here is a rule that read it,
+and the only candidate is "a run may remove what a run drew", which is the
+enforcement decision above arriving through a side door. If an author is ever
+added, that is the paragraph it has to answer.
+
+**The neighbourhood is on `TaskDTO`, is passed rather than read, and its lists
+are capped while its counts are not.** `taskDeps.ts` sits on the far side of
+`tasks.ts`'s one-way dependency exactly as `taskComments.ts` does, so a
+neighbourhood reaches `taskDTO` as an argument and the empty one is written
+inline there rather than imported — a `NO_TASK_DEPS` taken from the other module
+would close the loop for five zeroes. What it must never become is a *read*: the
+board asks for a whole page in one request precisely so it can draw a row
+without a second one, and a call inside `taskDTO` would be an N+1 on a
+ten-second poll; `depsForTasks` answers a page in two queries, one per direction,
+because the two directions are two different joins and
+`idx_task_deps_depends_on` exists for the second. The lists are capped at
+`MAX_TASK_DEP_LINKS`, ten, because nothing bounds how many edges one task may
+accumulate and `MAX_TASK_PAGE` rows each carrying two unbounded neighbour lists
+is the payload to avoid. The counts beside them are **not** capped, on
+`runCount`'s rule, and `blockedByCount` in particular is counted over every edge
+*before* the lists are cut: counted over the capped list instead, a task waiting
+on twelve things with the first ten done would report itself ready, which is a
+number drawn on a row, wrong, with nothing saying so. What a cap drops is the
+**done** end of `dependsOn` — the mirror of a clipped thread losing its oldest
+note, and for the same reason: a list of four finished dependencies beside a
+`blockedByCount` of three names nothing a reader can act on. Anything drawing
+the graph itself must check `dependsOnCount` against `dependsOn.length` rather
+than treat the list as the edge set.
+
+**Every tool that mentions an edge says twice that it holds nothing back.** The
+failure this feature can produce on the agent surface is not a bad write — a
+misdirected edge is a wrong ordering on the board and is visible as one, which
+is why `add_task_dependency` takes two task ids without being held to
+`list_my_tasks`' id rule, the same argument `comment_on_task` makes. It is a
+model *reading* an edge as a gate: stopping work on a task it holds because
+something upstream is open, or telling the operator that a run cannot start.
+Nothing in this app reads `task_deps` when a run starts, when a task is claimed
+or when one is closed, so the tool descriptions, the success reply,
+`get_task`'s `dependencyNote` and `list_my_tasks`' `note` all say so in words —
+a shape alone cannot carry it, because two arrays of task ids read as a queue
+unless something says they are not. The chat's copy carries one sentence more,
+because a chat is the surface that plans work: an ordering recorded here must
+not be read as a way of sequencing runs, and a model that believed otherwise
+would propose a chain and then not propose the second half of it.
+
+**An edge moves nothing, `updated_at` included.** Nothing on this path calls
+`updateTask`, and nothing here may: that column means the task moved and the
+board sorts on it, so drawing an edge would reorder the board and read as
+somebody having worked on the task. It is the comment table's rule and it holds
+on both ends of the pair, which is the half worth stating — the write touches
+two rows and only one of them is the obvious one.
+
+**`task_deps` did not bump `SCHEMA_VERSION`**, and the reason is that constant's
+own docblock rather than an omission: it is bumped for a migration that is
+something other than an added column or an `IF NOT EXISTS`, and this is two
+`IF NOT EXISTS` statements, as `task_comments` was before it. Both ends cascade,
+`run_deps`' reasoning with one difference that matters — a task *is* deleted, by
+the operator and by nobody else, where nothing in this app deletes a `runs` row
+— so an edge naming a row that is gone is an ordering no reader can place. The
+two columns are two separate foreign keys and both are declared, since a table
+carrying only one would leave half the edges standing after a delete.
 
 **The board's own index deliberately does not carry `priority`, and that is the
 one thing here a reader is most likely to "fix".** Priority is a closed set of
@@ -520,6 +803,148 @@ of guard for a different reason: a stored folder the workspace scan does not
 currently offer stays in the list as its own option, since a `<select>` whose
 value is absent resolves to the first option and an unrelated save would then
 move the task to a folder nobody picked.
+
+**The thread is drawn on the task's own page, and it does not poll either.**
+`TaskThread` in `src/app/tasks/[id]/page.tsx` reads
+`GET /api/tasks/[id]/comments` on arrival and again after a post it made itself,
+and there is no interval anywhere on that route. It holds a **second** draft
+beside the editor's, so the page's own reason applies to it twice over: a timer
+re-reading the thread could neither replace the composer's text without throwing
+away what is being typed nor leave it alone while redrawing the notes it answers.
+What that costs is a note written at another door while the page is open, and it
+is the same trade the row above already makes. A successful post refetches the
+**thread and nothing else**: the note did not move the task — no status, no
+priority, and deliberately not `updated_at` — so re-reading the row would redraw
+a heading nothing changed. Its three ways of having nothing are the board's, one
+table down: a failed read says *this is a failed request rather than an empty
+thread* and offers a retry, an empty thread says what a comment is and who may
+write one, and a thread longer than `MAX_TASK_COMMENTS` says how many of how many
+it is showing and which end is missing. The composer is drawn in all three,
+including the failed read — a thread that could not be read says nothing about
+whether a note can be written, and the door answers for that itself.
+
+**A note's body is drawn as the characters it is, and that is decided by the
+field above it rather than by what the text might be.** `whitespace-pre-wrap`,
+no `Markdown`, because the task's own brief on that page is drawn in a
+`Textarea` — the same text, unrendered. A thread rendering headings and links
+over a brief shown raw would claim a fidelity the field it answers does not
+have, and it would do it on the one surface whose whole point is that a run
+reads back exactly what somebody wrote. The day the brief itself is rendered is
+the day this follows it, and not before. The author is drawn as a word from
+`TASK_COMMENT_AUTHOR_WORD` and the run id beside it as a link, in that order and
+never the id alone: the pairing is what `taskComments.ts` records and this is
+where it is read back, so the word says who wrote the note and the id is a handle
+on the run that did. That map is a second `Record` holding the same four words as
+`TASK_ORIGIN_WORD` for the reason `TASK_COMMENT_AUTHORS` is a second closed set —
+the two tables move independently, and one map shared between them would let a
+fifth word added for either reach a reader typed against the other.
+
+**The count goes inside a cell the board already has, and a column for it is
+refused rather than merely not built.** The Task column is `w-full` over six
+min-width columns and is therefore whatever they leave — about 190px on a 1280px
+window — so a seventh floor comes straight off the title, for a figure that is
+zero on most rows. It is drawn in the Task cell specifically: that is the one
+cell the board deliberately leaves unlabelled, being the headline the record is
+identified by, and every other cell carries a `label` that `stack` puts above the
+value at 390px, where "Priority urgent 3" and "Runs 3" both read as a fact about
+something else. **Nothing at all at zero**, which is the same decision the Runs
+cell makes one column over: a faint "0 comments" on every row is a column of the
+word none. And it is **not** a link, unlike the run count beside it — that one is
+the only handle its cell can give, where the title directly above this one is
+already a link to the page the thread is on.
+
+**The board draws an ordering as one line inside a cell it already has, and a
+column for it is refused for the count's reason above.** `DepLine` in
+`src/app/tasks/page.tsx` goes in the Task cell under the title, above the
+provenance — it is about the work rather than about where the brief came from,
+and `Blocked by` is the thing on this page somebody scanning a backlog is looking
+for. **Nothing at all when a task has no edges**, which is the Runs cell's
+decision one column over and matters more here: most rows have none, so a marker
+that drew on every row would be a column of the word none with a seventh `min-w`
+paid for it. It names **one** neighbour a side and counts past that — measured,
+not chosen: two a side rendered as six wrapped lines under a two-line title at
+1280px, because that cell is whatever the six min-width columns leave. The
+stacked layout at 390px would carry more and deliberately does not get more, or
+the same board would say different things on a phone and on a laptop. What
+decides between a name and a count is the **count**, never the list's length:
+`TaskDepsDTO`'s lists stop at `MAX_TASK_DEP_LINKS` and its counts do not, so a
+line reading the list would report a task waiting on fourteen things as one
+waiting on ten. The blocking half is `dependsOn.slice(0, blockedByCount)` and
+that is sound only because `depNeighbourhood` partitions the list blocking-first;
+the browser never re-tests a status, because `depIsBlocking` is a server module
+and a copy of "done clears an edge and nothing else does" over here is a second
+answer to when an ordering is satisfied. An ordering that has fully cleared still
+draws — as *After* rather than *Blocked by* — since a row that drew nothing for
+it would say this task was never put behind anything.
+
+**The task's own page draws the neighbourhood, and the canvas draws while the
+form writes.** `TaskDependencies` holds both, `TaskDepGraph` is the surface and
+`taskNeighbourhoodGraph` in `src/lib/taskDepGraph.ts` is what decides which nodes
+and arrows exist. The split is the point: **every gesture on the drawing is a
+navigation**, a node being a link to that task and nothing else being pressable,
+and adding and removing are a picker and a named button underneath. A canvas that
+could delete an ordering would put the one write on this board that no agent may
+make behind a drag which leaves nothing behind, and it would put it on the half
+of the pane that is hidden at 390px. `WorkflowCanvas` is an editor because a
+workflow has no other surface; these edges have a page each and a list naming
+them in words.
+
+The assembly is in `src/lib` rather than beside the component because **a graph
+assembled wrongly draws a plausible picture** — an arrow the wrong way round is a
+readable drawing of the opposite ordering, and nothing throws. Four rules, all
+asserted in `taskDepGraph.test.ts`. The arrow runs *from* the task that happens
+first, which is the reverse of the way `dependsOn` lists things and is what makes
+`autoLayout`'s layering mean something: everything left of a node is what it
+waits on. The second level expands **outwards only** — a dependency contributes
+its own dependencies and a dependent its own dependents — because expanding both
+ways at level one pulls in every *sibling*, which on a task half the board waits
+for is most of the board and is not an answer to anything the page asks. An edge
+is kept only when both its ends are already drawn, which is what the cone leaves
+at its rim, and an ordering *between* two of this task's own dependencies is kept
+for the same test's other half: they are both on the graph, and leaving it out
+draws a chain as two unrelated things. And a neighbourhood the caller did not ask
+for cannot widen the drawing or mark it clipped.
+
+Nothing on that surface is coloured by status. `conventions.md`'s rule, and the
+case for it is sharpest here: there is one kind of node and one kind of edge, so
+the whole drawing is border tones, the **accent** marks the anchor and the edges
+touching it — it is the app's "this is the one you are looking at" colour rather
+than a tone — and a node's status is a `Badge`, which is where a status tone
+belongs and where every other surface here already reads one. The anchor also
+says *This task* in words beside the halo, because a graph of four boxes is
+exactly where a reader who cannot tell two border tones apart loses the one thing
+the drawing is about. The sheet opens scrolled to the anchor rather than to the
+origin, since the layout puts everything in front of the task to its left and a
+chain three deep would otherwise open showing the dependencies and not the task
+they are for.
+
+**Three ways of having nothing again, and two of them are not the empty canvas.**
+A task with no edges gets the board's empty state — what an ordering is and that
+it is advisory — because a surface with nothing drawn on it says the drawing
+failed as readily as it says there is nothing to draw, and most rows here have no
+ordering at all. A neighbour whose own read failed leaves the graph one level
+short on that side and **says so**: what a reader would otherwise take for the
+end of the ordering is the request stopping, and the two look identical on a
+canvas. A neighbourhood clipped by `MAX_TASK_DEP_LINKS` says that too, on
+`TaskDepsDTO`'s own instruction that anything drawing the graph check the counts
+against the lists — an incomplete picture of an ordering does not look
+incomplete.
+
+The form renders a server refusal **verbatim**, which is the board's rule one
+page down and has a second reason here: the loop refusal *names the loop it
+found*, and that sentence is the only thing telling the operator which edge to
+break. Nothing in the browser pre-empts it. The one thing the page declines to
+send is a picker nobody has answered, and the one task the picker does not offer
+is the page it is on — a self-edge stays refused by name at the door, but
+offering the press is an interface asking for something it knows is not an
+ordering. Removal against a *dependent* is a request to that task's own route,
+because `DELETE /api/tasks/[id]/deps` always takes the waiting task in the path;
+a page that could only cut the edges it is the near end of would be half a door.
+`created: false` is drawn as *already recorded* rather than as a success, since a
+press answered with nothing cannot be told from one that did nothing. And **this
+page still does not poll** — the pane refetches the row after a write it made and
+claims nothing about what another door did meanwhile, holding a half-made choice
+across two selects for exactly the reason the editor above it holds a draft.
 
 **The three ways of having nothing are three different screens, and none of them
 is an empty list.** A board with nothing on it says a task is a brief anybody —

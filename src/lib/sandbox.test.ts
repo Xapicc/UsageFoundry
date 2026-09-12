@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   sandboxArrangement,
+  sandboxFailureNote,
   sandboxRefusal,
   type ManagedSettings,
 } from "./sandbox";
 
 /**
- * Covers the two pure readings in `sandbox.ts`, and only those.
+ * Covers the three pure readings in `sandbox.ts`, and only those.
  *
  * Both earn a test on the same grounds and both are asserted in **both**
  * directions, because each has two silent failure modes that point opposite
@@ -23,9 +24,15 @@ import {
  * Most of the literals below were read out of the pinned CLI binary in
  * `proposals/implemented - Sandboxing/` and have never been executed. The `bwrap:` ones are
  * the exception and the reason the rest are worth having: they are copied out
- * of this install's own `run_events`, where a sandbox that could not start
- * produced 214 failed tool calls and no `sandbox` row at all. What this pins
- * either way is that the matcher is exactly as wide as the evidence, no wider.
+ * of this install's own failed tool calls, where a sandbox that could not start
+ * produced 214 of them and no `sandbox` row at all — and then, once that was
+ * fixed, 714 more in a wording nobody had read. What this pins either way is
+ * that the matcher is exactly as wide as the evidence, no wider.
+ *
+ * The third reading is the note the settings row carries when the detector has
+ * been firing, and it earns a test on the same grounds as the other two: it is
+ * the only place this module names a file for an operator to edit, and naming
+ * the wrong one is a silent way to spend somebody's afternoon.
  */
 
 describe("sandboxRefusal", () => {
@@ -103,6 +110,60 @@ describe("sandboxRefusal", () => {
       sandboxRefusal("bwrap: Creating new namespace failed: nesting depth or /proc/sys/user/max_*_namespaces exceeded (ENOSPC)")
         ?.kind,
       "bwrap-failed",
+    );
+  });
+
+  it("names a bubblewrap that got as far as its mounts, which is what happens now", () => {
+    // Copied out of this install's own failed tool calls, `Exit code 1` prefix
+    // and newline included, because the whole recorded text is what the matcher
+    // has to survive. Five wordings, 714 of them in the 18 days from
+    // 2026-08-25, and every one is a command that never ran. The one above this
+    // test — the namespace being refused outright — has not been recorded since
+    // 2026-08-19, so before these matched, the detector was pinned entirely to
+    // a string this install had stopped producing.
+    const recorded = [
+      "Exit code 1\nbwrap: Can't create file at /workspace/.claude/skills: Permission denied",
+      "Exit code 1\nbwrap: Can't find source path /home/node/.claude/policy-limits.json: No such file or directory",
+      "Exit code 1\nbwrap: Can't get type of source /workspace/Mclear/.git/config.lock: No such file or directory",
+      "Exit code 1\nbwrap: Can't bind mount /oldroot/workspace2/.mcp.json on /newroot/workspace2/.mcp.json: Unable to mount source on destination: No such file or directory",
+      'Exit code 1\nbwrap: Can\'t bind mount /oldroot/dev/null on /newroot/home/node/.claude/remote-settings.json.signature-iat.json: Unable to find "/newroot/home/node/.claude/remote-settings.json.signature-iat.json" in mount table',
+      "Exit code 1\nbwrap: Can't create file at /workspace2/.claude/commands: Read-only file system",
+    ];
+
+    for (const text of recorded) {
+      const refusal = sandboxRefusal(text);
+      assert.equal(refusal?.kind, "bwrap-failed", text);
+      assert.equal(refusal?.reason, text);
+    }
+
+    // The specific mount-time needle still answers first where it applies, so
+    // the row keeps the more precise literal rather than the catch-all.
+    assert.equal(
+      sandboxRefusal("bwrap: Can't mount proc on /newroot/proc: Operation not permitted")
+        ?.matched,
+      "bwrap: Can't mount proc on",
+    );
+  });
+
+  it("leaves a failed call that merely mentions bwrap alone", () => {
+    // Both are real failed tool calls from this install, and both are why the
+    // needle is `bwrap: Can't ` and not `bwrap: `: a process listing and a grep
+    // of the compose file carry the word, and a run working on this repository
+    // produces the second one on purpose.
+    assert.equal(
+      sandboxRefusal(
+        "Exit code 7\n37946 bwrap --new-session --die-with-parent --unshare-net " +
+          "--bind /tmp/claude-http-bbf9ae1008585e56.sock /tmp/claude-http-bbf9ae1008585e56.sock",
+      ),
+      null,
+    );
+    assert.equal(
+      sandboxRefusal(
+        "Exit code 2\n165:      # It needs the seccomp profile from the " +
+          "security_opt block at the bottom\n435:    # bwrap, socat and the " +
+          "seccomp applier, and every one of them sits unused,",
+      ),
+      null,
     );
   });
 
@@ -237,5 +298,69 @@ describe("sandboxArrangement", () => {
     assert.equal(sandboxArrangement(present({ sandbox: true })).state, "none");
     assert.equal(sandboxArrangement(present("not settings at all")).state, "none");
     assert.equal(sandboxArrangement(present(null)).state, "none");
+  });
+});
+
+describe("sandboxFailureNote", () => {
+  const mount = {
+    matched: "bwrap: Can't ",
+    reason:
+      "Exit code 1\nbwrap: Can't create file at /home/node/.claude/seed-admin: Permission denied",
+  };
+
+  it("says nothing when nothing has failed", () => {
+    // The row it sits on already says what the policy is. A note that appeared
+    // on a working install would be the signal that fires on everything.
+    assert.equal(sandboxFailureNote({ count: 0, hours: 24, latest: null }), null);
+  });
+
+  it("counts the calls and quotes the newest, without saying denied", () => {
+    const note = sandboxFailureNote({ count: 14, hours: 24, latest: mount });
+    assert.match(note ?? "", /^14 tool calls died inside bubblewrap in the last 24 hours/);
+    // Verbatim and last: the one part of the sentence an operator can check
+    // against the failed call itself.
+    assert.match(
+      note ?? "",
+      /bwrap: Can't create file at \/home\/node\/\.claude\/seed-admin: Permission denied$/,
+    );
+    // Never the `Exit code 1` the CLI wrapped it in, and never a second line.
+    assert.equal(note?.includes("Exit code"), false);
+    assert.equal(note?.includes("denied the"), false);
+  });
+
+  it("names the seccomp profile only when the namespace was refused", () => {
+    // The distinction the whole note exists for. `unshare` being EPERM is
+    // fixed in one file; a mount point bubblewrap could not prepare is not, and
+    // an operator sent to `security_opt` over the second edits nothing useful.
+    const namespaceRefused = sandboxFailureNote({
+      count: 3,
+      hours: 24,
+      latest: {
+        matched: "bwrap: No permissions to create new namespace",
+        reason:
+          "Exit code 1\nbwrap: No permissions to create new namespace, likely " +
+          "because the kernel does not allow non-privileged user namespaces.",
+      },
+    });
+    assert.match(namespaceRefused ?? "", /docker-compose\.yml/);
+    assert.match(namespaceRefused ?? "", /security_opt/);
+
+    assert.equal(sandboxFailureNote({ count: 3, hours: 24, latest: mount })?.includes("seccomp"), false);
+    // A needle this build does not know about falls to the quoted line alone.
+    assert.equal(
+      sandboxFailureNote({
+        count: 1,
+        hours: 24,
+        latest: { matched: "[Sandbox Linux]", reason: "[Sandbox Linux] a future sentence" },
+      })?.includes("docker-compose.yml"),
+      false,
+    );
+  });
+
+  it("agrees with itself about one call", () => {
+    assert.match(
+      sandboxFailureNote({ count: 1, hours: 24, latest: null }) ?? "",
+      /^1 tool call died/,
+    );
   });
 });

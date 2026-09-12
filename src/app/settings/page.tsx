@@ -1752,6 +1752,17 @@ function CodexAccount() {
  *
  * The sentence is the server's, not this page's. It is the same one the boot
  * line prints, and a second copy written here is a second thing to keep honest.
+ *
+ * `failureNote` is the second sentence and the reason this row is not a switch
+ * either: a policy can be `on`, correct and unreachable at the same time, and
+ * for three weeks this install was exactly that — bubblewrap exiting before it
+ * execed anything, 714 tool calls that did nothing, and a row here that said
+ * `on` because the file it reads did say so. The note is drawn whenever the
+ * detector has fired in the last day and it moves the badge to `warn`, because
+ * an operator who reads one word off this row has to read the word that is
+ * true *today*. `danger` stays reserved for `empty`, which is the state where
+ * commands really do run unwrapped; a sandbox that stops work is expensive but
+ * it is not that. The words are the server's for the reason above.
  */
 function SandboxRow({ sandbox }: { sandbox: unknown }) {
   const read =
@@ -1776,10 +1787,17 @@ function SandboxRow({ sandbox }: { sandbox: unknown }) {
     unknown: "unknown",
   };
 
+  const failureNote = typeof read.failureNote === "string" ? read.failureNote : null;
+
   return (
     <EnvRow label="Sandbox">
-      <Badge tone={TONE[state]}>{WORD[state]}</Badge>{" "}
+      <Badge tone={failureNote ? "warn" : TONE[state]}>{WORD[state]}</Badge>{" "}
       <span>{read.detail}</span>
+      {failureNote ? (
+        // Its own block rather than another clause on the sentence above: the
+        // two disagree, and an operator has to be able to see that they do.
+        <span className="mt-1 block text-warn">{failureNote}</span>
+      ) : null}
     </EnvRow>
   );
 }

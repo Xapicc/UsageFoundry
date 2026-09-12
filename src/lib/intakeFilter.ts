@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import fsp from "node:fs/promises";
 import { BYTES_PER_TOKEN } from "./fileCostNotice";
 import {
   CACHE_WRITE_1H_MULTIPLIER,
@@ -202,6 +203,12 @@ function readResultArray(value: unknown, dropped: boolean): LedgerResult[] {
  */
 export function parseLedger(text: string): LedgerRequest[] {
   const out: LedgerRequest[] = [];
+  consumeLedgerLines(out, text);
+  return out;
+}
+
+/** `parseLedger`'s body, appending to a list that may already hold rows. */
+function consumeLedgerLines(out: LedgerRequest[], text: string): void {
   for (const line of text.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
@@ -226,8 +233,152 @@ export function parseLedger(text: string): LedgerRequest[] {
     if (results.length === 0) continue;
     out.push({ requestId, results });
   }
-  return out;
 }
+
+/**
+ * How much of the ledger is decoded at once.
+ *
+ * The read below is chunked rather than whole-file for the same reason it is
+ * incremental: a `readFileSync` of this file put its entire contents in the
+ * heap as one string, `split("\n")` put a second copy there as 54,145 more, and
+ * `JSON.parse` walked the lot. Measured 2026-09-10 at 101,929,100 bytes: one
+ * poll that crossed `LEDGER_TTL_MS` raised this process's `heapUsed` by ~214 MB
+ * and its RSS to ~700 MB. Reading a megabyte at a time bounds that transient by
+ * this constant instead of by the file, on the *first* read as well as later
+ * ones, so a cold process pays it too.
+ *
+ * A megabyte because it is comfortably above any one line (the longest a
+ * request can produce is bounded by the tool results it names, not by the
+ * file) while still being small enough that the peak is noise beside what the
+ * join over the transcripts costs. A line longer than this is not a failure: the
+ * carry below spans chunks.
+ */
+const LEDGER_CHUNK_BYTES = 1 << 20;
+
+/**
+ * Where one process got to in the ledger, and what it parsed on the way.
+ *
+ * Held by the caller rather than by the reader so the whole of the incremental
+ * read is testable against a file a test wrote, `dedupeResults`' reason for
+ * taking `anchorOf`. `requests` is the accumulating result and is returned by
+ * reference, never copied.
+ */
+export interface LedgerReadState {
+  /** Bytes consumed: the offset just past the last newline this reader saw. */
+  offset: number;
+  /** The file's size at the last read, which is what detects a truncation. */
+  size: number;
+  requests: LedgerRequest[];
+}
+
+/** A state that has read nothing. */
+export function newLedgerReadState(): LedgerReadState {
+  return { offset: 0, size: 0, requests: [] };
+}
+
+/**
+ * The ledger's rows, parsing only the bytes appended since the last call.
+ *
+ * The file is append-only, one line per request the filter rewrote, so the
+ * rows already parsed are still the rows, and re-reading the file to get them
+ * again is the whole of the cost this avoids. `transcripts.ts`' `readAppended`
+ * is the shape being copied, including both of its refusals:
+ *
+ * - **A shorter file starts over.** Truncated or rotated underneath us, the
+ *   cached offset no longer names the same content, so keeping the rows parsed
+ *   before it would serve history that is no longer on disk. Size is the only
+ *   signal there is; a replacement of the same length or longer is not
+ *   detectable here and would be read as an append.
+ * - **A trailing partial line is left unconsumed.** Another process appends to
+ *   this file and the last line may be half-written, so nothing past the final
+ *   newline is parsed and `offset` stops there. It is read again next time. The
+ *   cost is that a final line the writer never terminates is never counted,
+ *   where `readFileSync` would have counted it once it happened to parse.
+ *
+ * Throws what `open`/`read` throw: the caller distinguishes a file that is not
+ * there from one it may not open, and those are different facts. The size is
+ * taken from the open handle rather than from the path, so a poll that finds
+ * nothing appended still proves it may read the file: `stat` needs only the
+ * directory, so an unreadable *empty* ledger would otherwise answer with no
+ * rows and be reported as one the filter had written nothing to.
+ *
+ * **Never run two of these against one state.** Rows are appended to it as they
+ * parse, so a second pass starting from the same offset while the first is
+ * mid-file appends every row it reads twice, and `dedupeResults` reads a
+ * duplicated line as one more request that carried the result: the occurrence
+ * count rises, nothing throws, and the figure is wrong in the direction the
+ * whole de-dupe exists to prevent. `readFilterSavings`' single flight is what
+ * holds that, `transcripts.ts`' `refreshFile` for the same reason. For the same
+ * hazard one chunk down, the offset is committed to the state as each chunk's
+ * rows land rather than once at the end, so a read that fails part way through
+ * leaves a state the next call resumes from instead of re-reading bytes whose
+ * rows it already holds.
+ */
+export async function readLedgerAppended(
+  path: string,
+  state: LedgerReadState,
+): Promise<LedgerRequest[]> {
+  const handle = await fsp.open(path, "r");
+  try {
+    const stat = await handle.stat();
+    if (stat.size < state.size) {
+      state.offset = 0;
+      state.size = 0;
+      state.requests = [];
+    }
+    if (stat.size === state.offset) {
+      state.size = stat.size;
+      return state.requests;
+    }
+
+    const buffer = Buffer.allocUnsafe(LEDGER_CHUNK_BYTES);
+    // Bytes carried across a chunk boundary: the tail of a line whose newline
+    // is in the next chunk. Held as bytes rather than as a string because a
+    // chunk can also split one UTF-8 sequence, and decoding half of one yields
+    // a replacement character that no later concatenation can undo.
+    let carry = Buffer.alloc(0);
+    let position = state.offset;
+    while (position < stat.size) {
+      const want = Math.min(LEDGER_CHUNK_BYTES, stat.size - position);
+      const { bytesRead } = await handle.read(buffer, 0, want, position);
+      if (bytesRead === 0) break; // shrank mid-read; the next pass starts over
+      const view = buffer.subarray(0, bytesRead);
+      position += bytesRead;
+      const lastNewline = view.lastIndexOf(0x0a);
+      if (lastNewline === -1) {
+        carry = Buffer.concat([carry, view]);
+        continue;
+      }
+      const complete =
+        carry.length === 0
+          ? view.subarray(0, lastNewline)
+          : Buffer.concat([carry, view.subarray(0, lastNewline)]);
+      consumeLedgerLines(state.requests, complete.toString("utf8"));
+      // `buffer` is reused on the next pass, so the tail has to be copied out.
+      carry = Buffer.from(view.subarray(lastNewline + 1));
+      state.offset = position - carry.length;
+      state.size = position;
+    }
+    // The size the file was seen at, which is what the next call tests a
+    // truncation against, including after a `bytesRead` of 0, where recording
+    // it is what makes the next call start over.
+    state.size = stat.size;
+  } finally {
+    await handle.close();
+  }
+  return state.requests;
+}
+
+/**
+ * This process's place in the ledger.
+ *
+ * `globalThis`-pinned on the rule every long-lived module state here follows:
+ * unpinned, a dev hot reload silently resets the offset and every poll pays the
+ * full read again, which is the defect, back, and invisible.
+ */
+const ledgerRead = ((globalThis as unknown as {
+  __ufIntakeFilterLedgerRead?: LedgerReadState;
+}).__ufIntakeFilterLedgerRead ??= newLedgerReadState());
 
 /** What the transcripts said about the request a result first rode on. */
 export interface RequestAnchor {
@@ -496,9 +647,9 @@ async function measureFilter(spans: FilterSpans): Promise<FilterSavings> {
     weekly: NO_FILTER_NET,
   };
 
-  let text: string;
+  let requests: LedgerRequest[];
   try {
-    text = fs.readFileSync(LEDGER_PATH, "utf8");
+    requests = await readLedgerAppended(LEDGER_PATH, ledgerRead);
   } catch (err) {
     // A file that is not there and a file this uid may not open are different
     // facts and the card says which: the first is a filter that has written
@@ -507,7 +658,6 @@ async function measureFilter(spans: FilterSpans): Promise<FilterSavings> {
     return { ...base, ledger: missing ? "missing" : "unreadable" };
   }
 
-  const requests = parseLedger(text);
   if (requests.length === 0) return { ...base, ledger: "empty" };
 
   // Main thread only, `priceReceipts`' reason: a sub-agent's context is

@@ -4,6 +4,8 @@ import type {
   AgentOriginDTO,
   RunDependencyDTO,
   RunDTO,
+  TaskCommentAuthorDTO,
+  TaskDepRefDTO,
   TaskDTO,
   TaskOriginDTO,
   TaskPriorityDTO,
@@ -319,6 +321,25 @@ export const TASK_ORIGIN_WORD: Record<TaskOriginDTO, string> = {
 };
 
 /**
+ * Who wrote a note on a task, as the thread labels it.
+ *
+ * The same four words as `TASK_ORIGIN_WORD` and deliberately a second `Record`
+ * rather than a reuse of it, for the reason `TASK_COMMENT_AUTHORS` is its own
+ * closed set one module over: an origin is a fact about how a *task* came to
+ * exist and an author is a fact about one row of a thread, the two tables move
+ * independently, and a map shared between them would let a fifth word added for
+ * one of them reach a reader typed against the other. Typed against
+ * `TaskCommentAuthorDTO`, so the day that union widens this is a compile error
+ * rather than a note drawn with no name on it.
+ */
+export const TASK_COMMENT_AUTHOR_WORD: Record<TaskCommentAuthorDTO, string> = {
+  operator: "Operator",
+  chat: "Orchestrator",
+  block: "Workflow",
+  run: "Run",
+};
+
+/**
  * Where a task's work is, as both surfaces that draw a task say it.
  *
  * Takes the fields rather than the DTO so the board's clipped row and the whole
@@ -338,6 +359,28 @@ export function fmtTaskPlace(
   // A task on a mount root has an empty `relPath`, which reads as a missing
   // value rather than as the root — so the mount's own name stands alone.
   return task.relPath ? `${task.mountLabel} / ${task.relPath}` : task.mountLabel;
+}
+
+/**
+ * The same reading for a task reached as somebody else's dependency.
+ *
+ * A `TaskDepRefDTO` carries no `folder`: `describeFolder` split it before it
+ * reached the wire, and `relPath` is the stored path whole in the case that
+ * splitter cannot place. Both fields null is the ref's way of saying the task
+ * names no folder at all, which is the one thing `folder` was deciding above —
+ * so the ref's own `relPath` stands in for it and the *one* splitter still
+ * decides what the words are. Two surfaces drawing one task must not be able to
+ * disagree about where it is, which is the whole reason this delegates rather
+ * than reading the three fields itself.
+ */
+export function fmtTaskRefPlace(
+  ref: Pick<TaskDepRefDTO, "mountLabel" | "relPath">,
+): string {
+  return fmtTaskPlace({
+    folder: ref.relPath,
+    mountLabel: ref.mountLabel,
+    relPath: ref.relPath,
+  });
 }
 
 export function fmtDuration(ms: number): string {

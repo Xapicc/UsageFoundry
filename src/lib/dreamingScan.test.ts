@@ -34,6 +34,10 @@ const PROJECTS = path.join(HOME, "projects");
 fs.mkdirSync(PROJECTS, { recursive: true });
 process.env.CLAUDE_HOME = HOME;
 
+/** Outside `PROJECTS` so the corpus-wiping `beforeEach` below leaves it alone. */
+const PROBE = path.join(HOME, "chunk-probe");
+fs.writeFileSync(PROBE, "x");
+
 after(() => {
   fs.rmSync(HOME, { recursive: true, force: true });
 });
@@ -153,5 +157,115 @@ describe("scanDreaming deduplication", () => {
     // Still walked and still stat'd: the memo is keyed on the file, and a
     // window that moved would otherwise re-read the corpus every midnight.
     assert.equal(out.filesWalked, 2);
+  });
+});
+
+/** Bytes exactly as given, for the cases where the line breaks are the subject. */
+function writeRaw(name: string, text: string) {
+  const file = path.join(PROJECTS, name);
+  fs.writeFileSync(file, text);
+  mod.forgetDreamingFiles([file]);
+}
+
+/**
+ * `fs.createReadStream`'s chunk size, read rather than assumed.
+ *
+ * The hazard below only exists at a chunk boundary, so a hard-coded 64 KiB would
+ * quietly stop testing anything the day Node changed its default. The probe file
+ * outlives the stream deliberately: destroying one whose open is still in flight
+ * over a path that has already been unlinked raises ENOENT off the event loop,
+ * where no test can catch it.
+ */
+function chunkSize(): number {
+  const stream = fs.createReadStream(PROBE);
+  const size = stream.readableHighWaterMark;
+  stream.destroy();
+  return size;
+}
+
+/**
+ * The three ways a chunked reader can disagree with the whole-file read it
+ * replaced, each of them silent.
+ *
+ * `readOne` reads a transcript a chunk at a time because `readFile` plus
+ * `split("\n")` held two copies of every file and took the server's high-water
+ * mark to 1,531 MB on a cold scan. Nothing about *what* a scan finds was meant
+ * to change, and all three ways of getting that wrong leave a readout that looks
+ * exactly like a correct one: no error, no throw, no failing typecheck, just a
+ * different set of numbers on the pane and a different set of notes written.
+ */
+describe("scanDreaming reads a transcript a chunk at a time", () => {
+  it("does not treat a lone carriage return as a line break", async () => {
+    const alpha = record({ at: "2026-08-10T09:00:00Z", toolUseId: "toolu_a", body: "ENOENT alpha" });
+    const beta = record({ at: "2026-08-10T10:00:00Z", toolUseId: "toolu_b", body: "ENOENT beta" });
+    const gamma = record({ at: "2026-08-12T09:00:00Z", toolUseId: "toolu_c", body: "ENOENT gamma" });
+    // `node:readline` breaks on `\r`, `\n` and `\r\n`; `split("\n")` breaks on
+    // `\n` alone. So the joined pair is one unparseable line to the reader this
+    // replaced and two good records to readline. Counts here feed a
+    // write-on-second-sighting policy, and a reader that found records the old
+    // one did not would change what gets written with nothing to say it had.
+    writeRaw("cr.jsonl", `${alpha}\r${beta}\n${gamma}\n`);
+
+    const out = await mod.scanDreaming({ timeZone: "UTC" });
+    assert.equal(out.totalInstances, 1, "the CR-joined pair is one line, and it does not parse");
+    assert.deepEqual(out.days, ["2026-08-12"], "and the line after it was still read");
+  });
+
+  it("keeps a multi-byte character whole across a chunk boundary", async () => {
+    // Four UTF-8 bytes, laid across the boundary two and two. Decoded per chunk
+    // rather than through a StringDecoder, both halves become U+FFFD — which is
+    // still valid JSON, so the record parses and carries a mangled prefix into
+    // `signatureOf`. One recurring failure silently becomes two that each look
+    // like they happened once.
+    const emoji = "🙈";
+    const body = `${emoji} ENOENT open failed`;
+    const first = record({ at: "2026-08-10T09:00:00Z", toolUseId: "toolu_1", body });
+    const second = record({ at: "2026-08-12T09:00:00Z", toolUseId: "toolu_2", body });
+
+    const emojiAt = Buffer.byteLength(first.slice(0, first.indexOf(emoji)));
+    // `write` joins with a newline, so the record starts one byte past the filler.
+    const fillerLength = chunkSize() - 2 - 1 - emojiAt;
+    assert.ok(fillerLength > 0, "a record longer than a chunk cannot straddle its boundary");
+    write("wide.jsonl", ["#".repeat(fillerLength), first, second]);
+
+    const out = await mod.scanDreaming({ timeZone: "UTC" });
+    assert.equal(out.totalSignatures, 1, "one failure, not one mangled and one whole");
+    assert.equal(out.recurring.length, 1, "so it still spans two days and still gets written");
+    assert.equal(out.recurring[0].instances, 2);
+    assert.ok(out.recurring[0].sample.startsWith(emoji), "the character survives the boundary");
+    assert.ok(!out.recurring[0].sample.includes("�"), "and is not replaced half at a time");
+  });
+
+  it("answers for a file it cannot open rather than failing the scan", {
+    // Root reads a mode-000 file, and the assertion would pass for the wrong reason.
+    skip: process.getuid?.() === 0 ? "chmod 000 does not refuse root" : undefined,
+  }, async () => {
+    write("good.jsonl", [
+      record({ at: "2026-08-10T09:00:00Z", toolUseId: "toolu_ok", body: "ENOENT readable" }),
+    ]);
+    // The retention sweep really does delete a file between this scan's stat and
+    // its open, and that window cannot be hit on demand. An open that fails is
+    // the same catch reached through the failure a test can force.
+    const shut = path.join(PROJECTS, "shut.jsonl");
+    fs.writeFileSync(
+      shut,
+      record({ at: "2026-08-10T10:00:00Z", toolUseId: "toolu_shut", body: "ENOENT unreadable" }) +
+        "\n",
+    );
+    fs.chmodSync(shut, 0o000);
+    mod.forgetDreamingFiles([shut]);
+
+    const out = await mod.scanDreaming({ timeZone: "UTC" });
+    assert.equal(out.filesWalked, 2);
+    assert.equal(out.filesRead, 1, "the unopenable one is not counted as read");
+    assert.equal(out.totalInstances, 1, "and the rest of the corpus is still reported");
+
+    // Nothing was memoised for it, so it is picked up the moment it can be
+    // opened: a stamp stored against an empty parse would hide the file until
+    // somebody wrote to it again.
+    fs.chmodSync(shut, 0o644);
+    const again = await mod.scanDreaming({ timeZone: "UTC" });
+    assert.equal(again.filesRead, 1, "only the recovered file is re-read");
+    assert.equal(again.totalInstances, 2);
   });
 });

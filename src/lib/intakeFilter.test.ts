@@ -177,6 +177,133 @@ describe("parseLedger", () => {
   });
 });
 
+/**
+ * The incremental read, whose two failure modes are both silent and one of
+ * which is a wrong figure rather than a slow one.
+ *
+ * It exists because `readFileSync` of this file put its whole contents in the
+ * heap as a string, a second copy there as one string per line, and then walked
+ * the lot: at 101,929,100 bytes, ~214 MB of `heapUsed` on every poll that
+ * crossed the TTL. So the reader keeps a byte offset and re-parses only what
+ * was appended, and the accuracy that buys back has to be pinned, because
+ * `transcriptCache.test.ts`' point applies here unchanged: keeping an offset
+ * and dropping records would look exactly like this fix and silently understate
+ * the figure. The first assertion is therefore that an incremental read and a
+ * whole-file read of the same bytes agree, row for row.
+ *
+ * The second is truncation. Nothing here owns this file (winnow writes it, and
+ * an operator or a future sweep may shorten it) and a cached offset into a
+ * file that no longer has those bytes would go on serving rows that are not on
+ * disk, for as long as the process lived. Size is the only signal, so a shorter
+ * file has to start over.
+ */
+describe("readLedgerAppended", () => {
+  let ledger: string;
+  let seq = 0;
+
+  before(() => {
+    ledger = path.join(root, "filter.jsonl");
+  });
+
+  /** A distinct line, so the assertions below are about position and not luck. */
+  const next = () => line(`req_${++seq}`, [{ bytes: 1000 + seq }]);
+
+  it("reads only the appended bytes and agrees with a whole-file read", async () => {
+    const first = [next(), next()];
+    fs.writeFileSync(ledger, first.join("\n") + "\n");
+
+    const state = intakeFilter.newLedgerReadState();
+    const afterFirst = await intakeFilter.readLedgerAppended(ledger, state);
+    assert.deepEqual(
+      afterFirst.map((r) => r.requestId),
+      ["req_1", "req_2"],
+    );
+    const offsetAfterFirst = state.offset;
+
+    const appended = [next(), next()];
+    fs.appendFileSync(ledger, appended.join("\n") + "\n");
+    const afterSecond = await intakeFilter.readLedgerAppended(ledger, state);
+
+    // The offset moved by exactly the bytes appended: anything else means the
+    // second pass re-read the first pass's bytes, which is the cost being
+    // avoided, or skipped some, which is a lost row.
+    assert.equal(
+      state.offset - offsetAfterFirst,
+      Buffer.byteLength(appended.join("\n") + "\n"),
+    );
+    // Row for row identical to reading the file whole, which is the property
+    // that separates a working incremental read from a fast wrong one.
+    assert.deepEqual(
+      afterSecond,
+      intakeFilter.parseLedger(fs.readFileSync(ledger, "utf8")),
+    );
+  });
+
+  it("holds back a half-written last line until its newline arrives", async () => {
+    const whole = next();
+    fs.writeFileSync(ledger, whole + "\n");
+    const half = next();
+    fs.appendFileSync(ledger, half.slice(0, 20));
+
+    const state = intakeFilter.newLedgerReadState();
+    const partial = await intakeFilter.readLedgerAppended(ledger, state);
+    // Another process is appending, so the tail is routinely mid-write. Parsing
+    // it would drop the row; consuming the offset past it would lose the row
+    // for good once the rest landed.
+    assert.equal(partial.length, 1);
+    assert.equal(state.offset, Buffer.byteLength(whole + "\n"));
+
+    fs.appendFileSync(ledger, half.slice(20) + "\n");
+    const complete = await intakeFilter.readLedgerAppended(ledger, state);
+    assert.deepEqual(
+      complete.map((r) => r.requestId),
+      [`req_${seq - 1}`, `req_${seq}`],
+    );
+  });
+
+  it("starts over when the file has shrunk under the cached offset", async () => {
+    const original = [next(), next(), next()];
+    fs.writeFileSync(ledger, original.join("\n") + "\n");
+
+    const state = intakeFilter.newLedgerReadState();
+    await intakeFilter.readLedgerAppended(ledger, state);
+    assert.equal(state.requests.length, 3);
+
+    // Rotated: same path, unrelated contents. The cached offset now names bytes
+    // that were never written, and holding the three rows parsed before it
+    // would report requests that are no longer on disk until the process died.
+    const rotated = next();
+    fs.writeFileSync(ledger, rotated + "\n");
+    const after = await intakeFilter.readLedgerAppended(ledger, state);
+
+    assert.deepEqual(
+      after.map((r) => r.requestId),
+      [`req_${seq}`],
+    );
+    assert.equal(state.offset, Buffer.byteLength(rotated + "\n"));
+  });
+
+  it("spans a line across chunk boundaries without corrupting it", async () => {
+    // Three megabytes of a three-byte character, inside one line: four chunks,
+    // and at least two of the three boundaries between them land inside a UTF-8
+    // sequence whichever byte the run starts on, because 1 MiB is not a
+    // multiple of three so no two of those boundaries share a residue. Decoding
+    // a chunk that ends mid-sequence on its own yields a replacement character
+    // that no later concatenation can undo, so the carry is bytes and this is
+    // what says so.
+    const padding = "€".repeat(1 << 20);
+    const long = line("req_long", [{ bytes: 4000, tool: padding }]);
+    fs.writeFileSync(ledger, [next(), long, next()].join("\n") + "\n");
+
+    const state = intakeFilter.newLedgerReadState();
+    const rows = await intakeFilter.readLedgerAppended(ledger, state);
+
+    assert.deepEqual(rows, intakeFilter.parseLedger(fs.readFileSync(ledger, "utf8")));
+    assert.equal(rows[1].results[0].tool, padding);
+    assert.equal(state.offset, fs.statSync(ledger).size);
+  });
+});
+
 describe("dedupeResults", () => {
   it("counts a result carried by many requests exactly once", () => {
     // The shape the real ledger takes: one long-lived tool result re-dropped on

@@ -46,9 +46,18 @@ import {
   updateTask,
   TASK_ORIGINS,
   TASK_STATUSES,
+  type TaskActor,
   type TaskOrigin,
   type TaskStatus,
 } from "@/lib/tasks";
+import {
+  addTaskComment,
+  listTaskComments,
+  MAX_TOOL_TASK_COMMENTS,
+  type TaskComment,
+} from "@/lib/taskComments";
+import { addTaskDep, depsForTask, depsForTasks } from "@/lib/taskDeps";
+import type { TaskDepRefDTO } from "@/lib/apiTypes";
 import { completeTaskWithValidation } from "@/lib/validation";
 import {
   createTemplate,
@@ -378,7 +387,7 @@ const SHARED_TOOLS = [
 /**
  * Everything a work cycle gets, and the whole of it.
  *
- * **Three tools, and what is absent is the design.** A run does not get
+ * **Five tools, and what is absent is the design.** A run does not get
  * `SHARED_TOOLS`: not `list_runs`, not `get_run_diff`, not `list_folders`, and
  * deliberately not `list_tasks` — a work cycle is an unattended agent that was
  * pointed at one folder and given one brief, and the whole backlog is neither
@@ -393,6 +402,22 @@ const SHARED_TOOLS = [
  * off **the capability token**. No tool below takes a run id, and that is not an
  * omission: a `runId` argument would be a work cycle able to close every task on
  * the board by guessing an id out of a list.
+ *
+ * `comment_on_task` is the fourth and the one that takes a *task* id without
+ * being held to the same rule, which is a smaller claim than it looks: a note
+ * moves nothing, its author is recorded from the token, and the worst a
+ * misdirected one can do is put a sentence signed by this run on a task it was
+ * not working. `complete_task` is where an id out of a list closes work nobody
+ * did, and that one is still checked against `claimed_by_run_id`.
+ *
+ * `add_task_dependency` is the fifth and takes **two** task ids on the same
+ * ground, which holds here for a reason of its own: the edge it writes gates
+ * nothing. A task whose dependencies are open can still be claimed, worked and
+ * closed by exactly the actors that could before, so a misdirected edge is a
+ * wrong ordering on the board and is visible as one — where `complete_task`
+ * against a guessed id is a state nothing can tell apart from the truth. There
+ * is no tool that removes one, and that absence is the design rather than work
+ * left over: only the operator takes an edge away.
  */
 const RUN_TOOLS = [
   {
@@ -474,6 +499,86 @@ const RUN_TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    // The half of the board a run could not reach before: the operator writes a
+    // note on the task and the run reads it out of `list_my_tasks`, which is why
+    // this rides a tool call rather than the appended system prompt. A thread
+    // injected into that prompt would rewrite the cached prefix every cycle.
+    //
+    // It moves nothing, and the description has to say so: a model handed the
+    // one write on this surface that is not `create_task` will otherwise read it
+    // as a way of closing something without calling `complete_task`.
+    name: "comment_on_task",
+    description:
+      "Write a note on a task: an answer to something the operator asked " +
+      "there, what you found, or why the brief is harder than it reads. It " +
+      "moves nothing — it cannot close, claim, drop or re-prioritise a task, " +
+      "and it does not mark the task as touched. Use complete_task to finish " +
+      "the task you hold. Notes are permanent and cannot be edited or deleted, " +
+      "and yours is recorded as written by this run.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: {
+          type: "string",
+          description:
+            "An id from list_my_tasks — one you hold, or one open in this " +
+            "folder that your work has something to do with.",
+        },
+        body: {
+          type: "string",
+          description:
+            "What you have to say, written for somebody who cannot see your " +
+            "work: name files and symbols rather than 'the change above'. If " +
+            "it is a new piece of work rather than a note about this one, call " +
+            "create_task instead.",
+        },
+      },
+      required: ["taskId", "body"],
+      additionalProperties: false,
+    },
+  },
+  {
+    // The fifth, and the one whose description has to work hardest: an edge
+    // sounds like a gate and is not one. A model told only "this task depends
+    // on that one" will assume something is being held back, stop working, or
+    // reach for it as a way of parking a task it does not want to do — so the
+    // description says what it does *not* do twice, in the two places a model
+    // reads before calling.
+    //
+    // No removal tool here or on the chat surface, and the absence is the
+    // design: a model quietly taking away an ordering the operator drew is the
+    // reversal the rest of this board's rules exist to prevent.
+    name: "add_task_dependency",
+    description:
+      "Record that one task has to happen before another. It is a note about " +
+      "ordering and nothing else: it starts nothing, blocks nothing and " +
+      "changes no status — a task with unfinished dependencies can still be " +
+      "claimed, worked and completed exactly as it could before, and yours is " +
+      "no exception. Use it when you find that the thing you were asked to do " +
+      "rests on work that is not finished, or when you file a task that " +
+      "obviously follows another. A loop is refused and so is a task depending " +
+      "on itself. You cannot remove one: only the operator can.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: {
+          type: "string",
+          description:
+            "The task that waits. An id from list_my_tasks — one you hold, or " +
+            "one open in this folder.",
+        },
+        dependsOnTaskId: {
+          type: "string",
+          description:
+            "The task it waits for, and the one that has to be done first. " +
+            "Another id from list_my_tasks.",
+        },
+      },
+      required: ["taskId", "dependsOnTaskId"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 /** Tools only the orchestrator chat gets. None of them starts anything. */
@@ -540,6 +645,85 @@ const CHAT_TOOLS = [
         },
       },
       required: ["title", "body"],
+      additionalProperties: false,
+    },
+  },
+  {
+    // Beside `create_task` and here for its reason: a chat turn has an operator
+    // at the keyboard, so a note it wrote is one somebody sees within the
+    // minute. A block is refused this for the same reason it is refused
+    // `create_task` — see `subjectRefusal`.
+    //
+    // It is the way a chat says something about a task without replacing it. The
+    // description says what it cannot do because the alternative is a model
+    // reading the one write beside `create_task` as a way around
+    // `taskTransitionRefusal`: this cannot close, claim, drop or re-prioritise
+    // anything, and it does not even mark the task as moved.
+    name: "comment_on_task",
+    description:
+      "Write a note on a task already on the board: what you found out about " +
+      "it, why it is harder than it reads, the decision this conversation took " +
+      "about it. It moves nothing — it cannot mark a task done, claimed or " +
+      "dropped, cannot change its priority and does not count as the task " +
+      "being touched. Use it for something worth saying about an existing " +
+      "brief; if it is a new piece of work, call create_task. Notes are " +
+      "permanent and cannot be edited or deleted, and yours is recorded as the " +
+      "chat's rather than the operator's.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: {
+          type: "string",
+          description: "An id from list_tasks or get_task.",
+        },
+        body: {
+          type: "string",
+          description:
+            "What you have to say, written for somebody with none of this " +
+            "conversation: name files, ids and decisions rather than 'the " +
+            "thing above'.",
+        },
+      },
+      required: ["taskId", "body"],
+      additionalProperties: false,
+    },
+  },
+  {
+    // Beside the other two board writes and gated the same way: a block is
+    // refused it, by not being on this list, and `subjectRefusal` names what a
+    // block can still do instead.
+    //
+    // The description carries the same load the run's copy does and then one
+    // thing more, because a chat is the surface that plans work: an ordering
+    // recorded here must not be read as a way of *sequencing* runs. Nothing
+    // reads this table when a run starts, and a model that believed otherwise
+    // would propose a chain and then not propose the second half of it.
+    name: "add_task_dependency",
+    description:
+      "Record that one task on the board has to happen before another. It is a " +
+      "note about ordering and nothing else: it starts nothing, blocks " +
+      "nothing, changes no status and schedules no run. A task with " +
+      "unfinished dependencies can still be claimed, started and completed " +
+      "exactly as it could before — the board simply shows what it is waiting " +
+      "for. To actually order work, propose the runs in the order you want " +
+      "them. A loop is refused and so is a task depending on itself, and the " +
+      "two tasks may be in different projects. You cannot remove one: only the " +
+      "operator can.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: {
+          type: "string",
+          description: "The task that waits. An id from list_tasks or get_task.",
+        },
+        dependsOnTaskId: {
+          type: "string",
+          description:
+            "The task it waits for, and the one that has to be done first. " +
+            "Another id from list_tasks or get_task.",
+        },
+      },
+      required: ["taskId", "dependsOnTaskId"],
       additionalProperties: false,
     },
   },
@@ -1247,6 +1431,38 @@ function subjectRefusal(subject: CapabilitySubject, name: string): string {
         "turn or the operator."
       );
     }
+    // `create_task`'s refusal one field along, and refused on its own ground
+    // rather than by omission: a note is permanent, it is attributed, and a
+    // block's turn is unattended, so a thread it wrote to is one the operator
+    // meets already answered by something nobody was reading. Naming what a
+    // block *can* still do with the board is what stops this reading as "the
+    // taskboard is not yours".
+    if (name === "comment_on_task") {
+      return (
+        "comment_on_task is not available to an orchestrator block: a note is " +
+        "permanent and cannot be edited or deleted, and nobody is watching " +
+        "this workflow to read one written unattended. You can read the board " +
+        "with list_tasks and get_task, and name a task on a run you emit — the " +
+        "run that does the work can write on it."
+      );
+    }
+    // Refused on a narrower ground than the two above, and it is worth having
+    // its own sentence for exactly that reason. An edge is not permanent — the
+    // operator can take one away — so "unattended and cannot be undone" is not
+    // the argument here. What it is: an ordering is a claim about the operator's
+    // backlog as a whole, and a block sees the board through one node of one
+    // workflow with nobody reading its reasoning. The generic sentence would
+    // answer "write down that this comes first" with `emit_runs`, which is the
+    // one tool that starts work now.
+    if (name === "add_task_dependency") {
+      return (
+        "add_task_dependency is not available to an orchestrator block: an " +
+        "ordering is a statement about the operator's whole backlog and nobody " +
+        "is watching this workflow to weigh it. You can read the board with " +
+        "list_tasks and get_task, which already report what each task is " +
+        "waiting for, and order the runs you emit with their own dependencies."
+      );
+    }
     return `${name} is not available to an orchestrator block. Use emit_runs.`;
   }
 
@@ -1271,9 +1487,9 @@ function subjectRefusal(subject: CapabilitySubject, name: string): string {
   }
   return (
     `${name} is not available to a work cycle. A run can list the tasks it ` +
-    "holds, complete one of those, and file a new one — it cannot start work, " +
-    "approve anything or touch another run. Anything else belongs in your " +
-    "reply, which the operator reads."
+    "holds, complete one of those, write a note on one and file a new one — it " +
+    "cannot start work, approve anything or touch another run. Anything else " +
+    "belongs in your reply, which the operator reads."
   );
 }
 
@@ -1705,6 +1921,25 @@ async function callTool(
       return subject.kind === "run"
         ? createTaskForRun(args, subject.runId)
         : createTaskTool(args, chatId!);
+
+    // Shared by name between a chat and a work cycle, and the only difference
+    // between the two callers is the author the row records — which is taken
+    // from the subject here and can be taken from nowhere else. `block` never
+    // reaches this line: the gate above refuses a tool that is not on its list.
+    case "comment_on_task":
+      return subject.kind === "run"
+        ? commentOnTask(args, { kind: "run", runId: subject.runId })
+        : commentOnTask(args, { kind: "chat" }, chatId!);
+
+    // Shared by name between a chat and a work cycle and, unlike the two above,
+    // shared by *implementation* too: an edge records no author, so there is
+    // nothing here that differs by subject. One function rather than two for
+    // `commentOnTask`'s reason turned around — two handlers writing the same row
+    // would be two places to keep the loop refusal in, and the loop refusal is
+    // the whole of what this door is for. `block` never reaches this line: the
+    // gate above refuses a tool that is not on its list.
+    case "add_task_dependency":
+      return addTaskDependency(args, chatId);
 
     // Narrowed rather than asserted, for `emit_runs`' reason: the gate above
     // proves the tool is on this subject's list, and the union is what makes the
@@ -2214,6 +2449,11 @@ function listTasksTool(args: Record<string, unknown>) {
     offset: Number(args.offset) || 0,
   });
 
+  // One pair of queries for the whole page rather than one per row, the board
+  // route's reason: this is a page of up to `MAX_TASK_PAGE` rows and the per-row
+  // read it replaces is an N+1 inside one tool call.
+  const deps = depsForTasks(page.tasks.map((t) => t.id));
+
   return text(
     JSON.stringify(
       {
@@ -2222,7 +2462,7 @@ function listTasksTool(args: Record<string, unknown>) {
           // the clip a model reads is the clip the operator reads — one rule,
           // in `taskListItemDTO`, rather than a second copy of it here that
           // could disagree about where a brief is cut.
-          const row = taskListItemDTO(t);
+          const row = taskListItemDTO(t, undefined, undefined, deps.get(t.id));
           return {
             taskId: row.id,
             title: row.title,
@@ -2246,6 +2486,20 @@ function listTasksTool(args: Record<string, unknown>) {
             // own doc names: two agents, one brief, one folder, nothing saying
             // so.
             claimedByRunId: row.claimedByRunId,
+            // Two numbers rather than the neighbours themselves, which is the
+            // whole of what a *list* can afford: the ids are in `get_task`, and
+            // a page carrying two ref lists per row is the payload the board's
+            // own cap exists to bound. `blockedByCount` counts every unfinished
+            // dependency rather than the ones that fitted a cap, so a zero here
+            // is a task with nothing in front of it and not a task whose
+            // blockers were clipped.
+            //
+            // Neither number holds anything back. A task with a non-zero
+            // `blockedByCount` can be claimed, started and closed exactly as one
+            // with a zero can — this says what somebody wrote down about the
+            // order, not what the app will allow.
+            blockedByCount: row.deps.blockedByCount,
+            blocksCount: row.deps.dependentCount,
           };
         }),
         // The three figures the existing list tools answer with, for their
@@ -2279,12 +2533,21 @@ function getTaskTool(args: Record<string, unknown>) {
   }
 
   const links = runLinksForTasks([task.id]).get(task.id);
+  const thread = listTaskComments(task.id, MAX_TOOL_TASK_COMMENTS);
+  const neighbourhood = depsForTask(task.id);
   return text(
     JSON.stringify(
       {
         taskId: task.id,
         title: task.title,
         body: task.body,
+        // The thread, because this is the unclipped door and a note the
+        // operator wrote on a task is part of what the task asks for. Oldest
+        // first with the oldest dropped when it does not fit — `listTaskComments`
+        // carries why that end and not the other.
+        comments: thread.comments.map(toolComment),
+        commentsShown: thread.comments.length,
+        commentsTotal: thread.total,
         status: task.status,
         priority: task.priority,
         origin: task.origin,
@@ -2300,12 +2563,193 @@ function getTaskTool(args: Record<string, unknown>) {
         // separately for the reason the diff names its omissions.
         runsStartedForIt: links?.runIds ?? [],
         runsStartedForItTotal: links?.runCount ?? 0,
+        // The neighbourhood, which is the unclipped door for it as much as for
+        // the brief: `list_tasks` carries two counts and this carries the
+        // tasks themselves, with the project each one is in, because an edge
+        // may cross projects and "which repository is this waiting on" is not
+        // answerable from an id.
+        //
+        // `blockedByCount` is counted over every edge rather than over
+        // `dependsOn`, which is capped — a model reading a ten-long list beside
+        // a count of twelve is being told the list is short, and one reading a
+        // count derived from the list would be told a task is ready when it is
+        // not.
+        dependsOn: neighbourhood.dependsOn.map(toolTaskRef),
+        dependsOnShown: neighbourhood.dependsOn.length,
+        dependsOnTotal: neighbourhood.dependsOnCount,
+        blockedByCount: neighbourhood.blockedByCount,
+        blocks: neighbourhood.dependents.map(toolTaskRef),
+        blocksShown: neighbourhood.dependents.length,
+        blocksTotal: neighbourhood.dependentCount,
+        // The sentence the shape cannot carry, `list_my_tasks`' note one tool
+        // along: two arrays of task ids read as a queue unless something says
+        // they are not.
+        dependencyNote:
+          "Dependencies are advisory. Nothing here holds a task back: one with " +
+          "unfinished dependencies can still be claimed, started and closed.",
         createdAt: new Date(task.createdAt).toISOString(),
         updatedAt: new Date(task.updatedAt).toISOString(),
       },
       null,
       1,
     ),
+  );
+}
+
+/**
+ * One note as a tool result carries it.
+ *
+ * `author` rather than a run id, because that pairing is the whole of what the
+ * column records and a model handed a bare id would attribute a note to whoever
+ * it guessed. The body is **whole** and not clipped, which is the one place this
+ * departs from `bodyPreview` beside it: a work cycle has no `get_task`, so there
+ * is no second call that would return the rest, and a clipped note is an
+ * instruction it can never finish reading.
+ */
+/**
+ * The other end of a dependency as a tool result carries it.
+ *
+ * The status is here because the blocked reading is derived from it and a model
+ * handed ids alone would have to call `get_task` per neighbour to find out what
+ * it is waiting on. The project is here because an edge may cross projects, and
+ * a dependency in another repository is the case where "which one" decides
+ * whether the model can do anything about it at all.
+ */
+function toolTaskRef(ref: TaskDepRefDTO) {
+  return {
+    taskId: ref.id,
+    title: ref.title,
+    status: ref.status,
+    mountId: ref.mountId,
+    folder: ref.relPath,
+  };
+}
+
+function toolComment(comment: TaskComment) {
+  return {
+    author: comment.author,
+    authorRunId: comment.authorRunId,
+    body: comment.body,
+    at: new Date(comment.createdAt).toISOString(),
+  };
+}
+
+/**
+ * Write a note on a task, as whichever subject is asking.
+ *
+ * **The author is the subject's and never the call's**, which is this tool's
+ * whole authorisation and the reason both callers go through one function: two
+ * handlers would be two places an actor is assembled, and the one that got it
+ * wrong would produce a thread saying the operator wrote what a model did.
+ * `normalizeTaskCommentInput` refuses an `author` off the wire by name for the
+ * same reason.
+ *
+ * **It moves nothing**, and nothing here may make it: no `updateTask`, and in
+ * particular no touch of `tasks.updated_at`, which the board sorts on — a note
+ * that reordered the board would read as a move on every surface drawing it.
+ * `taskTransitionRefusal` stays the whole of the board's authority model and
+ * this is not a second answer to it.
+ *
+ * A task that is not there is refused in `taskRefusal`'s wording rather than one
+ * written here, so a mistyped id reads the same as it does at `get_task`, at a
+ * proposal and at an emission.
+ */
+function commentOnTask(
+  args: Record<string, unknown>,
+  actor: TaskActor,
+  chatId?: string,
+) {
+  const taskId = String(args.taskId ?? "").trim();
+  const written = addTaskComment(taskId, args, actor);
+
+  if (!written.ok) {
+    if (written.kind === "missing") {
+      return text(taskRefusal(taskId, currentTaskKnowledge()) ?? "", true);
+    }
+    return text(written.error, true);
+  }
+
+  const task = getTask(taskId);
+  if (chatId) {
+    // On the thread, `create_task`'s rule: the operator's transcript is where
+    // anything the chat wrote outside the conversation has to appear, or a task
+    // that grew a note has no trace on the page that grew it.
+    appendMessage(
+      chatId,
+      "system",
+      `The chat wrote a note on the task “${task?.title ?? taskId}”. Nothing ` +
+        "about the task itself changed.",
+    );
+  }
+
+  return text(
+    `Written on “${task?.title ?? taskId}”. The note is permanent and cannot ` +
+      "be edited or deleted. Nothing about the task changed — it has the same " +
+      "status, the same priority and the same owner it had before.",
+  );
+}
+
+/**
+ * Record that one task waits for another, from either surface.
+ *
+ * **It gates nothing, and the reply says so every time.** That sentence is not
+ * politeness: the failure this tool can produce is a model drawing an edge and
+ * then behaving as though something were now blocked — stopping work on a task
+ * it holds, or reporting to the operator that a run cannot start. Nothing in
+ * this app reads the table when a run starts, when a task is claimed or when one
+ * is closed, so a reply that merely confirmed the write would leave the model's
+ * own reading of what it had just done unanswered.
+ *
+ * One function for both subjects, where `commentOnTask` needs the actor: an edge
+ * records no author, so there is nothing here that differs by who is asking and
+ * a second handler would be a second place the loop refusal has to live.
+ *
+ * A missing id is refused in `taskRefusal`'s wording rather than one written
+ * here, so a mistyped id reads the same as it does at `get_task`, at a proposal
+ * and at an emission. Which of the two is missing is answered first, because
+ * "no such task" about the wrong end of the pair sends a model re-reading the
+ * list it took the right one from.
+ */
+function addTaskDependency(args: Record<string, unknown>, chatId?: string | null) {
+  const taskId = String(args.taskId ?? "").trim();
+  const dependsOn = String(args.dependsOnTaskId ?? "").trim();
+
+  const written = addTaskDep(taskId, dependsOn);
+  if (!written.ok) {
+    if (written.kind === "missing") {
+      const knowledge = currentTaskKnowledge();
+      return text(
+        taskRefusal(getTask(taskId) ? dependsOn : taskId, knowledge) ?? written.error,
+        true,
+      );
+    }
+    return text(written.error, true);
+  }
+
+  const waiter = getTask(taskId);
+  const blocker = getTask(dependsOn);
+  const pair = `“${waiter?.title ?? taskId}” waits for “${blocker?.title ?? dependsOn}”`;
+
+  if (chatId) {
+    // On the thread, `commentOnTask`'s rule: the operator's transcript is where
+    // anything the chat did outside the conversation has to appear, or a board
+    // that grew an edge has no trace on the page that grew it.
+    appendMessage(
+      chatId,
+      "system",
+      `The chat recorded that ${pair}. Nothing about either task changed, and ` +
+        "nothing is held back by it.",
+    );
+  }
+
+  return text(
+    (written.created
+      ? `Recorded: ${pair}.`
+      : `Already recorded: ${pair}. Nothing was written.`) +
+      " This changes nothing about either task: the same statuses, the same " +
+      "owners, and the one that waits can still be claimed, worked and " +
+      "completed exactly as before. It is shown on the board so a person can " +
+      "see the ordering. Only the operator can remove it.",
   );
 }
 
@@ -2418,6 +2862,11 @@ function runFolder(runId: string): {
 function listMyTasks(runId: string) {
   const { folder } = runFolder(runId);
   const mine = tasksForRun(runId, folder);
+  // One pair of queries for the held rows, not one per row: unlike the threads
+  // below, this read answers for a whole set at a time and there is no reason
+  // to pay the N+1 the board's own listing refuses. `openInFolder` is
+  // deliberately not in it — see the note beside `held`.
+  const deps = depsForTasks(mine.held.map((t) => t.id));
 
   return text(
     JSON.stringify(
@@ -2426,6 +2875,19 @@ function listMyTasks(runId: string) {
         // is cut, read by the operator's board and by this tool alike.
         held: mine.held.map((t) => {
           const row = taskListItemDTO(t);
+          // The thread on `held` and deliberately not on `openInFolder`: a note
+          // is what the operator said about the task *this run is doing*, and
+          // it is the only way one reaches a cycle — the appended system prompt
+          // is frozen against the cached prefix and cannot carry a thread that
+          // changes between cycles. Notes on a task the run may not act on
+          // would be tokens spent on somebody else's conversation.
+          //
+          // One query per held row rather than one for the set. `held` is
+          // capped at `MAX_RUN_TASKS` and this is a tool call rather than a
+          // ten-second poll, so the N+1 the board's own listing refuses is
+          // bounded here at twenty reads nothing repeats.
+          const thread = listTaskComments(t.id, MAX_TOOL_TASK_COMMENTS);
+          const neighbourhood = deps.get(t.id);
           return {
             taskId: row.id,
             title: row.title,
@@ -2433,6 +2895,23 @@ function listMyTasks(runId: string) {
             bodyClipped: row.body.length < t.body.length,
             status: row.status,
             priority: row.priority,
+            comments: thread.comments.map(toolComment),
+            commentsShown: thread.comments.length,
+            commentsTotal: thread.total,
+            // What this task is recorded as waiting for, on `held` and
+            // deliberately not on `openInFolder` — the thread's split one field
+            // up, for its reason: this is context for the work this run is
+            // doing, where an ordering on a task it may only read about is
+            // tokens spent on somebody else's board.
+            //
+            // It is **not** a reason to stop. Nothing here holds the task back
+            // and the note below says so: a run that read "waiting for" as
+            // "blocked" would leave the work it was started for undone and
+            // report that it could not proceed, which is the one expensive
+            // misreading this field can produce.
+            waitingFor: (neighbourhood?.dependsOn ?? []).map(toolTaskRef),
+            waitingForUnfinished: neighbourhood?.blockedByCount ?? 0,
+            waitingForTotal: neighbourhood?.dependsOnCount ?? 0,
           };
         }),
         openInFolder: mine.openInFolder.map((t) => {
@@ -2455,8 +2934,11 @@ function listMyTasks(runId: string) {
         // ids will reach for the nearest one, and only one of them is closeable.
         note:
           "complete_task works on held only. Nothing here can close, claim or " +
-          "drop anything in openInFolder — file a new task if one of those " +
-          "needs saying something about.",
+          "drop anything in openInFolder — comment_on_task if one of those " +
+          "needs a note, or create_task if it is work of its own. waitingFor " +
+          "is a record of ordering and holds nothing back: carry on with the " +
+          "task you were given even if something it waits for is unfinished, " +
+          "and say in your reply if that turns out to be why you could not.",
       },
       null,
       1,

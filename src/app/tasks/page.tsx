@@ -1,10 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import Link from "next/link";
 import {
   MAX_TASK_PAGE,
   type TaskDTO,
+  type TaskDepRefDTO,
+  type TaskDepsDTO,
   type TaskListDTO,
   type TaskListItemDTO,
   type TaskStatusDTO,
@@ -166,6 +174,78 @@ function actingRun(
     return { label: "Held by", runId: task.claimedByRunId };
   }
   return null;
+}
+
+/**
+ * The one neighbour a line names, linked, or how many there are.
+ *
+ * **One, and it is a measurement rather than a preference.** This cell is
+ * whatever six min-width columns leave — about 150px at 1280px with the shell
+ * beside it — and what goes in it is task titles rather than words, so a title
+ * is already two wrapped lines there. Two a side was measured at six lines under
+ * a two-line heading: a paragraph, which is the shape the brief was taken out of
+ * this cell for. The stacked layout at 390px would carry more, since a stacked
+ * cell is the whole card width, and deliberately does not get it — a line that
+ * named two neighbours on a phone and counted them on a laptop is two boards.
+ *
+ * `count` rather than `refs.length` decides: the lists on a `TaskDepsDTO` stop
+ * at `MAX_TASK_DEP_LINKS` and the counts do not, so a row reading the list would
+ * report a task waiting on fourteen things as one waiting on ten.
+ */
+function depNames(refs: readonly TaskDepRefDTO[], count: number): ReactNode {
+  const only = count === 1 ? refs[0] : undefined;
+  if (!only) return `${count} tasks`;
+  return <Link href={`/tasks/${only.id}`}>{only.title}</Link>;
+}
+
+/**
+ * What a row waits for and what waits for it, in one line, or nothing at all.
+ *
+ * **Nothing at all is the common case and is the point.** Most tasks have no
+ * ordering, and a faint marker on every row saying so is what a board looks
+ * like when every row answers a question nobody asked — the Runs cell's
+ * decision one column over, and the comment count's in this cell.
+ *
+ * **The blocking half of `dependsOn` is its own front.** `depNeighbourhood`
+ * partitions the list so that what is still open comes first and
+ * `TaskDepsDTO` states it, so `slice(0, blockedByCount)` is exactly the
+ * dependencies in the way. It is read off the count the server sent rather than
+ * re-tested here: `depIsBlocking` is a server module, and a copy of "done
+ * clears an edge and nothing else does" in the browser is a second answer to
+ * when an ordering is satisfied.
+ *
+ * **Blocked is a reading and never a gate.** Nothing in this app refuses a
+ * press on the strength of an edge, which is why this line sits under a title
+ * and not beside the Move buttons: it describes the row, it does not qualify
+ * what can be done to it.
+ */
+function DepLine({ deps }: { deps: TaskDepsDTO }) {
+  if (deps.dependsOnCount === 0 && deps.dependentCount === 0) return null;
+
+  const upstream =
+    deps.blockedByCount > 0 ? (
+      <>
+        Blocked by{" "}
+        {depNames(deps.dependsOn.slice(0, deps.blockedByCount), deps.blockedByCount)}
+      </>
+    ) : deps.dependsOnCount > 0 ? (
+      // An ordering that has cleared is still an ordering, and a row that drew
+      // nothing for it would say this task was never put behind anything.
+      <>After {depNames(deps.dependsOn, deps.dependsOnCount)}</>
+    ) : null;
+
+  return (
+    <span className="mt-0.5 block text-xs text-ink-faint">
+      {upstream}
+      {upstream && deps.dependentCount > 0 && " · "}
+      {deps.dependentCount > 0 && (
+        <>
+          {upstream ? "blocks " : "Blocks "}
+          {depNames(deps.dependents, deps.dependentCount)}
+        </>
+      )}
+    </span>
+  );
 }
 
 export default function TasksPage() {
@@ -334,6 +414,14 @@ export default function TasksPage() {
                 sentence, and still a line per row. It is on the task's own page,
                 which the title links to, and the width it gives up is the width
                 the title reads in. */}
+            {/* The ordering, in this cell and never a column of its own, on the
+                comment count's grounds below and for its reason: a seventh
+                `min-w` would come straight off the title for a line most rows
+                do not draw at all. Above the provenance because it is about the
+                work rather than about where the brief came from, and because
+                `Blocked by` is the one thing in this cell somebody scanning the
+                board is looking for. */}
+            <DepLine deps={task.deps} />
             {task.parentTaskId && (
               <span className="mt-0.5 block text-xs text-ink-faint">
                 Filed under{" "}
@@ -342,6 +430,29 @@ export default function TasksPage() {
                 ) : (
                   <span className="mono">{shortId(task.parentTaskId)}</span>
                 )}
+              </span>
+            )}
+            {/* The thread's size, in this cell and never a column of its own.
+                A seventh `min-w` would come straight off the title — the Task
+                column is `w-full` over six of them and is whatever they leave —
+                for a figure that is zero on most rows. This cell is the one the
+                board deliberately leaves unlabelled, being the headline the
+                record is identified by, so a count here is the only placement
+                that cannot be mislabelled when `stack` puts each field under
+                its own name at 390px: "Priority urgent 3" and "Runs 3" both
+                read as a fact about something else.
+
+                Nothing at all at zero rather than a faint "0 comments", which
+                is the same decision the Runs cell makes one column over: a
+                column of the word none is what a board looks like when every
+                row answers a question nobody asked. Not a link either, unlike
+                the run count beside it — that one is the only handle its cell
+                can give, where the title directly above this is already a link
+                to the page the thread is on. */}
+            {task.commentCount > 0 && (
+              <span className="mt-0.5 block text-xs text-ink-faint">
+                {task.commentCount}{" "}
+                {task.commentCount === 1 ? "comment" : "comments"}
               </span>
             )}
           </Td>

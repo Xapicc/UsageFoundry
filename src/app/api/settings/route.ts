@@ -29,7 +29,8 @@ import {
   WORKSPACE_ROOT,
   CLAUDE_HOME,
 } from "../../../lib/config";
-import { currentSandbox } from "../../../lib/sandbox";
+import { currentSandbox, sandboxFailureNote } from "../../../lib/sandbox";
+import { recentSandboxFailures } from "../../../lib/db";
 import { loginFailureSummary } from "../../../lib/loginAttempts";
 import { activeSessionCount } from "../../../lib/sessions";
 import { FIVE_HOURS_MS } from "../../../lib/windows";
@@ -131,7 +132,13 @@ export async function GET(req: Request) {
       // reading is taken per request rather than at boot for the reason
       // `sandbox.ts` gives: a stale answer about a boundary is the failure this
       // row exists to prevent.
-      sandbox: currentSandbox(),
+      sandbox: {
+        ...currentSandbox(),
+        // The other half of the same answer, composed here because one half
+        // reads a file and the other reads `run_events`, and `currentSandbox`
+        // is also what the boot line prints — before any run has failed.
+        failureNote: sandboxFailureNote(recentSandboxFailures()),
+      },
       authEnabled: authEnabled(),
       // How many browser sign-ins are outstanding — a question that had no
       // answer at all while the cookie was UF_AUTH_TOKEN itself.
