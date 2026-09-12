@@ -1,377 +1,506 @@
-# What any option has to survive
+# The requirement set
 
-Everything below was checked against the tree at `fe52cab`. Where a claim could
-not be checked — and several central ones could not, because **this container has
-no Docker** — the sentence says so at the point it is made.
+**This file is the acceptance criteria for the feature, not a survey of what an
+option would have to survive.** The decision to build is recorded at the top of
+[README.md](README.md). Five requirements come from the operator; the rest are
+constraints this tree imposes, each with the citation that imposes it. Every one
+is phrased so that a later run can answer **met** or **not met** and say which
+command or file settles it.
+
+Checked against the tree at `6c5af5f`. Where a claim could not be checked, and
+several central ones cannot be, because **this container has no Docker**, the
+sentence says "assumed" at the point it is made.
 
 ---
 
-## 1. The four events an option is scored against
+## Part 1. The five operator requirements
 
-"Persistent" is not one property here. It is four, and the existing volumes
-satisfy three of them and not the fourth. Every option file states which of these
-it survives, under heading 3.
+### R1. Adding a tool requires no edit to any file inside the published image
 
-| Event | What it destroys | What survives it |
-|---|---|---|
-| `docker restart` | nothing on disk | everything, including the writable layer |
-| `docker compose up --build` | **the writable layer** | image layers, bind mounts, named volumes |
-| `docker compose down -v` | **named volumes** | image layers, bind mounts |
-| a fresh host, `git clone` + `up` | named volumes *and* the writable layer | image layers, and only what the repository can rebuild |
+**This is the central requirement. A design that fails it is out of the
+running.**
 
-The middle row is the operator's stated problem and it is the row the three
-existing volumes were created for (`docker-compose.yml:370-409`). The bottom row
-is the one no existing mechanism satisfies except through the boot-time install
-loops, and it is why a proposal that ends at "a writable volume on `PATH`" is
-answering half the question.
+**Met when:** the change that adds a tool to an install touches none of
+`Dockerfile`, `docker-entrypoint.sh`, `scripts/`, `src/`, or any other path the
+image contains, and an operator running a *pulled* image can add the tool
+without building one.
 
-**Not checked here.** No `docker compose up --build` was run, no volume was
-created and none was destroyed. Docker is not installed in this container. The
-table is the documented semantics of those commands plus this repository's own
-statements of them (`docker-compose.yml:370-382`, `.env.example:212-213`,
-`docs/backup-and-restore.md:8`), and nothing in this proposal is written as
-though a rebuild had been observed.
+**Not met when:** adding a tool means editing this repository's `Dockerfile` or
+its entrypoint, however small the edit. `9cc0935` added `jq` by putting one word
+on `Dockerfile:130`, and that is precisely the shape R1 forbids.
 
-## 2. The volume-masking trap, which is the sharpest constraint in the file
+**Note what R1 does not forbid.** It constrains the *per-tool* cost, not the
+mechanism's own cost. Whatever carries a stack may itself be built into the
+image once, in a commit that names no tool. R1 is about what the twelfth tool
+costs, not the first.
+
+**How to test it:** `git diff --name-only` over the commit that adds a tool, and
+separately, an install started from `docker compose pull` rather than
+`docker compose up --build`.
+
+### R2. A stack is a self-contained declarative unit a third party can author, copy and share
+
+**Met when** all four hold:
+
+1. A stack is **one artifact**, a file or a directory, whose content alone
+   determines what gets installed.
+2. Its author needs no knowledge of `src/`. The words in it name tools and
+   versions, not this app's internals.
+3. Copying that artifact to a second install and doing nothing else produces the
+   same tools there.
+4. Consuming somebody else's stack is copying their artifact plus one act of
+   approval by the receiving operator.
+
+**Not met by** a row typed into a form, by anything whose meaning depends on
+state held only in this install's database, or by an instruction sequence
+somebody has to re-type. See assumption A2 below, which is what this
+requirement rests on.
+
+**Borderline, and the design must rule on it:** a line in `.env` satisfies 1 and
+3 and arguably 2, and fails 4, because `.env` is one file for the whole install
+and merging two operators' lines is a text edit rather than an act of
+consumption. `UF_PY_TOOLS` (`docs/install.md:192`) is exactly this case and is
+the closest thing the tree has to a stack today.
+
+### R3. An installed tool reaches every run, including sandboxed runs and every kind of agent child
+
+**Met when**, for each child kind enumerated in
+[00-problem.md](00-problem.md), all three links hold:
+
+1. the binary exists on disk after a rebuild (R4);
+2. it is on that child's `PATH`;
+3. **the child is permitted to invoke it.**
+
+Link 2 is already true for anything on `PATH`: `childEnv` copies the server's
+environment and strips prefixes and named keys, and `PATH` is on neither list
+(`src/lib/orchestrator.ts:5698-5716`), with the docblock saying so by name:
+*"Everything else passes through. The CLI needs PATH, HOME, CLAUDE_CONFIG_DIR,
+proxy and CA settings, and locale to function at all"*
+(`src/lib/orchestrator.ts:5628`).
+
+**Link 3 has never been measured and R3 cannot be declared met until it is.**
+A work cycle runs `acceptEdits` (`src/lib/settings.ts:940`), and this tree has
+measured that mode refusing commands twice: one run tried to commit *"seven
+times, in five phrasings, and was refused every time"*
+(`src/lib/cycleInvocation.ts:605-614`), and *"19 of 58 completed resolutions,
+$109.94 of $233.85, say in their own report text that they could not compile or
+test what they had merged"* (`src/lib/settings.ts:386-392`). Neither measurement
+is of an arbitrary unknown binary, so whether `terraform version` passes where
+`git commit` does not is **assumed either way** and the probe in
+[07-option-make-it-runnable.md](07-option-make-it-runnable.md) §10 costs one
+work cycle.
+
+**"Sandboxed runs" resolves to six different things** and only two of them bear
+on this; [00-problem.md](00-problem.md) enumerates them. The one that bites is
+`UF_SANDBOX=1`: a write config of any kind makes the CLI bind `/` read-only and
+rw-bind only the allow set (`src/lib/orchestrator.ts:5310`), and that set is
+the run's cwd plus `BUILD_CACHE_DIRS`, which is two entries,
+`$HOME/.npm` and `$GOPATH` (`src/lib/orchestrator.ts:5327-5330`). **No tool
+state directory is in it.** So R3 under a sandbox is a requirement about the
+write set, not about `PATH`.
+
+**How to test it:** a run at each permission mode asked to invoke the tool, and
+the log read for a refusal. Until that exists, R3 is open.
+
+### R4. It survives `docker compose up --build`, and `down -v` is answered separately
+
+These are two events and this requirement deliberately splits them, because the
+existing volumes answer them differently and folding them together is how the
+tree's own record got vague.
+
+**R4a, `docker compose up --build`. Met when** every tool a stack declares is
+present and runnable after the rebuild with no operator action. This is the
+operator's stated problem and it is the event the three existing volumes were
+created for. The compose file states the failure it is avoiding in the language
+of the symptom: an extension in the writable layer *"works until the next
+upgrade and is then simply gone — and what an agent sees at that point is
+`unknown command`, inside a tool call nothing here reads, which the run loop
+files as the agent choosing not to use it"*
+(`docker-compose.yml:450-453`).
+
+**R4b, `docker compose down -v`. Met when the design states, in writing, which
+of these it is** and the app says the same thing:
+
+- the tools are **reinstalled from the declaration**, because the durable thing
+  is the declaration and the volume is a cache; or
+- the tools are **gone**, and the operator is told they are gone rather than
+  discovering it inside a tool call.
+
+Both are acceptable. Silence is not. `down -v` is the harder half because
+**nothing backs up a named volume**: `scripts/backup-db.mjs` writes one file, a
+snapshot of the database into the `/backups` bind mount
+(`docs/backup-and-restore.md:15`, `:122`), and the compose file describes `down -v`
+as *"the correct treatment of a cache and the reason backups are not here"*
+(`docker-compose.yml:443-444`). A toolchain volume would be the first thing this
+app holds that is in neither the image, nor git, nor the host, nor the database.
+
+**Evidence status: R4 has never been observed for any existing tool volume.**
+`grep -n "UF_PY_TOOLS\|UF_GH_EXTENSIONS\|usagefoundry-pytools\|gocache" docs/verification.md`
+returns **zero lines** at `6c5af5f`. The three volumes are pinned only by unit
+tests over file *contents*, at `src/lib/deployment.test.ts:905`, `:978` and
+`:1137`. Docker is unavailable in this container, so every persistence statement
+in this directory is **assumed** from the compose file's own claims and Docker's
+documented semantics. Part 3 has the commands a human with Docker would run.
+
+### R5. The app can report what is installed and whether the install succeeded
+
+**Met when** a surface in this app names, per declared tool:
+
+1. that it is declared;
+2. the outcome of its install, carrying the failure text when it failed;
+3. whether the tool has ever been observed to run.
+
+Point 3 is separate from point 2 on purpose, because R3's third link can fail
+after a perfectly successful install, and the honest rendering of a tool nobody
+has seen run is not `installed`.
+
+**Today none of this exists.** `ls src/app/api/` returns 27 entries, 26 of them
+route directories, and none is `tools` or `stacks`;
+`grep -rn "UF_PY_TOOLS\|UF_GH_EXTENSIONS" src/` returns **no reader**, only two
+docblock mentions in `src/lib/contextPruning.ts:98-99` and three in
+`src/lib/deployment.test.ts`. An operator learns whether an install worked by
+reading the container's boot log for `[usagefoundry] installed Python tool`
+(`docker-entrypoint.sh:297`) or the `could not install` line beside it
+(`:306-307`). That is the whole read-back.
+
+**This requirement carries the directory's own strongest finding and it survives
+the decision unchanged:** a tool that is absent fails inside a tool call nobody
+reads. The number is in the tree: *"Measured on one install here: 213 sessions
+told a plugin was active against a command that was never present"*
+(`.env.example:245-249`), because *"hook bodies end in `|| true`, so the hook
+exits 0 having done nothing"* (`:246-247`). The asymmetry that ranks R5 against
+R1 is that **an install that fails costs a boot log line an operator is
+watching, and a tool that is absent costs billed tokens on every cycle of every
+run that needed it, discovered by nobody.**
+
+---
+
+## Part 2. Constraints this tree imposes
+
+These are not negotiable by the design and none of them was invented for this
+file. Each fails **silently** if broken: nothing throws, nothing fails to
+typecheck, and the page looks right.
+
+### C1. The volume-masking trap
 
 **A named volume takes its contents from the image exactly once, at creation.**
-So a file written into an image path that is also a volume mount point is
-*masked* by whatever the existing volume already holds, on every install that has
-run before.
+A file written into an image path that is also a volume mount point is masked by
+whatever the existing volume already holds, on every install that has run
+before. Written down in the tree at the place that had to work around it:
 
-This is not inferred. It is written down twice, in the two places that had to
-work around it:
-
-> `/opt` rather than `/home/node/pytools`, and that is the whole reason it
-> survives: that path is a named volume, and a volume takes its contents from the
-> image exactly once, at creation. An install written there during a build is
-> masked by whatever the existing volume already holds — which is precisely the
+> that path is a named volume, and a volume takes its contents from the image
+> exactly once, at creation. An install written there during a build is masked
+> by whatever the existing volume already holds — which is precisely the
 > "installed by hand, lost on rebuild" failure this is meant to end.
-> — `Dockerfile:303-309`
+> `Dockerfile:303-309`, pinned by `src/lib/deployment.test.ts:1137`
 
-and again for the Playwright browsers, which are in `/opt/playwright/browsers`
-and not a fifth volume for the same reason (`docs/agent/environment.md:33`).
+**Consequence for the design.** Anything that ships a default set in the image
+*and* lets a stack add to it **at the same path** is broken on every existing
+install and correct on a fresh one, which is the worst available failure,
+because the person testing it has a fresh install. The image's contents and a
+stack's contents go at different paths, or the image half never upgrades.
 
-`src/lib/deployment.test.ts:892` pins it: *"keeps that directory off every named
-volume"*.
+### C2. `childEnv` strips `UF_*`, so a stack cannot be named to a child by a `UF_` variable
 
-**The consequence for this survey.** Any option that says "ship a default
-toolchain in the image *and* let the operator add to it in a volume at the same
-path" is broken on every existing install and correct on a fresh one — which is
-the worst available failure, because the developer testing it has a fresh
-install. An option must put the image's contents and the operator's contents at
-**different paths**, or accept that the image half never upgrades.
-
-## 3. `childEnv` strips `UF_*`, and that closes one obvious design
-
-`childEnv` (`src/lib/orchestrator.ts:6306-6321`) copies the server's whole
-environment, sets `FORCE_COLOR=0`, and deletes six classes:
+`childEnv` (`src/lib/orchestrator.ts:5698-5716`) copies the server's whole
+environment, sets `FORCE_COLOR=0`, and deletes three prefixes and six names:
 
 ```
-UF_*   OTEL_*   ANTHROPIC_ADMIN_KEY   CLAUDE_CODE_ENABLE_TELEMETRY
-DATA_DIR   NODE_OPTIONS
+UF_*   OTEL_*   __NEXT_*
+ANTHROPIC_ADMIN_KEY   OPENAI_API_KEY   CODEX_API_KEY
+CLAUDE_CODE_ENABLE_TELEMETRY   DATA_DIR   NODE_OPTIONS
 ```
 
-`chatEnv` (`src/lib/chat.ts:2251-2266`) is the same six, plus `githubEnv()`.
+So a design shaped "`UF_STACK_DIR=/opt/stacks`, and the agent's tooling reads
+it" does not work: the child never sees it. A `UF_` variable can be read by
+`docker-entrypoint.sh`, which runs before `exec` and is not subject to the
+strip, or by the server; the result reaches a child as `PATH`, as some
+non-`UF_` variable, or as a file on disk.
 
-Two things follow.
+**Correction to this directory's own earlier claim.** Files `09-`, `10-` and
+`11-` describe a `terminalEnv()` and argue about whether its strip list is five
+or six names. **There is no `terminalEnv` in `src/`** (`grep -rn "terminalEnv"
+src/` returns nothing); it was this survey's invented name for a function it
+proposed. The real list is `childEnv`'s above, it is nine conditions rather than
+six, and `OPENAI_API_KEY`, `CODEX_API_KEY` and `__NEXT_*` joined it after the
+survey closed.
 
-**`PATH` passes through untouched.** It is not on the strip list, and the
-docblock says so by name: *"Everything else passes through. The CLI needs PATH,
-HOME, CLAUDE_CONFIG_DIR, proxy and CA settings, and locale to function at all, so
-an allowlist would fail in ways that are tedious to diagnose from inside a
-container"* (`src/lib/orchestrator.ts:6244-6246`). This is what makes
-`Dockerfile:281`'s `ENV PATH="/home/node/pytools/bin:${PATH}"` reach an agent's
-shell at all, and the Dockerfile comment states the mechanism in the same words
-(`Dockerfile:271-274`).
+### C3. The uid split decides ownership, and which rule applies depends on who invokes the binary
 
-**A `UF_`-named variable cannot be read by the child.** So an option shaped
-"`UF_STACK_DIR=/opt/stacks`, and the agent's tooling reads it" does not work: the
-child never sees it. The variable can be read by `docker-entrypoint.sh` (which
-runs before `exec` and is not subject to the strip) or by the server, and the
-result has to reach the child as `PATH`, as some non-`UF_` variable, or as a file
-on disk. This is the same rule `UF_GH_EXTENSIONS`, `UF_PY_TOOLS`, `UF_SANDBOX*`
-and `UF_LOCK_CLAUDE_HOME` already live under — the wildcard is three names, so
-all six are consumed entirely by the entrypoint and read by nothing in `src/`
-(`docs/agent/environment.md:26-31`).
+The container runs as root, `user: "0:0"` (`docker-compose.yml:64`), and agent
+children are dropped to `UF_AGENT_UID:UF_AGENT_GID`, which compose fills from
+`${UF_UID:-1000}` / `${UF_GID:-1000}` (`docker-compose.yml:280-281`).
 
-It is also the rule that keeps them off the blank-by-default warning surface: a
-variable `config.ts` reads through `env()` and compose renders as `${VAR:-}`
-becomes a permanent dashboard warning on every stock install
-(`docs/agent/environment.md:17`). A new variable in this area should be
-entrypoint-only for that reason as well as this one.
-
-## 4. The uid split, and what a root-installed file does to an agent
-
-The container runs as root — `user: "0:0"` (`docker-compose.yml:64`) — and the
-agent children are dropped to `UF_AGENT_UID:UF_AGENT_GID`, which compose fills
-from `${UF_UID:-1000}` / `${UF_GID:-1000}` (`docker-compose.yml:263-264`).
-
-The repository has already decided how an operator-installed executable must be
-owned, and decided it twice, in the same words:
-
-> Every install runs as the uid that will *run* the extension — an extension is
-> an executable an agent invokes, and root-owned files here would leave the
-> agents unable to remove or upgrade what they run.
-> — `docker-entrypoint.sh:140-144`, and again at `:213-215` for `uv`
-
-Both loops therefore install under `setpriv --reuid --regid --clear-groups`
-(`docker-entrypoint.sh:145-153`, `:216-224`).
-
-And the opposite decision, for the one binary the *run loop* invokes rather than
-the agent:
+Both existing install loops run under
+`setpriv --reuid --regid --clear-groups` (`docker-entrypoint.sh:147`, `:218`),
+because an agent must be able to remove or upgrade what it runs. The opposite
+decision is taken for the one binary the *run loop* invokes rather than the
+agent:
 
 > Root-owned and 0755: every agent uid reads it, none writes it. A tool the run
 > loop shells out to on every cycle boundary, sitting in a directory a sibling
 > agent could rewrite, would be a way for one run to put its own code on every
 > other run's transcript.
-> — `Dockerfile:311-314`
+> `Dockerfile:311-314`
 
-So there are two correct ownerships and which one applies is decided by **who
-invokes the binary**, not by where it lives. An option that ships one directory
-for both kinds of tool has to say which rule it takes.
+**Consequence.** A design that ships one directory for both kinds of tool must
+say which rule it takes. Reading and executing a root-owned 0755 file is not the
+problem; upgrading and removing it is.
 
-Reading and executing a root-owned 0755 file is not the problem; *upgrading and
-removing* it is. That is the failure both loops are written to avoid.
+There is a live instance of the hazard already: `/home/node/pytools/bin` is on
+the **server's** `PATH` and is agent-writable, which
+`src/lib/contextPruning.ts:98-99` names and works around by resolving an
+absolute interpreter rather than a name. Any new stack directory that lands on
+`PATH` for a root process inherits it, and the mitigation is the same:
+absolute paths, never names.
 
-## 5. `/data` is 0700 root-owned and is not available
+### C4. No agent-writable toolchain under `/data`
 
-`/data` ships root-owned 0700 and `docker-entrypoint.sh` reclaims it on every
-boot, because a volume created by an earlier release is `node:node 0777` and
-stays that way through any number of image pulls (`docker-compose.yml:358-368`,
-`Dockerfile:517-519`). The mode is *"the whole of what keeps an agent out of the
-database, the settings the guards read and the server lock"*
-(`docker-compose.yml:363-364`).
+`/data` ships root-owned 0700 and the entrypoint reclaims it on every boot. The
+compose comment states the corollary for a tool volume directly: not inside
+`/data`, which *"is root-owned 0700 precisely to keep the agents out — while this
+is the one directory they must be able to write"*
+(`docker-compose.yml:440-444`). Confirmed from inside this container:
+`ls -la /data` returns `Permission denied`.
 
-The Go cache comment states the corollary for a tool volume directly: *"not
-inside /data, [which] is root-owned 0700 precisely to keep the agents out — while
-this is the one directory they must be able to write"* (`docker-compose.yml:378-381`).
+### C5. Namespaces are denied at both seccomp settings
 
-**No option may put an agent-writable toolchain under `/data`.** Confirmed from
-inside this container: `ls -la /data` returns `Permission denied`, which is the
-same reading three earlier proposals took (`proposals/GrowthLimits/00-problem.md:138`).
+Docker gates the namespace and mount family behind `CAP_SYS_ADMIN`, this
+container holds no capabilities, and the compose file records the measurement:
+plain `unshare -U` *"needs no privilege on a stock kernel"* and fails here
+(`docker-compose.yml:534`). The profile
+itself ships **commented out** at `docker-compose.yml:567-568`, so a stock
+install runs Docker's default profile, which also allows `execve`. So an
+operator-installed binary runs; a tool that wants to build its own container,
+chroot or sandbox, and several "stack" tools do, fails here in a way no volume
+fixes. **Not re-measured by this run; quoted from the compose file's own
+record.**
 
-## 6. Nothing backs up a named volume
+### C6. A tool's own state is a separate persistence problem from its binary
 
-`scripts/backup-db.mjs` writes one file: a `VACUUM INTO` snapshot of
-`/data/usagefoundry.db` into the `/backups` bind mount
-(`docs/backup-and-restore.md:14-31`, `:118-123`). `docs/backup-and-restore.md:129-142`
-enumerates what is deliberately excluded — the agents' git branches, and
-`~/.claude` — on the grounds that both have other copies.
-
-**A toolchain volume would have neither a backup nor another copy.** It is the
-first thing this app would hold that is neither in the image, nor in git, nor on
-the host, nor in the database. `docker compose down -v` destroys it and
-`docs/backup-and-restore.md:8` describes that command as the one the whole backup
-path exists to survive.
-
-Every option states, under heading 3, what its answer to that is. There are only
-three honest ones: the volume is a **cache** and the declaration is the durable
-thing; the volume is **backed up** by something new; or the operator is told
-plainly that it is not.
-
-## 7. The seccomp profile does not stop an arbitrary binary running
-
-Measured here, by parsing `uf-seccomp.json` with `python3 -c` (`json.load`, one
-pass, 2026-08-25):
-
-| | |
-|---|---|
-| `defaultAction` | `SCMP_ACT_ERRNO`, `defaultErrnoRet: 1` (EPERM) |
-| Syscall rules | 29 groups, **every one `SCMP_ACT_ALLOW`** — no explicit deny rule exists |
-| Names on the allow list | 443 |
-| `execve`, `execveat`, `fork`, `vfork` | **allowed, ungated** |
-| `statx`, `openat2`, `faccessat2`, `memfd_create` | allowed, ungated |
-| `clone`, `clone3`, `unshare`, `mount`, `umount2` | present **twice** — once behind Docker's capability gate, once ungated (the appended pair) |
-| `pivot_root` | present **once**, ungated — the sixth appended name, in no gated rule |
-| `userfaultfd`, `keyctl` | **absent from the list**, so `defaultAction` denies them |
-
-So an operator-installed binary runs. Nothing in this profile is a barrier to
-Terraform, to a language runtime, or to a compiler.
-
-Two qualifications that matter more than the table.
-
-**The profile is commented out.** `docker-compose.yml:490-491` ships
-`security_opt` disabled, so a stock install runs Docker's *default* profile,
-which also allows `execve`. The relaxation exists for bubblewrap and nothing
-else, and the compose comment says a stock `docker compose up` must not fail on a
-profile file a daemon rejects (`docker-compose.yml:429-438`).
-
-**What is denied is namespaces, at both settings.** Docker gates the whole
-namespace-and-mount family behind CAP_SYS_ADMIN, this container holds no
-capabilities, and the compose comment reports the measurement: plain `unshare -U`
-fails, `/proc/sys/user/max_user_namespaces` is 31734, `Seccomp: 2` with one
-filter loaded (`docker-compose.yml:453-468`). A tool that wants to build its own
-container, chroot, or sandbox — and several "stack" tools do — will fail here in
-a way no volume fixes. **Not re-measured by this proposal; quoted from the
-compose file's own record.**
-
-## 8. The CLI sandbox's write allow-list already names two tool caches, and
-neither is persistent
-
-When `UF_SANDBOX=1`, a write config of any kind makes the CLI bind `/`
-read-only and rw-bind only the allow set, so every path a build touches must be
-named or the build fails inside a tool call (`src/lib/orchestrator.ts:5979-5982`).
-`BUILD_CACHE_DIRS` is that concession:
-
-```ts
-const BUILD_CACHE_DIRS = [
-  path.join(os.homedir(), ".npm"),
-  process.env.GOPATH || path.join(os.homedir(), "go"),
-];
-```
-— `src/lib/orchestrator.ts:5996-5999`
-
-`GOPATH` is `/home/node/go`, which is the `usagefoundry-gocache` volume.
-**`$HOME/.npm` is not a volume and not a bind mount** — it is the writable layer,
-so npm's cache is discarded by every `docker compose up --build`. The docblock's
-own sentence is correct as written: *"which the image points at a named volume so
-it survives a container it is meant to outlive"* attaches to `GOPATH`, the clause
-immediately before it, and claims nothing about npm. But it reads on a fast pass
-as covering both, which is the misreading to avoid.
-
-That is the shape of the fourth persistence problem, in the tree already: **a
-tool's own state directory is a separate question from its binary**, it lands in
-`$HOME` by default, and `$HOME` for both server and children is `/home/node`
-(`Dockerfile:47`, `src/lib/orchestrator.ts:5986-5990`), of which exactly four
-subdirectories are persistent:
+`$HOME` is `/home/node` for the server and for every child alike
+(`Dockerfile:47`), and exactly four subdirectories of it are persistent:
 
 | Path | What it is | Survives `up --build`? |
 |---|---|---|
-| `/home/node/.claude` | bind mount of the operator's own `~/.claude` | yes — and it is the **host's** file |
-| `/home/node/go` | `usagefoundry-gocache` | yes |
-| `/home/node/.local/share/gh` | `usagefoundry-gh` | yes |
-| `/home/node/pytools` | `usagefoundry-pytools` | yes |
-| **everything else under `/home/node`** — `.npm`, `.cache`, `.config`, `.terraform.d`, `.aws`, `.kube` | writable layer | **no** |
+| `/home/node/.claude` | bind mount of the operator's own `~/.claude` | yes, and it is the **host's** file |
+| `/home/node/go` | `usagefoundry-gocache` (`docker-compose.yml:445`) | yes |
+| `/home/node/.local/share/gh` | `usagefoundry-gh` (`:459`) | yes |
+| `/home/node/pytools` | `usagefoundry-pytools` (`:471`) | yes |
+| everything else under `/home/node`: `.npm`, `.cache`, `.config`, `.terraform.d`, `.aws`, `.kube` | writable layer | **no** |
 
-A stack tool that keeps a provider cache, a plugin directory or a credential in
-`$HOME` therefore re-downloads or loses it on the rebuild, and the operator's
-symptom is a slow work cycle rather than an error. Every option file answers this
-under heading 5.
+Terraform downloads providers, `kubectl` reads a kubeconfig, `mise` keeps a tool
+registry, `npm` keeps a cache, and all of them default to `$HOME`. A stack that
+ships a binary and not that relocation ships half a tool, and the operator's
+symptom is a slow work cycle rather than an error. Every image-level answer
+already in the tree does the relocation explicitly:
+`UV_TOOL_BIN_DIR` under `/home/node/pytools` (`Dockerfile:283`), Playwright
+browsers to `/opt/playwright/browsers` (`Dockerfile:500`), winnow's state out of
+`$HOME` (`src/lib/contextPruning.ts`).
 
-`/home/node/.claude` deserves its own warning, and `.env.example:279-286` already
-carries it: a tool that "wires itself in globally" on first run is editing the
-**host's** Claude Code settings for every session on the machine, not just this
-app's. Measured there: one `cozempic --version` in a throwaway container wrote 7
-hooks into `~/.claude/settings.json`.
+`/home/node/.claude` carries its own warning and `.env.example` already makes
+it: a tool that *"wires itself in globally" on first run edits your machine's
+settings* (`.env.example:304`), which is the **host's** Claude Code settings for every session on the machine, not just this
+app's.
 
-## 9. Invariants from `CLAUDE.md` an option could break silently
+### C7. Four invariants from `CLAUDE.md` that a stack mechanism could break silently
 
-Each of these fails with nothing thrown and nothing failing to typecheck.
-
-- **`createRun` runs from entry to INSERT with no `await`.** Anything that
-  probes for a tool, stats a volume or shells out during admission puts two
-  agents in one directory. `docs/agent/concurrency-and-ownership.md` owns it. A
-  "which stack does this run need" check belongs anywhere but there.
-- **Two flags ride every cycle's argv because `--resume` restores none of them**
-  — `--plugin-dir` and the four-notice `--append-system-prompt` (one flag; a
-  second is a replacement). An option that tells the agent about the stack in a
-  system-prompt notice is editing a **cached prefix**: `runs.file_cost_notice` is
-  generated once at `createRun` and never rebuilt at a spawn, because text that
-  differed between two cycles of one run would cold-start a 190,000-token
-  context. Any generated notice about installed tools inherits that rule.
+- **`createRun` runs from entry to INSERT with no `await`**
+  (`CLAUDE.md:49` routes to `docs/agent/concurrency-and-ownership.md`).
+  Anything that probes for a tool, stats a volume or shells out during admission
+  puts two agents in one directory. A "which stack does this run need" check
+  belongs anywhere but there.
+- **Two flags ride every cycle's argv because `--resume` restores neither**,
+  `--plugin-dir` and the `--append-system-prompt` notice (`CLAUDE.md:48`). A
+  design that tells the agent about the stack in a system-prompt notice is
+  editing a **cached prefix**: `runs.file_cost_notice` is generated once at
+  `createRun` and never rebuilt at a spawn, because text differing between two
+  cycles of one run would cold-start a large context. Any generated notice about
+  installed tools inherits that rule.
 - **`--add-dir` grants write, and a stored path is proved contained in a mount
-  again at use time** (`docs/agent/architecture.md`, plugins section). A stack
-  directory reachable by `--add-dir` is a stack directory an agent can rewrite.
-- **The three cost sources are never summed or mixed.** No stack mechanism may
-  put a figure on a card that reads as spend.
-- **`saveSettings` stores only what differs from `DEFAULTS`.** If any part of a
-  stack becomes a setting rather than an environment variable, it inherits that.
+  again at use time**, because what an enabled plugin becomes is *"a directory
+  whose hooks the container executes"* (`docs/agent/architecture.md:59`, routed
+  from `CLAUDE.md:53`). **A stack directory reachable by `--add-dir` is a stack
+  directory an agent can rewrite.**
+- **Never a shell.** The agent is spawned with an argument array and
+  `stdio: ["ignore", "pipe", "pipe"]`, **never a shell**, so prompt
+  metacharacters are inert (`docs/agent/security.md:14`, routed from
+  `CLAUDE.md:59`). Any install surface that takes operator text and runs it
+  answers to this line, and the only shape that never has to argue with it is a
+  closed verb list with constant argv templates.
 
-## 10. The two existing loops are pinned by a test that reads three files
+### C8. A new `UF_` variable the entrypoint reads must land in four files in one commit
 
-`src/lib/deployment.test.ts` carries two suites and two further assertions that
-are precisely the pin any new persistence mechanism would have to extend:
+`.env.example`, `docker-compose.yml`'s `environment:` block,
+`docker-entrypoint.sh`, and `src/lib/deployment.test.ts`. Compose has no
+`env_file`, so a variable in `.env` that the `environment:` block does not name
+never reaches the container at all, which is the trap `UF_LOCK_CLAUDE_HOME` was
+caught by: *"a security control switched on in a file,
+never applied, and indistinguishable from one that is off"*
+(`docker-compose.yml:219`). `src/lib/deployment.test.ts:1377`'s
+`it("forwards every variable the entrypoint reads and nothing else supplies")`
+is what makes forgetting one of the four loud, and `:863` and `:884` carry the
+reasoning.
 
-- `describe("gh extensions survive the rebuild that installs them by hand does not")` — `:664`
-- `describe("Python tools survive the rebuild that installs them by hand does not")` — `:733`
-- `it("keeps that directory off every named volume")` — `:892`
-- `it("forwards every UF_ variable the entrypoint reads")` — `:961`
+**Read against R1:** this constraint applies to the *mechanism*, once. If it
+applies every time a tool is added, R1 is not met.
 
-The last one is the trap `UF_LOCK_CLAUDE_HOME` was caught by: compose has no
-`env_file`, so a variable in `.env` that `docker-compose.yml`'s `environment:`
-block does not name never reaches the container at all — *"a security control
-switched on in a file, never applied, and indistinguishable from one that is
-off"* (`docs/agent/environment.md:27`).
+### C9. The left menu has nine digits and eleven rows, and the loss is taken from the bottom
 
-**A new `UF_` variable that the entrypoint reads must be added to four files in
-the same commit** — `.env.example`, `docker-compose.yml`'s `environment:` block,
-`docker-entrypoint.sh`, and `deployment.test.ts` — and the test is what makes
-forgetting one of them loud.
+**This directory's claim that "there is no room on the left menu" is stale and
+the tree now contradicts itself about it.** `src/components/shell/panes.ts:14-20`
+says *"**Nine is the ceiling** — ⌘1…⌘9 is nine digits and the list is eleven
+rows — so the last **two** rows have no digit at all"*, and names them: API account and
+Settings, *"because Taskboard went in under Runs and pushed everything below it
+down one."* `docs/agent/ui-density-audit.md:159-163` still bans **an eleventh**
+pane on the ground that it would be *"the second row you cannot reach from the
+keyboard"*, and gives the alternative: *"New destinations are sub-routes under
+an existing pane."*
 
-## 11. What could not be reached, and the commands that would reach it
+So: eleven rows exist, the ban's stated price has already been paid once, and
+the doc is stale by one pane. **The design run should not assume a new pane is
+impossible, and should not assume it is free either.** A sub-route under an
+existing pane is what the doc asks for and costs no digit.
 
-Every item here is a claim this survey makes on documentation and code rather
-than on observation. A human with Docker runs these.
+### C10. Nothing here turns a sandbox on
+
+*"Nothing here turns a sandbox on. This app configures none"*
+(`src/lib/sandbox.ts:8-9`). `UF_SANDBOX` is read only by
+`docker-entrypoint.sh:362` and ships off. A "sandboxed run" on a stock install
+is a run in a git worktree under `acceptEdits`, sharing a uid, a `$HOME`, a
+`PATH` and a filesystem with every other run. R3's "including sandboxed runs" is
+therefore **not two cases today**, and becomes two cases only in the one
+configuration where a tool's write path breaks (C6, and
+`src/lib/orchestrator.ts:5310`).
+
+---
+
+## Part 3. Assumptions this specification carries
+
+Stated so that a later run can find out they were wrong, rather than inheriting
+them silently.
+
+### A1. "Without modifying the published container" means the shipped image stays as published and a stack layers on top at boot or run time
+
+It does **not** mean the image may never be rebuilt. A `docker compose up
+--build` that rebuilds the same published `Dockerfile` unchanged is fine; what
+R1 forbids is the *edit*.
+
+**What changes if this is wrong, in either direction.**
+
+- If the operator meant something stricter, that no image is ever built at all,
+  then anything at build time leaves the running, including
+  [05-option-image-is-the-stack.md](05-option-image-is-the-stack.md)'s
+  `Dockerfile.stack`, and only a boot-time or run-time installer qualifies.
+- If the operator meant something looser, that editing this repository's own
+  `Dockerfile` is acceptable as long as the *published* artifact is not
+  republished, then R1 is not a constraint at all and the whole directory
+  reopens, because the status quo measured in
+  [00-problem.md](00-problem.md) already satisfies it.
+- **The live tension:** `05-`'s form builds a derived image `FROM
+  usagefoundry:latest`, which layers on top of the shipped image without editing
+  it, but does so at **build** time rather than at boot or run time. A1 as
+  written says boot or run. The design run has to rule on whether build-time
+  layering counts, and that ruling decides whether `05-` is the answer or is out.
+
+### A2. "Modular and easy for others" means a stack is a unit someone can publish and another operator can consume, not a row typed into a form
+
+The unit is the artifact, and the app's job is to consume it. This is what R2
+tests.
+
+**What changes if this is wrong.** If the operator meant a form in the app, with
+the stack living in this install's database, then R2 collapses into the stacks
+table of [16-option-stack-table.md](16-option-stack-table.md), the "easy for
+others" half becomes a statement about this app's UI rather than about the
+artifact, and R4b gets harder rather than easier, because `.env` survives
+`docker compose down -v` and a database on a volume does not.
+
+---
+
+## Part 4. What could not be reached, and the commands that would reach it
+
+Every item here is a claim this directory makes on documentation and code rather
+than on observation. A human with Docker runs these, in this order.
 
 1. **That anything survives `docker compose up --build`.** Nothing in this
-   proposal watched a volume outlive a rebuild.
+   directory has watched a volume outlive a rebuild, and `docs/verification.md`
+   records nothing about any of the three.
    ```bash
    docker compose -p ufstack up -d --build
-   docker compose -p ufstack exec -T usagefoundry sh -c 'echo hi > /home/node/pytools/bin/probe && echo hi > /home/node/probe-writable-layer'
+   docker compose -p ufstack exec -T usagefoundry sh -c \
+     'echo hi > /home/node/pytools/bin/probe && echo hi > /home/node/probe-writable-layer'
    docker compose -p ufstack up -d --build --force-recreate
-   docker compose -p ufstack exec -T usagefoundry sh -c 'ls /home/node/pytools/bin/probe /home/node/probe-writable-layer'
+   docker compose -p ufstack exec -T usagefoundry sh -c \
+     'ls /home/node/pytools/bin/probe /home/node/probe-writable-layer'
    #   expected: the first exists, the second is gone
    docker compose -p ufstack down -v
+   #   then repeat the build and check which tools came back
    ```
-2. **That the volume-masking trap is real on this engine.** Add a `RUN touch
+   The last two lines are R4b and are the half this directory has never
+   separated out.
+2. **That C1 is real on this engine.** Add a `RUN touch
    /home/node/pytools/bin/from-image` to the Dockerfile, rebuild against an
    *existing* volume, and check whether the file is visible. The repository
    asserts it is not (`Dockerfile:303-309`).
-3. **That a boot-installed binary is executable by the agent uid inside a work
-   cycle.** `docker compose exec -T -u "$(docker compose exec -T usagefoundry
-   printenv UF_AGENT_UID)" usagefoundry sh -c 'command -v <tool> && <tool>
-   --version'` — and note `docs/agent/environment.md:22` forbids taking that uid
-   from `-u "${UF_UID:-1000}"` in the operator's own shell, because `.env` is
-   compose's input rather than an exported environment.
-4. **That the seccomp profile is accepted and a new binary still runs under it.**
-   Uncomment `docker-compose.yml:490-491` and repeat 3.
-5. **Anything about a real stack tool.** No Terraform, no `mise`, no `asdf`, no
-   `apt-get` was run anywhere in this proposal.
+3. **R3 link 3, which is the single most decisive unknown in this directory.**
+   Install `ruff` via `UF_PY_TOOLS`, start a run at `acceptEdits`, ask it to run
+   `ruff --version` and `ruff check .`, and read the log for a refusal. Four
+   outcomes and each decides a different thing;
+   [07-option-make-it-runnable.md](07-option-make-it-runnable.md) §10 has the
+   recipe. **It costs one work cycle and no design should be finalised without
+   it.**
+4. **That a boot-installed binary is executable by the agent uid.**
+   `docker compose exec -T -u "$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)" usagefoundry sh -c 'command -v <tool> && <tool> --version'`,
+   and note that the uid must be read out of the container rather than taken
+   from `${UF_UID:-1000}` in the operator's own shell, because `.env` is
+   compose's input rather than an exported environment
+   (`docs/install.md:44-50`).
+5. **That the seccomp profile is accepted and a new binary still runs under it.**
+   Uncomment `docker-compose.yml:567-568` and repeat 4.
+6. **Anything about a real stack tool.** No Terraform, no `mise`, no `asdf`, no
+   `apt-get` has been run anywhere in this directory.
 
-And one gap in the repository's own record rather than in this survey:
-**`docs/verification.md` contains no entry verifying that `usagefoundry-gh` or
-`usagefoundry-pytools` survives a rebuild.** `grep -n "UF_PY_TOOLS\|UF_GH_EXTENSIONS\|gocache" docs/verification.md`
-returns one line, `:1371`, and it is about a guard rather than about persistence.
-The mechanism this proposal builds on is pinned by a unit test over file
-*contents* and has never been executed against a real rebuild. That is not an
-argument against it — it is the reason item 1 above is item 1.
+Two questions are not about the tree at all, cost a sentence each, and settle
+more than any command above. **Neither has been asked in four runs.**
+
+- **Does the operator have host access to the container?** If not, every
+  argument resting on `docker compose exec` collapses.
+- **What are the five commands they expect to type?** If the answer is
+  `apt-get`, a login, or a two-step install, a declarative unit is answering a
+  smaller question than the one being asked.
 
 ---
 
 ## The fixed heading list
 
-**Every option file in this directory answers these ten headings, in this order,
-under these names.** Runs 2 and 3 follow it. A comparison table later in the
-directory is then over a fixed set rather than over N arguments, which is the
-whole reason the list is fixed here and not negotiated per file. An option with
-nothing to say under a heading writes "Nothing" under it rather than dropping it.
+This list governed the seventeen option files in this directory and it now
+governs the design. **A design document answers these ten headings, in this
+order, under these names**, and each of R1 to R5 maps onto one or more of them,
+named in brackets. A heading with nothing to say gets "Nothing" under it rather
+than being dropped.
 
-1. **The strongest case** — one paragraph, written as its advocate would write
-   it, with no hedging and no rebuttal.
-2. **Shape** — what is actually built or configured: which files, which
-   variables, which volumes, which lines of `src/`.
-3. **What persists it, and what discards it** — the four events in §1 above,
-   one line each, plus whether `scripts/backup-db.mjs` covers it.
-4. **Reach** — which of the five kinds of child sees the tool, named one by one,
-   and what carries it there (`PATH`, `childEnv`/`chatEnv`, the agent uid, a
-   `--add-dir`). See `00-problem.md` §"Which children have to see it".
-5. **Tool state, not the binary** — where the tool's own cache, config, plugin
-   directory and credentials land, and whether that persists on the same terms as
-   the executable. §8 above is the shape of the question.
-6. **What it does to the boundaries** — `/data` 0700, the root/`UF_AGENT_UID`
-   split, `UF_CHAT_GID`, the CLI sandbox's write allow-list, the read guard, and
-   worktree isolation. Which of them it crosses, and what it hands an agent that
-   the agent did not have.
-7. **The operator's surface** — what they configure and where, what a restart
-   does with it, and how they change or remove a tool once installed.
-8. **How it fails, and whether loudly** — every silent failure mode named. The
-   bar is set by `.env.example:222-226`: a missing command inside a `|| true`
-   hook body is a plugin that reports itself active against a command that was
-   never present, 213 times.
-9. **What it costs to build** — files touched, whether `deployment.test.ts`
-   grows, whether any `docs/agent/` invariant moves, and whether the work is a
-   day, a week or longer.
-10. **What would have to be true** — the single fact that would promote this
-    option, and the single fact that would kill it. Both stated as something
-    somebody could go and check.
+1. **The strongest case** for the shape chosen, written as its advocate would
+   write it, with no hedging.
+2. **Shape** [R1, R2] which files, which variables, which volumes, which lines
+   of `src/`; and what a stack artifact literally looks like.
+3. **What persists it, and what discards it** [R4a, R4b] the two events stated
+   separately, plus whether `scripts/backup-db.mjs` covers it.
+4. **Reach** [R3] which of the kinds of child sees the tool, named one by one,
+   and what carries it there: `PATH`, `childEnv`, the agent uid, an `--add-dir`.
+5. **Tool state, not the binary** [R4, C6] where the tool's own cache, config,
+   plugin directory and credentials land, and whether that persists on the same
+   terms as the executable.
+6. **What it does to the boundaries** [C3, C4, C5, C7, C10] which it crosses,
+   and what it hands an agent that the agent did not have.
+7. **The operator's surface** [R2, R5] what they configure and where, what a
+   restart does with it, and how they change or remove a tool once installed.
+8. **How it fails, and whether loudly** [R5] every silent failure mode named.
+   The bar is `.env.example:245-249`: a missing command inside a `|| true` hook
+   body is a plugin reporting itself active against a command that was never
+   present, 213 times.
+9. **What it costs to build** files touched, whether `deployment.test.ts` grows,
+   whether any `docs/agent/` invariant moves, and whether the work is a day, a
+   week or longer.
+10. **What would have to be true** the single fact that would confirm the design
+    and the single fact that would kill it, both stated as something somebody
+    could go and check.
