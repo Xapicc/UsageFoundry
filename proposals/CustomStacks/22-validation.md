@@ -9,8 +9,12 @@ through `01d-`), and this one (`01e-`, `01f-`, `01g-`, `21-`). **The seventeen
 superseded option files `02-` through `18-` were deliberately not re-validated**,
 and §5 says why and what that costs.
 
-Checked against the tree at `fd07353`. **This container has no Docker**, and §6
-is the honest accounting of what that leaves unobserved.
+Checked against the tree at `68a8aa7`, which is the last commit before this run's
+own and the pin every file written here carries.
+`git diff --stat 68a8aa7..HEAD -- . ':!proposals'` is **empty**, so nothing this
+run committed can have moved a line any of these citations names. **This
+container has no Docker**, and §6 is the honest accounting of what that leaves
+unobserved.
 
 ---
 
@@ -54,7 +58,7 @@ Seven findings. Two changed a design decision; five are references.
 only two docblock mentions in `src/lib/contextPruning.ts:98-99` and three in
 `src/lib/deployment.test.ts`."*
 
-**Is:** ten lines in two files at `fd07353` - **one** docblock mention in
+**Is:** ten lines in two files at `68a8aa7` - **one** docblock mention in
 `src/lib/contextPruning.ts:99` and **nine** in `src/lib/deployment.test.ts`.
 
 **Direction: neither.** The claim R5 rests on - that nothing in `src/` *reads*
@@ -180,7 +184,7 @@ rule is the one thing a reader has to get right about it.
 
 ### 3.2 `panes.ts` is eleven rows and `ui-density-audit.md` still says ten
 
-`grep -c "href:" src/components/shell/panes.ts` returns **11** at `fd07353`, and
+`grep -c "href:" src/components/shell/panes.ts` returns **11** at `68a8aa7`, and
 `panes.ts:14-18` says so in its own words: *"**Nine is the ceiling** — ⌘1…⌘9 is
 nine digits and the list is eleven rows — so the last **two** rows have no digit
 at all."* `docs/agent/ui-density-audit.md:159` still reads *"`panes.ts` is ten
@@ -266,7 +270,7 @@ docker compose logs usagefoundry | grep "installed Python tool"  # expect: reins
 **This is the largest single gap in the repository's own record, and it has
 widened.**
 `grep -n "UF_PY_TOOLS\|UF_GH_EXTENSIONS\|usagefoundry-pytools\|gocache" docs/verification.md`
-returns **zero** lines at `fd07353`. The five named volumes are pinned by unit
+returns **zero** lines at `68a8aa7`. The five named volumes are pinned by unit
 tests over file *contents* (`src/lib/deployment.test.ts:905`, `:978`, `:1137`)
 and by nothing else. If a volume does **not** survive a rebuild on the operator's
 engine, R4a degrades from *met* to *met when the network is up* and `21-` phase
@@ -372,7 +376,8 @@ the boundary is sharp:
   commented out and it has been parsed, never applied.
 
 **And one thing that is neither**: `/data` is **empty** in this container -
-`ls -a /data` returns `.` and `..` and nothing else at `fd07353`, and no
+`ls -a /data` returned `.` and `..` and nothing else when this ran on
+2026-09-12, and no
 UsageFoundry database exists anywhere reachable from it. (The original survey
 recorded `ls -la /data` → `Permission denied`; the directory is readable now and
 has nothing in it, which changes the reason and not the consequence.) So there is

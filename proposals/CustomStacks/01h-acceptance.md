@@ -9,7 +9,7 @@ against the design as it stands, and answered **met**, **met in design** or
 One of the five is not met and says so; two more are met in design and cannot be
 met in fact from this container, which is a different and weaker thing than met.
 
-Checked against the tree at `fd07353` and the directory as of this run.
+Checked against the tree at `68a8aa7` and the directory as of this run.
 
 ---
 
@@ -159,7 +159,7 @@ the `/opt`-versus-volume reasoning at `Dockerfile:303-309`.
 
 **And it has never been observed here or anywhere in this repository's record.**
 `grep -n "UF_PY_TOOLS\|UF_GH_EXTENSIONS\|usagefoundry-pytools\|gocache" docs/verification.md`
-returns **zero** lines at `fd07353`. The five named volumes are pinned by unit
+returns **zero** lines at `68a8aa7`. The five named volumes are pinned by unit
 tests over file *contents* (`src/lib/deployment.test.ts:905`, `:978`, `:1137`)
 and by nothing else. **No volume in this repository has ever been observed
 outliving a rebuild.**

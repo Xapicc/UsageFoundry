@@ -91,7 +91,7 @@ was no other way.**
 
 **Written on 2026-09-12 in eight files.** `01a-` through `01d-` are the design
 run's, against `baf051d`; `01e-` through `01h-` are the build run's, against
-`fd07353`. It decides rather than compares, and `01-constraints.md`'s fixed
+`68a8aa7`. It decides rather than compares, and `01-constraints.md`'s fixed
 ten-heading list governs the first four.
 
 **The mechanism in five sentences.** A stack is a directory holding one
@@ -261,7 +261,7 @@ moved into `docs/agent/`, and the fixes point at where they live now:
 modules" claim at `docs/agent/architecture.md:222`.
 
 **The eleven current files were fully re-validated on 2026-09-12 against
-`fd07353`, and `22-validation.md` is that pass**: 289 citations resolved
+`68a8aa7`, and `22-validation.md` is that pass**: 289 citations resolved
 mechanically, 88 quotations located in the tree, and every citation's line
 content read by hand for `01-constraints.md`, `00-problem.md` and the four
 design files. **Seven findings, five references and two design defects**, all
@@ -317,7 +317,7 @@ One gap in the repository's own record rather than in this directory, and it has
 **widened** since it closed:
 `grep -n "UF_PY_TOOLS\|UF_GH_EXTENSIONS\|usagefoundry-pytools\|gocache" docs/verification.md`
 returned one line about a guard when the survey closed and returns **zero** at
-`fd07353`. The five named volumes have never been observed surviving a rebuild;
+`68a8aa7`. The five named volumes have never been observed surviving a rebuild;
 they are pinned by unit tests over file *contents*
 (`src/lib/deployment.test.ts:905`, `:978`, `:1137`) and by nothing else.
 

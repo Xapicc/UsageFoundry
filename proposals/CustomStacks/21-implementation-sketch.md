@@ -25,7 +25,7 @@ one dangerous surface is a shell script the deployment tests already have a way
 of pinning (`src/lib/deployment.test.ts`, which asserts over the *text* of
 `Dockerfile`, `docker-compose.yml` and `docker-entrypoint.sh`).
 
-Checked against the tree at `ec205fe`. **This container has no Docker**, so every
+Checked against the tree at `68a8aa7`. **This container has no Docker**, so every
 phase's persistence claim is reasoned rather than observed and
 [22-validation.md](22-validation.md) §5 has the commands that would settle it.
 
@@ -46,7 +46,7 @@ It is also the phase that stands alone. **Phase 1 touches no `Dockerfile`, no
 having on an install that never adds a stack, because the two tool lists it
 reports on - `UF_GH_EXTENSIONS` and `UF_PY_TOOLS` - are shipped, documented and
 **completely unreported** today: `grep -rn "UF_PY_TOOLS\|UF_GH_EXTENSIONS" src/`
-returns ten lines in two files at `ec205fe`, one docblock mention in
+returns ten lines in two files at `68a8aa7`, one docblock mention in
 `src/lib/contextPruning.ts:99` and nine in `src/lib/deployment.test.ts`, and none
 of them is a read.
 
@@ -460,7 +460,7 @@ volume on `PATH` produces a binary a child resolves. Every one is reasoned from
 `docker-compose.yml` and `docker-entrypoint.sh`'s own statements, and
 **`docs/verification.md` records nothing about any of the five named volumes** -
 `grep -n "UF_PY_TOOLS\|UF_GH_EXTENSIONS\|usagefoundry-pytools\|gocache" docs/verification.md`
-returns zero lines at `ec205fe`.
+returns zero lines at `68a8aa7`.
 
 [22-validation.md](22-validation.md) §5 lists the commands in the order they buy
 the most, and **the first two of them should be run before phase 2 starts**, not
