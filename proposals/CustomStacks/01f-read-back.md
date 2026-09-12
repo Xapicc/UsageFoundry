@@ -129,8 +129,11 @@ What resolution buys, case by case:
   that is an error; it is the one fact an operator debugging a version mismatch
   needs and cannot get any other way.
 - **A link a receipt claims that is not there.** Removed by hand, or removed with
-  the volume. Drawn as **`missing`**, which is a fault: the receipt says `ok` and
-  the disk disagrees, and only one of them can be right.
+  the volume. This layer reports **`missing`** for that binary, which §3 composes
+  into **`broken`** for the stack holding it - two names at two levels and not two
+  states, because a stack with three binaries and one gone needs a word for the
+  binary and a word for the stack. It is a fault either way: the receipt says `ok`
+  and the disk disagrees, and only one of them can be right.
 - **A name the toolbox carries that no receipt claims.** Listed separately, as
   `unclaimed`, with the sentence that the applier will not touch it - because
   `01a-` §7's reconcile *"removes only paths its own receipts record"*, so an
@@ -250,7 +253,7 @@ on the busiest table in the schema.
 
 ---
 
-## 5. The route
+## 5. The two routes
 
 **Two routes, one per subject.** `GET /api/tools` is the list the section draws,
 covering all three sources of a tool on this install - stacks, `UF_PY_TOOLS`,

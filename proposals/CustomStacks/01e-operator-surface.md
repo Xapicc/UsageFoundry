@@ -184,24 +184,38 @@ row per tool: the name, the `summary` line from `stack.json` for a stack
 sentence beside it. A stack's row links to `/settings/stacks/<name>`; a `UF_*`
 row links nowhere, because there is no receipt behind it and never will be.
 
-**Four states, and they are `SandboxRow`'s four readings rather than a switch.**
-That docblock is the argument and it transfers whole: *"Four readings and not a
+**Six states, and they are `SandboxRow`'s readings rather than a switch.** That
+docblock is the argument and it transfers whole: *"Four readings and not a
 switch, because two of them are the ways a sandbox lies about itself"*
-(`src/app/settings/page.tsx:1744-1745`).
+(`src/app/settings/page.tsx:1744-1745`). Here there are six and **three of them
+are ways an install lies about itself**, because the receipt says `ok` in every
+one.
 
-| Word | The state | Tone |
+**The words and how each is composed are
+[01f-read-back.md](01f-read-back.md) §3**, which is where the rule lives because
+the composition is a pure function over the four layers and the page only draws
+it. Restated here as what an operator reads, with the tone this page gives it:
+
+| Word | What it means to somebody reading the row | Tone |
 |---|---|---|
-| `installed` | receipt `ok`, and a call naming one of its binaries has been seen | `ok` |
-| `unverified` | receipt `ok`, and no call naming its binaries has ever been seen | `neutral` |
-| `failing` | receipt `ok`, and calls naming its binaries are coming back errors | `warn` |
-| `failed` | receipt `failed` or `conflicted`, or a declaration with no receipt at all | **`danger`** |
+| `installed` | it is there and something has run it and nothing failed | `ok` |
+| `unverified` | it is there and nothing has tried it in the retained window | `neutral` |
+| `shadowed` | it is there, and a *different* copy of it is what an agent gets | `warn` |
+| `failing` | it is there and calls against it are coming back errors | `warn` |
+| `broken` | the receipt says it installed and the binary does not resolve | **`danger`** |
+| `failed` | the install failed, conflicted, or never ran at all | **`danger`** |
 
-**`danger` is reserved for `failed` and the reason is the same one `SandboxRow`
-gives for reserving it for `empty`.** There, `empty` is *"an install that
-believes it is confined and is not"* (`:1747-1749`). Here, `failed` is an install
-that believes it has a tool and does not, and it is the only state where an agent
-is certain to call a binary that is not on disk. `failing` is expensive and
-`failed` is the one that is lying.
+**`danger` is reserved for the two that lie, and the reason is the same one
+`SandboxRow` gives for reserving it for `empty`.** There, `empty` is *"an install
+that believes it is confined and is not"* (`:1747-1749`). Here, `failed` and
+`broken` are an install that believes it has a tool and does not, and they are
+the two states where an agent is certain to call a binary that is not on disk.
+`failing` and `shadowed` are expensive; those two are the ones that are lying.
+
+**`installed` is the only word that requires all four layers to agree**, which is
+`01f-` §3's rule and the right direction for a page whose failure mode is a false
+reassurance: every other word is cheaper to say than the one an operator will act
+on without reading further.
 
 **`unverified`, never `installed`, for a tool nobody has seen run.**
 `15-option-no-stack-object.md`'s honest rendering, carried forward whole by
@@ -238,8 +252,8 @@ worst of its rows, on [01f-](01f-read-back.md) §3's rule.
 **The three ways of having nothing are three renderings**, in the shape the
 Plugins section already uses at `src/app/settings/page.tsx:4139-4159`:
 
-- the route errored → the error text, not an empty list;
-- the route has not answered → `Empty` reading *"Reading stack receipts…"*;
+- `/api/tools` errored → the error text, not an empty list;
+- `/api/tools` has not answered → `Empty` reading *"Reading tool inventory…"*;
 - there are no tools from any of the three sources → `Empty` naming the `stacks`
   directory and the one-line shape of a `stack.json`, exactly as `:4159` names
   what a plugin directory must hold.
