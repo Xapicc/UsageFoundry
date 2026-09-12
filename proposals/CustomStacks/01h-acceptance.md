@@ -3,7 +3,7 @@
 **Does the design as written meet its own acceptance criteria?** Each of R1 to R5
 is taken from [01-constraints.md](01-constraints.md) in its own words, checked
 against the design as it stands, and answered **met**, **met in design** or
-**not met** — with how it was checked beside the answer.
+**not met** - with how it was checked beside the answer.
 
 **A criterion that is not met is a finding, not a reason to move the criterion.**
 One of the five is not met and says so; two more are met in design and cannot be
@@ -36,11 +36,11 @@ tool without building one."*
    `01g-` §6 is `stacks/shell-lint/stack.json` and `stacks/shell-lint/README.md`.
    **Neither path can be in the image**, and the `Dockerfile`'s stage split is
    why: `COPY . .` at `Dockerfile:34` is the *builder* stage, and the runner
-   stage that becomes the published image copies exactly five things —
+   stage that becomes the published image copies exactly five things -
    `public`, `.next/standalone` and `.next/static` (`:560-562`), three named
    scripts (`:570`), and the entrypoint (`:740`). A directory under `stacks/`
-   reaches none of them. Adding the second tool to that stack — shfmt beside
-   shellcheck — is an edit to the same `stack.json` and nothing else.
+   reaches none of them. Adding the second tool to that stack - shfmt beside
+   shellcheck - is an edit to the same `stack.json` and nothing else.
 2. **The six one-time changes enumerated and each checked for per-tool cost.**
    `01a-` §2.3 lists them: one compose mount and volume, one `ENV PATH` and one
    `COPY`, one entrypoint block, and three new or edited `src/`-side files.
@@ -56,7 +56,7 @@ compose file is a one-time `git pull` of this repository's own
 `docker-compose.yml`, which is the operator's file and not a path the image
 contains, and it is the same act every other compose change in this repository's
 history has required. It is a first-adoption cost, not a per-tool one, so it
-falls on R1's licensed side — but it is a cost and stating it is the difference
+falls on R1's licensed side - but it is a cost and stating it is the difference
 between met and claimed.
 
 ---
@@ -65,31 +65,31 @@ between met and claimed.
 
 **The criterion.** Four tests, all of which must hold.
 
-**1. One artifact whose content alone determines what gets installed** — **met**.
+**1. One artifact whose content alone determines what gets installed** - **met**.
 A directory holding one required file, and *"`stack.json` … the only file the
 applier reads"* (`01b-` §1). The `README.md` beside it is for the author's prose
 and the applier never opens it.
 
-**2. Its author needs no knowledge of `src/`** — **met**. Checked by reading
+**2. Its author needs no knowledge of `src/`** - **met**. Checked by reading
 `01g-` §6's `stack.json` word by word: `schema`, `name`, `summary`, `install`
 with `kind`, `url`, `sha256`, `unpack` and `bin`, and `allow`. Every one names a
 tool, a version, a file or a command. **The closest thing to an internal is
-`allow`**, whose entries the applier turns into `Bash(<cmd>:*)` — and that is
+`allow`**, whose entries the applier turns into `Bash(<cmd>:*)` - and that is
 Claude Code's own permission vocabulary, which a person installing tools for a
 coding agent already has to know. It is not this app's internals.
 
 **3. Copying to a second install and doing nothing else produces the same tools
-there** — **met now, and it was not met before this run.** This is the test
+there** - **met now, and it was not met before this run.** This is the test
 `01g-` §5.2 found failing: a stack whose `url` varied by architecture and whose
 publisher shipped no checksum manifest asserted one `sha256` about two different
 files, so copying it to an install on the other architecture produced a `failed`
-receipt rather than the same tools. The repair — `sha256` may be an object keyed
+receipt rather than the same tools. The repair - `sha256` may be an object keyed
 by architecture, and a bare string against an arch-varying `url` is a parse
-refusal — is in `01b-` §2.1, and it is what moves this test from failing to
+refusal - is in `01b-` §2.1, and it is what moves this test from failing to
 passing.
 
 **4. Consuming somebody else's stack is copying their artifact plus one act of
-approval** — **met**. `01g-` §2: `cp -r`, then `docker compose up -d`. The
+approval** - **met**. `01g-` §2: `cp -r`, then `docker compose up -d`. The
 approval is the restart, and it is an act the operator takes at a shell.
 
 **The borderline `01-constraints.md` asked the design to rule on, ruled.** A line
@@ -130,7 +130,7 @@ R3 is open."*
   its own words: *"Nothing in this file has been run."* There is no Docker here
   and no way to spawn a `claude` process against a real install.
 
-**So the verdict is not met, and it is not met on the criterion's own terms** —
+**So the verdict is not met, and it is not met on the criterion's own terms** -
 the test R3 names has not been performed. Saying otherwise would require reading
 "designed around" as "met", which is the substitution this file exists to refuse.
 
@@ -153,7 +153,7 @@ present and runnable after the rebuild with no operator action."*
 running it. The artifacts live in a named volume at `/var/lib/uf-stacks`
 (`01a-` §2.1), the image ships nothing at that path, and a named volume is not
 the writable layer a rebuild replaces. Every clause of that is Docker's
-documented semantics plus this repository's own statements — the compose file's
+documented semantics plus this repository's own statements - the compose file's
 description of the failure it is avoiding at `docker-compose.yml:450-453`, and
 the `/opt`-versus-volume reasoning at `Dockerfile:303-309`.
 
@@ -169,20 +169,20 @@ the five lines that settle it. If it fails, R4a degrades to *met when the networ
 is up* and `21-` phase 2's time budget becomes a per-boot cost.
 
 **R4b, `docker compose down -v`.** *"Met when the design states, in writing,
-which of these it is"* — reinstalled from the declaration, or gone with the
-operator told — *"and the app says the same thing"*. And: *"Both are acceptable.
+which of these it is"* - reinstalled from the declaration, or gone with the
+operator told - *"and the app says the same thing"*. And: *"Both are acceptable.
 Silence is not."*
 
 **Met.** The design states it in `01a-` §1 and §3: the volume dies, the
 declaration does not, and the next boot reinstalls from the declaration. The app
-says the same thing in two places — the boot log's install lines (`01e-` §3) and
+says the same thing in two places - the boot log's install lines (`01e-` §3) and
 the Tools section, where a stack reinstalling after a `down -v` is drawn from its
 fresh receipt like any other (`01e-` §4).
 
 **This is the half that is met on the criterion's own terms**, because the
 criterion asks for a written answer and consistency rather than for a
 measurement. It is also the one R4 called harder, on the ground that nothing
-backs up a named volume — and the design's answer removes that problem rather
+backs up a named volume - and the design's answer removes that problem rather
 than solving it: there is nothing in the volume worth backing up, because the
 declaration is on the host and in the operator's own git.
 
@@ -196,14 +196,14 @@ when it failed; 3. whether the tool has ever been observed to run."*
 
 **How it was checked.** Point by point against `01f-`'s four layers.
 
-1. **Declared** — the `declared` layer, read from `/etc/uf-stacks/*/stack.json`
+1. **Declared** - the `declared` layer, read from `/etc/uf-stacks/*/stack.json`
    rather than inferred from the receipt, which is what catches a stack the
    operator added whose applier never ran (`01f-` §2.1).
-2. **Outcome with the failure text** — the `applied` layer. The receipt carries
+2. **Outcome with the failure text** - the `applied` layer. The receipt carries
    `ok | failed | conflicted` and, on failure, the last 4 KB of the step's stderr
    **verbatim and never parsed**, with the original byte count beside it so a cap
    that bit says so (`01f-` §2.2).
-3. **Ever observed to run** — the `observed` layer, counted from `run_events`'s
+3. **Ever observed to run** - the `observed` layer, counted from `run_events`'s
    `tool` and `tool_error` rows over the retention horizon, with the horizon
    printed because *"never observed" means "not in the retained window"*
    (`01f-` §2.4).
@@ -216,7 +216,7 @@ resolves the server's own `PATH` and reports `shadowed`, `missing` and
 **The claim that was false until this run.** `01e-` §5.3 puts two integers on
 `/api/status` and argues they de-latch on a boot, in the shape `schemaFaults`
 already has. That argument requires the receipt set to be a reading of *this*
-boot — and `01a-` §7's reconcile rules would have skipped a `failed` receipt
+boot - and `01a-` §7's reconcile rules would have skipped a `failed` receipt
 forever, making it a reading of the boot that first failed. `22-validation.md`
 §2.2 is the finding and the fourth reconcile rule is the fix. **Without it R5
 point 2 was met on the Settings page and not on the monitoring surface**, which

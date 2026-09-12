@@ -21,9 +21,9 @@ on purpose: R3's third link can fail after a perfect install, and the honest
 rendering of a tool nobody has seen run is not `installed`.
 
 **Today none of it exists.** `grep -rn "UF_PY_TOOLS\|UF_GH_EXTENSIONS" src/`
-returns no reader — ten lines in two files at `68a8aa7`, one docblock mention in
+returns no reader - ten lines in two files at `68a8aa7`, one docblock mention in
 `src/lib/contextPruning.ts:99` and nine in `src/lib/deployment.test.ts`, none of
-them a read — so an operator learns whether an
+them a read - so an operator learns whether an
 install worked by reading the boot log for
 `[usagefoundry] installed Python tool $entry` (`docker-entrypoint.sh:297`) or the
 `could not install` line at `:306`. That is the whole read-back, and
@@ -39,7 +39,7 @@ facts sit three ways of drifting apart:
 1. somebody `docker compose exec`ed in and installed a tool by hand;
 2. somebody removed or overwrote one of the files a receipt claims;
 3. a stack installed perfectly and the tool is still refused, because R3's third
-   link — permission to invoke — is not on disk at all (`01c-` §3).
+   link - permission to invoke - is not on disk at all (`01c-` §3).
 
 A read-back built on receipts alone answers confidently and wrongly in all three
 cases. So it is built on **four layers, read from four places**, and the design
@@ -56,8 +56,8 @@ rule is that a layer may never be inferred from the layer above it.
 | **reachable** | what would an agent actually get | `PATH` resolution over the server's own `process.env.PATH` | one `lstat` per name |
 | **observed** | has it ever run, and did it work | `run_events`, `kind IN ('tool','tool_error')` | one cached query |
 
-`src/lib/stacks.ts` reads the first three; `src/lib/toolInventory.ts` — which is
-`15-option-no-stack-object.md` §2's module carried forward whole — reads the
+`src/lib/stacks.ts` reads the first three; `src/lib/toolInventory.ts` - which is
+`15-option-no-stack-object.md` §2's module carried forward whole - reads the
 fourth. Two modules rather than one because the fourth is a database reading with
 a cache and the first three are filesystem reads with none, and a module that is
 sometimes pure and sometimes cached is a module whose test has to decide which.
@@ -68,7 +68,7 @@ The receipt already carries the declared name and digest, so reading the
 declarations looks redundant. It is not, and the case it catches is the one that
 matters most: **a stack the operator added, whose applier never ran.** A
 declaration with no receipt is an install the operator believes in and the
-container has never attempted — the exact shape of `.env.example:245-249`'s
+container has never attempted - the exact shape of `.env.example:245-249`'s
 plugin, active against a command that was never present, 213 times.
 
 It is also how the read-back survives the applier crashing mid-boot: the
@@ -101,8 +101,8 @@ an existing executable file.
 
 **The server's `PATH` is the right one to split, and this is the non-obvious
 fact the whole layer rests on.** `childEnv` (`src/lib/orchestrator.ts:5698`)
-copies `process.env` and deletes a closed list of prefixes and names — `UF_`,
-`OTEL_`, `__NEXT_`, and five named keys (`:5701-5711`) — and `PATH` is in none of
+copies `process.env` and deletes a closed list of prefixes and names - `UF_`,
+`OTEL_`, `__NEXT_`, and five named keys (`:5701-5711`) - and `PATH` is in none of
 them. The docblock above it says so directly: *"Everything else passes through.
 The CLI needs PATH, HOME, CLAUDE_CONFIG_DIR, proxy and CA settings, and locale to
 function at all"* (`:5628`). So the server's `PATH` **is** the child's `PATH`,
@@ -110,7 +110,7 @@ and a resolution done here is the resolution the child will do.
 
 **One honest caveat, and it is the same one `01c-` §2 records.** The test that
 pins the pass-through is `src/lib/git.test.ts:89`, whose assertion is
-`assert.equal(env.PATH, process.env.PATH)` at `:97` — and it is over `gitEnv`,
+`assert.equal(env.PATH, process.env.PATH)` at `:97` - and it is over `gitEnv`,
 not `childEnv`. `childEnv` has three `describe` blocks in
 `src/lib/orchestrator.test.ts` (`:4251`, `:4305`, `:4340`) and none asserts
 anything about `PATH`. For agent children the guarantee is the construction plus
@@ -122,8 +122,8 @@ assumption a thing that fails loudly.
 What resolution buys, case by case:
 
 - **A hand-installed tool that shadows a stack's**, or is shadowed by it. The
-  design puts the toolbox first — `ENV PATH="/var/lib/uf-stacks/bin:${PATH}"`
-  (`01c-` §2) — so a stack wins over `/usr/local/bin`. The read-back reports the
+  design puts the toolbox first - `ENV PATH="/var/lib/uf-stacks/bin:${PATH}"`
+  (`01c-` §2) - so a stack wins over `/usr/local/bin`. The read-back reports the
   path it resolved to, and a resolution outside the toolbox against a name a
   receipt claims is drawn as **`shadowed`**, naming both paths. Nothing about
   that is an error; it is the one fact an operator debugging a version mismatch
@@ -132,7 +132,7 @@ What resolution buys, case by case:
   the volume. Drawn as **`missing`**, which is a fault: the receipt says `ok` and
   the disk disagrees, and only one of them can be right.
 - **A name the toolbox carries that no receipt claims.** Listed separately, as
-  `unclaimed`, with the sentence that the applier will not touch it — because
+  `unclaimed`, with the sentence that the applier will not touch it - because
   `01a-` §7's reconcile *"removes only paths its own receipts record"*, so an
   unclaimed link outlives every stack and every `down -v` that does not take the
   volume with it. This is the row that answers "somebody installed something by
@@ -176,7 +176,7 @@ today, for a prompt rather than for a person. This is the same query with
    `toolArgs` rendered, and a binary invoked through a wrapper script, a shell
    function or an absolute path is a call the count misses. It **undercounts**,
    which is the direction that leaves a tool reading `unverified` when it is
-   fine, rather than `installed` when it is not — the same trade
+   fine, rather than `installed` when it is not - the same trade
    `src/lib/sandbox.ts:157-159` takes with its needles, for the same reason.
 3. **It cannot distinguish a missing grant from a missing binary.** Both arrive
    as a `tool_error`, and the words differ per CLI build. Naming the cause is
@@ -206,8 +206,8 @@ failure mode is a false reassurance.
 
 **This is `SandboxRow`'s argument, generalised.** *"Four readings and not a
 switch, because two of them are the ways a sandbox lies about itself"*
-(`src/app/settings/page.tsx:1744-1745`). Here there are six, and three of them —
-`broken`, `failing`, `shadowed` — are ways an install lies about itself: the
+(`src/app/settings/page.tsx:1744-1745`). Here there are six, and three of them -
+`broken`, `failing`, `shadowed` - are ways an install lies about itself: the
 receipt says `ok` in every one.
 
 **Unknown must not render as zero** (`docs/agent/metering.md:8`). A layer that
@@ -220,8 +220,8 @@ unreadable is a page-level error, not six `unverified` rows.
 
 **The first three layers are cheap and uncached.** A handful of small file reads
 and about ten `lstat`s, on a settings page that already does more than that. No
-cache, because the alternative — staleness on the one page whose whole job is
-saying what is true now — is the failure this file exists to stop.
+cache, because the alternative - staleness on the one page whose whole job is
+saying what is true now - is the failure this file exists to stop.
 
 **The fourth is a bounded query behind a short cache**, on the reasoning
 `src/lib/fileCostNotice.ts:300-310` writes out for the same query on the same
@@ -236,7 +236,7 @@ table:
 
 Every clause transfers. `READ_COUNTS_TTL_MS` is 60 seconds
 (`src/lib/fileCostNotice.ts:310`) and this takes the same, on `globalThis` under
-its own key — never a key whose shape changed, which is `CLAUDE.md`'s trap and
+its own key - never a key whose shape changed, which is `CLAUDE.md`'s trap and
 `src/lib/fileCostNotice.ts:312-315` is the pattern to copy.
 
 **No index on `run_events`.** The one partial index this app added over that
@@ -253,21 +253,21 @@ on the busiest table in the schema.
 ## 5. The route
 
 **Two routes, one per subject.** `GET /api/tools` is the list the section draws,
-covering all three sources of a tool on this install — stacks, `UF_PY_TOOLS`,
-`UF_GH_EXTENSIONS` — and `GET /api/stacks/[name]` is one stack's whole receipt.
+covering all three sources of a tool on this install - stacks, `UF_PY_TOOLS`,
+`UF_GH_EXTENSIONS` - and `GET /api/stacks/[name]` is one stack's whole receipt.
 Two rather than one because they answer about two different things and a route
 handler here is per subject; one rather than three because the two `UF_*` lists
 have no receipt behind them and never will (`01e-` §4).
 
 Both: `runtime = "nodejs"`,
-`dynamic = "force-dynamic"` — both required, per `docs/agent/conventions.md:11`:
+`dynamic = "force-dynamic"` - both required, per `docs/agent/conventions.md:11`:
 *"Route handlers that touch SQLite or the filesystem need … Every existing data
 route has both."* Through `jsonMaybeGzipped` like the other eighteen
 (`docs/agent/conventions.md:18`), with a list DTO in `src/lib/apiTypes.ts` and
 `Cache-Control` written at the call site, *"because the helper knows nothing
 about caching"* (same line).
 
-The detail is **never filled from the list row** — `docs/agent/taskboard.md:779`
+The detail is **never filled from the list row** - `docs/agent/taskboard.md:779`
 makes the same call for the task editor, and here it is load-bearing rather than
 stylistic, because the list deliberately does not carry the 4 KB of stderr.
 
@@ -293,27 +293,27 @@ because it names every existing one and the grounds each earned.
 
 **Three here meet it, and one nearly does.**
 
-1. **`composeState(receipt, resolution, counts)`** — §3's table. Pure, six
+1. **`composeState(receipt, resolution, counts)`** - §3's table. Pure, six
    branches, and every way of being wrong is silent and expensive in one
    direction: a composition that reports `installed` over a `broken` resolution
    is a page actively telling an operator the thing that is costing them money is
    fine. The assertions are the six rows plus the two precedence cases, `broken`
    over `failing` and `failed` over everything.
-2. **`resolveOnPath(name, pathValue, exists)`** — §2.3, with the filesystem
+2. **`resolveOnPath(name, pathValue, exists)`** - §2.3, with the filesystem
    predicate injected so the function stays pure. The failure mode is the
    classic one: an empty `PATH` element means the current directory, a trailing
    colon means the same, and a resolver that treats either as "not found" or as
    "found" silently changes what the page claims about every binary at once.
-3. **`parseReceipt(json)`** — a receipt written by a shell script and read by
+3. **`parseReceipt(json)`** - a receipt written by a shell script and read by
    TypeScript is a boundary, and `CLAUDE.md`'s rule is to validate at boundaries
    and trust internal calls. A truncated receipt from a container killed
    mid-write must be `unreadable` and never a partial `ok`; that is one branch
    and it is the whole reason this is on the list.
 
-**The nearly.** The `run_events` prefix count is not pure — it is a query — and
+**The nearly.** The `run_events` prefix count is not pure - it is a query - and
 its failure mode is a number that is too low, which §2.4 argues is the safe
 direction. It gets no test of its own. Its **cache** is a different matter: the
-`globalThis` key trap costs a thrown call on every request after a hot reload —
+`globalThis` key trap costs a thrown call on every request after a hot reload -
 *"`??=` only initialises when the key is absent, so a pre-upgrade value at a key
 whose shape changed survives the reload and every call on it throws"*
 (`src/lib/orchestrator.ts:10870-10873`; `CLAUDE.md`'s own pointer at `:373` is

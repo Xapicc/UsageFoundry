@@ -156,9 +156,10 @@ has seen run is not `installed`.
 
 **Today none of this exists.** `ls src/app/api/` returns 27 entries, 26 of them
 route directories, and none is `tools` or `stacks`;
-`grep -rn "UF_PY_TOOLS\|UF_GH_EXTENSIONS" src/` returns **no reader** — ten
-lines in two files, one docblock mention in `src/lib/contextPruning.ts:99` and
-nine in `src/lib/deployment.test.ts`, none of them a read. An operator learns whether an install worked by
+`grep -rn "UF_PY_TOOLS\|UF_GH_EXTENSIONS" src/` returns **no reader**: ten lines
+in two files, one docblock mention in `src/lib/contextPruning.ts:99` and nine in
+`src/lib/deployment.test.ts`, none of them a read.
+An operator learns whether an install worked by
 reading the container's boot log for `[usagefoundry] installed Python tool`
 (`docker-entrypoint.sh:297`) or the `could not install` line beside it
 (`:306-307`). That is the whole read-back.

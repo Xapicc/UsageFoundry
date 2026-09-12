@@ -65,7 +65,7 @@ this app ever fetched code on their behalf.
 1. **A pinned version in the URL**, never `latest`. `01b-` §6: *"The version is
    pinned in the declaration and nowhere else … so a version bump is an edit and
    a restart and there is no resolver, no lockfile and no `latest`."*
-2. **An integrity claim** — `checksums`, the publisher's own manifest, where one
+2. **An integrity claim** - `checksums`, the publisher's own manifest, where one
    exists; `sha256` where it does not, which is the case §5 exercises.
 3. **An `allow` list that is the narrowest thing that works**, because `allow`
    defaults to empty and every entry in it is a capability the consumer is
@@ -108,7 +108,7 @@ lines, there is no shell in it (`01b-` §2, and `docs/agent/security.md:14`'s
 are inert"* is what makes that enforceable), and every URL, digest, environment
 variable and granted command is a literal on its own line. The five things to look at are §4's checklist.
 
-**Nothing else is required, and that is R2.3's own test** — *"Copying that
+**Nothing else is required, and that is R2.3's own test** - *"Copying that
 artifact to a second install and doing nothing else produces the same tools
 there"* (`01-constraints.md` R2). No `.env` edit, no `docker-compose.yml` edit,
 no `Dockerfile`, which is R1. `git diff --name-only` over the consumer's commit
@@ -134,17 +134,17 @@ every row that is quiet is a row this design owes an answer.
 |---|---|---|---|
 | 1 | directory renamed on copy, so `name` mismatches | **loud** | parse refusal, `failed` receipt (`01b-` §3) |
 | 2 | schema key the consumer's version does not know | **loud** | unknown-key refusal (`01b-` §3) |
-| 3 | URL 404s — release deleted or retagged | **loud** | `curl -f` non-zero, `failed` receipt (`01b-` §4.1) |
-| 4 | digest mismatch — re-cut release, or a wrong digest | **loud** | step 2 ends the stack, nothing unpacked (`01b-` §4.2) |
+| 3 | URL 404s - release deleted or retagged | **loud** | `curl -f` non-zero, `failed` receipt (`01b-` §4.1) |
+| 4 | digest mismatch - re-cut release, or a wrong digest | **loud** | step 2 ends the stack, nothing unpacked (`01b-` §4.2) |
 | 5 | publisher's arch spelling is not `{arch}`'s | **loud, and it was a schema hole** | §5, fixed |
 | 6 | one digest against a per-arch URL | **quiet, and it was the worse hole** | §5, fixed |
 | 7 | two stacks claim one binary name | **loud** | both `conflicted`, neither linked (`01a-` §7) |
-| 8 | installs perfectly, `allow` is empty or wrong | **quiet** | R5 point 3 — `unverified`, then `failing` ([01f-](01f-read-back.md) §3) |
+| 8 | installs perfectly, `allow` is empty or wrong | **quiet** | R5 point 3 - `unverified`, then `failing` ([01f-](01f-read-back.md) §3) |
 | 9 | the tool is malicious | **silent, and nothing here catches it** | §3.1 |
 
 **Row 6 is the one this section exists for.** Before §5, a stack whose URL varied
 by architecture and whose publisher shipped no manifest would install on one
-architecture and fail the digest on the other — which is loud — *or*, if the
+architecture and fail the digest on the other - which is loud - *or*, if the
 author pinned the digest for the arch they happened to be on and the consumer was
 on the other, produce a `failed` receipt on a machine the author never tested. It
 never installs the wrong software, because the digest check is before the unpack
@@ -187,16 +187,16 @@ Five lines to read in a `stack.json`, in priority order. This is the list a
 `docs/` page would carry when the feature is promoted; it is here rather than
 there because **this is still a proposal and promotion is by implementing it**.
 
-1. **`allow`** — every entry is a command an agent may run without asking. Read
+1. **`allow`** - every entry is a command an agent may run without asking. Read
    it as if it were the whole file. `[]` is the safe answer and the default.
-2. **`url`** — whose domain is it? A digest verifies that you got what the URL
+2. **`url`** - whose domain is it? A digest verifies that you got what the URL
    serves, never that the URL is the project's.
-3. **`checksums` or `sha256`** — one must be there (`01b-` §3). Prefer
+3. **`checksums` or `sha256`** - one must be there (`01b-` §3). Prefer
    `checksums`, which is the publisher's manifest; a bare `sha256` was chosen by
    the same person who chose the URL.
-4. **`kind`** — `archive` runs nothing at install time. `uv-tool` and
+4. **`kind`** - `archive` runs nothing at install time. `uv-tool` and
    `npm-global` run whatever the package's install hooks run, as the agent uid.
-5. **`env`** — refused keys are refused at parse (`01b-` §2.2), so what remains
+5. **`env`** - refused keys are refused at parse (`01b-` §2.2), so what remains
    is by construction a variable that only affects the tool. Read it anyway; a
    proxy variable is a routing decision.
 
@@ -224,9 +224,9 @@ aarch64
 ```
 
 shellcheck's release assets are `shellcheck-v0.11.0.linux.x86_64.tar.gz` and
-`…linux.aarch64.tar.gz` — verified against
+`…linux.aarch64.tar.gz` - verified against
 `curl -fsSL https://api.github.com/repos/koalaman/shellcheck/releases/latest | jq -r '.assets[].name'`
-on 2026-09-12 — so no expansion of `{arch}` can name them.
+on 2026-09-12 - so no expansion of `{arch}` can name them.
 
 **The repair is a second token and not a mapping table.** `{arch_uname}` expands
 to `x86_64` or `aarch64`, derived from the same `dpkg --print-architecture`
@@ -241,8 +241,8 @@ This is the worse of the two, because it is the one that produces a stack that
 works for its author and fails for half its consumers.
 
 `01b-` §2.1 gives `sha256` as *"optional, 64 hex chars"*, one string per step,
-while `url` *"may contain `{arch}`"*. When both are used — which is every bare
-binary published without a manifest — the declaration asserts one digest about
+while `url` *"may contain `{arch}`"*. When both are used - which is every bare
+binary published without a manifest - the declaration asserts one digest about
 two different files. shfmt is exactly that case: its release carries no checksum
 manifest at all (`curl -fsSL https://api.github.com/repos/mvdan/sh/releases/latest | jq -r '.assets[].name'`
 on 2026-09-12 lists eight binaries and nothing else), and the two Linux binaries
@@ -255,7 +255,7 @@ $ sha256sum shfmt_v3.14.1_linux_amd64 shfmt_v3.14.1_linux_arm64
 ```
 
 **The repair: `sha256` may be a string or an object keyed by `{arch}`'s value.**
-A string is kept for the case it is correct in — a `url` with no `{arch}` in it —
+A string is kept for the case it is correct in - a `url` with no `{arch}` in it -
 and an object is required when the `url` contains `{arch}` or `{arch_uname}`.
 That last clause is the load-bearing half: it is a **parse refusal**, so the
 defect is loud at the one moment somebody can fix it rather than quiet on
@@ -271,13 +271,13 @@ two fields disagreeing rather than one field being wrong.
 **A different shape from Terraform on every axis that matters.** Terraform is one
 tool, one archive, a `zip`, a publisher manifest, a state directory and an
 environment variable. This is **two tools in one stack**, two publishers, a
-`tar.gz` and a bare binary, no manifest anywhere, no state and no environment —
+`tar.gz` and a bare binary, no manifest anywhere, no state and no environment -
 and it is the case that found §5.
 
 **Why two tools in one stack rather than two stacks.** `01d-` §3: *"No dependency
 graph between stacks. No `depends_on`, no topological sort … two things that must
 be ordered are one stack."* These two do not need ordering, but they are one
-decision an operator makes — *should agents on this install lint shell scripts* —
+decision an operator makes - *should agents on this install lint shell scripts* -
 and a stack is the unit of that decision. Splitting them would give the operator
 two rows to keep in step for no property either one gains.
 
@@ -336,7 +336,7 @@ two rows to keep in step for no property either one gains.
 |---|---|---|
 | steps | one | **two, applied in file order** |
 | publishers | one | **two, neither related to the other** |
-| unpack | `zip` | **`tar.gz` and `none` — both other branches** |
+| unpack | `zip` | **`tar.gz` and `none` - both other branches** |
 | integrity | `checksums`, the publisher's manifest | **`sha256` per arch, because neither publishes one** |
 | arch token | `{arch}` | **`{arch_uname}` and `{arch}`, one of each** |
 | `state` | required, Terraform refuses to start without it | **absent** |

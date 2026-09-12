@@ -21,7 +21,7 @@ about the *mechanism*, and the surface was a later question. Both sentences are
 quoted in [00-problem.md](00-problem.md).
 
 **The surface is no longer later**: [01e-operator-surface.md](01e-operator-surface.md)
-answers it, and the answer is **not a pane** — a `Tools` section on Settings plus
+answers it, and the answer is **not a pane** - a `Tools` section on Settings plus
 a sub-route for one stack's receipt, on the ban's own replacement sentence
 (`docs/agent/ui-density-audit.md:162`). The original Terminal request is refused
 in `08-terminal-problem.md` and nothing here reopens it.
@@ -43,8 +43,8 @@ what is binding:
 **Whether the design meets them is checked one by one in
 [01h-acceptance.md](01h-acceptance.md)**, with how each was checked. The result:
 **R1 met**, **R2 met and one of its four tests was failing until this run's
-validation pass**, **R3 not met** — two links of three settled, the third
-designed around and never measured — **R4b met with R4a met in design and
+validation pass**, **R3 not met** - two links of three settled, the third
+designed around and never measured - **R4b met with R4a met in design and
 unobserved**, and **R5 met in design**, which also did not meet its own
 de-latching claim until `01a-` §7 gained a fourth reconcile rule. A criterion
 that is not met is recorded as a finding there rather than softened here.
@@ -119,16 +119,16 @@ better one.
 | [01c-reach-and-permission.md](01c-reach-and-permission.md) | **R3.** Which of the three links are settled and by which test, what a sandboxed run's read, exec and write policy does to a binary outside the image and the one path that has to be added, and the exact command that measures whether `acceptEdits` refuses an arbitrary binary, with the four outcomes and what each one changes |
 | [01d-boundaries.md](01d-boundaries.md) | **the two answers the next run should not re-derive.** Where the line between a stack and the existing `UF_*` lists sits; the migration question answered with a counting rule and a table - all twelve `Dockerfile` commits stay, `jq` is the one misfiled and stays anyway, and here is what a reviewer says to the thirteenth; and the twelve things this design deliberately does not do |
 | [01e-operator-surface.md](01e-operator-surface.md) | **where the operator meets it.** Why three of the four acts are a file manager and a restart rather than a button; the pane, which is Settings, and why there is no tenth; a `Tools` section with stacks as one of three sources; the six states and why `danger` is reserved for the one that lies; and the failure in four places, because a boot log line dies with the restart that is exactly when somebody comes looking |
-| [01f-read-back.md](01f-read-back.md) | **R5.** Four layers — declared, applied, reachable, observed — from four sources, with the rule that a layer may never be inferred from the one above it; how `reachable` keeps the whole thing true when somebody installs by hand; what a `run_events` count can and cannot say; and the seven things it may never claim |
-| [01g-third-party.md](01g-third-party.md) | **R2 between two people.** What a publisher publishes and what they cannot promise, what a consumer does and reads, nine failure modes with which are quiet, and a second complete stack — shellcheck and shfmt, two publishers, no manifest anywhere — that found two defects in `01b-`'s schema |
+| [01f-read-back.md](01f-read-back.md) | **R5.** Four layers - declared, applied, reachable, observed - from four sources, with the rule that a layer may never be inferred from the one above it; how `reachable` keeps the whole thing true when somebody installs by hand; what a `run_events` count can and cannot say; and the seven things it may never claim |
+| [01g-third-party.md](01g-third-party.md) | **R2 between two people.** What a publisher publishes and what they cannot promise, what a consumer does and reads, nine failure modes with which are quiet, and a second complete stack - shellcheck and shfmt, two publishers, no manifest anywhere - that found two defects in `01b-`'s schema |
 | [01h-acceptance.md](01h-acceptance.md) | **the five criteria checked one by one**, with how each was checked and one of them answered **not met** |
 
 **The operator's half, decided by the build run.** A stack is added, removed and
 changed on the host with a file manager and a restart, and **nothing in the app
-installs anything** — an install endpoint would be remote code execution behind
+installs anything** - an install endpoint would be remote code execution behind
 this app's own authentication, which `src/lib/config.ts:494-508` already refuses
 a smaller version of. What the app does is *report*, in a `Tools` section on
-Settings — never a tenth pane — over four layers read from four places rather
+Settings - never a tenth pane - over four layers read from four places rather
 than inferred from one another, so that a tool somebody installed by hand and a
 receipt that has stopped being true are both visible. A failed install is written
 in four places, because the boot log that carries it is destroyed by the next
@@ -200,14 +200,14 @@ warning.
 
 **Nothing here would reverse the decision.** The decision is at the top of this
 file, the operator made it, and no file in this directory may re-argue it. What
-follows is what would change *the design* — and each item names which part of it
+follows is what would change *the design* - and each item names which part of it
 moves, because "this would overturn it" is not a useful thing to say about a
 mechanism that is being built either way.
 
 **Two of the five questions this list used to carry are closed and are not
-repeated below.** *Does A1 permit build-time layering?* — **ruled no**
+repeated below.** *Does A1 permit build-time layering?* - **ruled no**
 (`01a-` §2.4): a derived image cannot add a tool on a `docker compose pull`
-install, which is R1's own test. *What is the identity of a stack?* — **ruled**:
+install, which is R1's own test. *What is the identity of a stack?* - **ruled**:
 the directory name, with the filesystem enforcing uniqueness (`01b-` §1).
 
 Ordered by how much of the design each one moves.
@@ -216,7 +216,7 @@ Ordered by how much of the design each one moves.
    **Changes: everything.** The whole carrier is a host bind mount beside that
    file (`01a-` §2.1). An install on a managed platform, or one the operator
    reaches only through this app's own UI, has no door at all, and the mechanism
-   would have to be rebuilt around something the app itself can write — which is
+   would have to be rebuilt around something the app itself can write - which is
    the thing `01a-` §6 refuses on security grounds, so it would be a different
    design rather than a modified one. **Still unasked**, and it is one sentence.
    The weaker half is already answered: the design needs host *filesystem*
@@ -232,7 +232,7 @@ Ordered by how much of the design each one moves.
    deletable list.** `01c-` §4.2's grant projection and `21-` phase 4 both
    disappear, `01b-`'s `allow` field becomes optional decoration, and nothing
    else moves. The design is built for the worse answer precisely so that the
-   better one costs a deletion — `22-validation.md` §5 command 1.
+   better one costs a deletion - `22-validation.md` §5 command 1.
 4. **The operator expects to type `apt-get`, or a login, or a two-step install.**
    **Changes: whether the unit is the right unit.** `01d-` §3 refuses system
    packages by name, and if that is what is actually wanted then a declarative
@@ -240,7 +240,7 @@ Ordered by how much of the design each one moves.
    unasked.**
 5. **Four mounted repositories need four different toolchains.**
    **Changes: `01d-` §3's refusal of per-folder selection.** The design takes the
-   one-stack reading — install-wide, per `14-` §7, which found all three per-run
+   one-stack reading - install-wide, per `14-` §7, which found all three per-run
    doors closed by name. If the reading is wrong, `18-option-repo-manifest.md` is
    where the question restarts. **Still unasked.**
 
@@ -338,5 +338,5 @@ they are pinned by unit tests over file *contents*
 | `02-` … `18-` | the seventeen surveyed options and two framing files, dispositioned in the table above, unedited and **deliberately not re-validated** |
 | [19-comparison.md](19-comparison.md) | superseded whole. §3's shape table is still a fact table; §4's scores are history |
 | [20-recommendation.md](20-recommendation.md) | superseded whole. It recommended building almost nothing |
-| [21-implementation-sketch.md](21-implementation-sketch.md) | **the build order**: five phases against the decided design, each naming what ships, the invariant it must not break, what the operator sees and which functions earn a test — plus the seven tests collected, what is not built and where it went, and what each phase leaves unverified |
+| [21-implementation-sketch.md](21-implementation-sketch.md) | **the build order**: five phases against the decided design, each naming what ships, the invariant it must not break, what the operator sees and which functions earn a test - plus the seven tests collected, what is not built and where it went, and what each phase leaves unverified |
 | [22-validation.md](22-validation.md) | **this run's validation pass**: what was checked and how, seven findings fixed in place, two findings against the tree that were not, what was deliberately not re-validated, the Docker commands in the order they buy the most, and the reasoned-versus-observed accounting |

@@ -21,7 +21,7 @@ is the honest accounting of what that leaves unobserved.
 1. **Every `path/file:line` citation resolved.** A script opened each cited file
    at each cited line and reported anything past the file's end or pointing at a
    file that does not exist. **289 citations across the eleven files plus
-   `proposals/README.md`.** Two apparent failures were false positives — both are
+   `proposals/README.md`.** Two apparent failures were false positives - both are
    `README.md`'s own prose *about* the stale `CLAUDE.md:134` and `CLAUDE.md:95`
    citations the previous run swept, quoting them in order to say they were
    wrong.
@@ -33,7 +33,7 @@ is the honest accounting of what that leaves unobserved.
    fixes in §2.** Three reported misses were the matcher breaking on a nested
    `"` and all three resolve to `.env.example:304`.
 3. **Every citation's line content read by hand**, for `01-constraints.md`,
-   `00-problem.md` and the four design files — the claim beside it compared with
+   `00-problem.md` and the four design files - the claim beside it compared with
    what the line says. This is the pass that found §2's substantive errors; the
    mechanical ones cannot.
 
@@ -54,17 +54,17 @@ Seven findings. Two changed a design decision; five are references.
 only two docblock mentions in `src/lib/contextPruning.ts:98-99` and three in
 `src/lib/deployment.test.ts`."*
 
-**Is:** ten lines in two files at `fd07353` — **one** docblock mention in
+**Is:** ten lines in two files at `fd07353` - **one** docblock mention in
 `src/lib/contextPruning.ts:99` and **nine** in `src/lib/deployment.test.ts`.
 
-**Direction: neither.** The claim R5 rests on — that nothing in `src/` *reads*
-either variable — is unchanged and is the only part that was load-bearing. The
+**Direction: neither.** The claim R5 rests on - that nothing in `src/` *reads*
+either variable - is unchanged and is the only part that was load-bearing. The
 count was decoration and it was wrong in both directions at once. Fixed in
 `01-constraints.md` and in the sentence `01f-` §1 inherited from it.
 
 ### 2.2 `01a-` §7's reconcile would never retry a failed stack · **design**
 
-**Was:** three rules — digest matches an `ok` receipt, do nothing; no receipt or
+**Was:** three rules - digest matches an `ok` receipt, do nothing; no receipt or
 digest differs, install; receipt with no declaration, remove.
 
 **The gap:** a stack whose install failed keeps its declaration and its digest,
@@ -79,7 +79,7 @@ exactly the trap `src/lib/db.ts:184-189` writes up: *"a monitor built on the
 archive would go red at the first fault and stay red until five hundred later
 events pushed it out."*
 
-**Fixed:** a fourth rule in `01a-` §7 — a declaration matching a `failed` or
+**Fixed:** a fourth rule in `01a-` §7 - a declaration matching a `failed` or
 `conflicted` receipt is retried, and only `ok` is a reason to skip. The cost is
 one retried download per boot on an install whose network is down, which is loud
 and correct.
@@ -105,8 +105,8 @@ Same origin. `sha256` was one string per step while `url` *"may contain
 shfmt is that case: its release carries no checksum manifest, and its two Linux
 binaries digest differently, as they must.
 
-**What it produced:** not the wrong software — the digest check precedes the
-unpack and there is no branch where a mismatch proceeds — but a correct-looking
+**What it produced:** not the wrong software - the digest check precedes the
+unpack and there is no branch where a mismatch proceeds - but a correct-looking
 stack that installs on its author's architecture and fails on the other, blaming
 the consumer's machine in a message nobody wrote.
 
@@ -125,7 +125,7 @@ metacharacters are inert."* The phrase **"Never a shell. Argv arrays only"** is
 
 Two files in this directory quoted the paraphrase as if it were the doc's, both
 of them written by this run, and both now quote the doc's own sentence. **Every
-other `docs/agent/security.md:14` citation in the directory is correct** — they
+other `docs/agent/security.md:14` citation in the directory is correct** - they
 quote the two words *"never a shell"*, which the line does contain.
 
 **This is a house-style trap worth naming, because the paraphrase is loose in the
@@ -148,13 +148,13 @@ Both fixed.
 Three claims in `01e-` and `01f-` cited a `docs/agent/` file without a line, and
 in one case paraphrased it:
 
-- the agent-placement refusal is `docs/agent/agents-and-templates.md:10` —
+- the agent-placement refusal is `docs/agent/agents-and-templates.md:10` -
   *"A saved agent … carries a role rather than a capability"*, and the field that
   would make it one is `tools`, which *"is refused at save"*;
-- the route-not-a-card decision is `docs/agent/taskboard.md:779` — *"The editor
+- the route-not-a-card decision is `docs/agent/taskboard.md:779` - *"The editor
   is a route, not a card the board opens above itself"*;
-- the grouping rule is `docs/agent/conventions.md:51` — *"Grouping has a closed
-  vocabulary, and it is seven things"* — and the component is `ListGroup`
+- the grouping rule is `docs/agent/conventions.md:51` - *"Grouping has a closed
+  vocabulary, and it is seven things"* - and the component is `ListGroup`
   (`src/components/ui/List.tsx:43`).
 
 ---
@@ -186,7 +186,7 @@ nine digits and the list is eleven rows — so the last **two** rows have no dig
 at all."* `docs/agent/ui-density-audit.md:159` still reads *"`panes.ts` is ten
 rows against ⌘1–⌘9"*.
 
-**The ban is not weakened by being stale — it is strengthened**, and `01e-` §2
+**The ban is not weakened by being stale - it is strengthened**, and `01e-` §2
 uses it either way. This is the third document in a disagreement
 `proposals/implemented - SessionFlow/README.md` already recorded, and it has not
 been reconciled since.
@@ -217,7 +217,7 @@ three closed doors, and `17-`:227's warning-not-refusal fallback.
 
 The earlier validation pass over those files is not lost. It ran at `fe52cab`,
 it found 39 wrong citations of which six changed an argument, and its record is
-this file's own git history — `git show fe52cab:proposals/CustomStacks/22-validation.md`
+this file's own git history - `git show fe52cab:proposals/CustomStacks/22-validation.md`
 is the whole of it, and `1f7b2a7` annotated rather than rewrote it for exactly
 that reason.
 
@@ -228,7 +228,7 @@ that reason.
 **Every one of them needs Docker and none of them can run here.** The ordering
 rule is how much of this directory each command moves from reasoned to observed.
 
-### 1. The probe — one work cycle, and it decides a whole phase
+### 1. The probe - one work cycle, and it decides a whole phase
 
 Moves: **R3's third link**, which `01-constraints.md` calls the one that has
 never been measured and which `21-` phase 0 gates phase 4 on.
@@ -241,7 +241,7 @@ docker compose logs usagefoundry | grep "installed Python tool"
 #   expect: [usagefoundry] installed Python tool ruff==0.14.1   (docker-entrypoint.sh:297)
 ```
 
-Then start a run at `acceptEdits` — the default (`src/lib/settings.ts:940`) — on
+Then start a run at `acceptEdits` - the default (`src/lib/settings.ts:940`) - on
 any mounted repository, with the task: *"Run `ruff --version` and report exactly
 what it printed. Then run `ruff check .` and report the first line."* Read the
 log for a refusal, and read the run's own report text. Repeat with
@@ -270,7 +270,7 @@ returns **zero** lines at `fd07353`. The five named volumes are pinned by unit
 tests over file *contents* (`src/lib/deployment.test.ts:905`, `:978`, `:1137`)
 and by nothing else. If a volume does **not** survive a rebuild on the operator's
 engine, R4a degrades from *met* to *met when the network is up* and `21-` phase
-2's time budget becomes a per-boot cost rather than a first-boot one — which is
+2's time budget becomes a per-boot cost rather than a first-boot one - which is
 why `21-` §8 says to run this **before** phase 2 starts.
 
 ### 3. Whether an agent uid can write what this design assumes it cannot
@@ -357,7 +357,7 @@ They cost a sentence each and settle more than any command above.
   `version: 0.11.0` and `shfmt --version` prints `v3.14.1`;
 - every citation and every quotation in the eleven current files, per §1.
 
-**Reasoned and not observed** — everything else, and the list is short because
+**Reasoned and not observed** - everything else, and the list is short because
 the boundary is sharp:
 
 - **every statement about what survives a rebuild or a `down -v`**, which is all
@@ -371,7 +371,7 @@ the boundary is sharp:
 - **the seccomp profile in any form.** `docker-compose.yml:567-568` ships it
   commented out and it has been parsed, never applied.
 
-**And one thing that is neither**: `/data` is **empty** in this container —
+**And one thing that is neither**: `/data` is **empty** in this container -
 `ls -a /data` returns `.` and `..` and nothing else at `fd07353`, and no
 UsageFoundry database exists anywhere reachable from it. (The original survey
 recorded `ls -la /data` → `Permission denied`; the directory is readable now and

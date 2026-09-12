@@ -2,7 +2,7 @@
 
 **Where a stack is added, listed, removed and inspected.** `01a-mechanism.md` §7
 fixed the data and the acts and said the surface was this run's; this file is the
-surface. What the app *reports* — R5 — is [01f-read-back.md](01f-read-back.md),
+surface. What the app *reports* - R5 - is [01f-read-back.md](01f-read-back.md),
 because R5 is the one gap the original survey agreed was real and it deserves its
 own argument.
 
@@ -20,7 +20,7 @@ a gap.** `01d-boundaries.md` §3 refuses an install from inside the app by name,
 on `01a-` §6's sharpest reason: `/api/settings` is reachable with the master key,
 so an install endpoint is remote code execution with this app's authentication in
 front of it, and `src/lib/config.ts:494-508` already refuses a smaller version of
-the same thing with the sentence that decides it — *"Here it takes a container
+the same thing with the sentence that decides it - *"Here it takes a container
 restart, which is a decision a person makes at a shell."*
 
 | Act | Where | What the app does |
@@ -62,7 +62,7 @@ does with it.
 `docs/agent/ui-density-audit.md:159-162` bans an eleventh row on the ground that
 it would be *"the second row you cannot reach from the keyboard"*, and ends:
 *"New destinations are sub-routes under an existing pane."* That sentence has
-been applied here before and shipped — `proposals/implemented - SessionFlow/`
+been applied here before and shipped - `proposals/implemented - SessionFlow/`
 took the same fork and landed `/runs/[id]/touched` rather than a pane
 (`proposals/implemented - SessionFlow/05-option-d-sub-route.md:11` quotes the
 same line).
@@ -80,7 +80,7 @@ the third. Either count forbids a pane.
 like it belongs beside the things that decide what an agent can do, and that is
 exactly the placement `docs/agent/agents-and-templates.md:10` forbids: *"A saved
 agent … carries a role rather than a capability"*, and the field that would make
-it one — `tools` — *"is refused at save"*. A stack is install-wide (`01c-` §3, on
+it one - `tools` - *"is refused at save"*. A stack is install-wide (`01c-` §3, on
 `14-stack-object-model.md` §7's finding that all three per-run doors are closed),
 so it is not a property of an agent, a template or a run, and the only pane whose
 subject is the install itself is Settings.
@@ -112,7 +112,7 @@ row that can hold 4 KB of stderr is a row that has stopped being a row.
 This tree has already argued the same fork and taken the same side:
 *"The editor is a route, not a card the board opens above itself"*
 (`docs/agent/taskboard.md:779`). The Tools section links out for the same
-reason and **is never filled from the list row** — the detail page fetches the
+reason and **is never filled from the list row** - the detail page fetches the
 receipt itself, which is the second half of that argument.
 
 ---
@@ -154,7 +154,7 @@ does not act"*, so nothing is killed and the boot finishes; what the operator
 loses is the meaning of the health column while it does.
 
 **So the applier needs a total budget and not only a per-step one.** `01a-` §8
-gives each step a bounded timeout, which the two existing loops do not have —
+gives each step a bounded timeout, which the two existing loops do not have -
 `grep -n "timeout\|--max-time\|--connect-timeout" docker-entrypoint.sh` returns
 one line, `:1202`, and it is a one-second socket probe for winnow's port, on
 neither install path. That is correct and insufficient: ten stacks each timing
@@ -207,12 +207,12 @@ is certain to call a binary that is not on disk. `failing` is expensive and
 `15-option-no-stack-object.md`'s honest rendering, carried forward whole by
 `01a-` §7, and under this design it earns a second meaning: `01c-` §3's grant can
 be missing while the install is perfect, and `unverified` is exactly what that
-looks like from here. The shape is the metering rule's — *"Unknown must not
+looks like from here. The shape is the metering rule's - *"Unknown must not
 render as zero"* (`docs/agent/metering.md:8`).
 
 **`failing` names no cause, on purpose.** A count cannot tell a missing grant
 from a tool that ran and did not like its arguments, and a word that claims a
-cause sends somebody to widen an allowlist that was never the problem — which is
+cause sends somebody to widen an allowlist that was never the problem - which is
 the failure `src/lib/sandbox.ts:157-159` names in its own docblock about matching
 too eagerly. The badge says `failing`; the sentence beside it says what was
 counted and over what window, and the detail page shows the commands.
@@ -272,17 +272,17 @@ why.** `src/lib/db.ts:182-184`, arguing for `ops_events` beside stdout:
 A failed stack install is written at boot, and boot is when stdout starts over.
 So the failure goes in four places, each answering a question the others cannot.
 
-### 5.1 The boot log — for the person watching the restart
+### 5.1 The boot log - for the person watching the restart
 
 §3's lines. Free, immediate, and destroyed by the next restart.
 
-### 5.2 `ops_events` — the archive a restart does not erase
+### 5.2 `ops_events` - the archive a restart does not erase
 
 One durable row per non-`ok` outcome, under **one event name**, through
 `recordOpsEvent` (`src/lib/ops.ts:155`), with the stack name and the reason in
 `detail`. One name rather than one per failure kind, for the reason `db.ts`
-gives about schema faults at `:207-211`: they answer a single question — what did
-this boot find wrong — and the status endpoint reads them with a single-name
+gives about schema faults at `:207-211`: they answer a single question - what did
+this boot find wrong - and the status endpoint reads them with a single-name
 query, with `detail` saying which.
 
 The table is capped at 500 rows and the cap is deliberate for this traffic:
@@ -291,7 +291,7 @@ The table is capped at 500 rows and the cap is deliberate for this traffic:
 shape the cap was sized for. `recentOpsEvents(limit, event)` (`src/lib/ops.ts:180`)
 is the reader and needs nothing new.
 
-### 5.3 `/api/status` — the machine-readable reading, and it must de-latch
+### 5.3 `/api/status` - the machine-readable reading, and it must de-latch
 
 `StatusReport` (`src/lib/status.ts:81`) gains **two integers and nothing else**:
 how many stacks are declared, and how many of them are not `ok` **on this boot**.
@@ -335,14 +335,14 @@ read-only status token (`src/middleware.ts`, and `README.md` documents the
 token), so an operator who never opens Settings still has a way for something
 else to tell them.
 
-### 5.4 The run's own log — where the cost is actually incurred
+### 5.4 The run's own log - where the cost is actually incurred
 
 The three above all fire at boot. The fourth fires at the moment the money is
 spent, and it is [01f-](01f-read-back.md)'s subject: a `tool_error` row naming a
 declared binary is the app learning, from the run itself, that a stack is not
 reaching the agent. That is the reading `failing` is drawn from in §4 and it is
 the only one of the four that can catch a stack that installed perfectly and
-granted nothing — `01a-` §8's one quiet failure.
+granted nothing - `01a-` §8's one quiet failure.
 
 ### 5.5 What is deliberately not used
 
@@ -411,7 +411,7 @@ in the manner of `01d-` §3.
   which is `15-` §6's argument and it does not weaken because the list got
   better.
 - **No decision on this page.** It reports; it does not gate. `docs/agent/taskboard.md`
-  draws the same line for the board — what the page may draw and what it may
+  draws the same line for the board - what the page may draw and what it may
   never decide.
 - **No second copy of any sentence the server writes.** §4, on
   `src/app/settings/page.tsx:1752-1754`.
