@@ -234,6 +234,29 @@ today, for a prompt rather than for a person. This is the same query with
 
 ## 3. How a state is composed, and the rule that composes it
 
+> **CORRECTED on 2026-09-12, by the first real install it met.** The table's
+> `failing` row reads *"resolves, and `tool_error` rows against its names in the
+> window"*, and on any tool anybody uses that is every tool.
+>
+> `tool_error` is written on the tool **result** while the `tool` row is written
+> when the call is **made** (`src/lib/orchestrator.ts:7925`), so a failed call
+> produces both and failures are a subset of calls. Keyed on `failures > 0`, the
+> word lands on anything used daily for a month: the first install to draw this
+> section had one declared tool, `gh layer10`, with **4 errors in 996 calls over
+> 30 days**, and it read `failing` — a warn badge on a tool that works. That
+> makes `installed` unreachable in practice and teaches the reader to ignore the
+> page, which is the same failure as a reading with no recall, arrived at from
+> the other side.
+>
+> **What earns the word is that nothing has ever worked** - `failures >= calls`,
+> which is the signature of `01a-` §8's quiet failure, a tool installed
+> perfectly that no cycle can run. Below that threshold both numbers still
+> appear in the row's sentence, because a tool erroring one call in four is
+> working *and* worth looking at, and the badge is not the place to say the
+> second. The `calls - failures` prohibition in §2.4 is untouched: this
+> compares them, it does not subtract them.
+
+
 Four layers, one word per stack. The rule is **the worst layer wins, and a
 higher layer may never overwrite a lower one's fault**.
 

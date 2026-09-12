@@ -15,7 +15,7 @@ import { before, describe, it } from "node:test";
  * readings into the one word an operator acts on without reading further, and
  * the expensive way for it to be wrong is to say `installed` over a reading
  * that is not. `commandPositionNames` decides whether the observed layer
- * carries information at all — a leading-prefix test was measured at 13% recall
+ * carries information at all — a leading-prefix test was measured at 10.5% recall
  * on this install's own history, and at that rate nothing ever leaves
  * `unverified`.
  *
@@ -74,7 +74,7 @@ describe("parseToolList", () => {
   });
 
   it("cuts a Python name at the first specifier character and nowhere else", () => {
-    // `${entry%%[=<>!~[@]*}` at docker-entrypoint.sh:281, which is what decides
+    // `${entry%%[=<>!~[@]*}` at docker-entrypoint.sh:282, which is what decides
     // whether the boot loop thinks a tool is already installed. A parser that
     // disagrees with it draws a row for a package name the container never
     // used.
@@ -166,7 +166,7 @@ describe("composeState", () => {
     assert.equal(mod.composeState(readings()), "installed");
     assert.equal(mod.composeState(readings({ calls: 0 })), "unverified");
     assert.equal(mod.composeState(readings({ insideItsOwnToolbox: false })), "shadowed");
-    assert.equal(mod.composeState(readings({ failures: 1 })), "failing");
+    assert.equal(mod.composeState(readings({ calls: 3, failures: 3 })), "failing");
     assert.equal(mod.composeState(readings({ resolvedAt: null })), "broken");
     assert.equal(mod.composeState(readings({ install: "failed" })), "failed");
     assert.equal(mod.composeState(readings({ command: null })), "unknown");
@@ -185,9 +185,25 @@ describe("composeState", () => {
       "failed",
     );
     assert.equal(
-      mod.composeState(readings({ failures: 4, insideItsOwnToolbox: false })),
+      mod.composeState(readings({ calls: 4, failures: 4, insideItsOwnToolbox: false })),
       "failing",
     );
+  });
+
+  it("does not call a working tool failing because some calls errored", () => {
+    // `tool_error` is written on the tool result and the `tool` row when the
+    // call is made (`orchestrator.ts:7925`), so failures are a subset of calls
+    // and any tool used daily for a month has some. Keyed on `failures > 0`
+    // this word is a warn badge on every working tool on the install and
+    // `installed` is unreachable — measured on this install the day it
+    // shipped, 4 errors in 996 calls read `failing`. What earns the word is
+    // that nothing has ever worked.
+    assert.equal(mod.composeState(readings({ calls: 996, failures: 4 })), "installed");
+    assert.equal(mod.composeState(readings({ calls: 2, failures: 1 })), "installed");
+    assert.equal(mod.composeState(readings({ calls: 1, failures: 1 })), "failing");
+    // No call at all is not a failing tool, it is an unverified one — and the
+    // guard has to be there, because `0 >= 0` is true.
+    assert.equal(mod.composeState(readings({ calls: 0, failures: 0 })), "unverified");
   });
 
   it("does not read a source with no applier as a source that failed", () => {

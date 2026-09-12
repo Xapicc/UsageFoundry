@@ -523,7 +523,21 @@ export function composeState(readings: ToolReadings): ToolState {
   if (readings.install !== "ok" && readings.install !== "none") return "failed";
   if (readings.command === null) return "unknown";
   if (readings.resolvedAt === null) return "broken";
-  if (readings.failures > 0) return "failing";
+  // Not `failures > 0`, and the difference is the whole usefulness of the
+  // word. `tool_error` is written on the tool *result* while the `tool` row is
+  // written when the call is made (`orchestrator.ts:7925`), so a failed call
+  // produces both and failures are a subset of calls — which means any tool
+  // used daily for a month has some. Drawn on the first one, `failing` is a
+  // warn badge on every working tool on the install, `installed` is
+  // unreachable, and the page has taught its reader to ignore it. Measured on
+  // this install the day it shipped: the one declared tool read `failing` on 4
+  // errors in 996 calls.
+  //
+  // What `01a-` §8 actually wants caught is the quiet failure — a tool
+  // installed perfectly that no cycle can run — and its signature is that
+  // *nothing* has ever worked. That is `failures >= calls`. Below it the two
+  // numbers are still on the row, which is where a 4-in-996 belongs.
+  if (readings.failures > 0 && readings.failures >= readings.calls) return "failing";
   if (!readings.insideItsOwnToolbox) return "shadowed";
   if (readings.calls === 0) return "unverified";
   return "installed";
@@ -576,13 +590,18 @@ function detailFor(row: {
         `it; the boot log for this container is where the install said why.`
       );
     case "failing":
-      return `${row.calls} calls ${over}, ${row.failures} of which came back an error. What went wrong is in those runs, not here.`;
+      return `Every one of the ${row.calls} calls ${over} came back an error. What went wrong is in those runs, not here.`;
     case "shadowed":
       return `Resolves to ${row.resolvedAt}, which is outside ${where} — an agent gets that copy and not the one this entry installed.`;
     case "unverified":
       return `Resolves at ${row.resolvedAt}. Nothing has invoked it ${over}, so nothing here has seen it work.`;
     case "installed":
-      return `Resolves at ${row.resolvedAt}. ${row.calls} calls ${over}, none of which came back an error.`;
+      // The failure count stays on the row even though the badge no longer
+      // turns on it. A tool erroring one call in four is working and is also
+      // worth looking at, and the badge is not the place to say the second.
+      return row.failures > 0
+        ? `Resolves at ${row.resolvedAt}. ${row.calls} calls ${over}, ${row.failures} of which came back an error.`
+        : `Resolves at ${row.resolvedAt}. ${row.calls} calls ${over}, none of which came back an error.`;
   }
 }
 
