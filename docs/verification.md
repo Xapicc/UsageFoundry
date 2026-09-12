@@ -312,6 +312,27 @@ is `docs/agent/testing.md`; interface defects and their classes are
   held-upstream test fails before it and passes after. Reopened on it, the
   run's first Write carried 32,827 bytes in a 2 min 53 s response, no retry.
 
+- **Reading winnow's ledger incrementally took a TTL-crossing poll from ~181 MB
+  of `heapUsed` to 0, 2026-09-11.** The operator measured the defect on the real
+  `/var/lib/winnow/filter.jsonl` at 101,929,100 bytes / 54,145 lines: one poll
+  crossing `LEDGER_TTL_MS` raised next-server's `heapUsed` by ~214 MB and its RSS
+  to ~700 MB. That file is 0620 `nobody:node` and an agent worktree's uid
+  cannot open it, so the figures below are against a synthesised ledger of
+  101,957,288 bytes / 54,145 lines (0.03% over) carrying the three record shapes
+  `winnow/filter.py` writes, not against the real one;
+  the process is a bare `node --expose-gc` holding only this module, which is why
+  its old-path number is ~181 MB rather than ~214 MB. Five runs each, stable to
+  0.2 MB on the poll figure. `readFileSync` + `parseLedger`: 181.1-181.2 MB of `heapUsed` per poll,
+  peak RSS 365-368 MB, ~300 ms. `readLedgerAppended` with one request appended
+  since the last poll: 0.0 MB, peak RSS 181-184 MB, ~1 ms. Both paths returned
+  the same 45,013 rows, which is the accuracy half of the claim. The cold read a
+  process pays once fell from 181.6-185.3 MB to 83.5-90.0 MB, chunking being what
+  bounds it. **The caveat is retention:** the rows kept for the offset hold 79.5
+  MB for this file and grow ~1.7 KB per agent request for the life of the
+  process, where the old path freed them between polls, so this bounds the churn
+  and the peak but not the growth. Nothing sweeps the file, and a horizon on it
+  is task `fb3b65e3`.
+
 - **`--autocompact` creates the only compaction threshold, firing at ~167,000,
   2026-08-22.** 1,147 transcripts split at `ee93684`: before the flag, 604
   sessions (246 past 167,000) made zero `compact_boundary` records; after, 53
