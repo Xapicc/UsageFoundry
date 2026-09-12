@@ -62,6 +62,31 @@ export async function register() {
       process.exit(1);
     }
 
+    // What the stacks export, into this process's environment, before anything
+    // spawns a child.
+    //
+    // `scripts/apply-stacks.mjs` ran before this server did and wrote the merged
+    // block to a file, because a child of the entrypoint cannot put anything
+    // into its parent's environment. From here `childEnv` copies it onward to
+    // every agent for free: it strips `UF_*`, `OTEL_*`, `__NEXT_*` and six names
+    // and passes everything else through, which is also why `01b-` §2.2 refuses
+    // a stack any key under those prefixes — one would be set here and silently
+    // absent in every child.
+    //
+    // It never overwrites. A variable the operator set in `.env` or compose is
+    // their answer and a stack's is a default, and the alternative is a stack
+    // quietly redirecting something the operator configured by hand.
+    const { stackEnvironment } = await import("./lib/stacks");
+    const exported: string[] = [];
+    for (const [key, value] of Object.entries(stackEnvironment())) {
+      if (process.env[key] !== undefined) continue;
+      process.env[key] = value;
+      exported.push(key);
+    }
+    if (exported.length > 0) {
+      console.log(`[usagefoundry] stacks export ${exported.sort().join(", ")} to every agent.`);
+    }
+
     const { backfillTaskSignatures, reconcileOnBoot, shutdownRuns } =
       await import("./lib/orchestrator");
 

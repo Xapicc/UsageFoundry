@@ -266,3 +266,86 @@ describe("commandPositionNames", () => {
     assert.deepEqual(mod.commandPositionNames("   "), []);
   });
 });
+
+/**
+ * The one reading here that is a query rather than a pure function, and the
+ * only branch of it whose wrong answer is a number that is too **high**.
+ *
+ * Everything else about `invocationCounts` fails low — an unmatched command
+ * shape, a retained window that is shorter than an operator assumes — which
+ * `01f-read-back.md` §2.4 argues is the safe direction: a tool reads
+ * `unverified` when it has in fact been used. The install floor inverts that. A
+ * command name outlives an install of it, so counting calls made before a stack
+ * existed composes to `installed` on evidence that says nothing about the
+ * binary now on `PATH` — and *"the only evidence that a tool works is a run
+ * that used it"* is the one claim the read-back may never get wrong
+ * (`01f-` §7).
+ *
+ * Measured on this install the day stacks shipped, which is why the floor is
+ * here at all: `shellcheck` had 20 `Bash` calls in the retained window against
+ * a binary four minutes old, and without the floor that row read `installed`.
+ */
+describe("invocationCounts — a call made before the install is not evidence of it", () => {
+  const RUN = "floor-test-run";
+
+  before(async () => {
+    const { db } = await import("./db");
+    db()
+      .prepare(
+        "INSERT INTO runs (id, folder, prompt, status, budget, created_at) VALUES (?,?,?,?,?,?)",
+      )
+      .run(RUN, "/workspace/x", "p", "success", "{}", 1);
+    const event = db().prepare(
+      "INSERT INTO run_events (run_id, ts, kind, payload) VALUES (?,?,?,?)",
+    );
+    const call = (ts: number, command: string) =>
+      event.run(RUN, ts, "tool", JSON.stringify({ name: "Bash", input: { command } }));
+    const failed = (ts: number, command: string) =>
+      event.run(RUN, ts, "tool_error", JSON.stringify({ name: "Bash", command, text: "no" }));
+
+    call(1_000, "shellcheck old.sh");
+    failed(1_000, "shellcheck old.sh");
+    call(9_000, "shellcheck new.sh");
+    call(9_000, "shfmt -l .");
+  });
+
+  it("counts every call when nothing names a floor", () => {
+    const counts = mod.invocationCounts(["shellcheck", "shfmt"], 10_000);
+    assert.deepEqual(counts.get("shellcheck"), { calls: 2, failures: 1 });
+    assert.deepEqual(counts.get("shfmt"), { calls: 1, failures: 0 });
+  });
+
+  it("drops the calls that predate the install, failures included", () => {
+    // A failure from before the install is as misleading as a success: it would
+    // draw `failing` on a binary that has never been run.
+    const counts = mod.invocationCounts(
+      ["shellcheck", "shfmt"],
+      10_001,
+      new Map([["shellcheck", 5_000]]),
+    );
+    assert.deepEqual(counts.get("shellcheck"), { calls: 1, failures: 0 });
+    // A name with no floor is untouched by another name's.
+    assert.deepEqual(counts.get("shfmt"), { calls: 1, failures: 0 });
+  });
+
+  it("reads nothing at all for a stack installed after the last call", () => {
+    // Which is every stack on its first boot, and is what makes `unverified`
+    // the honest first word rather than `installed`.
+    const counts = mod.invocationCounts(
+      ["shellcheck"],
+      10_002,
+      new Map([["shellcheck", 9_500]]),
+    );
+    assert.deepEqual(counts.get("shellcheck"), { calls: 0, failures: 0 });
+  });
+
+  it("does not answer a moved floor out of the cache it filled for the old one", () => {
+    // The cache is keyed on the floors as well as on the retention cutoff,
+    // because a floor that moved is a stack that was reapplied — which is
+    // exactly the moment the counts must start again.
+    const before = mod.invocationCounts(["shellcheck"], 10_003, new Map([["shellcheck", 0]]));
+    assert.equal(before.get("shellcheck")?.calls, 2);
+    const after = mod.invocationCounts(["shellcheck"], 10_004, new Map([["shellcheck", 9_500]]));
+    assert.equal(after.get("shellcheck")?.calls, 0);
+  });
+});

@@ -4056,8 +4056,11 @@ export interface TaskListDTO {
  * did not install says `unknown command` inside a tool call; a Python tool that
  * did not is a plugin hook ending in `|| true`, which exits 0 having done
  * nothing — measured at 213 sessions on one install (`.env.example:245-249`).
+ * A `stack` is the third, and it is the only one with an applier of its own: it
+ * fixes by editing a file on the host and restarting, and its failure is
+ * recorded in a receipt rather than only in a boot log a restart destroys.
  */
-export type ToolSourceDTO = "python" | "gh-extension";
+export type ToolSourceDTO = "python" | "gh-extension" | "stack";
 
 /**
  * What the app is willing to say about one tool.
@@ -4080,7 +4083,14 @@ export type ToolStateDTO =
 /** One declared tool, and the four readings composed into one word. */
 export interface ToolRowDTO {
   source: ToolSourceDTO;
-  /** The entry exactly as it stands in `.env`, which is what an operator recognises. */
+  /**
+   * What an operator recognises this entry by: the line as it stands in `.env`
+   * for the two list variables, and the stack's directory name for a stack.
+   *
+   * Not unique. A stack that links three binaries is three rows sharing one
+   * `spec`, because the layer that keeps the others honest resolves one command
+   * at a time and a stack with one binary gone is not a stack that is fine.
+   */
   spec: string;
   /** What an agent would type, or `null` when the entry names no command. */
   command: string | null;

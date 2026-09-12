@@ -1063,6 +1063,69 @@ is `docs/agent/testing.md`; interface defects and their classes are
   a missing one reads unavailable rather than empty, and a folder maps back to
   its workspace through a symlinked mount.
 
+- **The stacks carrier, end to end against the running container, 2026-09-12**
+  (`docker compose up --build` on this install, arm64). One declaration,
+  `stacks/shell-lint/stack.json` — the two-publisher example from
+  `proposals/CustomStacks/01g-third-party.md` §6, exercising every branch the
+  `archive` verb has at once: two steps, `tar.gz` and `none`, per-architecture
+  `sha256` rather than a publisher manifest, and both `{arch}` and
+  `{arch_uname}` in one file. The boot log read
+  `stacks: 1 declared in /etc/uf-stacks`, `stack shell-lint: installing
+  (archive, archive, 2 steps) — no receipt`, `installed, 2 binaries, 1 denied`,
+  `stacks: 1 ok, 0 failed`. Afterwards: `/var/lib/uf-stacks/bin` held
+  `shellcheck` and `shfmt`, both `root root 0755`; `state/shell-lint` was
+  `1000 1000 0775`; `PATH` began `/var/lib/uf-stacks/bin:/home/node/pytools/bin:…`;
+  and `shellcheck --version` and `shfmt --version` both answered from inside the
+  container. Both architecture spellings resolved correctly in the same boot —
+  the receipt records `shellcheck-v0.11.0.linux.aarch64.tar.gz` beside
+  `shfmt_v3.14.1_linux_arm64`. **This is the first thing in this repository to
+  put a binary on an agent's `PATH` without a `Dockerfile` edit.**
+
+- **A checksum mismatch stops the stack and nothing else, 2026-09-12.** A second
+  declaration was added carrying a deliberately wrong `sha256` against a real
+  URL. The boot log read `stack bad-digest: failed —
+  shfmt_v3.14.1_linux_arm64 does not match its checksum` and then
+  `stacks: 1 ok, 1 failed`; nothing was unpacked, nothing was linked, the stack
+  beside it installed, and the container came up healthy. The receipt carried
+  the applier's own text verbatim — three lines of `sha256sum` output, 98 bytes,
+  uncapped — and `/api/tools` drew that stack `failed` with the same sentence.
+  `/api/status` read `{ declared: 4, notOk: 1 }`: counts and no names, which is
+  `status.ts:23-28`'s closed rule holding across a source that carries
+  operator-chosen text.
+
+- **A second boot costs no network, 2026-09-12.** `docker compose restart` with
+  the declaration unchanged printed `stack shell-lint: receipt matches,
+  skipped`. That is R4a: a rebuild does not re-download, which matters because
+  the failure this whole mechanism exists to end is a rebuild handing an agent
+  `command not found`, and a design that re-downloads every boot reproduces it
+  whenever the network is slow.
+
+- **`reconcile` removes only what its own receipt records, against a real
+  volume, 2026-09-12.** A file was created by hand at
+  `/var/lib/uf-stacks/bin/hand-installed`, the declaration directory was moved
+  away, and the container restarted. The log read `stack shell-lint: no longer
+  declared, removed`; `bin/`, `pkg/`, `state/` and `receipts/` were emptied of
+  everything that stack owned, and `hand-installed` was still there. This is the
+  one rule here whose breach is unrecoverable, and it is now observed rather
+  than reasoned.
+
+- **A stack's invocation counts had to be floored at its install, and the
+  defect was found by shipping it, 2026-09-12.** On the first read-back after
+  the stack installed, `shellcheck` composed to `installed` on 20 `Bash` calls
+  in the retained 30-day window — against a binary four minutes old. The calls
+  were real and said nothing about it: a command name outlives an install of it.
+  `invocationCounts` now takes a per-name floor, set from the receipt's
+  `appliedAt` for stack rows and from nothing for the two `.env` lists, which
+  record no such instant. Re-measured after the fix: both rows read `unverified`
+  with *"Nothing has invoked it since this stack was installed"*, which is the
+  window the number was actually taken over. `01f-read-back.md` §7's first rule
+  — *"the only evidence that a tool works is a run that used it"* — is what this
+  was violating.
+
+- **`unverified` drawn against a real install, 2026-09-12.** The two rows above.
+  It was on the *Not yet verified* list from the day phase 1 shipped, because
+  the one declared tool on this install had 996 calls behind it.
+
 - **The server holds both tool-list variables, and uv's launcher directory is
   first on `PATH`, 2026-09-12.** Read off PID 1 of the running container:
   `UF_GH_EXTENSIONS=Xapicc/gh-layer10`, `UF_PY_TOOLS=` (blank), and
@@ -1223,9 +1286,12 @@ is `docs/agent/testing.md`; interface defects and their classes are
   `fs.realpathSync` around the sandbox root — on macOS `/var` is a symlink to
   `private/var`, so `POST /api/runs` refused the seed with *"Folder is outside
   the \"workspace\" mount"* and the pass died before a browser opened.
-  **What it still does not cover:** `unverified` and `failing`, which need a
-  database carrying `run_events` rows of the right shape, and any assertion
-  about interaction — this pass is about load, by decision.
+  **What it still does not cover:** `failing`, which needs a database carrying
+  `run_events` rows of the right shape, the stacks group — whose receipts live
+  at an absolute container path this pass has no way to populate — and any
+  assertion about interaction, this pass being about load by decision.
+  (`unverified` was drawn against the running container instead, on the day
+  stacks shipped; see *Container and environment*.)
 
 - **`installed`, composed against a real install's own history, 2026-09-12.**
   The one tool declared here, `Xapicc/gh-layer10`, resolves at
@@ -2309,6 +2375,46 @@ measurement under *Verified* and cut the item down to what is still open.
   visible to it.
 
 ### Container and environment
+
+- **The Tools section's stacks group has not been seen in a browser.** The rows
+  were read off `/api/tools` against the running container and the group's
+  markup is the same `ListGroup` the other two use, but nothing has loaded
+  `/settings` with a stack present — `npm run smoke-pages` cannot, because the
+  receipts live at `/var/lib/uf-stacks/receipts`, an absolute container path,
+  and the pass runs on the host. Settle by opening `/settings` on the install
+  that has one and reading the group.
+
+- **Only `archive` has ever run.** `uv-tool` and `npm-global` are in the format
+  and refused by name at parse in this build, so the two verbs that execute a
+  package's install hooks have never been exercised — which is deliberate:
+  `archive` executes nothing at install time, and shipping the other two in the
+  same commit as the carrier would have meant the first thing this mechanism
+  ever did was run a stranger's code.
+
+- **A stack's `env` block has never reached an agent.** The applier writes
+  `/var/lib/uf-stacks/env.json` and `src/instrumentation.ts` merges it into
+  `process.env` at boot, from where `childEnv` is what carries it onward — but
+  the one stack measured here declares no `env`, so the file has only ever been
+  written as `{}` and nothing has read a stack's variable out of a child. The
+  two halves that *are* measured are the refusals (`refuseEnv`, unit-tested) and
+  that `childEnv` passes `PATH` through (`orchestrator.test.ts`). Settle with a
+  stack declaring `"env": { "TF_PLUGIN_CACHE_DIR": "{state}/plugin-cache" }` and
+  `docker compose exec usagefoundry printenv TF_PLUGIN_CACHE_DIR`.
+
+- **Two stacks claiming one binary name has never happened outside a unit
+  test.** `reconcile` marks both `conflicted` and links neither, which is
+  asserted over the function; no boot has produced it. The same is true of the
+  applier's whole-run time budget: no install here has come close to 120
+  seconds, so the *not attempted* receipt that budget writes has never been
+  written by a real boot.
+
+- **`/var/lib/uf-stacks/bin` has no `unclaimed` reading.** A binary in the
+  stacks toolbox that no receipt claims is invisible on the page — the
+  *claimed by no entry* list walks uv's launcher directory and the gh extensions
+  volume and not this one. Measured on 2026-09-12 by creating
+  `bin/hand-installed` by hand: it survived the removal that took the stack
+  beside it, correctly, and appeared nowhere in `/api/tools`. That list is the
+  last phase of `proposals/CustomStacks/21-implementation-sketch.md`.
 
 - **No Python tool has been installed while the Tools section could read it.**
   `UF_PY_TOOLS` is blank on this install and `/home/node/pytools/bin` is empty,

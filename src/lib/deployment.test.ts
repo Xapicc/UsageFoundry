@@ -1071,6 +1071,124 @@ describe("Python tools survive the rebuild that installs them by hand does not",
 });
 
 /**
+ * The stacks carrier, pinned across the three files that have to agree — and
+ * one assertion that is not about agreement at all.
+ *
+ * The first two are the gh and Python blocks above, one mechanism over: a
+ * declarations directory the operator writes on the host, a named volume the
+ * applier writes inside the container, and a `PATH` that makes the second
+ * reachable. Any one of the three moving leaves a container that boots,
+ * installs the stacks, reports them installed, and hands an agent `command not
+ * found`.
+ *
+ * **The third is different and is the reason this block exists.** `C1`: the
+ * image ships nothing under `/var/lib/uf-stacks`, ever. A named volume takes
+ * its contents from the image exactly once, at creation, so a file the image
+ * puts at that mount point is visible on a reviewer's **fresh** install and
+ * masked on every install that already exists. Somebody adding a `mkdir -p` or
+ * a `COPY` there would see it work, and so would every reviewer who tested it
+ * the same way; the installs where it silently does nothing are everybody
+ * else's. Nothing but this assertion catches that, which is why it is written
+ * as "no path under it at all" rather than as a list of the ways to break it.
+ */
+describe("stacks reach an agent, and the image ships none of them", () => {
+  const entrypoint = fs.readFileSync(path.join(root, "docker-entrypoint.sh"), "utf8");
+
+  /** The two paths, off the entrypoint, which is what actually uses them. */
+  function stacksPath(variable: string): string {
+    const match = new RegExp(`^${variable}=(\\S+)$`, "m").exec(entrypoint);
+    assert.ok(match, `docker-entrypoint.sh no longer names ${variable}`);
+    return match[1];
+  }
+
+  it("binds the declarations read-only from the host, and never from a mount an agent writes", () => {
+    // Read-only because the container has no business editing a declaration,
+    // and off the host rather than out of /workspace because agents write
+    // there — a declaration an agent can edit is a way for one run to install
+    // software into every later run, and no sentence fixes that.
+    const target = stacksPath("STACKS_DECLARATIONS_DIR");
+    assert.match(
+      compose,
+      new RegExp(`^\\s*-\\s*\\$\\{UF_STACKS_DIR:-[^}]+\\}:${target}:ro\\s*$`, "m"),
+      `${target} is not a read-only bind of a host directory in ` +
+        `docker-compose.yml, so the stacks an operator declared either never ` +
+        `reach the container or are writable from inside it`,
+    );
+  });
+
+  it("mounts a named volume over the directory the applier installs into", () => {
+    const target = stacksPath("STACKS_VOLUME");
+    assert.match(
+      compose,
+      new RegExp(`^\\s*-\\s*[A-Za-z0-9][\\w.-]*:${target}\\s*$`, "m"),
+      `${target} is not a named volume in docker-compose.yml. Without one it ` +
+        `is the image's writable layer, which \`docker compose up --build\` ` +
+        `discards along with every binary a stack installed`,
+    );
+  });
+
+  it("puts the toolbox first on the PATH the image sets", () => {
+    // First rather than last, so a stack wins over a copy in /usr/local/bin and
+    // an operator who declared a version gets the version they declared. In the
+    // image rather than the entrypoint because PATH has to be final before the
+    // server starts: childEnv copies the server's environment into every agent
+    // child, so a run-time change leaves two sets of children differing in what
+    // they can resolve.
+    const target = stacksPath("STACKS_VOLUME");
+    assert.match(
+      dockerfile,
+      new RegExp(`ENV PATH="${target}/bin:\\$\\{PATH\\}"`),
+      `${target}/bin is not prepended to PATH in the Dockerfile, so every ` +
+        `binary a stack links is present, correct, and never found`,
+    );
+  });
+
+  it("ships the applier in the image, since nothing mounts this repository there", () => {
+    assert.match(
+      dockerfile,
+      /COPY scripts\/apply-stacks\.mjs/,
+      "the image does not carry scripts/apply-stacks.mjs, so the entrypoint's " +
+        "applier block runs a file that is not there and every stack is silently absent",
+    );
+  });
+
+  it("ships nothing under the volume — the one breach that is invisible to whoever makes it", () => {
+    const target = stacksPath("STACKS_VOLUME");
+    const offending = dockerfile
+      .split("\n")
+      .map((line, index) => ({ line, number: index + 1 }))
+      .filter(({ line }) => !line.trimStart().startsWith("#"))
+      .filter(({ line }) => line.includes(target))
+      // The one legitimate mention: PATH names the directory and creates
+      // nothing. Everything else — a mkdir, a COPY, a RUN, a WORKDIR, a VOLUME
+      // — puts something at a mount point a volume will copy exactly once.
+      .filter(({ line }) => !new RegExp(`^ENV PATH="${target}/bin:\\$\\{PATH\\}"$`).test(line.trim()));
+    assert.deepEqual(
+      offending.map(({ number, line }) => `${number}: ${line.trim()}`),
+      [],
+      `the Dockerfile names a path under ${target} outside its ENV PATH line. A ` +
+        `named volume takes its contents from the image exactly once, at ` +
+        `creation, so whatever this puts there is visible on a fresh install ` +
+        `and masked on every install that already exists — which means it works ` +
+        `for whoever tested it and silently does nothing for everybody else`,
+    );
+  });
+
+  it("runs the applier before the server, not after it", () => {
+    // The only window in the container's life with no agent process alive, and
+    // the reason PATH can be a constant. After `exec "$@"` there is no
+    // entrypoint left to run anything.
+    const applier = entrypoint.indexOf("apply-stacks.mjs");
+    const handoff = entrypoint.lastIndexOf('exec "$@"');
+    assert.notEqual(applier, -1, "docker-entrypoint.sh no longer runs the stack applier");
+    assert.ok(
+      applier < handoff,
+      "the stack applier runs after the server is exec'd, which is to say never",
+    );
+  });
+});
+
+/**
  * The sandbox switch, pinned across the four files that have to agree for it to
  * mean anything — and, first, for it to stay *off*.
  *

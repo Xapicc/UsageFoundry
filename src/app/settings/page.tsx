@@ -1064,6 +1064,11 @@ const TOOL_GROUP: Record<ToolRowDTO["source"], { label: string; footnote: string
     footnote:
       "From UF_GH_EXTENSIONS in your .env, installed at boot into a named volume. An entry whose @tag has moved is deliberately not reinstalled, so a bumped pin and an unchanged binary is correct rather than broken",
   },
+  stack: {
+    label: "Stacks",
+    footnote:
+      "From the stacks directory beside your docker-compose.yml — one folder per stack, each holding a stack.json naming what to download and what to link. One row per binary, so a stack that links three is three things that can go missing separately. Add or remove a folder and restart; nothing here installs anything",
+  },
 };
 
 function ToolRow({ tool }: { tool: ToolRowDTO }) {
@@ -1104,7 +1109,7 @@ function ToolFigures({
   }
   if (!report) return <Empty>Reading what is installed…</Empty>;
 
-  const sources: ToolRowDTO["source"][] = ["python", "gh-extension"];
+  const sources: ToolRowDTO["source"][] = ["python", "gh-extension", "stack"];
   const groups = sources
     .map((source) => ({ source, tools: report.tools.filter((t) => t.source === source) }))
     .filter((group) => group.tools.length > 0);
@@ -1124,9 +1129,11 @@ function ToolFigures({
       {groups.length === 0 && report.unclaimed.length === 0 ? (
         <Empty>
           No tools declared. <code>UF_PY_TOOLS</code> and{" "}
-          <code>UF_GH_EXTENSIONS</code> in your <code>.env</code> are where they go —
-          one requirement or one <code>owner/repo</code> per entry — and they install
-          on the next <code>docker compose up</code>.
+          <code>UF_GH_EXTENSIONS</code> in your <code>.env</code> are where the first
+          two go — one requirement or one <code>owner/repo</code> per entry — and a
+          stack is a folder under <code>stacks/</code> beside your{" "}
+          <code>docker-compose.yml</code>. All three install on the next{" "}
+          <code>docker compose up</code>.
         </Empty>
       ) : (
         groups.map((group, i) => (
@@ -1137,7 +1144,7 @@ function ToolFigures({
             footnote={TOOL_GROUP[group.source].footnote}
           >
             {group.tools.map((tool) => (
-              <ToolRow key={`${tool.source}:${tool.spec}`} tool={tool} />
+              <ToolRow key={`${tool.source}:${tool.spec}:${tool.command ?? ""}`} tool={tool} />
             ))}
           </ListGroup>
         ))

@@ -499,6 +499,47 @@ services:
       # that write it run as UF_AGENT_UID.
       - ${UF_BACKUP_DIR:-./backups}:/backups
 
+      # The stacks an operator declared: one directory each, holding a
+      # stack.json that names what to download, what to verify it against and
+      # what to link onto PATH. Read-only, and a bind mount rather than a volume
+      # for the one reason that decides it — the declaration is the durable
+      # thing and the artifacts are a cache, so this has to live on the host
+      # where it can be edited, reviewed and put in git.
+      #
+      # Not inside /workspace, which is already mounted and would need no change
+      # here at all: agents write there, and a declaration an agent can edit is
+      # a way for one run to install software into every later run. There is no
+      # sentence that fixes that.
+      #
+      # The repository ships an empty ./stacks so the default works with no
+      # setup, and ships no example stack inside it — a directory whose presence
+      # means "install this" is not something an operator should find already
+      # there. Point UF_STACKS_DIR somewhere else and that directory has to
+      # exist first, for the reason the backups bind above gives.
+      - ${UF_STACKS_DIR:-./stacks}:/etc/uf-stacks:ro
+
+      # What the stacks installed. A named volume for the reason the four above
+      # are — the default location is the writable layer, which
+      # `docker compose up --build` discards — and `down -v` destroys it, which
+      # is the correct treatment of a cache: the declarations are on the host,
+      # so the next boot reinstalls every stack from them, at the cost of time
+      # and bandwidth and nothing else.
+      #
+      # Root-owned, unlike the gh and pytools volumes beside it, and that is
+      # deliberate rather than an oversight. Its bin/ directory is on the
+      # *server's* PATH, and a directory on that PATH which a sibling agent can
+      # rewrite is a way for one run to put its own code on every other run's
+      # transcript. /home/node/pytools/bin is already one of those; there will
+      # not be a second. The one subtree the agents own is state/, which the
+      # applier hands them by name.
+      #
+      # The image ships nothing at this mount point, ever: a volume takes its
+      # contents from the image exactly once, at creation, so anything the image
+      # put here would be visible on a fresh install and masked on every
+      # existing one. `deployment.test.ts` asserts the Dockerfile names no path
+      # under it, because that is the one breach nothing else would catch.
+      - usagefoundry-stacks:/var/lib/uf-stacks
+
     # ------------------------------------------------------------------------
     # What this container may ask the kernel for — commented out, and the whole
     # of what UF_SANDBOX above needs from the host.
@@ -717,3 +758,4 @@ volumes:
   usagefoundry-gh:
   usagefoundry-pytools:
   usagefoundry-winnow:
+  usagefoundry-stacks:

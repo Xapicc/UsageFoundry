@@ -173,6 +173,58 @@ Three, and the first is the strongest case in the plan.
 
 ## Phase 2 - the carrier, and one verb
 
+> **BUILT on 2026-09-12**, and running on this install. Everything the table
+> below names shipped: the compose mount and volume, the `ENV PATH` line and the
+> `COPY`, the entrypoint block, `scripts/apply-stacks.mjs`, `src/lib/stacks.ts`,
+> the stack rows on the `/api/tools` DTO, the `BUILD_CACHE_DIRS` entry, the
+> whole-run time budget, the three `deployment.test.ts` assertions and — from
+> phase 1, where it was taken early — the `childEnv().PATH` repair. What it was
+> measured to do is in `docs/verification.md`'s *Container and environment*
+> section, and what it still has not done is in the *Not yet verified* half of
+> the same file.
+>
+> **Three deviations, each argued here.**
+>
+> 1. **`env` and `state` shipped with the carrier rather than in phase 3**, and
+>    with them `expandTokens`, `refuseEnv` and the `src/instrumentation.ts`
+>    merge that `01a-` §2.3's own six-file list names and this file's table
+>    dropped. The reason is that `archive` alone cannot install the directory's
+>    own worked example correctly: Terraform without `TF_PLUGIN_CACHE_DIR` is
+>    `01a-` §5's *"ships half a tool, and the symptom is a slow work cycle
+>    rather than an error"* — which is the exact failure shape this whole
+>    directory exists to end. `expandTokens` was not separable either way, since
+>    `{arch}` is what makes an `archive` URL resolve on both architectures and
+>    `{pkg}` is what a `bin.from` is relative to. The two verbs that **execute**
+>    a package's install hooks, `uv-tool` and `npm-global`, are still phase 3's
+>    and are refused by name at parse — so the property that made `archive` the
+>    one to ship alone is intact: nothing this mechanism has downloaded has ever
+>    been executed by it.
+>
+> 2. **The two `/api/status` integers widened rather than becoming four.**
+>    `01e-` §5.3 asks for *"how many stacks are declared, and how many of them
+>    are not `ok` on this boot"*; phase 1's `tools.declared` / `tools.notOk`
+>    already carry exactly that question one source wider, and a second pair
+>    would be a second thing a monitor has to threshold for one condition. What
+>    is counted is **rows**, so a stack linking three binaries is three things
+>    that can go missing separately, and a stack the applier never reached
+>    contributes one row rather than none.
+>
+> 3. **`invocationCounts` gained a per-name install floor**, which phase 1 did
+>    not know it needed and which this phase found by shipping. A command name
+>    outlives an install of it: the first read-back after the first stack
+>    installed drew `installed` over 20 `shellcheck` calls made before the
+>    binary existed. The floor comes off the receipt's `appliedAt` and the two
+>    `.env` lists get none, because nothing records when a line was added to
+>    them. It earns a test on grounds phase 1 explicitly declined for this
+>    query — *"its failure mode is a number that is too low, which is the safe
+>    direction"* — because this branch is the one whose wrong answer is a number
+>    that is too **high**.
+>
+> One thing the text below asks for is **not** built and is deliberately phase
+> 5's: the `unclaimed` reading over `/var/lib/uf-stacks/bin`. A binary a person
+> put in the toolbox by hand survives every boot, correctly, and appears on no
+> page.
+
 **Three to four days. The first phase that installs anything.**
 
 ### What ships

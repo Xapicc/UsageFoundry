@@ -4,6 +4,7 @@ import path from "node:path";
 import { db } from "./db";
 import { retentionCutoff } from "./retention";
 import { getSettings } from "./settings";
+import { STACKS_BIN_DIR, readReceipts, type StackReceipt } from "./stacks";
 
 /**
  * What this install's agents can actually run, and how sure the app is of it.
@@ -58,10 +59,15 @@ export const PY_TOOLS_BIN_DIR = "/home/node/pytools/bin";
 export const GH_EXTENSIONS_DIR = "/home/node/.local/share/gh/extensions";
 
 /**
- * The two ways a tool arrives today. Phase 2 adds `"stack"` beside them and
- * nothing in `composeState` changes to admit it.
+ * The three ways a tool arrives.
+ *
+ * `"stack"` joined the two `UF_*` lists with `proposals/CustomStacks/` phase 2
+ * and nothing in `composeState` changed to admit it, which was the test of
+ * whether the four layers were the right decomposition. What differs per source
+ * is only which toolbox a resolution has to land in to count as unshadowed, and
+ * which applier — if any — recorded that it worked.
  */
-export type ToolSource = "python" | "gh-extension";
+export type ToolSource = "python" | "gh-extension" | "stack";
 
 /**
  * One word per tool, worst reading wins.
@@ -444,20 +450,57 @@ export interface InvocationCounts {
  */
 const INVOCATION_TTL_MS = 60_000;
 
+/**
+ * A per-name instant before which a call says nothing about this tool.
+ *
+ * Only a stack has one, because only a stack records when it was applied. It
+ * matters because a command name outlives an install of it: measured on this
+ * install the day stacks shipped, `shellcheck` had 20 `Bash` calls in the
+ * retained window against a binary that had existed for four minutes. Counted
+ * whole, those 20 calls compose to `installed` — which is the read-back
+ * claiming a tool works on evidence from before it was there, and *"the only
+ * evidence that a tool works is a run that used it"* is the one thing `01f-`
+ * §7 says it may never get wrong.
+ *
+ * A floor rather than a separate window: the retention cutoff still bounds the
+ * scan, and this only refuses rows older than the install. The two list
+ * variables get none, because nothing anywhere records when an entry was added
+ * to `.env` — so their counts stay as honest as the data allows and no more.
+ */
+export type InvocationFloors = Map<string, number>;
+
+/**
+ * A new key rather than the old `__ufToolInvocations`, whose shape this changed.
+ *
+ * `??=` only initialises when the key is absent, so a pre-upgrade value at a key
+ * whose shape moved survives a dev hot reload and every call on it throws
+ * (`orchestrator.ts:10870-10873`). The cost of a new key is one cold rebuild.
+ */
 const invocationCache = ((
   globalThis as unknown as {
-    __ufToolInvocations?: { at: number; cutoff: number | null; value: Map<string, InvocationCounts> };
+    __ufToolInvocationCounts?: {
+      at: number;
+      cutoff: number | null;
+      floors: string;
+      value: Map<string, InvocationCounts>;
+    };
   }
-).__ufToolInvocations ??= { at: 0, cutoff: null, value: new Map() });
+).__ufToolInvocationCounts ??= { at: 0, cutoff: null, floors: "", value: new Map() });
 
 export function invocationCounts(
   names: string[],
   now = Date.now(),
+  floors: InvocationFloors = new Map(),
 ): Map<string, InvocationCounts> {
   const cutoff = retentionCutoff(getSettings().eventRetentionDays, now);
   const wanted = new Set(names);
+  // A floor that moved is a stack that was reapplied, which is exactly when the
+  // counts must start again — so it is part of what makes a cached answer stale.
+  const floorsKey = [...floors].sort().map(([name, at]) => `${name}@${at}`).join(",");
   const fresh =
-    now - invocationCache.at < INVOCATION_TTL_MS && invocationCache.cutoff === cutoff;
+    now - invocationCache.at < INVOCATION_TTL_MS &&
+    invocationCache.cutoff === cutoff &&
+    invocationCache.floors === floorsKey;
   if (fresh && [...wanted].every((name) => invocationCache.value.has(name))) {
     return invocationCache.value;
   }
@@ -467,7 +510,8 @@ export function invocationCounts(
   if (wanted.size > 0) {
     const rows = db()
       .prepare(
-        `SELECT CASE kind WHEN 'tool' THEN 0 ELSE 1 END AS failed,
+        `SELECT ts,
+                CASE kind WHEN 'tool' THEN 0 ELSE 1 END AS failed,
                 CASE kind WHEN 'tool' THEN json_extract(payload, '$.input.command')
                           ELSE json_extract(payload, '$.command') END AS command
            FROM run_events
@@ -476,7 +520,7 @@ export function invocationCounts(
             AND json_extract(payload, '$.name') = 'Bash'`,
       )
       // A null cutoff is retention switched off, which means every row.
-      .iterate(cutoff ?? 0) as Iterable<{ failed: number; command: string | null }>;
+      .iterate(cutoff ?? 0) as Iterable<{ ts: number; failed: number; command: string | null }>;
     for (const row of rows) {
       if (!row.command) continue;
       // A command naming one tool twice is one call of it, not two.
@@ -484,6 +528,8 @@ export function invocationCounts(
       for (const name of seen) {
         const counted = counts.get(name);
         if (!counted) continue;
+        const floor = floors.get(name);
+        if (floor !== undefined && row.ts < floor) continue;
         if (row.failed) counted.failures += 1;
         else counted.calls += 1;
       }
@@ -492,6 +538,7 @@ export function invocationCounts(
 
   invocationCache.at = now;
   invocationCache.cutoff = cutoff;
+  invocationCache.floors = floorsKey;
   invocationCache.value = counts;
   return counts;
 }
@@ -548,6 +595,16 @@ export function composeState(readings: ToolReadings): ToolState {
 /* ------------------------------------------------------------------ */
 
 /**
+ * Which directory a source installs into, which is the whole of what `shadowed`
+ * turns on: a resolution outside it is a copy the agent gets instead.
+ */
+function toolboxOf(source: ToolSource): string {
+  if (source === "gh-extension") return "the gh extensions volume";
+  if (source === "stack") return STACKS_BIN_DIR;
+  return PY_TOOLS_BIN_DIR;
+}
+
+/**
  * The sentence beside each badge.
  *
  * The server's, not the page's, for `SandboxRow`'s reason at
@@ -566,10 +623,20 @@ function detailFor(row: {
   calls: number;
   failures: number;
   windowDays: number | null;
+  /** The applier's own sentence, for the one source that has an applier. */
+  applierSaid?: string | null;
+  /** True when the counts are floored at the install rather than at retention. */
+  countedSinceInstall?: boolean;
 }): string {
-  const over =
-    row.windowDays === null ? "over all retained history" : `in the last ${row.windowDays} days`;
-  const where = row.source === "gh-extension" ? "the gh extensions volume" : PY_TOOLS_BIN_DIR;
+  // What the counts actually cover, said rather than implied. A stack's are
+  // floored at the boot that installed it, so "in the last 30 days" would be a
+  // window the number was not taken over.
+  const over = row.countedSinceInstall
+    ? "since this stack was installed"
+    : row.windowDays === null
+      ? "over all retained history"
+      : `in the last ${row.windowDays} days`;
+  const where = toolboxOf(row.source);
   switch (row.state) {
     case "unknown":
       return (
@@ -581,10 +648,16 @@ function detailFor(row: {
       // by that name was installed at all, against something installed that is
       // not runnable. Neither names a cause — a count and a directory listing
       // cannot tell a refused credential from a network that was down.
+      //
+      // A stack is the exception, and it is the only source here with an
+      // applier of its own: its receipt carries the reason verbatim, so the row
+      // repeats that rather than inventing a category for it.
+      if (row.applierSaid) return row.applierSaid;
       return row.install === "missing"
         ? `Declared, and nothing by that name is installed in ${where}.`
         : `Installed into ${where} and not runnable from there.`;
     case "broken":
+      if (row.applierSaid) return row.applierSaid;
       return (
         `Declared, and \`${row.command}\` does not resolve. Nothing an agent types will find ` +
         `it; the boot log for this container is where the install said why.`
@@ -603,6 +676,131 @@ function detailFor(row: {
         ? `Resolves at ${row.resolvedAt}. ${row.calls} calls ${over}, ${row.failures} of which came back an error.`
         : `Resolves at ${row.resolvedAt}. ${row.calls} calls ${over}, none of which came back an error.`;
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Stacks                                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One row per binary a stack's receipt claims, and one row for a stack that
+ * never got as far as claiming any.
+ *
+ * A row per binary rather than a row per stack, because the reachable layer is
+ * per binary and collapsing it would throw away the one fact it buys: a stack
+ * with three binaries and one gone needs a word for the binary and a word for
+ * the stack, and the page shows the stack's name beside each. The stack-level
+ * word is on the detail route, which is a later phase.
+ *
+ * The applier's own sentence is carried through for the two states it can
+ * explain better than a resolution can — a stack that failed to install and a
+ * link that has since gone. It is passed rather than re-derived, because a
+ * second sentence written here is a second thing that can disagree with the
+ * receipt about what happened.
+ */
+function stackRows(
+  receipts: StackReceipt[],
+  pathValue: string,
+  counts: Map<string, InvocationCounts>,
+  windowDays: number | null,
+): ToolRow[] {
+  const rows: ToolRow[] = [];
+  for (const receipt of receipts) {
+    if (receipt.status !== "ok" || receipt.bin.length === 0) {
+      rows.push(unappliedStackRow(receipt, windowDays));
+      continue;
+    }
+    for (const entry of receipt.bin) {
+      const resolvedAt = resolveOnPath(entry.name, pathValue, isExecutableFile);
+      const insideItsOwnToolbox = resolvedAt === null || resolvedAt.startsWith(`${STACKS_BIN_DIR}/`);
+      const calls = counts.get(entry.name)?.calls ?? 0;
+      const failures = counts.get(entry.name)?.failures ?? 0;
+      const state = composeState({
+        install: "ok",
+        resolvedAt,
+        insideItsOwnToolbox,
+        command: entry.name,
+        calls,
+        failures,
+      });
+      rows.push({
+        source: "stack",
+        spec: receipt.name,
+        command: entry.name,
+        pin: null,
+        installedPin: null,
+        state,
+        resolvedAt,
+        calls,
+        failures,
+        detail: detailFor({
+          state,
+          install: "ok",
+          source: "stack",
+          command: entry.name,
+          resolvedAt,
+          calls,
+          failures,
+          windowDays,
+          countedSinceInstall: receipt.appliedAt !== null,
+          applierSaid:
+            state === "broken"
+              ? `The receipt records a link at ${entry.path} and nothing resolves \`${entry.name}\` ` +
+                `now. Something removed it after the boot that made it, so the receipt and the disk ` +
+                `disagree and only one of them can be right.`
+              : null,
+        }),
+      });
+    }
+  }
+  return rows;
+}
+
+/**
+ * A stack the applier refused, could not install, or found in conflict.
+ *
+ * `conflicted` and `failed` are one badge and two sentences: the state an
+ * operator acts on is the same — nothing from this stack is on `PATH` — and
+ * what they do about it is not, so the reason is the receipt's own text.
+ */
+function unappliedStackRow(receipt: StackReceipt, windowDays: number | null): ToolRow {
+  const install: InstallRecord = receipt.status === "conflicted" ? "conflicted" : "failed";
+  const said = receipt.error?.text ?? "";
+  const truncated = receipt.error && receipt.error.bytes > said.length;
+  const applierSaid =
+    receipt.status === "conflicted"
+      ? `Two stacks claim one command, so neither was linked. ${said}`
+      : `The applier did not install this stack. ${said}${truncated ? ` (the last ${said.length} bytes of ${receipt.error?.bytes})` : ""}`;
+  const state = composeState({
+    install,
+    resolvedAt: null,
+    insideItsOwnToolbox: true,
+    command: null,
+    calls: 0,
+    failures: 0,
+  });
+  return {
+    source: "stack",
+    spec: receipt.name,
+    command: null,
+    pin: null,
+    installedPin: null,
+    state,
+    resolvedAt: null,
+    calls: 0,
+    failures: 0,
+    detail: detailFor({
+      state,
+      install,
+      source: "stack",
+      command: null,
+      resolvedAt: null,
+      calls: 0,
+      failures: 0,
+      windowDays,
+      applierSaid,
+    }),
+  };
 }
 
 /**
@@ -630,20 +828,40 @@ export function toolInventory(
   if (gh.problem) problems.push(gh.problem);
   const byRepoName = new Map(gh.extensions.map((ext) => [ext.repoName, ext]));
 
+  const stacks = readReceipts();
+  if (stacks.problem) problems.push(stacks.problem);
+  for (const bad of stacks.unreadable) {
+    // Named rather than omitted. A stack whose receipt cannot be read is a
+    // stack this page cannot say anything about, and an empty space where it
+    // should be reads exactly like a stack that was never declared.
+    problems.push(`The receipt for the stack "${bad.name}" was not read, because ${bad.reason}.`);
+  }
+
   // Only names this install actually declared reach the scan. The set bounds
   // what the query can be asked, and an install that declares nothing pays for
   // no query at all.
-  const commandNames = declared
-    .map((tool) => tool.command)
-    .filter((command): command is string => command !== null)
-    .map((command) => (command.startsWith("gh ") ? "gh" : command));
+  const commandNames = [
+    ...declared
+      .map((tool) => tool.command)
+      .filter((command): command is string => command !== null)
+      .map((command) => (command.startsWith("gh ") ? "gh" : command)),
+    ...stacks.receipts.flatMap((receipt) => receipt.bin.map((entry) => entry.name)),
+  ];
   // `/api/status` is polled by a monitor, and the observed layer is a full
   // scan of the busiest table in the schema on a synchronous driver. It is also
   // the one layer that payload does not need: `notOk` counts `failed` and
   // `broken`, and `composeState` reaches both before it ever looks at a count.
   // So the scan is the page's cost and never the monitor's.
+  // A stack's binaries are counted only from the boot that installed them. The
+  // two list variables record no such instant, so they get no floor.
+  const floors: InvocationFloors = new Map();
+  for (const receipt of stacks.receipts) {
+    const appliedAt = receipt.appliedAt === null ? null : Date.parse(receipt.appliedAt);
+    if (appliedAt === null || Number.isNaN(appliedAt)) continue;
+    for (const entry of receipt.bin) floors.set(entry.name, appliedAt);
+  }
   const counts = countInvocations
-    ? invocationCounts(commandNames, now)
+    ? invocationCounts(commandNames, now, floors)
     : new Map<string, InvocationCounts>();
 
   const rows: ToolRow[] = [];
@@ -718,6 +936,8 @@ export function toolInventory(
     });
   }
 
+  rows.push(...stackRows(stacks.receipts, pathValue, counts, windowDays));
+
   const unclaimed = [
     ...ghUnclaimed(gh.extensions, claimedGh),
     ...pyUnclaimed(claimedPy, problems),
@@ -776,9 +996,16 @@ function pyUnclaimed(claimed: Set<string>, problems: string[]): string[] {
  * counts only, never a tool's name, its version or the path it resolved to.
  *
  * `notOk` is the number of declared entries whose composed state is drawn in a
- * danger tone — `failed` and `broken`, and deliberately not the two warn states
- * — so phase 2 widens the declaration set with stacks and adds nothing to the
- * definition a monitor already thresholds.
+ * danger tone — `failed` and `broken`, and deliberately not the two warn
+ * states. Stacks widened the declaration set and added nothing to the
+ * definition a monitor already thresholds, which is what `01e-` §5.3 asks for:
+ * the set is rewritten on every boot, so `notOk` de-latches on the only event
+ * that can clear one of these, which is a boot.
+ *
+ * `declared` counts **rows** and not stacks: a stack that links three binaries
+ * is three things that can be missing separately, and a monitor thresholding
+ * `notOk` is thresholding exactly those. A stack the applier never got as far
+ * as linking contributes one row, so it is never absent from the count.
  */
 export function toolCounts(now = Date.now()): { declared: number; notOk: number } {
   const inventory = toolInventory(now, { countInvocations: false });

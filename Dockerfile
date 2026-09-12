@@ -284,6 +284,27 @@ ENV PATH="/home/node/pytools/bin:${PATH}" \
     UV_PYTHON_INSTALL_DIR=/home/node/pytools/python \
     UV_PYTHON_PREFERENCE=system
 
+# Where the stacks an operator declared put the binaries they link, and the one
+# line that makes the whole mechanism reach an agent.
+#
+# There is no mkdir under it and there must never be one. /var/lib/uf-stacks is
+# a named volume, and a volume takes its contents from the image exactly once,
+# at creation — so anything the image ships at that mount point is visible on a
+# reviewer's fresh install and masked on every install that already exists. That
+# is the one invariant here whose breach is invisible to the person who breaks
+# it, and `deployment.test.ts` asserts this file names no path under it.
+#
+# First on PATH rather than last, so a stack wins over a copy in /usr/local/bin
+# and an operator who declared a version gets the version they declared. The
+# read-back reports the path it resolved to and draws a resolution outside the
+# toolbox as `shadowed`, so the losing case is visible rather than silent.
+#
+# Set here rather than by the entrypoint because PATH has to be final before the
+# server starts: `childEnv` copies the server's environment into every agent
+# child, so a run-time change would leave two sets of children differing in what
+# they can resolve, with nothing saying so.
+ENV PATH="/var/lib/uf-stacks/bin:${PATH}"
+
 # winnow, bundled rather than installed at boot.
 #
 # The reason this is in the image and not behind `UF_PY_TOOLS` is that it is no
@@ -568,6 +589,13 @@ COPY --from=builder /app/.next/static ./.next/static
 # They resolve `better-sqlite3` out of the standalone bundle's own node_modules,
 # which is the same build of the same addon the server uses.
 COPY scripts/backup-db.mjs scripts/restore-db.mjs scripts/discord-relay.mjs ./scripts/
+
+# The stack applier, which the entrypoint runs before `exec "$@"`. In the image
+# for the reason the three above are: it only ever runs inside the container,
+# and it runs at a moment when nothing has mounted this repository. It imports
+# nothing outside Node's own standard library, so it needs no node_modules and
+# resolves against no bundle.
+COPY scripts/apply-stacks.mjs ./scripts/
 
 # /data is the one path here whose permissions are the *image's* problem rather
 # than the host's, because it is a named volume: Docker initialises a fresh

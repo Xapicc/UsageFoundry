@@ -273,6 +273,89 @@ Then restart. `docker compose down -v` discards them with the volume. What
 happened at boot is in `docker compose logs`, one `[usagefoundry]` line per tool
 installed or refused.
 
+### Everything else: a stack
+
+The two variables above cover a Python package and a `gh` extension. A stack
+covers the rest — a tool published as a release asset, which is most of them:
+Terraform, shellcheck, a linter somebody ships as a tarball. It exists because
+the alternative was editing the `Dockerfile`, which means every operator who
+wants a tool maintains a fork of this image.
+
+**A stack is a directory, not a line in `.env`.** It lives under `./stacks/`
+beside your `docker-compose.yml` — `UF_STACKS_DIR` moves it — and holds one
+`stack.json`:
+
+```json
+{
+  "schema": 1,
+  "name": "shell-lint",
+  "summary": "shellcheck 0.11.0 and shfmt 3.14.1, for agents editing shell scripts",
+  "install": [
+    {
+      "kind": "archive",
+      "url": "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.{arch_uname}.tar.gz",
+      "sha256": {
+        "amd64": "b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6",
+        "arm64": "68a8133197a50beb8803f8d42f9908d1af1c5540d4bb05fdfca8c1fa47decefc"
+      },
+      "unpack": "tar.gz",
+      "bin": [{ "from": "shellcheck-v0.11.0/shellcheck", "as": "shellcheck" }]
+    }
+  ],
+  "deny": ["shfmt -w"]
+}
+```
+
+The directory name is the stack's identity and `name` must equal it. Save it,
+`docker compose up -d`, and `shellcheck` is on every agent's `PATH`. That is the
+whole of adding a tool: `git diff --name-only` over the commit is one file, and
+no file the image contains is among them.
+
+**What each field is doing.** `url` is what to download, `sha256` or `checksums`
+is what to check it against — `checksums` being the publisher's own manifest,
+which is what this image already does for its own downloads and is the better
+choice when the publisher ships one. `unpack` is `zip`, `tar.gz` or `none`.
+`bin` names what to link and under what command. `{arch}` and `{arch_uname}` are
+the two spellings of your architecture (`arm64`/`aarch64`, `amd64`/`x86_64`),
+and both exist because publishers use both. Two more fields are optional:
+`env`, which exports variables to every agent — `{state}` expands to a directory
+that survives a rebuild, which is where a tool's cache belongs — and `state`,
+which creates directories under it before the first run, for the tools that
+refuse to start without one.
+
+**`deny` is a blocklist and the default is empty**, which means a stack grants
+every command of every binary it links. Name the ones you do not want a headless
+agent running — `terraform apply`, `shfmt -w` — and the first word of each entry
+must be a binary this stack itself links, so a stack cannot reach past its own
+tools.
+
+**Read it back in Settings → Tools**, which is the point of the directory: one
+row per binary, saying whether it resolves, where, and whether anything has
+invoked it since it was installed. A stack that failed shows the reason its
+installer gave, verbatim, which a boot log cannot do because the restart that
+caused you to look is the restart that destroyed it.
+
+**What goes wrong, and where you see it.** A bad checksum, a 404 or a
+`stack.json` that does not parse fails that stack alone: nothing is unpacked,
+nothing is linked, the other stacks install, and the container comes up. Two
+stacks claiming the same command name both lose it rather than one winning
+silently. A declaration whose digest already matches an installed receipt costs
+no network at all, so only the first boot after an edit is slow.
+
+To change a tool, edit the file and restart. To remove one, delete the directory
+and restart — the applier removes only what its own receipts record, so anything
+you put in the toolbox by hand is left alone. `docker compose down -v` discards
+the volume and the next boot reinstalls everything from the declarations, which
+are on your disk and can go in git.
+
+**One honest sentence before you take somebody else's stack.** Installing a
+stack is the same act as taking a stranger's `RUN` line into your Dockerfile.
+What this buys you is that the act is *reviewable* — one small file, every URL
+and digest visible — and *revocable* — delete the directory, restart. It does
+not make it safe, and nothing that installs software can. Nothing a stack
+downloads is executed at install time, but an agent that runs the tool is
+running their code.
+
 ## Finding a setting, and not losing an edit
 
 Everything above says **Settings → something**. The page is one long scroll of sections, and there are two things on it worth knowing before you go looking.
@@ -317,6 +400,7 @@ to what is stored.
 | `UF_UID` / `UF_GID` | **Linux only.** The uid every spawned agent runs as; must own the mounts. The server itself runs as root and drops to this. Default 1000. |
 | `UF_CHAT_GID` | The group the orchestrator chat runs in, which owns the per-turn MCP capability file that a concurrent agent must not read. Default 65533. **Must differ from `UF_GID`** — the server refuses to boot when they match rather than hand that file to the group it is being kept from. |
 | `UF_BACKUP_DIR` | Host directory mounted at `/backups`, where `scripts/backup-db.mjs` writes. Default `./backups`, which this repository ships. Point it elsewhere and create that directory first: Docker makes a missing bind source root-owned, and the children that write it are `UF_UID`. |
+| `UF_STACKS_DIR` | Host directory bind-mounted read-only at `/etc/uf-stacks`, holding one directory per stack. Default `./stacks`, which this repository ships empty. A stack is a `stack.json` naming an archive, its checksum manifest and the binaries to link onto `PATH`; the applier runs at boot and Settings → Tools reads back what it did. |
 | `UF_MEM_LIMIT` | What the container may take before Docker kills it. Default `10g`, sized for the shipped 4 runs plus 2 other Claude processes. |
 | `UF_NODE_HEAP_MB` | The server's own heap ceiling, in MiB. Default 2048. |
 | `UF_PIDS_LIMIT` | Tasks the container may hold. Default 2048. |

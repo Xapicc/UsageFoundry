@@ -20,8 +20,27 @@
 > Building it measured four things this directory had reasoned about, and two
 > of them contradicted it — see the `CORRECTED` banner at
 > [01f-read-back.md](01f-read-back.md) §2.4 and the new *Container and
-> environment* entries in `docs/verification.md`. **Phase 0, the probe, has not
-> been run**, and phases 2 to 5 are untouched.
+> environment* entries in `docs/verification.md`.
+
+> **PHASE 2 IS BUILT, 2026-09-12.**
+> The carrier and the `archive` verb have shipped and are **running**: a
+> read-only bind at `/etc/uf-stacks`, the `usagefoundry-stacks` volume at
+> `/var/lib/uf-stacks`, `/var/lib/uf-stacks/bin` first on the image's `PATH`,
+> `scripts/apply-stacks.mjs`, `src/lib/stacks.ts`, the stacks group in the Tools
+> section and five more unit tests. Measured against this install on the day it
+> shipped: a two-publisher stack installed two binaries an agent can now run,
+> a deliberately wrong digest failed alone and loudly, a second boot did no
+> network at all, and the removal that took one stack left a hand-placed file in
+> the same directory untouched. `docs/verification.md`'s *Container and
+> environment* section has all four.
+>
+> **Three deviations from [21-implementation-sketch.md](21-implementation-sketch.md),
+> each argued at the banner on that file's phase 2.** `env` and `state` shipped
+> here rather than in phase 3; the two `/api/status` integers widened rather than
+> gaining two more; and `invocationCounts` gained an install floor that phase 1
+> did not know it needed.
+>
+> **Phase 0, the probe, has not been run**, and phases 3 to 5 are untouched.
 
 ## What is being built
 

@@ -23,6 +23,7 @@ import { withRepoAdmin } from "./repoLock";
 import { dataDirRefusal, mayWriteDataDir, requireDataDir } from "./serverLock";
 import { childCredentials, chownForChild } from "./privsep";
 import { currentSandbox, sandboxRefusal } from "./sandbox";
+import { STACKS_STATE_DIR } from "./stacks";
 import {
   ensureSandboxExcludesFile,
   ensureSandboxMountPoints,
@@ -5327,6 +5328,15 @@ const SANDBOX_GLOB_CHARS = /[*?[\]{}!]/;
 const BUILD_CACHE_DIRS = [
   path.join(os.homedir(), ".npm"),
   process.env.GOPATH || path.join(os.homedir(), "go"),
+  // Where every stack's tool keeps its own cache, plugins and config. One
+  // entry for the mechanism and not one per stack, which is the reason
+  // `state/` is one tree rather than a path each stack chooses. Reading and
+  // executing a stack's binaries needs nothing here — the write config binds
+  // `/` read-only and read-only is not unreadable — so this is the only path
+  // the sandbox has to learn about, and without it a tool pointed at its own
+  // cache by `stack.json` fails on a directory it cannot write, inside a tool
+  // call nothing here reads.
+  STACKS_STATE_DIR,
 ];
 
 /**

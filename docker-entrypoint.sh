@@ -309,6 +309,44 @@ if [ -n "${UF_PY_TOOLS:-}" ]; then
   done
 fi
 
+# The stacks the operator declared, installed into the fifth named volume.
+#
+# The third installer, and the first whose unit is a file rather than a line in
+# .env. A stack is a directory under the host's ./stacks holding one stack.json
+# that names what to download, the publisher's checksum manifest to verify it
+# against, and which binaries to link onto PATH. proposals/CustomStacks/ is the
+# design; docker-compose.yml has the two mounts.
+#
+# Here rather than in the image because which tools an install wants is the
+# operator's answer and not this project's, and here rather than by hand because
+# anything installed by hand in a shell is discarded by the `docker compose up
+# --build` this project is deployed with — the same argument the gh and Python
+# loops above are on.
+#
+# Before `exec "$@"` and therefore before the server, which is what lets PATH be
+# a constant set in the image: `childEnv` copies the server's environment into
+# every agent child, so a run-time installer would leave two sets of children
+# differing in what they can resolve. It is also the only window in the
+# container's life with no agent process alive, which is what makes the
+# applier's own uid split safe — it downloads and unpacks as UF_AGENT_UID and
+# links as root, the opposite of the two loops above, because what it links
+# lands on the *server's* PATH.
+#
+# Best-effort and never fatal, on the same argument: a stack that will not
+# install is a degraded install, and refusing the boot over one would take the
+# dashboard, the run history and every guard away from an operator whose agents
+# may never reach for the tool. The applier writes a receipt for every stack
+# including the ones it could not reach, so a stack that was not attempted never
+# reads as one that installed; Settings > Tools is where those are read back
+# after this log has scrolled away.
+STACKS_DECLARATIONS_DIR=/etc/uf-stacks
+STACKS_VOLUME=/var/lib/uf-stacks
+if [ -d "$STACKS_DECLARATIONS_DIR" ]; then
+  node /app/scripts/apply-stacks.mjs "$STACKS_DECLARATIONS_DIR" "$STACKS_VOLUME" || \
+    echo "[usagefoundry] the stack applier exited non-zero; anything it had" \
+         "already installed is still there, and Settings > Tools says what." >&2
+fi
+
 # The CLI's own sandbox policy, written here rather than baked into the image.
 #
 # Generated at boot because the enforcement level has to be something an

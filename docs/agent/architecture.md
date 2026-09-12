@@ -58,6 +58,21 @@ toolInventory.ts what this install's agents can actually run, and how sure the
                 Read by /api/tools and by status.ts's two integers; nothing
                 writes through it, because add, remove and change are all a
                 file edit on the host and a restart.
+stacks.ts       the receipts `scripts/apply-stacks.mjs` wrote, typed. A reader
+                and nothing else: it installs nothing, removes nothing and
+                repairs nothing, because the applier runs in the one window of
+                the container's life with no agent alive and this runs in a
+                request. `parseReceipt` validates rather than trusts, on
+                CLAUDE.md's boundary rule — the branch that earns it is the
+                truncated receipt a container killed mid-write leaves behind,
+                which must read unreadable and never a partial `ok`, since a
+                partial `ok` is the read-back reporting an install that did not
+                happen. There is no `stacks` table and must not be: the receipts
+                *are* the state and they are per boot, so the set de-latches on
+                the only event that can clear one of these. `stackEnvironment`
+                is the block `src/instrumentation.ts` merges into `process.env`
+                at boot, never overwriting what the operator set, from where
+                `childEnv` carries it to every child.
 plugins.ts      Claude Code plugins found in the mounts, switched on per install
                 and carried onto every work cycle as --plugin-dir. Deliberately
                 *not* `claude plugin install`: compose binds the operator's

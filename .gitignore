@@ -37,6 +37,16 @@ next-env.d.ts
 backups/*
 !backups/.gitkeep
 
+# The default stacks directory, which compose bind-mounts read-only at
+# /etc/uf-stacks. The directory itself is tracked (through .gitkeep) so the
+# mount has a host source with no setup, and the repository deliberately ships
+# no example stack inside it — a directory whose presence means "install this"
+# is not something an operator should find already there. What an operator puts
+# in it is their own toolchain and belongs in their tree rather than in this
+# public one; `git add -f stacks/<name>` is how you track your own.
+stacks/*
+!stacks/.gitkeep
+
 .claude/
 
 # Database exports. Every row of the `runs` table carries the run's full prompt,
