@@ -81,3 +81,19 @@ nothing about it.
   the operator with a screenshot; fixed with `.uf-badge > svg { display: inline;
   margin-inline-end: 1ch }` in `src/app/globals.css`. After: 0 of 61 over one
   line. D rather than B because the markup is identical in both skins.
+- **2026-09-12, class D.** The toolbar's right-hand group overflowed a 390px
+  window on `/`: `New run` sat at 378→446.2px in the default skin and
+  398→491.5px under ascii, clipped away by `AppShell`'s `overflow-hidden` with
+  no scrollbar, while the route title shrank to 0px and drew nothing. Both
+  skins, both themes; measured 2026-09-11, fixed 2026-09-12. The cause is
+  width, not the mono face — five 44px appearance segments and their gaps are
+  254px of a 366px strip. Found by measuring every control's bounding box
+  against the viewport in Chromium; `npm run smoke-pages` is blind to it,
+  because it compares the *document's* `scrollWidth` against `clientWidth` and
+  the shell clips rather than scrolls (filed separately as `adb32ab1`). Fixed
+  by moving both appearance pickers behind one 44px disclosure below the
+  breakpoint (`src/components/shell/Toolbar.tsx`); above it the panel is
+  `display: contents` and nothing moved. After: every control inside 390px on
+  all five routes measured, in both skins and both themes, panel open and
+  closed, and the title draws again — in full everywhere except `/` under
+  ascii, where it has 52.7px against a natural 59 and truncates visibly.

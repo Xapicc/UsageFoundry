@@ -1083,6 +1083,18 @@ is `docs/agent/testing.md`; interface defects and their classes are
   and the widest plausible figures, all five columns fit unwrapped; at 390px
   `Table stack` turns each run into a labelled block.
 
+- **Every toolbar control was measured against a 390px viewport, 2026-09-12**
+  (`npm run build` then the standalone bundle, seeded `DATA_DIR`, a `CLAUDE_BIN`
+  that cannot spawn, Chromium 151 via the globally installed Playwright 1.62.1):
+  each control's bounding box compared against the viewport on `/`, `/chat`,
+  `/runs`, `/knowledge` and `/settings`, in both skins and both themes, with the
+  appearance panel open and closed. Before: `New run` at 378→446.2px (default)
+  and 398→491.5px (ascii), the route title 0px wide. After: nothing past 378px
+  anywhere, and the title draws in full except on `/` under ascii, where it has
+  52.7px against a natural 59. Also measured unchanged at 768px and 1280px. Not
+  a real phone, no touch, no zoom and no screen reader; dismissal was driven
+  with synthetic Esc and mouse events, not a finger.
+
 ## Not yet verified by hand
 
 Everything below typechecks and builds, and some of it is unit tested, but none
@@ -2024,9 +2036,10 @@ measurement under *Verified* and cut the item down to what is still open.
   (`4e6dd0b9`). No second browser (where `█` measures 0.602em), touch, zoom
   or screen reader.
 
-- **Open under the ascii skin, 2026-09-11.** Five findings stay on the board,
-  among them `New run` clipped off at 390px in both skins; `ListView`'s real
-  borders still mismatch at 1920, where dark was not re-measured. The
+- **Open under the ascii skin, 2026-09-11.** Findings stay on the board —
+  `New run` clipped off at 390px is no longer among them, see the 2026-09-12
+  measurement above; `ListView`'s real borders still mismatch at 1920, where
+  dark was not re-measured. The
   in-flight marks were seen in Chromium, dark, 1280px only; the charts ran on
   intercepted responses, `RunConflictMap` only empty; the meter fit was
   exercised at one glyph advance.
