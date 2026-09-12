@@ -5,6 +5,10 @@ import { DATA_DIR, DB_PATH } from "./config";
 // value import here would be a cycle between the schema and the thing that
 // reports on it.
 import type { OpsFields, OpsLevel } from "./ops";
+// Types only, and for a sharper reason: `sandbox.ts` is on `privsep.ts`'s
+// import path and so on `git.ts`'s, and a value import here is the cycle that
+// left `serverLock.ts`'s constants `NaN`.
+import type { SandboxFailureReading, SandboxRefusal } from "./sandbox";
 import { heldByAnotherProcess } from "./serverLock";
 // A value import, and safe to be one: `modelCatalogue.ts` imports only
 // `pricing.ts`, which imports nothing at all. `settings.ts` imports both this
@@ -819,6 +823,13 @@ function migrate(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_run_events_run
       ON run_events(run_id, id);
+    -- Every other reader of this table comes in by run. The settings payload
+    -- asks the one question that does not — has the sandbox detector fired
+    -- anywhere in the last day — and without this it scans a table that grows
+    -- with every tool failure in every run. Partial, so the index holds the few
+    -- hundred rows that kind ever writes rather than a copy of the table.
+    CREATE INDEX IF NOT EXISTS idx_run_events_sandbox
+      ON run_events(ts) WHERE kind = 'sandbox';
     CREATE INDEX IF NOT EXISTS idx_chat_messages_chat
       ON chat_messages(chat_id, ts);
     CREATE INDEX IF NOT EXISTS idx_chat_proposals_chat
@@ -2777,4 +2788,61 @@ export function getJSON<T>(key: string, fallback: T): T {
 
 export function setJSON(key: string, value: unknown): void {
   setSetting(key, JSON.stringify(value));
+}
+
+/* ------------------------------------------------------------------ */
+/* What the sandbox detector has recorded lately                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * How far back `recentSandboxFailures` looks.
+ *
+ * A day, because the settings payload this feeds is read on a page an operator
+ * opens rather than watches, and a window shorter than one would go quiet
+ * overnight and show a working sandbox in the morning. It is also the horizon
+ * the install ceiling already rolls on, so two figures on that page mean the
+ * same span of time.
+ */
+const SANDBOX_FAILURE_WINDOW_HOURS = 24;
+
+/**
+ * The `sandbox` rows of the last day, for the settings row that would otherwise
+ * say `on` over an install where every wrapped tool call died.
+ *
+ * Here rather than beside the matcher because `sandbox.ts` is on `privsep.ts`'s
+ * import path and therefore on `git.ts`'s: importing this module from there put
+ * `serverLock.ts` into a cycle with `git.ts` and left its stale-lock constant
+ * `NaN`, with the suite green everywhere else. The words that go with this
+ * reading are `sandboxFailureNote`, which stays over there and stays pure.
+ *
+ * The index this needs is partial — `idx_run_events_sandbox` in `migrate()` —
+ * because `run_events` grows with every tool failure in every run and this is
+ * the one question about it that does not come in by run.
+ */
+export function recentSandboxFailures(now = Date.now()): SandboxFailureReading {
+  const rows = db()
+    .prepare(
+      "SELECT payload FROM run_events WHERE kind = 'sandbox' AND ts >= ? ORDER BY ts DESC",
+    )
+    .all(now - SANDBOX_FAILURE_WINDOW_HOURS * 3_600_000) as {
+    payload: string | null;
+  }[];
+
+  let latest: SandboxFailureReading["latest"] = null;
+  for (const row of rows) {
+    try {
+      const payload = JSON.parse(row.payload ?? "") as Partial<SandboxRefusal>;
+      if (typeof payload.matched === "string" && typeof payload.reason === "string") {
+        latest = { matched: payload.matched, reason: payload.reason };
+        break;
+      }
+    } catch {
+      // A row whose payload does not parse still counts as a failure — the
+      // count comes off the rows and not off this loop — and the next one down
+      // supplies the words. Dropping the whole reading over one unreadable row
+      // would be the silent zero this pair of functions exists to refuse.
+    }
+  }
+
+  return { count: rows.length, hours: SANDBOX_FAILURE_WINDOW_HOURS, latest };
 }
