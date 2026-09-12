@@ -142,7 +142,14 @@ async function freePort() {
  * milliseconds, which is a perfectly good seeded run and costs nothing.
  */
 function makeSandbox() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "uf-smoke-"));
+  // Real path, not the spelling `os.tmpdir()` hands back, and this is what
+  // makes the pass run on a Mac at all. There `/var` is a symlink to
+  // `private/var`, so the sandbox's workspace arrives as
+  // `/var/folders/…/workspace` while the containment check resolves it to
+  // `/private/var/…` — and `POST /api/runs` refuses the seed with *"Folder is
+  // outside the \"workspace\" mount"*, which kills the pass before a browser
+  // opens. Resolving here hands both halves the same string.
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-smoke-")));
   const claudeBin = path.join(root, "claude-cannot-spawn");
   fs.writeFileSync(
     claudeBin,
@@ -293,6 +300,15 @@ function serverEnv(sandbox, token, port, envDir) {
     CLAUDE_BIN: sandbox.claudeBin,
     WORKSPACE_ROOT: sandbox.workspace,
     UF_AUTH_TOKEN: token,
+    // Staged, for `seed`'s reason one variable over: the Tools section draws a
+    // row per declared tool and an empty install renders one `Empty` line, so a
+    // pass that set neither of these would measure the nothing-state at both
+    // widths and never the rows. Three entries across the two groups, chosen to
+    // need nothing installed and to land on three different badges — a package
+    // that will not resolve, a bare checkout path that names no command at all,
+    // and an extension no volume here holds.
+    UF_PY_TOOLS: "ruff==0.5.0|/workspace/winnow",
+    UF_GH_EXTENSIONS: "dlvhdr/gh-dash",
   };
 }
 

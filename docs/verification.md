@@ -1211,13 +1211,21 @@ is `docs/agent/testing.md`; interface defects and their classes are
   its tone, the server's own sentence and the command underneath. The section
   carries `aria-labelledby="tools-heading"`, the page logged nothing at all to
   the console across two loads, and the document did not scroll sideways.
-  **Two things this did not check.** A real 390px viewport: the window resize
-  was refused, so the narrow case was probed by squeezing the card's own width
-  to 358px and looking for a descendant that would not fit, which found none —
-  a proxy for a hard `min-width`, not for the layout. And `installed`,
-  `unverified` and `failing`, which need a database with matching `run_events`
-  rows. `npm run smoke-pages` is the check that would settle the first
-  properly and it could not run: Playwright is not installed on this machine.
+
+- **`npm run smoke-pages`, 44/44 clean with the Tools section populated,
+  2026-09-12.** Playwright was installed and the pass run against
+  `.next/standalone/server.js` — the artifact the container ships — over all 22
+  pages at 390px and 1280px: a 200, no console error and no sideways scroll on
+  every one. `serverEnv` now stages `UF_PY_TOOLS` and `UF_GH_EXTENSIONS`, for
+  `seed`'s reason, so `/settings` draws three tool rows across two groups at
+  both widths rather than one `Empty` line. Two fixes were needed to get there
+  and both are in `scripts/smoke-pages.mjs`: the staging above, and
+  `fs.realpathSync` around the sandbox root — on macOS `/var` is a symlink to
+  `private/var`, so `POST /api/runs` refused the seed with *"Folder is outside
+  the \"workspace\" mount"* and the pass died before a browser opened.
+  **What it still does not cover:** `installed`, `unverified` and `failing`,
+  which need a database carrying matching `run_events` rows, and any assertion
+  about interaction — this pass is about load, by decision.
 
 - **Layout sweep, production build, twelve widths 1440–380px, both themes,
   geometry read from the DOM:** it found and fixed three defects (a 0px gap, a
