@@ -5,7 +5,7 @@ it is [01a-mechanism.md](01a-mechanism.md); this file is the format, the closed
 verb list, the refusals, and the Terraform example written out exactly as an
 author would write it.
 
-Checked against the tree at `baf051d`. The Terraform URLs and digests in §7 were
+Checked against the tree at `baf051d`. The Terraform URLs and digests in §5 were
 fetched from the publisher on 2026-09-12 and the commands that fetched them are
 printed beside them; everything about what the applier does with them is design
 rather than observation, because **this container has no Docker**.

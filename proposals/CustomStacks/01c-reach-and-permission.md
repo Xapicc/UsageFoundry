@@ -47,8 +47,8 @@ every agent child gets. `childEnv` has three `describe` blocks in
 `src/lib/orchestrator.test.ts` and **none of them asserts anything about
 `PATH`** - `awk` over `NR>=4251 && NR<=4400 && /PATH/` returns nothing. For agent
 children the guarantee is the construction plus the docblock above, which is
-weaker than a test, and an assertion there is a fourth candidate for the test
-additions `01a-` §9 lists.
+weaker than a test, and an assertion there belongs
+beside the test additions `01a-` §9 lists.
 
 One layer down, `src/lib/deployment.test.ts:1029`,
 `it("puts uv's launcher directory on the PATH a hook resolves through")`, pins
