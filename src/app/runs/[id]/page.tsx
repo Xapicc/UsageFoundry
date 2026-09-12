@@ -164,9 +164,8 @@ function describeQueued(run: RunDTO): RunState {
       headline: "Waiting for a run slot",
       detail: (
         <>
-          {blocker.running} of {blocker.cap} runs are working, and this one
-          starts as soon as one of them finishes. Its folder is free; the
-          ceiling is{" "}
+          {blocker.running} of {blocker.cap} running. Its folder is free — it
+          starts as soon as a slot frees, and the ceiling is{" "}
           <Link href="/settings#runs">Runs at the same time</Link>.
         </>
       ),

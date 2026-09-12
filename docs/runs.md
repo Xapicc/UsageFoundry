@@ -485,6 +485,17 @@ from, so a second run on it is **queued**, not refused, and starts on its own wh
 the folder frees up. The folder picker marks what is busy and what is waiting, and
 the run page shows a queued run's position in line.
 
+The folder is not the only thing a queued run can be waiting for, and the page
+says which of the three it is rather than assuming. **Its folder** is the case
+above, and the only one with a position in line — "3 runs ahead", or "next up"
+when what holds the folder is the run currently in it. **A run slot** is
+`Settings → Runs → Runs at the same time` being full: the folder is free and
+nothing is ahead of it, so the page names what is running against the ceiling
+("waiting for a slot — 4 of 4 running") instead of a position that would always
+be zero. **New work being held** is the fleet-wide pause on the Runs page, which
+outranks both — nothing starts while it is on, whatever the folder and the cap
+are doing.
+
 "The same folder" is more inclusive than string equality, deliberately: a run
 started on the **whole workspace** holds every folder inside it, two workspaces
 pointing at one directory count as one, and on macOS a name differing only in case

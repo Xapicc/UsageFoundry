@@ -737,6 +737,21 @@ is `docs/agent/testing.md`; interface defects and their classes are
   cases fail with the write removed (`# fail 5`, then `# pass 16`), and the row
   survives the fault clearing.
 
+- **A queued run now names the cap rather than its folder, 2026-09-12**: driven
+  against the built standalone bundle with `maxConcurrentRuns: 1`, a
+  `CLAUDE_BIN` that sleeps, and three runs — one running in `alpha`, one queued
+  in `beta`, one queued in `alpha`. All three routes agreed:
+  `{"kind":"cap","cap":1,"running":1}` for `beta` and
+  `{"kind":"folder","ahead":0}` for the second `alpha` run, on the admission
+  response, the list and the single-run route; `queuePosition` was 0 for both,
+  which is the reading the old copy was built on. Rendered at 1280px, `beta`
+  reads "waiting for a slot — 1 of 1 running" on the list and "Waiting for a run
+  slot / 1 of 1 running. Its folder is free …" on its own page, and the second
+  `alpha` run is unchanged. Holding new work through `POST /api/fleet` turned
+  both into `{"kind":"paused"}`. Caveat: the new-run form's own notice was not
+  driven through the browser — the blocker's presence on the admission response
+  was checked, and the sentence is a pure function of it.
+
 ### Isolation and landing
 
 - **Isolation, real repo with uncommitted work and a gitignored `.env`:** two
