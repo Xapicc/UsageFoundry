@@ -5,6 +5,7 @@ import type {
   RunDependencyDTO,
   RunDTO,
   TaskCommentAuthorDTO,
+  TaskDepRefDTO,
   TaskDTO,
   TaskOriginDTO,
   TaskPriorityDTO,
@@ -358,6 +359,28 @@ export function fmtTaskPlace(
   // A task on a mount root has an empty `relPath`, which reads as a missing
   // value rather than as the root — so the mount's own name stands alone.
   return task.relPath ? `${task.mountLabel} / ${task.relPath}` : task.mountLabel;
+}
+
+/**
+ * The same reading for a task reached as somebody else's dependency.
+ *
+ * A `TaskDepRefDTO` carries no `folder`: `describeFolder` split it before it
+ * reached the wire, and `relPath` is the stored path whole in the case that
+ * splitter cannot place. Both fields null is the ref's way of saying the task
+ * names no folder at all, which is the one thing `folder` was deciding above —
+ * so the ref's own `relPath` stands in for it and the *one* splitter still
+ * decides what the words are. Two surfaces drawing one task must not be able to
+ * disagree about where it is, which is the whole reason this delegates rather
+ * than reading the three fields itself.
+ */
+export function fmtTaskRefPlace(
+  ref: Pick<TaskDepRefDTO, "mountLabel" | "relPath">,
+): string {
+  return fmtTaskPlace({
+    folder: ref.relPath,
+    mountLabel: ref.mountLabel,
+    relPath: ref.relPath,
+  });
 }
 
 export function fmtDuration(ms: number): string {
