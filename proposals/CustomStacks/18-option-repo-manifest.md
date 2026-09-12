@@ -45,7 +45,7 @@ refused three times.
   container by being cloned, which is not a feature, it is a supply chain. The
   verbs are `uv-tool`, `gh-extension`, `release-tarball`, and the argv is a
   constant template with the manifest's value in exactly one position
-  (`CLAUDE.md:134`).
+  (`docs/agent/security.md:14`).
 - **And the gate, which is the whole option**: a manifest is **inert until an
   operator approves it**, per repository, from the app. First sighting produces a
   notice, not an install. That approval is a settings row keyed by mount and by

@@ -145,7 +145,10 @@ range is the Proposals side card, not the composer), `ui-density-audit.md:166` �
 `docs/backup-and-restore.md:14-31` → `:33-72`, same error as `07-`'s.
 
 **Wrong file for a real quote (3).** `08-`: *"whose hooks the container runs"*
-attributed to `docs/agent/architecture.md` — it is `CLAUDE.md:95`; and *"a shared
+attributed to `docs/agent/architecture.md` — it is `CLAUDE.md:95` **[stale
+since 2026-09-12: the phrase has left `CLAUDE.md` entirely and reads *"whose
+hooks the container executes"* at `docs/agent/architecture.md:59`, so the
+original attribution was right about the file and wrong only about the line]**; and *"a shared
 secret over plain HTTP"* attributed to the compose comment — it is
 `.env.example:136-137`. `04-`: `auditMutation`'s invariant attributed to
 `docs/agent/chat.md` — it is `docs/agent/run-lifecycle.md:11`. (`chat.md:22`

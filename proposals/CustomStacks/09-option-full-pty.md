@@ -224,8 +224,8 @@ Invariants that move: `docs/agent/security.md` (a fourth kind of non-agent child
 and the first that is not a `claude`); `docs/agent/architecture.md`'s child count;
 `docs/agent/conventions.md` (a sub-route with a raw-keystroke region);
 `docs/agent/concurrency-and-ownership.md` (a writer outside the folder claim).
-And `CLAUDE.md:134`'s spawn rule needs the §4 reconciliation written into
-`docs/agent/security.md` rather than left in this proposal.
+And `docs/agent/security.md:14`'s spawn rule needs the §4 reconciliation written
+into that file rather than left in this proposal.
 
 Plus the colour work: sixteen ANSI colours plus foreground, background and cursor,
 each probed off a real element and re-probed on theme change, because

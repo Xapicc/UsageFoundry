@@ -12,8 +12,8 @@ going to be used for and refuses the fifth.
 ## 1. The strongest case
 
 This is the only option in the directory that does not have to reconcile with
-`CLAUDE.md:134` — because there is nothing to reconcile. `"Never a shell. Argv
-arrays only, at every spawn site"` is a rule this option *obeys* rather than one
+`docs/agent/security.md:14` — because there is nothing to reconcile. *"never a
+shell"*, at every spawn site, is a rule this option *obeys* rather than one
 it argues its way around: the argv is a constant template, the operator's input
 lands in a validated field, and `08-` §4's test is passed without a paragraph of
 justification. It is also the only option that already exists twice in this

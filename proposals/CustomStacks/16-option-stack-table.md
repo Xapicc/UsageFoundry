@@ -51,8 +51,8 @@ that shape with a different payload, and the shape is known to work.
 - **`src/lib/stacks.ts`** — pure, and the module is mostly validators:
   - a typed entry → a **constant argv template** with the operator's input in
     exactly one position. This is `11-`'s design and its whole safety argument,
-    imported here rather than re-argued: `CLAUDE.md:134`'s *"Never a shell.
-    Argv arrays only"* is obeyed rather than reconciled.
+    imported here rather than re-argued: `docs/agent/security.md:14`'s *"never a
+    shell"* is obeyed rather than reconciled.
   - per-field validation by name, refusing loudly: a tool name against
     `^[A-Za-z0-9._-]+$`, a `gh` extension against `^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`,
     a URL required to be `https:` with a host from an operator-configured list

@@ -41,9 +41,8 @@ Four documentation changes and zero code:
    on no volume** (`docker-compose.yml:330-423`) and is discarded by every
    `up --build`. One clause in a comment, and it is a comment somebody will
    otherwise reason from.
-3. **A correction to `CLAUDE.md:35` and to `docs/agent/architecture.md:203`,
-   which carries the same wording** — "four kinds of agent child process, from
-   four modules" is three modules (`orchestrator.ts`, `chat.ts`, `review.ts`).
+3. **A correction to `docs/agent/architecture.md:222`** — "four kinds of agent
+   child process, from four modules" is three modules (`orchestrator.ts`, `chat.ts`, `review.ts`).
    `chat.ts` has one `spawn(` (`:1709`) serving *one* kind through two callers,
    on `architecture.md:203`'s own reading — a workflow's orchestrator block is
    *"not a fifth kind: it is the fourth one invoked without a thread"* — and it

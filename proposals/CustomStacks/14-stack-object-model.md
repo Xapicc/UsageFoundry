@@ -55,7 +55,7 @@ this survey refuses it.
 
 | Shape | In the tree? | Expresses | Cannot express |
 |---|---|---|---|
-| **An ordered list of shell steps** | no | anything | anything the app can reason about — and it needs a shell, which `CLAUDE.md:134` forbids composing (`08-` §4) |
+| **An ordered list of shell steps** | no | anything | anything the app can reason about — and it needs a shell, which `docs/agent/security.md:14` forbids composing (`08-` §4) |
 | **A Dockerfile fragment** | yes — `05-` | anything, reproducibly, root-owned | interactivity; and it is not a stored object at all, it is a file in the operator's checkout |
 | **A declarative manifest of packages per ecosystem** | **yes, twice** | whatever each ecosystem's installer takes | anything with no ecosystem — which is exactly Terraform (`00-` §"Missing 1") |
 | **A set of requirements** — name plus a version predicate, with no installer behind it | no | "this must be present, and here is how to tell" | installing it |

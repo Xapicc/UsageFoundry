@@ -94,7 +94,7 @@ question about a single install.
 **`11-` — the allow-listed installer, at 75.** Four typed verbs, no command
 line, the operator's stated example served directly because Terraform is a
 release tarball, and — uniquely — an option that never has to argue with
-`CLAUDE.md:134`'s *"Never a shell. Argv arrays only"*, because it obeys it. It
+`docs/agent/security.md:14`'s *"never a shell"*, because it obeys it. It
 is also the quietest option in the set against `docs/agent/`: `11-` §9's *"almost
 none"* survived validation.
 
@@ -179,7 +179,8 @@ drift.
 2. That on a `UF_ALLOW_NO_AUTH=1` install — sanctioned, documented and probably
    common — the app ships an unauthenticated root shell on port 3000.
 3. That four `docs/agent/` files moving, including a fourth kind of non-`claude`
-   child and the first reconciliation `CLAUDE.md:134` has ever needed, is
+   child and the first reconciliation `docs/agent/security.md:14`'s spawn rule
+   has ever needed, is
    proportionate.
 4. That `docker compose exec`, documented twenty times across four
    operator-facing pages, is not already the answer.

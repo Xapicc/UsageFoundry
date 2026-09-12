@@ -36,7 +36,7 @@ operator will type. This is what you build when you have read their sentence.
   ```
   `08-` §4's test — no value the server holds may be concatenated into a child's
   command line — is passed by an argv array and **failed by `sh -c command`**, in
-  exactly the shape `CLAUDE.md:134` names. Splitting a string server-side fails it
+  exactly the shape `docs/agent/security.md:14` names. Splitting a string server-side fails it
   worse: a hand-rolled shell lexer is a shell with a bug in it.
 - **The spawn**: `spawn("/usr/bin/setpriv", ["--reuid", …, "--regid", …,
   "--clear-groups", ...argv], { env: terminalEnv(), cwd, stdio: ["ignore",

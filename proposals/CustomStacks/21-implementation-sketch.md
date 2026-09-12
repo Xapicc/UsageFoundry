@@ -75,8 +75,9 @@ at any time in the last year:
    survives: `Dockerfile:10`'s claim that `python3 make g++` *"stay in this stage
    and never reach the runtime image"*, contradicted by `:127-132`, which
    installs all three in the runner; `privsep.ts:236-238`'s two overcounts; and
-   `CLAUDE.md:35`'s "four modules", which `docs/agent/architecture.md:203`
-   repeats and then contradicts in the same paragraph.
+   `docs/agent/architecture.md:222`'s "four modules", which it contradicts in
+   the same paragraph. (`CLAUDE.md` no longer carries the claim at all; it
+   routes to that file at `CLAUDE.md:53`.)
    **Plus a fourth this survey's own validation pass turned up:**
    `docs/agent/conventions.md:50` says the pane list *"is closed at eight,
    because ⌘1…⌘8 has eight digits"* and bans *"a ninth pane"*, where

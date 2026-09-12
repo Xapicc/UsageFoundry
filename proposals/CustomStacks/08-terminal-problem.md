@@ -39,7 +39,7 @@ What the credential buys today:
 |---|---|---|---|
 | `POST /api/runs` (`src/app/api/runs/route.ts:358`) | a `claude` child with `Bash`, prompt from the wire | `UF_AGENT_UID` | permission mode, budget guards, `run_events` |
 | `POST /api/chat/[id]/message` (`route.ts:33`) | a `claude` child at **`bypassPermissions`**, `--add-dir` on every mount, `UF_GITHUB_TOKEN` in env (`src/lib/chat.ts:1652-1653`, `:1667-1670`) | `UF_AGENT_UID`, `UF_CHAT_GID` | `--max-budget-usd`, a 10-minute timeout, and *"the system prompt is the boundary"* (`docs/agent/chat.md:24`) |
-| `POST /api/plugins` | registers a directory *"whose hooks the container runs"* (`CLAUDE.md:95`) | `UF_AGENT_UID`, inside a `claude` child | containment re-proved at use time |
+| `POST /api/plugins` | registers a directory *"whose hooks the container executes"* (`docs/agent/architecture.md:59`) | `UF_AGENT_UID`, inside a `claude` child | containment re-proved at use time |
 
 So arbitrary execution is not new, the agent uid is not new, and write access to
 every mount is not new. **Four things are new, and only four.** They are what an
@@ -162,8 +162,8 @@ directions.
 
 ## 4. "Never a shell" — the rule, and the only reconciliation that holds
 
-`CLAUDE.md:134` states it: *"Never a shell. Argv arrays only, at every spawn
-site."* The substantive form is `docs/agent/security.md:14` — *"spawned with an
+`CLAUDE.md:59` routes it, and the rule itself lives at
+`docs/agent/security.md:14` — *"spawned with an
 argument array and `stdio: ["ignore", "pipe", "pipe"]`, **never a shell**, so
 prompt metacharacters are inert"* — and the tree keeps it: **`shell: true`
 appears nowhere in this repository**, and all eight production spawn sites pass
