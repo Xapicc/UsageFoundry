@@ -1,4 +1,6 @@
+import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
+import { StringDecoder } from "node:string_decoder";
 import { PROJECTS_DIR } from "./config";
 import { listTranscriptFiles } from "./transcripts";
 
@@ -284,51 +286,100 @@ async function mapWithLimit<T, R>(
 }
 
 /**
- * Every `is_error` tool result in one transcript file.
+ * Every `is_error` tool result in one transcript line, appended to `out`.
  *
- * Line-by-line and tolerant: a partially flushed or corrupt line is skipped
- * rather than aborting the file, which is `parseLine`'s rule in `transcripts.ts`
- * and for its reason — the newest file in the corpus is usually one an agent is
- * still writing to.
+ * Tolerant: a partially flushed or corrupt line is skipped rather than aborting
+ * the file, which is `parseLine`'s rule in `transcripts.ts` and for its reason —
+ * the newest file in the corpus is usually one an agent is still writing to.
+ *
+ * The accumulator is threaded through rather than returned because the fallback
+ * key below is the observation's index *within its file*: a per-line function
+ * that started its own array would hand every identifier-less record the key
+ * `file:0` and collapse the lot of them into one.
  */
-function parseFile(raw: string, timeZone: string, file: string): ErrorObservation[] {
-  const out: ErrorObservation[] = [];
-  for (const line of raw.split("\n")) {
-    if (!line.startsWith("{")) continue;
-    let rec: Record<string, unknown>;
-    try {
-      rec = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    const ts = typeof rec.timestamp === "string" ? Date.parse(rec.timestamp) : NaN;
-    if (!Number.isFinite(ts)) continue;
-    const message = rec.message as Record<string, unknown> | undefined;
-    const content = message?.content;
-    if (!Array.isArray(content)) continue;
-
-    const sessionId = typeof rec.sessionId === "string" ? rec.sessionId : "";
-    const uuid = typeof rec.uuid === "string" ? rec.uuid : "";
-    for (const block of content as Record<string, unknown>[]) {
-      if (block?.type !== "tool_result" || !block.is_error) continue;
-      const body =
-        typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
-      const signature = signatureOf(body);
-      if (!signature) continue;
-      const toolUseId = typeof block.tool_use_id === "string" ? block.tool_use_id : "";
-      out.push({
-        signature,
-        sample: body.slice(0, SAMPLE_BYTES),
-        day: dayKey(ts, timeZone),
-        sessionId,
-        // Without either identifier there is nothing to prove this is not a
-        // duplicate, so fall back to a key that can only ever match itself —
-        // `parseLine`'s rule in transcripts.ts, and the direction that
-        // over-counts rather than dropping a real failure.
-        key: toolUseId || uuid || `${file}:${out.length}`,
-      });
-    }
+function parseLine(line: string, timeZone: string, file: string, out: ErrorObservation[]): void {
+  if (!line.startsWith("{")) return;
+  let rec: Record<string, unknown>;
+  try {
+    rec = JSON.parse(line);
+  } catch {
+    return;
   }
+  const ts = typeof rec.timestamp === "string" ? Date.parse(rec.timestamp) : NaN;
+  if (!Number.isFinite(ts)) return;
+  const message = rec.message as Record<string, unknown> | undefined;
+  const content = message?.content;
+  if (!Array.isArray(content)) return;
+
+  const sessionId = typeof rec.sessionId === "string" ? rec.sessionId : "";
+  const uuid = typeof rec.uuid === "string" ? rec.uuid : "";
+  for (const block of content as Record<string, unknown>[]) {
+    if (block?.type !== "tool_result" || !block.is_error) continue;
+    const body =
+      typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
+    const signature = signatureOf(body);
+    if (!signature) continue;
+    const toolUseId = typeof block.tool_use_id === "string" ? block.tool_use_id : "";
+    out.push({
+      signature,
+      sample: body.slice(0, SAMPLE_BYTES),
+      day: dayKey(ts, timeZone),
+      sessionId,
+      // Without either identifier there is nothing to prove this is not a
+      // duplicate, so fall back to a key that can only ever match itself —
+      // `parseLine`'s rule in transcripts.ts, and the direction that
+      // over-counts rather than dropping a real failure.
+      key: toolUseId || uuid || `${file}:${out.length}`,
+    });
+  }
+}
+
+/**
+ * One transcript, read a chunk at a time and parsed a line at a time.
+ *
+ * `readFile(file, "utf8")` held two copies of a whole transcript at once — the
+ * decoded string and the array `split("\n")` cut it into — and with
+ * `READ_CONCURRENCY` of them in flight over a corpus this size they reach old
+ * and large-object space faster than V8 collects them. The pane's mount fires a
+ * cold scan while the transcript cache is already resident, so the peak lands on
+ * top of it rather than beside it.
+ *
+ * Three things this must not quietly change about what a line is:
+ *
+ * - **Hand-rolled rather than `node:readline`.** Readline breaks on a lone `\r`
+ *   and `split("\n")` does not, so a carriage return between two records would
+ *   turn one unparseable line into two parseable ones. Counts here feed a
+ *   write-on-second-sighting policy, and a reader that found records the old one
+ *   did not would change what gets written with nothing to say it had.
+ * - **Decoded through a `StringDecoder`.** A multi-byte character straddling a
+ *   chunk boundary is held until its remaining bytes arrive; `chunk.toString()`
+ *   per chunk would replace both halves with U+FFFD, which is still valid JSON —
+ *   so the record parses, carries a mangled prefix into `signatureOf`, and one
+ *   recurring failure silently becomes two that each look like they happened
+ *   once.
+ * - **A rejection is the caller's to answer**, because a file really does vanish
+ *   mid-scan under the retention sweep.
+ */
+async function readLines(file: string, timeZone: string): Promise<ErrorObservation[]> {
+  const out: ErrorObservation[] = [];
+  const decoder = new StringDecoder("utf8");
+  let tail = "";
+  for await (const chunk of createReadStream(file)) {
+    tail += decoder.write(chunk as Buffer);
+    // Index-walked rather than re-sliced per line: cutting the head off `tail`
+    // at every newline is quadratic in the chunk, which over a corpus this size
+    // would trade the memory this change saves for time it never had to spend.
+    let start = 0;
+    for (let nl = tail.indexOf("\n"); nl !== -1; nl = tail.indexOf("\n", start)) {
+      parseLine(tail.slice(start, nl), timeZone, file, out);
+      start = nl + 1;
+    }
+    if (start > 0) tail = tail.slice(start);
+  }
+  tail += decoder.end();
+  // A file not ending in a newline: `split` handed that last stretch over as a
+  // line, and the newest file in the corpus is one being written to right now.
+  if (tail) parseLine(tail, timeZone, file, out);
   return out;
 }
 
@@ -350,13 +401,15 @@ async function readOne(
   const cached = memo.get(file);
   if (cached && cached.stamp === stamp) return { observations: cached.observations, read: false };
 
-  let raw: string;
+  let observations: ErrorObservation[];
   try {
-    raw = await fs.readFile(file, "utf8");
+    observations = await readLines(file, timeZone);
   } catch {
+    // Unreadable, or gone between the stat above and the open — the same
+    // retention sweep, one step later. A partial parse is discarded rather than
+    // memoised: the stamp would mark a truncated read as the whole file.
     return { observations: [], read: false };
   }
-  const observations = parseFile(raw, timeZone, file);
   memo.set(file, { stamp, observations });
   return { observations, read: true };
 }

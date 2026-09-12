@@ -97,3 +97,12 @@ nothing about it.
   all five routes measured, in both skins and both themes, panel open and
   closed, and the title draws again — in full everywhere except `/` under
   ascii, where it has 52.7px against a natural 59 and truncates visibly.
+- **2026-09-12, class D.** The board's dependency line named two neighbours a
+  side, which in the Task cell (`src/app/tasks/page.tsx`, `DepLine`) rendered as
+  six wrapped lines under a two-line title: that cell is whatever six `min-w`
+  columns leave, about 150px at 1280px, and a task title is already two lines in
+  it. Found by screenshotting a seeded board at 1280px — the shape reads fine in
+  the source, where the line is one `<span>`. Cut to one named neighbour a side,
+  in `depNames`, at both widths rather than more when stacked, so the fallback to
+  a count means the same thing on a phone and on a laptop. D rather than B
+  because nothing about the markup is wrong; the cell is just that narrow.

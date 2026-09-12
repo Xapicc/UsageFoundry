@@ -312,6 +312,27 @@ is `docs/agent/testing.md`; interface defects and their classes are
   held-upstream test fails before it and passes after. Reopened on it, the
   run's first Write carried 32,827 bytes in a 2 min 53 s response, no retry.
 
+- **Reading winnow's ledger incrementally took a TTL-crossing poll from ~181 MB
+  of `heapUsed` to 0, 2026-09-11.** The operator measured the defect on the real
+  `/var/lib/winnow/filter.jsonl` at 101,929,100 bytes / 54,145 lines: one poll
+  crossing `LEDGER_TTL_MS` raised next-server's `heapUsed` by ~214 MB and its RSS
+  to ~700 MB. That file is 0620 `nobody:node` and an agent worktree's uid
+  cannot open it, so the figures below are against a synthesised ledger of
+  101,957,288 bytes / 54,145 lines (0.03% over) carrying the three record shapes
+  `winnow/filter.py` writes, not against the real one;
+  the process is a bare `node --expose-gc` holding only this module, which is why
+  its old-path number is ~181 MB rather than ~214 MB. Five runs each, stable to
+  0.2 MB on the poll figure. `readFileSync` + `parseLedger`: 181.1-181.2 MB of `heapUsed` per poll,
+  peak RSS 365-368 MB, ~300 ms. `readLedgerAppended` with one request appended
+  since the last poll: 0.0 MB, peak RSS 181-184 MB, ~1 ms. Both paths returned
+  the same 45,013 rows, which is the accuracy half of the claim. The cold read a
+  process pays once fell from 181.6-185.3 MB to 83.5-90.0 MB, chunking being what
+  bounds it. **The caveat is retention:** the rows kept for the offset hold 79.5
+  MB for this file and grow ~1.7 KB per agent request for the life of the
+  process, where the old path freed them between polls, so this bounds the churn
+  and the peak but not the growth. Nothing sweeps the file, and a horizon on it
+  is task `fb3b65e3`.
+
 - **`--autocompact` creates the only compaction threshold, firing at ~167,000,
   2026-08-22.** 1,147 transcripts split at `ee93684`: before the flag, 604
   sessions (246 past 167,000) made zero `compact_boundary` records; after, 53
@@ -507,6 +528,163 @@ is `docs/agent/testing.md`; interface defects and their classes are
 - **The `taskboardForRuns` switch is off on a never-written settings file,
   2026-09-07**, Chromium at 1280px, production build; `smoke-pages` drew
   `/settings` and `/tasks` clean at 390 and 1280.
+
+- **Task comments end to end, in-process, 2026-09-11**: the real route
+  handlers and the real MCP route compiled with `tsc` to a scratch `outDir`
+  and required directly, tokens from `mintCapability`/`mintRunCapability`
+  against a seeded `runs` row and a claimed task, **31/31 assertions**.
+  `comment_on_task` is published to the run subject (4 tools, not 3) and to
+  the chat subject and refused to a block in its own sentence naming
+  `list_tasks`; an operator's note written through `POST
+  /api/tasks/[id]/comments` is recorded as `operator` with a null
+  `authorRunId` and its body trimmed; a body carrying `author` is a 400
+  naming the field; a thread on an id that is not there is a 404 rather than
+  an empty list; a note written through the run's tool is attributed to the
+  token's run id; the thread reads back oldest first with `total` beside it;
+  `updated_at`, `status` and `claimed_by_run_id` are unmoved after both
+  writes; `commentCount` is 2 on `GET /api/tasks/[id]` **and** on the board
+  row from `GET /api/tasks`; `list_my_tasks` hands the run both notes whole
+  under `held` with `commentsTotal`, and `openInFolder` carries no thread;
+  `complete_task` is still refused for a task the run does not hold while
+  `comment_on_task` on that same task is allowed, which is the stated trade;
+  and `DELETE /api/tasks/[id]` leaves zero rows in `task_comments`, which is
+  the cascade proved through the real route rather than through a `PRAGMA`.
+  Caveat: this is the server half only. Nothing here opened a browser — the
+  board's own rendering of a count or a thread is a later run's work — and
+  no `claude` child was spawned, so what a model does when handed the tool
+  description is unmeasured.
+
+- **`npm run build` with the comments route, 2026-09-11**: `env -u
+  __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` exit 0 twice,
+  `.next/BUILD_ID` and `.next/standalone` both written on the worktree
+  mount; `/api/tasks/[id]/comments` is listed as a dynamic route. Ahead of
+  it, `NODE_ENV=development npm ci --include=dev` exit 0, `npm run
+  typecheck` exit 0, `npm test` 2654/2654. `npm run smoke-pages` then served
+  `.next/standalone/server.js` — the artifact the container ships, not the
+  `next start` fallback — and reported 44/44 page loads clean, 0 of 22 pages
+  failing at either width. It asserts about *load* only and this change adds
+  no page, so what it rules out is a route change having broken one.
+
+- **The thread and the board's count, in a real browser, 2026-09-11**: the half
+  the entry above says it does not cover. The standalone bundle served against a
+  throwaway `DATA_DIR` and a `CLAUDE_BIN` that cannot spawn, seeded through the
+  real routes, driven with the container's Chromium at 1280px and 390px.
+  `/tasks/[id]` drew four notes oldest first, one per author kind — `Operator`,
+  `Orchestrator`, `Workflow`, and `Run` with `9f2c1d3a` linking to `/runs/…` —
+  each carrying its own relative phrase, and a body's blank line survived as a
+  blank line, which is what `whitespace-pre-wrap` and no `Markdown` buys. **Both
+  widths: no console error, no sideways scroll.** The composer was pressed for
+  real: with an empty box the button reports `disabled`, with a draft it does
+  not, the click posted, the box came back empty, the note appeared and the
+  count beside the heading went 4 → 5 with the task's own title, priority and
+  `updated_at` unmoved. All three ways of having nothing were rendered rather
+  than reasoned about — a task with no notes drew the sentence naming who may
+  write one; a thread of **205** against `MAX_TASK_COMMENTS` = 200 drew *Showing
+  the newest 200 of 205 comments* over notes 6…205, which is the oldest end
+  dropped and the newest kept, measured rather than inferred; and
+  `/api/tasks/*/comments` aborted inside the page drew the failed-read notice
+  **and** *this is a failed request rather than an empty thread* with a retry,
+  the composer still on screen under it. On `/tasks` the count read `4 comments`
+  inside the Task cell at both widths, no seventh column appeared, and the task
+  with no notes drew nothing at all rather than a zero. Caveat: one browser
+  engine, and the **default** skin only — nothing here opened
+  `data-skin="ascii"`, which is board item `4e6dd0b9`.
+
+- **The whole gate for the thread's two surfaces, 2026-09-11**, on the worktree
+  mount: `NODE_ENV=development npm ci --include=dev` exit 0; `npm run typecheck`
+  exit 0; `npm test` **2654 tests, 2654 pass, 0 fail** across 413 suites; `env
+  -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` exit 0 with
+  `.next/standalone` written; `npm run smoke-pages` served
+  `.next/standalone/server.js` and reported **44/44 page loads clean, 0 of 22
+  pages failing**. The test count is unchanged from the entry above and that is
+  deliberate: this change is two rendered surfaces and one `Record` of four
+  words, and none of the three is a pure function with a silent failure mode,
+  which is the bar `docs/agent/testing.md` records. What covers it is the
+  browser entry above rather than a unit test.
+
+- **Task dependencies, both doors, 2026-09-11** against the branch's own
+  `.next/standalone/server.js` and — for the tool surface — the same modules
+  loaded in process. On the **route**: an edge across two projects wrote with
+  `created: true` and both ends described down to `mountId`/`relPath`; the same
+  call again answered 200 with `created: false` and one edge still on the board;
+  a two-node and a three-node loop were both refused 400 naming the loop by
+  title (`“Ship the parser” → “Write the parser” → “Third” → “Ship the
+  parser”`); a self-edge, a `dependsOn` that is not a task and a `taskId` that
+  is not a task were refused 400/404/404 with three different sentences; `GET`
+  answered both directions and 404 on a task that is not there; closing the
+  dependency took `blockedByCount` 1 → 0 with the edge and its count standing;
+  `DELETE` answered 200 then **404** on the repeat; and deleting a task took the
+  edge on its other end with it. Nothing was logged at error level. On the
+  **tool surface**: `add_task_dependency` is on a chat's list and on a run's
+  five, absent from a block's and refused to one by name; the write, the repeat
+  and the loop answered in the three wordings above with `isError` set only on
+  the refusal; an unknown id came back in `taskRefusal`'s own words;
+  `get_task` carried the refs with their projects, `list_tasks` the two counts,
+  and `list_my_tasks` `waitingFor` on `held` only. **The advisory property was
+  measured rather than assumed**: a task with `blockedByCount` 1 was closed by
+  the operator's `PATCH` and a second one by a run's `complete_task`, both
+  reaching `done`. What this did not touch is a real CLI — no model has called
+  the tool over stdio, which is the standing item below.
+
+- **The dependency drawing on both pages, in a real browser, 2026-09-12**: the
+  half the entry above says it does not cover. The branch's own
+  `.next/standalone/server.js` — the artifact the container ships — against a
+  throwaway `DATA_DIR` and a `CLAUDE_BIN` that cannot spawn, seeded through
+  `src/lib` with eight tasks across two projects and six edges forming a chain
+  three deep with a fork at the end, driven with the container's Chromium at
+  1280×1000 and 390×844. **Both widths: no console error, and
+  `scrollWidth − clientWidth` measured 0 on the document at each.** On `/tasks`
+  the line drew inside the Task cell under the title with no seventh column: a
+  row with four edges read *Blocked by 2 tasks · blocks 2 tasks*, a row with one
+  each read *After «title» · blocks «title»* with both titles as links, and the
+  task with no edges drew nothing at all. On `/tasks/[id]` the graph laid out
+  left to right with the arrows running from the task that happens first, the
+  anchor haloed and reading *This task* in words, a cross-project neighbour
+  naming `Main / RepoTwo` and the same-project ones naming nothing, and the
+  second level present — from the `Migrate` anchor, `Draw the task dependency
+  graph` was drawn two hops out through `Add the task_deps table`, with the edge
+  between those two in the border tone and only the edges touching the anchor in
+  the accent. **The form was pressed for real**, not reasoned about: adding
+  through the picker wrote the edge, answered *Recorded: this task now waits for
+  it*, redrew the graph with the new node in it and cleared the picker; asking
+  for a loop was refused with `taskDepRefusal`'s own sentence rendered whole —
+  *That would make a loop: “Add the task_deps table and its index” → “Migrate the
+  schema for task orderings” → “Draw the task dependency graph” → “Add the
+  task_deps table and its index”…* — with the picker's choice deliberately left
+  standing; and Remove took the edge away and left the empty state. A task with
+  no edges drew that empty state rather than an empty canvas. The 400 from the
+  refused write is the only console entry either page produced. Caveats: one
+  browser engine; the **default** skin here, with the ascii skin measured
+  separately below; the clipped-graph notice and the failed-neighbour notice
+  were not reproduced in the browser — both need more than `MAX_TASK_DEP_LINKS`
+  edges or an aborted request, and what covers them is
+  `taskDepGraph.test.ts`'s `clipped` assertions and the absent-neighbour case
+  rather than a rendered screen.
+
+- **The dependency pane under `data-skin="ascii"`, 2026-09-12.** The skin the
+  2026-09-11 `/branches` defect was found under, and the one this pane has most
+  to lose to: a `Badge` sits inside an absolutely positioned **fixed-height**
+  node box, so a badge that grew to three lines there would overflow rather than
+  reflow. Set through `localStorage["uf-skin"]` so `layout.tsx`'s blocking script
+  puts it on the element before anything hydrates, against the same standalone
+  bundle and seed as the entry above. **14 of 14 badges on one line at both
+  1280px and 390px**, measured as a bounding box against 2.2× the computed font
+  size rather than judged by eye; no console error, no sideways scroll; the
+  graph, the two lists and the form all drew. Caveat: the default and ascii
+  skins only, and one browser engine.
+
+- **The whole gate for the drawing, 2026-09-12**, on the worktree mount:
+  `NODE_ENV=development npm ci --include=dev` exit 0; `npm run typecheck` exit
+  0; `npm test` **2680 tests, 2680 pass, 0 fail**; `env -u
+  __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` exit 0 with `.next/standalone`
+  written; `npm run smoke-pages` served `.next/standalone/server.js` rather than
+  the `next start` fallback and reported **44/44 page loads clean, 0 of 22 pages
+  failing at either width**. The 26 tests over 2654 are `taskDepGraph.test.ts`
+  and they are the bar `docs/agent/testing.md` records rather than a convention
+  followed: `taskNeighbourhoodGraph` is a pure function whose every failure mode
+  draws a plausible picture — an arrow reversed is a readable graph of the
+  opposite ordering, a second level expanded the wrong way reads as a
+  neighbourhood, and none of them throws or fails a typecheck.
 
 ### Workflows and schedules
 
@@ -755,6 +933,19 @@ is `docs/agent/testing.md`; interface defects and their classes are
 
 ### Dreaming
 
+- **The dreaming pane's cold read, streamed rather than read whole,
+  2026-09-11**, at `8b7f1e2` on Node 22.23.2 over a real 1.91 GiB corpus (2,260
+  `.jsonl` files). A fresh `next start` per run was asked for `/api/usage` and
+  then `/api/dreaming`, in that order, with the peak read out of
+  `/proc/self/status` by a `--require` preload; three runs each way at each heap
+  cap. At the shipped `--max-old-space-size=2048`, VmHWM **1,478-1,552 MB before
+  against 1,252-1,316 MB after**; at this install's 1,024, **898-949 MB against
+  687-697 MB**. The readout is identical in all twelve runs — 2,260 walked,
+  3,341 instances, 1,549 signatures, 128 recurring — and the cold scan is a
+  little slower, 6.4-6.5 s before against 6.6-7.8 s after. Caveat: VmHWM is a
+  high-water mark of RSS under a lazy collector rather than a live-set figure, so
+  the saving moves with the heap cap and is not a fixed number of megabytes.
+
 - **Dreaming end to end, 2026-09-02**, built app over the real corpus: the
   readout matches `proposals/Dreaming` (77 signatures, 1,260 of 2,553
   instances); warm scan 21 ms, 0 files re-read. One night ($9.40) wrote notes
@@ -803,6 +994,27 @@ is `docs/agent/testing.md`; interface defects and their classes are
   of 261 paths in a project tree's `.claude` list, which `claude.exe` 2.1.260
   applies to the cwd and every ancestor. After the fill a linked worktree's
   `git status --porcelain` is empty.
+
+- **The `bwrap:` markers were pinned to a wording this install stopped
+  producing, 2026-09-11.** Every failed tool result in every session transcript
+  under `~/.claude/projects` carrying a `bwrap:` line: 945 of them, 223 of which
+  are `No permissions to create new namespace` and all 223 fall on 2026-08-18/19
+  — none since. The other 714, from 2026-08-25 to today, are mount-time and were
+  matched by nothing: `Can't create file at` (670), `Can't find source path`
+  (24), `Can't get type of source` (16), `Can't bind mount` (11), `Can't create
+  file at … Read-only file system` (1). Read off transcripts because `DATA_DIR`
+  is unreadable to an agent; the orchestrator writes one `tool_error` per failed
+  tool result, so this over-counts `run_events` by whatever retention has swept
+  and by the host's own non-UsageFoundry sessions. Two failed calls in the same
+  corpus carry `bwrap` and are not sandbox failures — a `ps` listing and a grep
+  of `docker-compose.yml` — which is why the needle added is `bwrap: Can't `
+  and not `bwrap: `.
+
+- **The settings row's failure note, end to end, 2026-09-11.** Against the
+  standalone build on a throwaway `DATA_DIR` with 14 seeded `sandbox` rows:
+  `/api/settings` returned the note under `env.sandbox.failureNote`, and
+  `/settings` drew it under an amber `ON` badge. Seeded rows, not a real
+  bubblewrap: nothing here ran a sandbox.
 
 - **The sandbox's tree-root list binds eleven dotfiles at the cwd only,
   2026-09-09.** Each is a character device `1,3`, and `git add -A` dies on
@@ -1096,6 +1308,36 @@ is `docs/agent/testing.md`; interface defects and their classes are
   with synthetic Esc and mouse events, not a finger.
 
 ## Not yet verified by hand
+
+- **The graph at a size no hand-drawn ordering reaches.** Every reading above is
+  against eight tasks. `autoLayout` is bounded by the block count rather than run
+  to a fixed point, so it terminates, but nothing has measured what the sheet
+  costs at, say, the `MAX_TASK_DEP_LINKS` cap on both lists with every neighbour
+  expanded — 21 nodes, absolutely positioned, with an SVG over them. What would
+  settle it: seed one task with ten dependencies and ten dependents, give each of
+  those ten of its own, and time the first paint of `/tasks/[id]`.
+
+- **Nothing has watched a real `claude` child call `comment_on_task`.** Every
+  assertion about this feature is against the route handlers in-process; what
+  a model does when handed the tool description — whether it reads the
+  operator's note out of `list_my_tasks` and acts on it, and whether it
+  reaches for `comment_on_task` instead of widening its own diff — is
+  unmeasured, and the descriptions are the only thing standing between the
+  two. Settling it: `docker compose up --build`, switch *Let runs use the
+  taskboard* on, start a run from a task, write a note on that task from
+  `/tasks/<id>` mid-run, and read the next cycle's transcript for whether the
+  note reached the model and what it did with it.
+
+- **The `MAX_RUN_TASKS × MAX_TOOL_TASK_COMMENTS` ceiling on a
+  `list_my_tasks` payload has never been reached.** Bodies are not clipped in
+  a tool result, deliberately — a work cycle has no `get_task` — so a run
+  holding twenty tasks each carrying ten notes at `MAX_TASK_COMMENT` is a
+  reply nothing bounds below two megabytes. Nothing in this app produces that
+  shape (a run holds one task in practice) and no measurement says what a
+  cycle pays for a realistic one. Settling it: seed a run holding three tasks
+  with ten notes each, call `tools/call list_my_tasks` through the in-process
+  harness, and measure the reply's bytes against the same call with no
+  threads.
 
 Everything below typechecks and builds, and some of it is unit tested, but none
 of it has been exercised the way its entry says — against a real CLI, a real
@@ -1471,6 +1713,30 @@ measurement under *Verified* and cut the item down to what is still open.
   (subagent transport, one sample per case, 40 runs judged against `runs.task`)
   on a prompt since replaced; the shipped prompt has never been scored.
 
+- **`add_task_dependency` has never been called by a model**, which is the
+  dependency half of the item above and has the same cost: it needs a billed
+  run. What is unmeasured is not the write — that was exercised through the
+  route handler and through the tool surface in process on 2026-09-11 — but
+  whether the descriptions do their job. The failure they are written against is
+  a model drawing an edge and then treating it as a gate: stopping work on a
+  task it holds, or reporting that a run cannot start. Settle it by giving a run
+  a task that waits on an open one after `docker compose up --build`, and
+  reading whether the cycle finishes the work it was given.
+
+- **No dependency has been drawn on a board with a real backlog on it.**
+  `MAX_TASK_DEP_LINKS` is 10 and the cap's direction — blocking dependencies
+  first, done ones dropped — was measured only against a hand-built twelve in
+  `taskDeps.test.ts`. Unknown is whether ten is the right number for a backlog
+  somebody actually accumulated, and nothing yet has produced a row whose
+  `dependsOnCount` exceeds `dependsOn.length` outside a fixture. Settle it by
+  filing a real project's tasks and reading `GET /api/tasks`.
+
+- **Nothing about dependencies has been drawn on screen.** This change is
+  storage, a route and two tool surfaces; the board does not render an edge yet,
+  and `docs/taskboard.md` describes the feature as it will read once it does.
+  `npm run smoke-pages` was deliberately not re-run, because no page changed.
+  Settle it with the run that draws it.
+
 ### Workflows and schedules
 
 - **The pager has not met live instances**: all rows were inserted `finished`
@@ -1810,7 +2076,10 @@ measurement under *Verified* and cut the item down to what is still open.
   fired.** Every `bwrap` it caused exited 1 unexecuted; the 15-hour run logged
   484 `tool_error` and 0 `sandbox` rows. Unseen: any CLI-written marker (six
   read by `strings`), the credential deny from a run, the boot line past `none`,
-  `enableWeakerNestedSandbox` read by any `claude`, seccomp past `bwrap`. Probe:
+  `enableWeakerNestedSandbox` read by any `claude`, seccomp past `bwrap`. What
+  the probe below was for on the `bwrap:` side has since been answered off this
+  host's transcripts instead (2026-09-11, above), so what is still open here is
+  the CLI's own six and everything after the wrap: run it for those.
   ```sh
   uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
 

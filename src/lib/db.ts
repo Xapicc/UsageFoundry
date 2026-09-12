@@ -5,6 +5,10 @@ import { DATA_DIR, DB_PATH } from "./config";
 // value import here would be a cycle between the schema and the thing that
 // reports on it.
 import type { OpsFields, OpsLevel } from "./ops";
+// Types only, and for a sharper reason: `sandbox.ts` is on `privsep.ts`'s
+// import path and so on `git.ts`'s, and a value import here is the cycle that
+// left `serverLock.ts`'s constants `NaN`.
+import type { SandboxFailureReading, SandboxRefusal } from "./sandbox";
 import { heldByAnotherProcess } from "./serverLock";
 // A value import, and safe to be one: `modelCatalogue.ts` imports only
 // `pricing.ts`, which imports nothing at all. `settings.ts` imports both this
@@ -819,6 +823,13 @@ function migrate(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_run_events_run
       ON run_events(run_id, id);
+    -- Every other reader of this table comes in by run. The settings payload
+    -- asks the one question that does not — has the sandbox detector fired
+    -- anywhere in the last day — and without this it scans a table that grows
+    -- with every tool failure in every run. Partial, so the index holds the few
+    -- hundred rows that kind ever writes rather than a copy of the table.
+    CREATE INDEX IF NOT EXISTS idx_run_events_sandbox
+      ON run_events(ts) WHERE kind = 'sandbox';
     CREATE INDEX IF NOT EXISTS idx_chat_messages_chat
       ON chat_messages(chat_id, ts);
     CREATE INDEX IF NOT EXISTS idx_chat_proposals_chat
@@ -2326,6 +2337,98 @@ function migrate(db: Database.Database) {
       ON tasks(mount_id, folder);
   `);
 
+  // Notes on a task: what the operator, a chat turn or a run has to say about a
+  // brief without changing what the brief is.
+  //
+  // **Append-only, and there is no column that would let it be anything else.**
+  // No `updated_at`, no `deleted_at`, no `edited_by`: a thread three parties
+  // write to is a record of what was said, and an edit would leave a run acting
+  // on text that is no longer there with nothing anywhere saying it changed.
+  // What that costs is that a mistaken note stays, answered by the next one.
+  //
+  // `ON DELETE CASCADE` is the one way a comment goes away, and it is the only
+  // foreign key on this path that could be a cascade: unlike the three run id
+  // columns above, the row it points at *is* deleted — by the operator, and by
+  // nobody else — and a thread outliving its task is orphaned prose no surface
+  // can place. `parent_task_id`'s `SET NULL` is the opposite case for the
+  // opposite reason: there the child is the thing worth keeping.
+  //
+  // `author` is the closed set `operator | chat | block | run`, recorded from
+  // the door the write arrived at and never read off a request — `origin`'s rule
+  // on the row above, and see `normalizeTaskCommentInput` in taskComments.ts.
+  // `author_run_id` is set only when a run wrote it, and it is the capability
+  // token's id rather than an argument; a note claiming to be another run's is
+  // the failure that column exists to make impossible.
+  //
+  // Deliberately **no** `task_id` write-back: a comment does not touch
+  // `tasks.updated_at`. That column means the task moved and the board sorts on
+  // it, so a note would reorder the board and read as a move — see
+  // docs/agent/taskboard.md.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS task_comments (
+      id            TEXT PRIMARY KEY,
+      task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      author        TEXT NOT NULL,
+      author_run_id TEXT,
+      body          TEXT NOT NULL,
+      created_at    INTEGER NOT NULL
+    );
+    -- One thread, oldest first, which is the only read this table has. The pair
+    -- is what keeps a task's own notes together on disk and the ordering off a
+    -- sort, and \`created_at\` is ascending here because that is the direction a
+    -- thread is read in — the cap takes from the old end instead.
+    CREATE INDEX IF NOT EXISTS idx_task_comments_thread
+      ON task_comments(task_id, created_at);
+  `);
+
+  // "This task waits for that one." Two ids and a timestamp, and the columns
+  // that are *not* here are the whole design.
+  //
+  // Two columns rather than a JSON blob on `tasks`, which is run_deps' choice
+  // above for run_deps' reason: this is queried from **both** ends — "what is
+  // this task waiting for" draws a row, and "what does closing this release"
+  // is the question an operator asks before they close anything — so it has to
+  // be indexable, and a blob would make the second end a scan of every task
+  // the install has ever filed. The primary key over the pair is what makes a
+  // repeated write idempotent rather than a second edge; see `addTaskDep`.
+  //
+  // **No `edge` column, and its absence is the decision.** run_deps carries
+  // 'on-success' | 'on-finish' because it gates a *start*: something is waiting
+  // on the answer, so the condition has to be explicit. This edge gates
+  // nothing — it is advisory, a task whose dependencies are open is *shown* as
+  // blocked and nothing anywhere refuses to claim, start or close it — so
+  // there is one kind of edge and no condition to state. The day something
+  // here holds a task back is the day that stops being true, and it is a
+  // decision about the board's authority model rather than a column.
+  //
+  // **No author and no `created_by`.** An edge is not a claim about who
+  // noticed the ordering, and the three doors that can write one (the
+  // operator's route, a chat turn, a work cycle) all write the same fact. What
+  // *is* gated is removal, and it is gated by there being only one door that
+  // does it — see docs/agent/taskboard.md.
+  //
+  // `parent_task_id` on the row above is a different relation and stays one: a
+  // run filed a task while working another. That is provenance, not "this
+  // blocks that", and nothing reads the two together.
+  //
+  // Both ends cascade, run_deps' reasoning: a task *is* deleted — by the
+  // operator, and by nobody else — and an edge naming a row that is gone is a
+  // dependency no reader can place and no walker can resolve.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS task_deps (
+      task_id    TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      depends_on TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (task_id, depends_on)
+    );
+    -- The other end. The primary key already indexes (task_id, depends_on),
+    -- which answers "what is this waiting for"; this one answers "what is
+    -- waiting for this", which is the read a board makes for every row it
+    -- draws and the one that would otherwise be a table scan per row.
+    CREATE INDEX IF NOT EXISTS idx_task_deps_depends_on
+      ON task_deps(depends_on);
+  `);
+
   adoptModelsInUse(db);
 
   // Anything still wearing the rebuild suffix after the one rebuild above has
@@ -2685,4 +2788,61 @@ export function getJSON<T>(key: string, fallback: T): T {
 
 export function setJSON(key: string, value: unknown): void {
   setSetting(key, JSON.stringify(value));
+}
+
+/* ------------------------------------------------------------------ */
+/* What the sandbox detector has recorded lately                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * How far back `recentSandboxFailures` looks.
+ *
+ * A day, because the settings payload this feeds is read on a page an operator
+ * opens rather than watches, and a window shorter than one would go quiet
+ * overnight and show a working sandbox in the morning. It is also the horizon
+ * the install ceiling already rolls on, so two figures on that page mean the
+ * same span of time.
+ */
+const SANDBOX_FAILURE_WINDOW_HOURS = 24;
+
+/**
+ * The `sandbox` rows of the last day, for the settings row that would otherwise
+ * say `on` over an install where every wrapped tool call died.
+ *
+ * Here rather than beside the matcher because `sandbox.ts` is on `privsep.ts`'s
+ * import path and therefore on `git.ts`'s: importing this module from there put
+ * `serverLock.ts` into a cycle with `git.ts` and left its stale-lock constant
+ * `NaN`, with the suite green everywhere else. The words that go with this
+ * reading are `sandboxFailureNote`, which stays over there and stays pure.
+ *
+ * The index this needs is partial — `idx_run_events_sandbox` in `migrate()` —
+ * because `run_events` grows with every tool failure in every run and this is
+ * the one question about it that does not come in by run.
+ */
+export function recentSandboxFailures(now = Date.now()): SandboxFailureReading {
+  const rows = db()
+    .prepare(
+      "SELECT payload FROM run_events WHERE kind = 'sandbox' AND ts >= ? ORDER BY ts DESC",
+    )
+    .all(now - SANDBOX_FAILURE_WINDOW_HOURS * 3_600_000) as {
+    payload: string | null;
+  }[];
+
+  let latest: SandboxFailureReading["latest"] = null;
+  for (const row of rows) {
+    try {
+      const payload = JSON.parse(row.payload ?? "") as Partial<SandboxRefusal>;
+      if (typeof payload.matched === "string" && typeof payload.reason === "string") {
+        latest = { matched: payload.matched, reason: payload.reason };
+        break;
+      }
+    } catch {
+      // A row whose payload does not parse still counts as a failure — the
+      // count comes off the rows and not off this loop — and the next one down
+      // supplies the words. Dropping the whole reading over one unreadable row
+      // would be the silent zero this pair of functions exists to refuse.
+    }
+  }
+
+  return { count: rows.length, hours: SANDBOX_FAILURE_WINDOW_HOURS, latest };
 }

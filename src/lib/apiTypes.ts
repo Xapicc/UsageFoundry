@@ -307,6 +307,17 @@ export interface SandboxDTO {
    * nothing asked for a sandbox, since there is then no such promise to report.
    */
   failIfUnavailable: boolean | null;
+  /**
+   * What the `sandbox` rows of the last day say, or null for none.
+   *
+   * A second fact and not a fifth state, because it answers a different
+   * question: `state` is what the policy file says and this is whether runs
+   * could live with it, and an install can honestly be `on` while every tool
+   * call it wrapped died. Optional because `sandboxArrangement` does not
+   * produce it — it reads a file and this reads the database, and the route is
+   * where the two meet.
+   */
+  failureNote?: string | null;
 }
 
 /**
@@ -3755,6 +3766,75 @@ export type TaskPriorityDTO = "urgent" | "high" | "normal" | "low";
 export type TaskOriginDTO = "operator" | "chat" | "block" | "run";
 
 /**
+ * The other end of a dependency edge, as much of it as a reader needs.
+ *
+ * `status` is here because the blocked reading is derived from it and a surface
+ * that had the count but not the statuses could not say *which* neighbour is in
+ * the way. The three project fields are here because **an edge may cross
+ * projects** — a task in one folder blocking one in another is exactly the case
+ * an operator needs shown — and they are split by the same `describeFolder` the
+ * task itself is, so no two of them can split a path differently.
+ */
+export interface TaskDepRefDTO {
+  id: string;
+  title: string;
+  status: TaskStatusDTO;
+  mountId: string | null;
+  mountLabel: string | null;
+  /** The folder within its mount, or null when that task names no folder. */
+  relPath: string | null;
+}
+
+/**
+ * One task's edges, in both directions, and the reading derived from them.
+ *
+ * **Advisory throughout.** Nothing in this shape gates anything: a task whose
+ * `blockedByCount` is not zero can still be claimed, started, commented on and
+ * closed by exactly the actors that could before, and `taskTransitionRefusal` —
+ * which is the whole of the board's authority model — has never heard of it.
+ * `blockedByCount` is *shown*, derived at read time and never stored, so a
+ * surface drawing it is reporting an ordering somebody wrote down rather than a
+ * rule the app enforces. See `docs/agent/taskboard.md` for what making it
+ * enforcing would cost.
+ *
+ * The two lists are capped at `MAX_TASK_DEP_LINKS` and the three counts are
+ * not, on `runCount`'s rule: a row showing three of eleven and saying nothing
+ * would report a task waiting on eleven things as one waiting on three. A
+ * reader with a clipped list can always tell — `dependsOnCount` exceeds
+ * `dependsOn.length` — and **anything drawing the graph itself must check
+ * that** rather than treat these lists as the edge set.
+ */
+export interface TaskDepsDTO {
+  /**
+   * Tasks this one waits for. Blocking ones first, so what a cap drops is what
+   * has already been done — the mirror of a clipped thread losing its oldest
+   * end, and for the same reason: a clipped list showing four `done`
+   * dependencies beside a `blockedByCount` of 3 names nothing a reader can act
+   * on.
+   */
+  dependsOn: TaskDepRefDTO[];
+  /** Edges out of this task, however many. May exceed `dependsOn.length`. */
+  dependsOnCount: number;
+  /** Tasks waiting for this one, oldest edge first. Capped the same way. */
+  dependents: TaskDepRefDTO[];
+  /** Edges into this task, however many. May exceed `dependents.length`. */
+  dependentCount: number;
+  /**
+   * Dependencies that are not `done`, counted over **every** edge rather than
+   * over the capped list. Zero is ready and anything else is blocked, which is
+   * the one derived reading on this shape and the only one a surface may draw
+   * without re-deriving it from the lists.
+   *
+   * `dropped` counts as blocking and that is deliberate: a task somebody
+   * decided should not happen has not been done, and the ordering its dependent
+   * was given still says it comes first. What the board shows is the
+   * dependency's own status beside it, so the operator can see that the thing
+   * in the way is one they dropped and remove the edge.
+   */
+  blockedByCount: number;
+}
+
+/**
  * One task on the board, whole.
  *
  * `mountId` and `folder` are null together or set together — the wire shape of
@@ -3792,10 +3872,84 @@ export interface TaskDTO {
   runIds: string[];
   /** Runs naming this task. May exceed `runIds.length`, which is capped. */
   runCount: number;
+  /**
+   * Notes written on this task, so a board can draw the count without a second
+   * request per row.
+   *
+   * Uncapped, because it is a count rather than a list: `runCount`'s rule, and
+   * the thread itself is what `GET /api/tasks/[id]/comments` answers with. Zero
+   * and "nobody has read the thread" are deliberately not told apart — there is
+   * nothing to tell apart, since a task with no notes and a task whose notes
+   * were not asked for are the same row.
+   */
+  commentCount: number;
+  /**
+   * What this task waits for and what waits for it.
+   *
+   * On `TaskDTO` rather than on a shape of its own for the list, so that the
+   * board can draw one line of text per row without a second request — the
+   * board deliberately fetches the whole page in one go, and a per-row
+   * neighbourhood request would be an N+1 on a ten-second poll. That is only
+   * affordable because the lists inside are capped; see `TaskDepsDTO`.
+   */
+  deps: TaskDepsDTO;
   createdAt: number;
   updatedAt: number;
   closedAt: number | null;
 }
+
+/** Mirrors `TaskCommentAuthor` in `taskComments.ts`: which door wrote a note. */
+export type TaskCommentAuthorDTO = "operator" | "chat" | "block" | "run";
+
+/**
+ * One note on a task.
+ *
+ * `authorRunId` is set **only** when `author` is `"run"`, and it is the run's
+ * capability token's id rather than anything the write named — see
+ * `normalizeTaskCommentInput`. A surface drawing a note attributes it to the
+ * author and never to a run id it found beside one, because that pairing is what
+ * the column exists to make checkable.
+ *
+ * There is no `updatedAt` and there will not be one: the thread is append-only,
+ * so a note's only timestamp is when it was written.
+ */
+export interface TaskCommentDTO {
+  id: string;
+  taskId: string;
+  author: TaskCommentAuthorDTO;
+  authorRunId: string | null;
+  body: string;
+  createdAt: number;
+}
+
+/**
+ * One task's thread, as `GET /api/tasks/[id]/comments` answers it.
+ *
+ * `TaskListDTO`'s shape without an `offset`, and the absence is the decision:
+ * a thread is read whole from the top, so there is no second page to ask for and
+ * `total` above `limit` is a notice rather than a cursor. What a cap drops is
+ * the **oldest** end — the reply still reads oldest first, and the notes it
+ * loses are the ones already answered. The day a thread needs paging is the day
+ * that trade stops holding, and the answer then is an offset from the new end
+ * rather than a larger cap.
+ */
+export interface TaskCommentListDTO {
+  comments: TaskCommentDTO[];
+  total: number;
+  limit: number;
+}
+
+/**
+ * Notes one request for a thread may carry, whatever it asks for.
+ *
+ * Here rather than in `taskComments.ts` for `MAX_TASK_PAGE`'s reason: the page
+ * that draws a thread asks for exactly this many and then says whether `total`
+ * was larger, and written twice it would report a whole thread it had not been
+ * sent. Well above any thread a person writes, because what it bounds is the
+ * pathological case — a run and an operator answering each other for a week —
+ * rather than the ordinary one.
+ */
+export const MAX_TASK_COMMENTS = 200;
 
 /**
  * The task a run was started for, as `GET /api/runs/[id]` answers for it.
@@ -3830,6 +3984,25 @@ export const MAX_LIST_TASK_BODY = 200;
  * three times.
  */
 export const MAX_TASK_RUN_LINKS = 5;
+
+/**
+ * Neighbours a task carries the refs of, each way, however many edges it has.
+ *
+ * Twice `MAX_TASK_RUN_LINKS` because this one is read on two surfaces with
+ * different needs and one payload has to serve both: a board row draws a line
+ * of text off the counts, where a task's own page draws the neighbours
+ * themselves and a second request for them would be the N+1 the whole page
+ * fetch exists to avoid. Ten is above any hand-drawn ordering and well below
+ * the number at which `MAX_TASK_PAGE` rows carrying two of these lists becomes
+ * a payload worth worrying about — which is the failure this constant exists
+ * for, since nothing bounds how many edges one task may accumulate.
+ *
+ * The counts beside the lists are **not** capped, on `MAX_TASK_RUN_LINKS`' own
+ * rule, and `blockedByCount` in particular is counted over every edge: a row
+ * that showed ten neighbours and said nothing about the eleventh would report a
+ * task as ready while something it waits on is still open.
+ */
+export const MAX_TASK_DEP_LINKS = 10;
 
 /**
  * Rows one board request may take, whatever it asks for.
