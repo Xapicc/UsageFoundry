@@ -25,6 +25,7 @@ import { Button, ButtonLink, ButtonRow } from "@/components/ui/Button";
 import { Card, CardTitle, Empty, SkeletonText } from "@/components/ui/Card";
 import { Field, Textarea } from "@/components/ui/Field";
 import { Notice } from "@/components/ui/Notice";
+import { TaskDependencies } from "@/components/TaskDependencies";
 import { TaskEditor } from "@/components/TaskEditor";
 
 /**
@@ -516,6 +517,14 @@ export default function TaskDetail({
       )}
 
       <TaskEditor task={task} onSaved={() => void load()} />
+
+      {/* Between the brief and the thread, which is where an ordering sits in
+          the reading: what the task asks for, then what has to happen around
+          it, then what has been said about it. It takes `load` rather than
+          holding a read of its own — a write there changes this row's
+          neighbourhood, which arrives on the task — and this page still does
+          not poll, so the graph is as old as the last press. */}
+      <TaskDependencies task={task} onChanged={load} />
 
       {/* Below the brief and above its provenance, which is the order the three
           are read in: the brief is what the task asks for, the thread is what
