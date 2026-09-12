@@ -1083,6 +1083,30 @@ is `docs/agent/testing.md`; interface defects and their classes are
   prompt, the plugin directory or the taskboard MCP config — the confirming
   measurement in `07-option-make-it-runnable.md` §10 is still owed.
 
+- **The projected grant runs a stack's tool, and the projected denial stops the
+  one command the stack forbids. 2026-09-12, CLI 2.1.260.** Phase 4's own
+  output, taken off this install's real receipt — `shell-lint` links
+  `shellcheck` and `shfmt` and denies `shfmt -w`, so the projection is
+  `--allowedTools Bash(shellcheck:*) Bash(shfmt:*)` and `--disallowedTools
+  Bash(pkill:*) Bash(killall:*) Bash(shfmt -w:*)`. One headless turn as uid 1000
+  carrying exactly those flags was asked for three commands in order.
+  `shellcheck --version` ran first call and printed `0.11.0`; `shfmt --version`
+  ran and printed `v3.14.1` — so the grant is what makes a stack's binary usable,
+  against the same mode that refused `probetool` an hour earlier. `shfmt -w
+  /tmp/probe.sh` was **refused**, `permission_denied` with *"Permission to use
+  Bash with command shfmt -w /tmp/probe.sh has been denied."*, and the file was
+  read back afterwards still holding its unformatted `;then`. $0.34, four turns.
+
+  **This is the deny-list doing the thing `23-` §9 chose it for**: the binary is
+  granted whole and one command of it is not, and the denial beat the grant
+  rather than the other way round. Caveat, and it is the same one the probe
+  carries: this is a bare `claude -p` with the flags spread by hand, not a work
+  cycle. It proves the two lists behave as projected; it does not prove the run
+  loop hands them over, which the three argv assertions in
+  `orchestrator.test.ts` pin instead, nor that the rest of the spawn path leaves
+  them alone. `07-option-make-it-runnable.md` §10 is still owed and is now
+  runnable.
+
 ### Container and environment
 
 - **Multiple workspaces:** slots list independently, a disabled one is skipped,
@@ -2317,16 +2341,21 @@ measurement under *Verified* and cut the item down to what is still open.
 
 ### Security and sandboxing
 
-- **No real work cycle has invoked a stack's binary.** `01c-` §4's probe settled
-  that the grant is necessary and sufficient — measured 2026-09-12, in *Verified*
-  above — but it is two bare `claude -p` turns, not a cycle: it carries the
-  managed settings and nothing else the spawn path adds. The `--settings` file
-  `cycleInvocation.ts:1300` writes, the appended system prompt, the plugin
-  directory and the taskboard MCP config have never been in play while a stack's
-  tool was asked for, and any of them could refuse what the probe permitted.
-  Settle with `07-option-make-it-runnable.md` §10: a run at `acceptEdits`
-  against a folder, asked to use `shellcheck`, read for whether the `Bash` call
-  succeeded. Phase 4 has to ship first — there is no projected grant yet.
+- **No real work cycle has invoked a stack's binary.** Three things around it
+  are measured and are in *Verified* above: that an ungranted binary is refused,
+  that the projected grant runs `shellcheck` and the projected denial stops
+  `shfmt -w`, and — in `orchestrator.test.ts` — that the run loop puts each list
+  on the right flag, on a resumed cycle as well as a first. What is **not**
+  measured is the two meeting: every one of those turns was a bare `claude -p`
+  with flags spread by hand, carrying the managed settings and none of what else
+  a cycle's spawn path adds. The `--settings` overlay `cycleInvocation.ts:1300`
+  writes, the appended system prompt, the plugin directory and the taskboard MCP
+  config have never been in play while a stack's tool was asked for, and any of
+  them could refuse what these permitted. Settle with
+  `07-option-make-it-runnable.md` §10: a run at `acceptEdits` against a folder
+  holding a shell script, asked to `shellcheck` it and then to `shfmt -w` it,
+  read for whether the first `Bash` call succeeded and the second was refused.
+  Phase 4 has shipped, so this is now runnable.
 
 - **The 2026-08-19 probes did not exercise** the per-run `--settings` overlay,
   `denyRead` paths, the network allowlist, the write set, or real work.

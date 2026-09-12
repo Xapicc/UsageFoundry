@@ -445,6 +445,34 @@ wrote.
 
 ## Phase 4 - the grant
 
+> **BUILT on 2026-09-12**, after phase 0 measured that it is necessary. The
+> projection is `stackGrants()` in `src/lib/stacks.ts`; it reaches the work
+> cycle through one new option on `buildArgs`, threaded from the run loop's
+> single call site, and the conflict assist through `spawnAssist` directly.
+>
+> **Two deviations, both from `23-revision-per-repo-and-login.md` §9 rather than
+> from this file**, which still describes the superseded `allow` field.
+>
+> 1. **The grant is derived, not authored.** Every binary an `ok` receipt links
+>    becomes `Bash(<name>:*)`; the author writes `deny`, and each entry becomes
+>    a `Bash(<entry>:*)` on `--disallowedTools`. So this phase touches **two**
+>    flags rather than one, and the denial half is the one measured to restrict
+>    anything (`agents.ts:216-218`, where deny beats the mode).
+>
+> 2. **The assist reads it rather than being handed it.** `buildArgs` is pure
+>    and is where the argv is asserted, so it takes an option; `spawnAssist` is
+>    the spawn itself, has no purity to keep, and derives the grant from the
+>    permission mode — which means a fourth kind of assist gets it right without
+>    anybody remembering to thread it. A reviewer under `plan` gets neither
+>    list, per `01c-` §5.
+>
+> **Three assertions rather than none.** This file argued that a `flatMap` into
+> a string template earns no test, and that is still true of the projection —
+> what earns one is the **argv**, which this file also names as where the output
+> is asserted. They are in `buildArgs`'s existing suite: that the two lists land
+> on the two flags and not on each other, that the grant rides a resumed cycle,
+> and that an install with no stack keeps a byte-identical argv.
+
 **Half a day, and phase 0 may delete it entirely.**
 
 ### What ships

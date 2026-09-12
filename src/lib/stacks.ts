@@ -250,3 +250,70 @@ export function stackEnvironment(file = STACKS_ENV_FILE): Record<string, string>
     return {};
   }
 }
+
+/**
+ * What every `ok` stack grants a work cycle, and what it takes back.
+ *
+ * `--allowedTools` and `--disallowedTools` entries, ready to spread onto an
+ * argv. `01a-` §4.2 is the design and `23-revision-per-repo-and-login.md` §9 is
+ * the revision that made it a deny-list rather than an allow-list:
+ *
+ * - **`allow` is derived and needs no author decision.** Every binary a stack
+ *   links becomes `Bash(<name>:*)`. An operator who declared a tool meant their
+ *   agents to be able to run it, and a stack that installed perfectly and
+ *   granted nothing is the quiet failure `01a-` §8 names — measured on
+ *   2026-09-12, an ungranted binary at `acceptEdits` is refused with *"This
+ *   command requires approval"* and the turn ends `success` having run nothing.
+ * - **`deny` is what the author wrote**, one `Bash(<entry>:*)` each. Deny beats
+ *   allow and beats the mode, which is the verified half of the pair
+ *   (`agents.ts:216-218`), so the result reads the way the operator asked for
+ *   it: everything this stack installs, except what you denied.
+ *
+ * **Only `ok` receipts.** A `failed` or `conflicted` stack linked nothing, so
+ * its grant would name a binary that is not there and its denial would bind a
+ * command nothing can run.
+ *
+ * **Nothing is re-validated here, deliberately.** That an entry names one of
+ * this stack's own binaries, and that it carries no parenthesis to close the
+ * `Bash(...)` it is interpolated into, are refusals `parseStack` makes before a
+ * byte is downloaded. A second check here would be a second place that can
+ * disagree with the first about what a stack may grant — and the receipts are
+ * root-owned in a volume no agent can write, so the only way to get past the
+ * first is to be root in the container already.
+ *
+ * **Two of the five child kinds read this**, per `01c-` §5: the work cycle and
+ * the conflict assist. A reviewer runs `plan` and cannot invoke a tool whatever
+ * any list says; a chat turn and a workflow orchestrator run
+ * `bypassPermissions`, where the allow half is redundant — and where the deny
+ * half is deliberately absent, because those children could already run every
+ * binary in the image and a stack does not change what they may do.
+ */
+export interface StackGrants {
+  allow: string[];
+  deny: string[];
+}
+
+/**
+ * Cached for the life of the process, which is the exact life of the receipts.
+ *
+ * The applier runs in `docker-entrypoint.sh` before `exec "$@"`, so every
+ * receipt this server will ever see was written before it started and the only
+ * thing that rewrites one is a restart — which takes this cache with it. A TTL
+ * would be a re-read that can never return anything different.
+ */
+const grants = (globalThis as unknown as { __ufStackGrants?: { value: StackGrants | null } });
+grants.__ufStackGrants ??= { value: null };
+
+export function stackGrants(dir = STACKS_RECEIPTS_DIR): StackGrants {
+  const cache = grants.__ufStackGrants!;
+  if (cache.value) return cache.value;
+  const allow: string[] = [];
+  const deny: string[] = [];
+  for (const receipt of readReceipts(dir).receipts) {
+    if (receipt.status !== "ok") continue;
+    for (const entry of receipt.bin) allow.push(`Bash(${entry.name}:*)`);
+    for (const entry of receipt.deny) deny.push(`Bash(${entry}:*)`);
+  }
+  cache.value = { allow, deny };
+  return cache.value;
+}

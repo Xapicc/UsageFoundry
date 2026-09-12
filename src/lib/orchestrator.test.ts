@@ -2333,6 +2333,84 @@ describe("buildArgs", () => {
     );
   });
 
+  /**
+   * The stack grant, which is the one list on this flag whose entries an
+   * operator wrote down in a file the image does not contain.
+   *
+   * Every way of getting this wrong is silent and one direction is expensive.
+   * A grant that lands on `--disallowedTools` denies the tool the operator
+   * installed; a denial that lands on `--allowedTools` **grants the one command
+   * they wrote the stack to forbid**, and the evidence either way is a tool call
+   * that behaved unexpectedly somewhere inside a work cycle. `23-` §9's whole
+   * argument is that deny is the half measured to restrict anything, so the
+   * half that must not be swapped is this one.
+   */
+  const disallowedToolValues = (args: string[]): string[] => {
+    const at = args.indexOf("--disallowedTools");
+    if (at === -1) return [];
+    const rest = args.slice(at + 1);
+    const end = rest.findIndex((a) => a.startsWith("--"));
+    return end === -1 ? rest : rest.slice(0, end);
+  };
+
+  it("puts a stack's grant on the allow flag and its denial on the deny flag", () => {
+    const args = buildArgs({
+      ...base,
+      isolated: true,
+      stackGrants: {
+        allow: ["Bash(terraform:*)", "Bash(shellcheck:*)"],
+        deny: ["Bash(terraform apply:*)"],
+      },
+    });
+    // Between the isolation grant and the search tools, and one flag carrying
+    // all three: a second `--allowedTools` is a replacement rather than an
+    // addition, so a stack that got its own flag would take the git grant with
+    // it and every isolated run would stop being able to commit.
+    assert.deepEqual(allowedToolValues(args), [
+      ...ISOLATED_GIT_TOOLS_EXPECTED,
+      "Bash(terraform:*)",
+      "Bash(shellcheck:*)",
+      ...SEARCH_TOOLS,
+    ]);
+    assert.equal(args.filter((a) => a === "--allowedTools").length, 1);
+
+    // And the same rule on the other flag, where the thing that would be lost
+    // is the process-kill denial — which is what stops an agent killing the
+    // server supervising every run in flight.
+    assert.deepEqual(disallowedToolValues(args), [
+      "Bash(pkill:*)",
+      "Bash(killall:*)",
+      "Bash(terraform apply:*)",
+    ]);
+    assert.equal(args.filter((a) => a === "--disallowedTools").length, 1);
+  });
+
+  it("carries a stack's grant on a resumed cycle, not only the first", () => {
+    // `--resume` restores no `--allowedTools`, the same trap `--plugin-dir`
+    // carries below and with a sharper symptom: cycle two of a run would be
+    // unable to invoke a tool cycle one used, and a permission refusal inside a
+    // tool call reads as the model choosing not to do the thing.
+    const args = buildArgs({
+      ...base,
+      isolated: false,
+      resumeSessionId: "sess-1",
+      stackGrants: { allow: ["Bash(shellcheck:*)"], deny: [] },
+    });
+    assert.deepEqual(allowedToolValues(args), ["Bash(shellcheck:*)", ...SEARCH_TOOLS]);
+  });
+
+  it("leaves the argv of an install with no stack exactly as it was", () => {
+    // The rule every optional on this argv is held to. An empty grant is not a
+    // grant of nothing that still moves a byte: `--append-system-prompt` and
+    // everything after it is part of the cached prefix, and a prefix that
+    // differs between two installs for a feature neither uses is a full-price
+    // re-read of a context averaging 190,000 tokens.
+    const without = buildArgs({ ...base, isolated: true });
+    for (const grants of [null, { allow: [], deny: [] }]) {
+      assert.deepEqual(buildArgs({ ...base, isolated: true, stackGrants: grants }), without);
+    }
+  });
+
   it("carries plugin directories on a resumed cycle, not only the first", () => {
     // The invariant this exists for: `--plugin-dir` is not restored by
     // `--resume`. A version of this that sent it on the opening cycle alone

@@ -23,7 +23,7 @@ import { withRepoAdmin } from "./repoLock";
 import { dataDirRefusal, mayWriteDataDir, requireDataDir } from "./serverLock";
 import { childCredentials, chownForChild } from "./privsep";
 import { currentSandbox, sandboxRefusal } from "./sandbox";
-import { STACKS_STATE_DIR } from "./stacks";
+import { STACKS_STATE_DIR, stackGrants } from "./stacks";
 import {
   ensureSandboxExcludesFile,
   ensureSandboxMountPoints,
@@ -9192,6 +9192,17 @@ export async function startRun(id: string): Promise<void> {
             ? { mcpConfigPath: taskboard.mcpConfigPath }
             : null,
         isolated: run.isolation === "worktree",
+        // On every cycle including a resumed one, for `--plugin-dir`'s reason
+        // and with a sharper edge: the CLI restores no `--allowedTools` on
+        // `--resume`, so a version of this that granted once would leave cycle
+        // two of a run unable to invoke a tool cycle one used — and the symptom
+        // is a permission refusal inside a tool call, which reads as the model
+        // choosing not to do the thing.
+        //
+        // Install-wide and never per run: `14-stack-object-model.md` §7 found
+        // all three doors a per-run selector could attach to closed by name,
+        // and the narrowing that matters is the stack author's `deny`.
+        stackGrants: stackGrants(),
         // Written out as the guard's own expression rather than passed as one
         // number, because `buildArgs` is where the subtraction is tested and
         // because the two halves have to be read together: this is the figure

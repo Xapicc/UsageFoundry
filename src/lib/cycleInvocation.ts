@@ -1189,6 +1189,23 @@ export function buildArgs(opts: {
    * setting is off.
    */
   taskboard?: { mcpConfigPath: string } | null;
+  /**
+   * What the install's stacks grant this cycle, and what they take back.
+   *
+   * `stackGrants()` in `stacks.ts` derives both from the receipts and carries
+   * the reasoning; this only spreads them. It arrives as an option rather than
+   * being read here for `pluginDirs`' reason — this function is pure and is
+   * where the argv is asserted — and it is passed **on every cycle including a
+   * resumed one**, which is the rule that matters most on this flag: `--resume`
+   * restores no `--allowedTools`, so a version of this that granted on the
+   * opening cycle only would leave a run's later cycles unable to invoke a tool
+   * that worked an hour earlier, with nothing anywhere saying why.
+   *
+   * Optional, and absent means an argv byte-identical to the one this app
+   * emitted before stacks existed — which is also what an install with no stack
+   * gets, since both lists are then empty.
+   */
+  stackGrants?: { allow: readonly string[]; deny: readonly string[] } | null;
 }): string[] {
   const args = ["-p", opts.prompt, "--output-format", "stream-json", "--verbose"];
   if (opts.model) args.push("--model", opts.model);
@@ -1209,15 +1226,25 @@ export function buildArgs(opts: {
   // replacement rather than an addition, and the order is what the assertions
   // beside this read. `SEARCH_TOOLS` is last because it is the entry that is
   // always there.
+  //
+  // The stack grants sit between the two, which keeps `SEARCH_TOOLS` last and
+  // keeps the argv of an install with no stack byte-identical to what it was:
+  // both lists are empty there, and an empty spread adds nothing.
   args.push(
     "--allowedTools",
     ...(opts.isolated ? ISOLATED_GIT_TOOLS : []),
+    ...(opts.stackGrants?.allow ?? []),
     ...SEARCH_TOOLS,
   );
   // Unconditional, and deliberately not paired with the isolation flag above:
   // a run in the operator's own checkout is inside the same process as one in a
   // worktree, and the kill does not care which.
-  args.push("--disallowedTools", ...PROCESS_KILLERS);
+  //
+  // A stack's denials ride the same flag for the reason its grants ride the one
+  // above: a second `--disallowedTools` is a replacement rather than an
+  // addition, so a stack that got its own flag would silently take the
+  // process-kill denial off every cycle on the install.
+  args.push("--disallowedTools", ...PROCESS_KILLERS, ...(opts.stackGrants?.deny ?? []));
   // One flag carrying every notice, for the reason `--allowedTools` carries both
   // its lists: a second `--append-system-prompt` is a replacement, not an
   // addition, and losing one of them would be silent. The last two are per-run

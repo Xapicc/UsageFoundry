@@ -10,6 +10,7 @@ import { agentsArgs, type AgentDefinition } from "./agents";
 import { clipToolInput } from "./logLine";
 import { dataDirRefusal } from "./serverLock";
 import { getSettings } from "./settings";
+import { stackGrants } from "./stacks";
 import {
   currentSnapshot,
   emitRunEvent,
@@ -775,7 +776,25 @@ function spawnAssist(id: string, req: AssistRequest): Promise<void> {
     // stops a review changing anything. The operator's own list stays behind
     // them, so `resolveAllowedTools` remains the only thing that can name a
     // *command*, and `resolvePrompt` still sees only that list.
-    args.push("--allowedTools", ...SEARCH_TOOLS, ...(allowedTools ?? []));
+    // What the install's stacks grant, and what they take back. Read here
+    // rather than threaded through `AssistRequest` — unlike `buildArgs` this is
+    // the spawn itself, there is no pure function to keep pure, and deriving it
+    // from the mode means a fourth kind of assist gets it right without anybody
+    // remembering to pass it.
+    //
+    // **Nothing for a reviewer, and that is the design rather than an
+    // omission.** `01c-` §5: `plan` is read-only, so a reviewer cannot invoke a
+    // tool whatever any allowlist says, and a grant on its argv would be a
+    // statement of intent this app does not have. A reviewer that could run
+    // `terraform apply` while reading a diff would be a defect.
+    const stacks = permissionMode === "plan" ? { allow: [], deny: [] } : stackGrants();
+    args.push("--allowedTools", ...SEARCH_TOOLS, ...(allowedTools ?? []), ...stacks.allow);
+
+    // The one flag this argv did not carry before. It is pushed only when a
+    // stack actually denies something, so an install with no stack keeps an
+    // argv byte-identical to the one it had — the rule every optional on the
+    // work cycle's argv is held to, applied one spawn site over.
+    if (stacks.deny.length > 0) args.push("--disallowedTools", ...stacks.deny);
 
     // What this child may write, if anything confines it at all. The same
     // encoder the work cycle and the chat use, handed the one thing that
