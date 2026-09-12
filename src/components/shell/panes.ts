@@ -115,6 +115,10 @@ export function toolbarTitle(pathname: string): string {
     return "What it touched";
   }
   if (pathname.startsWith("/runs/")) return "Run";
+  // Same reason as the line above it: Settings over one stack's receipt is a
+  // toolbar naming the page this hangs off rather than the screen in front of
+  // the operator, and the toolbar is the only breadcrumb this shell has.
+  if (pathname.startsWith("/settings/stacks/")) return "Stack";
   if (pathname === "/workflows/new") return "New workflow";
   if (pathname.endsWith("/edit") && pathname.startsWith("/workflows/")) {
     return "Edit workflow";

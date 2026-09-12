@@ -57,12 +57,20 @@ interface ParsedBin {
   from: string;
   as: string;
 }
+/**
+ * One shape rather than a union, because that is what the applier normalises
+ * to: `bin` is the field every verb has, and it is `{ from, as }` on all three
+ * even though the two package verbs are written as bare command names.
+ */
 interface ParsedStep {
   kind: string;
-  url: string;
-  checksums: string | null;
-  sha256: { amd64: string; arm64: string } | null;
-  unpack: string;
+  /** `archive` only. */
+  url?: string;
+  checksums?: string | null;
+  sha256?: { amd64: string; arm64: string } | null;
+  unpack?: string;
+  /** `uv-tool` and `npm-global` only. */
+  spec?: string;
   bin: ParsedBin[];
 }
 interface ParsedStack {
@@ -186,12 +194,10 @@ describe("parseStack — what is refused before anything is downloaded", () => {
     assert.match(refusal(parse({ install: [] })), /install is missing/);
   });
 
-  it("refuses a verb that does not exist and names one that is not built yet", () => {
-    const unknown = refusal(parse({ install: [{ kind: "apt", spec: "jq" }] }));
-    assert.match(unknown, /not a verb/);
-    const later = refusal(parse({ install: [{ kind: "uv-tool", spec: "ruff==0.14.1" }] }));
-    assert.match(later, /does not apply yet/);
-    assert.equal(/not a verb/.test(later), false, "a verb in the format read as a typo");
+  it("refuses a verb that is not one of the three", () => {
+    // `apt-get` is the one an operator reaches for and the one `01d-` §3
+    // refuses by name, so this is the message they actually meet.
+    assert.match(refusal(parse({ install: [{ kind: "apt", spec: "jq" }] })), /not a verb/);
   });
 
   it("refuses a url or a checksums url that is not https", () => {
@@ -298,6 +304,99 @@ describe("parseStack — what is refused before anything is downloaded", () => {
 
   it("refuses a deny entry that could close the Bash(...) it is interpolated into", () => {
     assert.match(refusal(parse({ deny: ["terraform apply)"] })), /parenthesis/);
+  });
+});
+
+/**
+ * The two verbs that hand a spec to a package manager.
+ *
+ * Their refusals are argv refusals and nothing else, which is the difference
+ * from `archive`: there is no URL to pin and no digest to check, because both
+ * tools resolve a spec to a release at install time against their own
+ * registries. What a stack carries here is the spec, and the two ways a spec
+ * can stop being one argument are the two branches below — a leading `-`,
+ * which both tools read as a flag, and whitespace, which is a second argument.
+ * Either would install something other than what the file says, quietly, and
+ * the operator's evidence would be a receipt naming the spec they wrote.
+ */
+describe("parsePackageStep — one spec, one argument", () => {
+  const uv = { kind: "uv-tool", spec: "ruff==0.14.1", bin: ["ruff"] };
+  const npm = { kind: "npm-global", spec: "@musistudio/claude-code-router@1.0.66", bin: ["ccr"] };
+
+  function parseWith(step: Record<string, unknown>, extra: Record<string, unknown> = {}): ParseResult {
+    return applier.parseStack(
+      JSON.stringify({ schema: 1, name: "tools", install: [step], ...extra }),
+      "tools",
+    );
+  }
+
+  it("normalises a bare command name into the shape archive leaves", () => {
+    // The whole reason the two shapes converge here: the duplicate-binary
+    // check, the deny rule, the linker and the receipt all read `{ from, as }`,
+    // and a second shape carried to the end would be four places that can
+    // disagree about what a stack links.
+    const result = parseWith(uv);
+    assert.equal(result.ok, true, result.ok ? "" : (result as { reason: string }).reason);
+    if (!result.ok) return;
+    assert.deepEqual(result.stack.install[0].bin, [{ from: "bin/ruff", as: "ruff" }]);
+    assert.equal(result.stack.install[0].spec, "ruff==0.14.1");
+  });
+
+  it("keeps a scoped npm package, whose spec is full of characters a name may not have", () => {
+    const result = parseWith(npm);
+    assert.equal(result.ok, true, result.ok ? "" : (result as { reason: string }).reason);
+    if (!result.ok) return;
+    assert.equal(result.stack.install[0].spec, "@musistudio/claude-code-router@1.0.66");
+    assert.deepEqual(result.stack.install[0].bin, [{ from: "bin/ccr", as: "ccr" }]);
+  });
+
+  it("refuses a spec that would be read as a flag rather than a package", () => {
+    assert.match(refusal(parseWith({ ...uv, spec: "--upgrade" })), /reads? as a flag/);
+  });
+
+  it("refuses a spec carrying a second argument inside it", () => {
+    assert.match(refusal(parseWith({ ...uv, spec: "ruff --force" })), /one package per step/);
+    assert.match(refusal(parseWith({ ...uv, spec: "" })), /missing or is not a non-empty string/);
+  });
+
+  it("refuses archive's keys on a package step, and its own on an archive one", () => {
+    assert.match(refusal(parseWith({ ...uv, url: "https://example.com/x.tgz" })), /unknown key "url"/);
+    assert.match(
+      refusal(parse({ install: [{ ...TERRAFORM.install[0], spec: "ruff" }] })),
+      /unknown key "spec"/,
+    );
+  });
+
+  it("refuses a bin entry that is not a plain command name", () => {
+    // `archive` spells its `bin` as objects and this spells it as strings, so
+    // an author copying one into the other meets a refusal rather than a step
+    // that installs and links nothing.
+    assert.match(refusal(parseWith({ ...uv, bin: [{ from: "ruff", as: "ruff" }] })), /plain command name/);
+    assert.match(refusal(parseWith({ ...uv, bin: ["../ruff"] })), /plain command name/);
+    assert.match(refusal(parseWith({ ...uv, bin: [] })), /is missing, is not an array, or is empty/);
+  });
+
+  it("lets a deny entry name a command a package step links", () => {
+    const result = parseWith(npm, { deny: ["ccr start"] });
+    assert.equal(result.ok, true, result.ok ? "" : (result as { reason: string }).reason);
+    if (!result.ok) return;
+    assert.deepEqual(result.stack.deny, ["ccr start"]);
+  });
+
+  it("catches two verbs claiming one command name, across the shape boundary", () => {
+    assert.match(
+      refusal(
+        applier.parseStack(
+          JSON.stringify({
+            schema: 1,
+            name: "tools",
+            install: [uv, { kind: "npm-global", spec: "ruff-js@1.0.0", bin: ["ruff"] }],
+          }),
+          "tools",
+        ),
+      ),
+      /both link a binary called "ruff"/,
+    );
   });
 });
 

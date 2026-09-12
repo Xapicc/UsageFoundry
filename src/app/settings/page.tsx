@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import Link from "next/link";
 import type {
   AgentDTO,
   AmbientAgentDTO,
@@ -1067,7 +1068,7 @@ const TOOL_GROUP: Record<ToolRowDTO["source"], { label: string; footnote: string
   stack: {
     label: "Stacks",
     footnote:
-      "From the stacks directory beside your docker-compose.yml — one folder per stack, each holding a stack.json naming what to download and what to link. One row per binary, so a stack that links three is three things that can go missing separately. Add or remove a folder and restart; nothing here installs anything",
+      "From the stacks directory beside your docker-compose.yml — one folder per stack, each holding a stack.json naming an archive to download or a package for uv or npm to install, and what to link onto PATH. One row per binary, so a stack that links three is three things that can go missing separately. Add or remove a folder and restart; nothing here installs anything. Open a stack for what its install said",
   },
 };
 
@@ -1075,7 +1076,18 @@ function ToolRow({ tool }: { tool: ToolRowDTO }) {
   const pinned = tool.installedPin && tool.installedPin !== tool.pin;
   return (
     <ListRow
-      label={<span className="font-mono text-xs">{tool.spec}</span>}
+      label={
+        // Only a stack has anywhere to go: the two `.env` lists have no receipt
+        // behind them and never will, so a link on one of those rows would lead
+        // to a page that could only repeat the row.
+        tool.source === "stack" ? (
+          <Link className="font-mono text-xs" href={`/settings/stacks/${encodeURIComponent(tool.spec)}`}>
+            {tool.spec}
+          </Link>
+        ) : (
+          <span className="font-mono text-xs">{tool.spec}</span>
+        )
+      }
       description={
         <>
           <span className="block">{tool.detail}</span>

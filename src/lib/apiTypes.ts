@@ -4151,3 +4151,64 @@ export interface ToolInventoryDTO {
    */
   problems: string[];
 }
+
+/** One step of one stack's install, as the applier recorded it. */
+export interface StackStepDTO {
+  kind: string;
+  status: "ok" | "failed";
+  detail: string;
+}
+
+/**
+ * One stack's whole receipt — what `GET /api/stacks/[name]` answers.
+ *
+ * Its own route and its own DTO rather than a field on `ToolInventoryDTO`,
+ * because the list deliberately does not carry the 4 KB of stderr and a row
+ * that could hold it would have stopped being a row (`01e-` §2.1). The page is
+ * never filled from the list row for the same reason.
+ *
+ * **The three ways of having nothing are three answers and not one.** A name
+ * nothing has ever written a receipt for, a receipt this build cannot read, and
+ * a stack whose install failed are different facts with different fixes, and
+ * collapsing them into an absent `receipt` would leave the page unable to say
+ * which one the operator is looking at.
+ */
+export interface StackDetailDTO {
+  /** Echoed from the request, so a page has something to head itself with. */
+  name: string;
+  receipt: StackReceiptDTO | null;
+  /**
+   * Why there is no receipt to show, or `null` when there is one.
+   *
+   * Two shapes: `missing` is a name no receipt claims, which on this surface
+   * means a stack that was never declared or one whose directory has gone;
+   * `unreadable` is a file that is there and is not a receipt, which is what a
+   * container killed part-way through a boot leaves behind.
+   */
+  absence: { kind: "missing" | "unreadable"; reason: string } | null;
+}
+
+/** Mirror of `StackReceipt` in `stacks.ts`. Paths, so it never reaches `/api/status`. */
+export interface StackReceiptDTO {
+  name: string;
+  digest: string;
+  status: "ok" | "failed" | "conflicted";
+  appliedAt: string | null;
+  summary: string;
+  bin: { name: string; path: string }[];
+  /** Commands a work cycle may not run. Empty means the stack denies nothing. */
+  deny: string[];
+  env: Record<string, string>;
+  state: string[];
+  steps: StackStepDTO[];
+  /**
+   * The last 4 KB of a failing step's stderr, and how many bytes there were.
+   *
+   * The two are separate because a truncated message that does not say it is
+   * truncated is `status.ts:41-46`'s *"plausible number that is quietly a third
+   * of the real one"*. On an `ok` receipt this is either `null` or a note about
+   * something the applier declined, such as an environment key another stack
+   * had already exported.
+   */
+  error: { text: string; bytes: number } | null;
+}

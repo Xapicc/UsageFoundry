@@ -765,12 +765,19 @@ function stackRows(
  */
 function unappliedStackRow(receipt: StackReceipt, windowDays: number | null): ToolRow {
   const install: InstallRecord = receipt.status === "conflicted" ? "conflicted" : "failed";
-  const said = receipt.error?.text ?? "";
-  const truncated = receipt.error && receipt.error.bytes > said.length;
+  // The first line and never the whole of it. The applier writes its own
+  // sentence ahead of the tool's stderr, so line one is the summary and the
+  // rest is a `curl` or `npm` transcript — and a row that carries 4 KB of that
+  // has stopped being a row (`01e-` §2.1), which is the whole reason
+  // `/settings/stacks/<name>` is a route. Before that route existed this was
+  // the only place the text could go; it is now the wrong one, and the row
+  // links to the right one.
+  const said = (receipt.error?.text ?? "").split("\n", 1)[0] ?? "";
+  const more = (receipt.error?.text ?? "").includes("\n");
   const applierSaid =
     receipt.status === "conflicted"
       ? `Two stacks claim one command, so neither was linked. ${said}`
-      : `The applier did not install this stack. ${said}${truncated ? ` (the last ${said.length} bytes of ${receipt.error?.bytes})` : ""}`;
+      : `The applier did not install this stack. ${said}${more ? " Open the stack for what the step said." : ""}`;
   const state = composeState({
     install,
     resolvedAt: null,

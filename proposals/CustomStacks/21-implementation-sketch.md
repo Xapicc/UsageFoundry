@@ -323,6 +323,48 @@ and the repair is one line.
 
 ## Phase 3 - the rest of the format
 
+> **BUILT on 2026-09-12.** `uv-tool` and `npm-global`, `GET /api/stacks/[name]`
+> and `/settings/stacks/<name>` shipped, on `main`. `env`, `state`,
+> `expandTokens`, `refuseEnv` and the conflict rule were taken early by phase 2
+> and are unchanged; tests 7 and 8 were written there. What this phase measured
+> is in `docs/verification.md`'s *Container and environment*, and what it did
+> not is in the *Not yet verified* half of the same file.
+>
+> **Three deviations, each argued where it is made.**
+>
+> 1. **`UV_TOOL_DIR` is redirected as well as `UV_TOOL_BIN_DIR`**, which §2.1
+>    names alone. The applier inherits `UV_TOOL_DIR=/home/node/pytools/tools`
+>    from `Dockerfile:282`, so redirecting one of the two puts the tool's
+>    environment in the volume the *agents* own and write, under a launcher on
+>    the **server's** `PATH` — the arrangement `01a-` §2.2 refuses to add a
+>    second of — and leaves it behind on removal, where no receipt records it
+>    and `reconcile` may not touch it.
+>
+> 2. **The link step is keyed on the verb.** `01b-` §4 step 6 says
+>    `install -m 0755` and that stands for `archive`; the two package verbs
+>    symlink. Measured: `npm install -g --prefix` writes its bin as a symlink
+>    into `lib/node_modules/`, `install` follows a symlink, and the copy throws
+>    on its first relative `require`.
+>
+> 3. **`BUILT_VERBS` and `DECLARED_VERBS` collapsed into one `VERBS` set**, and
+>    the refusal naming a verb *"this build does not apply yet"* went with them.
+>    With all three built, the pair's contents were identical and the refusal it
+>    fed could never fire again — a distinction that rots in silence, since the
+>    next verb would be added to whichever set its author read first.
+>
+> One thing this phase did **not** do is widen the applier's budgets. Both
+> package verbs run somebody else's install hooks and a slow one meets
+> `STEP_TIMEOUT_MS`; the receipt says so in the operator's own words, and
+> `01e-` §3's reasoning for sizing the ceiling against the healthcheck's
+> `--start-period` is unchanged by a third verb. Measured at boot: a `uv-tool`
+> stack cost 763 ms of a 180-second start period.
+>
+> **And one repair this phase's own page found.** The Tools row for a failed
+> stack was drawing the whole of the receipt's stderr as its description, which
+> is exactly the row `01e-` §2.1 says cannot exist — correct while phase 2 had
+> nowhere else to put the text, and wrong the moment this route shipped. The
+> row now carries the applier's first line and links here.
+
 **Two to three days.**
 
 ### What ships

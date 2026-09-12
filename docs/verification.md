@@ -1138,6 +1138,89 @@ is `docs/agent/testing.md`; interface defects and their classes are
   It was on the *Not yet verified* list from the day phase 1 shipped, because
   the one declared tool on this install had 996 calls behind it.
 
+- **`uv-tool` and `npm-global` install and run, in the shipped image,
+  2026-09-12.** The phase 3 applier was run inside the running container against
+  a scratch declarations directory and a scratch root, so the live install's own
+  toolbox was untouched: `uv-tool ruff==0.14.1` and `npm-global cowsay@1.6.0`,
+  two stacks, `2 ok, 0 failed` in 2.1 seconds wall clock for both — against a
+  per-step ceiling of 45s and a whole-run budget of 120s, so the budget that was
+  sized for `archive` has room for these. Both binaries then ran under
+  `setpriv --reuid=1000 --regid=1000 --clear-groups` with only the toolbox's
+  `bin/` on `PATH`: `ruff --version` printed `ruff 0.14.1` and `cowsay` drew its
+  cow. Everything under `pkg/` was `root:root`, which is the uid split holding
+  for a verb that executes the package's own install hooks as the agent.
+
+- **`UV_TOOL_DIR` had to be redirected as well as `UV_TOOL_BIN_DIR`,
+  2026-09-12.** `01b-` §2.1 names only the bin directory. Measured in the same
+  run: with both redirected, `bin/ruff` resolves to
+  `pkg/py-lint/tools/ruff/bin/ruff` and `/home/node/pytools/tools` does not
+  exist. `Dockerfile:282` sets `UV_TOOL_DIR=/home/node/pytools/tools` and the
+  applier inherits it, so redirecting one of the two would have put the tool's
+  environment in the volume the *agents* own and write, under a launcher on the
+  **server's** `PATH` — the arrangement `01a-` §2.2 refuses — and left it behind
+  on removal, where no receipt records it and `reconcile` may not touch it.
+
+- **An npm bin is a symlink into its package tree, and copying it breaks the
+  command, 2026-09-12.** `npm install -g --prefix` wrote
+  `pkg/node-cli/bin/cowsay` as a link to
+  `pkg/node-cli/lib/node_modules/cowsay/cli.js`. `install -m 0755` follows a
+  symlink, and the copy made that way threw
+  `node:internal/modules/cjs/loader` on its first relative `require` — the
+  entry file alone in a directory with none of its siblings. So the link step is
+  keyed on the verb: `archive` copies a self-contained executable and the two
+  package verbs symlink. A `uv` console script survives being copied — its
+  shebang is absolute — and is linked the same way anyway, because two link
+  rules with an exception is one rule nobody would find.
+
+- **Both new failure paths write a receipt an operator can act on, 2026-09-12.**
+  A `uv-tool` step naming a command the package does not ship wrote
+  `failed` with *"ruff==0.14.1 installed but left no command called \"rufff\""*
+  — the branch that exists because both tools exit 0 having installed a package
+  whose console script is named something else. An `npm-global` step naming an
+  unpublished package wrote `failed` carrying npm's own `E404` text verbatim.
+  Neither linked anything, and the stack beside each was unaffected.
+
+- **`uv-tool` at boot, through the entrypoint, 2026-09-12.** A `py-lint` stack
+  declaring `uv-tool ruff==0.14.1` was put in `./stacks` and
+  `docker compose up --build` run against this install. The boot log read
+  `stacks: 2 declared`, `stack py-lint: installing (uv-tool, 1 step) — no
+  receipt`, `stack py-lint: installed, 1 binary, 1 denied`, `stack shell-lint:
+  receipt matches, skipped`, `stacks: 2 ok, 0 failed`. **763 ms** between the
+  first line and the last, with the server ready 1.2s after that and the
+  container `(healthy)` — against `Dockerfile`'s 180-second `--start-period`,
+  which is what the applier's budgets were sized for. The agent uid then
+  resolved `ruff` to `/var/lib/uf-stacks/bin/ruff` and `ruff --version` printed
+  `ruff 0.14.1`.
+
+- **A `uv-tool` stack removed is removed whole, 2026-09-12.** The declaration
+  directory was deleted and the container restarted: `stack py-lint: no longer
+  declared, removed`, and `bin/` and `receipts/` were left holding `shell-lint`'s
+  three files and nothing else. `reconcile` has now been observed removing a
+  `uv` virtual environment, not only an unpacked archive — the second is a
+  directory tree the applier wrote, and the first is one `uv` wrote inside it.
+
+- **`GET /api/stacks/[name]` and the detail page, against real receipts,
+  2026-09-12.** Unauthenticated the route is 401 and the page redirects to
+  `/login`, which is the gate holding with no exemption. Authenticated, the `ok`
+  receipt renders as four cards — what happened, the install steps, what it put
+  on `PATH`, what a work cycle may not run — with the toolbar reading `Stack`
+  and Settings still lit in the sidebar. A **failed** stack was then declared
+  deliberately (an unpublished npm package) and its page drew npm's nine lines
+  of `E404` verbatim in the *What the step said* card, with *Nothing is linked*
+  under it. No console error on either. A name no receipt claims answers 200
+  with `absence.kind = "missing"`, and `/api/stacks/%2e%2e%2f%2e%2e%2fetc%2fpasswd`
+  answers the same way — the name is matched against what `readReceipts()`
+  returned and is never joined onto a path.
+
+- **The failed stack's row on Settings was carrying the whole 4 KB, 2026-09-12.**
+  Found by looking at the page above: the Tools row for `bad-pkg` drew all nine
+  lines of npm's error as its description, which is `01e-` §2.1's *"a row that
+  can hold 4 KB of stderr has stopped being a row"* — the defect the detail
+  route exists to fix. It was correct while phase 2 had nowhere else to put the
+  text. `unappliedStackRow` now takes the first line, which is the applier's own
+  sentence ahead of the tool's stderr, and says *"Open the stack for what the
+  step said."* Re-measured: two lines and a link.
+
 - **The server holds both tool-list variables, and uv's launcher directory is
   first on `PATH`, 2026-09-12.** Read off PID 1 of the running container:
   `UF_GH_EXTENSIONS=Xapicc/gh-layer10`, `UF_PY_TOOLS=` (blank), and

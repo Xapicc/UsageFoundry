@@ -447,6 +447,13 @@ function routes({ runId, workflowId, instanceId, taskId }) {
     `/runs/${runId}/touched`,
     `/runs/${runId}/conflicts`,
     "/settings",
+    // Not seeded, and it cannot be: a receipt is written by the applier into a
+    // named volume the host has no copy of, so what this asserts is the page's
+    // "no receipt names this stack" state. That is the state an operator most
+    // often reaches it in — from a link on a row whose stack has since been
+    // removed — and the half with a receipt is verified by hand against the
+    // container, in `docs/verification.md`.
+    "/settings/stacks/none-declared",
     "/tasks",
     "/tasks/new",
     `/tasks/${taskId}`,

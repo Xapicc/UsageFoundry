@@ -106,18 +106,46 @@ export const SCHEMA_VERSION = 1;
 
 const TOP_LEVEL_KEYS = new Set(["schema", "name", "summary", "install", "env", "state", "deny"]);
 const ARCHIVE_KEYS = new Set(["kind", "url", "checksums", "sha256", "unpack", "bin"]);
+const PACKAGE_KEYS = new Set(["kind", "spec", "bin"]);
 const BIN_KEYS = new Set(["from", "as"]);
 const UNPACK_KINDS = new Set(["zip", "tar.gz", "none"]);
 
 /**
- * The verbs this build applies.
+ * The closed verb list, which is the whole of it: `01b-` §2.1's three.
  *
- * `uv-tool` and `npm-global` are in the format and arrive with phase 3. They
- * are listed here so a stack using one is refused by name at parse rather than
- * meeting "unknown kind", which would read as a typo in the operator's file.
+ * One set rather than the two this file carried while `archive` was the only
+ * one built. A pair whose contents had become identical is a distinction that
+ * rots in silence — the refusal it fed could never fire again, and the next
+ * verb would be added to whichever set the author happened to read first.
+ *
+ * `archive` executes nothing at install time; `uv-tool` and `npm-global` run
+ * whatever the package's install hooks run, as the agent uid. That is the same
+ * trade `docker-entrypoint.sh:233` already makes for `UF_PY_TOOLS` and it is
+ * stated rather than glossed: a stack using either is as trusted as the package
+ * it names, where one using `archive` is as trusted as the URL it names.
  */
-export const BUILT_VERBS = new Set(["archive"]);
-export const DECLARED_VERBS = new Set(["archive", "uv-tool", "npm-global"]);
+export const VERBS = new Set(["archive", "uv-tool", "npm-global"]);
+
+/**
+ * Where each package manager is pointed, and why both variables and not one.
+ *
+ * `01b-` §2.1 names `UV_TOOL_BIN_DIR={pkg}/bin` alone. That is half an install:
+ * `Dockerfile:282` also sets `UV_TOOL_DIR=/home/node/pytools/tools`, which this
+ * process inherits, so redirecting only the bin directory leaves the tool's
+ * *environment* in the volume the agents own and write. A binary on the
+ * server's `PATH` whose interpreter lives somewhere a sibling run can rewrite
+ * is exactly the arrangement the uid split above exists to prevent, and it
+ * would also mean a stack removal left the venv behind — `reconcile` may remove
+ * only paths its own receipts record, and that one would be in nobody's.
+ *
+ * `HOME` because the step runs as the agent uid while this process is root's,
+ * and both tools write under `$HOME`; it is `docker-entrypoint.sh:218-219`'s
+ * own value for the same reason.
+ */
+const PACKAGE_ENV = {
+  "uv-tool": (pkg) => ({ HOME: "/home/node", UV_TOOL_DIR: `${pkg}/tools`, UV_TOOL_BIN_DIR: `${pkg}/bin` }),
+  "npm-global": () => ({ HOME: "/home/node" }),
+};
 
 /**
  * Environment keys a stack may not set, and the silent failure each prevents.
@@ -282,14 +310,54 @@ function parseStep(step, index) {
     return refuse(`${where} is not an object`);
   }
   if (typeof step.kind !== "string") return refuse(`${where}.kind is missing`);
-  if (!DECLARED_VERBS.has(step.kind)) return refuse(`${where}.kind is "${step.kind}", which is not a verb`);
-  if (!BUILT_VERBS.has(step.kind)) {
-    // Named rather than met as "unknown kind". The verb is in the format and
-    // arrives in a later build, and an operator whose stack is refused needs to
-    // know which of the two it is.
-    return refuse(`${where}.kind is "${step.kind}", which this build does not apply yet`);
-  }
+  if (!VERBS.has(step.kind)) return refuse(`${where}.kind is "${step.kind}", which is not a verb`);
+  if (step.kind === "archive") return parseArchiveStep(step, where);
+  return parsePackageStep(step, where);
+}
 
+/**
+ * A `uv-tool` or `npm-global` step, normalised into the shape `archive` leaves.
+ *
+ * `bin` is written as command names — `"bin": ["ruff"]` — because that is all
+ * an author knows: the package manager decides where it puts them, and both
+ * put them in `{pkg}/bin`. It is turned into `archive`'s `{ from, as }` here so
+ * that everything downstream has one shape to read. The alternative, a second
+ * shape carried to the end, would mean the duplicate-binary check, the `deny`
+ * ownership rule, the linker and the receipt each learning which verb they were
+ * looking at, and four places that can disagree about what a stack links.
+ */
+function parsePackageStep(step, where) {
+  for (const key of Object.keys(step)) {
+    if (!PACKAGE_KEYS.has(key)) return refuse(`${where} has an unknown key "${key}"`);
+  }
+  if (typeof step.spec !== "string" || step.spec.trim().length === 0) {
+    return refuse(`${where}.spec is missing or is not a non-empty string`);
+  }
+  // The two refusals that are argv and not taste. There is no shell here, so a
+  // metacharacter is inert — but a spec is passed as one positional argument,
+  // and a leading `-` is read as a flag by both tools while whitespace is read
+  // as a second argument. Either one is a stack whose declaration says one
+  // thing and whose install does another.
+  if (step.spec.startsWith("-")) {
+    return refuse(`${where}.spec starts with "-", which both tools read as a flag rather than a package`);
+  }
+  if (/\s/.test(step.spec)) {
+    return refuse(`${where}.spec contains whitespace: one package per step, since it is one argument`);
+  }
+  if (!Array.isArray(step.bin) || step.bin.length === 0) {
+    return refuse(`${where}.bin is missing, is not an array, or is empty`);
+  }
+  const bin = [];
+  for (const entry of step.bin) {
+    if (typeof entry !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(entry)) {
+      return refuse(`${where}.bin has an entry that is not a plain command name`);
+    }
+    bin.push({ from: `bin/${entry}`, as: entry });
+  }
+  return { ok: true, step: { kind: step.kind, spec: step.spec, bin } };
+}
+
+function parseArchiveStep(step, where) {
   for (const key of Object.keys(step)) {
     if (!ARCHIVE_KEYS.has(key)) return refuse(`${where} has an unknown key "${key}"`);
   }
@@ -540,10 +608,17 @@ function pathsOwnedBy(receipt) {
 /* Running things                                                      */
 /* ------------------------------------------------------------------ */
 
-/** An argv array and never a command string; `spawnSync` without `shell`. */
-function run(argv, { cwd, timeoutMs } = {}) {
+/**
+ * An argv array and never a command string; `spawnSync` without `shell`.
+ *
+ * `env` is merged over this process's own rather than replacing it, because a
+ * package manager dropped into an empty environment loses `PATH` and cannot
+ * find the interpreter it is about to write a shebang for.
+ */
+function run(argv, { cwd, timeoutMs, env } = {}) {
   const result = spawnSync(argv[0], argv.slice(1), {
     cwd,
+    env: env ? { ...process.env, ...env } : undefined,
     timeout: Math.max(1, timeoutMs ?? STEP_TIMEOUT_MS),
     encoding: "buffer",
     stdio: ["ignore", "pipe", "pipe"],
@@ -776,6 +851,106 @@ function applyArchiveStep(step, context) {
   return { ok: true, detail: `${step.bin.length} binary${step.bin.length === 1 ? "" : " files"} from ${artifact}`, stderr: "", bytes: 0 };
 }
 
+/**
+ * One `uv-tool` or `npm-global` step: a package manager installs into `{pkg}`.
+ *
+ * The one thing this does that `applyArchiveStep` does not is **execute code
+ * the package ships**, at install time, as the agent uid. `01b-` §2.1 says so
+ * plainly and it is why this verb did not ship with the carrier: the first
+ * thing the mechanism ever did was not going to be running a stranger's
+ * install hook against an install nobody had reviewed yet.
+ *
+ * There is no digest and there cannot be one. `uv` and `npm` resolve a spec to
+ * a release at install time and both verify what they fetch against their own
+ * registries; a digest here would pin the spec's *text* and say nothing about
+ * the bytes. What pins a version is the spec, which is why the worked examples
+ * carry `==` and `@`.
+ *
+ * The binaries are checked to exist before the step is called `ok`, because
+ * both tools exit 0 having installed a package whose console script is named
+ * something other than the package — which is the same over-report the
+ * `unclaimed` list carries, met here where it can still be a `failed` receipt
+ * naming the name that is missing.
+ */
+function applyPackageStep(step, context) {
+  const { name, arch, root, deadline } = context;
+  const pkg = path.posix.join(root, "pkg", name);
+  const spec = expandTokens(step.spec, { arch, name, root });
+
+  const budget = () => deadline - Date.now();
+  if (budget() <= 0) return { ok: false, detail: "the applier's time budget was spent", stderr: "", bytes: 0 };
+
+  fs.mkdirSync(path.posix.join(pkg, "bin"), { recursive: true });
+  const owner = agentOwner();
+  if (owner) {
+    const chown = run(["chown", "-R", owner, pkg]);
+    if (!chown.ok) return { ok: false, detail: `could not hand ${pkg} to ${owner}`, stderr: chown.stderr, bytes: chown.bytes };
+  }
+
+  const argv =
+    step.kind === "uv-tool"
+      ? ["uv", "tool", "install", spec]
+      : ["npm", "install", "-g", "--prefix", pkg, spec];
+  const installed = runAsAgent(argv, {
+    timeoutMs: Math.min(STEP_TIMEOUT_MS, budget()),
+    env: PACKAGE_ENV[step.kind](pkg),
+  });
+  if (!installed.ok) {
+    return { ok: false, detail: `${step.kind} could not install ${spec}`, stderr: installed.stderr, bytes: installed.bytes };
+  }
+
+  for (const entry of step.bin) {
+    if (!fs.existsSync(path.posix.join(pkg, entry.from))) {
+      return {
+        ok: false,
+        detail: `${spec} installed but left no command called "${entry.as}"`,
+        stderr: "",
+        bytes: 0,
+      };
+    }
+  }
+
+  return { ok: true, detail: `${step.bin.length} command${step.bin.length === 1 ? "" : "s"} from ${spec}`, stderr: "", bytes: 0 };
+}
+
+/**
+ * An extracted binary, copied onto `PATH`. `Dockerfile:175`'s own idiom.
+ *
+ * A copy and not a link because what an `archive` unpacks is a self-contained
+ * executable, and a copy is one fewer indirection for anything reading the
+ * directory.
+ */
+function copyOnto(from, target) {
+  return run(["install", "-m", "0755", from, target]);
+}
+
+/**
+ * A package's entry point, linked onto `PATH` rather than copied there.
+ *
+ * `npm install -g --prefix` writes `{pkg}/bin/<cmd>` as a symlink into
+ * `{pkg}/lib/node_modules/<package>/`, and `install` *follows* a symlink: the
+ * copy would be the package's entry file sitting alone in a directory with none
+ * of its siblings, so its first relative `require` fails. A `uv` console script
+ * survives being copied — its shebang is absolute — but it is linked the same
+ * way, because two link rules keyed on the verb is one rule with an exception
+ * nobody would find.
+ *
+ * As safe as the copy beside it: the link is root's, in a root-owned directory,
+ * and it points into `{pkg}`, which `claimAndLink` has already taken for root
+ * and narrowed. Removed first because `symlink` refuses an existing path, which
+ * is the second boot of an unchanged stack.
+ */
+function symlinkOnto(from, target) {
+  try {
+    fs.rmSync(target, { force: true });
+    fs.symlinkSync(from, target);
+    return { ok: true, stderr: "", bytes: 0 };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, stderr: message, bytes: message.length };
+  }
+}
+
 /** Steps 5 and 6: root takes the tree, then links it onto `PATH`. */
 function claimAndLink(stack, context) {
   const { name, arch, root } = context;
@@ -794,9 +969,9 @@ function claimAndLink(stack, context) {
     for (const entry of step.bin) {
       const from = path.posix.join(pkg, expandTokens(entry.from, { arch, name, root }));
       const target = path.posix.join(binDir, entry.as);
-      const installed = run(["install", "-m", "0755", from, target]);
-      if (!installed.ok) {
-        return { ok: false, detail: `could not link ${entry.as}`, stderr: installed.stderr, bytes: installed.bytes };
+      const result = step.kind === "archive" ? copyOnto(from, target) : symlinkOnto(from, target);
+      if (!result.ok) {
+        return { ok: false, detail: `could not link ${entry.as}`, stderr: result.stderr, bytes: result.bytes };
       }
       linked.push({ name: entry.as, path: target });
     }
@@ -922,7 +1097,7 @@ function main(argv) {
     const steps = [];
     let failure = null;
     for (const step of stack.install) {
-      const result = applyArchiveStep(step, context);
+      const result = step.kind === "archive" ? applyArchiveStep(step, context) : applyPackageStep(step, context);
       steps.push({ kind: step.kind, status: result.ok ? "ok" : "failed", detail: result.detail });
       if (!result.ok) {
         failure = { text: result.stderr ? `${result.detail}\n${result.stderr}` : result.detail, bytes: result.bytes };
