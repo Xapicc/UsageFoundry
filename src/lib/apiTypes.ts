@@ -1223,6 +1223,29 @@ export interface BootReconcileDTO {
  */
 export type RunProviderDTO = "claude" | "codex";
 
+/**
+ * Why a queued run is not running — the one answer, derived in `walkQueue`.
+ *
+ * Three different waits used to render as one sentence about the folder, and
+ * two of them were false: a run held by the install-wide pause, and a run whose
+ * folder is free and which is only waiting for a slot under `maxConcurrentRuns`,
+ * both read "next up — starts when the folder frees". The discriminant is here
+ * rather than reconstructed on the page because the page cannot see the walk:
+ * `queuePosition` counts folder-overlapping runs only, so it is 0 for a cap
+ * block and saying so is the defect rather than the readout.
+ */
+export type QueueBlockerDTO =
+  /** The install-wide hold. Neither the folder nor the cap is why it waits. */
+  | { kind: "paused" }
+  /**
+   * A run ahead of it holds an overlapping folder, or one is running in it.
+   * `ahead` counts queued runs only, so 0 means "the folder is busy, nothing is
+   * queued in front of me" — the same number `queuePosition` reports.
+   */
+  | { kind: "folder"; ahead: number }
+  /** Every slot is taken. `running` is what is live, `cap` is the ceiling. */
+  | { kind: "cap"; cap: number; running: number };
+
 /** Every provider the run form offers, in the order it offers them. */
 export const RUN_PROVIDERS: readonly RunProviderDTO[] = ["claude", "codex"];
 
@@ -1366,8 +1389,17 @@ export interface RunDTO {
    */
   spent_usd_est?: number;
   spent_tokens_est?: number;
-  /** Queued runs only: how many are ahead of it. 0 means next up. */
+  /** Queued runs only: how many are ahead of it **for its folder**. 0 means
+   *  nothing queued is in front of it there — not that it is about to start. */
   queuePosition?: number;
+  /**
+   * Queued runs only: what it is actually waiting for. Absent on any other
+   * status, and absent from a route that did not walk the queue.
+   *
+   * Read this before `queuePosition`, which is only meaningful under
+   * `kind: "folder"` — the two come out of one walk and cannot disagree there.
+   */
+  queueBlocker?: QueueBlockerDTO;
   /**
    * Where this run sits in the promotion order, ±100, 0 by default. Higher goes
    * first and `created_at` breaks every tie, so the queue is oldest-first among

@@ -141,6 +141,30 @@ function folderLabel(run: RunListItemDTO): string {
 }
 
 /**
+ * What a queued run is waiting on, in one clause.
+ *
+ * Off `queueBlocker` rather than off `queuePosition`, which counts runs
+ * overlapping this one's folder and is therefore 0 for a run the concurrency
+ * cap is holding — this line said "next up — starts when the folder frees" to
+ * every one of those, with the folder free and nothing ahead of it.
+ *
+ * The fallback is the folder sentence, which is what this said for every run
+ * before the blocker existed: a payload without one is a route that did not
+ * walk the queue, not an install without a cap.
+ */
+function queuedDetail(run: RunListItemDTO): string {
+  const blocker = run.queueBlocker;
+  if (blocker?.kind === "paused") return "new work is held";
+  if (blocker?.kind === "cap") {
+    return `waiting for a slot — ${blocker.running} of ${blocker.cap} running`;
+  }
+  const ahead = blocker?.kind === "folder" ? blocker.ahead : (run.queuePosition ?? 0);
+  return ahead === 0
+    ? "next up — starts when the folder frees"
+    : `${ahead} run${ahead === 1 ? "" : "s"} ahead`;
+}
+
+/**
  * What a run that is not working is waiting *on*, or null.
  *
  * Deliberately silent for `running`: that state's detail is the work cycle it
@@ -161,13 +185,7 @@ function waitingDetail(
     return { text: fmtWaitingFor(run.dependsOn) ?? "waiting for another run" };
   }
   if (run.status === "queued") {
-    const ahead = run.queuePosition ?? 0;
-    return {
-      text:
-        ahead === 0
-          ? "next up — starts when the folder frees"
-          : `${ahead} run${ahead === 1 ? "" : "s"} ahead`,
-    };
+    return { text: queuedDetail(run) };
   }
   if (run.status === "paused") {
     return run.resume_at

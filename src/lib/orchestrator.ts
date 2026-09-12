@@ -150,6 +150,7 @@ import { fmtDuration, fmtTokens, shortId } from "./format";
 import {
   RUN_PROVIDER_LABEL,
   providerReportsSpend,
+  type QueueBlockerDTO,
   type RunDependencyDTO,
   type RunProviderDTO,
   type RunToolActivityDTO,
@@ -412,8 +413,14 @@ export const RUN_ORIGINS = [
 
 export type RunOrigin = (typeof RUN_ORIGINS)[number];
 
-/** Where the agent runs. Older rows predate `work_dir` and never isolated. */
-export function workDirOf(run: RunRow): string {
+/**
+ * Where the agent runs. Older rows predate `work_dir` and never isolated.
+ *
+ * Typed on the two columns it reads rather than on `RunRow`, so the queue walk
+ * — which is pure and has to be constructible in a test without a database —
+ * can ask this rather than re-spell the `??`.
+ */
+export function workDirOf(run: { folder: string; work_dir?: string | null }): string {
   return run.work_dir ?? run.folder;
 }
 
@@ -4018,8 +4025,39 @@ export function queueCompare(a: QueueRank, b: QueueRank): number {
   return (b.priority ?? 0) - (a.priority ?? 0) || a.created_at - b.created_at;
 }
 
-export function selectPromotable(
-  runs: readonly RunRow[],
+/** What the queue walk needs of a row: its rank, its state and its folder. */
+export interface QueueMember extends QueueRank {
+  id: string;
+  status: RunStatus;
+  folder: string;
+  work_dir?: string | null;
+}
+
+/** What one walk of the queue decided: who starts, and why the rest do not. */
+export interface QueueWalk {
+  /** Ids to promote, in the order they were considered. */
+  promote: string[];
+  /** Every queued run that is not in `promote`, by id. */
+  blocked: Map<string, QueueBlockerDTO>;
+}
+
+/**
+ * The one walk: who starts now, and what each run still queued is waiting on.
+ *
+ * `selectPromotable` used to be this function with the reasons thrown away, and
+ * the UI reconstructed them from `queuePosition` — which counts folder overlaps
+ * and nothing else, so every one of the three waits below rendered as the
+ * folder one. A run whose folder was free and which was only short of a slot
+ * read "next up — starts when the folder frees", with no run ahead of it and
+ * nothing about to free. Reasons derived anywhere but here are a second answer
+ * to "why is this not running", and the `created_at`-versus-`queueCompare` trap
+ * `queuePosition` records is what that costs.
+ *
+ * Pure, and this is the half whose failure is silent: a blocker that named the
+ * wrong wait looks exactly like one that named the right one.
+ */
+export function walkQueue(
+  runs: readonly QueueMember[],
   cap: number | null,
   /**
    * The install-wide hold. Nothing starts while it is set, and nothing already
@@ -4029,12 +4067,29 @@ export function selectPromotable(
    * answer to the same question.
    */
   newWorkPaused = false,
-): string[] {
-  if (newWorkPaused) return [];
+): QueueWalk {
+  const blocked = new Map<string, QueueBlockerDTO>();
+
+  if (newWorkPaused) {
+    // Every queued run, not just the ones the loop below would have reached:
+    // the hold is install-wide, so neither the folder nor the cap is why any of
+    // them is sitting there and saying either would be the defect this exists
+    // to fix.
+    for (const run of runs) {
+      if (run.status === "queued") blocked.set(run.id, { kind: "paused" });
+    }
+    return { promote: [], blocked };
+  }
+
+  // One key per run, because the ahead-count below reads every other queued
+  // run's folder and `conflictKey` is a walk of the mount topology.
+  const keys = new Map<string, ConflictKey>(
+    runs.map((r) => [r.id, conflictKey(workDirOf(r))]),
+  );
 
   const reserved: ConflictKey[] = runs
     .filter((r) => r.status === "running")
-    .map((r) => conflictKey(workDirOf(r)));
+    .map((r) => keys.get(r.id)!);
 
   const promote: string[] = [];
   let live = reserved.length;
@@ -4046,16 +4101,72 @@ export function selectPromotable(
   // a priority is asking for.
   for (const run of queueOrder(runs)) {
     if (run.status !== "queued") continue;
-    if (cap !== null && live >= cap) break;
 
-    const key = conflictKey(workDirOf(run));
+    const key = keys.get(run.id)!;
     reserved.push(key);
-    if (reserved.some((r) => r !== key && overlaps(key, r))) continue;
+    const folderHeld = reserved.some((r) => r !== key && overlaps(key, r));
+    // Once `live` has reached the cap nothing below can promote, so `live` never
+    // moves again and this stays true for the rest of the walk. That is what the
+    // `break` this replaced relied on; the loop runs on only to reach the runs
+    // whose reason still has to be worked out.
+    const capBound = cap !== null && live >= cap;
+
+    // **The folder outranks the cap when both apply.** It is the nearer and more
+    // specific wait — `ahead` is a real number there, and the run ahead of it
+    // has to finish whatever the cap does — where the cap is an install-wide
+    // fact the operator can already read off the Fleet card.
+    if (folderHeld) {
+      blocked.set(run.id, { kind: "folder", ahead: aheadForFolder(runs, run, keys) });
+      continue;
+    }
+    if (capBound) {
+      // Never `queuePosition`'s number here: it counts folder-overlapping runs
+      // only, and this run overlaps none — it would always be 0, which is the
+      // sentence "next up" was built on.
+      blocked.set(run.id, { kind: "cap", cap, running: live });
+      continue;
+    }
 
     live += 1;
     promote.push(run.id);
   }
-  return promote;
+  return { promote, blocked };
+}
+
+/**
+ * How many queued runs are ahead of `self` **for its folder**.
+ *
+ * One definition, shared by the walk's `folder` blocker and by
+ * `queuePosition`, so the reason and the number cannot disagree. Queued runs
+ * only: the run currently holding the folder is not "ahead in line" — it is the
+ * thing being waited on, which is what 0 means.
+ */
+function aheadForFolder(
+  runs: readonly QueueMember[],
+  self: QueueMember,
+  keys: Map<string, ConflictKey>,
+): number {
+  const key = keys.get(self.id) ?? conflictKey(workDirOf(self));
+  return runs.filter(
+    (r) =>
+      r.id !== self.id &&
+      r.status === "queued" &&
+      // `queueCompare`, not `created_at`, so the number shown is a count over
+      // the same order `walkQueue` actually promotes in. `<= 0` keeps the tie
+      // behaviour this had before priority existed: two runs created in the
+      // same millisecond each count the other as ahead.
+      queueCompare(r, self) <= 0 &&
+      overlaps(key, keys.get(r.id) ?? conflictKey(workDirOf(r))),
+  ).length;
+}
+
+/** The ids `promoteQueued` may start. `walkQueue` with the reasons dropped. */
+export function selectPromotable(
+  runs: readonly RunRow[],
+  cap: number | null,
+  newWorkPaused = false,
+): string[] {
+  return walkQueue(runs, cap, newWorkPaused).promote;
 }
 
 /**
@@ -4088,31 +4199,42 @@ export function promoteQueued(): void {
 }
 
 /**
- * How many runs are ahead of this one **for its folder**. 0 means next up.
+ * How many runs are ahead of this one **for its folder**. 0 means nothing is
+ * queued in front of it there — *not* that it is about to start.
  *
  * Counting every queued run would be meaningless: runs waiting on unrelated
  * folders do not delay this one by a second, and reporting them as "ahead of
- * it" describes a wait that will not happen.
+ * it" describes a wait that will not happen. The cost of that narrowness is
+ * that this number says nothing at all about a run the cap is holding, which is
+ * what `queueBlockers` is for — read the blocker first, and this only under
+ * `kind: "folder"`.
  */
 export function queuePosition(id: string): number {
   const runs = activeRuns();
   const self = runs.find((r) => r.id === id);
   if (!self) return 0;
 
-  // Queued runs only. The run currently holding the folder is not "ahead in
-  // line" — it is the thing being waited on, which is what position 0 means.
-  const key = conflictKey(workDirOf(self));
-  return runs.filter(
-    (r) =>
-      r.id !== id &&
-      r.status === "queued" &&
-      // `queueCompare`, not `created_at`, so the number shown is a count over
-      // the same order `selectPromotable` actually promotes in. `<= 0` keeps
-      // the tie behaviour this had before priority existed: two runs created in
-      // the same millisecond each count the other as ahead.
-      queueCompare(r, self) <= 0 &&
-      overlaps(key, conflictKey(workDirOf(r))),
-  ).length;
+  return aheadForFolder(
+    runs,
+    self,
+    new Map(runs.map((r) => [r.id, conflictKey(workDirOf(r))])),
+  );
+}
+
+/**
+ * Why each queued run is not running, for one request.
+ *
+ * Walked once and handed round rather than asked per row: the walk is over the
+ * whole install either way, and a list route holds a hundred of them.
+ */
+export function queueBlockers(): Map<string, QueueBlockerDTO> {
+  return walkQueue(activeRuns(), getSettings().maxConcurrentRuns, newWorkPaused())
+    .blocked;
+}
+
+/** The same answer for one run. `undefined` unless the run is queued. */
+export function queueBlockerOf(id: string): QueueBlockerDTO | undefined {
+  return queueBlockers().get(id);
 }
 
 /* ------------------------------------------------------------------ */

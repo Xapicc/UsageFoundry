@@ -129,6 +129,61 @@ interface RunState {
   detail: ReactNode;
 }
 
+/**
+ * Which of the three queue waits this run is in, in the words of that one.
+ *
+ * All three used to render as the folder: `queuePosition` counts runs
+ * overlapping this one's folder and is 0 for a run the concurrency cap is
+ * holding, so "Waiting for its folder / Next in line — it starts as soon as the
+ * run ahead of it finishes" was shown with the folder free and no run ahead.
+ *
+ * Falling back to the folder wording is deliberate — it is what this said
+ * before `queueBlocker` existed, and a response without one has not walked the
+ * queue rather than found no cap.
+ */
+function describeQueued(run: RunDTO): RunState {
+  const blocker = run.queueBlocker;
+
+  if (blocker?.kind === "paused") {
+    return {
+      tone: "warn",
+      headline: "New work is held",
+      detail: (
+        <>
+          Nothing starts while the hold is on, whatever its folder and the
+          concurrency limit are doing. Lift it with{" "}
+          <Link href="/runs">Resume new work</Link>.
+        </>
+      ),
+    };
+  }
+
+  if (blocker?.kind === "cap") {
+    return {
+      tone: "info",
+      headline: "Waiting for a run slot",
+      detail: (
+        <>
+          {blocker.running} of {blocker.cap} runs are working, and this one
+          starts as soon as one of them finishes. Its folder is free; the
+          ceiling is{" "}
+          <Link href="/settings#runs">Runs at the same time</Link>.
+        </>
+      ),
+    };
+  }
+
+  const ahead = blocker?.kind === "folder" ? blocker.ahead : (run.queuePosition ?? 0);
+  return {
+    tone: "info",
+    headline: "Waiting for its folder",
+    detail:
+      ahead === 0
+        ? "Next in line — it starts as soon as the run ahead of it finishes."
+        : `${ahead} other run${ahead === 1 ? " is" : "s are"} ahead of it.`,
+  };
+}
+
 function describeRun(
   run: RunDTO,
   ctx: { now: number; cycleInFlight: string | null; stoppedByGuard: boolean },
@@ -160,17 +215,8 @@ function describeRun(
       };
     }
 
-    case "queued": {
-      const ahead = run.queuePosition ?? 0;
-      return {
-        tone: "info",
-        headline: "Waiting for its folder",
-        detail:
-          ahead === 0
-            ? "Next in line — it starts as soon as the run ahead of it finishes."
-            : `${ahead} other run${ahead === 1 ? " is" : "s are"} ahead of it.`,
-      };
-    }
+    case "queued":
+      return describeQueued(run);
 
     case "running":
       return {

@@ -5,6 +5,7 @@ import {
   getRun,
   haltedWorkflowOf,
   isRunning,
+  queueBlockerOf,
   queuePosition,
   stopRun,
 } from "@/lib/orchestrator";
@@ -81,6 +82,10 @@ export async function GET(req: Request, ctx: Ctx) {
       relPath,
       dependsOn: dependenciesOf([id]).get(id) ?? [],
       queuePosition: run.status === "queued" ? queuePosition(id) : undefined,
+      // What it is *actually* waiting for. `queuePosition` alone cannot say: it
+      // counts folder overlaps, so a run the concurrency cap is holding has 0
+      // and reads as next in line for a folder nothing is using.
+      queueBlocker: run.status === "queued" ? queueBlockerOf(id) : undefined,
       // What `reopenRun` will refuse this run for, sent so the page can decline
       // to offer the button rather than let the operator find out by pressing it.
       haltedWorkflow: haltedWorkflowOf(id),

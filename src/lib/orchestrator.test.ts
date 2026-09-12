@@ -131,6 +131,7 @@ const {
   telemetryEnv,
   toolProgressReading,
   toolResultFailures,
+  walkQueue,
   worktreeSlug,
   MAX_PAUSES_PER_RUN,
   MAX_RATE_LIMIT_RETRIES,
@@ -341,6 +342,118 @@ describe("promotion", () => {
     assert.deepEqual(selectPromotable([chained, unrelated], null), [unrelated.id]);
     // And it spends no concurrency slot either.
     assert.deepEqual(selectPromotable([chained, unrelated], 1), [unrelated.id]);
+  });
+});
+
+/**
+ * Covers *why* a queued run did not start, which is the same walk as above with
+ * its reasons kept rather than discarded.
+ *
+ * It earns a test on those grounds and on one of its own: the three waits are
+ * indistinguishable from outside, so a blocker naming the wrong one renders a
+ * confident, well-formed and false sentence. That is exactly what shipped — the
+ * cap held three runs whose folders were free and every one of them read "next
+ * up — starts when the folder frees", because the only thing the page had was
+ * `queuePosition`, which counts folder overlaps and is 0 for a cap block.
+ *
+ * The assertions are on the blocker rather than on the copy: the pages pick
+ * their own words, and what must not drift is which of the three they are given.
+ */
+describe("queue blockers", () => {
+  type Row = import("./orchestrator").RunRow;
+  let seq = 0;
+  // `created_at` matters here where it did not above: the ahead-count reads
+  // `queueCompare`, and rows without one tie on NaN and count nobody.
+  const row = (status: Row["status"], dir: string, created_at = ++seq): Row =>
+    ({ id: `r${seq}`, status, folder: dir, work_dir: dir, created_at }) as Row;
+
+  it("names the cap, not the folder, when the folder is free", () => {
+    // The shipped defect, in one case: nothing is in RepoOne, nothing is queued
+    // ahead of it, and the only thing missing is a slot.
+    const live = row("running", `${ws}/Other`);
+    const waiting = row("queued", `${ws}/RepoOne`);
+    const { promote, blocked } = walkQueue([live, waiting], 1);
+    assert.deepEqual(promote, []);
+    assert.deepEqual(blocked.get(waiting.id), { kind: "cap", cap: 1, running: 1 });
+  });
+
+  it("reports what is running and the ceiling, never the queue position", () => {
+    // `queuePosition` would be 0 for all three of these — they overlap nothing.
+    const live = [row("running", `${ws}/A`), row("running", `${ws}/B`)];
+    const queued = [row("queued", `${ws}/C`), row("queued", `${ws}/D`)];
+    const { blocked } = walkQueue([...live, ...queued], 2);
+    for (const run of queued) {
+      assert.deepEqual(blocked.get(run.id), { kind: "cap", cap: 2, running: 2 });
+    }
+  });
+
+  it("names the folder when the cap is not binding", () => {
+    const live = row("running", `${ws}/RepoOne`);
+    const waiting = row("queued", `${ws}/RepoOne/sub`);
+    const { blocked } = walkQueue([live, waiting], null);
+    // 0 because the folder is held by a *running* run: nothing is queued in
+    // front of it, which is the distinction `queuePosition` has always drawn.
+    assert.deepEqual(blocked.get(waiting.id), { kind: "folder", ahead: 0 });
+  });
+
+  it("counts the queued runs ahead of it for that folder", () => {
+    const live = row("running", `${ws}/RepoOne`);
+    const first = row("queued", `${ws}/RepoOne`);
+    const second = row("queued", `${ws}/RepoOne/sub`);
+    const { blocked } = walkQueue([live, first, second], null);
+    assert.deepEqual(blocked.get(first.id), { kind: "folder", ahead: 0 });
+    assert.deepEqual(blocked.get(second.id), { kind: "folder", ahead: 1 });
+  });
+
+  it("prefers the folder over the cap when both apply", () => {
+    // `second` is held twice over: the cap is full, *and* `first` is ahead of it
+    // for RepoOne. The folder is the nearer wait and the one with a number on
+    // it, so that is what it must say — the cap is on the Fleet card either way.
+    const live = row("running", `${ws}/Other`);
+    const first = row("queued", `${ws}/RepoOne`);
+    const second = row("queued", `${ws}/RepoOne/sub`);
+    const { promote, blocked } = walkQueue([live, first, second], 1);
+    assert.deepEqual(promote, []);
+    assert.deepEqual(blocked.get(first.id), { kind: "cap", cap: 1, running: 1 });
+    assert.deepEqual(blocked.get(second.id), { kind: "folder", ahead: 1 });
+  });
+
+  it("says new work is held, and says it about every queued run", () => {
+    // Neither the folder nor the cap is why any of these is sitting there, and
+    // the hold reaches runs the walk would otherwise never have looked at.
+    const live = row("running", `${ws}/Other`);
+    const free = row("queued", `${ws}/RepoOne`);
+    const behind = row("queued", `${ws}/Other`);
+    const { promote, blocked } = walkQueue([live, free, behind], 4, true);
+    assert.deepEqual(promote, []);
+    assert.deepEqual(blocked.get(free.id), { kind: "paused" });
+    assert.deepEqual(blocked.get(behind.id), { kind: "paused" });
+    assert.equal(blocked.has(live.id), false);
+  });
+
+  it("gives every queued run exactly one answer", () => {
+    // The invariant the readout rests on: a queued run either starts or is told
+    // why, and a run in neither set renders as a blank line on the one status
+    // whose whole meaning is that it is waiting.
+    const runs = [
+      row("running", `${ws}/A`),
+      row("paused", `${ws}/B`),
+      row("waiting", `${ws}/C`),
+      row("queued", `${ws}/A`),
+      row("queued", `${ws}/D`),
+      row("queued", `${ws}/D/sub`),
+    ];
+    for (const cap of [null, 1, 2, 9]) {
+      const { promote, blocked } = walkQueue(runs, cap);
+      for (const run of runs.filter((r) => r.status === "queued")) {
+        assert.equal(
+          promote.includes(run.id) !== blocked.has(run.id),
+          true,
+          `cap ${cap}: ${run.id} is in neither set or in both`,
+        );
+      }
+      assert.deepEqual(promote, selectPromotable(runs, cap));
+    }
   });
 });
 

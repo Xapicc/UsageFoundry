@@ -246,6 +246,27 @@ function humanMinutes(n: number): string {
   return `${Number.isInteger(hours) ? hours : hours.toFixed(1)} hours`;
 }
 
+/**
+ * What just happened to a run this form queued rather than started.
+ *
+ * The folder was the only story here too, and it is the wrong one whenever the
+ * concurrency cap is what caught the run: `queuePosition` counts folder
+ * overlaps, so "Queued behind 0 other runs for that folder" was printed with
+ * the folder free. Same blocker the runs list and the run's own page read, off
+ * the admission response.
+ */
+function queuedNotice(run: RunDTO): string {
+  const blocker = run.queueBlocker;
+  if (blocker?.kind === "paused") {
+    return "Queued, and new work is held — it starts when you resume the fleet.";
+  }
+  if (blocker?.kind === "cap") {
+    return `Queued for a run slot — ${blocker.running} of ${blocker.cap} running. It starts on its own.`;
+  }
+  const ahead = blocker?.kind === "folder" ? blocker.ahead : (run.queuePosition ?? 0);
+  return `Queued behind ${ahead} other run${ahead === 1 ? "" : "s"} for that folder — it starts on its own.`;
+}
+
 /** "a, b or c" — the guard summary reads as a sentence, not as a list. */
 function joinClauses(parts: string[]): string {
   if (parts.length <= 1) return parts[0] ?? "";
@@ -2484,11 +2505,7 @@ export default function NewRunPage() {
           <div role="status">
             <Notice tone={started.status === "queued" ? "warn" : "info"}>
               {started.status === "queued" ? (
-                <>
-                  Queued behind {started.queuePosition ?? 0} other run
-                  {(started.queuePosition ?? 0) === 1 ? "" : "s"} for that
-                  folder — it starts on its own.{" "}
-                </>
+                <>{queuedNotice(started)} </>
               ) : (
                 <>Started. </>
               )}

@@ -10,6 +10,8 @@ import {
   describeFolder,
   isRunStatus,
   listRunsPage,
+  queueBlockerOf,
+  queueBlockers,
   queuePosition,
   type DependencyEdge,
   type RunDependencyInput,
@@ -110,6 +112,10 @@ export async function GET(req: Request) {
   // question with no bound on it. Two surfaces disagreeing about one run would
   // be the worse failure.
   const pruned = await pruneSavingsByRun(rows.map((r) => r.id));
+  // One walk for the page. It is over every active run whatever this page holds,
+  // and it is the only thing that knows a queued run is short of a slot rather
+  // than short of its folder.
+  const blockers = queueBlockers();
   const runs: RunListItemDTO[] = rows.map((r) => {
     const { mountId, mountLabel, relPath } = describeFolder(r.folder);
     // Dropped rather than shipped and ignored. `budget` is the whole normalised
@@ -143,6 +149,7 @@ export async function GET(req: Request) {
       relPath,
       dependsOn: deps.get(r.id) ?? [],
       queuePosition: r.status === "queued" ? queuePosition(r.id) : undefined,
+      queueBlocker: r.status === "queued" ? blockers.get(r.id) : undefined,
       // Absent for a run that never pruned rather than 0 — a receipt is what
       // puts a run in the map, so the lookup carries that distinction already.
       prunedNetUSD: pruned.get(r.id)?.netUSD,
@@ -406,6 +413,10 @@ async function postHandler(req: Request) {
         agent: runAgentDTO(run.agent),
         dependsOn: dependenciesOf([run.id]).get(run.id) ?? [],
         queuePosition: run.status === "queued" ? queuePosition(run.id) : undefined,
+        // Sent on the admission response too: the new-run form says what just
+        // happened to the run it created, and "queued behind N for that folder"
+        // is the same false sentence there when the cap is what caught it.
+        queueBlocker: run.status === "queued" ? queueBlockerOf(run.id) : undefined,
       },
     });
     response.headers.set(SUBJECT_HEADER, run.id);
