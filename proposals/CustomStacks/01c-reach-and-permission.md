@@ -5,9 +5,12 @@ reason is one link of three.** This file settles the two that can be settled fro
 the tree, states the third as unmeasured, designs for the worse answer, and gives
 the exact command that would let the design be simplified.
 
-Checked against the tree at `baf051d`. The probe in §4 has **not been run**;
-this container has no Docker and no way to spawn a `claude` process against a
-real install.
+Checked against the tree at `baf051d`. **The probe in §4 was run on 2026-09-12
+against CLI 2.1.260 and the answer is row 2 of its own table: B refuses, C
+prints the line.** The grant is necessary and sufficient, this file's working
+assumption was right, and phase 4 exists. The measurement is in
+`docs/verification.md`'s *Security and sandboxing* section; §4 and §6 below
+carry what it does and does not settle.
 
 ---
 
@@ -20,7 +23,7 @@ on that child's `PATH`, and **the child is permitted to invoke it**.
 |---|---|---|
 | 1. exists on disk | settled by design | `01a-` §3: a named volume plus a host-side declaration that reinstalls it |
 | 2. on `PATH` | **settled, and pinned by a test** | §2 |
-| 3. permitted to invoke | **never measured** | §3, §4 |
+| 3. permitted to invoke | **measured 2026-09-12: refused without a grant, permitted with one** | §3, §4 |
 
 ---
 
@@ -92,12 +95,15 @@ The same docblock records the measurement behind it: a run tried to commit
 $233.85, say in their own report text that they could not compile or test what
 they had merged"*.
 
-**What is not known.** Neither measurement is of an arbitrary unknown binary.
-Whether `terraform version` passes where `git commit` does not turns on how the
-CLI classifies a command it has never seen, and **nothing in this repository
-measures that.** The phrase in the docblock is *read-only shell*, and a binary
-the CLI has no model of is not obviously in that class, so the working assumption
-here is that **it is refused** - stated as an assumption, not as a finding.
+**What was not known, and now is.** Neither measurement above is of an arbitrary
+unknown binary. Whether `terraform version` passes where `git commit` does not
+turns on how the CLI classifies a command it has never seen, and nothing in this
+repository measured that until §4's probe was run. The phrase in the docblock is
+*read-only shell*; a binary the CLI has no model of is **not** in that class.
+Measured 2026-09-12 on CLI 2.1.260: an unknown binary at `acceptEdits` is
+refused with `permission_denied` / *"This command requires approval"*, and the
+same turn with `--allowedTools 'Bash(<name>:*)'` runs it on the first call. This
+file was written assuming that answer, so nothing below changes.
 
 **The design under that assumption.** A stack's `allow` array is projected onto
 the work cycle's `--allowedTools`. The argv builder already has exactly this
@@ -161,14 +167,30 @@ docker compose exec -T \
 Read the `stream-json` for `probetool 9.9.9` and for any event naming a
 permission denial.
 
-**Four outcomes, each deciding a different thing.**
+**Four outcomes, each deciding a different thing. The second is what happened.**
 
 | B | C | What it means |
 |---|---|---|
 | prints the line | - | **The grant is unnecessary.** Delete §3's projection: one list, one spread, and the `allow` field becomes advisory rather than load-bearing. `01b-` keeps `allow` as documentation of what the stack is for, or drops it |
-| refuses | prints the line | **The design is correct as written.** The grant is necessary and sufficient, and a stack with an empty `allow` is the quiet failure `01a-` §8 names |
+| **refuses** | **prints the line** | ← **observed, 2026-09-12, CLI 2.1.260. The design is correct as written.** The grant is necessary and sufficient, and a stack with an empty `allow` is the quiet failure `01a-` §8 names |
 | refuses | refuses | The refusal is not about the allowlist. Look at `--disallowedTools`, at the `--settings` file the builder writes at `cycleInvocation.ts:1300`, and at whether a sandbox write config is in play |
 | refuses | errors on the flag | The CLI's allowlist syntax has moved since `ISOLATED_GIT_TOOLS` was written. `claude --help` and re-derive; this would also mean two existing grants are silently dead, which is a defect worth filing on its own |
+
+**What B actually printed**, since the shape of the refusal is what a later reader
+will want: one `Bash` tool call, then a `system` event with
+`subtype: "permission_denied"`, `decision_reason_type: "other"` and
+`decision_reason: "This command requires approval"`, and a `tool_result` with
+`is_error: true` carrying the same string. The turn then ended `success` with
+`num_turns: 2`, having run nothing — **which is the shape phase 1's read-back was
+built for.** A stack whose grant is missing does not fail the run, does not log
+an error and does not change the run's status; it produces a work cycle that
+reports it could not do the thing, and the only evidence is a tool call that
+never succeeded. That is `01f-` §3's `failing`.
+
+The model's own last words in B were *"pre-allow it (e.g. a `Bash(probetool)`
+entry in `.claude/settings.json` permissions)"*, which is worth noting only
+because it is the wrong door for this design: `01e-` §7 and `01a-` §6 refuse a
+settings-file route, and the grant is projected onto argv from receipts instead.
 
 **The confirming measurement is still `07-option-make-it-runnable.md` §10**, a
 real run at `acceptEdits` asked to invoke the tool, because only that exercises
@@ -214,14 +236,17 @@ derived rather than for making it configurable.
 
 ## 6. What this leaves open
 
-**Nothing in this file has been run.** The probe is written, priced at one short
-headless turn, and unexecuted. Until somebody runs it, the sentence that belongs
-in `docs/verification.md`'s *Not yet verified by hand* list is: *whether a work
-cycle at `acceptEdits` may invoke a binary the CLI has never seen, with and
-without a `Bash(<name>:*)` grant; §4 of `proposals/CustomStacks/01c-` has the
-commands.*
+**The probe has been run and one thing is still owed.** §4's two turns isolate
+the single variable and settle it: the grant is necessary and sufficient. What
+they do not exercise is the rest of the spawn path — the `--settings` file
+`cycleInvocation.ts:1300` writes, the appended system prompt, the plugin
+directory, the taskboard MCP config and the agent uid together — so the sentence
+that belongs in `docs/verification.md`'s *Not yet verified by hand* list is now
+the narrower one: *whether a real work cycle at `acceptEdits`, with every one of
+those in play, invokes a stack's binary under the projected grant;*
+`07-option-make-it-runnable.md` §10 is the measurement.
 
-**The design does not depend on the answer**, which is the point of assuming the
-worse one. A wrong assumption here costs one deletable list; the opposite
-assumption, had it been taken, would cost a redesign discovered inside a tool
-call nobody reads.
+**The design did not depend on the answer**, which was the point of assuming the
+worse one. Assuming the better one would have cost a redesign discovered inside
+a tool call nobody reads; assuming the worse one cost nothing at all, because
+the answer came back worse.

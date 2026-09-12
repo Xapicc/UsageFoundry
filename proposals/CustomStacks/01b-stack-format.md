@@ -317,12 +317,13 @@ because Terraform errors rather than creating that directory itself.
 matches no entry and falls back to `acceptEdits`, which will refuse it in a
 headless run. That is the design working, not failing.
 
-> **CORRECTED by [23-revision-per-repo-and-login.md](23-revision-per-repo-and-login.md) §9.2.**
-> *"which will refuse it in a headless run"* is **not verified** - it is the
-> exact proposition `01c-` §4's probe exists to measure, asserted here as fact.
-> Under the other outcome this example as published grants `terraform apply` to
-> every cycle in the repository it is mapped to. The field is now `deny`, and
-> this example's last block should read
+> **CORRECTED by [23-revision-per-repo-and-login.md](23-revision-per-repo-and-login.md) §9.2,
+> and since MEASURED.** *"which will refuse it in a headless run"* was asserted
+> here as fact while being the exact proposition `01c-` §4's probe existed to
+> measure. The probe was run on 2026-09-12 against CLI 2.1.260 and the sentence
+> is **true**: an unknown binary at `acceptEdits` matching no `--allowedTools`
+> entry is refused with *"This command requires approval"*. The field is now
+> `deny` regardless, and this example's last block should read
 > `"deny": ["terraform apply", "terraform destroy"]`.
 
 **Adding this to an install is:** copy the directory into `./stacks/`,

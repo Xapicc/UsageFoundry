@@ -60,6 +60,27 @@ nothing but convenience.
 
 ## Phase 0 - the probe
 
+> **RUN on 2026-09-12**, against CLI 2.1.260 on this install, after phases 1 to
+> 3 rather than beside phase 1. **The answer is the worse one, which is the one
+> the design was built for: B refuses, C prints the line.** An unknown binary at
+> `acceptEdits` is refused with `permission_denied` / *"This command requires
+> approval"*; the same turn with `--allowedTools 'Bash(probetool:*)'` runs it on
+> the first call. $0.25 and $0.11, two turns, nothing else changed between them.
+>
+> **Phase 4 is not deleted. It is necessary and it is sufficient.** The
+> measurement is in `docs/verification.md`'s *Security and sandboxing* section
+> and `01c-` §4 now carries the shape of the refusal, which is the part a later
+> reader needs: the turn ends `success` having run nothing, so a stack whose
+> grant is missing is a work cycle that reports it could not do the thing and
+> nothing anywhere that says why. That is `01f-` §3's `failing`, and it is the
+> reason the read-back shipped first.
+>
+> **One thing it does not settle**, and `01c-` §6 now says so in its place: this
+> isolates the single variable and is not a work cycle. It carries
+> `/etc/claude-code/managed-settings.json` as a real cycle does, but not the
+> `--settings` file, the appended system prompt, the plugin directory or the
+> taskboard MCP config. `07-option-make-it-runnable.md` §10 is still owed.
+
 **One work cycle. Nothing ships. It can run beside phase 1.**
 
 [01c-reach-and-permission.md](01c-reach-and-permission.md) §4 has the commands

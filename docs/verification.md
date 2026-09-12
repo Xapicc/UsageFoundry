@@ -1057,6 +1057,32 @@ is `docs/agent/testing.md`; interface defects and their classes are
   three hand-run `claude -p` calls against one that did: one ran a shell
   command, one was refused the credentials file its own uid owns.
 
+- **`acceptEdits` refuses a binary the CLI has never seen, and `--allowedTools`
+  is sufficient to unrefuse it. 2026-09-12, CLI 2.1.260.**
+  `proposals/CustomStacks/01c-` §4's probe, run verbatim against this install: a
+  `probetool` shell script was put on a directory on `PATH`, confirmed runnable
+  by the agent uid directly (`probetool 9.9.9`), and asked for through two
+  headless `claude -p` turns as uid 1000 differing only in the last flag.
+  **Without a grant it is refused** — one `Bash` call, then a `system` event
+  `subtype: permission_denied`, `decision_reason_type: "other"`,
+  `decision_reason: "This command requires approval"`, and a `tool_result` with
+  `is_error: true`; the turn ended `success` having run nothing, and the model's
+  own closing words named the fix (*"pre-allow it (e.g. a `Bash(probetool)`
+  entry"*). **With `--allowedTools 'Bash(probetool:*)'` it runs**, first call,
+  `is_error: false`, `probetool 9.9.9`. $0.25 and $0.11.
+
+  That is row 2 of `01c-` §4's table: the grant is **necessary and sufficient**,
+  and the assumption the design was built on — *"a binary the CLI has no model
+  of is not obviously in [the read-only shell] class, so the working assumption
+  here is that it is refused"* — was right. **Phase 4 exists**, and a stack that
+  installs perfectly and grants nothing is the quiet failure `01a-` §8 names,
+  now observed rather than predicted. Caveat: this isolates the one variable and
+  is not a work cycle. It carries the managed settings at
+  `/etc/claude-code/managed-settings.json`, as a real cycle does, but not the
+  `--settings` file `cycleInvocation.ts:1300` writes, the appended system
+  prompt, the plugin directory or the taskboard MCP config — the confirming
+  measurement in `07-option-make-it-runnable.md` §10 is still owed.
+
 ### Container and environment
 
 - **Multiple workspaces:** slots list independently, a disabled one is skipped,
@@ -2290,6 +2316,17 @@ measurement under *Verified* and cut the item down to what is still open.
   halves are unit tested; the whole sequence has not run.
 
 ### Security and sandboxing
+
+- **No real work cycle has invoked a stack's binary.** `01c-` §4's probe settled
+  that the grant is necessary and sufficient — measured 2026-09-12, in *Verified*
+  above — but it is two bare `claude -p` turns, not a cycle: it carries the
+  managed settings and nothing else the spawn path adds. The `--settings` file
+  `cycleInvocation.ts:1300` writes, the appended system prompt, the plugin
+  directory and the taskboard MCP config have never been in play while a stack's
+  tool was asked for, and any of them could refuse what the probe permitted.
+  Settle with `07-option-make-it-runnable.md` §10: a run at `acceptEdits`
+  against a folder, asked to use `shellcheck`, read for whether the `Bash` call
+  succeeded. Phase 4 has to ship first — there is no projected grant yet.
 
 - **The 2026-08-19 probes did not exercise** the per-run `--settings` overlay,
   `denyRead` paths, the network allowlist, the write set, or real work.
