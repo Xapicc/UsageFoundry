@@ -28,7 +28,7 @@ restart, which is a decision a person makes at a shell."*
 | **add** | `cp -r <stack> ./stacks/` on the host, then `docker compose up -d` | nothing; it was not running |
 | **remove** | `rm -r ./stacks/<stack>` on the host, then `docker compose up -d` | nothing; it was not running |
 | **change** | edit `./stacks/<stack>/stack.json`, then `docker compose up -d` | nothing; it was not running |
-| **inspect** | `/settings#stacks`, and `/settings/stacks/<name>` | **all of it** |
+| **inspect** | `/settings#tools`, and `/settings/stacks/<name>` | **all of it** |
 
 So the app's whole surface is the fourth row. The other three are a file manager
 and a restart, which is what makes the host filesystem the trust boundary
@@ -44,8 +44,19 @@ poll, and §3 is what the operator sees instead.
 
 ## 2. The pane, and why it is Settings
 
-**Pane: Settings. Routes: a `Stacks` section at `/settings#stacks`, and a
-sub-route `/settings/stacks/<name>` for one stack's receipt.**
+**Pane: Settings. Routes: a `Tools` section at `/settings#tools`, and a sub-route
+`/settings/stacks/<name>` for one stack's receipt.**
+
+**The section is `Tools` and not `Stacks`, and that is a correction this run made
+while writing the phases.** A stack is one of three ways a tool gets onto this
+install's `PATH`; the other two are `UF_GH_EXTENSIONS` and `UF_PY_TOOLS`, which
+`01d-` §1 keeps rather than replaces. A `Stacks` section would be a second list
+of tools beside a first one that does not exist yet, and the operator's question
+is not *which stacks are installed* but *what can my agents run*. So the section
+answers that question, stacks are a group inside it, and the consequence for the
+build order is the good one: the section is shippable before any stack exists,
+which is what [21-implementation-sketch.md](21-implementation-sketch.md) phase 1
+does with it.
 
 **There is no tenth pane and the ban's own sentence names the replacement.**
 `docs/agent/ui-density-audit.md:159-162` bans an eleventh row on the ground that
@@ -102,7 +113,7 @@ spacing.
 
 This tree has already argued the same fork and taken the same side: the taskboard
 editor is a route rather than a card the board opens, and
-`docs/agent/taskboard.md` records why. The Stacks section links out for the same
+`docs/agent/taskboard.md` records why. The Tools section links out for the same
 reason and **is never filled from the list row** — the detail page fetches the
 receipt itself, which is the second half of that argument.
 
@@ -125,7 +136,7 @@ $ docker compose up -d && docker compose logs -f usagefoundry
 [usagefoundry] stacks: 2 declared in /etc/uf-stacks
 [usagefoundry] stack terraform: installing (archive, 1 step)
 [usagefoundry] stack terraform: installed, 1 binary, 5 grants
-[usagefoundry] stack markdownlint: receipt matches, skipped
+[usagefoundry] stack shell-lint: receipt matches, skipped
 [usagefoundry] stacks: 2 ok, 0 failed
 ```
 
@@ -160,13 +171,18 @@ failure `.env.example:245-249` measures.
 
 ## 4. Installed
 
-A `Stacks` section in Settings, registered in `SECTIONS`
+A `Tools` section in Settings, registered in `SECTIONS`
 (`src/app/settings/page.tsx:110-122`) between `plugins` and `knowledge`, because
 that is where the operator-declared things the container loads already sit.
 
-One `ListGroup` row per stack: the name, the `summary` line from `stack.json`
-(`01b-` §2), a badge, and the server's own sentence beside it. The row links to
-`/settings/stacks/<name>`.
+**Three groups, one per source, in this order: stacks, `UF_PY_TOOLS`,
+`UF_GH_EXTENSIONS`.** The grouping vocabulary is closed and
+`docs/agent/conventions.md` is what it may be — these are three sources, which is
+what a group is for, and the order is most-configurable first. One `ListGroup`
+row per tool: the name, the `summary` line from `stack.json` for a stack
+(`01b-` §2) or the declared spec for the other two, a badge, and the server's own
+sentence beside it. A stack's row links to `/settings/stacks/<name>`; a `UF_*`
+row links nowhere, because there is no receipt behind it and never will be.
 
 **Four states, and they are `SandboxRow`'s four readings rather than a switch.**
 That docblock is the argument and it transfers whole: *"Four readings and not a
@@ -213,13 +229,20 @@ reading whose TTL a poll would mostly re-serve ([01f-](01f-read-back.md) §4).
 The section loads with the page. A poll here would be the easy wrong answer and
 it would be polling for an event that cannot happen.
 
+**The states are per tool and not per stack**, which matters for a stack with two
+binaries: `01g-` §6's shell-lint links `shellcheck` and `shfmt`, and a stack whose
+first binary resolves and whose second does not is `broken` as a whole and one
+`installed` row beside one `missing` row underneath. The stack's own badge is the
+worst of its rows, on [01f-](01f-read-back.md) §3's rule.
+
 **The three ways of having nothing are three renderings**, in the shape the
 Plugins section already uses at `src/app/settings/page.tsx:4139-4159`:
 
 - the route errored → the error text, not an empty list;
 - the route has not answered → `Empty` reading *"Reading stack receipts…"*;
-- there are no stacks → `Empty` naming the directory and the one-line shape of
-  a `stack.json`, exactly as `:4159` names what a plugin directory must hold.
+- there are no tools from any of the three sources → `Empty` naming the `stacks`
+  directory and the one-line shape of a `stack.json`, exactly as `:4159` names
+  what a plugin directory must hold.
 
 An install that has never mounted `./stacks` and an install with an empty
 `./stacks` are the same third case and read the same, which is honest: from
@@ -283,7 +306,7 @@ text that says which toolchains this install runs, and a failure reason is the
 last 4 KB of somebody's stderr, which carries URLs and paths as a matter of
 course. Both are settings values in everything but the table they are stored in.
 `stacksFailed > 0` is the whole of what a monitor needs to threshold, and the
-names are one authenticated request away at `/api/stacks`.
+names are one authenticated request away at `/api/tools`.
 
 **Zero on a good boot is the other half of the requirement, and the trap is
 named in the tree.** `src/lib/db.ts:184-189`:
@@ -302,7 +325,7 @@ not say so and this run has fixed them in place; see
 [22-validation.md](22-validation.md) §3.
 
 **The counts are the receipts and are not counted twice.** The same
-`readReceipts()` that `/api/stacks` calls
+`readReceipts()` that `/api/tools` calls
 ([01f-read-back.md](01f-read-back.md) §2) answers this; `status.ts` takes its
 length and its non-`ok` length. A second reader of the same directory is a
 second thing that can disagree with the first about how many stacks there are.
@@ -383,8 +406,8 @@ in the manner of `01d-` §3.
   writable declaration path inside the container is a declaration an agent could
   reach if any path containment check were ever wrong, and `01a-` §2.4 rejected
   `/workspace` for exactly that.
-- **No MCP exposure.** `/api/stacks` is excluded from the board's tool list by
-  name. A read-only inventory still tells a model which binaries are on the box,
+- **No MCP exposure.** `/api/tools` and `/api/stacks/[name]` are excluded from
+  the board's tool list by name. A read-only inventory still tells a model which binaries are on the box,
   which is `15-` §6's argument and it does not weaken because the list got
   better.
 - **No decision on this page.** It reports; it does not gate. `docs/agent/taskboard.md`

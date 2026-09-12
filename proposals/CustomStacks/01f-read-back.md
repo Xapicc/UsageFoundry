@@ -252,7 +252,14 @@ on the busiest table in the schema.
 
 ## 5. The route
 
-**`GET /api/stacks`**, and nothing else. `runtime = "nodejs"`,
+**Two routes, one per subject.** `GET /api/tools` is the list the section draws,
+covering all three sources of a tool on this install — stacks, `UF_PY_TOOLS`,
+`UF_GH_EXTENSIONS` — and `GET /api/stacks/[name]` is one stack's whole receipt.
+Two rather than one because they answer about two different things and a route
+handler here is per subject; one rather than three because the two `UF_*` lists
+have no receipt behind them and never will (`01e-` §4).
+
+Both: `runtime = "nodejs"`,
 `dynamic = "force-dynamic"` — both required, per `docs/agent/conventions.md:11`:
 *"Route handlers that touch SQLite or the filesystem need … Every existing data
 route has both."* Through `jsonMaybeGzipped` like the other eighteen
@@ -260,19 +267,17 @@ route has both."* Through `jsonMaybeGzipped` like the other eighteen
 `Cache-Control` written at the call site, *"because the helper knows nothing
 about caching"* (same line).
 
-Two shapes from one handler, in the tree's own idiom: the list for the section,
-and one stack's receipt for `/settings/stacks/<name>`. The detail is **never
-filled from the list row** — `docs/agent/taskboard.md` makes the same call for
+The detail is **never filled from the list row** — `docs/agent/taskboard.md` makes the same call for
 the task editor, and here it is load-bearing rather than stylistic, because the
 list deliberately does not carry the 4 KB of stderr.
 
 **Behind the master token, with no exemption.** `src/middleware.ts:114` exempts
-`/api/status` when `UF_STATUS_TOKEN` is set and nothing else; this route is not
+`/api/status` when `UF_STATUS_TOKEN` is set and nothing else; neither route is
 added to that list. A read-only inventory still tells its reader which binaries
 are on the box, which is `15-` §6's argument, and it does not weaken because the
 list got better.
 
-**Not an MCP tool, and refused by name.** `docs/agent/taskboard.md` fixes the
+**Neither is an MCP tool, and both are refused by name.** `docs/agent/taskboard.md` fixes the
 board's three tools and the membership test that gates them; `stacks` is not a
 subject on that surface. A model asking what is installed is a model choosing
 what to invoke, and the design's answer to "which tools may this agent use" is
