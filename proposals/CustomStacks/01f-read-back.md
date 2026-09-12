@@ -320,8 +320,8 @@ direction. It gets no test of its own. Its **cache** is a different matter: the
 *"`??=` only initialises when the key is absent, so a pre-upgrade value at a key
 whose shape changed survives the reload and every call on it throws"*
 (`src/lib/orchestrator.ts:10870-10873`; `CLAUDE.md`'s own pointer at `:373` is
-stale, and [22-validation.md](22-validation.md) §4 records it), and that is caught by typechecking a
-fresh key rather than by a test.
+stale, and [22-validation.md](22-validation.md) §3.1 records it), and that is
+caught by typechecking a fresh key rather than by a test.
 
 **No route test.** `src/app/api/health/route.test.ts` is the bar for one, and it
 earned it by answering *falsely* when the server cannot do its job. This route's

@@ -260,16 +260,19 @@ moved into `docs/agent/`, and the fixes point at where they live now:
 `docs/agent/architecture.md:59`, routed from `CLAUDE.md:53`; and the "four
 modules" claim at `docs/agent/architecture.md:222`.
 
-**The eleven current files were fully re-validated on 2026-09-12 against
-`68a8aa7`, and `22-validation.md` is that pass**: 289 citations resolved
-mechanically, 88 quotations located in the tree, and every citation's line
-content read by hand for `01-constraints.md`, `00-problem.md` and the four
-design files. **Seven findings, five references and two design defects**, all
-fixed in place: R5's count of its own evidence was wrong in both directions;
+**The thirteen current files were fully re-validated on 2026-09-12 against
+`68a8aa7`, and `22-validation.md` is that pass**: 292 citations resolved
+mechanically, 124 quotations located in the tree, 215 section cross-references
+resolved against the target's own headings, and every citation's line content
+read by hand for `01-constraints.md`, `00-problem.md` and the four design files.
+**Eight findings, six references and two design defects**, all fixed in place: R5's count of its own evidence was wrong in both directions;
 `01a-` §7's reconcile would never have retried a failed stack, which broke
 `01e-` §5.3's de-latching claim; and `01b-`'s schema could neither name a
 publisher's architecture spelling nor pin a digest per architecture, both found
-by writing a second worked example. Two findings against the tree are recorded
+by writing a second worked example; and the internal-consistency pass found six
+cross-references and counts that pointed a reader at the wrong place, of which
+the one that mattered was **this validation file miscounting its own scope**.
+Two findings against the tree are recorded
 and **not** fixed, because this is a proposal: `CLAUDE.md`'s pointer to the
 `globalThis` shape trap names `orchestrator.ts:373` and the trap is at
 `:10870-10873`, and `docs/agent/ui-density-audit.md:159` still calls `panes.ts`
@@ -335,7 +338,7 @@ they are pinned by unit tests over file *contents*
 | [01f-read-back.md](01f-read-back.md) | **R5**: the four layers and their four sources, why the receipt is not the truth, how `PATH` resolution keeps it honest against a hand install, what a `run_events` count can and cannot say, the composition rule, the routes, the tests, and the seven claims it may never make |
 | [01g-third-party.md](01g-third-party.md) | **R2 between two people**: what is published and through which four channels, what a publisher owes and cannot promise, the consumer's four commands and five-line checklist, nine failure modes with which are quiet, the two schema defects this example found, and the shell-lint stack written out whole with digests fetched here |
 | [01h-acceptance.md](01h-acceptance.md) | **R1-R5 checked one by one**, with how each was checked, one verdict of **not met** and two of *met in design* |
-| `02-` … `18-` | the seventeen surveyed options and two framing files, dispositioned in the table above, unedited and **deliberately not re-validated** |
+| `02-` … `18-` | seventeen files - fifteen surveyed options and two framing files, `08-` and `14-` - dispositioned in the table above, unedited and **deliberately not re-validated** |
 | [19-comparison.md](19-comparison.md) | superseded whole. §3's shape table is still a fact table; §4's scores are history |
 | [20-recommendation.md](20-recommendation.md) | superseded whole. It recommended building almost nothing |
 | [21-implementation-sketch.md](21-implementation-sketch.md) | **the build order**: five phases against the decided design, each naming what ships, the invariant it must not break, what the operator sees and which functions earn a test - plus the seven tests collected, what is not built and where it went, and what each phase leaves unverified |

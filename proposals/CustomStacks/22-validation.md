@@ -3,10 +3,10 @@
 **What this pass checked, what it found, and which of this directory's claims are
 observed rather than reasoned.**
 
-Three runs produced the eleven files this pass covers: the reframing run
+Three runs produced the thirteen files this pass covers: the reframing run
 (`README.md`, `00-problem.md`, `01-constraints.md`), the design run (`01a-`
-through `01d-`), and this one (`01e-`, `01f-`, `01g-`, `21-`). **The seventeen
-superseded option files `02-` through `18-` were deliberately not re-validated**,
+through `01d-`), and this one (`01e-` through `01h-`, `21-` and this file).
+**The seventeen files `02-` through `18-` were deliberately not re-validated**,
 and §5 says why and what that costs.
 
 Checked against the tree at `68a8aa7`, which is the last commit before this run's
@@ -20,24 +20,34 @@ unobserved.
 
 ## 1. What was checked, and how
 
-**Three passes, two of them mechanical.**
+**Three passes, two of them mechanical**, plus a fourth over the internal
+consistency of the six files this run wrote or rewrote: every `01x-` §N
+cross-reference resolved against the target's own headings (**215 of them**), the
+route names, the state vocabulary, and the phase and test counts. §2.8 is what it
+found.
 
 1. **Every `path/file:line` citation resolved.** A script opened each cited file
    at each cited line and reported anything past the file's end or pointing at a
-   file that does not exist. **289 citations across the eleven files plus
-   `proposals/README.md`.** Two apparent failures were false positives - both are
-   `README.md`'s own prose *about* the stale `CLAUDE.md:134` and `CLAUDE.md:95`
-   citations the previous run swept, quoting them in order to say they were
-   wrong.
+   file that does not exist. **292 citations across the thirteen files**, plus 45
+   more in `proposals/README.md`'s index row. Two apparent failures were false
+   positives - both are `README.md`'s own prose *about* the stale `CLAUDE.md:134`
+   and `CLAUDE.md:95` citations the previous run swept, quoting them in order to
+   say they were wrong.
 2. **Every quoted passage located in the tree.** A second script extracted every
    `*"…"*` span, normalised it to letters and digits, and searched `src/`,
    `docs/`, `scripts/`, the three deployment files, `.env.example`, `CLAUDE.md`
    and `README.md`, falling back to `proposals/` for a quotation from a sibling
-   file. **88 quotations across the eleven files; none is unattributed after the
-   fixes in §2.** Three reported misses were the matcher breaking on a nested
-   `"` and all three resolve to `.env.example:304`.
+   file. **121 quotations across the thirteen files when this ran; none is
+   unattributed after the fixes in §2.** After §2.8's corrections the count is 124 and six reported
+   misses are known and none is an error: three
+   are the matcher breaking on a quotation containing its own `"`, two resolving
+   to `.env.example:304` and one to `01-constraints.md`'s own §3; the other three
+   are §2.1's and §2.8's deliberate records of text this pass **replaced**, which
+   by construction no longer exists anywhere. A finding that quotes what was
+   wrong will always fail a search for it, and that is the shape rather than a
+   defect.
 3. **Every citation's line content read by hand**, for `01-constraints.md`,
-   `00-problem.md` and the four design files - the claim beside it compared with
+   `00-problem.md` and the four design files `01a-` to `01d-` - the claim beside it compared with
    what the line says. This is the pass that found §2's substantive errors; the
    mechanical ones cannot.
 
@@ -50,7 +60,8 @@ plus two design defects that no citation check could have caught.
 
 ## 2. What was wrong, and is now fixed in place
 
-Seven findings. Two changed a design decision; five are references.
+Eight findings. Two changed a design decision; five are references; the eighth,
+§2.8, is what the internal-consistency pass found and is a group of six.
 
 ### 2.1 `01-constraints.md` R5 undercounted its own evidence · **reference**
 
@@ -161,6 +172,34 @@ in one case paraphrased it:
   vocabulary, and it is seven things"* - and the component is `ListGroup`
   (`src/components/ui/List.tsx:43`).
 
+### 2.8 Six internal inconsistencies between the files this run wrote · **reference**
+
+Found by a pass that resolved every `01x-` §N cross-reference against the target
+file's own headings and then compared the numbers each file states about another.
+**None changes an argument; every one of them would have sent a reader to the
+wrong place or made them distrust a count.**
+
+- `01f-` §4 cited `22-validation.md` §4 for the stale `CLAUDE.md` pointer. It is
+  **§3.1**; §4 is *"What was deliberately not re-validated"*.
+- `21-` phase 2 said *"`01b-` §2's three expansion tokens"*. `01b-` §2 has
+  **four** since §2.3 of this file added `{arch_uname}`, and `21-`'s own test 7
+  one page later already said four.
+- `21-` phase 2 said *"`01b-` §3's refusal list, now eleven refusals including
+  the two `01g-` §5 added"*. Eleven is the count **before** those two: the list is
+  **thirteen refusals in twelve clauses**, one clause carrying two.
+- `21-` phase 2 introduced its three tests as *"three in the applier"*, and the
+  third, `parseReceipt`, is the reader's rather than the applier's - the split
+  `01a-` §2.3 draws between `scripts/apply-stacks.mjs` and `src/lib/stacks.ts`,
+  which `21-`'s own file table states.
+- `01e-` §2 promised *"three further places"* against §5's four. Fixed before
+  this pass ran, and recorded because the count was wrong in a committed state.
+- **This file listed eleven files where it covers thirteen**, omitting
+  `01h-acceptance.md` - which `README.md` places in the same run and which cites
+  §5 and §6 of this file as its own backing. The counts in §1 were measured over
+  the smaller set and are now measured over the whole one. **A validation file
+  that miscounts its own scope is the one error here that matters**, because
+  every other number it prints is only as trustworthy as that one.
+
 ---
 
 ## 3. Two findings against the tree, neither fixed here
@@ -199,7 +238,8 @@ been reconciled since.
 
 ## 4. What was deliberately not re-validated
 
-**`02-` through `18-`: seventeen option files and two framing files, roughly 390
+**`02-` through `18-`: seventeen files - fifteen option files and two framing
+files, `08-terminal-problem.md` and `14-stack-object-model.md` - and roughly 390
 citations, not re-resolved.**
 
 The reason is that they are superseded rather than current.
@@ -359,7 +399,7 @@ They cost a sentence each and settle more than any command above.
   and digests in `01g-` §6, fetched from their publishers on 2026-09-12;
 - both of `01g-`'s binaries run here: `shellcheck --version` prints
   `version: 0.11.0` and `shfmt --version` prints `v3.14.1`;
-- every citation and every quotation in the eleven current files, per §1.
+- every citation and every quotation in the thirteen current files, per §1.
 
 **Reasoned and not observed** - everything else, and the list is short because
 the boundary is sharp:

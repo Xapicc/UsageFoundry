@@ -205,7 +205,7 @@ person who breaks it**, and §6's assertion 3 is the only thing that catches it.
 **And: never a shell.** `docs/agent/security.md:14` - the agent is spawned
 *"with an argument array and `stdio: ["ignore", "pipe", "pipe"]`, **never a
 shell**, so prompt metacharacters are inert"* - over an artifact a third party
-wrote. `01b-` §2's three expansion
+wrote. `01b-` §2's four expansion
 tokens and closed verb list exist for this, and the applier interpolates into
 argv arrays and never into a command string.
 
@@ -218,15 +218,17 @@ receipts now feed the section phase 1 built.
 
 ### Which functions earn a test
 
-Three in the applier, all pure over their inputs:
+Three, all pure over their inputs. Two are the applier's and the third is the
+reader's, which is the split `01a-` §2.3 draws between `scripts/apply-stacks.mjs`
+and `src/lib/stacks.ts`:
 
 4. **`reconcile(declarations, receipts)`** - `01a-` §7's three rules: digest
    match is a no-op, digest mismatch is a reinstall keeping `state/`, a receipt
    with no declaration is a removal. *"The applier removes only paths its own
    receipts record"* is the assertion that matters, and the failure mode is
    deleting something it did not install, which is silent and unrecoverable.
-5. **`parseStack(json, dirName)`** - `01b-` §3's refusal list, now eleven
-   refusals including the two `01g-` §5 added. Each refusal is a branch, and the
+5. **`parseStack(json, dirName)`** - `01b-` §3's refusal list, now **thirteen**
+   refusals in twelve clauses, the last two of them `01g-` §5's. Each refusal is a branch, and the
    two new ones - a string `sha256` against an arch-varying `url`, and an object
    `sha256` missing a key - are exactly the kind that fail on somebody else's
    machine if they are wrong.

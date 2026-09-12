@@ -247,8 +247,10 @@ it would be polling for an event that cannot happen.
 **The states are per tool and not per stack**, which matters for a stack with two
 binaries: `01g-` §6's shell-lint links `shellcheck` and `shfmt`, and a stack whose
 first binary resolves and whose second does not is `broken` as a whole and one
-`installed` row beside one `missing` row underneath. The stack's own badge is the
-worst of its rows, on [01f-](01f-read-back.md) §3's rule.
+`installed` row beside one `missing` row underneath. **`missing` is the
+per-binary word and is deliberately not in §4's table**, which is the stack's
+vocabulary; `01f-` §2.3 is where the two levels are distinguished, and the stack's
+own badge is the worst of its rows, on [01f-](01f-read-back.md) §3's rule.
 
 **The three ways of having nothing are three renderings**, in the shape the
 Plugins section already uses at `src/app/settings/page.tsx:4139-4159`:
