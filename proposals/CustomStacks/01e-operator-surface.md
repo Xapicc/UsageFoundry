@@ -99,8 +99,9 @@ subject is the install itself is Settings.
 **The digit cost is real and is paid on purpose.** Settings is one of the two
 rows with no shortcut, so a surface that lives only there is a surface an
 operator reaches by deciding to. That is acceptable for the list and
-unacceptable for the failure, which is why §5 puts the failure in three further
-places and does not rely on anybody opening Settings at all.
+unacceptable for the failure, which is why §5 puts the failure in **four places,
+none of them this section**, and does not rely on anybody opening Settings at
+all.
 
 ### 2.1 Why `/settings/stacks/<name>` is a route and not an expander
 
