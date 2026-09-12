@@ -439,10 +439,18 @@ describe("restoring", () => {
     live.prepare("INSERT INTO runs VALUES ('the-operators-data')").run();
     live.close();
 
-    // Half the backup's own size, so the copy is certain to meet the limit part
-    // of the way through rather than before it starts or after it finishes.
+    // A limit that lands part of the way through the copy under *either*
+    // spelling of a block, because the two shells that run `ulimit -f` here
+    // disagree about it: `dash`, which is `/bin/sh` on the image, counts 512
+    // bytes, and `bash`, which is `/bin/sh` on macOS, counts 1024 unless
+    // `POSIXLY_CORRECT` is set. Measured 2026-09-12 against a 90,112-byte
+    // fixture: `/2/512` is 88 blocks, which is 44 KB to `dash` and the whole
+    // file to `bash` — so this case passed on Linux and, on macOS, watched a
+    // restore succeed and asserted nothing. Dividing by the larger unit caps
+    // the copy at half the file where a block is 1024 bytes and a quarter of
+    // it where a block is 512, and both are part-way.
     const size = fs.statSync(fixtureBackup).size;
-    const blocks = Math.floor(size / 2 / 512);
+    const blocks = Math.floor(size / 2 / 1024);
     assert.ok(blocks > 0, `the fixture backup is too small to truncate: ${size} bytes`);
 
     const restore = await runScript("restore-db.mjs", [fixtureBackup, "--db", target], {
