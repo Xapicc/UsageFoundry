@@ -4178,6 +4178,26 @@ export interface StackDetailDTO {
   name: string;
   receipt: StackReceiptDTO | null;
   /**
+   * The container path this stack's declaration is read from.
+   *
+   * The **host** path is `UF_STACKS_DIR`'s compose interpolation and never
+   * enters the container's environment, so the page says this and hedges the
+   * host side as the default. Forwarding the variable would mean adding one the
+   * entrypoint does not read to the `environment:` block, which
+   * `deployment.test.ts` asserts against in both directions.
+   */
+  declaredAt: string;
+  /** Where the tools' own caches live for this stack, whatever is in it. */
+  stateDir: string;
+  /**
+   * What `state/<name>` is holding, in bytes, or `null` when nothing walked it.
+   *
+   * `null` is a real answer and not a zero: a stack that declared no `state`
+   * and one whose cache could not be measured are different facts, and a zero
+   * would tell an operator they have nothing to lose when nothing looked.
+   */
+  stateBytes: number | null;
+  /**
    * Why there is no receipt to show, or `null` when there is one.
    *
    * Two shapes: `missing` is a name no receipt claims, which on this surface

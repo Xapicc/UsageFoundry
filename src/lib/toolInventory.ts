@@ -948,6 +948,7 @@ export function toolInventory(
   const unclaimed = [
     ...ghUnclaimed(gh.extensions, claimedGh),
     ...pyUnclaimed(claimedPy, problems),
+    ...stacksUnclaimed(stacks.receipts, problems),
   ];
 
   return { rows, unclaimed, observedWindowDays: windowDays, problems };
@@ -983,6 +984,44 @@ function ghUnclaimed(installed: InstalledGhExtension[], claimed: Set<string>): s
  * which is a second parser over a third party's file for a row that is already
  * only a prompt to go and look.
  */
+/**
+ * Commands in the stacks toolbox that no receipt claims.
+ *
+ * This is how somebody who installed by hand becomes visible rather than
+ * silent (`01f-` §2.3). Nothing removes these: `reconcile` touches only the
+ * paths its own receipts record — measured against a real volume on
+ * 2026-09-12, a file put in `bin/` by hand outlived the removal of the stack
+ * beside it — so an unclaimed command survives every restart and goes only
+ * with `docker compose down -v`.
+ *
+ * Claimed by **every** receipt and not only the `ok` ones, which costs nothing
+ * and is the safe direction: a failed stack links nothing, so its `bin` is
+ * empty, and a receipt that somehow records a link the page would otherwise
+ * call unowned is better read as owned.
+ *
+ * Unlike the two lists above it, this directory is one the image puts nothing
+ * in — so a name here is always something that arrived after the build, which
+ * is exactly the population worth naming.
+ */
+function stacksUnclaimed(receipts: StackReceipt[], problems: string[]): string[] {
+  const claimed = new Set(receipts.flatMap((receipt) => receipt.bin.map((entry) => entry.name)));
+  let names: string[];
+  try {
+    names = fs.readdirSync(STACKS_BIN_DIR);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    // An install with no stack has never had this directory created, which is
+    // an absence rather than a fault — the applier makes it when it first links
+    // something.
+    if (code === "ENOENT") return [];
+    problems.push(
+      `The stacks toolbox ${STACKS_BIN_DIR} could not be read (${code ?? "unknown error"}).`,
+    );
+    return [];
+  }
+  return names.filter((name) => !claimed.has(name)).sort();
+}
+
 function pyUnclaimed(claimed: Set<string>, problems: string[]): string[] {
   let names: string[];
   try {

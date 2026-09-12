@@ -31,6 +31,20 @@ import path from "node:path";
  * by a set that is rewritten on every boot and by nothing that outlives one.
  */
 
+/**
+ * The read-only bind of the host's `./stacks`, where declarations are read from.
+ *
+ * A copy of `DECLARATIONS_DIR` in `scripts/apply-stacks.mjs`, which is where it
+ * is used — the runtime image ships `scripts/` without `src/`, so neither can
+ * import the other. `deployment.test.ts` holds the two to the entrypoint's own
+ * value, because a copy drifts silently and what it costs here is a page
+ * telling an operator to edit a directory that is not there.
+ *
+ * Nothing in this app reads a file under it. It is carried only so the detail
+ * page can say where a stack came from.
+ */
+export const STACKS_DECLARATIONS_DIR = "/etc/uf-stacks";
+
 /** The named volume. Nothing in the image is ever written under here. */
 export const STACKS_ROOT = "/var/lib/uf-stacks";
 
@@ -316,4 +330,109 @@ export function stackGrants(dir = STACKS_RECEIPTS_DIR): StackGrants {
   }
   cache.value = { allow, deny };
   return cache.value;
+}
+
+/**
+ * The one event name every non-`ok` stack is recorded under.
+ *
+ * One name rather than one per failure kind, on `db.ts:207-211`'s grounds for
+ * `SCHEMA_FAULT_EVENT`: they answer a single question — what did **this** boot
+ * find wrong — and a reader asks it with a single-name query, with `detail`
+ * saying which kind it was.
+ */
+export const STACK_FAULT_EVENT = "stacks.not_ok";
+
+/** One stack this boot did not install, in the shape an ops row carries. */
+export interface StackFault {
+  name: string;
+  /** `failed`, `conflicted`, or `unreadable` for a receipt that is not one. */
+  status: string;
+  reason: string;
+}
+
+/**
+ * Every stack this boot found wrong, for the archive a restart does not erase.
+ *
+ * A reader, like everything else here — the caller writes the rows. That keeps
+ * this module free of `db.ts` and puts the boot-time side effect in the boot
+ * hook, beside every other one.
+ *
+ * **Per stack and never per step.** `ops_events` is capped at 500 rows and the
+ * cap was sized for *"boot-frequency writes"* (`db.ts:136-137`); a row per step
+ * per boot on an install with a few stacks would evict the rest of the table,
+ * which is the trap `contextPruning.ts:2919-2922` records for a repeating
+ * fault. One stack that will not install is one row however many steps it has.
+ *
+ * The reason is the applier's own text, clipped: a receipt can carry 4 KB of
+ * somebody's stderr and this row is an index into the detail page, not a
+ * replacement for it.
+ */
+export function stackFaults(dir = STACKS_RECEIPTS_DIR): StackFault[] {
+  const { receipts, unreadable } = readReceipts(dir);
+  const faults: StackFault[] = [];
+  for (const receipt of receipts) {
+    if (receipt.status === "ok") continue;
+    faults.push({
+      name: receipt.name,
+      status: receipt.status,
+      reason: firstLine(receipt.error?.text ?? "") || "the receipt records no reason",
+    });
+  }
+  for (const entry of unreadable) {
+    faults.push({ name: entry.name, status: "unreadable", reason: entry.reason });
+  }
+  return faults;
+}
+
+/** The applier's own sentence, which it writes ahead of the tool's stderr. */
+function firstLine(text: string): string {
+  return (text.split("\n", 1)[0] ?? "").slice(0, 300);
+}
+
+/**
+ * How much the tools' own caches are holding for one stack, in bytes.
+ *
+ * This is what the detail page has to be able to say before an operator deletes
+ * a directory: `state/<name>` goes with the stack, and for a stack whose state
+ * is a provider cache that is a re-download, while for one whose state is
+ * anything else it is a loss (`01e-` §6).
+ *
+ * Uncached, and that is a decision rather than an oversight: it is one walk over
+ * one directory, on a page an operator opens on purpose and leaves — which is
+ * the opposite of the Storage card's walks, whose caching `retention.md`
+ * governs because they run on a page that polls.
+ *
+ * Returns `null` rather than `0` when the directory is not there or cannot be
+ * walked. A stack that declared no `state` and one whose cache could not be
+ * measured are not the same fact, and a zero would say the operator has nothing
+ * to lose when nothing looked.
+ */
+export function stateBytes(name: string, root = STACKS_STATE_DIR): number | null {
+  const dir = path.join(root, name);
+  let total = 0;
+  const walk = (at: string): boolean => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(at, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    for (const entry of entries) {
+      const child = path.join(at, entry.name);
+      // Never followed. A symlink into the run's own checkout would otherwise
+      // have this walk measure a repository and call it a cache.
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) {
+        if (!walk(child)) return false;
+        continue;
+      }
+      try {
+        total += fs.statSync(child).size;
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  };
+  return walk(dir) ? total : null;
 }

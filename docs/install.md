@@ -323,6 +323,25 @@ that survives a rebuild, which is where a tool's cache belongs — and `state`,
 which creates directories under it before the first run, for the tools that
 refuse to start without one.
 
+**Two other kinds of step, for a tool that is a package rather than a
+download.** `uv-tool` is a Python package and `npm-global` is a Node one, and
+both take a spec and the commands it installs:
+
+```json
+{ "kind": "uv-tool", "spec": "ruff==0.14.1", "bin": ["ruff"] }
+{ "kind": "npm-global", "spec": "@musistudio/claude-code-router@1.0.66", "bin": ["ccr"] }
+```
+
+There is no digest on either and there cannot be: `uv` and `npm` resolve a spec
+to a release at install time and verify what they fetch against their own
+registries, so the version is pinned by the spec — write `==` or `@`. Pin it,
+or a rebuild months later installs something else.
+
+**These two run the package's own install hooks, as the agent uid, at boot.**
+That is the difference from `archive`, which downloads, checks and unpacks and
+executes nothing. It is the same trade `UF_PY_TOOLS` already makes, and it means
+a stack using either is worth exactly the package it names.
+
 **`deny` is a blocklist and the default is empty**, which means a stack grants
 every command of every binary it links. Name the ones you do not want a headless
 agent running — `terraform apply`, `shfmt -w` — and the first word of each entry
@@ -331,9 +350,12 @@ tools.
 
 **Read it back in Settings → Tools**, which is the point of the directory: one
 row per binary, saying whether it resolves, where, and whether anything has
-invoked it since it was installed. A stack that failed shows the reason its
-installer gave, verbatim, which a boot log cannot do because the restart that
-caused you to look is the restart that destroyed it.
+invoked it since it was installed. Open a stack's name for the rest — the
+per-step outcome, what it put on `PATH`, what it exports, and the last 4 KB of a
+failing step's output verbatim, which a boot log cannot give you because the
+restart that made you look is the restart that destroyed it. A command sitting
+in the toolbox that no stack claims is listed too, under *Claimed by no entry*:
+nothing removes those, so something installed by hand outlives every restart.
 
 **What goes wrong, and where you see it.** A bad checksum, a 404 or a
 `stack.json` that does not parse fails that stack alone: nothing is unpacked,
@@ -344,17 +366,21 @@ no network at all, so only the first boot after an edit is slow.
 
 To change a tool, edit the file and restart. To remove one, delete the directory
 and restart — the applier removes only what its own receipts record, so anything
-you put in the toolbox by hand is left alone. `docker compose down -v` discards
-the volume and the next boot reinstalls everything from the declarations, which
-are on your disk and can go in git.
+you put in the toolbox by hand is left alone. **Removing takes the tool's cache
+with it**: whatever `state` was holding goes, which for a provider cache is a
+re-download and for anything else is a loss. The stack's page prints that
+directory and its current size before you decide. `docker compose down -v`
+discards the whole volume and the next boot reinstalls everything from the
+declarations, which are on your disk and can go in git.
 
 **One honest sentence before you take somebody else's stack.** Installing a
 stack is the same act as taking a stranger's `RUN` line into your Dockerfile.
 What this buys you is that the act is *reviewable* — one small file, every URL
 and digest visible — and *revocable* — delete the directory, restart. It does
-not make it safe, and nothing that installs software can. Nothing a stack
-downloads is executed at install time, but an agent that runs the tool is
-running their code.
+not make it safe, and nothing that installs software can. An `archive` step
+executes nothing it downloads, so such a stack is worth its URL; `uv-tool` and
+`npm-global` run the package's install hooks at boot, so those are worth the
+package. Either way, an agent that runs the tool is running their code.
 
 ## Finding a setting, and not losing an edit
 
@@ -400,7 +426,7 @@ to what is stored.
 | `UF_UID` / `UF_GID` | **Linux only.** The uid every spawned agent runs as; must own the mounts. The server itself runs as root and drops to this. Default 1000. |
 | `UF_CHAT_GID` | The group the orchestrator chat runs in, which owns the per-turn MCP capability file that a concurrent agent must not read. Default 65533. **Must differ from `UF_GID`** — the server refuses to boot when they match rather than hand that file to the group it is being kept from. |
 | `UF_BACKUP_DIR` | Host directory mounted at `/backups`, where `scripts/backup-db.mjs` writes. Default `./backups`, which this repository ships. Point it elsewhere and create that directory first: Docker makes a missing bind source root-owned, and the children that write it are `UF_UID`. |
-| `UF_STACKS_DIR` | Host directory bind-mounted read-only at `/etc/uf-stacks`, holding one directory per stack. Default `./stacks`, which this repository ships empty. A stack is a `stack.json` naming an archive, its checksum manifest and the binaries to link onto `PATH`; the applier runs at boot and Settings → Tools reads back what it did. |
+| `UF_STACKS_DIR` | Host directory bind-mounted read-only at `/etc/uf-stacks`, holding one directory per stack. Default `./stacks`, which this repository ships empty. A stack is a `stack.json` naming an archive and its checksum manifest, or a `uv`/`npm` package, plus the binaries to link onto `PATH`; the applier runs at boot and Settings → Tools reads back what it did. |
 | `UF_MEM_LIMIT` | What the container may take before Docker kills it. Default `10g`, sized for the shipped 4 runs plus 2 other Claude processes. |
 | `UF_NODE_HEAP_MB` | The server's own heap ceiling, in MiB. Default 2048. |
 | `UF_PIDS_LIMIT` | Tasks the container may hold. Default 2048. |

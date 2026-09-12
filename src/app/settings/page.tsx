@@ -1166,7 +1166,7 @@ function ToolFigures({
         <ListGroup
           className="mt-4"
           label="Claimed by no entry"
-          footnote="Commands in the tool volumes that nothing in your .env names — usually something installed by hand, and sometimes a Python package whose console script is called something other than the package. Nothing removes these: the boot-time installers touch only what they were asked for, so they outlive every restart and go only with docker compose down -v"
+          footnote="Commands in the tool volumes that no declaration names — usually something installed by hand, and sometimes a Python package whose console script is called something other than the package. Nothing removes these: the installers touch only what they were asked for, so they outlive every restart and go only with docker compose down -v"
         >
           {report.unclaimed.map((name) => (
             <ListRow key={name} label={<span className="font-mono text-xs">{name}</span>}>

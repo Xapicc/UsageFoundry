@@ -1107,6 +1107,29 @@ is `docs/agent/testing.md`; interface defects and their classes are
   them alone. `07-option-make-it-runnable.md` §10 is still owed and is now
   runnable.
 
+- **Phase 5's four readings, against the running container, 2026-09-12.**
+  *Unclaimed:* a file was created by hand at `/var/lib/uf-stacks/bin/hand-rolled`
+  and `/api/tools` drew it under `unclaimed` with no `problems` entry — the
+  population that was invisible until this phase, since the two `.env` lists'
+  toolboxes were walked and this one was not. *`ops_events`:* a deliberately
+  unpublished npm package was declared, and the boot wrote exactly one row,
+  `warn stacks.not_ok`, `{"stack":"bad-pkg","status":"failed","reason":"npm-global
+  could not install @usagefoundry/definitely-not-published@9.9.9"}` — one row per
+  stack and not per step, and the reason clipped to the applier's own first line
+  rather than the 4 KB the receipt holds. 44 rows in the table against a 500 cap.
+  *State size:* `/api/stacks/shell-lint` answered `declaredAt`
+  `/etc/uf-stacks/shell-lint`, `stateDir` `/var/lib/uf-stacks/state/shell-lint`
+  and `stateBytes` **0** — correct and deliberately not `null`: that stack
+  declares no `state`, so the directory exists and holds nothing, which is a
+  different fact from nothing having walked it. *The page:* the `Removing it`
+  card draws the two paths, `0 B`, and the host-path hedge naming
+  `./stacks/shell-lint` and `UF_STACKS_DIR`. No console error.
+
+  Caveat on the size: no stack measured here has ever had a non-empty `state`,
+  so the walk has only ever summed zero files. What it would do with a real
+  provider cache — and in particular the symlink it declines to follow — is
+  reasoned from the code.
+
 ### Container and environment
 
 - **Multiple workspaces:** slots list independently, a disabled one is skipped,

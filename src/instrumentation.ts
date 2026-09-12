@@ -138,6 +138,28 @@ export async function register() {
     // moment it acts on it, everywhere. A captured boot-time answer was how the
     // heartbeat came to restamp a lock that had changed hands.
     if (ownsDataDir()) {
+      // What this boot's stacks did not install, into the archive a restart
+      // does not erase. The boot log already said it and the boot log is a
+      // scrollback buffer the restart destroys — `db.ts:182-184`, and the
+      // restart is exactly when an operator comes looking.
+      //
+      // One row per stack and never per step: the table is capped at 500 rows
+      // and sized for boot-frequency writes, so a per-step row on an install
+      // with a few stacks would evict everything else in it.
+      //
+      // Behind the ownership claim like every other durable write below, and it
+      // is a no-op off the container anyway: the receipts live in a named volume
+      // no host process has, so a dev server finds none and writes nothing.
+      const { recordOpsEvent } = await import("./lib/ops");
+      const { stackFaults, STACK_FAULT_EVENT } = await import("./lib/stacks");
+      for (const fault of stackFaults()) {
+        recordOpsEvent("warn", STACK_FAULT_EVENT, {
+          stack: fault.name,
+          status: fault.status,
+          reason: fault.reason,
+        });
+      }
+
       reconcileOnBoot();
 
       // Same problem, different table: a review is a child process too, and a

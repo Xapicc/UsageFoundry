@@ -25,9 +25,15 @@ one dangerous surface is a shell script the deployment tests already have a way
 of pinning (`src/lib/deployment.test.ts`, which asserts over the *text* of
 `Dockerfile`, `docker-compose.yml` and `docker-entrypoint.sh`).
 
-Checked against the tree at `68a8aa7`. **This container has no Docker**, so every
-phase's persistence claim is reasoned rather than observed and
-[22-validation.md](22-validation.md) §5 has the commands that would settle it.
+Checked against the tree at `68a8aa7`, when this container had no Docker and
+every persistence claim below was reasoned rather than observed.
+
+> **All six shipped on 2026-09-12** — the probe and phases 1 to 5 — against a
+> real install with Docker. Each phase carries a note saying what it deviated
+> from and why; `docs/verification.md` carries what was measured and what was
+> not, and the one thing still owed is `07-option-make-it-runnable.md` §10: a
+> real work cycle invoking a stack's tool. Read the notes before the text under
+> them, which is the plan rather than the record.
 
 ---
 
@@ -519,6 +525,38 @@ is not one anybody wrote down.
 ---
 
 ## Phase 5 - the last mile of the surface
+
+> **BUILT on 2026-09-12.** All four items shipped: the `ops_events` row per
+> non-`ok` outcome, the `unclaimed` reading over `/var/lib/uf-stacks/bin`, the
+> state directory and its size on the detail page with the sentence about losing
+> it, and the documents — `docs/install.md`'s operator half extended to the two
+> package verbs, the detail page and the state loss, plus `architecture.md`'s
+> module map and `C1` and `security.md`'s trust statement.
+>
+> **Two deviations.**
+>
+> 1. **The row is written by the server, not the applier.** This file says
+>    *"through `recordOpsEvent`"* without saying who calls it, and the applier
+>    cannot: it is a `.mjs` in `scripts/`, which the runtime image ships without
+>    `src/`, and it runs before the server exists. So `stacks.ts` gained
+>    `stackFaults()` — a reader, like everything else there — and
+>    `instrumentation.ts` writes the rows behind the same ownership claim as
+>    every other durable boot write. Off the container it is a no-op, because a
+>    host process finds no receipts.
+>
+> 2. **There is one new test after all**, and it is a `deployment.test.ts`
+>    assertion rather than a unit test. The detail page has to print where a
+>    stack was read from, so `stacks.ts` now carries a copy of
+>    `/etc/uf-stacks` — the applier's `DECLARATIONS_DIR`, which it cannot
+>    import for the reason above. A copy drifts silently in both directions and
+>    what it costs here is a page telling an operator to edit a directory that
+>    is not there, which is the one instruction on that page. Held to the
+>    entrypoint's own value, on `backupRestore.test.ts`'s `STALE_MS` grounds.
+>
+> **`stateBytes` is `null` rather than `0` when nothing walked it**, which this
+> file did not ask for and the page needs: a stack that declared no `state` and
+> one whose directory could not be read are different facts, and a zero would
+> tell an operator they have nothing to lose when nothing looked.
 
 **One to two days. Nothing else depends on it.**
 

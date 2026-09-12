@@ -3,7 +3,7 @@
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import type { StackDetailDTO, StackReceiptDTO } from "@/lib/apiTypes";
-import type { BadgeTone } from "@/lib/format";
+import { fmtBytes, type BadgeTone } from "@/lib/format";
 import { Card, CardTitle, Empty } from "@/components/ui/Card";
 import { ListGroup, ListRow } from "@/components/ui/List";
 import { Badge } from "@/components/ui/Badge";
@@ -107,12 +107,74 @@ export default function StackDetailPage({ params }: Ctx) {
         </Notice>
       )}
 
-      {detail?.receipt && <Receipt receipt={detail.receipt} />}
+      {detail?.receipt && <Receipt receipt={detail.receipt} detail={detail} />}
+
+      {detail && <Removing detail={detail} />}
     </>
   );
 }
 
-function Receipt({ receipt }: { receipt: StackReceiptDTO }) {
+/**
+ * What happens if the operator deletes the directory, said before they do it.
+ *
+ * There is no button here and there is not going to be one: `/api/settings` is
+ * reachable with the master key, and a control that installs software is a
+ * control that installs software for anyone holding it (`01e-` §7). Removing is
+ * `rm -r` and a restart. The app's whole part is to say the one thing an
+ * operator cannot see from the host — that `state/<name>` goes with the stack.
+ *
+ * **The host path is a hedge and is marked as one.** The container knows where
+ * it read the declaration; the host directory is `UF_STACKS_DIR`'s compose
+ * interpolation, which never enters the container's environment and must not be
+ * forwarded into it — `deployment.test.ts` asserts that the `environment:` block
+ * carries every variable the entrypoint reads *and nothing else*. So this prints
+ * the container path it knows and names the default beside it, which is right
+ * for every install that did not set the variable and honest for the ones that
+ * did.
+ */
+function Removing({ detail }: { detail: StackDetailDTO }) {
+  return (
+    <Card>
+      <CardTitle>Removing it</CardTitle>
+      <p className="mb-3 max-w-[70ch] text-sm text-ink">
+        Delete the directory and restart. The applier removes only paths its own receipt records, so
+        anything you put in the toolbox by hand stays where it is.
+      </p>
+      <ListGroup
+        footnote={
+          <>
+            Bind-mounted read-only from the host — <code>./stacks/{detail.name}</code> beside your{" "}
+            <code>docker-compose.yml</code>, unless you set <code>UF_STACKS_DIR</code>, which this
+            container cannot see.
+          </>
+        }
+      >
+        <ListRow label="Read from">
+          <span className="break-all font-mono text-2xs text-ink-muted">{detail.declaredAt}</span>
+        </ListRow>
+        <ListRow
+          label="Destroyed with it"
+          description={
+            <>
+              <span className="block break-all font-mono text-2xs">{detail.stateDir}</span>
+              <span className="block">
+                {detail.stateBytes === null
+                  ? "Nothing walked it, which is not the same as it being empty"
+                  : "A provider cache is a re-download; anything else is gone"}
+              </span>
+            </>
+          }
+        >
+          <span className="text-sm text-ink-muted">
+            {detail.stateBytes === null ? "not measured" : fmtBytes(detail.stateBytes)}
+          </span>
+        </ListRow>
+      </ListGroup>
+    </Card>
+  );
+}
+
+function Receipt({ receipt, detail }: { receipt: StackReceiptDTO; detail: StackDetailDTO }) {
   const applied = receipt.appliedAt ? new Date(receipt.appliedAt) : null;
   return (
     <>
@@ -244,7 +306,14 @@ function Receipt({ receipt }: { receipt: StackReceiptDTO }) {
             <ListGroup
               className={Object.keys(receipt.env).length > 0 ? "mt-4" : ""}
               label="Kept across a reinstall"
-              footnote="Agent-owned directories in the named volume. A version bump takes the package and leaves these, so a provider or module cache is not re-downloaded — but removing the stack removes them with it"
+              footnote={
+                <>
+                  Agent-owned directories in the named volume. A version bump takes the package and
+                  leaves these, so a provider or module cache is not re-downloaded — removing the
+                  stack does not, and what that would cost is below
+                  {detail.stateBytes === null ? "" : ` (${fmtBytes(detail.stateBytes)} today)`}.
+                </>
+              }
             >
               {receipt.state.map((dir) => (
                 <ListRow key={dir} label={<span className="break-all font-mono text-xs">{dir}</span>}>

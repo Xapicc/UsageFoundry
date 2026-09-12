@@ -1116,6 +1116,24 @@ describe("stacks reach an agent, and the image ships none of them", () => {
     );
   });
 
+  it("holds the app's copy of the declarations path to the entrypoint's own", () => {
+    // `src/lib/stacks.ts` carries the path so the detail page can say where a
+    // stack was read from; it cannot import the applier, which is where the
+    // path is actually used, because the runtime image ships `scripts/` without
+    // `src/`. So it is a copy, and a copy drifts silently in both directions —
+    // `backupRestore.test.ts`'s grounds for `STALE_MS`, one pair of files over.
+    // What it costs here is a page telling an operator to go and edit a
+    // directory that does not exist, which is the one instruction on that page.
+    const source = fs.readFileSync(path.join(root, "src", "lib", "stacks.ts"), "utf8");
+    const declared = /^export const STACKS_DECLARATIONS_DIR = "([^"]+)";$/m.exec(source);
+    assert.ok(declared, "stacks.ts no longer declares STACKS_DECLARATIONS_DIR where this test can read it");
+    assert.equal(
+      declared[1],
+      stacksPath("STACKS_DECLARATIONS_DIR"),
+      "stacks.ts and docker-entrypoint.sh disagree about where declarations are read from",
+    );
+  });
+
   it("mounts a named volume over the directory the applier installs into", () => {
     const target = stacksPath("STACKS_VOLUME");
     assert.match(

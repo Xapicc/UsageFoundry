@@ -58,6 +58,38 @@ toolInventory.ts what this install's agents can actually run, and how sure the
                 Read by /api/tools and by status.ts's two integers; nothing
                 writes through it, because add, remove and change are all a
                 file edit on the host and a restart.
+stacks.ts       the read-back over what apply-stacks.mjs installed, and the
+                only reader of the receipts. A *reader*: it installs nothing,
+                removes nothing and repairs nothing, because the applier runs
+                in the one window of the container's life with no agent alive
+                and this runs in a request. `parseReceipt` validates at the
+                boundary a shell script writes across — a half-written receipt
+                must read `unreadable` and never a partial `ok`. It also
+                projects what every ok stack grants a cycle
+                (`Bash(<bin>:*)` onto --allowedTools) and denies it
+                (`Bash(<entry>:*)` onto --disallowedTools), cached for the life
+                of the process because that is the exact life of the receipts.
+                There is **no `stacks` table**: the receipts are the state and
+                they are per boot, so the one question a monitor asks — what
+                did *this* boot find wrong — is answered by a set nothing
+                outlives a restart with.
+scripts/apply-stacks.mjs
+                not in src/ and not importable from it — it runs from the
+                entrypoint before `exec "$@"`, because PATH has to be final
+                before the server starts and childEnv copies the server's
+                environment into every agent. Parse, digest, download, verify,
+                unpack, link, write receipts. Three verbs and nothing else:
+                `archive` executes nothing it downloads, `uv-tool` and
+                `npm-global` run the package's own install hooks as the agent
+                uid. Never a shell — every URL, filename and digest on its argv
+                came out of a file a stranger wrote. **C1: the image ships
+                nothing under /var/lib/uf-stacks, ever.** A named volume takes
+                its contents from the image exactly once, at creation, so
+                anything the image puts at that mount point is visible on a
+                reviewer's fresh install and masked on every install that
+                already exists — which is the one breach here invisible to
+                whoever commits it, and the reason deployment.test.ts asserts
+                the Dockerfile names no path under it.
 stacks.ts       the receipts `scripts/apply-stacks.mjs` wrote, typed. A reader
                 and nothing else: it installs nothing, removes nothing and
                 repairs nothing, because the applier runs in the one window of

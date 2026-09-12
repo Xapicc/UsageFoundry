@@ -1,5 +1,11 @@
+import path from "node:path";
 import { jsonMaybeGzipped } from "../../../../lib/http";
-import { readReceipts } from "../../../../lib/stacks";
+import {
+  readReceipts,
+  stateBytes,
+  STACKS_DECLARATIONS_DIR,
+  STACKS_STATE_DIR,
+} from "../../../../lib/stacks";
 import type { StackDetailDTO } from "../../../../lib/apiTypes";
 
 export const runtime = "nodejs";
@@ -41,9 +47,26 @@ export async function GET(req: Request, ctx: Ctx) {
   const { name } = await ctx.params;
   const { receipts, unreadable } = readReceipts();
 
+  // Both paths are built from the name only after it has been matched against a
+  // receipt, so they are a name this applier wrote rather than a segment off the
+  // wire — and they are printed, never opened, except by the one walk below.
+  const where = (found: string) => ({
+    declaredAt: path.posix.join(STACKS_DECLARATIONS_DIR, found),
+    stateDir: path.posix.join(STACKS_STATE_DIR, found),
+  });
+
   const receipt = receipts.find((entry) => entry.name === name) ?? null;
   if (receipt) {
-    const body: StackDetailDTO = { name, receipt, absence: null };
+    const body: StackDetailDTO = {
+      name,
+      receipt,
+      ...where(receipt.name),
+      // Walked per request and deliberately not cached: one directory, on a
+      // page an operator opens on purpose and leaves. `stacks.ts` carries why
+      // `null` here is not zero.
+      stateBytes: stateBytes(receipt.name),
+      absence: null,
+    };
     return jsonMaybeGzipped(req, body, { headers: { "Cache-Control": "no-store" } });
   }
 
@@ -51,6 +74,12 @@ export async function GET(req: Request, ctx: Ctx) {
   const body: StackDetailDTO = {
     name,
     receipt: null,
+    // Nothing was matched, so nothing is measured and nothing is spelled: a
+    // name off the wire must not become a path, and a stack with no receipt has
+    // no state this app can vouch for either way.
+    declaredAt: STACKS_DECLARATIONS_DIR,
+    stateDir: STACKS_STATE_DIR,
+    stateBytes: null,
     absence: broken
       ? { kind: "unreadable", reason: broken.reason }
       : {
