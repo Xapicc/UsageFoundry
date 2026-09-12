@@ -230,11 +230,11 @@ Every one of these gets the image's `PATH` unchanged.
 | 3 | Conflict resolver | same site | `reviewEnv` | `acceptEdits` (`land.ts:1450`) |
 | 4 | Orchestrator chat turn | `src/lib/chat.ts:2940` | `chatEnv` (`chat.ts:3826`) | `bypassPermissions` (`chat.ts:2833`) |
 | 5 | Workflow orchestrator block | same site | `chatEnv` | `bypassPermissions` |
-| — | `claude auth` | `src/lib/claudeAuth.ts:306`, `:418` | `authEnv` (`:260`) | n/a |
-| — | `codex auth` | `src/lib/codexAuth.ts:399`, `:551` | own | n/a |
-| — | git | `src/lib/git.ts:233` | `gitEnv` (`:51`) | n/a |
-| — | winnow | `src/lib/contextPruning.ts` (five sites) | `pruneEnv` (`:1444`) | n/a |
-| — | land gate | `src/lib/landGate.ts:140` | own | n/a |
+| n/a | `claude auth` | `src/lib/claudeAuth.ts:306`, `:418` | `authEnv` (`:260`) | n/a |
+| n/a | `codex auth` | `src/lib/codexAuth.ts:399`, `:551` | own | n/a |
+| n/a | git | `src/lib/git.ts:233` | `gitEnv` (`:51`) | n/a |
+| n/a | winnow | `src/lib/contextPruning.ts` (five sites) | `pruneEnv` (`:1444`) | n/a |
+| n/a | land gate | `src/lib/landGate.ts:140` | own | n/a |
 
 The agent children drop to the agent uid through `childCredentials()`
 (`src/lib/privsep.ts:252`), the chat child through `chatChildCredentials()`
