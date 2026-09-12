@@ -84,8 +84,15 @@ nothing about it.
 - **2026-09-12, `dd66cfb`, class A.** `/settings`' section strip drew a third
   chip treatment of its own — a `--tint` fill with `text-tint-fg` on the current
   chip, `text-ink-muted` on `bg-bezel` on the other nine — and two of its three
-  tone pairs were below 4.5:1: white on `--tint` at 4.21:1 in every theme, and
-  the muted label on the bezel at 3.54:1 in dark. Found by two reviewers under
+  tone pairs were below 4.5:1 as rendered: `--fg-muted` on `--bezel` at 3.54:1
+  in dark, which is the app's own tokens and fails unconditionally, and
+  `--tint-fg` on `--tint` at 4.21:1 in every theme, which is **not** — that pair
+  resolved to `AccentColorText`/`AccentColor` through the `@supports` block at
+  globals.css:330, and Chromium's default accent is `#0075ff`. On the declared
+  fallback the same pair is 5.22:1 light and 5.06:1 dark, so the current chip
+  failed only where the browser hands the app an accent that does. That is not
+  this strip's to fix and is filed separately; the strip stops depending on the
+  pair either way. Found by two reviewers under
   the ascii skin, where the mono face made the dark one obvious; sampled from
   rendered pixels, both skins measured the same figure to two decimals, so the
   skin was not the cause — nothing under `:root[data-skin="ascii"]` reaches
