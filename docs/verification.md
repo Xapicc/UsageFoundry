@@ -1081,6 +1081,18 @@ is `docs/agent/testing.md`; interface defects and their classes are
   `shfmt_v3.14.1_linux_arm64`. **This is the first thing in this repository to
   put a binary on an agent's `PATH` without a `Dockerfile` edit.**
 
+- **The stacks group on Settings, in a browser against the running container,
+  2026-09-12.** `/settings#tools` on this install drew the group between
+  *gh extensions* and the footnote, two rows sharing the `shell-lint` name and
+  differing only in their command, each `unverified` with the path it resolved
+  to and *"Nothing has invoked it since this stack was installed"*. No console
+  error. `npm run smoke-pages` cannot reach this state — the receipts live at
+  `/var/lib/uf-stacks/receipts`, an absolute container path, and that pass runs
+  on the host — so a browser against the real container is the only thing that
+  settles it. It also caught the section's lede still claiming every count was
+  over the retention window, which stopped being true for a stack the moment
+  the install floor landed.
+
 - **A checksum mismatch stops the stack and nothing else, 2026-09-12.** A second
   declaration was added carrying a deliberately wrong `sha256` against a real
   URL. The boot log read `stack bad-digest: failed —
@@ -2375,14 +2387,6 @@ measurement under *Verified* and cut the item down to what is still open.
   visible to it.
 
 ### Container and environment
-
-- **The Tools section's stacks group has not been seen in a browser.** The rows
-  were read off `/api/tools` against the running container and the group's
-  markup is the same `ListGroup` the other two use, but nothing has loaded
-  `/settings` with a stack present — `npm run smoke-pages` cannot, because the
-  receipts live at `/var/lib/uf-stacks/receipts`, an absolute container path,
-  and the pass runs on the host. Settle by opening `/settings` on the install
-  that has one and reading the group.
 
 - **Only `archive` has ever run.** `uv-tool` and `npm-global` are in the format
   and refused by name at parse in this build, so the two verbs that execute a

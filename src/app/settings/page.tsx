@@ -4399,7 +4399,9 @@ export default function SettingsPage() {
               <>
                 {" "}
                 Invocations are counted over the last {tools.observedWindowDays}{" "}
-                days, which is how long this install keeps run events.
+                days, which is how long this install keeps run events — and, for
+                a stack, only since the boot that installed it, because a command
+                name outlives an install of it. Each row says which.
               </>
             )}
           </>
