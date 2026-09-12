@@ -72,6 +72,46 @@ different tools, in three writers' words, and every time it is R1's argument.
 **Nobody chose to edit the published image. Each of them wrote down that there
 was no other way.**
 
+## The design
+
+**Written on 2026-09-12 against `baf051d`, in four files.** It decides rather
+than compares, and `01-constraints.md`'s fixed ten-heading list governs it.
+
+**The mechanism in five sentences.** A stack is a directory holding one
+`stack.json`, living in `./stacks/` on the operator's own machine and reaching
+the container through a read-only bind mount the compose file gains **once**. At
+boot, before the server starts, an applier reads every stack, installs what each
+declares into the named volume `usagefoundry-stacks` at `/var/lib/uf-stacks`,
+links the binaries it names into one root-owned `bin` directory the `Dockerfile`
+has already put on `PATH`, and writes a receipt saying what happened. Adding the
+twelfth tool is a directory copied in and a restart: no file the image contains
+is touched, which is R1. The declaration is on the host, so it survives
+`docker compose up --build` untouched and survives `docker compose down -v`,
+which destroys the volume and is answered by reinstalling from the declaration -
+the volume is a cache and the declaration is the durable thing. Because a work
+cycle's `acceptEdits` may refuse a binary the CLI has never seen, and nobody has
+measured whether it does, a stack declares the argv prefixes it grants and the
+applier projects them onto `--allowedTools` beside `ISOLATED_GIT_TOOLS`, which is
+the design that works under the worse answer and is one deletable list under the
+better one.
+
+| File | What it argues |
+|---|---|
+| [01a-mechanism.md](01a-mechanism.md) | **the design.** The ten fixed headings in order: the two paths and why they are two, the six files that change once and never again, why a bind mount rather than `/workspace`, a `UF_*` list or a derived image, both persistence events separately, boot-time apply and its four reasons, the ownership split, idempotency, reconciliation, removal, conflicts, every failure mode with where it is visible, the build cost, and the fact that would kill it |
+| [01b-stack-format.md](01b-stack-format.md) | **the artifact.** What one stack is, why the directory name is its identity, why JSON, the schema field by field, the three install verbs and their argv, the four `env` refusals and what each prevents, what `allow` may and may not grant, the parse-time refusals, and the Terraform example written out whole with real publisher digests |
+| [01c-reach-and-permission.md](01c-reach-and-permission.md) | **R3.** Which of the three links are settled and by which test, what a sandboxed run's read, exec and write policy does to a binary outside the image and the one path that has to be added, and the exact command that measures whether `acceptEdits` refuses an arbitrary binary, with the four outcomes and what each one changes |
+| [01d-boundaries.md](01d-boundaries.md) | **the two answers the next run should not re-derive.** Where the line between a stack and the existing `UF_*` lists sits; the migration question answered with a counting rule and a table - all twelve `Dockerfile` commits stay, `jq` is the one misfiled and stays anyway, and here is what a reviewer says to the thirteenth; and eleven things this design deliberately does not do |
+
+**Three rulings the design run was asked to make and made.**
+`05-option-image-is-the-stack.md` is **out**: a derived image layers at build
+time, so an operator on a pulled image cannot add a tool at all, which fails
+R1's own stated test rather than a preference. `04-`'s reconcile-host question is
+**answered**: the applier reconciles declarations against receipts in both
+directions and removes only paths its own receipts record. `14-`'s identity
+question is **answered** the way R2 forces: the directory name is the identity,
+the filesystem enforces uniqueness, and a stack is install-wide because `14-` §7
+found every per-run door closed by name.
+
 ## Disposition of the surveyed options
 
 **Nothing in this directory has been deleted.** The files below are unedited, so
@@ -116,25 +156,32 @@ comparison of shapes, as a fact table; read its §4 scores as history.
 the reason the corrections below are trustworthy. See the citation health
 warning.
 
-## What the design run must still settle
+## What is still open
 
-None of these is a design choice, and every one of them changes the design.
+Two of the five questions this list opened are answered by the design; three are
+not, and **none of the three is a design choice.**
 
-1. **R3's third link.** Can a work cycle at `acceptEdits` invoke an arbitrary
-   installed binary? `07-` §10's probe, one work cycle. **Eleven of the twelve
-   rows `19-` scored score 0 to 3 on reach.** Nothing else in this directory is
-   worth a work cycle more.
-2. **Does A1 permit build-time layering?** If yes, `05-` may be most of the
-   answer for half a day. If no, `05-` is out and the installer runs at boot.
-3. **Does the operator have host access to the container?** One sentence. Every
-   argument resting on `docker compose exec` collapses if the answer is no.
-4. **What are the five commands they expect to type?** One sentence. If the
-   answer is `apt-get`, a login, or a two-step install, a declarative unit is
-   answering a smaller question than the one being asked.
-5. **One stack or four?** `14-` §1 makes identity conditional on something
-   selecting between stacks and `14-` §7 finds nothing in this app that does. If
-   four mounted repositories need four toolchains, `18-` is the only shape in the
-   directory that expresses it.
+1. ~~**R3's third link.**~~ **Designed around rather than answered.** The design
+   assumes `acceptEdits` refuses an arbitrary binary and projects a grant;
+   `01c-` §4 has the exact command, now priced at one short headless turn rather
+   than a whole work cycle, and says which list to delete if the answer is the
+   better one. **Still unmeasured.**
+2. ~~**Does A1 permit build-time layering?**~~ **Ruled: no.** `01a-` §2.4. A
+   derived image cannot add a tool on a `docker compose pull` install, which is
+   R1's own test.
+3. **Does the operator have host access to the container?** Still unasked, and it
+   is now **the single fact that would most change the design**: the whole
+   carrier is a host bind mount beside `docker-compose.yml`. An operator who does
+   not own that directory has no door, and the mechanism would have to be rebuilt
+   around something the app itself can write. Note that the design needs host
+   *filesystem* access and **not** `docker compose exec`, so the weaker half of
+   this question is already answered.
+4. **What are the five commands they expect to type?** Still unasked. If the
+   answer is `apt-get`, a login, or a two-step install, `01d-` §3's refusal of
+   system packages is answering a smaller question than the one being asked.
+5. **One stack or four?** Still unasked, and the design takes the one-stack
+   reading: install-wide, per `14-` §7. If four mounted repositories need four
+   toolchains, that is a new question and `18-` is where it starts.
 
 Questions 3, 4 and 5 were named as decisive by four separate runs of this
 directory and **not one of them asked.**
@@ -162,6 +209,18 @@ were re-verified against `6c5af5f`; citations in `02-` through `22-` were not.**
 Re-validating them is a later run's job and should be done against whatever
 commit the design lands on, not this one.
 
+**The four design files were written and their citations verified against
+`baf051d`**, and they correct three the design needed: the tree now has **five**
+named volumes rather than three (`usagefoundry-winnow` at
+`docker-compose.yml:486`, declared at `:719`, joined the three this directory
+counted); the two existing install loops run `gh_as_agent extension install "$1"
+--pin "$2"` at `docker-entrypoint.sh:159-161` and `uv_as_agent tool install "$1"`
+at `:233`, neither of which greps as a literal `gh extension install`; and
+`install -m 0755` is `Dockerfile:175`. Two facts the design rests on were
+measured **in this container** rather than read: `command -v unzip` returns
+nothing while `tar`, `python3`, `curl`, `jq`, `sha256sum` and `install` all
+resolve, and `python3 -m zipfile -e` extracts a `0755` file at `0644`.
+
 ## What could not be reached
 
 **This container has no Docker.** No rebuild, no volume creation, no volume
@@ -184,6 +243,10 @@ they are pinned by unit tests over file *contents*
 |---|---|
 | [00-problem.md](00-problem.md) | the measured cost of the status quo, what ships today, the four gaps against R1-R5, which children have to see a tool, and the six things "sandboxed run" means |
 | [01-constraints.md](01-constraints.md) | **the acceptance criteria**: R1-R5 with a met/not-met test each, the constraints the tree imposes, the two assumptions, the commands nobody has run, and the fixed ten-heading list a design document answers |
+| [01a-mechanism.md](01a-mechanism.md) | **the design**, answering the ten fixed headings in order: the two paths, the six files that change once, both persistence events separately, reach, tool state, the boundaries crossed, the operator's acts, every failure mode, the cost, and the fact that would kill it |
+| [01b-stack-format.md](01b-stack-format.md) | **the stack unit**: identity, format, schema, the three install verbs, the refusals, pinning and integrity, and the Terraform example written out whole |
+| [01c-reach-and-permission.md](01c-reach-and-permission.md) | **R3**: which links are settled and by which test, what a sandbox does to a binary outside the image, and the exact command that measures the one link nobody has measured |
+| [01d-boundaries.md](01d-boundaries.md) | **the migration question answered** - all twelve `Dockerfile` commits stay, with the counting rule that decides the thirteenth - and the eleven things this design deliberately does not do |
 | `02-` … `18-` | the seventeen surveyed options and two framing files, dispositioned in the table above and otherwise unedited |
 | [19-comparison.md](19-comparison.md) | superseded whole. §3's shape table is still a fact table; §4's scores are history |
 | [20-recommendation.md](20-recommendation.md) | superseded whole. It recommended building almost nothing |
