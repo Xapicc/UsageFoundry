@@ -133,8 +133,12 @@ src/lib/
                    Knows what a pixel is and never what is drawn on it
   db.ts            SQLite (runs, events, reviews, chats, proposals, workflows,
                    schedules, settings)
+  toolInventory.ts what the agents can run beyond what the image ships:
+                   UF_PY_TOOLS and UF_GH_EXTENSIONS parsed, resolved on the
+                   server's own PATH (which is the child's), and counted
+                   against run_events — four readings composed into one word
 src/app/api/       usage · account · runs · branches · calibrate · settings ·
-                   folders · chat · mcp · workflows · knowledge
+                   folders · chat · mcp · workflows · knowledge · tools
 ```
 
 Transcripts are re-read incrementally: only bytes appended since the last scan

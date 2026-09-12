@@ -4337,6 +4337,21 @@ describe("childEnv — the agent's home, which is not its checkout", () => {
   });
 });
 
+describe("childEnv — the PATH a tool is resolved on", () => {
+  it("passes PATH through to the agent unchanged", () => {
+    // The strip list is four prefixes and six names and PATH is in none of
+    // them, which is the whole reason a tool installed into a directory on this
+    // server's PATH is a tool an agent can run. Until this line the only
+    // assertion in the tree was `gitEnv`'s (`git.test.ts:97`) — a different
+    // function for a different child — and `toolInventory.ts` now resolves
+    // every row of the Tools section against `process.env.PATH` on the strength
+    // of this being true. Wrong, and the page reports what the server can run
+    // while every agent gets something else, with nothing raised anywhere.
+    process.env.PATH ??= "/usr/bin";
+    assert.equal(childEnv().PATH, process.env.PATH);
+  });
+});
+
 describe("childEnv — Next's private channel to its own children", () => {
   // This process is a Next standalone server, so `__NEXT_PRIVATE_STANDALONE_CONFIG`
   // is set on it in production and carries *this* app's resolved config.

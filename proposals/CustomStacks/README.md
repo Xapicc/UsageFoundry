@@ -9,6 +9,20 @@
 > requirement set is [01-constraints.md](01-constraints.md) and it is the
 > acceptance criteria, not a survey.
 
+> **PHASE 1 IS BUILT, 2026-09-12.**
+> [21-implementation-sketch.md](21-implementation-sketch.md)'s first phase — the
+> read-back, over what is installed today — has shipped: `src/lib/toolInventory.ts`,
+> `GET /api/tools`, a `Tools` section on Settings, two integers on `/api/status`
+> and four unit tests. **It installs nothing**, which is why it could go first;
+> it reports on `UF_PY_TOOLS` and `UF_GH_EXTENSIONS`, and the stacks group joins
+> it in phase 2 with nothing about the section changing to admit it.
+>
+> Building it measured four things this directory had reasoned about, and two
+> of them contradicted it — see the `CORRECTED` banner at
+> [01f-read-back.md](01f-read-back.md) §2.4 and the new *Container and
+> environment* entries in `docs/verification.md`. **Phase 0, the probe, has not
+> been run**, and phases 2 to 5 are untouched.
+
 ## What is being built
 
 A way to install new tools into UsageFoundry **without modifying the published

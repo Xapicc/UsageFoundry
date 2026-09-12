@@ -8,6 +8,7 @@ import { opsCounters, recentOpsEvents } from "./ops";
 import { currentSnapshot, restartClosedCount } from "./orchestrator";
 import { backupStore } from "./retention";
 import { ownsDataDir } from "./serverLock";
+import { toolCounts } from "./toolInventory";
 
 /**
  * What `GET /api/status` answers with: gauges an operator or a monitor can
@@ -141,6 +142,35 @@ export interface StatusReport {
    * it falls to zero when the last one has been picked up or set aside.
    */
   restartClosedOutstanding: number;
+  /**
+   * What this install declared its agents should be able to run, and how much
+   * of it is not there.
+   *
+   * **Two integers, and it stays two.** A tool's name is the value of
+   * `UF_PY_TOOLS` or `UF_GH_EXTENSIONS` — a settings value in everything but
+   * the table it is stored in — and its resolved path is a mount path, so both
+   * are refused by this file's own rule above. `notOk > 0` is the whole of what
+   * a monitor needs to threshold and the names are one authenticated request
+   * away at `/api/tools`.
+   *
+   * `notOk` counts the entries whose composed reading is drawn in a danger
+   * tone: an install record that says it failed, and a declaration whose
+   * command does not resolve. Deliberately not the two warn readings — a tool
+   * that is shadowed or is returning errors is expensive and is not absent.
+   * That definition is the composition's rather than the source's, which is
+   * what lets `proposals/CustomStacks/` phase 2 add stacks to the declaration
+   * set without renaming a field a monitor is already thresholding.
+   *
+   * It de-latches more strongly than `schemaFaults` does rather than less:
+   * `declared` is fixed for the life of the process because nothing outside a
+   * process writes its environment, and `notOk` is recomputed from the
+   * filesystem on every request, so an operator who installs the missing tool
+   * by hand sees it fall on the next poll with no restart at all. The cost of
+   * that is the other direction and is worth saying out loud: this figure can
+   * move between two polls with no boot in between, so the threshold is `> 0`
+   * and never "changed since the last boot".
+   */
+  tools: { declared: number; notOk: number };
   /**
    * What `migrate()` found wrong with the database file when this process
    * opened it: a rollback to an older image, or the residue of an interrupted
@@ -380,6 +410,7 @@ export async function statusReport(now = Date.now()): Promise<StatusReport> {
         }
       : null,
     restartClosedOutstanding: restartClosedCount(),
+    tools: toolCounts(now),
     // Copied rather than handed out: the list behind it is the one `migrate()`
     // clears and refills, and a caller that held a reference to it would see it
     // emptied under them by the next boot in this process.

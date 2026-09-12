@@ -86,6 +86,19 @@ rather than a redesign - *"which is why it is built assuming the worse answer"*
 
 ## Phase 1 - the read-back, over what is installed today
 
+> **BUILT on 2026-09-12.** `src/lib/toolInventory.ts`, `GET /api/tools`, the
+> `Tools` section on Settings and the two `/api/status` integers all shipped, on
+> `main`. Four deviations from the text below, each argued where it is made:
+> `parseToolList` takes the **source** rather than a separator pattern, so one
+> source's separators cannot be paired with the other's name parser; there is a
+> **seventh state**, `unknown`, because a `UF_PY_TOOLS` entry may be a bare path
+> that names no command; a gh extension is resolved against the **extensions
+> directory and its `manifest.yml`** rather than through `resolveOnPath`,
+> because it is not a binary on `PATH`; and there is a **fourth test**,
+> `commandPositionNames`, because the prefix test this file specified was
+> measured at 10.5% recall. The `childEnv().PATH` repair this file scheduled for
+> phase 2 was taken here, since the reachable layer rests on it.
+
 **Two to three days. Ships alone and is worth having alone.**
 
 ### What ships

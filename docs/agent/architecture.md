@@ -42,6 +42,22 @@ mergeQueue.ts   several branches landed one after another — rows in merge_queu
                 one worker per repository (that Set is the mutual exclusion),
                 and nothing on the path carrying a clock
 templates.ts    saved run configurations — form input, never a run
+toolInventory.ts what this install's agents can actually run, and how sure the
+                app is of each one. Four readings from four places — declared
+                (UF_PY_TOOLS / UF_GH_EXTENSIONS), installed (the gh extensions
+                volume, and later a stack's receipt), reachable (a PATH
+                resolution over the server's own PATH, which *is* the child's
+                because childEnv strips no PATH), observed (a bounded, cached
+                run_events scan) — composed into one word by `composeState`. A
+                layer is never inferred from the layer above it, and
+                `installed` is the only word needing all four to agree, because
+                it is the one an operator acts on without reading further. The
+                two kinds of event do not carry the command in the same place
+                — `tool` at $.input.command, `tool_error` at $.command — and a
+                query reading both the same way counts zero failures for ever.
+                Read by /api/tools and by status.ts's two integers; nothing
+                writes through it, because add, remove and change are all a
+                file edit on the host and a restart.
 plugins.ts      Claude Code plugins found in the mounts, switched on per install
                 and carried onto every work cycle as --plugin-dir. Deliberately
                 *not* `claude plugin install`: compose binds the operator's

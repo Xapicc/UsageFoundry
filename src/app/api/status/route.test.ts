@@ -114,6 +114,7 @@ test("carries every documented key", async () => {
     "webhook",
     "lastBootReconcile",
     "restartClosedOutstanding",
+    "tools",
     "schemaFaults",
   ]) {
     assert.ok(key in body, `the status payload lost "${key}"`);
@@ -126,6 +127,8 @@ test("carries every documented key", async () => {
     // unknown fraction reported as zero is a guard that reads as wide open.
     assert.ok(w.fraction === null || typeof w.fraction === "number");
   }
+  assert.equal(typeof body.tools.declared, "number");
+  assert.equal(typeof body.tools.notOk, "number");
   assert.equal(typeof body.stores.databaseBytes, "number");
   assert.equal(typeof body.stores.checkoutsBytes, "number");
   assert.equal(typeof body.stores.transcriptsBytes, "number");
@@ -213,6 +216,13 @@ test("counts the delivery attempts since the webhook last succeeded", async () =
 test("carries no prompt, no folder path, no setting and no credential", async () => {
   process.env.UF_AUTH_TOKEN = "master-token-value";
   process.env.UF_STATUS_TOKEN = "monitor-token-value";
+  // A declared tool is a settings value in everything but the table it is
+  // stored in, and its resolved path is a mount path. Both are refused by this
+  // payload's rule, and nothing else in this list would have noticed one: every
+  // other forbidden string here is one this file seeded, and a tool name is a
+  // string it had never heard of.
+  process.env.UF_PY_TOOLS = "a-declared-python-tool==1.0";
+  process.env.UF_GH_EXTENSIONS = "an-owner/gh-a-declared-extension";
   try {
     const { body } = await get({ authorization: "Bearer monitor-token-value" });
     const serialised = JSON.stringify(body);
@@ -224,6 +234,8 @@ test("carries no prompt, no folder path, no setting and no credential", async ()
       "master-token-value",
       "monitor-token-value",
       "hooks.example.invalid", // a webhook receiver's host, from the rows above
+      "a-declared-python-tool", // what this install was told to install
+      "a-declared-extension",
       root,
     ]) {
       assert.ok(
@@ -234,6 +246,10 @@ test("carries no prompt, no folder path, no setting and no credential", async ()
   } finally {
     delete process.env.UF_AUTH_TOKEN;
     delete process.env.UF_STATUS_TOKEN;
+    // node:test runs this file in one process and `after()` below clears only
+    // the two tokens, so a value left here would reach every test after it.
+    delete process.env.UF_PY_TOOLS;
+    delete process.env.UF_GH_EXTENSIONS;
   }
 });
 

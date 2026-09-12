@@ -156,6 +156,42 @@ still not free on a settings page load, and §4 is where that is paid.
 
 ### 2.4 observed, and what a count can and cannot say
 
+> **CORRECTED on 2026-09-12, by measurement, while phase 1 was built.** Two of
+> this section's three claims about the query do not hold on the tree.
+>
+> **The two kinds do not carry the command in the same place**, so *"the same
+> way"* below is the one instruction that must not be followed. Counted over
+> the whole table on a live install: of 2,249 `tool_error` rows, **2,249 carry
+> it at `$.command` and 0 at `$.input.command`**; of 52,051 `tool` rows it is
+> exactly the other way round. The payload keys are `["name","input"]` with
+> `input: ["command","description"]` for one and
+> `["name","command","text","toolUseId"]` for the other. A reader that treats
+> them alike counts zero failures for ever — so `failing` is unreachable and
+> every failing tool reads `installed`, which is §3's expensive direction
+> exactly.
+>
+> **And "begins with the binary's name" is too weak to carry the layer.** Over
+> the 30-day window on that install — 53,833 `Bash` rows of 96,206
+> `tool`/`tool_error` rows — **105 commands begin `gh ` against 1,000 that
+> invoke it at a command position: 10.5% recall**, at which nothing ever leaves
+> `unverified`. `toolInventory.ts` matches at every command position instead
+> (the head of the string, and of each segment after `&&`, `||`, `|`, `;`, `&`,
+> a bracket or a newline), steps over a leading `VAR=value` and takes the
+> basename of an absolute path — which matters: 3,282 of those commands do not
+> begin with a bare binary name at all. The undercount argument below survives
+> whole —
+> a wrapper script, a shell function and a quoted `sh -c` are still missed —
+> and it gains an over-count this section did not have: without parsing
+> quoting, a tool's name quoted after a `;` reads as a call. That is why
+> `installed` needs the other three layers as well.
+>
+> **§4's cache is right and there is now a number behind it.** On a 204 MB
+> database the bare scan is 95 ms and each name matched in SQL adds about
+> 130 ms — 1,444 ms at ten names, which `better-sqlite3` makes 1,444 ms of
+> blocked event loop — against one `.iterate()` pass matching all ten in JS at
+> 308 ms and flat in the number of names.
+
+
 `run_events` already separates a call from a failed call by `kind`
 (`src/lib/apiTypes.ts:2194-2216`), and the union's own comment on `tool_error`
 is what makes this readable at all: *"Errors only — a successful result is not

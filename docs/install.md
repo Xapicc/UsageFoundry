@@ -275,8 +275,7 @@ installed or refused.
 
 ## Finding a setting, and not losing an edit
 
-Everything above says **Settings → something**. The page is nine sections on one
-long scroll, and there are two things on it worth knowing before you go looking.
+Everything above says **Settings → something**. The page is one long scroll of sections, and there are two things on it worth knowing before you go looking.
 
 **Find a setting**, above the section chips, matches a field's **name and its
 description** — never the values in them. Type `weekly`, `plugin`, `retention`;

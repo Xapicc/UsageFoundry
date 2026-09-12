@@ -17,6 +17,9 @@ import type {
   CodexAuthStateDTO,
   KnowledgeStatusDTO,
   PluginsReportDTO,
+  ToolInventoryDTO,
+  ToolRowDTO,
+  ToolStateDTO,
   PruneTier,
   RunGuardsDTO,
   SandboxDTO,
@@ -116,6 +119,7 @@ const SECTIONS = [
   { id: "unattended", label: "Unattended runs" },
   { id: "tokens", label: "Token use" },
   { id: "plugins", label: "Plugins" },
+  { id: "tools", label: "Tools" },
   { id: "knowledge", label: "Knowledge base" },
   { id: "dreaming", label: "Dreaming" },
   { id: "storage", label: "Storage" },
@@ -1013,6 +1017,149 @@ function StorageFigures({
  * figures at all, and the counts are `null` on the wire precisely so this
  * cannot be got wrong by accident.
  */
+/**
+ * What an agent on this install can actually run.
+ *
+ * Seven readings and not a switch, which is `SandboxRow`'s argument one subject
+ * over: three of the seven — `broken`, `failing`, `shadowed` — are the ways an
+ * install lies about itself, because in every one of them the install step
+ * reported success. `danger` is reserved for the two where an agent is certain
+ * to call something that is not on disk, for the same reason `SandboxRow`
+ * reserves it for `empty`; a tool that is shadowed or returning errors is
+ * expensive and it is not absent.
+ *
+ * The sentence beside each badge is the server's. A second copy written here is
+ * a second thing to keep honest, and this one has to name what was counted and
+ * over what window — a count cannot tell a missing binary from a tool that ran
+ * and did not like its arguments.
+ */
+const TOOL_TONE: Record<ToolStateDTO, BadgeTone> = {
+  installed: "ok",
+  unverified: "neutral",
+  shadowed: "warn",
+  failing: "warn",
+  broken: "danger",
+  failed: "danger",
+  unknown: "neutral",
+};
+
+const TOOL_WORD: Record<ToolStateDTO, string> = {
+  installed: "installed",
+  unverified: "unverified",
+  shadowed: "shadowed",
+  failing: "failing",
+  broken: "broken",
+  failed: "failed",
+  unknown: "unknown",
+};
+
+const TOOL_GROUP: Record<ToolRowDTO["source"], { label: string; footnote: string }> = {
+  python: {
+    label: "Python tools",
+    footnote:
+      "From UF_PY_TOOLS in your .env, installed at boot into a named volume. These are what a plugin's hooks shell out to — a hook whose command is missing ends in || true and exits 0 having done nothing",
+  },
+  "gh-extension": {
+    label: "gh extensions",
+    footnote:
+      "From UF_GH_EXTENSIONS in your .env, installed at boot into a named volume. An entry whose @tag has moved is deliberately not reinstalled, so a bumped pin and an unchanged binary is correct rather than broken",
+  },
+};
+
+function ToolRow({ tool }: { tool: ToolRowDTO }) {
+  const pinned = tool.installedPin && tool.installedPin !== tool.pin;
+  return (
+    <ListRow
+      label={<span className="font-mono text-xs">{tool.spec}</span>}
+      description={
+        <>
+          <span className="block">{tool.detail}</span>
+          {tool.command && (
+            <span className="block font-mono text-2xs text-ink-muted">
+              {tool.command}
+              {pinned ? ` — declared ${tool.pin ?? "unpinned"}, installed ${tool.installedPin}` : ""}
+            </span>
+          )}
+        </>
+      }
+    >
+      <Badge tone={TOOL_TONE[tool.state]}>{TOOL_WORD[tool.state]}</Badge>
+    </ListRow>
+  );
+}
+
+function ToolFigures({
+  report,
+  error,
+}: {
+  report: ToolInventoryDTO | null;
+  error: string | null;
+}) {
+  if (error !== null) {
+    return (
+      <Notice tone="danger">
+        <strong>The tool inventory could not be read.</strong> {error}
+      </Notice>
+    );
+  }
+  if (!report) return <Empty>Reading what is installed…</Empty>;
+
+  const sources: ToolRowDTO["source"][] = ["python", "gh-extension"];
+  const groups = sources
+    .map((source) => ({ source, tools: report.tools.filter((t) => t.source === source) }))
+    .filter((group) => group.tools.length > 0);
+
+  return (
+    <>
+      {report.problems.length > 0 && (
+        <Notice tone="warn" className="mb-4">
+          <ul className="list-disc pl-4">
+            {report.problems.map((p) => (
+              <li key={p}>{p}</li>
+            ))}
+          </ul>
+        </Notice>
+      )}
+
+      {groups.length === 0 && report.unclaimed.length === 0 ? (
+        <Empty>
+          No tools declared. <code>UF_PY_TOOLS</code> and{" "}
+          <code>UF_GH_EXTENSIONS</code> in your <code>.env</code> are where they go —
+          one requirement or one <code>owner/repo</code> per entry — and they install
+          on the next <code>docker compose up</code>.
+        </Empty>
+      ) : (
+        groups.map((group, i) => (
+          <ListGroup
+            key={group.source}
+            className={i === 0 ? "" : "mt-4"}
+            label={TOOL_GROUP[group.source].label}
+            footnote={TOOL_GROUP[group.source].footnote}
+          >
+            {group.tools.map((tool) => (
+              <ToolRow key={`${tool.source}:${tool.spec}`} tool={tool} />
+            ))}
+          </ListGroup>
+        ))
+      )}
+
+      {report.unclaimed.length > 0 && (
+        <ListGroup
+          className="mt-4"
+          label="Claimed by no entry"
+          footnote="Commands in the tool volumes that nothing in your .env names — usually something installed by hand, and sometimes a Python package whose console script is called something other than the package. Nothing removes these: the boot-time installers touch only what they were asked for, so they outlive every restart and go only with docker compose down -v"
+        >
+          {report.unclaimed.map((name) => (
+            <ListRow key={name} label={<span className="font-mono text-xs">{name}</span>}>
+              <Badge tone="neutral">unclaimed</Badge>
+            </ListRow>
+          ))}
+        </ListGroup>
+      )}
+    </>
+  );
+}
+
 function KnowledgeFigures({
   report,
   error,
@@ -1870,6 +2017,10 @@ export default function SettingsPage() {
   // The vault scan, on its own read for `storage`'s reason: it walks a
   // directory tree, and a figure that could not be measured has to read as
   // absent rather than as zero.
+  // A reading rather than a setting: nothing on this page writes it, so it goes
+  // through its own route and Save never touches it.
+  const [tools, setTools] = useState<ToolInventoryDTO | null>(null);
+  const [toolsError, setToolsError] = useState<string | null>(null);
   const [knowledge, setKnowledge] = useState<KnowledgeStatusDTO | null>(null);
   const [knowledgeError, setKnowledgeError] = useState<string | null>(null);
   // The vault skill is a switch of the plugins' kind rather than a settings
@@ -1958,6 +2109,29 @@ export default function SettingsPage() {
     },
     [],
   );
+
+  /**
+   * Read once and never polled.
+   *
+   * A poll here would be polling for an event that cannot happen: both boot-time
+   * installers run before the server is `exec`ed, so nothing can install a tool
+   * while this page is open, and the one half that does move — how often a
+   * command has been invoked — sits behind a sixty-second cache a poll would
+   * mostly re-serve.
+   */
+  const loadTools = useCallback(async () => {
+    const res = await jsonRequest<ToolInventoryDTO>("/api/tools");
+    if (!res.ok) {
+      setToolsError(actionFailureMessage(res, "The tool inventory could not be read."));
+      return;
+    }
+    setToolsError(null);
+    setTools(res.data);
+  }, []);
+
+  useEffect(() => {
+    void loadTools();
+  }, [loadTools]);
 
   const loadKnowledge = useCallback(async () => {
     const res = await jsonRequest<KnowledgeStatusDTO>("/api/knowledge/status");
@@ -2431,7 +2605,7 @@ export default function SettingsPage() {
 
       {/* Above the chips because it answers the same question they do — where
           is the thing I want — and because the chips only answer it for
-          somebody who remembers which of nine sections holds a field. Nothing
+          somebody who already knows which section holds a field. Nothing
           here collapses, reorders or hides a section: the search is a route to
           a field, not a second arrangement of the page. */}
       <div className="mb-4 max-w-[32rem]">
@@ -2544,9 +2718,13 @@ export default function SettingsPage() {
               onClick={() => setSectionHash(sec.id)}
               aria-current={current ? "true" : undefined}
               // `text-xs` against a segment's `text-sm`, and that is the one
-              // thing deliberately not shared: ten labelled chips is four
-              // rows at 390px rather than a group of five on a toolbar, and
-              // the size is what decides how much of the pane the map costs.
+              // thing deliberately not shared: a chip per section wraps to
+              // four rows at 390px — measured at ten of them — rather than
+              // sitting on a toolbar as a group of five, and the size is what
+              // decides how much of the pane the map costs. The count is not
+              // the argument, which is why this no longer states one: it said
+              // "ten" while `SECTIONS` held eleven, the same drift
+              // `findFields` records above.
               // `shadow-e1` is gone from here because `SEGMENT` carries it on
               // the selected state, which is the whole of what it is for.
               className={`uf-segment ui-transition inline-flex min-h-[var(--control-h)] max-md:min-h-11 items-center rounded-sm border px-2.5 text-xs font-medium no-underline hover:no-underline ${
@@ -4199,6 +4377,28 @@ export default function SettingsPage() {
             ))}
           </ListGroup>
         )}
+      </Section>
+
+      <Section
+        id="tools"
+        title="Tools"
+        lede={
+          <>
+            What your agents can run beyond what the image ships. A badge is
+            four readings composed — declared, installed, still resolving on the
+            PATH a run gets, and actually invoked — and only <em>installed</em>{" "}
+            needs all four to agree.
+            {tools?.observedWindowDays != null && (
+              <>
+                {" "}
+                Invocations are counted over the last {tools.observedWindowDays}{" "}
+                days, which is how long this install keeps run events.
+              </>
+            )}
+          </>
+        }
+      >
+        <ToolFigures report={tools} error={toolsError} />
       </Section>
 
       <Section

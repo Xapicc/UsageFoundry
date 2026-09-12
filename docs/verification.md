@@ -1063,6 +1063,64 @@ is `docs/agent/testing.md`; interface defects and their classes are
   a missing one reads unavailable rather than empty, and a folder maps back to
   its workspace through a symlinked mount.
 
+- **The server holds both tool-list variables, and uv's launcher directory is
+  first on `PATH`, 2026-09-12.** Read off PID 1 of the running container:
+  `UF_GH_EXTENSIONS=Xapicc/gh-layer10`, `UF_PY_TOOLS=` (blank), and
+  `PATH=/home/node/pytools/bin:…`. Both were previously reasoned from
+  `docker-entrypoint.sh:853` unsetting only the two `DISCORD_*` names before
+  `exec "$@"` at `:1223`, and from `Dockerfile:281`; they are now observed. This
+  is what makes `toolInventory.ts` reading `process.env.UF_PY_TOOLS` on the
+  server legal — and it would be empty in any agent child, which `childEnv`'s
+  `UF_` strip guarantees and no test yet asserts.
+
+- **A `gh` extension is not a binary on `PATH`, and its `manifest.yml` is an
+  exact join key, 2026-09-12.** In the running container,
+  `/home/node/.local/share/gh/extensions/gh-layer10/` holds the executable
+  `gh-layer10` and a 0600 `manifest.yml` reading `owner: Xapicc`,
+  `name: gh-layer10`, `tag: v0.1.0`, `ispinned: false`. So a declared
+  `owner/repo` joins to the directory by name with no derivation — the thing
+  `docker-entrypoint.sh:191-194` declines to do against `gh extension list`
+  output — and the manifest additionally carries the tag gh *installed*, which
+  is what makes the drift `.env.example:229-232` describes (a moved `@tag` is
+  deliberately not reinstalled) visible for the first time. Caveat: a manifest
+  is written for a precompiled extension; a git-cloned one may have none, and
+  that case has not been seen here.
+
+- **`run_events` carries a Bash command at two different JSON paths depending on
+  the kind, 2026-09-12.** Counted over the whole table on this install: of 2,249
+  `tool_error` rows, 2,249 have `$.command` and **0** have `$.input.command`; of
+  52,051 `tool` rows it is exactly the other way round. Payload keys are
+  `["name","input"]` with `input: ["command","description"]` for `tool`, and
+  `["name","command","text","toolUseId"]` for `tool_error`. A reader that treats
+  them alike counts zero failures for ever. `proposals/CustomStacks/01f-` §2.4
+  said failures are counted *"the same way"* as calls, which is the shape this
+  corrects.
+
+- **A leading-prefix test over those commands has 10.5% recall, 2026-09-12.**
+  Run with the shipped `commandPositionNames` over the 30-day window on this
+  install — 53,833 `Bash` rows of 96,206 `tool`/`tool_error` rows — **105
+  commands begin `gh ` against 1,000 that invoke it at a command position**, and
+  3,282 commands do not begin with a bare binary name at all. `git` is found at
+  a command position 6,765 times. The matcher takes the head of the string and
+  of each segment after `&&`, `||`, `|`, `;`, `&`, a bracket or a newline, steps
+  over a leading `VAR=value` and reduces an absolute path to its basename. It
+  still misses a wrapper script, a shell function and a quoted `sh -c`, and it
+  over-counts a tool's name quoted after a `;`; neither has been sized. **An
+  earlier reading of 697 and 13% is superseded** — it came from a throwaway
+  regex in a shell rather than from this function, and had no `Bash` filter.
+
+- **The observed query's cost, and why it is not SQL, 2026-09-12.** On the
+  204 MB database: the bare scan extracting the command is 95 ms; each name
+  matched in SQL adds about 130 ms (1 name 226 ms, 5 names 742 ms, 10 names
+  1,444 ms), while one `.iterate()` pass matching all ten in JS is 308 ms and
+  flat in the number of names. `better-sqlite3` is synchronous, so the SQL shape
+  is over a second of blocked event loop on the server that also admits runs.
+  `iterate` rather than `all` also keeps peak memory at one row against the
+  18.5 MB of command text the window holds. `run_events` has no index that helps
+  — `idx_run_events_run` is `(run_id, id)` and `idx_run_events_sandbox` is
+  partial on `kind = 'sandbox'` — which is the trade `01f-` §4 argued for and
+  this is the measurement behind it.
+
 - **Backup and restore against a live writer:** mid-transaction, `cp` got 25
   runs and `scripts/backup-db.mjs` the live 386, both passing
   `integrity_check`; restore never deletes, refuses under a live
@@ -1143,6 +1201,23 @@ is `docs/agent/testing.md`; interface defects and their classes are
   down in one command.
 
 ### Interface
+
+- **The Settings `Tools` section, in a browser against the production bundle,
+  2026-09-12.** A throwaway install seeded with
+  `UF_PY_TOOLS="ruff==0.5.0|/workspace/winnow|cozempic>=1.8,<2"` and
+  `UF_GH_EXTENSIONS="dlvhdr/gh-dash github/gh-copilot@v1.1.0"`, with a fake
+  `ruff` on `PATH` outside the tool directory, drew all five readings the data
+  could produce — `shadowed`, `unknown`, `broken` and two `failed` — each with
+  its tone, the server's own sentence and the command underneath. The section
+  carries `aria-labelledby="tools-heading"`, the page logged nothing at all to
+  the console across two loads, and the document did not scroll sideways.
+  **Two things this did not check.** A real 390px viewport: the window resize
+  was refused, so the narrow case was probed by squeezing the card's own width
+  to 358px and looking for a descendant that would not fit, which found none —
+  a proxy for a hard `min-width`, not for the layout. And `installed`,
+  `unverified` and `failing`, which need a database with matching `run_events`
+  rows. `npm run smoke-pages` is the check that would settle the first
+  properly and it could not run: Playwright is not installed on this machine.
 
 - **Layout sweep, production build, twelve widths 1440–380px, both themes,
   geometry read from the DOM:** it found and fixed three defects (a 0px gap, a
@@ -2215,6 +2290,27 @@ measurement under *Verified* and cut the item down to what is still open.
   visible to it.
 
 ### Container and environment
+
+- **No Python tool has been installed while the Tools section could read it.**
+  `UF_PY_TOOLS` is blank on this install and `/home/node/pytools/bin` is empty,
+  so the row a declared Python tool draws has never been seen, and neither has
+  the one case `toolInventory.ts` is known to over-report: a package whose
+  console script is named something other than the package lands in the
+  *claimed by no entry* list, because a declaration carries only the package
+  name and `docker-entrypoint.sh:280-281` parses it *"only to ask whether it is
+  already installed"*. Settle with a throwaway container:
+  `UF_PY_TOOLS="rich-cli httpie"`, then `ls /home/node/pytools/bin` and compare
+  the listing against the two declared names.
+
+- **Only a precompiled `gh` extension has been seen, never a script one.** The
+  one extension here is a binary release carrying a full `manifest.yml`, and
+  `toolInventory.ts` now prefers that manifest's own `path:` over
+  `<dir>/<dir-name>`. Whether `gh extension install` of a **script** extension
+  writes a manifest at all, and where it puts the executable, is unmeasured —
+  and if there is no executable at either path, every script extension reads
+  `failed`. Settle with
+  `gh extension install vilmibm/gh-screensaver` in a throwaway container, then
+  `ls -la /home/node/.local/share/gh/extensions/gh-screensaver/`.
 
 - **That the next boot after a failed restore comes up green on an empty path
   was not executed**; it follows from `db.ts`'s unconditional

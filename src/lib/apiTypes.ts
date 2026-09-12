@@ -4043,3 +4043,101 @@ export interface TaskListDTO {
   offset: number;
   limit: number;
 }
+
+/* ------------------------------------------------------------------ */
+/* What the agents can run                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Where a tool on this install came from.
+ *
+ * Its own field rather than a prefix on the name, because the three sources
+ * differ in what a failure costs and in what fixes one. A `gh` extension that
+ * did not install says `unknown command` inside a tool call; a Python tool that
+ * did not is a plugin hook ending in `|| true`, which exits 0 having done
+ * nothing — measured at 213 sessions on one install (`.env.example:245-249`).
+ */
+export type ToolSourceDTO = "python" | "gh-extension";
+
+/**
+ * What the app is willing to say about one tool.
+ *
+ * Seven readings and not a switch, for `SandboxDTO`'s reason: three of them —
+ * `broken`, `failing`, `shadowed` — are the ways an install lies about itself,
+ * and in every one of them the install record says nothing is wrong.
+ * `installed` is the only word that requires all four layers to agree, because
+ * it is the one an operator acts on without reading further.
+ */
+export type ToolStateDTO =
+  | "installed"
+  | "unverified"
+  | "shadowed"
+  | "failing"
+  | "broken"
+  | "failed"
+  | "unknown";
+
+/** One declared tool, and the four readings composed into one word. */
+export interface ToolRowDTO {
+  source: ToolSourceDTO;
+  /** The entry exactly as it stands in `.env`, which is what an operator recognises. */
+  spec: string;
+  /** What an agent would type, or `null` when the entry names no command. */
+  command: string | null;
+  /** The version or tag the entry pins, or `null`. */
+  pin: string | null;
+  /**
+   * The tag actually installed, when the source can say.
+   *
+   * Beside `pin` rather than instead of it, and the two disagreeing is the
+   * point: an entry whose `@tag` has moved is deliberately **not** reinstalled
+   * (`.env.example:229-232`), so a bumped pin and an unchanged binary is a
+   * correct install that nothing in this app could see until this field.
+   */
+  installedPin: string | null;
+  state: ToolStateDTO;
+  /** Where it resolved, or `null`. A path, so this never reaches `/api/status`. */
+  resolvedAt: string | null;
+  calls: number;
+  failures: number;
+  /**
+   * The server's sentence for this row.
+   *
+   * Written here rather than on the page for `SandboxRow`'s reason — *"a second
+   * copy written here is a second thing to keep honest"* — and it names what
+   * was counted and over what window, never why a call failed.
+   */
+  detail: string;
+}
+
+/** What `GET /api/tools` answers. */
+export interface ToolInventoryDTO {
+  tools: ToolRowDTO[];
+  /**
+   * Commands in a toolbox that no declaration claims.
+   *
+   * This is how installing something by hand becomes visible rather than
+   * silent. Nothing removes these — the appliers touch only what their own
+   * declarations name — so an unclaimed command outlives every restart.
+   *
+   * It over-reports in one known way and the page says so: a Python package
+   * whose console script is named something other than the package lands here,
+   * because a declaration carries the package name and nothing in the app joins
+   * the two.
+   */
+  unclaimed: string[];
+  /**
+   * The window the invocation counts cover, in days, or `null` on an install
+   * that keeps events for ever. On the page, never implied: *"nothing has
+   * invoked it"* means *"not in the retained window"*.
+   */
+  observedWindowDays: number | null;
+  /**
+   * What could not be read at all — an unreadable toolbox, not an empty one.
+   *
+   * `PluginsReportDTO`'s reasoning: every entry here is a tool that is *absent*
+   * from the list, and a list that silently omits them cannot explain why what
+   * an operator is looking for is not there.
+   */
+  problems: string[];
+}
