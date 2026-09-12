@@ -199,7 +199,12 @@ export function KnowledgeGraphCanvas({
   const dragRef = useRef<{ index: number | null; x: number; y: number; moved: number } | null>(null);
 
   const frameRef = useRef(0);
-  /** One automatic framing per mount, and only while the view is untouched. */
+  /**
+   * The opening layout's framing is over: set on the frame it goes cold, and
+   * early by a node grab. One automatic framing per mount in the sense that
+   * matters — it never returns after this, and `tick` runs it only while the
+   * view is untouched.
+   */
   const fittedRef = useRef(false);
   const touchedRef = useRef(false);
   /** Reduced motion, or the operator's own switch: either one freezes the build. */
@@ -401,13 +406,27 @@ export function KnowledgeGraphCanvas({
     const sim = simRef.current;
     let hot = false;
     if (sim && animateRef.current) hot = step(sim, forcesRef.current);
-    // The first layout to go cold is framed, because k = 1 on a settled vault
-    // shows about a quarter of it and nothing on a canvas says which way the
-    // rest is. Only the first, and only if nobody has moved the view yet:
-    // refitting under an operator who panned somewhere on purpose is worse
-    // than never fitting at all.
-    if (!hot && !fittedRef.current && !touchedRef.current && sim && sim.nodes.length > 0) {
-      fittedRef.current = true;
+    // The opening layout is framed on every frame of its cooling, and then
+    // never again. k = 1 on a settled vault shows about a quarter of it and
+    // nothing on a canvas says which way the rest is — but the cooling curve
+    // runs for about four seconds (`ALPHA_DECAY`, "roughly 250 frames") after
+    // the layout has visibly stopped moving, and framing only on the frame it
+    // goes cold spends those four seconds showing the unframed view and then
+    // jumps. Measured at 1280 on a four-note vault: k = 1 until t = 4.3s, then
+    // 5.87 in one frame. An operator reads the graph as settled well before
+    // that, so the jump lands under their hands and gets blamed on whatever
+    // they last pressed — which is what `/knowledge`'s "the skin control
+    // reframes the graph at 5x" report was. Fitting all the way down leaves
+    // the settled view identical and takes the jump out of the middle of it.
+    //
+    // Still only while nobody has taken the view: refitting under an operator
+    // who panned somewhere on purpose is worse than never fitting at all, and
+    // `onPointerDown` ends this the moment a node is grabbed, so the camera
+    // never chases a node being dragged.
+    if (!fittedRef.current && !touchedRef.current && sim && sim.nodes.length > 0) {
+      // Cold is the terminus rather than the trigger: this is the last
+      // automatic framing there will be for this mount.
+      if (!hot) fittedRef.current = true;
       fitView();
     }
     draw();
@@ -593,6 +612,12 @@ export function KnowledgeGraphCanvas({
     if (sim && grabbed !== null) {
       sim.nodes[grabbed].fx = sim.nodes[grabbed].x;
       sim.nodes[grabbed].fy = sim.nodes[grabbed].y;
+      // Taking hold of a node ends the automatic framing, which `tick` runs on
+      // every frame of a cooling layout: a drag reheats the simulation, and a
+      // camera still framing it would rescale the graph under the hand moving
+      // it. Not `touchedRef`, which means the view itself was moved — a node
+      // dragged back is not a pan.
+      fittedRef.current = true;
       reheat(sim, 0.3);
       schedule();
     }

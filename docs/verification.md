@@ -1083,6 +1083,23 @@ is `docs/agent/testing.md`; interface defects and their classes are
   and the widest plausible figures, all five columns fit unwrapped; at 390px
   `Table stack` turns each run into a labelled block.
 
+- **`/knowledge` keeps its framing across a live skin flip and a live theme
+  flip, 2026-09-12** (`npm run build` then the standalone bundle, seeded
+  `DATA_DIR`, a four-note scratch vault, Playwright 1.62.1 over Chromium at
+  1280; no container). Measured as node-disc ink by pixel count — every pixel
+  whose whole 5x5 neighbourhood is opaque, which drops hairline links and
+  11px labels — plus the 2D context's own transform read back after the frame.
+  Untouched, the graph settles at k=5.874 and both flips leave it at 5.874,
+  bbox 642x919 either side and the same after a reload. A deliberate pan
+  (k=5.884 at 429,474) and a deliberate wheel zoom (k=8.000 at 301,393)
+  survive both flips unchanged, and a node held through the opening cooling
+  freezes the framing at the grab. Before the fix the same run read k=1.000
+  for the first 4.3 seconds and then 5.874 in one frame — the skin was never
+  the trigger: with no interaction at all the jump lands at t=4.31s, and a
+  flip at t=2s does not bring it forward. The caveat is that this is one
+  four-node vault on one machine: the cooling curve is `ALPHA_DECAY`'s ~250
+  frames whatever the vault, but how far the framing travels over them is not.
+
 ## Not yet verified by hand
 
 Everything below typechecks and builds, and some of it is unit tested, but none
@@ -1666,11 +1683,13 @@ measurement under *Verified* and cut the item down to what is still open.
   through auth: the middleware was moved aside because the edge bundle will
   not load under that container's sandbox. The canvas click-list is unrun.
 
-- **The `canvasView.ts` extraction has never been looked at.** Pan, zoom, hit
-  testing, dpr sizing, the `ResizeObserver` and the colour probe left
-  `KnowledgeGraphCanvas.tsx` with no browser; `observeCanvasSize`,
-  `observeTheme`, `probeTokens`, `sizeCanvasToHost` only compile. Unrun: its
-  ten-step click-list, and Firefox on `wheelZoomFactor`'s estimated 16px line.
+- **`canvasView.ts` has now been driven, but only on Chromium at dpr 1.** The
+  2026-09-12 framing run above exercised `observeTheme` on both attributes,
+  `observeCanvasSize`/`sizeCanvasToHost` through a font-driven 950->984 resize,
+  `probeTokens`, `fitView`, `panBy`, `zoomAt` into `clampZoom`'s ceiling and
+  `nearestWithin` on a node grab. Still unrun: dpr sizing anywhere but 1, the
+  rest of its ten-step click-list, and Firefox on `wheelZoomFactor`'s estimated
+  16px line.
 
 - **The Knowledge base settings section has never rendered**, and no `docker
   compose up --build` ran where it landed. Four states unseen: nothing
