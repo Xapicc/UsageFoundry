@@ -58,12 +58,13 @@ declaration, where it can be as long as it needs to be.
 }
 ```
 
-Three tokens expand inside `install`, `env` and `state` values, and nothing else
+Four tokens expand inside `install`, `env` and `state` values, and nothing else
 does. There is no shell, so there is no `$VAR`, no backtick and no `$( )`.
 
 | Token | Expands to | Why it exists |
 |---|---|---|
 | `{arch}` | `amd64` or `arm64`, from `dpkg --print-architecture` | the same call the image already makes at `Dockerfile:164` |
+| `{arch_uname}` | `x86_64` or `aarch64`, from the **same** switch | publishers use two spellings for two architectures. **Added by [01g-third-party.md](01g-third-party.md) §5.1**, which measured both in this container: `dpkg --print-architecture` says `arm64` where `uname -m` says `aarch64`, and shellcheck's assets are spelled the second way |
 | `{state}` | `/var/lib/uf-stacks/state/<name>` | `C6`: the tool's own cache, relocated off `$HOME` |
 | `{pkg}` | `/var/lib/uf-stacks/pkg/<name>` | where the step installs to, before it is linked |
 
@@ -78,15 +79,27 @@ templates, applied where it belongs, and it is what keeps *"never a shell"*
 
 ```
 { "kind": "archive",
-  "url": "<https:// url, may contain {arch}>",
+  "url": "<https:// url, may contain {arch} or {arch_uname}>",
   "checksums": "<https:// url of the publisher's checksum manifest>",
-  "sha256": "<64 hex chars>",        // optional, and see §6
+  "sha256": "<64 hex chars>" | { "amd64": "<64 hex>", "arm64": "<64 hex>" },
   "unpack": "zip" | "tar.gz" | "none",
   "bin": [ { "from": "<path inside the archive>", "as": "<name on PATH>" } ] }
 ```
 
-Exactly one of `checksums` and `sha256` is required. The applier downloads to a
-scratch directory, verifies, and only then unpacks. **Nothing downloaded is
+Exactly one of `checksums` and `sha256` is required, and `sha256` is optional in
+the sense that `checksums` may stand in its place - never in the sense that a
+step may carry neither. See §6.
+
+**`sha256` is a string only when the `url` names one file.** When the `url`
+contains `{arch}` or `{arch_uname}` it names two, and one digest cannot be true
+of both, so the object form keyed by `{arch}`'s value is required and a bare
+string is a parse refusal. **Added by [01g-third-party.md](01g-third-party.md)
+§5.2**, which is the defect this schema had until a second worked example used a
+publisher who ships no manifest: the string form made a correct-looking stack
+install on its author's architecture and fail the digest on the other, blaming
+the consumer's machine in a message nobody wrote.
+
+The applier downloads to a scratch directory, verifies, and only then unpacks. **Nothing downloaded is
 executed by the applier at any point**, which is the property that separates this
 verb from the two below.
 
@@ -170,8 +183,10 @@ and fails inside a tool call. R5 point 3 is what makes it visible.
 Unknown top-level key; unknown `kind`; `schema` other than `1`; `name` not equal
 to the directory name; a `url` or `checksums` that is not `https://`; an
 `unpack` other than the three; a `bin.from` that escapes `{pkg}` after
-normalisation; a `sha256` that is not 64 hex characters; any `env` key or value
-from §2.2's table; any `allow` entry whose first word is not one of this stack's
+normalisation; a `sha256` that is not 64 hex characters; a string `sha256`
+against a `url` containing `{arch}` or `{arch_uname}`, and an object `sha256`
+missing either key; any `env` key or value from §2.2's table; any `allow` entry
+whose first word is not one of this stack's
 own `bin` names; any `allow` entry containing `(` or `)`, which would otherwise
 let a grant close the `Bash(...)` it is being interpolated into.
 
@@ -266,7 +281,10 @@ because the 404 arrives at boot and the operator reads the log once.
 
 `checksums` rather than a literal digest is the choice §6 argues: it is the
 publisher's own manifest, covering both architectures, and it is the same
-property the image already has. **Both are real.** Fetched 2026-09-12 with
+property the image already has. **It is also why this example never found the two
+schema defects [01g-third-party.md](01g-third-party.md) §5 found** - HashiCorp
+publishes a manifest and spells its architectures Debian's way, so one worked
+example exercised neither the `sha256` branch nor the other spelling. **Both are real.** Fetched 2026-09-12 with
 `curl -fsS https://releases.hashicorp.com/terraform/1.13.1/terraform_1.13.1_SHA256SUMS`:
 
 ```
