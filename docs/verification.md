@@ -1083,6 +1083,20 @@ is `docs/agent/testing.md`; interface defects and their classes are
   and the widest plausible figures, all five columns fit unwrapped; at 390px
   `Table stack` turns each run into a labelled block.
 
+- **`/settings`' section strip clears 4.5:1 in all eighty readings,
+  2026-09-12** (`dd66cfb`): the built standalone bundle served against a
+  throwaway `DATA_DIR` and a `CLAUDE_BIN` that cannot spawn, Chromium at dpr 2,
+  the strip scrolled to centre and every chip cropped from one viewport frame
+  per combination — 10 chips x {390, 1280} x {light, dark} x {ascii, default}.
+  Backdrop is each crop's modal colour, glyph the pixel furthest from it in
+  luminance, so the figure is the *best* pixel of an antialiased stroke and the
+  real reading is worse. Before the fix, 44 of 80 were below 4.5:1 (white on
+  `--tint` 4.21:1 everywhere, `--fg-muted` on `--bezel` 3.54:1 in dark); after,
+  0 of 80, worst 4.87:1. Both skins measured identically on both sides, so the
+  ascii skin neither caused the defect nor was needed to fix it. Caveat: the
+  measurement harness was scratch and is not in the tree, so this is a
+  one-time reading rather than something a later change re-runs.
+
 ## Not yet verified by hand
 
 Everything below typechecks and builds, and some of it is unit tested, but none

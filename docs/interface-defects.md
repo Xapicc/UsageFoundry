@@ -81,3 +81,17 @@ nothing about it.
   the operator with a screenshot; fixed with `.uf-badge > svg { display: inline;
   margin-inline-end: 1ch }` in `src/app/globals.css`. After: 0 of 61 over one
   line. D rather than B because the markup is identical in both skins.
+- **2026-09-12, `dd66cfb`, class A.** `/settings`' section strip drew a third
+  chip treatment of its own — a `--tint` fill with `text-tint-fg` on the current
+  chip, `text-ink-muted` on `bg-bezel` on the other nine — and two of its three
+  tone pairs were below 4.5:1: white on `--tint` at 4.21:1 in every theme, and
+  the muted label on the bezel at 3.54:1 in dark. Found by two reviewers under
+  the ascii skin, where the mono face made the dark one obvious; sampled from
+  rendered pixels, both skins measured the same figure to two decimals, so the
+  skin was not the cause — nothing under `:root[data-skin="ascii"]` reaches
+  these anchors' colours, only their corners. Fixed by drawing the strip in
+  `SegmentedControl`'s exported `SEGMENT` and adding `uf-segment`, which is also
+  what gets it bracketed under the skin; it stays a `<nav>` of anchors rather
+  than becoming a radiogroup. Before: 44 of 80 readings below 4.5:1 (10 chips ×
+  390/1280 × light/dark × ascii/default). After: 0 of 80, worst 4.87:1. A rather
+  than B because both pairs are declared values in a relation the source states.
