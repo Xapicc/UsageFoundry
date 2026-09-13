@@ -1802,6 +1802,34 @@ is `docs/agent/testing.md`; interface defects and their classes are
   was not reproduced: nothing installed here answers `█ ▒ ░` at three different
   widths. The fix covers that half by construction, unmeasured.
 
+- **`ListRow`'s wrap threshold and its wrapped line, 2026-09-13** (Chromium 151
+  via the globally installed Playwright 1.62.1, against `.next/standalone/
+  server.js`, at 390px and 1280px in both themes and both skins, on `/settings`'
+  105 rows and `/runs/new`'s 15). Two readings, both on the live page. *When it
+  wraps:* the narrowest description column on `/settings` measured **132.3px**
+  in the default skin and **144px** under ascii — the row content is 294px, so a
+  145.7px `SegmentedControl` beside the old 128px floor left four words to a
+  line over fourteen — and against a 176px floor for any row carrying a
+  `description` the same figures are **176.2px** and **210px**. The wrapped
+  count went 41 → 41 and 42 → 43 on `/settings`, 10 → 10 and 10 → 11 on
+  `/runs/new`: switch rows (40px control) and short-value rows (up to 78.6px)
+  did not move, and the twenty-five `max-md:w-40` stacking hints on
+  `src/app/settings/page.tsx` came out with the rows they were holding still
+  wrapping. *What a wrapped line is worth:* on `/runs/new`'s Workspace row,
+  setting `width: 100%` on the caller's own wrapper resolved to **294px** with
+  `ListRow`'s children wrapper as it now ships and to **117px** (114px ascii)
+  with its `grow` taken straight back off in the same frame — the shrink-to-fit
+  width of its own content, which is what made `max-md:w-full` inert there and
+  what `WorkflowEditor`'s `ROW_CONTROL` was carrying a 288px literal to work
+  around. At 1280px all 120 rows measured identical before and after in all four
+  states, which is what the `max-md:` prefix on every class touched predicts.
+  `npm run smoke-pages` 46/46 against the standalone bundle, and nothing on
+  either page reaches past a clipping ancestor at 390px in any of the four
+  states. Caveat: measured through a headless Chromium, no touch and no other
+  engine; and `WorkflowEditor`'s inspector rows were not driven in a browser,
+  because reaching them needs a block selected on the canvas — the mechanism was
+  measured on `/runs/new` instead.
+
 ## Not yet verified by hand
 
 - **The graph at a size no hand-drawn ordering reaches.** Every reading above is
