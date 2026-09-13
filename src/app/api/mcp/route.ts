@@ -38,9 +38,10 @@ import {
   getTask,
   listTasks,
   normalizeTaskInput,
+  readTaskLinks,
   runLinksForTasks,
-  taskForRun,
   taskListItemDTO,
+  tasksLinkedToRun,
   taskRefusal,
   tasksForRun,
   updateTask,
@@ -423,9 +424,9 @@ const RUN_TOOLS = [
   {
     name: "list_my_tasks",
     description:
-      "The task this run was started for, and what else is already open in " +
+      "The tasks this run was started for, and what else is already open in " +
       "the folder you are working in. Not the whole board. Read it before you " +
-      "call complete_task, so you close the thing you were given rather than " +
+      "call complete_task, so you close the things you were given rather than " +
       "one you read about, and before create_task, so you do not write down " +
       "something already on the board.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
@@ -492,7 +493,7 @@ const RUN_TOOLS = [
           type: "string",
           description:
             "The task this was found while working on. Omit to file it under " +
-            "the task this run was started for, which is almost always right.",
+            "the first task this run was started for.",
         },
       },
       required: ["title", "body"],
@@ -873,16 +874,27 @@ const CHAT_TOOLS = [
             "id from list_templates. Omit to use the operator's default " +
             "guard set, which is the right choice for one-off work.",
         },
-        taskId: {
-          type: "string",
+        taskIds: {
+          type: "array",
+          items: { type: "string" },
           description:
-            "id from list_tasks: the task on the board this run is for. It " +
-            "is a record of what prompted the run and changes nothing about " +
-            "it — no guard, no folder, no prompt — so name it whenever the " +
-            "work is on the board and leave it out otherwise. It also does " +
-            "nothing to the task: approving this does not claim it and the " +
-            "run finishing does not close it. An id that is not on the board " +
-            "is refused rather than ignored.",
+            "ids from list_tasks: EVERY task on the board this run is to work. " +
+            "When the run starts it claims each of these, and it can close " +
+            "only these — a task written into the brief but left out of this " +
+            "list stays open on the board after the run has done it. So one " +
+            "run for three tasks lists all three here. A brief that names an " +
+            "open task (by id or title) that is in neither this list nor " +
+            "relatedTaskIds is refused. Changes nothing else about the run — " +
+            "no guard, no folder, no prompt. An id not on the board is refused.",
+        },
+        relatedTaskIds: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "ids from list_tasks of tasks the brief names only as context — " +
+            "work this run must NOT do, such as a task another run holds. " +
+            "Nothing is recorded for them; listing one here is how you say " +
+            "the brief mentions it on purpose.",
         },
         promptOverride: {
           type: "string",
@@ -1219,16 +1231,26 @@ const BLOCK_TOOLS = [
                   "The full brief for the agent: what to do, where, and what " +
                   "done looks like. It cannot ask you a follow-up question.",
               },
-              taskId: {
-                type: "string",
+              taskIds: {
+                type: "array",
+                items: { type: "string" },
                 description:
-                  "id from list_tasks: the task on the board this run is " +
-                  "for. A record of what prompted it and nothing more — it " +
-                  "sets no guard, picks no folder and does not change the " +
-                  "brief above. It also moves nothing on the board: emitting " +
-                  "this does not claim the task and the run ending does not " +
-                  "close it. An id that is not on the board is refused by " +
-                  "name and the whole emission is refused with it.",
+                  "ids from list_tasks: EVERY task on the board this run is " +
+                  "to work. The run claims each when it starts and can close " +
+                  "only these, so a task written into the brief but left out " +
+                  "of this list stays open after the run has done it. A brief " +
+                  "naming an open task (by id or title) that is in neither " +
+                  "this list nor relatedTaskIds refuses the whole emission, as " +
+                  "does an id not on the board. Sets no guard, picks no folder " +
+                  "and does not change the brief.",
+              },
+              relatedTaskIds: {
+                type: "array",
+                items: { type: "string" },
+                description:
+                  "ids from list_tasks of tasks the brief names only as " +
+                  "context — work this run must NOT do. Nothing is recorded " +
+                  "for them; listing one says the mention is on purpose.",
               },
               folder: {
                 type: "string",
@@ -2557,7 +2579,7 @@ function getTaskTool(args: Record<string, unknown>) {
         createdByRunId: task.createdByRunId,
         claimedByRunId: task.claimedByRunId,
         completedByRunId: task.completedByRunId,
-        // Runs started *for* this task, which is the link a `taskId` on a
+        // Runs started *for* this task, which is the link `taskIds` on a
         // proposal or an emission writes. Reported so a model can see the work
         // has been tried before proposing it again — and capped and counted
         // separately for the reason the diff names its omissions.
@@ -2803,7 +2825,7 @@ function createTaskTool(args: Record<string, unknown>, chatId: string) {
   return text(
     `Filed “${task.title}” (id ${task.id}) on the board as open. Nothing is ` +
       "running for it and nothing will until somebody starts it — name this " +
-      "id as taskId on a propose_run to link a run to it. You cannot close it; " +
+      "id in taskIds on a propose_run to link a run to it. You cannot close it; " +
       "that is the operator's press or the run that does the work.",
   );
 }
@@ -3020,9 +3042,11 @@ async function completeTaskForRun(args: Record<string, unknown>, runId: string) 
  *
  * Three of the four fields that place it are taken from the token rather than
  * from the call, and none of them is on the schema: the origin, the run that
- * filed it, and the folder. The fourth, `parentTaskId`, defaults to the task
- * this run was started for — the trail back to what was being done when the
- * thing was noticed, which is the whole reason the column exists.
+ * filed it, and the folder. The fourth, `parentTaskId`, defaults to the first
+ * task this run was started for — the trail back to what was being done when
+ * the thing was noticed, which is the whole reason the column exists. A run
+ * working several can name which one; the first is the default because it is the
+ * one the caller put first.
  *
  * The parent is dropped rather than refused when the task it names is gone. A
  * run whose brief the operator deleted mid-flight would otherwise have every
@@ -3033,7 +3057,7 @@ async function completeTaskForRun(args: Record<string, unknown>, runId: string) 
 function createTaskForRun(args: Record<string, unknown>, runId: string) {
   const { filing } = runFolder(runId);
   const named = String(args.parentTaskId ?? "").trim();
-  const inherited = taskForRun(runId);
+  const inherited = tasksLinkedToRun(runId)[0];
   const parent = named || inherited?.id || null;
 
   const parsed = normalizeTaskInput(
@@ -3638,7 +3662,7 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
   // proposal's fields by whether they decide something about the run: a model
   // switched off between the write and the press changes what the run costs,
   // which every guard on the card already measures rather than being set by,
-  // and nothing about what it may do — so it sits with `task_id` on the side
+  // and nothing about what it may do — so it sits with `task_ids` on the side
   // that never refuses an approval, not with `template_id` on the side that
   // does. Refusing there would be terminal for every member of the batch.
   //
@@ -3647,26 +3671,33 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
   const modelProblem = modelRefusal(getSettings().modelCatalogue, model);
   if (modelProblem) return text(modelProblem, true);
 
-  // The board row this run is for, refused here for the template's and the
+  // The board rows this run is for, refused here for the template's and the
   // agent's reason and gating nothing at the click, unlike either of them: a
   // proposal that named a task nobody can find is discovered by a person
   // reading a card, which is the wrong moment, but a task *deleted* between the
   // proposal and the press changes nothing about the run and must not refuse
-  // the approval. `taskRefusal` owns the wording so a chat and a block say the
-  // same thing about the same id. A closed task is accepted — see
-  // docs/agent/taskboard.md.
-  const taskId = String(args.taskId ?? "").trim() || null;
-  const board = taskId ? currentTaskKnowledge() : null;
-  if (taskId && board) {
-    const problem = taskRefusal(taskId, board);
-    if (problem) return text(problem, true);
-  }
+  // the approval. `readTaskLinks` owns the rule and the wording so a chat and a
+  // block say the same thing — including the refusal of a brief that names a
+  // task this run would not be linked to, which is the one that keeps a run
+  // from doing three tasks' work and closing one. A closed task is accepted —
+  // see docs/agent/taskboard.md.
+  //
+  // Read on every proposal rather than only when ids were named, because the
+  // failure is precisely the proposal that named none and put tasks in its text.
+  const board = currentTaskKnowledge();
+  const links = readTaskLinks(
+    args,
+    [title, task, promptOverride ?? ""].join("\n"),
+    board,
+  );
+  if (!links.ok) return text(`${links.reason} Nothing was proposed.`, true);
+  const taskIds = links.taskIds;
 
   const input: ProposalInput = {
     templateId: template ? template.id : null,
     agentId,
     model,
-    taskId,
+    taskIds,
     title,
     task,
     promptOverride,
@@ -3707,15 +3738,21 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
   // bill. Silent where none was named: the card draws no row there either.
   const onModel = model ? ` It runs on ${model}.` : "";
   // Said back for the model's reason and with the model's caveat: it is a fact
-  // the operator should meet on the card rather than work out. Worded as a
-  // record — "for" — because that is all it is: the approval does not claim the
-  // task and the run ending does not close it, and a reply reading as though it
-  // did is what would make a model stop filing the follow-up.
-  const forTask = taskId
-    ? ` It is recorded as being for “${board?.get(taskId)?.title ?? taskId}” on ` +
-      "the board; approving it does not claim that task and finishing will not " +
-      "close it."
-    : "";
+  // the operator should meet on the card rather than work out. Every title, so
+  // a model that meant three tasks can see whether it linked three. Worded so
+  // nothing reads as a close: the run claims them when it starts and closes each
+  // itself, and a reply reading as though finishing closed them is what would
+  // make a model stop filing the follow-up.
+  const forTask =
+    taskIds.length > 0
+      ? ` It is for ${taskIds
+          .map((id) => `“${board.get(id)?.title ?? id}”`)
+          .join(", ")} on the board; the run claims ${
+          taskIds.length === 1 ? "that task" : `all ${taskIds.length}`
+        } when it starts and can close only ${
+          taskIds.length === 1 ? "it" : "those"
+        }.`
+      : "";
   const after =
     dependsOn.length === 0
       ? ""

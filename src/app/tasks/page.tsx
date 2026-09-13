@@ -151,7 +151,7 @@ function RunLink({ label, runId }: { label: string; runId: string }) {
  * The one run a row names — the run that acted on *this* task — or nothing.
  *
  * Three records used to compete for a single 150px column and stacked four deep
- * in it: the holder, the closer, and every run `runs.task_id` points at. They
+ * in it: the holder, the closer, and every run `run_tasks` links to it. They
  * are not equally worth a row. The holder and the closer each say what happened
  * to the task; a run merely started for it can have ended without touching it,
  * which is exactly why nothing closes a task when a run ends. So the row draws
@@ -497,7 +497,7 @@ export default function TasksPage() {
               <RunLink label={acted.label} runId={acted.runId} />
             ) : (
               task.runCount > 0 && (
-                // The count rather than the ids: `runs.task_id` is unbounded and
+                // The count rather than the ids: `run_tasks` is unbounded and
                 // its links are what stacked this column, and `runCount` is the
                 // true total where `runIds` stops at `MAX_TASK_RUN_LINKS`. A
                 // link and not a figure, so the runs behind it stay one press

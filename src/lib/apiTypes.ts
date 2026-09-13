@@ -1374,20 +1374,20 @@ export interface RunDTO {
   /** The record that authorised it — a proposal, an instance, a schedule. */
   origin_ref?: string | null;
   /**
-   * The task on the board this run was started for, or null for a run that came
-   * off no task.
+   * The tasks on the board this run was started for, in the order named; empty
+   * for a run that came off no task.
    *
    * Provenance beside `origin`, and deliberately not authority: nothing on the
-   * run reads it, finishing does not close it, and the board's own status is the
-   * task's. It is resolved by the route rather than being a column on the row,
-   * so the title shown is the task's as it stands now — and null on both fields
-   * where the task has since been deleted.
+   * run's loop reads it, finishing does not close them, and the board's own
+   * status is each task's. It is resolved by the route rather than being a
+   * column on the row, so the titles shown are the tasks' as they stand now —
+   * and null on both fields where a task has since been deleted.
    *
    * The runs list does not set it, on `agent`'s argument at a smaller size: only
    * the run's own page draws it, and a per-row resolution costs a query a row on
    * a list polled every four seconds.
    */
-  task?: RunTaskDTO | null;
+  tasks?: RunTaskDTO[];
   /** When an operator last picked this run up again. Never rewrites `origin`. */
   reopened_at?: number | null;
 }
@@ -3149,19 +3149,17 @@ export interface ChatProposalDTO {
   title: string;
   task: string;
   /**
-   * The task on the board this proposal is for, by id, or null for none.
+   * The tasks on the board this proposal is for, in the order named; empty for
+   * none. Title and status as they stand now, null together where a row has
+   * gone.
    *
-   * Kept beside `taskTitle` for `agentName`/`agentMissing`'s reason: "no task
-   * was named" and "the one that was named has been deleted" are different
-   * facts. Unlike the agent, **neither refuses the click** — the link is a
-   * record of what prompted the work and approving it neither claims the task
-   * nor changes what the run may do.
+   * `RunTaskDTO` for `agentName`/`agentMissing`'s reason: "no task was named"
+   * and "the one that was named has been deleted" are different facts. Unlike
+   * the agent, **neither refuses the click** — the link is a record of what
+   * prompted the work, approving it moves nothing on the board, and it changes
+   * nothing about what the run may do.
    */
-  taskId: string | null;
-  /** The task's title as it stands now, or null where the row has gone. */
-  taskTitle: string | null;
-  /** The task's status as it stands now, or null where the row has gone. */
-  taskStatus: TaskStatusDTO | null;
+  tasks: RunTaskDTO[];
   /** Where it would run, as a person reads it. Null means "as the template says". */
   folderLabel: string | null;
   /**
@@ -3840,7 +3838,7 @@ export interface TaskDTO {
    *
    * The fourth relationship between a task and a run and the only one that is
    * not on the `tasks` table: the other three are records the board writes about
-   * itself, and this one is `runs.task_id` read back. It says nothing about
+   * itself, and this one is `run_tasks` read back. It says nothing about
    * whether the work happened — a run named here can have completed without
    * doing the thing, which is why nothing derives this task's status from it.
    */
@@ -3927,7 +3925,8 @@ export interface TaskCommentListDTO {
 export const MAX_TASK_COMMENTS = 200;
 
 /**
- * The task a run was started for, as `GET /api/runs/[id]` answers for it.
+ * One task a run or a proposal was for, as `GET /api/runs/[id]` and the chat's
+ * proposal cards answer for it.
  *
  * `title` and `status` are null **together**, and that is a third state rather
  * than a missing one: the id is a record and the operator may delete a task, so

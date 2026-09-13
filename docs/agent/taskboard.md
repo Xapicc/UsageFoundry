@@ -504,7 +504,7 @@ a **block**, and the division is about who is reading rather than about what the
 tool does: a chat turn has an operator at the keyboard, so a task it filed is one
 somebody sees within the minute, where a block's turn is unattended and a backlog
 it wrote to is a board the operator later meets already full of an agent's own
-idea of the work. The refusal a block gets names `list_tasks` and the `taskId`
+idea of the work. The refusal a block gets names `list_tasks` and the `taskIds`
 field rather than pointing at `emit_runs`, because answering "write this down for
 later" with the one tool that starts work *now* is the opposite of what was
 asked. A **work cycle** gets neither of the shared tools and a `create_task` of
@@ -575,7 +575,7 @@ identified and the task lands unplaced, which the tool result says rather than
 claiming a folder: an unplaced brief is still a brief, and a message asserting
 one would send the model looking for it on a project board. The one exception is `parentTaskId`, which a run may name because
 it may find something while working a task other than the one it was started for;
-it defaults to the task it holds, and a parent that has been **deleted** is
+it defaults to the first task the run was started for, and a parent that has been **deleted** is
 dropped rather than refused, because otherwise an operator deleting a brief
 mid-flight would have every `create_task` refused by `createTask`'s
 dangling-parent check and the new brief — the thing worth keeping — would be
@@ -640,9 +640,11 @@ before the feature existed, the file price list's rule: a run mid-flight across 
 deploy that gained one newline would otherwise pay a cold prefix for a notice it
 did not get.
 
-**A run started from a task claims it when the run starts, not when a tool is
-first called.** `claimTaskForRun` fires at the top of `startRun`, before the
-worktree and before the first cycle. A claim written at the first `list_my_tasks`
+**A run started from tasks claims every one of them when the run starts, not when
+a tool is first called.** `claimTasksForRun` fires at the top of `startRun`,
+before the worktree and before the first cycle, and claims each linked task on its
+own in the order they were named, so one that cannot be claimed leaves the rest
+claimed. A claim written at the first `list_my_tasks`
 is a claim a run never writes if the setting is off, if the model never opens the
 tool, or if the cycle dies before it does — so the board would show `open` for
 work already in flight, and the chat tool that exists to stop two agents taking
@@ -694,38 +696,76 @@ so, because a model told it may file a task reads the omission as an oversight.
 
 **A run that came off the board carries the link, and the link is a record
 rather than a trigger.** `propose_run` and `emit_runs` each take an optional
-`taskId`. It rides `chat_proposals.task_id` from the proposal and lands on
-`runs.task_id` **inside `createRun`'s own transaction**, carried in on
-`CreateRunInput.taskId` from the approval or the emission, so nothing can see
-the run without seeing what it was started for. What it does **not** do is the
-point: naming a task does not claim it, and the run reaching a terminal status
-does not close it. A run can complete and still not have done the thing — it can
-stop on a budget, be cancelled, or finish having decided the work was wrong — so
-a status-derived rule here would close backlog items nobody worked. Completion
-belongs to the run that did the work, in its own name, or to the operator's
-press. Nothing in the run *loop* reads the column either: not a guard, not the
-budget, not occupancy. A run carrying a task id and one that is not are the same
-run, which is why the SQL still lives in `tasks.ts` and `createRun` holds only
-the id.
+`taskIds` list. It rides `chat_proposals.task_ids` from the proposal and lands in
+`run_tasks` **inside `createRun`'s own transaction**, carried in on
+`CreateRunInput.taskIds` from the approval or the emission, so nothing can see
+the run without seeing what it was started for. Approving or emitting moves
+nothing on the board — the run's own claim at its start is the move — and the
+run reaching a terminal status does not close anything. A run can complete and
+still not have done the thing — it can stop on a budget, be cancelled, or finish
+having decided the work was wrong — so a status-derived rule here would close
+backlog items nobody worked. Completion belongs to the run that did the work, in
+its own name, or to the operator's press. Nothing in the run *loop* reads the
+table either: not a guard, not the budget, not occupancy. A run carrying task ids
+and one that is not are the same run, which is why the SQL still lives in
+`tasks.ts` and `createRun` holds only the ids.
 
-**The link has to be written before the run can be promoted, and that is the one
-ordering here whose violation is silent.** It used to be a `recordRunForTask`
+**One run may be for several tasks, and it is linked to every one.** The link
+was a single column, `runs.task_id`, and the failure it produced was the one this
+file exists for, at scale: a chat batched two or three board tasks into one run's
+brief — "Board tasks A, B and C" — and linked A. The run claimed A, did the work
+for all three, and could close only A, because `complete_task` refuses what was
+not claimed in its own name. Ten tasks in one batch stayed open that way, and a
+dozen more before it, with nothing on the board or the run saying why. So the
+link is a list, capped at `MAX_RUN_TASKS` because that is what `list_my_tasks`
+shows of what a run holds — a run linked to more could claim a task it is never
+shown. `runs.task_id` and `chat_proposals.task_id` are backfilled into
+`run_tasks` and `task_ids` and are no longer written or read; they stay because
+dropping them is a rebuild and a rolled-back image still reads them.
+
+**A brief that names a board task its run is not linked to is refused, and that
+is what keeps the list from being optional.** A list the model may leave short is
+the single column again with more room in it. `readTaskLinks` in `tasks.ts` reads
+every proposal and every emitted spec — including one that names no task at all,
+which is precisely the failing shape — and refuses when the run's text (title,
+brief, prompt override) names an **open or claimed** task by its whole id, by
+its first eight characters standing alone, or by its whole title past
+`MIN_MENTIONED_TITLE`, and that task is in neither `taskIds` nor
+`relatedTaskIds`. The refusal names each task and says both ways out.
+`relatedTaskIds` is the second one and it records nothing: it is how a brief says
+it mentions a task *on purpose* — "separately filed as X and not in scope",
+"another run holds Y" — and it exists because those sentences are real: measured
+against every prompt this install had run, the id matches included exactly that
+kind of context alongside the bundles. Refused rather than linked automatically,
+for that same reason: a claim written off "do not touch the task another run
+holds" would be this app deciding what a run is for. Closed tasks never count as
+mentioned, since naming finished work is context, and a short title never does,
+since "Fix the README" is a phrase any brief can contain. The title match is a
+detector rather than a proof — a brief that paraphrases a title slips past it,
+which the batch it was measured on did once in ten — and it is the second line;
+the tool descriptions and both system prompts saying "every task this run works
+goes in `taskIds`" is the first. `taskId`, the field this replaced, is refused
+by name, because a caller still sending it would believe it had linked something.
+
+**The links have to be written before the run can be promoted, and that is the
+one ordering here whose violation is silent.** It used to be a `recordRunForTask`
 call on the line after `createRun` returned, which reads as the same synchronous
 pass and is not: `createRun` ends by calling `promoteQueued`, `startRun` runs to
-`claimTaskForRun` without an `await` in between, so the entire claim happens
-*inside* the `createRun(...)` call expression. The column was still null,
-`taskForRun` returned null, and the claim returned at its first line — the one
-branch that logs nothing, because a run that names no task has nothing to say.
-The board then showed `open` for work already in flight, and the run could never
-complete the task afterwards either, since a run may complete only the one
-claimed in its own name. It bit only runs that started immediately; a run that
-queued behind a busy folder was promoted later, after the write, and claimed
-correctly. Anything that gives a new run a task id must hand it to `createRun`
-rather than write it afterwards.
+`claimTasksForRun` without an `await` in between, so the entire claim happens
+*inside* the `createRun(...)` call expression. The link was not written yet, the
+claim found nothing and returned at its first line — the one branch that logs
+nothing, because a run that names no task has nothing to say. The board then
+showed `open` for work already in flight, and the run could never complete the
+task afterwards either, since a run may complete only what was claimed in its own
+name. It bit only runs that started immediately; a run that queued behind a busy
+folder was promoted later, after the write, and claimed correctly. Anything that
+gives a new run task ids must hand them to `createRun` rather than write them
+afterwards.
 
-**An unknown `taskId` is refused by name, and a *closed* one is not.**
-`taskRefusal` in `tasks.ts` is the one wording, so an id that is not there reads
-the same in a chat, in an emission and in `get_task` — `agentRefusal`'s ground.
+**An unknown task id is refused by name, and a *closed* one is not.**
+`taskRefusal` in `tasks.ts` is the one wording, reached through `readTaskLinks`
+for both lists, so an id that is not there reads the same in a chat, in an
+emission and in `get_task` — `agentRefusal`'s ground.
 The failure it closes is the quiet one: a proposal that said "for the flaky-auth
 task" and silently carried no task is bit-for-bit a proposal that named none, and
 the operator approves a card whose provenance line is simply absent. The
@@ -752,10 +792,10 @@ is not, on the rule a shortened diff follows: a row showing three of eleven runs
 and saying nothing reports a task worked eleven times as one worked three.
 
 **A run whose task has been deleted still names it, and that is a third answer
-rather than a missing one.** Neither `chat_proposals.task_id` nor `runs.task_id`
+rather than a missing one.** Neither `chat_proposals.task_ids` nor `run_tasks`
 is a foreign key — the operator deletes tasks freely and nothing in this app
 deletes a `runs` row, so a cascade would describe a deletion that never happens
-in one direction and destroy a run's provenance in the other. `taskForRun`
+in one direction and destroy a run's provenance in the other. `tasksLinkedToRun`
 returns the id with `title` and `status` both null where the row has gone, and
 every surface that draws it tells that apart from "no task": the run page says
 *a task since deleted*, the proposal card says the same, and neither links,

@@ -73,7 +73,8 @@ import {
 } from "./agents";
 import {
   currentTaskKnowledge,
-  taskRefusal,
+  readTaskLinks,
+  type TaskLinkReading,
 } from "./tasks";
 import { telemetrySpendSince } from "./otlp";
 import type { UsageSnapshot } from "./windows";
@@ -583,17 +584,19 @@ export interface RunSpec {
    */
   agent: string | null;
   /**
-   * The task on the board this run is for, by id, or null.
+   * The tasks on the board this run is for, by id, in the order named; empty
+   * for none.
    *
    * A **record of what prompted the run** and not a sixth field on the list
    * above: it decides nothing about the run — not the guards, not the folder,
-   * not who it is — and it moves nothing on the board, since an emitted run
-   * neither claims its task nor closes it. It is on the spec rather than on the
-   * *node* for the reason the task text and the folder are: a saved graph is a
-   * shape a person agreed to, and which backlog item a particular pass is
-   * working is a decision the turn makes when it gets there.
+   * not who it is. The run claims these when it starts and closes each with its
+   * own `complete_task`; the emission itself moves nothing on the board. It is
+   * on the spec rather than on the *node* for the reason the task text and the
+   * folder are: a saved graph is a shape a person agreed to, and which backlog
+   * items a particular pass is working is a decision the turn makes when it
+   * gets there.
    */
-  taskId: string | null;
+  taskIds: string[];
   /** Siblings in this same emission that must settle first. */
   dependsOn: Array<{ id: string; edge: DependencyEdge }>;
 }
@@ -628,16 +631,19 @@ export interface EmissionLimits {
    */
   agents: readonly AgentFacts[];
   /**
-   * Why a spec may not name this task, or null when it may.
+   * Read a spec's `taskIds` and `relatedTaskIds` against its brief.
    *
    * Injected as a **function** where `agents` beside it is data, and the reason
    * is neither of that field's: the registry is a list somebody curated and the
-   * board is a backlog nothing expires, so handing every emission a copy of
-   * every task the install has ever filed would grow with the install for a
-   * question about at most `fanOut` ids. `tasks.ts` owns the wording —
-   * `taskRefusal` — so an unknown id reads the same here as it does in a chat.
+   * board is a backlog nothing expires, so the board stays behind this call
+   * rather than being copied onto a type every test has to fill. `tasks.ts` owns
+   * the rule and the wording — `readTaskLinks` — so an unknown id, and a brief
+   * naming a task its run is not linked to, read the same here as in a chat.
    */
-  taskRefusal: (taskId: string) => string | null;
+  taskLinks: (
+    fields: { taskIds?: unknown; relatedTaskIds?: unknown; taskId?: unknown },
+    text: string,
+  ) => TaskLinkReading;
 }
 
 /** How many characters of a spec's own fields are worth keeping. */
@@ -866,27 +872,23 @@ function normalizeSpec(
       agent = match.name;
     }
 
-    // The board row this run came off, refused by name rather than dropped —
-    // `agentRefusal`'s rule, reached from the door where nobody is looking. The
-    // consequence is smaller than the agent's and the shape is the same: a run
-    // emitted "for the flaky-auth task" that silently carried no task is
+    // The board rows this run came off, refused by name rather than dropped —
+    // `agentRefusal`'s rule, reached from the door where nobody is looking. A
+    // run emitted "for the flaky-auth task" that silently carried no task is
     // indistinguishable afterwards from one that named none, and the operator
     // then reads a board row nothing was ever started for.
     //
-    // A *closed* task is accepted, unlike an unusable agent. The link records
-    // what prompted the work and reaches nothing on the run, so refusing one
-    // here would be this function deciding that work off a task somebody already
-    // closed may not happen — which is the operator's call and not a spec's.
-    const taskId = String(e.taskId ?? "").trim() || null;
-    if (taskId !== null) {
-      const taskProblem = limits.taskRefusal(taskId);
-      if (taskProblem) {
-        // The spec named rather than the sentence wrapped, because
-        // `taskRefusal` already says the id is not on the board and which tool
-        // has the right ones: what a whole-emission refusal has to add is
-        // *which run in the list* carried it, or a model rewrites the wrong one.
-        return { ok: false, reason: `“${title}”: ${taskProblem}` };
-      }
+    // And a brief that names a task the spec does not link is refused too,
+    // which is the failure that made this a list: the run does the work, can
+    // close only what it was linked to, and the rest stays open with nothing
+    // saying why. A *closed* task is accepted as a link and never counts as a
+    // mention — naming finished work is context.
+    const links = limits.taskLinks(e, `${title}\n${task}`);
+    if (!links.ok) {
+      // The spec named rather than the sentence wrapped: what a whole-emission
+      // refusal has to add is *which run in the list* carried it, or a model
+      // rewrites the wrong one.
+      return { ok: false, reason: `“${title}”: ${links.reason}` };
     }
 
   return {
@@ -897,7 +899,7 @@ function normalizeSpec(
           task,
           folder,
           agent,
-          taskId,
+          taskIds: links.taskIds,
           dependsOn: [],
     },
   };
@@ -4966,19 +4968,18 @@ function createEmitted(
         // and readable without that join.
         origin: "orchestrator-block",
         originRef: nodeId,
-        // The link, carried from the spec onto the run — through the door
+        // The links, carried from the spec onto the run — through the door
         // rather than written after it, because `createRun` may start the run
-        // before it returns and the run's own claim reads this column. Written
-        // whatever became of the row, unlike the agent above it, and the
+        // before it returns and the run's own claim reads them. Written
+        // whatever became of the rows, unlike the agent above it, and the
         // difference is what each one decides: a run that is not the agent it
         // was emitted as is a different run, where a run whose task has since
         // been deleted is the same run with a record of where it came from.
         //
-        // It is not a claim and not a completion. An emitted run neither moves
-        // the task nor closes it when it ends — a run can complete and still
-        // not have done the thing, and `taskTransitionRefusal` is where that
-        // stays decided.
-        taskId: spec.taskId,
+        // Not a completion. The run claims these when it starts; nothing closes
+        // one when it ends — a run can complete and still not have done the
+        // thing, and `taskTransitionRefusal` is where that stays decided.
+        taskIds: spec.taskIds,
       });
       runIds.set(spec.id, run.id);
       recordMember(instanceId, {
@@ -5154,12 +5155,12 @@ export function emitBlockRuns(
     // any task: an agent carries no capability, and every guard still comes off
     // the block a person saved.
     agents: listAgents().map((a) => ({ name: a.name, usable: a.usable })),
-    // The board, asked one id at a time rather than copied whole — see the
-    // field. The knowledge is read once for the emission so a task filed
-    // mid-call cannot make two specs in one list disagree about what exists.
-    taskRefusal: (() => {
+    // The board behind a call rather than on the type — see the field. The
+    // knowledge is read once for the emission so a task filed mid-call cannot
+    // make two specs in one list disagree about what exists.
+    taskLinks: (() => {
       const knowledge = currentTaskKnowledge();
-      return (taskId: string) => taskRefusal(taskId, knowledge);
+      return (fields, text) => readTaskLinks(fields, text, knowledge);
     })(),
   });
   if (!plan.ok) {
@@ -5294,6 +5295,8 @@ function blockSystemPrompt(
     "Emitting — emit_runs' own field descriptions say the rest:",
     "- One run per unit of work. Name the file, the issue number and the URL in",
     "  each task.",
+    "- A run that works board tasks lists every one of them in taskIds: it can",
+    "  close only those, and a task named in its text but left out is refused.",
     "- Runs with no dependsOn link between them start in parallel.",
     "- Emitting nothing is a real answer when there is nothing worth doing — say",
     "  so plainly, and know that any block set to start after this one will be",

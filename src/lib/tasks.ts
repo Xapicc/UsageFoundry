@@ -424,7 +424,166 @@ export function taskRefusal(
   return knowledge.has(taskId)
     ? null
     : `No task with id "${taskId}" is on the board. Call list_tasks for the ` +
-        `ids, or leave taskId out — a run that names no task is the ordinary run.`;
+        `ids, or leave it out — a run that names no task is the ordinary run.`;
+}
+
+/**
+ * Characters a title needs before a brief quoting it counts as naming the task.
+ *
+ * Below this a title is a phrase an unrelated brief can contain by accident —
+ * "Update the README" — and a refusal it caused would teach a model to reword
+ * text rather than to link work. Every title the run briefs that bundled tasks
+ * quoted was longer than twice this.
+ */
+export const MIN_MENTIONED_TITLE = 24;
+
+/**
+ * One spelling for text a model copied: case, curly quotes, backticks, the
+ * `&amp;` a filed title can carry, and runs of whitespace are not differences.
+ */
+function mentionForm(text: string): string {
+  return text
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/&amp;/g, "&")
+    .replace(/[“”„]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/`/g, "")
+    .replace(/\s+/g, " ");
+}
+
+const UUID_PREFIX = /^[0-9a-f]{8}$/;
+
+/**
+ * The open or claimed tasks this text names, by id or by title, in board order.
+ *
+ * An id counts whole or by its first eight characters standing alone, because
+ * that is how a person and a model both abbreviate one. A title counts when the
+ * whole of it appears, and only past `MIN_MENTIONED_TITLE`. Closed tasks are
+ * never reported: naming finished work is context, not a claim to do it.
+ */
+export function tasksMentionedIn(
+  text: string,
+  knowledge: ReadonlyMap<string, TaskFacts>,
+): Array<{ id: string; title: string }> {
+  const haystack = mentionForm(text);
+  const found: Array<{ id: string; title: string }> = [];
+  for (const [id, facts] of knowledge) {
+    if (facts.status !== "open" && facts.status !== "claimed") continue;
+    const lowerId = id.toLowerCase();
+    const prefix = lowerId.slice(0, 8);
+    const byId =
+      haystack.includes(lowerId) ||
+      (UUID_PREFIX.test(prefix) &&
+        new RegExp(`(?<![0-9a-f])${prefix}(?![0-9a-f])`).test(haystack));
+    const title = mentionForm(facts.title).trim();
+    const byTitle = title.length >= MIN_MENTIONED_TITLE && haystack.includes(title);
+    if (byId || byTitle) found.push({ id, title: facts.title });
+  }
+  return found;
+}
+
+/** What a proposal or an emission said about the tasks its run is for. */
+export type TaskLinkReading =
+  | { ok: true; taskIds: string[] }
+  | { ok: false; reason: string };
+
+/**
+ * Read `taskIds` and `relatedTaskIds` off a proposal or a spec, refusing a brief
+ * that names board work its run would not be linked to.
+ *
+ * **The last check is why this function exists.** A run claims the tasks it is
+ * linked to when it starts and `complete_task` refuses every other, so a task
+ * written into a brief and left out of the link is work the run does and the
+ * board never hears about: it stays open, with nothing anywhere saying why.
+ * That happened to ten tasks in one batch, and to a dozen more before it, every
+ * time a chat bundled "Board tasks A, B and C" into one run and linked A. So a
+ * brief naming an open or claimed task — by id or by whole title — must account
+ * for it: in `taskIds` if this run is to do it, in `relatedTaskIds` if it is
+ * only context. Refused rather than linked automatically, because "do not touch
+ * the task another run holds" names a task too, and a claim written off that
+ * sentence would be this app deciding what the run is for.
+ *
+ * `taskId`, the single field this replaced, is refused by name: a caller still
+ * sending it would otherwise believe it linked something.
+ *
+ * `text` is everything the run will be handed — title, brief, prompt override.
+ */
+export function readTaskLinks(
+  fields: { taskIds?: unknown; relatedTaskIds?: unknown; taskId?: unknown },
+  text: string,
+  knowledge: ReadonlyMap<string, TaskFacts>,
+): TaskLinkReading {
+  if (fields.taskId !== undefined && fields.taskId !== null) {
+    return {
+      ok: false,
+      reason:
+        "taskId was replaced by taskIds, a list: name every board task this " +
+        "run is for there.",
+    };
+  }
+
+  const taskIds = idList(fields.taskIds, "taskIds");
+  if (!taskIds.ok) return taskIds;
+  const related = idList(fields.relatedTaskIds, "relatedTaskIds");
+  if (!related.ok) return related;
+
+  // `MAX_RUN_TASKS` because that is what `list_my_tasks` shows of what a run
+  // holds: a run linked to more could claim a task it is never shown.
+  if (taskIds.ids.length > MAX_RUN_TASKS) {
+    return {
+      ok: false,
+      reason:
+        `One run may be for at most ${MAX_RUN_TASKS} tasks and this names ` +
+        `${taskIds.ids.length}. Split the work across runs.`,
+    };
+  }
+
+  for (const id of [...taskIds.ids, ...related.ids]) {
+    const problem = taskRefusal(id, knowledge);
+    if (problem) return { ok: false, reason: problem };
+  }
+
+  const both = taskIds.ids.find((id) => related.ids.includes(id));
+  if (both) {
+    return {
+      ok: false,
+      reason:
+        `“${knowledge.get(both)?.title ?? both}” is in both taskIds and ` +
+        "relatedTaskIds. It is either work this run does or context it is " +
+        "told about, not both.",
+    };
+  }
+
+  const accounted = new Set([...taskIds.ids, ...related.ids]);
+  const unlinked = tasksMentionedIn(text, knowledge).filter((t) => !accounted.has(t.id));
+  if (unlinked.length > 0) {
+    return {
+      ok: false,
+      reason:
+        "The brief names board tasks this run is not linked to: " +
+        `${unlinked.map((t) => `“${t.title}” (${t.id})`).join(", ")}. A run ` +
+        "claims only the tasks in taskIds and can close only those, so a task " +
+        "left out stays open on the board after the run has done the work. " +
+        "Put every task this run is to work in taskIds. A task named only as " +
+        "context — one this run must not work — goes in relatedTaskIds.",
+    };
+  }
+
+  return { ok: true, taskIds: taskIds.ids };
+}
+
+/** A list of ids off the wire, trimmed and de-duplicated in order. */
+function idList(
+  raw: unknown,
+  field: string,
+): { ok: true; ids: string[] } | { ok: false; reason: string } {
+  if (raw === undefined || raw === null) return { ok: true, ids: [] };
+  if (!Array.isArray(raw) || raw.some((entry) => typeof entry !== "string")) {
+    return { ok: false, reason: `${field} has to be a list of task ids from list_tasks.` };
+  }
+  const ids = [...new Set((raw as string[]).map((id) => id.trim()).filter(Boolean))];
+  return { ok: true, ids };
 }
 
 /**
@@ -1226,60 +1385,67 @@ export function deleteTask(id: string, actor: TaskActor): TaskWriteResult {
 /* ------------------------------------------------------------------ */
 
 /**
- * Record that a run was started for a task.
+ * Record the tasks a run was started for, in the order they were named.
  *
- * **A record, and the whole of what the link does.** It writes one column and
- * moves nothing else: the task keeps the status it had, nobody claims it, and
- * when the run finishes nothing here closes it — a run can complete and still
- * not have done the thing, so completion stays with the run that did the work,
- * in its own name, or with the operator. See `taskTransitionRefusal`.
+ * **A record, and the whole of what the link does here.** It writes `run_tasks`
+ * and moves nothing: the tasks keep the status they had, and when the run
+ * finishes nothing here closes them — a run can complete and still not have
+ * done the thing, so completion stays with the run that did the work, in its
+ * own name, or with the operator. See `taskTransitionRefusal`. The claim is the
+ * run's own, made when it starts.
  *
  * The SQL is here rather than in `createRun`, and that is a boundary rather
  * than a convenience: `orchestrator.ts` decides what a run may do and what it
  * costs, and nothing in its loop, its guards, its occupancy or its budget reads
- * this column. A run that carries a task id and one that does not are the same
+ * this table. A run that carries task ids and one that does not are the same
  * run.
  *
  * **It is called from inside `createRun`'s transaction and from nowhere else,
  * which is a correctness rule rather than a preference.** Written by a caller
  * after `createRun` returned, it lands too late to be seen: that function ends
- * by promoting, and `startRun` reaches `claimTaskForRun` with no `await` in
- * between, so the run's own claim reads a null column and files nothing — the
- * board shows `open` for work already in flight, the run's log says nothing at
- * all, and the run can then never complete the task, because a run may complete
- * only the one claimed in its own name. Whether it bites depends on whether the
+ * by promoting, and `startRun` reaches `claimTasksForRun` with no `await` in
+ * between, so the run's own claim reads no links and files nothing — the board
+ * shows `open` for work already in flight, the run's log says nothing at all,
+ * and the run can then never complete those tasks, because a run may complete
+ * only what was claimed in its own name. Whether it bites depends on whether the
  * run started or queued, which is exactly the kind of intermittence this file
  * exists to keep out.
  *
- * The id is written whether or not the row is still there. It is not a foreign
- * key for that reason — the operator may delete a task at any point — and a
- * dangling id reads as "the task this run was for has been deleted", which is
- * what `taskForRun` answers and what both surfaces say.
+ * The ids are written whether or not the rows are still there. They are not
+ * foreign keys for that reason — the operator may delete a task at any point —
+ * and a dangling id reads as "a task since deleted", which is what
+ * `tasksLinkedToRun` answers and what every surface says.
  */
-export function recordRunForTask(runId: string, taskId: string): void {
-  db().prepare("UPDATE runs SET task_id = ? WHERE id = ?").run(taskId, runId);
+export function recordRunTasks(runId: string, taskIds: readonly string[]): void {
+  const insert = db().prepare(
+    "INSERT OR IGNORE INTO run_tasks (run_id, task_id, position) VALUES (?, ?, ?)",
+  );
+  taskIds.forEach((taskId, position) => insert.run(runId, taskId, position));
 }
 
 /**
- * The task a run was started for, or null for a run that names none.
+ * The tasks a run was started for, in the order they were named; empty for a
+ * run that names none.
  *
- * `title` and `status` are null together when the id names nothing any more,
+ * `title` and `status` are null together where the id names nothing any more,
  * which is a third answer rather than a missing one: a run whose task was
  * deleted is not a run that never had one, and a surface that collapsed the two
- * would quietly lose the provenance the column exists to hold.
+ * would quietly lose the provenance the link exists to hold.
  */
-export function taskForRun(runId: string): RunTaskDTO | null {
-  const row = db()
-    .prepare("SELECT task_id FROM runs WHERE id = ?")
-    .get(runId) as { task_id: string | null } | undefined;
-  if (!row?.task_id) return null;
-
-  const task = getTask(row.task_id);
-  return {
-    id: row.task_id,
-    title: task?.title ?? null,
-    status: task ? (task.status as TaskStatusDTO) : null,
-  };
+export function tasksLinkedToRun(runId: string): RunTaskDTO[] {
+  const rows = db()
+    .prepare(
+      `SELECT rt.task_id AS id, t.title AS title, t.status AS status
+         FROM run_tasks rt LEFT JOIN tasks t ON t.id = rt.task_id
+        WHERE rt.run_id = ?
+        ORDER BY rt.position`,
+    )
+    .all(runId) as Array<{ id: string; title: string | null; status: string | null }>;
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    status: row.status !== null && isTaskStatus(row.status) ? row.status : null,
+  }));
 }
 
 /** What one board row says about the runs started for it. */
@@ -1308,9 +1474,10 @@ export function runLinksForTasks(
   const placeholders = taskIds.map(() => "?").join(", ");
   const rows = db()
     .prepare(
-      `SELECT id, task_id FROM runs
-        WHERE task_id IN (${placeholders})
-        ORDER BY created_at DESC, id`,
+      `SELECT r.id AS id, rt.task_id AS task_id
+         FROM run_tasks rt JOIN runs r ON r.id = rt.run_id
+        WHERE rt.task_id IN (${placeholders})
+        ORDER BY r.created_at DESC, r.id`,
     )
     .all(...taskIds) as Array<{ id: string; task_id: string }>;
 

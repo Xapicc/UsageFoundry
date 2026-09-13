@@ -559,7 +559,7 @@ export default function TaskDetail({
           )}
           {/* Runs started *for* this task, which is the one link here the board
               did not write about itself — the three above are records the board
-              keeps and this is `runs.task_id` read back. Drawn last and worded
+              keeps and this is `run_tasks` read back. Drawn last and worded
               "started for", because none of them says the work happened: a run
               named here can have completed without doing the thing, which is
               exactly why nothing closes this task when one ends. */}

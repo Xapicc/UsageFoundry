@@ -275,15 +275,17 @@ export interface ChatProposalRow {
    */
   model: string | null;
   /**
-   * The task on the board this proposal is for, by id, or null.
+   * JSON `string[]`: the tasks on the board this proposal is for, or null.
+   * Read through `proposalTaskIds`.
    *
    * On the *work* side beside the agent and the task text — it records what
    * prompted the run — and it is neither a guard nor a trigger: it reaches no
    * budget, no permission mode and no isolation choice, and approving a proposal
-   * that names one neither claims the task nor moves it. See the column note in
-   * `db.ts` and the frozen-versus-read paragraph in docs/agent/chat.md.
+   * that names tasks does not move them; the run claims them when it starts. See
+   * the column note in `db.ts` and the frozen-versus-read paragraph in
+   * docs/agent/chat.md.
    */
-  task_id: string | null;
+  task_ids: string | null;
   title: string;
   task: string;
   /** The prompt the task is appended to, when the chat wrote one for this run. */
@@ -351,6 +353,24 @@ export function proposalDeps(
       if (!specId || (edge !== "on-success" && edge !== "on-finish")) return [];
       return [{ specId, edge, continueBranch: e.continueBranch === true }];
     });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The tasks a proposal is for, in the order they were named, or none.
+ *
+ * Never throws, for `proposalDeps`' reason: a row an older build or a hand edit
+ * left must not be able to 500 the chat page.
+ */
+export function proposalTaskIds(row: Pick<ChatProposalRow, "task_ids">): string[] {
+  if (!row.task_ids) return [];
+  try {
+    const parsed = JSON.parse(row.task_ids) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === "string" && id !== "")
+      : [];
   } catch {
     return [];
   }
@@ -952,14 +972,15 @@ export interface ProposalInput {
    */
   model?: string | null;
   /**
-   * The task on the board this run is for, by id. Null is work nobody wrote
+   * The tasks on the board this run is for, by id. Empty is work nobody wrote
    * down first, which is the ordinary proposal.
    *
-   * Neither work nor a guard: it is a *record* of what prompted the run. It
-   * moves nothing on the board — approving does not claim the task and
-   * finishing does not close it — and it reaches nothing on the run.
+   * Neither work nor a guard: it is a *record* of what prompted the run.
+   * Approving moves nothing on the board — the run claims these when it starts
+   * and closes each with its own `complete_task` — and nothing on the run's
+   * loop, guards or budget reads them.
    */
-  taskId?: string | null;
+  taskIds?: readonly string[];
   title: string;
   task: string;
   /** Replaces the template's prompt for this run only. Null keeps it. */
@@ -1000,7 +1021,7 @@ function insertProposal(
   db()
     .prepare(
       `INSERT INTO chat_proposals
-         (id, chat_id, created_at, kind, template_id, agent_id, model, task_id,
+         (id, chat_id, created_at, kind, template_id, agent_id, model, task_ids,
           title, task, prompt_override, mount_id, folder, spec_id, depends_on,
           graph, guards_json, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
@@ -1017,12 +1038,12 @@ function insertProposal(
       // model decides what this run costs and a guard set decides what it may
       // do, so only one of them is a thing a model may name.
       input.model ?? null,
-      // The board row this run came off, recorded here and read live at the
+      // The board rows this run came off, recorded here and read live at the
       // click. It is not a third thing beside the two above: a model and a guard
       // set decide what the run costs and what it may do, and this decides
       // neither — it says what prompted the work, and the board keeps deciding
       // its own status.
-      input.taskId ?? null,
+      input.taskIds?.length ? JSON.stringify(input.taskIds) : null,
       input.title,
       input.task,
       input.promptOverride,
@@ -1776,10 +1797,10 @@ export function approveProposal(
       // been deleted.
       origin: "chat",
       originRef: proposal.id,
-      // The link, carried from the proposal onto the run it became — through the
-      // door rather than written after it, because `createRun` may start the run
-      // before it returns and the run's own claim reads this column. Written
-      // whatever became of the row: the operator may delete a task, and a run
+      // The links, carried from the proposal onto the run it became — through
+      // the door rather than written after it, because `createRun` may start the
+      // run before it returns and the run's own claim reads them. Written
+      // whatever became of the rows: the operator may delete a task, and a run
       // that names one that has gone is not a run that named none.
       //
       // It is deliberately **not** a claim. `open → claimed` is a move on the
@@ -1787,7 +1808,7 @@ export function approveProposal(
       // is not a run deciding to work the task — it is a person agreeing to
       // start one. The board stays the operator's to move, and the claim is the
       // run's own, made when it starts.
-      taskId: proposal.task_id,
+      taskIds: proposalTaskIds(proposal),
     });
     markProposal(id, "approved", { runId: run.id });
     return { ok: true, runId: run.id };
@@ -3735,6 +3756,10 @@ function systemPrompt(): string {
     "Proposing a run:",
     "- One proposal per unit of work. The task text is the whole brief, read by",
     "  an agent that cannot ask you a follow-up question.",
+    "- A run that works board tasks lists every one of them in taskIds. The run",
+    "  claims those when it starts and can close only those: a task written into",
+    "  the brief but left out of taskIds stays open after the work is done, and",
+    "  propose_run refuses a brief that does that.",
     "- A template's prompt is instructions the operator wrote and tested. Say",
     "  whether you named one or left the run on the default guard set.",
     "- Use promptOverride rather than contradicting the template inside the task,",

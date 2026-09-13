@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { RUN_PROVIDER_LABEL, providerReportsSpend } from "@/lib/apiTypes";
@@ -1224,20 +1224,25 @@ export default function RunDetail({
             separately, because it does not change where the run came from. */}
         {fmtRunOrigin(run.origin)}
         {run.reopened_at ? ` · picked up again ${fmtRelative(run.reopened_at, nowTick)}` : ""}
-        {/* The board row this run was started for. Beside the origin because it
-            answers the second half of the same question — that line says which
-            gate authorised the run, this says what prompted it — and it is a
-            record rather than a state: this run finishing does not close the
-            task, so nothing here reports on it. A task deleted since says so
+        {/* The board rows this run was started for. Beside the origin because
+            they answer the second half of the same question — that line says
+            which gate authorised the run, this says what prompted it — and they
+            are a record rather than a state: this run finishing does not close a
+            task, so nothing here reports on one. A task deleted since says so
             rather than linking, because the row it would open is not there. */}
-        {run.task && (
+        {run.tasks && run.tasks.length > 0 && (
           <>
             {" · for "}
-            {run.task.title ? (
-              <Link href={`/tasks/${run.task.id}`}>{run.task.title}</Link>
-            ) : (
-              "a task since deleted"
-            )}
+            {run.tasks.map((task, index) => (
+              <Fragment key={task.id}>
+                {index > 0 && ", "}
+                {task.title ? (
+                  <Link href={`/tasks/${task.id}`}>{task.title}</Link>
+                ) : (
+                  "a task since deleted"
+                )}
+              </Fragment>
+            ))}
           </>
         )}{" "}
         ·{" "}

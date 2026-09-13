@@ -1249,6 +1249,9 @@ function migrate(db: Database.Database) {
   // docs/agent/chat.md.
   //
   // Deliberately not in PROPOSAL_BASE_COLUMNS, for `guards_json`' reason above.
+  //
+  // Superseded by `task_ids`, beside `run_tasks` further down, and no longer
+  // written or read; everything above applies to that column unchanged.
   addColumn(db, "chat_proposals", "task_id", "TEXT");
 
   // The proposal that replaced this one, by id, and null on every other row.
@@ -1550,6 +1553,10 @@ function migrate(db: Database.Database) {
   // not one.
   addColumn(db, "runs", "needs_review_reason", "TEXT");
 
+  // Superseded by `run_tasks` below and no longer written or read; kept because
+  // dropping it is a rebuild and a rolled-back image still reads it. What
+  // follows is what it was.
+  //
   // The task on the board this run was started for, by id, or null.
   //
   // The other end of `chat_proposals.task_id` and of an emitted spec's own
@@ -2428,6 +2435,48 @@ function migrate(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_task_deps_depends_on
       ON task_deps(depends_on);
   `);
+
+  // The tasks a run was started for — every one of them, in the order the
+  // proposal or the emission named them.
+  //
+  // It replaces `runs.task_id`, which could hold one, and the failure that
+  // column produced is why this exists: a chat batched two or three board tasks
+  // into one run's brief, linked the first, and the run — which claims only what
+  // it is linked to and may complete only what it claimed — did all the work and
+  // closed one task. The rest stayed open with nothing anywhere saying why.
+  // `runs.task_id` and `chat_proposals.task_id` are left in place and are no
+  // longer written or read; dropping them is a table rebuild, and an older image
+  // rolled back onto this file still reads them.
+  //
+  // Neither end is a foreign key, for `runs.task_id`'s reasons: nothing deletes
+  // a run, and a deleted task must leave the run's provenance standing rather
+  // than cascade it away. `position` keeps the order the caller named, which is
+  // the order the claim is written in and the order every surface draws.
+  //
+  // The backfills are idempotent and destroy nothing — `INSERT OR IGNORE` on the
+  // primary key, and an `UPDATE` only where the new column is still null — so,
+  // like `addColumn`, they need no `SCHEMA_VERSION` bump: that constant records
+  // that a rebuild completed, and this is not one.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS run_tasks (
+      run_id   TEXT NOT NULL,
+      task_id  TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      PRIMARY KEY (run_id, task_id)
+    );
+    -- "Which runs were started for this task": the board row's read, which must
+    -- not be a scan of every link the install has ever written.
+    CREATE INDEX IF NOT EXISTS idx_run_tasks_task ON run_tasks(task_id);
+    INSERT OR IGNORE INTO run_tasks (run_id, task_id, position)
+      SELECT id, task_id, 0 FROM runs WHERE task_id IS NOT NULL;
+  `);
+  // JSON `string[]`, read through `proposalTaskIds`, for `depends_on`'s reason:
+  // nothing queries a proposal by task, so a table would be a join for no read.
+  addColumn(db, "chat_proposals", "task_ids", "TEXT");
+  db.exec(
+    `UPDATE chat_proposals SET task_ids = json_array(task_id)
+      WHERE task_id IS NOT NULL AND task_ids IS NULL`,
+  );
 
   adoptModelsInUse(db);
 

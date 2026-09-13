@@ -38,6 +38,7 @@ import {
   type WorkflowNode,
 } from "./workflows";
 import { topologicalOrder, type RunStatus } from "./orchestrator";
+import { readTaskLinks } from "./tasks";
 import type { RunProviderDTO } from "./apiTypes";
 import type { TurnResult } from "./chat";
 import type { RunGuards } from "./settings";
@@ -1294,13 +1295,17 @@ function limits(over: Partial<EmissionLimits> = {}): EmissionLimits {
       { name: "Half a thing", usable: false },
     ],
     // A function rather than a list, unlike the agents above, for the reason the
-    // field gives: the board is unbounded where the registry is curated. This
-    // fixture knows one id.
-    taskRefusal: (taskId) =>
-      taskId === "task-known" ? null : `No task with id "${taskId}".`,
+    // field gives: the board is unbounded where the registry is curated. The
+    // real rule over a fixture board, so the wiring is what is under test.
+    taskLinks: (fields, text) => readTaskLinks(fields, text, EMISSION_BOARD),
     ...over,
   };
 }
+
+const EMISSION_BOARD = new Map([
+  ["task-known", { title: "The known task on the board", status: "open" as const }],
+  ["task-other", { title: "Another open task the brief quotes", status: "open" as const }],
+]);
 
 /** One emitted spec with everything filled in. */
 function spec(id: string, over: Record<string, unknown> = {}) {
@@ -1673,36 +1678,56 @@ describe("planEmission — which specs become runs", () => {
     // `agent` is on this list and is not one of those: a saved agent holds no
     // tool list and no permission mode, so naming one decides who does a piece
     // of the work exactly as the task text decides what the work is.
-    // `taskId` is further from that line again: it decides nothing about the
-    // run at all and moves nothing on the board — it records what prompted the
-    // work, and the board keeps deciding its own status.
+    // `taskIds` is further from that line again: it decides nothing about the
+    // run's guards, folder or identity — it records what prompted the work, and
+    // the board keeps deciding its own status.
     assert.deepEqual(Object.keys(specs[0]).sort(), [
       "agent",
       "dependsOn",
       "folder",
       "id",
       "task",
-      "taskId",
+      "taskIds",
       "title",
     ]);
     assert.equal(specs[0].agent, null, "a spec that names none carries none");
-    assert.equal(specs[0].taskId, null, "a spec that names none carries none");
+    assert.deepEqual(specs[0].taskIds, [], "a spec that names none carries none");
   });
 
-  it("refuses a taskId that is not on the board, and takes one that is", () => {
+  it("refuses a task id that is not on the board, and takes every one that is", () => {
     // `agentRefusal`'s rule reached from the door where nobody is looking. The
     // failure it closes is the quiet one: a run emitted "for the flaky-auth
     // task" that silently carried no task is afterwards indistinguishable from
     // one that named none, and the operator reads a board row nothing was ever
     // started for.
-    const named = emitted([spec("a", { taskId: "task-known" })]);
-    assert.equal(named[0].taskId, "task-known");
+    const named = emitted([spec("a", { taskIds: ["task-known", "task-other"] })]);
+    assert.deepEqual(named[0].taskIds, ["task-known", "task-other"]);
 
-    const refused = planEmission([spec("a", { taskId: "task-gone" })], limits());
+    const refused = planEmission([spec("a", { taskIds: ["task-gone"] })], limits());
     assert.equal(refused.ok, false);
     // The whole emission, not the one spec — `planEmission`'s all-or-nothing
     // rule: a partial list is a workflow that did some of what it decided.
     assert.match(refused.ok ? "" : refused.reason, /task-gone/);
+  });
+
+  it("refuses a spec whose text names a task it does not link, saying which spec", () => {
+    // The bundling failure: the run does the work for both, can close only the
+    // one it was linked to, and the other stays open with nothing saying why.
+    const bundled = spec("b", {
+      title: "Two fixes",
+      task: "Fix “The known task on the board” and “Another open task the brief quotes”.",
+      taskIds: ["task-known"],
+    });
+    const refused = planEmission([spec("a"), bundled], limits());
+    assert.equal(refused.ok, false);
+    const reason = refused.ok ? "" : refused.reason;
+    assert.match(reason, /^“Two fixes”:/);
+    assert.match(reason, /task-other/);
+
+    assert.deepEqual(
+      emitted([{ ...bundled, taskIds: ["task-known", "task-other"] }])[0].taskIds,
+      ["task-known", "task-other"],
+    );
   });
 
   it("takes the mount root as a real answer", () => {

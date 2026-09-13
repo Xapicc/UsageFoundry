@@ -11,6 +11,7 @@ import {
   pendingQuestions,
   proposalDeps,
   proposalGuards,
+  proposalTaskIds,
   questionChoices,
   type ChatQuestionRow,
   type ChatRow,
@@ -192,11 +193,12 @@ function proposalDTO(
   // An agent the CLI would not register counts as missing: `planProposal` refuses it,
   // so a card calling it fine would be a card the click contradicts.
   const agent = p.agent_id ? getAgent(p.agent_id) : null;
-  // Truthy rather than `!== null`, `planProposal`'s rule one file over: a row
-  // written before the column existed reads `undefined` on an install that has
-  // not restarted, and that is a proposal naming no task rather than one naming
-  // a missing one.
-  const task = p.task_id ? getTask(p.task_id) : null;
+  // Each resolved on its own, so a task deleted since reads as that rather than
+  // as no task at all. Bounded by `MAX_RUN_TASKS` per proposal at the door.
+  const tasks = proposalTaskIds(p).map((taskId) => {
+    const task = getTask(taskId);
+    return { id: taskId, title: task?.title ?? null, status: task?.status ?? null };
+  });
   // The set this proposal froze, or null for a row that froze none — which is
   // every templated and every workflow proposal, and every run proposal made
   // before the column existed. Those fall back to `untemplated`, the live set,
@@ -228,9 +230,9 @@ function proposalDTO(
     // Truthy rather than `!== null`, `planProposal`'s rule: a row written before
     // the column existed reads as no agent rather than as a missing one.
     agentMissing: Boolean(p.agent_id) && (agent === null || !agent.usable),
-    // The board row this proposal came off, resolved here for the agent's
-    // reason: the row holds an id, and a card that did not resolve it could
-    // only show the id and could not tell "no task" from "the task has been
+    // The board rows this proposal came off, resolved here for the agent's
+    // reason: the row holds ids, and a card that did not resolve them could
+    // only show ids and could not tell "no task" from "the task has been
     // deleted". Unlike the agent, neither answer refuses the click — the link
     // records what prompted the run and decides nothing about it — so the card
     // states it and the approval says nothing about it.
@@ -240,9 +242,7 @@ function proposalDTO(
     // can open the board and read the same row. It is deliberately not the
     // frozen copy the guards are, because nothing here is a value the run
     // starts under.
-    taskId: p.task_id ?? null,
-    taskTitle: task?.title ?? null,
-    taskStatus: task?.status ?? null,
+    tasks,
     // The row's own, and deliberately not `?? template?.model`: a card that
     // spells a value out promises the run starts under it, and a template's
     // model is a handle read live at the click for exactly the reason its

@@ -70,11 +70,13 @@ const {
   normalizeTaskInput,
   normalizeTaskListQuery,
   normalizeTaskPatch,
-  recordRunForTask,
+  readTaskLinks,
+  recordRunTasks,
   runLinksForTasks,
   taskDTO,
-  taskForRun,
   taskRefusal,
+  tasksLinkedToRun,
+  tasksMentionedIn,
   taskDeletionRefusal,
   MAX_RUN_TASKS,
   taskListItemDTO,
@@ -705,7 +707,7 @@ test("the runs started for a task are counted whole and listed capped", () => {
   const ids: string[] = [];
   for (let n = 0; n < 8; n += 1) {
     const run = seedRun(`run-for-task-${n}`, Date.now() + n);
-    recordRunForTask(run, task.id);
+    recordRunTasks(run, [task.id]);
     ids.push(run);
   }
 
@@ -731,19 +733,128 @@ test("the runs started for a task are counted whole and listed capped", () => {
 test("a run whose task was deleted still names it", () => {
   const task = file();
   const run = seedRun("run-outliving-its-task");
-  recordRunForTask(run, task.id);
+  recordRunTasks(run, [task.id]);
 
-  assert.equal(taskForRun(run)?.title, task.title);
+  assert.equal(tasksLinkedToRun(run)[0]?.title, task.title);
   assert.equal(deleteTask(task.id, { kind: "operator" }).ok, true);
 
   // Three states rather than two, which is why the id is not a foreign key: a
   // run whose task has gone is not a run that never had one, and a surface
-  // collapsing them loses the provenance the column exists to hold.
-  const orphan = taskForRun(run);
+  // collapsing them loses the provenance the link exists to hold.
+  const [orphan] = tasksLinkedToRun(run);
   assert.equal(orphan?.id, task.id);
   assert.equal(orphan?.title, null);
   assert.equal(orphan?.status, null);
-  assert.equal(taskForRun(seedRun("run-off-no-task")), null);
+  assert.deepEqual(tasksLinkedToRun(seedRun("run-off-no-task")), []);
+});
+
+test("a run is linked to every task it was started for, in the order named", () => {
+  // The defect this replaced: one column, so a run started for three tasks
+  // recorded one, claimed one and could close one, and the other two stayed
+  // open after the work was done.
+  const first = file({ title: "First of three" });
+  const second = file({ title: "Second of three" });
+  const third = file({ title: "Third of three" });
+  const run = seedRun("run-for-three");
+  recordRunTasks(run, [second.id, first.id, third.id]);
+
+  assert.deepEqual(
+    tasksLinkedToRun(run).map((t) => t.title),
+    ["Second of three", "First of three", "Third of three"],
+  );
+  // And each task's own row sees the run, which is the board's read.
+  const links = runLinksForTasks([first.id, second.id, third.id]);
+  for (const task of [first, second, third]) {
+    assert.deepEqual(links.get(task.id)?.runIds, [run], task.title);
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* A brief that names work its run is not linked to                    */
+/* ------------------------------------------------------------------ */
+
+const OPEN_ID = "a9648b09-41bf-42a4-86e8-892d3df9603e";
+const CLAIMED_ID = "4b697254-4341-40eb-a78f-c27a3c386c65";
+const DONE_ID = "dfa89779-71cd-41d5-bae3-7c417807a96d";
+const SHORT_ID = "0f146cc6-1c9a-4a8e-9d0e-5b2f1f2c0e11";
+
+const BRIEFED = new Map([
+  [OPEN_ID, { title: "The merge tool opens with no conflicts in it", status: "open" as const }],
+  [CLAIMED_ID, { title: "Shell.run deadlocks forever on a loud child", status: "claimed" as const }],
+  [DONE_ID, { title: "git diff on a conflicted repo traps the app", status: "done" as const }],
+  [SHORT_ID, { title: "Fix the README", status: "open" as const }],
+]);
+
+test("a task is named by its whole id, its eight-character prefix, or its whole title", () => {
+  const named = (text: string) => tasksMentionedIn(text, BRIEFED).map((t) => t.id);
+
+  assert.deepEqual(named(`Board tasks ${OPEN_ID} and more.`), [OPEN_ID]);
+  assert.deepEqual(named(`See task a9648b09 first.`), [OPEN_ID]);
+  // Quoted the way a chat quotes one, in curly quotes and a different case,
+  // with a backtick the title does not have: all one spelling.
+  assert.deepEqual(named("- “the merge tool opens with NO conflicts in it”"), [OPEN_ID]);
+  assert.deepEqual(named("`Shell.run` deadlocks forever on a loud child"), [CLAIMED_ID]);
+
+  // A prefix inside a longer hex run is a commit sha or another id, not this.
+  assert.deepEqual(named("commit a9648b09c1 fixed it"), []);
+  // A closed task named is context, and a short title is a phrase any brief
+  // can contain.
+  assert.deepEqual(named("Unlike git diff on a conflicted repo traps the app, ..."), []);
+  assert.deepEqual(named("Then fix the README."), []);
+});
+
+test("a brief naming an open task its run does not link is refused, naming the task", () => {
+  const brief = "Two board tasks:\n- “The merge tool opens with no conflicts in it”\n- Shell.run deadlocks forever on a loud child";
+
+  const refused = readTaskLinks({ taskIds: [OPEN_ID] }, brief, BRIEFED);
+  assert.equal(refused.ok, false);
+  const reason = refused.ok ? "" : refused.reason;
+  assert.match(reason, new RegExp(CLAIMED_ID), "the task left out is named by id");
+  assert.doesNotMatch(reason, new RegExp(OPEN_ID), "the linked one is not");
+  assert.match(reason, /relatedTaskIds/, "and the way to say it is context");
+
+  // Named with no link at all is the same failure, and the commonest shape.
+  assert.equal(readTaskLinks({}, brief, BRIEFED).ok, false);
+
+  const linked = readTaskLinks({ taskIds: [OPEN_ID, CLAIMED_ID] }, brief, BRIEFED);
+  assert.deepEqual(linked, { ok: true, taskIds: [OPEN_ID, CLAIMED_ID] });
+
+  const context = readTaskLinks(
+    { taskIds: [OPEN_ID], relatedTaskIds: [CLAIMED_ID] },
+    brief,
+    BRIEFED,
+  );
+  assert.deepEqual(context, { ok: true, taskIds: [OPEN_ID] }, "context is not linked");
+});
+
+test("the task link fields are refused by name when they cannot mean what was sent", () => {
+  const reason = (fields: Record<string, unknown>) => {
+    const read = readTaskLinks(fields, "no tasks named here", BRIEFED);
+    return read.ok ? null : read.reason;
+  };
+
+  // The field this replaced: silently ignored, a caller believes it linked.
+  assert.match(reason({ taskId: OPEN_ID }) ?? "", /taskIds/);
+  assert.match(reason({ taskIds: OPEN_ID }) ?? "", /list/);
+  assert.match(reason({ taskIds: ["t-gone"] }) ?? "", /t-gone/);
+  assert.match(reason({ relatedTaskIds: ["t-gone"] }) ?? "", /t-gone/);
+  assert.match(
+    reason({ taskIds: [OPEN_ID], relatedTaskIds: [OPEN_ID] }) ?? "",
+    /both/,
+  );
+  // One past what `list_my_tasks` shows of what a run holds.
+  const tooMany = Array.from({ length: MAX_RUN_TASKS + 1 }, () => OPEN_ID).map(
+    (id, n) => `${id.slice(0, -2)}${String(n).padStart(2, "0")}`,
+  );
+  const board = new Map(tooMany.map((id) => [id, { title: id, status: "open" as const }]));
+  const capped = readTaskLinks({ taskIds: tooMany }, "", board);
+  assert.match(capped.ok ? "" : capped.reason, new RegExp(`at most ${MAX_RUN_TASKS}`));
+
+  // Repeats are a restatement, not a second link, and order is kept.
+  assert.deepEqual(
+    readTaskLinks({ taskIds: [CLAIMED_ID, OPEN_ID, CLAIMED_ID] }, "", BRIEFED),
+    { ok: true, taskIds: [CLAIMED_ID, OPEN_ID] },
+  );
 });
 
 /* ------------------------------------------------------------------ */

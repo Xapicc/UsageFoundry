@@ -80,7 +80,7 @@ import {
   revokeRunCapabilities,
   writeMcpConfig,
 } from "./chat";
-import { recordRunForTask, taskForRun, updateTask } from "./tasks";
+import { recordRunTasks, tasksLinkedToRun, updateTask } from "./tasks";
 import { enabledPluginDirs, pluginDirArgs } from "./plugins";
 import {
   apiContextSample,
@@ -152,6 +152,7 @@ import {
   type QueueBlockerDTO,
   type RunDependencyDTO,
   type RunProviderDTO,
+  type RunTaskDTO,
   type RunToolActivityDTO,
   type SandboxStateDTO,
 } from "./apiTypes";
@@ -3194,17 +3195,18 @@ export interface CreateRunInput {
   /** The authorising record, where one exists: a proposal, instance, schedule. */
   originRef?: string | null;
   /**
-   * The taskboard item this run was started for, where a caller named one.
+   * The taskboard items this run was started for, in the order a caller named
+   * them. Empty or absent for a run that came off no task.
    *
    * Through the door rather than written onto the row afterwards, and that is a
    * correctness constraint rather than tidiness: `createRun` finishes by
-   * promoting, `startRun` reaches `claimTaskForRun` with no `await` in between,
-   * so a caller that wrote `runs.task_id` after this call returned had the
-   * claim read a null column and silently file nothing. Recorded as given —
-   * an id naming a task the operator has since deleted is refused by the
-   * callers that can ask, never here.
+   * promoting, `startRun` reaches `claimTasksForRun` with no `await` in between,
+   * so a caller that wrote the links after this call returned had the claim read
+   * none and silently file nothing. Recorded as given — an id naming a task the
+   * operator has since deleted is refused by the callers that can ask, never
+   * here.
    */
-  taskId?: string | null;
+  taskIds?: readonly string[];
 }
 
 /**
@@ -3871,7 +3873,7 @@ export function createRun(input: CreateRunInput): RunRow {
     // is a column the claim reads as null, and the board then shows `open` for
     // work already in flight with nothing on the run's log saying why. The SQL
     // stays in `tasks.ts`; what reaches here is the id.
-    if (input.taskId) recordRunForTask(id, input.taskId);
+    if (input.taskIds?.length) recordRunTasks(id, input.taskIds);
 
     const addLink = db().prepare(
       "INSERT INTO run_deps (run_id, depends_on, edge, continue_branch, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -8460,12 +8462,18 @@ async function reconcileKilledCycle(
 }
 
 /**
- * Put the task a run was started for into this run's name, if there is one.
+ * Put every task a run was started for into this run's name.
  *
- * Asked of `tasks.ts` rather than read off `runs.task_id` here, which is the
- * boundary `recordRunForTask` names in that file: this module decides what a run
+ * Asked of `tasks.ts` rather than read off `run_tasks` here, which is the
+ * boundary `recordRunTasks` names in that file: this module decides what a run
  * may do and what it costs, and no loop, guard, occupancy check or budget on
- * this side reads that column. `taskForRun` is the one reader.
+ * this side reads that table. `tasksLinkedToRun` is the one reader.
+ *
+ * **All of them, in the order they were named.** A run holding one of three
+ * tasks it was started for does the work for three and can close one, because
+ * `complete_task` refuses what was not claimed in its own name — the defect
+ * that made a run's link a list. Each task is claimed on its own, so one that
+ * cannot be claimed leaves the others claimed.
  *
  * **Every refusal is a log line and never a failure**, and that direction is the
  * decision. A task somebody dropped, a task another run still holds, a task the
@@ -8480,11 +8488,13 @@ async function reconcileKilledCycle(
  * allows and which changes nothing — the shape a resumed or picked-up run takes,
  * since this fires again on every segment.
  */
-function claimTaskForRun(id: string): void {
-  const link = taskForRun(id);
-  if (!link) return;
+function claimTasksForRun(id: string): void {
+  for (const link of tasksLinkedToRun(id)) claimTaskForRun(id, link);
+}
+
+function claimTaskForRun(id: string, link: RunTaskDTO): void {
   if (link.status === null) {
-    log(id, `The task this run was started for has been deleted (${link.id}).`);
+    log(id, `A task this run was started for has been deleted (${link.id}).`);
     return;
   }
 
@@ -8497,11 +8507,11 @@ function claimTaskForRun(id: string): void {
   // run reaches here as an allowed no-op — `from === to` — and saying "claimed"
   // about it would be this app reporting a write it did not make.
   if (claimed.task.claimedByRunId === id) {
-    log(id, `Claimed the task this run was started for: “${claimed.task.title}”.`);
+    log(id, `Claimed a task this run was started for: “${claimed.task.title}”.`);
   } else {
     log(
       id,
-      `The task this run was started for is already held by run ${claimed.task.claimedByRunId?.slice(0, 8) ?? "nobody"}; this run has not claimed it.`,
+      `“${claimed.task.title}”, which this run was started for, is already held by run ${claimed.task.claimedByRunId?.slice(0, 8) ?? "nobody"}; this run has not claimed it.`,
     );
   }
 }
@@ -8728,12 +8738,12 @@ export async function startRun(id: string): Promise<void> {
     // the operator's board would show `open` for work already in flight, and the
     // chat tool that exists to stop two agents taking one brief would be reading
     // it. Here it is a fact about the run having started, which is what
-    // `runs.task_id` records.
+    // `run_tasks` records.
     //
     // Deliberately **not** gated on `taskboardForRuns`: the claim is this app
     // writing down what it just did, and the setting is about what an agent may
     // do. A run started from a task with the board switched off still holds it.
-    claimTaskForRun(id);
+    claimTasksForRun(id);
 
     // Once per segment rather than once per cycle, because it is a fact about
     // how this run was started and it does not change while it runs. Said at all
