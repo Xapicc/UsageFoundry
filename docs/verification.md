@@ -1026,17 +1026,22 @@ is `docs/agent/testing.md`; interface defects and their classes are
   the defect, not a call that died of it. Counted off transcripts, so it also
   sees this host's non-UsageFoundry sessions.
 
-- **The same defect speaks with three messages, and two of them are the race the
-  other way round, 2026-09-13.** Of the 135 on the ten names, 119 are `Can't
+- **The same defect speaks with three messages, and only one of them is the one
+  the fix removes, 2026-09-13.** Of the 135 on the ten names, 119 are `Can't
   create file at` — the create refused — and 16 are `Can't get type of source`
-  (9) and `Can't find source path` (7), where the CLI saw the path, emitted
-  `--ro-bind <path> <path>` for it, and bwrap found it gone. Gone because the CLI
-  scrubs what it created, so a name missing on disk oscillates for as long as the
-  install runs, which is why the same handful fail for weeks rather than once.
-  One landed on this session: `npm run typecheck` died with `bwrap: Can't find
-  source path /home/node/.claude/policy-limits.json.signature.json`, and the same
-  command succeeded on the retry. A placeholder this app owns is on nobody's
-  scrub list, which is what ends all three.
+  (9) and `Can't find source path` (7), where the CLI saw the path when it built
+  the argv and bwrap found it gone. One landed on this session: `npm run
+  typecheck` died with `bwrap: Can't find source path
+  /home/node/.claude/policy-limits.json.signature.json`, and the same command
+  succeeded on the retry, which is the whole shape of it. **What deletes them was
+  not established.** Read out of `claude.exe` 2.1.260: the sandbox's own scrub
+  (`bareGitRepoScrubPaths`) takes planted bare-repo files and nothing in the
+  config directory, and the managed-policy code does unlink both
+  `policy-limits.json` signatures, but only on a fetch returning no signature —
+  which this install, holding a 214-byte `policy-limits.json` and no signature
+  beside it, may or may not be doing. Pre-creating runs immediately before every
+  spawn and so narrows that window rather than closing it; whether the 16 go to
+  zero is the open half of the item below.
 
 - **Both lists are now read out of `claude.exe` 2.1.260 by `npm test`,
   2026-09-13.** `sandboxMountPoints.test.ts` extracts the sandbox construction
@@ -2592,9 +2597,11 @@ measurement under *Verified* and cut the item down to what is still open.
   and writes nothing to the disk underneath. Settle it from outside a sandboxed
   session — a `docker compose up --build` with `UF_SANDBOX=1`, a run started
   from the UI, and the config directory's ten names watched across two cycles:
-  before the fix five oscillate between absent and `/dev/null`-bound as the CLI
-  scrubs what it created, and after it they should stay regular empty files and
-  the `bwrap: Can't create file` count should reach zero.
+  before the fix five oscillate between absent and `/dev/null`-bound, and after
+  it they should stay regular empty files and the `bwrap: Can't create file`
+  count should reach zero. Read the other two messages separately: if `Can't find
+  source path` and `Can't get type of source` survive on these names, something
+  is still deleting them and the entry above says what has been ruled out.
 
 - **The post-cycle `sweepSandboxTreeRoot` call is unseen, 2026-09-09.** No
   sandboxed cycle since; its log line, the `EBUSY` branch and the interplay

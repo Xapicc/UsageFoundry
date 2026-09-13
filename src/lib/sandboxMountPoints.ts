@@ -87,16 +87,20 @@ export const SANDBOX_MOUNT_POINT_NAMES: readonly string[] = [
  * on the last day counted. Every one names a member of this list or of
  * `SANDBOX_CONFIG_DIR_REFUSED`.
  *
- * **Three messages, one defect, and the second two are why the placeholder has
- * to be durable rather than timely.** `Can't create file at` is the create being
- * refused, and is 119 of the 260. The other 16 are `Can't get type of source`
- * and `Can't find source path`, which are the *opposite* race: the CLI saw the
- * path a moment earlier, emitted `--ro-bind <path> <path>` for it, and by the
- * time bwrap ran it had gone. It had gone because the CLI scrubs what it
- * created, so a name missing on disk oscillates — created, bound, scrubbed —
- * for as long as the install runs, which is why the same handful of names fail
- * for weeks rather than once. A file this app put there is on nobody else's
- * scrub list, so it ends the oscillation and all three messages with it.
+ * **Three messages and one defect, and the second two are a limit on this
+ * fix rather than a part of it.** `Can't create file at` is the create being
+ * refused, and is 119 of the 260 — the whole of what pre-creating removes. The
+ * other 16 are `Can't get type of source` and `Can't find source path`, which
+ * are the race the other way round: the CLI saw the path when it built the argv,
+ * emitted `--ro-bind <path> <path>` for it, and bwrap found it gone. Something
+ * deletes these between the two, and **what was not established.** It is not the
+ * sandbox's own scrub, which covers planted bare-repo files and nothing else;
+ * the CLI does unlink both `policy-limits.json` signatures, but only on a policy
+ * fetch that returns none, which is not obviously happening here. So this fix
+ * runs immediately before every spawn, which is the most it can do against a
+ * deleter it cannot name: it narrows that window rather than closing it, and if
+ * the 16 do not go to zero after this ships, that is the thing still to find.
+ * Do not read a residual `Can't find source path` as this list being wrong.
  *
  * **Only the names the CLI itself treats as files, and not all of those.** Its
  * list marks each entry file or directory — the two are built from the same
