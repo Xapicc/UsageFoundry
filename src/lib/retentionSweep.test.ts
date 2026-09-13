@@ -200,6 +200,19 @@ describe("run_events retention", () => {
     assert.equal(result.at, NOW);
     assert.equal(result.events, 4, "the run seeded under a blank horizon");
     assert.deepEqual(retention.lastSweep(), result);
+
+    // The one store this sweep reaches that a test cannot point somewhere
+    // harmless: `LEDGER_PATH` is a literal in `intakeFilter.ts`, copied from
+    // `docker-entrypoint.sh`, and everything else here runs against a temporary
+    // `DATA_DIR` and `CLAUDE_HOME`. A uid that may not open that file, and a
+    // machine where it is not there, both answer `undefined` — so this
+    // assertion is what turns "the suite quietly compacted a live ledger" from
+    // something nobody would notice into a red test.
+    assert.equal(
+      result.ledgerBytes,
+      undefined,
+      "this test just cut bytes off a real winnow ledger",
+    );
   });
 });
 

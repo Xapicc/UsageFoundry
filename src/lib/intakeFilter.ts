@@ -380,6 +380,235 @@ const ledgerRead = ((globalThis as unknown as {
   __ufIntakeFilterLedgerRead?: LedgerReadState;
 }).__ufIntakeFilterLedgerRead ??= newLedgerReadState());
 
+/* ------------------------------------------------------------------ */
+/* The ledger's horizon                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Most bytes the ledger may hold, and what a compaction leaves behind.
+ *
+ * **Nothing else bounds this file.** winnow appends one line per rewritten
+ * request and never removes one; the filter has no rotation and no `--max-size`
+ * to pass it, and `retention.ts`' three sweeps reach a database, a mount and
+ * `~/.claude` and not this. Measured on this install: 101,929,100 bytes on
+ * 2026-09-11 and 141,916,052 on 2026-09-13, so ~16 MB a day averaged — but 130
+ * MB a day over a five-minute sample with the fleet busy, and 243 over the
+ * busiest single minute of it. Both figures matter below, because a horizon
+ * stated in days is a horizon that moves with the load.
+ *
+ * The binding cost is not the disk, though. Since `readLedgerAppended` went
+ * incremental, this process keeps every row it has parsed for its own life, at
+ * roughly the file's own size in heap — 170.5 MB held at 142.6 MB of ledger —
+ * so the *file* is what sets the server's floor and is the only per-request
+ * growth term left inside it. A ceiling here is therefore a ceiling on both.
+ *
+ * **48 MiB, which is what a figure nobody acts on is worth.** Three days of
+ * this fleet's average and about nine hours of it working flat out, so the
+ * 5-hour window the card draws is covered whole in either case and the weekly
+ * one is not: past the horizon the weekly figure becomes a floor, short by
+ * whatever the compacted head recorded. That is the direction every figure on
+ * this card already errs in — `resultsSince` drops an unjoined result from a
+ * window, most of them are unjoined, and the card's own docblock calls the
+ * total a floor — and it is the direction to err in for a counterfactual that
+ * reaches no meter, no guard and no window. What it buys is a server whose heap
+ * does not grow with the fleet's lifetime request count, which is the thing
+ * that was actually unbounded. There is no ceiling that keeps a week here: a
+ * week of the busy rate is ~900 MB of file and about as much heap, so the
+ * choice is which figure is a floor and not whether one is.
+ *
+ * What "bounded" therefore means is the ceiling **plus one sweep interval's
+ * growth** — `SWEEP_MS` is six hours, so up to ~33 MB more at the busy rate —
+ * and not the ceiling. A tick of its own to tighten that would be a second
+ * timer against a store this app does not own, for a figure nobody acts on.
+ *
+ * Compacting to less than the ceiling rather than back to it, `SWEEP_MS`'
+ * reasoning: a horizon is not a deadline, and a compaction that left the file
+ * one line under the ceiling would run again on the next tick and every tick
+ * after it, paying the whole copy each time for a day's worth of lines.
+ */
+export const LEDGER_MAX_BYTES = 64 * 1024 * 1024;
+export const LEDGER_KEEP_BYTES = 48 * 1024 * 1024;
+
+/**
+ * How many times a compaction re-asks for what was appended under it.
+ *
+ * The copy below moves the kept tail down over the head, which is safe against
+ * a concurrent append at any speed; only the `truncate` that ends it can lose
+ * one. So each round copies down whatever arrived during the last, and by the
+ * final one the gap between "the size I just read" and "the size I truncated
+ * to" is two adjacent syscalls. Four rounds because a fifth is answering a
+ * fleet that appends faster than this process can copy a megabyte, which is not
+ * a state a ledger sweep should keep trying to out-run.
+ */
+const COMPACT_DRAIN_ROUNDS = 4;
+
+/** What one compaction did, in bytes. */
+export interface LedgerCompaction {
+  /** Size the ledger was found at. */
+  before: number;
+  /** Size it was left at. */
+  after: number;
+}
+
+/**
+ * The offset of the first line that starts at or after `target`.
+ *
+ * Never the middle of a line: the answer is one past a newline, so the kept
+ * region begins where a record does. `null` when there is no newline left in
+ * the file past `target`, which is the one tail this must not cut into — a
+ * single line longer than everything we meant to keep.
+ */
+async function lineStartAtOrAfter(
+  handle: fsp.FileHandle,
+  target: number,
+  size: number,
+): Promise<number | null> {
+  const buffer = Buffer.allocUnsafe(LEDGER_CHUNK_BYTES);
+  let at = Math.max(0, target);
+  while (at < size) {
+    const want = Math.min(LEDGER_CHUNK_BYTES, size - at);
+    const { bytesRead } = await handle.read(buffer, 0, want, at);
+    if (bytesRead === 0) return null;
+    const newline = buffer.subarray(0, bytesRead).indexOf(0x0a);
+    if (newline !== -1) return at + newline + 1;
+    at += bytesRead;
+  }
+  return null;
+}
+
+/**
+ * Drop the head of the ledger, keeping the newest `keep` bytes of whole lines.
+ *
+ * Three refusals decide the shape of this, and every one of them is about the
+ * process that owns the file rather than about us.
+ *
+ * - **The inode is kept.** `docker-entrypoint.sh` creates this file and gives
+ *   it to the agent uid as `0620`; winnow's `_append_ledger` opens it by *path*
+ *   in append mode for every line and closes it again. So a rename-and-recreate
+ *   would work — right up to the window where winnow's own `open("a")` gets
+ *   there first and creates a root-owned `0644` file the agent uid can never
+ *   write, which is the filter recording nothing, for ever, silently. Truncating
+ *   in place is what keeps the owner and the mode that entrypoint set.
+ *
+ * - **The copy runs before the truncate, and downward.** The kept tail is
+ *   copied to offset 0 while the file is still its full length, so every append
+ *   winnow makes during the copy lands past the size we read and is still there
+ *   afterwards — and the write cursor trails the read cursor by exactly the
+ *   bytes being dropped, so it can never overwrite a byte this has not read.
+ *   Truncating first and writing the tail back would have put winnow's appends
+ *   inside the region being written.
+ *
+ * - **What it can still lose is one line, and it errs low.** Between the last
+ *   size this reads and the `truncate` that follows it, an append lands past
+ *   the new end and is cut. `COMPACT_DRAIN_ROUNDS` is what narrows that to two
+ *   adjacent syscalls; nothing can close it, because winnow takes no lock this
+ *   process could take as well. A lost line is one request's removals
+ *   uncounted, which under-states a counterfactual that is already a floor.
+ *
+ * Answers what it did; `null` when the file is under the ceiling, which is the
+ * ordinary case and not worth a figure.
+ */
+export async function compactLedger(
+  path: string,
+  max = LEDGER_MAX_BYTES,
+  keep = LEDGER_KEEP_BYTES,
+): Promise<LedgerCompaction | null> {
+  const handle = await fsp.open(path, "r+");
+  try {
+    const found = await handle.stat();
+    if (found.size <= max) return null;
+
+    const from = await lineStartAtOrAfter(handle, found.size - keep, found.size);
+    // No line boundary inside the horizon that leaves a record behind it, so
+    // there is nothing to cut on and nothing here may guess one. A ledger whose
+    // newest record is larger than the whole horizon lands on `from` at the
+    // file's own end — the only boundary there is, and keeping nothing is not
+    // compaction, it is emptying the file. Staying over the ceiling is the
+    // honest answer to both, and `null` is what says the ceiling did not hold.
+    if (from === null || from === 0 || from >= found.size) return null;
+
+    const buffer = Buffer.allocUnsafe(LEDGER_CHUNK_BYTES);
+    let read = from;
+    let write = 0;
+    // `write` trails `read` by `from` bytes for the whole of this, which is what
+    // makes a copy over the file's own head safe.
+    const drain = async (until: number): Promise<void> => {
+      while (read < until) {
+        const want = Math.min(LEDGER_CHUNK_BYTES, until - read);
+        const { bytesRead } = await handle.read(buffer, 0, want, read);
+        if (bytesRead === 0) return;
+        await handle.write(buffer, 0, bytesRead, write);
+        read += bytesRead;
+        write += bytesRead;
+      }
+    };
+
+    await drain(found.size);
+    for (let round = 0; round < COMPACT_DRAIN_ROUNDS; round += 1) {
+      const grown = await handle.stat();
+      if (grown.size <= read) break;
+      await drain(grown.size);
+    }
+    // Never past the end. `truncate` *extends* a file with NUL bytes when the
+    // length is longer than it is, and this is the one store in the app that
+    // somebody else may have shortened under us while the copy ran — an
+    // operator, since winnow only ever appends. Those bytes are not a record
+    // and are not a line either, so the ordinary case is the compare being
+    // true and the other is left over its ceiling for the next sweep.
+    const ended = await handle.stat();
+    if (write < ended.size) await handle.truncate(write);
+    return { before: found.size, after: write };
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Forget where this process had got to in the ledger, and what it read there.
+ *
+ * Called after a compaction, which is the only thing in this app that makes the
+ * file shorter. `readLedgerAppended` does detect a shrunken file and start over
+ * by itself, so this is not what keeps the rows honest — what it does is make
+ * the *next* reading honest rather than the one after it, and drop a cached
+ * `FilterSavings` that describes a file that no longer exists. A reading that
+ * was in flight across the compaction is the case neither handles: it may have
+ * read a chunk out of a region being rewritten, which parses to nothing and
+ * errs low, and the reading after it is correct.
+ */
+export function forgetLedgerRead(): void {
+  ledgerRead.offset = 0;
+  ledgerRead.size = 0;
+  ledgerRead.requests = [];
+  ledgerCache.value = null;
+  ledgerCache.measuredAt = 0;
+  ledgerCache.spans = null;
+}
+
+/**
+ * Put the horizon on the ledger this container's own filter writes.
+ *
+ * The path is `LEDGER_PATH` rather than an argument for the reason the reader's
+ * is: it is a literal copied from `docker-entrypoint.sh`, and one derived from
+ * anywhere else would compact a file nothing here writes. Answers `null` both
+ * when there was nothing to do and when the file is not this process's to
+ * touch — an install whose filter has never run has no ledger, and one whose
+ * server is not root cannot open it. Neither is a fault, and neither is a
+ * figure; a sweep that could not reach a store it does not own is the store's
+ * business, not the sweep's.
+ */
+export async function sweepLedger(): Promise<LedgerCompaction | null> {
+  let done: LedgerCompaction | null;
+  try {
+    done = await compactLedger(LEDGER_PATH);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "EACCES" || code === "EPERM") return null;
+    throw err;
+  }
+  if (done) forgetLedgerRead();
+  return done;
+}
+
 /** What the transcripts said about the request a result first rode on. */
 export interface RequestAnchor {
   sessionId: string;

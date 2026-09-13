@@ -16,6 +16,7 @@ import {
 import { mayWriteDataDir } from "./serverLock";
 import { getSettings } from "./settings";
 import { forgetDreamingFiles } from "./dreaming";
+import { sweepLedger } from "./intakeFilter";
 import { forgetTranscriptFiles } from "./transcripts";
 
 /**
@@ -55,6 +56,15 @@ import { forgetTranscriptFiles } from "./transcripts";
  *
  * Every horizon is `null`-able and `null` means keep for ever, the reading
  * every switchable rule in this app takes.
+ *
+ * **A fourth store joined them and breaks the second property, deliberately.**
+ * winnow's intake ledger has no rows, no timestamps and no database to ask, so
+ * its horizon is a byte ceiling rather than a decision a pure function makes —
+ * `intakeFilter.ts` owns it, because the path, the line format and the process
+ * that appends to it are all that module's, and this one only calls it on the
+ * tick. It is also the one store here that another process writes while the
+ * sweep runs; what that costs, and why a compaction copies before it truncates,
+ * is written at `compactLedger`.
  */
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
@@ -105,6 +115,15 @@ export interface RetentionSweep {
   transcripts: number;
   /** Bytes those transcripts held. The one store whose figure is exact. */
   transcriptBytes: number;
+  /**
+   * Bytes cut off the head of winnow's intake ledger, absent when the ceiling
+   * was not reached — which is every tick but the one that crosses it.
+   *
+   * Absent rather than `0` on `samples`' rule, and here the two readings are
+   * further apart than anywhere else on this record: a sweep that predates the
+   * ceiling ran against a file nothing bounded at all.
+   */
+  ledgerBytes?: number;
 }
 
 export function lastSweep(): RetentionSweep | null {
@@ -1202,12 +1221,16 @@ export async function runRetentionSweep(
   const events = sweepRunEvents(now);
   const checkouts = await sweepCheckouts(now);
   const transcripts = await sweepTranscripts(now);
+  const ledger = await sweepLedger();
   const result: RetentionSweep = {
     at: now,
     ...events,
     checkouts: checkouts.removed,
     transcripts: transcripts.removed,
     transcriptBytes: transcripts.bytes,
+    // Left off entirely on the ticks that found the ledger under its ceiling,
+    // which is what keeps "did not reach it" and "cut nothing off it" apart.
+    ...(ledger ? { ledgerBytes: ledger.before - ledger.after } : {}),
   };
   setJSON(LAST_SWEEP_KEY, result);
   return result;

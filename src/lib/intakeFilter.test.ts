@@ -585,3 +585,135 @@ describe("readFilterSavings", () => {
     assert.notEqual(outside, inside, "the grain rollover was served from cache");
   });
 });
+
+/**
+ * The ledger's horizon, which is the one bound in this app that another process
+ * is writing to while it runs.
+ *
+ * Nothing bounded this file: winnow appends one line per rewritten request, has
+ * no rotation to switch on, and `retention.ts`' other three sweeps reach a
+ * database, a mount and `~/.claude`. It reached 141,027,436 bytes on this
+ * install, and since the reader went incremental it is also the server's only
+ * per-request growth term, at roughly the file's own size in heap for the life
+ * of the process. So the ceiling bounds a disk *and* a heap, and every way of
+ * getting it wrong is silent in a different place.
+ *
+ * The inode is the first of them. `docker-entrypoint.sh` creates this file and
+ * hands it to the agent uid as `0620`, and winnow opens it by path, in append
+ * mode, once per line. A compaction that renamed or recreated it would lose
+ * that race about as often as it won it, and what winnow's own `open("a")`
+ * creates is a root-owned `0644` file the filter can never write again — no
+ * error, no line on the card, and every later request unrecorded. So the case
+ * below asserts the inode and the mode across a compaction, not just the
+ * contents.
+ *
+ * The second is the cut itself: an offset in the middle of a line leaves a
+ * half-record at the head of the file, which `parseLedger` skips — one row lost
+ * silently, and the same row lost again on every process that reads it. The
+ * third is the one that cannot be asserted here at all, because winnow takes no
+ * lock this process could take too: the copy runs downward over the file's own
+ * head before anything is truncated, so an append landing under it survives,
+ * and what is left is the two syscalls between the last size read and the
+ * truncate. That ordering is asserted indirectly — a file that is still
+ * appendable, and still readable end to end, afterwards.
+ */
+describe("compactLedger", () => {
+  let ledger: string;
+
+  before(() => {
+    ledger = path.join(root, "compact.jsonl");
+  });
+
+  /** Lines big enough that a handful of them cross a test-sized ceiling. */
+  function fill(count: number): string[] {
+    return Array.from({ length: count }, (_, i) =>
+      line(`c_${i}`, [{ bytes: 1000 + i, tool: "T".repeat(200) }]),
+    );
+  }
+
+  it("leaves a ledger under its ceiling exactly as it found it", async () => {
+    const lines = fill(4);
+    fs.writeFileSync(ledger, lines.join("\n") + "\n");
+    const before = fs.readFileSync(ledger);
+
+    const done = await intakeFilter.compactLedger(ledger, 1 << 20, 1 << 19);
+
+    assert.equal(done, null, "a file under the ceiling is not a figure");
+    assert.deepEqual(fs.readFileSync(ledger), before);
+  });
+
+  it("keeps the newest whole lines and drops the oldest", async () => {
+    const lines = fill(40);
+    fs.writeFileSync(ledger, lines.join("\n") + "\n");
+    const found = fs.statSync(ledger);
+
+    const done = await intakeFilter.compactLedger(ledger, 4096, 2048);
+    assert.ok(done, "the ceiling was not crossed, so this case proves nothing");
+    assert.equal(done.before, found.size);
+    assert.equal(done.after, fs.statSync(ledger).size);
+    assert.ok(done.after <= 2048 + Buffer.byteLength(lines[0] + "\n"));
+
+    // Every line whole: a cut inside one leaves a fragment that `parseLedger`
+    // skips, which is a row lost with nothing thrown.
+    const text = fs.readFileSync(ledger, "utf8");
+    assert.ok(text.endsWith("\n"));
+    for (const kept of text.split("\n").filter(Boolean)) {
+      assert.doesNotThrow(() => JSON.parse(kept));
+    }
+
+    // The tail of the original, in order, and nothing invented.
+    const kept = intakeFilter.parseLedger(text).map((r) => r.requestId);
+    const all = intakeFilter
+      .parseLedger(lines.join("\n") + "\n")
+      .map((r) => r.requestId);
+    assert.ok(kept.length > 0 && kept.length < all.length);
+    assert.deepEqual(kept, all.slice(all.length - kept.length));
+  });
+
+  it("keeps the inode and the mode the entrypoint gave the file", async () => {
+    const lines = fill(40);
+    fs.writeFileSync(ledger, lines.join("\n") + "\n");
+    // What `docker-entrypoint.sh` sets: writable by the filter's group and by
+    // nobody else. A recreated file would come back `0644` and root-owned.
+    fs.chmodSync(ledger, 0o620);
+    const before = fs.statSync(ledger);
+
+    assert.ok(await intakeFilter.compactLedger(ledger, 4096, 2048));
+
+    const after = fs.statSync(ledger);
+    assert.equal(after.ino, before.ino, "the ledger was replaced, not truncated");
+    assert.equal(after.mode, before.mode);
+  });
+
+  it("stays append-only for the process that owns it", async () => {
+    const lines = fill(40);
+    fs.writeFileSync(ledger, lines.join("\n") + "\n");
+    assert.ok(await intakeFilter.compactLedger(ledger, 4096, 2048));
+
+    // winnow reopens by path in append mode for every line, so the byte after a
+    // compaction has to be where the next one goes.
+    const appended = line("c_after", [{ bytes: 77 }]);
+    fs.appendFileSync(ledger, appended + "\n");
+
+    const state = intakeFilter.newLedgerReadState();
+    const rows = await intakeFilter.readLedgerAppended(ledger, state);
+    assert.equal(rows[rows.length - 1].requestId, "c_after");
+    assert.equal(state.offset, fs.statSync(ledger).size);
+    assert.deepEqual(
+      rows,
+      intakeFilter.parseLedger(fs.readFileSync(ledger, "utf8")),
+    );
+  });
+
+  it("refuses to cut a tail that holds no line boundary", async () => {
+    // One record larger than the whole horizon. There is no offset to cut on
+    // that is not inside it, and guessing one would behead the only row there
+    // is — so the file stays over its ceiling, which is the honest answer.
+    const one = line("c_huge", [{ bytes: 1, tool: "x".repeat(20_000) }]);
+    fs.writeFileSync(ledger, one + "\n");
+    const before = fs.readFileSync(ledger);
+
+    assert.equal(await intakeFilter.compactLedger(ledger, 4096, 2048), null);
+    assert.deepEqual(fs.readFileSync(ledger), before);
+  });
+});

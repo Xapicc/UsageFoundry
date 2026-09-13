@@ -3017,6 +3017,12 @@ export interface StorageReportDTO {
     checkouts: number;
     transcripts: number;
     transcriptBytes: number;
+    /**
+     * Bytes cut off the head of winnow's intake ledger. Absent on every sweep
+     * that found it under its ceiling, and on every sweep recorded before it
+     * had one.
+     */
+    ledgerBytes?: number;
   } | null;
 }
 

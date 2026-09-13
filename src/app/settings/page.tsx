@@ -936,6 +936,12 @@ function StorageFigures({
               {lastSweep.transcripts.toLocaleString()} transcript
               {lastSweep.transcripts === 1 ? "" : "s"} (
               {fmtBytes(lastSweep.transcriptBytes)}) discarded
+              {lastSweep.ledgerBytes !== undefined && (
+                <>
+                  , and {fmtBytes(lastSweep.ledgerBytes)} cut off the intake
+                  ledger
+                </>
+              )}
             </>
           )}
         </>

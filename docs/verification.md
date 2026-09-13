@@ -333,6 +333,37 @@ is `docs/agent/testing.md`; interface defects and their classes are
   and the peak but not the growth. Nothing sweeps the file, and a horizon on it
   is task `fb3b65e3`.
 
+- **The ledger's horizon takes 142.6 MB of file to 48 MiB in 12-16 ms, and the
+  reader's permanent retention with it, 2026-09-13.** The live
+  `/var/lib/winnow/filter.jsonl` reached **141,916,052 bytes** on this install:
+  ~16 MB/day averaged against the 101,929,100 recorded on 2026-09-11, but 130
+  MB/day over a five-minute sample with the fleet busy and 243 over the busiest
+  minute of it — so a horizon stated in days moves with the load, and 48 MiB is
+  three days of the average against about nine hours of the busy rate. It is still 0620 `nobody:node` on a mount an agent
+  worktree sees read-only, so as with that entry the figures are against a
+  **stand-in**: 142,623,364 bytes / 83,698 lines carrying the three record
+  shapes `winnow/filter.py` writes, mean line 1,704 bytes against the real
+  file's ~1,882, so it packs about 10% more lines into the same size and
+  retains 1.196 heap bytes per file byte where the real one recorded ~0.90 —
+  it overstates the heap by roughly a third and the ratio below not at all.
+  Reading it whole held **170.5 MB** of `heapUsed` (2,047 bytes a row over
+  83,280 rows). `compactLedger` cut it to 50,331,136 bytes — 92.3 MB off the
+  head — in **12-16 ms** at a peak of **254-322 KB** of heap over idle, which is
+  the 1 MiB copy buffer and not the file; reading the result held **60.1 MB**,
+  so the horizon gives back **110.4 MB** of server heap that nothing was
+  bounding. 29,536 lines survived and **0** of them failed to parse, which is
+  the half a byte count cannot show. Two runs, identical to the byte.
+  **The caveat is what it does to the card:** the 5-hour window is covered
+  whole at either rate and the weekly one becomes a floor past the horizon —
+  and no ceiling fixes that, since a week of the busy rate is ~900 MB of file
+  and about as much heap. What is bounded is the ceiling plus one six-hourly
+  sweep interval's growth, up to ~33 MB more at that rate, rather than the
+  ceiling. And a line appended in the two
+  syscalls between the last size the compaction reads and its `truncate` is
+  lost — winnow takes no lock this process could take as well, so nothing
+  closes that window; it errs low, which is the direction that figure already
+  errs in.
+
 - **`--autocompact` creates the only compaction threshold, firing at ~167,000,
   2026-08-22.** 1,147 transcripts split at `ee93684`: before the flag, 604
   sessions (246 past 167,000) made zero `compact_boundary` records; after, 53
