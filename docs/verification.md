@@ -2962,10 +2962,12 @@ measurement under *Verified* and cut the item down to what is still open.
 
 - **The ascii skin (2026-09-11) has been looked at narrowly.** Of 22 routes,
   eight were looked at for the tokens and four for the kit primitives, the
-  rest load-asserted; only the dashboard at 1920; the live flip (task
-  `d8e5f614`) was never driven; `smoke-pages` is default-skin only
-  (`4e6dd0b9`). No second browser (where `█` measures 0.602em), touch, zoom
-  or screen reader.
+  rest load-asserted; only the dashboard at 1920 — the shell's own chrome has
+  since been measured on four routes at 390 and 1280 in both themes, see the
+  three 2026-09-13 entries above, but that is the toolbar and the source list
+  and nothing a route draws under them; the live flip (task `d8e5f614`) was
+  never driven; `smoke-pages` is default-skin only (`4e6dd0b9`). No second
+  browser (where `█` measures 0.602em), touch, zoom or screen reader.
 
 - **Open under the ascii skin, 2026-09-11.** Findings stay on the board —
   `New run` clipped off at 390px is no longer among them, see the 2026-09-12
