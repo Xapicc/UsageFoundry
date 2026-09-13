@@ -1830,6 +1830,30 @@ is `docs/agent/testing.md`; interface defects and their classes are
   because reaching them needs a block selected on the canvas — the mechanism was
   measured on `/runs/new` instead.
 
+- **The replay row on `/runs/[id]/touched` at 390px, 2026-09-13** (Chromium 151
+  via the globally installed Playwright 1.62.1, against `.next/standalone/
+  server.js`, both themes and both skins, with `/api/runs/*/touched` and its
+  `sequence` answered from a fixture of 24 files and 60 calls so the map and the
+  scrubber both draw). The column is **324px** inside the card. The row's
+  min-content measured **361.5px** in the default skin and **468.2px** under
+  ascii, where a compact button draws twice as wide — 52.3px against 26.3px for
+  `‹`. It fitted anyway because the scrubber carried `min-w-0`: under ascii the
+  four buttons and four gaps took 291.1px and left it **32.8px**, of which its
+  own `w-10` value readout is 40, so the track was zero pixels wide and the
+  figure overhung its box by **15.2px** onto Reset. With the `min-w-0` off and
+  `flex-wrap` on the row, min-content is **177px** in both skins — the readout
+  plus what a range input needs to still be one — the scrubber measures
+  **202.5px** (default) and **235.5px** (ascii), and nothing on the page reaches
+  past its parent that did not before. At 1280px the row is one line in both
+  skins with the same arithmetic it had. The map itself does **not** overflow:
+  its container measured 324px against a 324px column, and the `minmax(0,1fr)`
+  on the grid track that the page's own comment records is what already holds
+  that. Caveats: headless Chromium only; the map's *canvas* draws node labels
+  past its own edge at this width and is clipped there, which is the force
+  layout's own doing and is filed separately; and the fixture is not a real
+  run's touch history, so only the row's geometry was measured, never the
+  replay's behaviour.
+
 ## Not yet verified by hand
 
 - **The graph at a size no hand-drawn ordering reaches.** Every reading above is
