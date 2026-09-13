@@ -450,12 +450,26 @@ export function PathMapCanvas<P extends object, R extends object, T extends stri
     const sim = simRef.current;
     let hot = false;
     if (sim && animateRef.current) hot = step(sim, FORCES);
-    // The first layout to go cold is framed: k = 1 on a settled map shows a
-    // corner of it and nothing on a canvas says which way the rest is. Only the
-    // first, and only while nobody has moved the view — refitting under an
-    // operator who panned somewhere on purpose is worse than never fitting.
-    if (!hot && !fittedRef.current && !touchedRef.current && sim && sim.nodes.length > 0) {
-      fittedRef.current = true;
+    // The opening layout is framed on every frame of its cooling, and then
+    // never again. k = 1 on a settled map shows a corner of it and nothing on a
+    // canvas says which way the rest is — but the cooling curve runs for about
+    // four seconds after the layout has visibly stopped moving, and framing only
+    // on the frame it goes cold spends those four seconds showing the unframed
+    // view and then jumps. An operator reads the map as settled well before
+    // that, so the jump lands under their hands and gets blamed on whatever they
+    // last pressed, which is how the same shape in `KnowledgeGraphCanvas` was
+    // reported as "the skin control reframes the graph". Fitting all the way
+    // down leaves the settled view identical and takes the jump out of the
+    // middle of it.
+    //
+    // Still only while nobody has taken the view: refitting under an operator
+    // who panned somewhere on purpose is worse than never fitting at all, and
+    // `onPointerDown` ends this the moment a node is grabbed, so the camera
+    // never chases a node being dragged.
+    if (!fittedRef.current && !touchedRef.current && sim && sim.nodes.length > 0) {
+      // Cold is the terminus rather than the trigger: this is the last framing
+      // the cooling will do.
+      if (!hot) fittedRef.current = true;
       fitView();
     }
     draw();
@@ -474,8 +488,25 @@ export function PathMapCanvas<P extends object, R extends object, T extends stri
     if (!host || !canvas) return;
     // Sizing clears the surface, so every resize is followed by a draw — which
     // is what `schedule` is doing as the callback rather than after the call.
-    return observeCanvasSize(host, canvas, schedule);
-  }, [schedule]);
+    //
+    // And by a refit, because a view is only ever framed against the box it was
+    // measured in. This host is a column of the page's grid, so narrowing the
+    // window narrows it without moving a node: measured at 1280 → 900 on a
+    // five-file map, the box went 622×576 → 594×480 and the graph kept its old
+    // 543×513 extent, which the shorter box then cropped. A fit is cheap and
+    // the layout is untouched by it, so this re-frames rather than trying to
+    // work out whether the new box is one the old fit still suits.
+    //
+    // Under the same rule as `tick`'s fit and not under `fittedRef`: a resize is
+    // a new box rather than more of the opening one, so having finished cooling
+    // does not spend it — but an operator who panned somewhere on purpose keeps
+    // what they panned to, at whatever size the window ends up.
+    const resized = () => {
+      if (!touchedRef.current) fitView();
+      schedule();
+    };
+    return observeCanvasSize(host, canvas, resized);
+  }, [fitView, schedule]);
 
   /* ---------------------------- the palette ---------------------------- */
 
