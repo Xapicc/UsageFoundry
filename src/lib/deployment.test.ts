@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import {
   BLANK_MEANINGFUL_ENV_VARS,
   MOUNTED_WORKSPACE_SLOTS,
+  TRANSCRIPT_CACHE_MAX_ENTRIES,
   unmountedWorkspaceRefusal,
 } from "./config";
 import { CHILD_OOM_SCORE_ADJ } from "./privsep";
@@ -603,6 +604,54 @@ describe("the container's memory ceiling and the server's heap agree", () => {
         `lower --max-old-space-size; README's "Sizing the container" has the ` +
         `arithmetic both numbers came from.`,
     );
+  });
+
+  it("states the cache's share of the heap as the share it actually is", () => {
+    // The transcript cache is the largest thing this process retains on
+    // purpose, and three files state its size *as a fraction of the heap*:
+    // compose beside the setting, .env.example beside the variable, and
+    // config.ts's docblock. That fraction is derived from two numbers that live
+    // somewhere else — the entry bound here and the ceiling in NODE_OPTIONS —
+    // so moving either leaves three sentences quietly describing the old one.
+    // It has already happened once: all three still said the bound was ~8% of
+    // "V8's ~2 GB default" after the ceiling became an explicitly shipped
+    // 1,024 MiB, which is the same bound at twice the share.
+    const source = (...parts: string[]) =>
+      fs.readFileSync(path.join(root, ...parts), "utf8");
+    const perTurnBytes = Number(
+      /Roughly (\d+) bytes\s*\n\s*\*\s*are retained per turn/.exec(
+        source("src", "lib", "config.ts"),
+      )?.[1],
+    );
+    assert.ok(
+      Number.isFinite(perTurnBytes),
+      "config.ts no longer states the per-turn retention its own default is " +
+        "derived from, so nothing below can be checked against it.",
+    );
+
+    const share = (TRANSCRIPT_CACHE_MAX_ENTRIES * perTurnBytes) / heapCeilingBytes();
+    const stated = Math.round(share * 100);
+
+    for (const file of [["docker-compose.yml"], [".env.example"], ["src", "lib", "config.ts"]]) {
+      const claim = /~(\d+)% of/.exec(source(...file));
+      assert.ok(
+        claim,
+        `${file.join("/")} no longer states the transcript cache's share of ` +
+          `the heap. ` +
+          `It is ${stated}% at the shipped figures, and the three files that ` +
+          `carry that sentence are how an operator raising one of the two ` +
+          `numbers learns it has to raise the other.`,
+      );
+      assert.equal(
+        Number(claim[1]),
+        stated,
+        `${file.join("/")} says the transcript cache is ~${claim[1]}% of the ` +
+          `server's ` +
+          `heap. At the shipped ${TRANSCRIPT_CACHE_MAX_ENTRIES} entries × ` +
+          `${perTurnBytes} B against ${heapCeilingBytes() / 2 ** 20} MiB it is ` +
+          `${stated}%.`,
+      );
+    }
   });
 
   it("leaves the server outranked by the children that carry an OOM offset", () => {

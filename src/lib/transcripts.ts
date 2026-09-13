@@ -32,10 +32,11 @@ import { type ToolCall, parseToolRecord } from "./toolComposition";
  *
  *  3. What (2) buys is paid for in memory, so the retention is bounded. Holding
  *     every record ever parsed is what made the offset cheap, and it is also a
- *     heap that only grows: at ~330 bytes a turn it reaches V8's default limit
- *     and aborts the process. Past `TRANSCRIPT_CACHE_MAX_ENTRIES` the coldest
- *     files are dropped whole — records *and* offset — so a later scan re-reads
- *     them and derives the same records again. Never the other way round:
+ *     heap that only grows: at ~330 bytes a turn it reaches the ceiling
+ *     `UF_NODE_HEAP_MB` states and aborts the process. Past
+ *     `TRANSCRIPT_CACHE_MAX_ENTRIES` the coldest files are dropped whole —
+ *     records *and* offset — so a later scan re-reads them and derives the same
+ *     records again. Never the other way round:
  *     keeping the offset and discarding the records would be cheaper and would
  *     silently understate every window, which is the one direction a budget
  *     guard must not fail in.

@@ -240,10 +240,13 @@ services:
       UF_UNMOUNTED_WORKSPACES: "${UF_WORKSPACE_5_NAME:+UF_WORKSPACE_5_NAME }${UF_WORKSPACE_6_NAME:+UF_WORKSPACE_6_NAME }${UF_WORKSPACE_7_NAME:+UF_WORKSPACE_7_NAME }${UF_WORKSPACE_8_NAME:+UF_WORKSPACE_8_NAME }"
       WORKSPACE_ROOT: /workspace
       # Optional: how many parsed transcript turns this process keeps in memory.
-      # Blank takes the default, which is sized against V8's own default heap
-      # limit. Past it the coldest files are re-read from disk on each scan, so
-      # raising it trades memory for speed and lowering it the other way — the
-      # figures on the dashboard are the same either way.
+      # Blank takes the default, ~165 MB, which is sized against the heap
+      # ceiling stated below rather than against whatever V8 would have derived
+      # from the host — so it is ~15% of UF_NODE_HEAP_MB's 1024 MiB, and raising
+      # one of the two without the other is what makes this the term that
+      # overruns. Past the bound the coldest files are re-read from disk on each
+      # scan, so raising it trades memory for speed and lowering it the other
+      # way — the figures on the dashboard are the same either way.
       UF_TRANSCRIPT_CACHE_MAX_ENTRIES: "${UF_TRANSCRIPT_CACHE_MAX_ENTRIES:-}"
       CLAUDE_HOME: /home/node/.claude
       CLAUDE_CONFIG_DIR: /home/node/.claude
