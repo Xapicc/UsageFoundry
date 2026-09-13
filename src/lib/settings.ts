@@ -332,7 +332,7 @@ export interface Settings {
    * a figure Anthropic publishes nowhere; there is no guess in a *host* limit —
    * how many Node processes a container can carry is a property of the machine,
    * and `null` meant a fresh install had no bound on the fleet at all. 4 is
-   * chosen against the memory limit `docker-compose.yml` now ships (10 GiB) at
+   * chosen against the memory limit `docker-compose.yml` now ships (9 GiB) at
    * roughly 1.5 GiB for a work cycle — the CLI child plus the builds, test
    * suites and dev servers the agent starts inside it — leaving room for the
    * server and for `maxConcurrentAssists` below. That per-child figure is
@@ -359,7 +359,7 @@ export interface Settings {
    * A cap that covered work cycles alone did not bound the host: a fleet of 25
    * runs can carry an orchestrator turn per `thinking` block and a turn per open
    * chat on top of it, each a full Node process. 2 is chosen against the same
-   * 10 GiB compose limit at roughly 0.5 GiB each — cheaper than a work cycle
+   * 9 GiB compose limit at roughly 0.5 GiB each — cheaper than a work cycle
    * because none of the four builds anything (a review runs `--permission-mode
    * plan` and cannot write at all).
    *

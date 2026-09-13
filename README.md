@@ -844,8 +844,8 @@ inside the same container. Two settings bound how many exist at once, and
 |---|---|---|
 | **Settings → Runs at the same time** | 4 | Work cycles. Over the limit a run waits in the queue; queued and parked runs cost nothing and do not count |
 | **Settings → Other Claude processes at the same time** | 2 | A review, a merge-conflict resolution, a chat turn, a workflow orchestrator block's deciding turn. The first three are refused while it is full and say so; a workflow block waits for a slot |
-| `UF_MEM_LIMIT` in `.env` | `10g` | The container's memory ceiling. compose pins `memswap_limit` to the same figure, which is how Docker spells *no swap* — unset it defaults to twice, and the stated ceiling would quietly have that much swap behind it |
-| `UF_NODE_HEAP_MB` in `.env` | `2048` | The **server's** own heap. Stated rather than inherited: left to V8 it is derived from the *host's* RAM, so the one term of the arithmetic below that belongs to this process would change with the machine. It does not scale with the fleet |
+| `UF_MEM_LIMIT` in `.env` | `9g` | The container's memory ceiling. compose pins `memswap_limit` to the same figure, which is how Docker spells *no swap* — unset it defaults to twice, and the stated ceiling would quietly have that much swap behind it |
+| `UF_NODE_HEAP_MB` in `.env` | `1024` | The **server's** own heap. Stated rather than inherited: left to V8 it is derived from the *host's* RAM, so the one term of the arithmetic below that belongs to this process would change with the machine. It does not scale with the fleet, and it is a ceiling a lazy collector fills — raising it raises what the server actually holds, so raise `UF_MEM_LIMIT` with it |
 | `UF_PIDS_LIMIT` in `.env` | `2048` | The container's task ceiling — threads, not just processes |
 | `UF_CPUS` in `.env` | unset | No quota. Docker refuses a value larger than the host has, so no positive number is safe to ship; set it to `nproc` minus one or two if you want the machine to stay responsive while several agents compile |
 
@@ -862,14 +862,14 @@ does not scale with it, and `UF_CPUS` is about the host staying responsive. The
 arithmetic, per container:
 
 ```
-memory ≈ 2.5 GiB  (the server: a 2 GiB heap ceiling plus what lives outside it)
+memory ≈ 1.5 GiB  (the server: a 1 GiB heap ceiling plus what lives outside it)
        + 1.5 GiB × runs at the same time
        + 0.5 GiB × other Claude processes
 pids   ≈ 256 × (runs + other Claude processes + 1)
 ```
 
 So 25 simultaneous runs with 5 other Claude processes wants roughly
-`UF_MEM_LIMIT=44g` and `UF_PIDS_LIMIT=8192`, on a host with that much to give.
+`UF_MEM_LIMIT=43g` and `UF_PIDS_LIMIT=8192`, on a host with that much to give.
 If the machine cannot spare it the answer is fewer runs rather than a bigger
 number: a limit above what the host can supply is not a limit. The per-child
 figures are estimates rather than measurements — `claude --help` on the pinned

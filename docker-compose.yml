@@ -252,15 +252,30 @@ services:
       # machine. Left unset, V8 sizes its old space from the *host's* RAM —
       # around 2.2 GB on a small host and twice that on a 16 GB one — so the one
       # term of the memory arithmetic below that belongs to this process was a
-      # property of wherever the container happened to land. 2048 MiB is roughly
-      # what V8 was already choosing, so nothing here shrinks: the point is that
-      # `mem_limit` can be derived from a number instead of guessed at.
+      # property of wherever the container happened to land — so the first point
+      # of stating it is that `mem_limit` can be derived from a number instead
+      # of guessed at.
+      #
+      # 1024 MiB, and it does shrink: a ceiling is what a lazy collector fills,
+      # so the cost of naming a larger one is paid whether or not the live set
+      # needs it. Measured 2026-09-11 over a real 1.91 GiB transcript corpus —
+      # the heaviest read this process does — a cold dreaming scan peaked at
+      # 1,478-1,552 MB of RSS against `--max-old-space-size=2048` and at
+      # 898-949 MB against 1024, with an identical readout and a scan a little
+      # slower (6.4-6.5 s against 6.6-7.8 s). What that buys is the GiB the
+      # arithmetic below no longer reserves, which is most of a work cycle.
+      #
+      # Raise it on a corpus much larger than that if the dashboard gets slow,
+      # and raise `mem_limit` with it: `deployment.test.ts` refuses a server
+      # permitted to claim more than half the container, because past that point
+      # V8 never throws its own heap error — the cgroup kills the container
+      # first.
       #
       # All four child environments strip NODE_OPTIONS, so this bounds the
       # server and not the `claude` children it spawns. An agent inheriting it
       # would abort a work cycle mid-flight on a figure chosen for something
       # else, and the run loop would file that as the agent crashing.
-      NODE_OPTIONS: "--max-old-space-size=${UF_NODE_HEAP_MB:-2048}"
+      NODE_OPTIONS: "--max-old-space-size=${UF_NODE_HEAP_MB:-1024}"
       # The uid every spawned child is dropped to — the same UF_UID/UF_GID the
       # `user:` line above used to carry, so an existing .env needs no edit and
       # the processes that write your files are the uid they always were. The
@@ -629,10 +644,16 @@ services:
     #
     #     4 work cycles × 1.5 GiB                          6.0 GiB
     #     2 other Claude processes × 0.5 GiB               1.0 GiB
-    #     server (2 GiB heap ceiling + ~0.5 GiB off-heap)  2.5 GiB
+    #     server (1 GiB heap ceiling + ~0.5 GiB off-heap)  1.5 GiB
     #     headroom (git, gh, page cache)                   0.5 GiB
     #                                                     ---------
-    #                                                     10.0 GiB
+    #                                                      9.0 GiB
+    #
+    # It was 10g while the heap ceiling above was 2048, and the two moved
+    # together: the server's own term dropped by exactly the GiB this did, so an
+    # install taking both defaults has the headroom it had before. An install
+    # that pins `UF_NODE_HEAP_MB` back to 2048 has to pin `UF_MEM_LIMIT` to 10g
+    # beside it, or it is running the old server under the new ceiling.
     #
     # 1.5 GiB per work cycle is a budget rather than a measurement: `claude
     # --help` on the pinned CLI peaks at 309 MB before it has held a
@@ -646,13 +667,13 @@ services:
     # README's "Sizing the container" has the arithmetic and a worked
     # example at 25 runs. Set it *below* the RAM you are willing to give this
     # container — a limit above what the host can supply is not a limit.
-    mem_limit: ${UF_MEM_LIMIT:-10g}
+    mem_limit: ${UF_MEM_LIMIT:-9g}
     # Equal to mem_limit, which is how Docker spells "no swap". Left unset it
     # defaults to twice mem_limit, so the stated ceiling would quietly be a RAM
-    # ceiling with an equal amount of swap behind it — and 10 GiB of swap
+    # ceiling with an equal amount of swap behind it — and 9 GiB of swap
     # thrash starves the host just as effectively as the OOM kill this exists
     # to confine, only slower and with no log entry.
-    memswap_limit: ${UF_MEM_LIMIT:-10g}
+    memswap_limit: ${UF_MEM_LIMIT:-9g}
     # Tasks, not processes: a Node process is ~11 threads before it forks
     # anything, and `npm ci` inside an agent's checkout starts one worker per
     # core. The shipped fleet models out at ~400 tasks with every agent
