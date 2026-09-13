@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { CLAUDE_CONFIG_DIR } from "./config";
 import { chownForChild, privilegeSeparated } from "./privsep";
 
 /**
@@ -35,21 +36,23 @@ import { chownForChild, privilegeSeparated } from "./privsep";
  * mount point it cannot create, so the name in the message is whichever it
  * reached first. Leaving one out moves the failure rather than removing it.
  *
- * **The config directory is deliberately not covered.** Eight of the 261 name
- * `policy-limits.json`, `local`, `seed-admin` or `mcp-skill-archives` under
- * `$CLAUDE_CONFIG_DIR`, and the sandbox's
- * list for that directory also holds `CLAUDE.md`, `projects` and `plugins` —
- * the operator's own global memory, their transcripts and their installed
- * plugins, in a bind mount of their real `~/.claude`. Creating empty files
- * under those names to save 3% of the failures is a trade nothing here should
- * make.
+ * The config directory is covered too, and by its own list rather than this one
+ * — `SANDBOX_CONFIG_DIR_NAMES` below, which is also where the reasoning for
+ * what is refused there now lives. This paragraph used to say that directory was
+ * deliberately not covered, on the arithmetic that eight of 261 failures named
+ * something under `$CLAUDE_CONFIG_DIR`. That premise stopped holding the day
+ * this shipped: of the 460 mount-time failures between then and 2026-09-13,
+ * **260 are in the config directory** and they are the only ones still arriving.
+ * Not one of the twelve below has failed since 2026-09-04.
  *
  * Read out of the CLI's own sandbox construction at 2.1.260, and confirmed
  * against what a live sandboxed session leaves on disk: each of these paths is
  * a character device with `rdev=1,3` while a session holds it. The list is
  * therefore *this* CLI's, and a version that adds a name would start failing on
  * it again — visibly, as the same error, which is the direction that can be
- * noticed.
+ * noticed. `sandboxMountPoints.test.ts` reads the shipped binary and fails when
+ * the names it binds are not the names these lists hold, so that noticing does
+ * not depend on somebody reading a run log.
  */
 export const SANDBOX_MOUNT_POINT_NAMES: readonly string[] = [
   "settings.json",
@@ -64,6 +67,130 @@ export const SANDBOX_MOUNT_POINT_NAMES: readonly string[] = [
   "output-styles",
   "scheduled_tasks.json",
   "loop.md",
+];
+
+/**
+ * The same problem one directory over, where the failures now are.
+ *
+ * `$CLAUDE_CONFIG_DIR` gets a **third** list, longer than the twelve above and
+ * overlapping them by name only. It is the same mechanism — `/dev/null` bound
+ * over the CLI's own configuration surface — with one difference that decides
+ * everything here: for a path that exists the CLI emits `--ro-bind <path>
+ * <path>`, and only for a path that is **missing** does it emit `--ro-bind
+ * /dev/null <path>`, which is the form that makes bwrap create a target. So the
+ * names that fail are exactly the names a given install does not have, and they
+ * are stable per install rather than per run.
+ *
+ * Measured on this install over 2026-09-04 to 2026-09-13, counting tool calls
+ * rather than paths: 260 of the 460 failures since the twelve above shipped are
+ * here, and after 2026-09-04 they are the only kind still arriving — 20 of them
+ * on the last day counted. Every one names a member of this list or of
+ * `SANDBOX_CONFIG_DIR_REFUSED`.
+ *
+ * **Three messages, one defect, and the second two are why the placeholder has
+ * to be durable rather than timely.** `Can't create file at` is the create being
+ * refused, and is 119 of the 260. The other 16 are `Can't get type of source`
+ * and `Can't find source path`, which are the *opposite* race: the CLI saw the
+ * path a moment earlier, emitted `--ro-bind <path> <path>` for it, and by the
+ * time bwrap ran it had gone. It had gone because the CLI scrubs what it
+ * created, so a name missing on disk oscillates — created, bound, scrubbed —
+ * for as long as the install runs, which is why the same handful of names fail
+ * for weeks rather than once. A file this app put there is on nobody else's
+ * scrub list, so it ends the oscillation and all three messages with it.
+ *
+ * **Only the names the CLI itself treats as files, and not all of those.** Its
+ * list marks each entry file or directory — the two are built from the same
+ * array and told apart by a set the bundle calls `De`, which is the file half —
+ * and an empty file where a directory belongs is the `skills` harm the list
+ * above names, one directory over. `SANDBOX_CONFIG_DIR_REFUSED` holds
+ * everything left out, each kind with its reason, and the two lists together are
+ * the CLI's whole list: the test asserts that, so a name a later version adds
+ * belongs to neither and fails rather than arriving as a dead tool call nobody
+ * attributes to an upgrade.
+ *
+ * **What this does not cover, stated because it is nearly half the failures.**
+ * Of the 260, these ten account for 135. The 77 in directories stopped on
+ * 2026-09-07 without this app doing anything, because the CLI creates its own
+ * caches the first time it wants them. The remaining 48 are `policy-limits.json`
+ * (38, last 2026-09-11) and `remote-settings.json` (10, last 2026-09-11), and
+ * `SANDBOX_CONFIG_DIR_REFUSED` says why those two stay. What is left after this
+ * is therefore the two policy documents and nothing else — every one of the 26
+ * failures recorded on 2026-09-12 and 2026-09-13 is one of these ten names.
+ */
+export const SANDBOX_CONFIG_DIR_NAMES: readonly string[] = [
+  "daemon.json",
+  "launch.json",
+  "loop.md",
+  "policy-limits.json.signature-iat.json",
+  "policy-limits.json.signature.json",
+  "remote-settings-helper-consent",
+  "remote-settings-consent.json",
+  "remote-settings.json.signature-iat.json",
+  "remote-settings.json.signature.json",
+  "scheduled_tasks.json",
+];
+
+/**
+ * The rest of the CLI's config-directory list, and why each kind stays missing.
+ *
+ * Exported to be asserted against, not to be read at runtime: nothing creates
+ * these and nothing should. It exists so that the CLI's list is accounted for
+ * name by name in one place or the other, which is what lets the test fail on a
+ * name a later version adds instead of letting it arrive as a dead tool call.
+ *
+ * Three reasons, and the first covers twenty-two of the twenty-five:
+ *
+ *   - **a directory.** These are the operator's real `~/.claude` through a bind
+ *     mount: `projects` is their transcripts, `plugins` what they installed,
+ *     `rules`, `skills` and `agents` what they wrote. An empty file at one of
+ *     those names is not a mount point, it is that directory gone — and this
+ *     install already carries one, a zero-byte `local` that something else
+ *     created, to show it is not hypothetical. `mkdir` would be the safe verb
+ *     and is still not this app's to call here: the CLI makes each of these the
+ *     first time it wants it, which is why all 77 of their failures stopped on
+ *     2026-09-07 with nothing done about them.
+ *   - **the two documents a signature attests.** `policy-limits.json` and
+ *     `remote-settings.json` are what a managed install's policy *is*. An empty
+ *     target for the *signature* beside one is a file carrying no decision, and
+ *     is created above; the policy itself is not, even empty, because what an
+ *     unparseable policy means is the CLI's to decide and this app inventing the
+ *     document it decides against is not a trade available here. This is the one
+ *     part of the defect the fix leaves in place: 48 failures, last seen
+ *     2026-09-11. Anyone reaching for it again needs the CLI's answer to "what
+ *     does a zero-byte `policy-limits.json` mean" first, and that answer is not
+ *     in this repository.
+ *   - **`CLAUDE.md`**, the operator's global memory: a file, otherwise
+ *     qualifying, and content a person wrote or will write. It has never failed
+ *     here — it exists on any install that has ever used it — and inventing an
+ *     empty one would be this app writing into somebody's memory to save a tool
+ *     call.
+ */
+export const SANDBOX_CONFIG_DIR_REFUSED: readonly string[] = [
+  "CLAUDE.md",
+  "agents",
+  "backups",
+  "commands",
+  "cowork_plugins",
+  "daemon",
+  "hooks",
+  "jobs",
+  "local",
+  "mcp-discovery-cache",
+  "mcp-skill-archives",
+  "output-styles",
+  "plugins",
+  "policy-limits.json",
+  "projects",
+  "remote-settings.json",
+  "routines",
+  "rules",
+  "seed-admin",
+  "session-env",
+  "shares",
+  "shell-snapshots",
+  "skills",
+  "state",
+  "workflows",
 ];
 
 /**
@@ -164,26 +291,28 @@ function hasClaudeDir(dir: string): boolean {
  * reported and the placeholder kept, rather than thrown the way `seedWorktree`
  * throws for a checkout the agent must be able to write.
  */
+function fillOnePlaceholder(target: string, result: MountPointResult): boolean {
+  try {
+    fs.writeFileSync(target, "", { flag: "wx" });
+    result.created.push(target);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code !== "EEXIST") result.problems.push(`${target}: ${(err as Error).message}`);
+    return false;
+  }
+  try {
+    chownForChild(target);
+  } catch (err) {
+    result.problems.push(`${target}: created, but ${(err as Error).message}`);
+  }
+  return true;
+}
+
 function fillOneTree(dir: string, result: MountPointResult): void {
   const claude = path.join(dir, ".claude");
   let madeSomething = false;
   for (const name of SANDBOX_MOUNT_POINT_NAMES) {
-    const target = path.join(claude, name);
-    try {
-      fs.writeFileSync(target, "", { flag: "wx" });
-      result.created.push(target);
-      madeSomething = true;
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException)?.code;
-      if (code === "EEXIST") continue;
-      result.problems.push(`${target}: ${(err as Error).message}`);
-      continue;
-    }
-    try {
-      chownForChild(target);
-    } catch (err) {
-      result.problems.push(`${target}: created, but ${(err as Error).message}`);
-    }
+    if (fillOnePlaceholder(path.join(claude, name), result)) madeSomething = true;
   }
 
   // This tree's own count, not the run's: a second tree that needed nothing
@@ -203,13 +332,19 @@ function fillOneTree(dir: string, result: MountPointResult): void {
 }
 
 /**
- * Give the sandbox its mount points in every tree a child is about to be handed.
+ * Give the sandbox its mount points: in every tree a child is about to be handed,
+ * and in the config directory those trees have nothing to do with.
  *
  * Called immediately before the spawn rather than once when a checkout is made:
  * what has to be true is the state of the tree at the moment bwrap constructs
  * the sandbox, and between two cycles a session can remove what the last one
  * left. It costs a dozen `open(O_CREAT|O_EXCL)` calls per tree on the first
  * cycle and a dozen `EEXIST`s afterwards.
+ *
+ * The config directory is done once per call and not per tree — it is one
+ * directory however many trees a child is handed — and it is done here rather
+ * than at boot for the same reason as everything else in this module: what
+ * matters is the state at the spawn, and this is the only place that runs then.
  *
  * Two callers, and the second is not a work cycle: `runOrchestratorChild` in
  * `chat.ts` prepares its turn's working directory and every `--add-dir` the same
@@ -225,6 +360,12 @@ function fillOneTree(dir: string, result: MountPointResult): void {
 export function ensureSandboxMountPoints(cwds: readonly string[]): MountPointResult {
   const result: MountPointResult = { created: [], problems: [] };
   const seen = new Set<string>();
+
+  // First, because it is the one that is still failing and it is independent of
+  // every tree below: a child handed no `--add-dir` at all still builds it.
+  for (const name of SANDBOX_CONFIG_DIR_NAMES) {
+    fillOnePlaceholder(path.join(CLAUDE_CONFIG_DIR, name), result);
+  }
 
   for (const cwd of cwds) {
     for (const dir of sandboxMountPointDirs(cwd, hasClaudeDir)) {
@@ -268,16 +409,38 @@ export function ensureSandboxMountPoints(cwds: readonly string[]): MountPointRes
  * empty `0444` files. `.idea` and `.vscode` are left as *files* where a checkout
  * wants directories, which is the harm the `skills` placeholder above names.
  *
- * Unlike the `.claude` list this one must **not** be created ahead of time.
- * There is no failure to prevent — the working directory is writable, so
- * bwrap's create succeeds — and creating them is precisely the mess. What this
- * app owes here is the clearing away.
+ * Unlike the `.claude` list this one is **not** created ahead of time, and the
+ * reason is narrower than it was first written. It used to read "there is no
+ * failure to prevent — the working directory is writable, so bwrap's create
+ * succeeds". That is true of a work cycle and false in general, so it was the
+ * wrong shape of reason: what holds is that for a **run**, whose cwd is a
+ * checkout this app seeded and chowned to the agent, bwrap's create succeeds
+ * and creating the files ourselves would only be making the mess earlier. What
+ * this app owes a run here is the clearing away, which is `sweepSandboxTreeRoot`
+ * below.
+ *
+ * **The case it does not cover is the orchestrator chat.** Its cwd is
+ * `chatCwd()` — `WORKSPACE_ROOT`, the mount root itself — and on this image that
+ * is `/workspace`, owned by `nobody:nogroup` at 0755 with the agent uid outside
+ * it. bwrap's create is refused there, so the turn dies before its command runs,
+ * with the same message a run used to get. Measured over 2026-09-04 to
+ * 2026-09-13: 18 such failures at `/workspace` and 8 at `/workspace2`, last seen
+ * 2026-09-11, out of the 200 in that window that fall outside the config
+ * directory.
+ *
+ * Pre-creating is not the fix available for that, and not because of a trade —
+ * the server cannot write `/workspace` either, so there is nothing this module
+ * could do there that would not fail the same way. What would settle it is the
+ * chat being given a cwd it owns, which is a decision about what that child is
+ * pointed at rather than about this list, and is deliberately not taken here.
+ * Anyone changing `chatCwd()` should know this is one of the things it fixes.
  *
  * The working directory only, and that is measured rather than assumed: a
  * session whose cwd was `.uf-worktrees/usagefoundry-721638d11c0b-7` had all
  * eleven bound there, none at `/workspace` — an exposed ancestor that does get
- * the `.claude` list — and none at `/workspace2`, an added directory. This list
- * follows the cwd and nothing else.
+ * the `.claude` list — and none at `/workspace2`, an added directory. The CLI
+ * resolves this list against `process.cwd()` and nothing else, which is what
+ * makes the chat's single read-only cwd the whole of the exposure above.
  */
 export const SANDBOX_TREE_ROOT_NAMES: readonly string[] = [
   ".bash_profile",
