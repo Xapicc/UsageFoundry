@@ -1826,6 +1826,36 @@ is `docs/agent/testing.md`; interface defects and their classes are
   measure there; and this is one Chromium on one font stack, so the figures are
   this container's rather than a reader's.
 
+- **The toolbar's appearance panel is framed below the breakpoint and carries no
+  frame above it, 2026-09-13** (same rig as the entry above: Chromium
+  151.0.7922.34 via Playwright 1.62.1, `.next/standalone/server.js`, `/`, DPR 2,
+  skin and theme in `localStorage` before first paint). `AsciiFrame` gained a
+  `widths` prop whose `narrow` value emits `uf-ascii-frame-narrow`, which
+  `globals.css` takes to `display: none` inside `@media (width >= 48rem)`. At
+  390 in ascii the opened panel's CSS border is `rgba(0, 0, 0, 0)` in both
+  themes — it was `rgb(227, 227, 230)` light and `rgb(58, 58, 61)` dark — and the
+  character frame inks on the panel's own border box edges: left `│` centre css
+  217.97 light and 218.00 dark against an edge at 218.00, right 378.00 and
+  377.98 against 378.00, which is the reading a `Card` on the same page gives
+  (374.00 against 374.00). The frame's own rect is x 211.5 w 173 against a panel
+  box of x 218 w 160, so `.uf-unboxed > .uf-ascii-frame` is backing the panel's
+  1px out as well. Under `default` the frame is in the DOM at `display: none`,
+  and the panel keeps its CSS border.
+
+  The failure this exists to avoid was checked in the state that reaches it
+  rather than in a fresh one: with the panel open at 390, `setViewportSize` to
+  1280 without a reload — a phone turned to landscape. The header holds one
+  `.uf-ascii-frame`, `display: none`, 0x0, and the window's top and right edges
+  have no ink on them in either theme (`rotated-light-ascii.png`,
+  `rotated-dark-ascii.png`). Caveats: the panel takes `uf-unboxed` *without*
+  `uf-framed`, which is the only place in the app the pair comes apart —
+  `uf-framed` is unlayered `position: relative` and would outrank the panel's
+  own `max-md:absolute`, dropping it into the strip under the ascii skin only;
+  the panel is already positioned wherever it has a box, which is what that
+  class would have been for. And this is one Chromium: a `display: contents`
+  element generating no containing block is specified behaviour, but only this
+  engine was measured.
+
 ## Not yet verified by hand
 
 - **The graph at a size no hand-drawn ordering reaches.** Every reading above is

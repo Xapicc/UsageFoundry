@@ -6,7 +6,7 @@ import { SkinToggle } from "@/components/SkinToggle";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
-import { AsciiEdge } from "@/components/ui/AsciiFrame";
+import { AsciiEdge, AsciiFrame } from "@/components/ui/AsciiFrame";
 import { SIDEBAR_DRAWER_ID, SIDEBAR_ID } from "@/components/shell/Sidebar";
 import { toolbarAction, toolbarTitle } from "@/components/shell/panes";
 
@@ -270,13 +270,18 @@ export function Toolbar({
         <div
           id={appearanceId}
           ref={panelRef}
-          // No `AsciiFrame` on the panel, and that is not an oversight: the
-          // frame is `absolute inset-0` and carries no `display` of its own by
-          // decision, so above the breakpoint — where this element is
-          // `contents` and has no box for it to line — it would resolve against
-          // the strip and draw a character frame around the whole toolbar.
+          // `uf-unboxed` without `uf-framed`, which is the one place in the app
+          // the pair comes apart, and it has to: `uf-framed` is
+          // `position: relative` under the skin and unlayered, so it outranks
+          // the `max-md:absolute` below — the panel would stop dropping from
+          // under the strip and sit in the row, in the ascii skin only. What
+          // that class is for here is already true without it. This element is
+          // positioned at every width it has a box at, so the frame's
+          // containing block is the panel itself; and the frame is the only
+          // positioned thing inside it, so nothing later paints over it, which
+          // is the other half of what `uf-framed` guards.
           className={
-            "app-no-drag md:contents " +
+            "app-no-drag uf-unboxed md:contents " +
             (appearanceOpen
               ? "max-md:absolute max-md:right-3 max-md:top-full max-md:z-20 " +
                 "max-md:mt-1 max-md:flex max-md:flex-col max-md:items-end " +
@@ -285,6 +290,13 @@ export function Toolbar({
               : "max-md:hidden")
           }
         >
+          {/* The one frame in the app that is not drawn at every width. Above
+              the breakpoint this element is `contents` and has no box, so a
+              frame here would resolve against the `<header>` and draw a
+              character box around the whole strip — `widths="narrow"` is how
+              globals.css is told to stop it, and the reasoning is beside
+              `AsciiFrameWidths`. */}
+          <AsciiFrame widths="narrow" />
           <div className="app-no-drag">
             <ThemeToggle />
           </div>
