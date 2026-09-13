@@ -1854,6 +1854,29 @@ is `docs/agent/testing.md`; interface defects and their classes are
   run's touch history, so only the row's geometry was measured, never the
   replay's behaviour.
 
+- **The Model picker on `/runs/new` at 390px, 2026-09-13** (Chromium 151 via the
+  globally installed Playwright 1.62.1, against `.next/standalone/server.js`,
+  both themes and both skins). Asked for its intrinsic width with
+  `width: max-content` and the option text substituted in place, the control
+  needs **322px under ascii** for `Inherit — Claude Code's own default` against
+  the **288px** its wrapper gives it — 34px over, and 300px/12px over in the
+  default skin; `measureText` in the element's own computed font puts the string
+  at **280px** of a 266px content box before the chevron takes any of it. The
+  same measurement says `Inherit — Claude Code's default` still needs 290px, so
+  the shorter sentence would not have been enough either. What the control now
+  shows where Settings names no default is `Inherit`, and the floor is then the
+  **catalogue's own widest option**: 282px under ascii and 267px in the default
+  skin, 6px and 21px inside the box. The named case takes the catalogue's label
+  rather than the id, which is what holds it to that same floor — a raw
+  `claude-haiku-4-5-20251001` behind `Inherit — ` is the 35 characters again.
+  Every other select on the page fits at 390px and 1280px in all four states,
+  the widest being Folder's `workspace — the whole workspace` at 18px inside its
+  box under ascii, and nothing on the page reaches past a clipping ancestor.
+  Caveat: headless Chromium only, so the chevron's own width is inferred from
+  the intrinsic-width reading rather than measured directly; and the ascii
+  headroom on this page is now 6px, which the seven `max-md:w-72` literals on
+  it would widen to 12px — filed rather than done here.
+
 ## Not yet verified by hand
 
 - **The graph at a size no hand-drawn ordering reaches.** Every reading above is
