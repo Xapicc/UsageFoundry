@@ -122,6 +122,25 @@ export function AsciiFrame({ tone = "faint" }: { tone?: AsciiFrameTone }) {
   );
 }
 
+export type AsciiEdgeSide = "right" | "bottom";
+
+/**
+ * The hook `globals.css` backs the host's border pixel out through, one class
+ * per side.
+ *
+ * Per side and not one for both, because the correction has to be directional.
+ * `AsciiFrame` takes it as `inset`, which is a shorthand — and a shorthand here
+ * would overwrite the `inset-y-0` the right edge carries and the `inset-x-0`
+ * the bottom one does, collapsing the edge to a single character. Only the axis
+ * its host actually has a border on may move, too: the sidebar has `border-r`
+ * and no top or bottom, the toolbar `border-b` and no sides, so correcting the
+ * other axis would push the stroke a pixel *out* of true rather than into it.
+ */
+const SIDE_HOOK: Record<AsciiEdgeSide, string> = {
+  right: "uf-ascii-edge-right",
+  bottom: "uf-ascii-edge-bottom",
+};
+
 /**
  * One edge of a surface rather than a box around it, for the two separators the
  * shell draws: the source list's right-hand edge and the toolbar's underline.
@@ -138,15 +157,20 @@ export function AsciiFrame({ tone = "faint" }: { tone?: AsciiFrameTone }) {
  * pane instead of dividing it. Pulled out by half, the stroke lands exactly
  * where the 1px border was. The half that hangs over the neighbour is the
  * glyph's empty side, so nothing is drawn there.
+ *
+ * And half is the whole correction only on a host with no border of its own —
+ * `AsciiFrame`'s second paragraph above, and both of these hosts are the case
+ * it describes. `SIDE_HOOK` is how `globals.css` reaches the axis that needs
+ * the extra pixel.
  */
 export function AsciiEdge({
   side,
   tone = "faint",
 }: {
-  side: "right" | "bottom";
+  side: AsciiEdgeSide;
   tone?: AsciiFrameTone;
 }) {
-  const common = `uf-ascii pointer-events-none absolute select-none overflow-hidden text-sm leading-none ${TONE[tone]}`;
+  const common = `uf-ascii ${SIDE_HOOK[side]} pointer-events-none absolute select-none overflow-hidden text-sm leading-none ${TONE[tone]}`;
 
   // `display` is left to globals.css for `AsciiFrame`'s reason — and an
   // absolutely positioned box computes its `inline` to `block` anyway, so the

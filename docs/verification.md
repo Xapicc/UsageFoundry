@@ -1802,6 +1802,30 @@ is `docs/agent/testing.md`; interface defects and their classes are
   was not reproduced: nothing installed here answers `█ ▒ ░` at three different
   widths. The fix covers that half by construction, unmeasured.
 
+- **`AsciiEdge` now lands its stroke on its host's border box edge, and the
+  sidebar's halo is gone, 2026-09-13** (Chromium 151 via the globally installed
+  Playwright 1.62.1, against `.next/standalone/server.js` on a throwaway
+  `DATA_DIR`, `/` at 390x900 and 1280x900, DPR 2, `localStorage["uf-skin"]` set
+  before first paint, both themes and both skins). `AsciiEdge` emits
+  `uf-ascii-edge-right`/`uf-ascii-edge-bottom` and `globals.css` backs the
+  host's still-1px border out of each on its own axis, the directional form of
+  the `.uf-unboxed > .uf-ascii-frame` rule that fixed `AsciiFrame`. At 1280 in
+  light, the sidebar's `│` moved from device columns 445-446, ink-weighted
+  centre css 222.99 against a border box ending at 224.00, to columns 447-448,
+  centre 223.99 — a `Card` on the same page reads 1260.00 against a box edge of
+  1260.00, so the two now agree — and device column 447, which was `bg-inset`
+  (245) against the pane's 240, is the stroke. Dark reads 224.00 and column 447
+  goes 22 to 89. The toolbar's `─` moves the same one pixel at both widths and
+  in both themes, rows 102-103 to 104-105, centre 51.36 to 52.36 against a box
+  bottom of 52.00. Under `default` nothing inked at either edge at either width,
+  which is `.uf-ascii { display: none }` holding. Caveats: the `─` reads 0.36
+  outside where the card's reads 0.03 inside, and that gap is the device grid
+  and not the rule — a 13px `─` inks two rows weighted 0.22 of a device row
+  below its em centre, and the toolbar's centre lands on a whole css pixel where
+  the card's lands on 412.39; the sidebar is a drawer at 390 and has no edge to
+  measure there; and this is one Chromium on one font stack, so the figures are
+  this container's rather than a reader's.
+
 ## Not yet verified by hand
 
 - **The graph at a size no hand-drawn ordering reaches.** Every reading above is
