@@ -112,7 +112,7 @@ Seven, and no eighth without a change to this document.
 
 | # | Affordance | Correct when | Cap |
 |---|---|---|---|
-| 1 | **Pane** (a row in `panes.ts`) | The reader arrives here *from the sidebar* to do a distinct job with its own primary action. | **Ten, and only nine of them carry a digit. The list is closed** — see §1.2. |
+| 1 | **Pane** (a row in `panes.ts`) | The reader arrives here *from the sidebar* to do a distinct job with its own primary action. | **Eleven, and only nine of them carry a digit. The list is closed** — see §1.2. |
 | 2 | **Sub-route** (a page below a pane) | A group is both *large* (a screen's worth) and *rare* (used once a week or less), and has its own primary action. | — |
 | 3 | **Card** (`Card`, `emphasis`) | The contents are read together and answer **one** question a reader could ask out loud. | ≤ 7 cards **as peers at one level**; ≤ 9 controls in one card without an inner `ListGroup`; **at most one `primary` per page** — a page may legitimately have none. |
 | 4 | **Group** (`ListGroup` with `label`) | Rows inside a card share a subject that the card's own title does not name. | 3–9 rows, more than 9 is two. Fewer than 3 only where the **label** states something neither row does. |
@@ -156,10 +156,11 @@ Notes that are part of the rule, not commentary:
 
 Each of these is a thing a build run would plausibly reach for. None is allowed.
 
-1. **An eleventh pane.** `panes.ts` is ten rows against ⌘1–⌘9, read by four
-   things (`panes.ts:3-18`). The digits are spent: the tenth row already has
-   none, and an eleventh would be the second row you cannot reach from the
-   keyboard. New destinations are sub-routes under an existing pane.
+1. **An eleventh pane.** `panes.ts` is eleven rows against ⌘1–⌘9, read by four
+   things (`panes.ts:3-18`). The digits are spent: the tenth and eleventh rows
+   — API account and Settings — already have none, and a twelfth would be a
+   third row you cannot reach from the keyboard. New destinations are
+   sub-routes under an existing pane.
 
    *This read "a ninth pane" until `/knowledge` was built, and "a tenth" until
    `/dreaming` was.* The ban's whole ground was the digit — "a ninth
