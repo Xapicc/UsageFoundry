@@ -83,12 +83,21 @@ export const PROJECTS_DIR = path.join(CLAUDE_HOME, "projects");
  * exactly the same records: what the bound costs is CPU, never accuracy.
  *
  * Process-level rather than a setting, because what it bounds is the heap this
- * process was given rather than anything the user is choosing. Roughly 330 bytes
- * are retained per turn, so the default is ~165 MB against V8's ~2 GB default
+ * process was given rather than anything the user is choosing. Roughly 153 bytes
+ * are retained per *record*, so the default is ~77 MB against V8's ~2 GB default
  * limit. Raise it alongside `--max-old-space-size` on a larger host; lower it on
  * a smaller one. A value that is not a positive number falls back to the
  * default, which is the safe direction for a figure only an operator tuning
  * memory ever sets.
+ *
+ * **Per record and not per turn**, which is the correction rather than a
+ * wording preference: `evictToBound` counts turns *and* the composition
+ * reading's tool calls against this one number, and this install's corpus
+ * carries 135,701 of the second beside 219,991 of the first. The figure here
+ * said 330 bytes a turn and ~165 MB until 2026-09-13, when the cache was
+ * measured at 230.4 bytes a record on that corpus — a claim wrong in both
+ * terms, and in opposite directions, so the product read about right. Interning
+ * the repeated strings (`transcripts.ts`) took it to 153.1.
  */
 export const TRANSCRIPT_CACHE_MAX_ENTRIES = ((): number => {
   const raw = Number(optionalEnv("UF_TRANSCRIPT_CACHE_MAX_ENTRIES"));

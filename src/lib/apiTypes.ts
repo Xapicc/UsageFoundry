@@ -808,6 +808,13 @@ export interface UsageResponse {
          * on every scan — correct, and slower every time.
          */
         evictions: number;
+        /**
+         * Distinct strings the records above share rather than each holding a
+         * copy of. It grows with how many checkouts and sessions this process
+         * has seen rather than with `entries`, which is why it is reported
+         * apart from the bound beside it.
+         */
+        internedStrings: number;
       };
       heapUsedBytes: number;
       /** V8's own ceiling for this process, which it derives from system memory. */
