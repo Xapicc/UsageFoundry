@@ -93,10 +93,16 @@ export function Toolbar({
 
   return (
     <header
-      // The title is the only item here that shrinks (`min-w-0 truncate`, and
-      // the group on the right is `shrink-0`), so the strip is one row at any
-      // width — the tighter gap below the breakpoint is what it has left to
-      // give back to the title before it starts eating words.
+      // The route title is the only item here that shrinks (`min-w-0 truncate`,
+      // and the group on the right and the drawer button are both `shrink-0`),
+      // so the strip is one row at any width and an overflow past what the
+      // title can give goes off the right edge rather than being taken out of a
+      // control.
+      //
+      // That last part is new and it is the visible failure, which is the one
+      // to prefer: the drawer button used to shrink too, and `max-md:min-w-11`
+      // stopped it on its own hit-target floor, so the strip could be over
+      // budget with nothing on it looking wrong.
       //
       // `relative` is the appearance panel's containing block, and it is
       // load-bearing only in the *default* skin: `uf-framed` states the same
@@ -160,7 +166,18 @@ export function Toolbar({
         aria-expanded={drawerOpen}
         aria-controls={SIDEBAR_DRAWER_ID}
         aria-label={drawerOpen ? "Hide navigation" : "Show navigation"}
-        className="app-no-drag md:hidden max-md:min-h-11 max-md:min-w-11"
+        // `shrink-0`, because nobody decided this button should be the thing
+        // that gives way and `max-md:min-w-11` hid it when it was: the button
+        // shrank until it stood on its own hit-target floor and then stopped,
+        // which looks exactly like a button that fits. In the default skin it
+        // is worse than silent — the natural width *is* 44px there, so the
+        // squeeze cannot be seen at all. Measured in ascii at 390 on `/`: 64px
+        // natural, 59.83px squeezed; at 320, 44px.
+        //
+        // A figure read off a strip that is over budget is not this button's
+        // width, and that trap has already cost one wrong number in a comment
+        // below. Check the strip fits before believing a measurement from it.
+        className="app-no-drag shrink-0 md:hidden max-md:min-h-11 max-md:min-w-11"
       >
         <Icon name="sidebar" />
       </Button>
@@ -168,16 +185,18 @@ export function Toolbar({
       {/* Not a heading: every page still carries its own <h1>, and a second one
           up here would put two titles in the document outline.
 
-          It is meant to be the item that gives way, and the figure to hold on
-          to is how little is left. At 390px on `/` in the ascii skin — where
-          three bracketed icon buttons cost 55.8px over the default skin's —
-          this has 52.7px against a natural 59 and draws "Dashbo…". Every other
-          route and the whole of the default skin draw it in full. That 6.3px
-          is the entire headroom on this strip, so anything added to the
-          right-hand group spends it and starts eating words. What spending it
-          past zero looks like is the failure this replaced, and it is worth
-          knowing by sight: `min-w-0` shrinks to nothing, and the title is then
-          silently not drawn at all rather than truncating. */}
+          It is the item that gives way, and now the only one — which costs it
+          the 4.17px the drawer button used to absorb. At 390px on `/` in the
+          ascii skin, the tightest route on the strip because it is the only one
+          carrying a New run, this has 48.5px against a natural 58.5 and draws
+          "Dashb…"; it had 52.67px and "Dashbo…" while the button was still
+          shrinking. Every
+          other route and the whole of the default skin draw it in full.
+
+          What spending that past zero looks like is worth knowing by sight:
+          `min-w-0` shrinks to nothing, and the title is then silently not drawn
+          at all rather than truncating. At 320px in ascii on `/` it is already
+          there. */}
       <div className="min-w-0 truncate text-sm font-semibold text-ink">
         {toolbarTitle(pathname)}
       </div>
@@ -215,22 +234,22 @@ export function Toolbar({
             thing on this strip that can.
 
             Measured on `/` in the ascii skin at 390px, at natural widths: 24px
-            of padding, a 59.8px drawer button, a 64px quick open, 142px of
-            theme segments, 96px of skin segments, a 93.5px New run and five
-            8px gaps want 519.3px of a 390px window — before the title is given
-            a pixel. (Read a *narrower* drawer button off the broken layout and
-            it is the overflow you are measuring: that button carries no
-            `shrink-0`, so it was being squeezed to its 44px hit-target floor,
-            which is the second thing on this strip that was silently giving
-            way.)
+            of padding, a 64px drawer button, a 64px quick open, 142px of theme
+            segments, 96px of skin segments, a 93.5px New run and five 8px gaps
+            want 523.5px of a 390px window — before the title is given a pixel.
+            (That drawer button was written down here as 59.8px, which is not
+            its width: it was read off the broken layout, where the overflow was
+            being squeezed out of it. It carries `shrink-0` now, so a reading
+            from this strip is the button's again.)
 
-            Everything else here was tried against that 129.3px first and none
-            of it reaches: hiding the route title recovers one gap — 8px — and
-            dropping New run as well is still 19.8px over, while dropping
-            either picker instead makes the skin a one-way trap for anyone who
-            set ascii on a desktop. Only moving both pickers off the row fits.
-            It saves 254px and spends 72px back on the disclosure, which is
-            what puts the title on screen as well.
+            Everything else here was tried against that 133.5px first and none
+            of it reaches: hiding the route title recovers one gap — 8px, the
+            title itself not being in the sum — and dropping New run as well is
+            still 24px over, while dropping either picker instead makes the
+            skin a one-way trap for anyone who set ascii on a desktop. Only
+            moving both pickers off the row fits. It saves 254px and spends
+            72px back on the disclosure, which is what puts the title on screen
+            as well.
 
             It is also the right one to move on grounds other than arithmetic.
             This strip's job — see the top of this file — is what you are

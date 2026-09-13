@@ -1856,6 +1856,30 @@ is `docs/agent/testing.md`; interface defects and their classes are
   element generating no containing block is specified behaviour, but only this
   engine was measured.
 
+- **The toolbar's drawer button holds its natural width, and the strip overflows
+  visibly instead, 2026-09-13** (same rig: Chromium 151.0.7922.34 via Playwright
+  1.62.1, `.next/standalone/server.js`, DPR 2, skin in `localStorage` before
+  first paint; `/`, `/runs` and `/workflows` at 320, 390 and 1280). The button
+  gained `shrink-0`. At 390 in ascii on `/` — the only route carrying a New run,
+  so the tightest on the strip — it goes from 59.83px to 64.00px, and 64.00 is
+  what the same button measures on `/runs` and `/workflows` at the same width,
+  where the row has slack. At 320 on `/` it goes from 44.00px, which is its
+  `max-md:min-w-11` hit-target floor, to 64.00px, and the header's `scrollWidth`
+  goes from 320 to 330 against a `clientWidth` of 320: the overflow is now
+  visible rather than absorbed. In the `default` skin the button reads 44.00px
+  at every width before and after, because 44 is both its natural width and its
+  floor there — which is why this was invisible.
+
+  Two things this cost, both recorded beside the code. The route title is now
+  the only item that gives way and takes the whole deficit: 52.67px to 48.50px
+  at 390 in ascii on `/`, `Dashbo…` to `Dashb…` against a natural 58.5. And the
+  59.8px figure written into `Toolbar.tsx`'s own arithmetic was never the
+  button's width — it was read off the over-budget strip — so the sum there is
+  523.5px rather than 519.3px. Caveats: 320 is below the 390 the interface
+  claims, and is measured here only because it is where the over-budget case is
+  reachable; `npm run smoke-pages` sees none of this, since the strip does not
+  scroll the document at either width it opens.
+
 ## Not yet verified by hand
 
 - **The graph at a size no hand-drawn ordering reaches.** Every reading above is
