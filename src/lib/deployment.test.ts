@@ -1505,6 +1505,54 @@ describe("the intake filter runs as the agent uid, holding no credential", () =>
         `discards along with every correction the ledger recorded.`,
     );
   });
+
+  /**
+   * The virtualenv the filter runs in, read off the launch environment the same
+   * way the ledger directory is — `UV_PROJECT_ENVIRONMENT` is what decides it,
+   * and a test that spelled the path itself would go on passing after a rename.
+   */
+  function filterVirtualenv(): string {
+    const passed = /UV_PROJECT_ENVIRONMENT=(\S+)/.exec(filterLaunch());
+    assert.ok(
+      passed,
+      "docker-entrypoint.sh no longer names UV_PROJECT_ENVIRONMENT for the " +
+        "intake filter. Without it `uv sync` deletes and rebuilds the `.venv` " +
+        "inside the operator's own bind-mounted checkout on every boot.",
+    );
+    return passed[1];
+  }
+
+  it("puts the virtualenv on a named volume too, which a rebuild does not discard", () => {
+    // Same mechanism as the ledger above, different loss: not a correction that
+    // can never be made again, but the ninety seconds the wait below this launch
+    // budgets for building a virtualenv — paid on every `up --build`, with the
+    // filter absent for that whole window and every request going unfiltered
+    // and unrecorded. In the writable layer that is the cost of any rebuild.
+    const venv = filterVirtualenv();
+    const mounts = [...compose.matchAll(/^\s*-\s*[A-Za-z0-9][\w.-]*:(\/\S+?)(?::\w+)?\s*$/gm)]
+      .map((m) => m[1]);
+    assert.ok(
+      mounts.includes(venv),
+      `${venv} is not a named volume in docker-compose.yml, so it is the ` +
+        `image's writable layer and \`docker compose up --build\` discards it. ` +
+        `The next boot rebuilds it, and the filter is not there while it does.`,
+    );
+  });
+
+  it("ships nothing in the image at that mount point", () => {
+    // The trap the `/opt/winnow` assertion above states in full: a volume takes
+    // the image's contents exactly once, at creation, so anything the Dockerfile
+    // wrote here would be present on a fresh install and masked on every
+    // existing one. Nothing does today — the venv is built at boot by `uv` —
+    // and this is what says so if that changes.
+    const venv = filterVirtualenv();
+    assert.ok(
+      !dockerfile.includes(venv),
+      `the Dockerfile names ${venv}, which is now a named volume. Whatever it ` +
+        `puts there is visible on a fresh install and invisible on every ` +
+        `machine whose volume already exists.`,
+    );
+  });
 });
 
 describe("the sandbox ships off, and its switch reaches the container", () => {

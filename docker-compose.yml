@@ -500,6 +500,26 @@ services:
       # the one file the filter writes to that uid by name.
       - usagefoundry-winnow:/var/lib/winnow
 
+      # The virtualenv that same filter runs in, when it is pointed at an
+      # operator's own checkout rather than the tree this image vendors.
+      # `docker-entrypoint.sh` names it as UV_PROJECT_ENVIRONMENT, which is
+      # load-bearing there for a reason that has nothing to do with this line:
+      # without it `uv sync` would delete and rebuild the `.venv` inside the
+      # bind-mounted checkout, which is the one the operator works in.
+      #
+      # A named volume for the reason the ones above are — the default location
+      # is the writable layer — and the cost of losing it is the ninety seconds
+      # the entrypoint's own comment budgets for building it, paid on every
+      # `up --build`, with the filter absent for that whole window and every
+      # request going unfiltered. The image ships nothing at this path, so the
+      # volume starts empty on a fresh install exactly as the writable layer did.
+      #
+      # `down -v` destroys it, which is the correct treatment of a cache and is
+      # also the way out of a venv that has gone wrong: `uv sync --frozen` is
+      # declarative against the checkout's lock, so an ordinary boot reconciles
+      # one built for a different ref rather than needing to start over.
+      - usagefoundry-winnow-venv:/home/node/.winnow-venv
+
       # Where `scripts/backup-db.mjs` writes, and the one thing here that is
       # deliberately *not* the named volume above: a snapshot kept inside the
       # volume dies with `docker compose down -v`, which is the command this
@@ -779,4 +799,5 @@ volumes:
   usagefoundry-gh:
   usagefoundry-pytools:
   usagefoundry-winnow:
+  usagefoundry-winnow-venv:
   usagefoundry-stacks:
