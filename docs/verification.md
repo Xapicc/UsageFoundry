@@ -1828,7 +1828,20 @@ is `docs/agent/testing.md`; interface defects and their classes are
   states. Caveat: measured through a headless Chromium, no touch and no other
   engine; and `WorkflowEditor`'s inspector rows were not driven in a browser,
   because reaching them needs a block selected on the canvas — the mechanism was
-  measured on `/runs/new` instead.
+  measured on `/runs/new` instead. **Amended 2026-09-13, same day:** the claim
+  above that the `WorkflowEditor` call site was the only holder of a pixel
+  literal was wrong — `WorkflowSchedule.tsx` held two more, on `How often` and
+  `Timezone`, and they were not converted in that pass. Measured the same way
+  with the schedule editor opened by its own `Add schedule` button: both rows
+  wrap at 390px in all four states and their control went **288px → 294px**, the
+  full column; `Time` stayed flat at 128px, which is what the comment there
+  asks for; and at 1280px all three rows are unchanged at 208px/128px,
+  unwrapped. Nothing on that page is clipped in any of the four states.
+
+  Method note for anyone repeating this: the schedule editor is behind a click,
+  and a probe that reads the DOM *before* pressing the button returns the
+  budget card's three rows and looks like a page with no schedule rows on it
+  rather than like a mistake.
 
 - **The replay row on `/runs/[id]/touched` at 390px, 2026-09-13** (Chromium 151
   via the globally installed Playwright 1.62.1, against `.next/standalone/
