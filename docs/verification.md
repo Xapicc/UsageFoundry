@@ -1880,6 +1880,30 @@ is `docs/agent/testing.md`; interface defects and their classes are
   reachable; `npm run smoke-pages` sees none of this, since the strip does not
   scroll the document at either width it opens.
 
+- **The toolbar's route title is gone below the breakpoint, and every page has
+  the <h1> that makes that safe, 2026-09-13** (same rig: Chromium
+  151.0.7922.34 via Playwright 1.62.1, `.next/standalone/server.js`, DPR 2, skin
+  in `localStorage` before first paint; 320, 390 and 1280, both themes, both
+  skins). The title div took `max-md:hidden`. The check the decision rests on
+  was run rather than assumed: all 23 pages `scripts/smoke-pages.mjs` opens
+  render an `<h1>`, and on seven of them it is the more specific of the two —
+  `/` is "Claude Code usage" against a toolbar title of "Dashboard",
+  `/runs/[id]/conflicts` is "Where the conflicts are" against "Run",
+  `/tasks/new` is "New task" against "Taskboard". The div carries no role, no id
+  and nothing points at it, which is why `max-md:hidden` rather than
+  `max-md:sr-only`.
+
+  At 390 in ascii on `/` — the tightest route, the only one with a New run — the
+  row went from filling its 390px exactly, with this drawing "Dashb…" at 48.5px
+  of a natural 58.5, to 333.5px with nothing on it squeezed. At 1280 the title
+  is untouched in both skins: 58.50px ascii, 61.53px default, `flex-shrink: 1`.
+  Caveats: the premise the task was filed on had already moved — with both
+  appearance pickers still on the row this drew one character, and moving them
+  into the disclosure had taken it back to a six-character truncation, so what
+  was decided here is the duplication and the headroom rather than the original
+  symptom. And 320 is measured only because it is where the over-budget case is
+  reachable; the interface claims 390.
+
 ## Not yet verified by hand
 
 - **The graph at a size no hand-drawn ordering reaches.** Every reading above is

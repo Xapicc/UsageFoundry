@@ -93,16 +93,17 @@ export function Toolbar({
 
   return (
     <header
-      // The route title is the only item here that shrinks (`min-w-0 truncate`,
-      // and the group on the right and the drawer button are both `shrink-0`),
-      // so the strip is one row at any width and an overflow past what the
-      // title can give goes off the right edge rather than being taken out of a
-      // control.
+      // Above the breakpoint the route title is the only item that shrinks
+      // (`min-w-0 truncate`, and the group on the right and the drawer button
+      // are both `shrink-0`). Below it, *nothing* does: the title is not drawn
+      // there at all. So the strip is one row at any width, and past the width
+      // it fits in, an overflow goes off the right edge rather than being taken
+      // out of a control.
       //
-      // That last part is new and it is the visible failure, which is the one
-      // to prefer: the drawer button used to shrink too, and `max-md:min-w-11`
-      // stopped it on its own hit-target floor, so the strip could be over
-      // budget with nothing on it looking wrong.
+      // That is the visible failure and it is the one to prefer. What it
+      // replaced was two silent ones, both at 390 in ascii on `/`: a drawer
+      // button standing on its own 44px hit-target floor, and a title shrunk
+      // to zero and therefore not drawn at all rather than truncated.
       //
       // `relative` is the appearance panel's containing block, and it is
       // load-bearing only in the *default* skin: `uf-framed` states the same
@@ -183,21 +184,31 @@ export function Toolbar({
       </Button>
 
       {/* Not a heading: every page still carries its own <h1>, and a second one
-          up here would put two titles in the document outline.
+          up here would put two titles in the document outline. That claim is
+          what makes hiding this below the breakpoint safe, so it was checked
+          rather than repeated — all 23 pages the smoke pass opens have an <h1>,
+          and on seven of them it is the more specific of the two: `/` says
+          "Claude Code usage" where this says "Dashboard".
 
-          It is the item that gives way, and now the only one — which costs it
-          the 4.17px the drawer button used to absorb. At 390px on `/` in the
-          ascii skin, the tightest route on the strip because it is the only one
-          carrying a New run, this has 48.5px against a natural 58.5 and draws
-          "Dashb…"; it had 52.67px and "Dashbo…" while the button was still
-          shrinking. Every
-          other route and the whole of the default skin draw it in full.
+          `max-md:hidden` and not the `max-md:sr-only` the rail's labels and
+          Quick open use. Those name a control whose glyph would otherwise go
+          unnamed. This is a plain div with no role, no id and nothing pointing
+          at it, one line above a heading that says the same thing or better, so
+          there is nothing in the accessibility tree to keep.
 
-          What spending that past zero looks like is worth knowing by sight:
-          `min-w-0` shrinks to nothing, and the title is then silently not drawn
-          at all rather than truncating. At 320px in ascii on `/` it is already
-          there. */}
-      <div className="min-w-0 truncate text-sm font-semibold text-ink">
+          The strip is what it buys. At 390 in ascii on `/` — the tightest
+          route, because it is the only one carrying a New run — the row filled
+          its 390px exactly and this was drawing "Dashb…" at 48.5px of a natural
+          58.5. It now occupies 333.5px with nothing on it squeezed. The symptom
+          that put this on the board was worse still: with both appearance
+          pickers on the row it drew a single character. None of those is a
+          title.
+
+          Above the breakpoint it stays, and stays the one item that gives way.
+          There is room for it there, and the pane scrolls under this strip — so
+          once a page has been scrolled at all, the <h1> this duplicates is gone
+          and this is the only name on screen. */}
+      <div className="min-w-0 truncate text-sm font-semibold text-ink max-md:hidden">
         {toolbarTitle(pathname)}
       </div>
 
@@ -213,12 +224,13 @@ export function Toolbar({
           className="app-no-drag max-md:min-h-11 max-md:min-w-11"
         >
           <Icon name="search" />
-          {/* Below the breakpoint the strip has a sidebar button, a title, this,
-              the appearance disclosure and sometimes New run to fit in 390px,
-              and this is the one of them whose label can go without a
-              destination going with it. It is still the tightest route on the
-              strip — see the appearance pair below for the measurement — so the
-              label stays gone even though the pickers moved.
+          {/* Below the breakpoint the strip has a sidebar button, this, the
+              appearance disclosure and sometimes New run to fit in 390px, and
+              this is the one of them whose label can go without a destination
+              going with it. The label stays gone through two rounds of the
+              strip getting room back — the pickers moving into the disclosure,
+              then the route title going — because neither was spent on
+              recovering it: see the appearance pair below.
               The words go to the accessibility tree rather than away,
               for the rail's reason — the glyph is then the only thing naming
               the control. The chord goes entirely: there is no ⌘ key on a phone,
@@ -248,8 +260,13 @@ export function Toolbar({
             still 24px over, while dropping either picker instead makes the
             skin a one-way trap for anyone who set ascii on a desktop. Only
             moving both pickers off the row fits. It saves 254px and spends
-            72px back on the disclosure, which is what puts the title on screen
-            as well.
+            72px back on the disclosure.
+
+            The title has since gone below the breakpoint too, for its own
+            reasons — see its comment — so the row is 333.5px of a 390px window
+            on this route. That 56.5px is slack and not a budget, because
+            nothing on the strip shrinks any more: the next thing added to it
+            overflows visibly rather than being absorbed.
 
             It is also the right one to move on grounds other than arithmetic.
             This strip's job — see the top of this file — is what you are
