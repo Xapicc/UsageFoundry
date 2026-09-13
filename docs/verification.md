@@ -2687,6 +2687,24 @@ measurement under *Verified* and cut the item down to what is still open.
 
 ### Container and environment
 
+- **No child's `oom_score_adj` has been read back, and no cgroup OOM has been
+  made to choose.** `deprioritiseChildForOom` writes
+  `/proc/<pid>/oom_score_adj` one line after each long-lived spawn, and what is
+  measured of it is only that the raise direction needs no privilege: writing
+  500 to `/proc/self/oom_score_adj` as uid 1000 succeeds on kernel
+  6.12.76-linuxkit, 2026-09-13. The cross-process write — a root server
+  adjusting a child at `UF_AGENT_UID` — could not be exercised from a work
+  cycle, whose sandbox mounts a `/proc` in which no other pid resolves at all,
+  so both halves of the claim are reasoned: that the write lands, and that a
+  grandchild (an agent's `npm test`, which is what actually holds the memory)
+  inherits it. Settling it: `docker compose up --build`, start a run, then
+  `docker exec usagefoundry sh -c 'for p in /proc/[0-9]*; do printf "%s %s %s\n"
+  "$p" "$(cat $p/oom_score_adj)" "$(tr "\0" " " <$p/cmdline | cut -c1-60)"; done'`
+  and read next-server's 0 against each `claude` child's 500. What that still
+  does not settle is which one the kernel picks: that needs a container driven
+  over `mem_limit` with `dmesg` read for the `Memory cgroup out of memory` line
+  naming the victim.
+
 - **Only `archive` has ever run.** `uv-tool` and `npm-global` are in the format
   and refused by name at parse in this build, so the two verbs that execute a
   package's install hooks have never been exercised — which is deliberate:

@@ -8,7 +8,7 @@ import { BYTES_PER_TOKEN } from "./fileCostNotice";
 // Client-safe presentation helper, no node builtins behind it — see format.ts.
 import { fmtTokens } from "./format";
 import { opsLog, recordOpsEvent } from "./ops";
-import { childCredentials } from "./privsep";
+import { childCredentials, deprioritiseChildForOom } from "./privsep";
 import {
   CACHE_WRITE_1H_MULTIPLIER,
   CACHE_WRITE_5M_MULTIPLIER,
@@ -1696,6 +1696,14 @@ function spawnPrune(
           stdio: ["ignore", "ignore", "pipe"],
         },
       );
+
+      // Staying at the server's uid does not mean sharing its OOM standing: this
+      // holds a whole transcript, and a cycle that loses its prune is a cycle
+      // that runs long, where a server killed in its place fails every run in
+      // flight. The reading verbs beside this one are not given the offset —
+      // they are seconds and megabytes, and preferring one is a kill that frees
+      // nothing.
+      deprioritiseChildForOom(child.pid);
 
       child.stderr.setEncoding("utf8");
       child.stderr.on("data", (chunk: string) => {

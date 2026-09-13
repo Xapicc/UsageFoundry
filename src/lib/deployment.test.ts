@@ -8,6 +8,7 @@ import {
   MOUNTED_WORKSPACE_SLOTS,
   unmountedWorkspaceRefusal,
 } from "./config";
+import { CHILD_OOM_SCORE_ADJ } from "./privsep";
 
 /**
  * Covers the agreement between `Dockerfile` and `docker-compose.yml` about who
@@ -601,6 +602,30 @@ describe("the container's memory ceiling and the server's heap agree", () => {
         `${(limit / 2 ** 30).toFixed(1)} GiB container. Raise mem_limit or ` +
         `lower --max-old-space-size; README's "Sizing the container" has the ` +
         `arithmetic both numbers came from.`,
+    );
+  });
+
+  it("leaves the server outranked by the children that carry an OOM offset", () => {
+    // The arithmetic behind `CHILD_OOM_SCORE_ADJ`, and it is arithmetic over
+    // *these* two numbers rather than a figure somebody liked. Under a cgroup
+    // OOM the kernel scores a process at its share of the limit in thousandths
+    // and adds `oom_score_adj`, so the server's own score is bounded by the
+    // heap ceiling it is given: raise the ceiling far enough, or lower the
+    // limit far enough, and next-server becomes the preferred victim again with
+    // every child still carrying its offset. Nothing anywhere reports that —
+    // the container simply starts dying at the wrong end on the one night it
+    // is over its limit, and `reconcileOnBoot` files the runs as interrupted.
+    const limit = bytes(shippedDefault("mem_limit"));
+    const heap = heapCeilingBytes();
+    const serverScore = Math.round((heap / limit) * 1000);
+
+    assert.ok(
+      serverScore < CHILD_OOM_SCORE_ADJ,
+      `the server's heap alone scores ${serverScore}/1000 of the container ` +
+        `against an offset of ${CHILD_OOM_SCORE_ADJ} on every long-lived ` +
+        `child, so a cgroup OOM can pick the server over a work cycle. Lower ` +
+        `--max-old-space-size, raise mem_limit, or raise CHILD_OOM_SCORE_ADJ ` +
+        `in privsep.ts, which states which of the three it is derived from.`,
     );
   });
 

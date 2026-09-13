@@ -4,7 +4,7 @@ import fs from "node:fs";
 import { CLAUDE_BIN } from "./config";
 import { db } from "./db";
 import { git } from "./git";
-import { childCredentials } from "./privsep";
+import { childCredentials, deprioritiseChildForOom } from "./privsep";
 import { diffAsText, runDiff, type RunDiff } from "./diff";
 import { agentsArgs, type AgentDefinition } from "./agents";
 import { clipToolInput } from "./logLine";
@@ -822,6 +822,10 @@ function spawnAssist(id: string, req: AssistRequest): Promise<void> {
       stdio: ["ignore", "pipe", "pipe"],
       detached: getSettings().killProcessGroup && process.platform !== "win32",
     });
+
+    // A worse OOM victim than the server, like every other long-lived child: a
+    // review that dies is a review, and this one is refusable and re-runnable.
+    deprioritiseChildForOom(child.pid);
 
     // The whole of stdout is still kept: `parseReviewOutput` reads the result
     // object out of it at the end, and a child killed mid-line leaves whatever
