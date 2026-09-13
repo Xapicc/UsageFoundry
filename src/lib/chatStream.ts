@@ -29,12 +29,20 @@ import {
  *
  * ## An unrecognised event is counted, never dropped
  *
- * `orchestrator.ts`'s Claude parser tests four types and has no fifth branch;
- * the Codex parser twelve lines below it logs an unknown type once per cycle
- * and its docblock explains why that is not survivable — a CLI that renames an
- * event goes on producing turns that look thinner rather than turns that fail.
- * That asymmetry is a row on `proposals/GapRegister/` (B6), and this file is
- * not going to add a third parser to the wrong side of it.
+ * `orchestrator.ts`'s two parsers both hand a `type` they have no branch for to
+ * `noteUnknownStreamEvent`, and the Codex one spends a docblock on why anything
+ * less is not survivable — a CLI that renames an event goes on producing turns
+ * that look thinner rather than turns that fail. That asymmetry is a row on
+ * `proposals/GapRegister/` (B6), and this file is not going to add a third
+ * parser to the wrong side of it: `unknownTypes` is what `chat.ts` warns on.
+ *
+ * Which is why a routine type is named below even when nothing here acts on it.
+ * A counter that fires on every turn is a counter nobody reads, so the handled
+ * list has to track the Claude parser's rather than only the types this file
+ * does something with. That parser handles `assistant`, `user`, `result`,
+ * `system`, `tool_progress` and `rate_limit_event`; this one handles all of
+ * those but `tool_progress`, which is still counted here as unknown and is the
+ * one remaining divergence between the two.
  */
 
 /** The main thread's text, the measured usage, and what could not be read. */
@@ -197,7 +205,13 @@ export function readChatEvent(
 
   // `system` is the init banner and carries the session id, taken above.
   // `user` is tool output coming back up, which the operator is not waiting on.
-  if (type === "system" || type === "user") {
+  // `rate_limit_event` is the provider's own reading of the account's two
+  // windows. Nothing in this app consumes it — the card that showed it was
+  // removed — but the CLI emits it on most turns, so left to fall through it
+  // files a routine event as a lost vocabulary once per chat turn, and a
+  // `chat.stream_unread` that fires on every turn is what teaches the operator
+  // to stop reading the one line that says the pin has moved.
+  if (type === "system" || type === "user" || type === "rate_limit_event") {
     return { textGrew: false, spendGrew: false, sawResult: false };
   }
 
