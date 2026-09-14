@@ -267,8 +267,8 @@
       env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)
   );
 
-  /* The four things the ascii skin retunes that are not colours, held here
-     rather than written as literals in @theme inline below.
+  /* The things the ascii skin retunes that are not colours, held here rather
+     than written as literals in @theme inline below.
 
      `inline` is what forces the split, and in the opposite direction from the
      colours: a theme entry whose value is a `var()` emits
@@ -295,6 +295,19 @@
      kit offers — but it would now fail silently rather than loudly. */
   --corner-sm: 6px;
   --corner-lg: 10px;
+  /* The same indirection for the third shape, and the reason it exists at all:
+     `rounded-full` is one of Tailwind's static utilities, so it emits a literal
+     `calc(infinity * 1px)` that no selector can reach — a pill stayed a pill
+     under a skin that had squared every other corner in the app. `rounded-pill`
+     is the reachable spelling and 9999px is indistinguishable from infinity on
+     any box this app draws, since either way the radius is clamped to half the
+     shorter side.
+     `rounded-full` is deliberately still in use, on the thirty-odd marks that
+     must stay round in both skins: a flattened status dot is a square, and the
+     knowledge graph and the conflicts map both read a square as a different
+     kind of node than a circle. Reach for it when the mark is a *circle*, and
+     for `rounded-pill` when the mark is a box with its ends taken off. */
+  --corner-pill: 9999px;
   --elevation-1: 0 0.5px 1px light-dark(rgb(0 0 0 / .05), rgb(0 0 0 / .28));
   --elevation-2: 0 1px 2px light-dark(rgb(0 0 0 / .06), rgb(0 0 0 / .38)),
                  0 4px 12px -4px light-dark(rgb(0 0 0 / .07), rgb(0 0 0 / .34));
@@ -401,20 +414,34 @@
 
      `--radius-md` is Tailwind's own scale rather than this app's, and it is
      here because Tailwind emits its scale as `var()`s too, so a later selector
-     reaches it. Three kinds of corner it cannot reach, counted in the emitted
-     stylesheet rather than guessed, because every one of them fails silently —
-     the page simply stays round:
-       `rounded-full` (48 call sites) is a static utility with a literal
-         3.40282e38px, and some of them *should* stay round anyway: a status
-         dot flattened into a square is a different mark.
-       bare `rounded`, `rounded-b`, `rounded-t` (26) are static utilities with
-         a literal .25rem.
-       `rounded-[3px]`, `rounded-[4px]`, `rounded-[6px]` (6) are arbitrary
-         values, which are literals by definition.
-     All three are call-site changes and belong to whoever rewrites the
-     component, not here. */
+     reaches it. `--corner-pill` is this app's, and it exists because
+     `rounded-full` is *not* one of those: it is a static utility with a
+     literal `calc(infinity * 1px)` baked in, so no selector anywhere can flatten
+     it and the failure is silent — the page simply stays round.
+
+     What is left unreachable, counted in the emitted stylesheet rather than
+     guessed, and re-derived 2026-09-14:
+       `rounded-full`, 35 call sites, every one of them deliberate. 27 are
+         legend swatches on /knowledge, /runs/[id]/touched and
+         /runs/[id]/conflicts that stand for nodes a canvas draws as circles,
+         and both maps read a square as a different kind of node — those may
+         never be flattened, in either skin. The other 8 are on components this
+         block already redraws (`.uf-badge`, `.uf-switch`, `.uf-meter`) or
+         hides (`.uf-plain`), so their corner is not painted here at all.
+       `rounded-[3px]`, `rounded-[4px]`, `rounded-[6px]` were 6 arbitrary
+         values, which are literals by definition. Four have moved onto tokens;
+         the two that are left are `rounded-[4px]`, on `.uf-segment` and
+         `.uf-kbd`, and both are flattened by hand below because 4px is not a
+         value on this scale and inventing a token for two call sites would
+         cost more than the two declarations do.
+     There is no bare `rounded`, `rounded-b` or `rounded-t` in src/. An earlier
+     count of 26 was `grep`'s: its `(-[a-z0-9]+)?` matched one segment, so
+     `rounded-b-lg` read as `rounded-b`, and the prose word "rounded" in these
+     very comments read as the utility. `rounded-b-lg` and `rounded-t-lg`
+     resolve through `--radius-lg` and this block already flattens them. */
   --corner-sm: 0;
   --corner-lg: 0;
+  --corner-pill: 0;
   --radius-md: 0;
   --elevation-1: 0 0 #0000;
   --elevation-2: 0 0 #0000;
@@ -804,10 +831,42 @@
      globals.css already counts beside `--corner-sm` as the component's own to
      flatten. This is that component. */
   border-radius: 0;
+  background: none;
   padding-inline: 0.25rem;
 }
 :root[data-skin="ascii"] .uf-segment::before { content: "["; }
 :root[data-skin="ascii"] .uf-segment::after  { content: "]"; }
+/* The selected segment's `bg-bezel` is what `background: none` above is for,
+   and it is the one declaration in this block that fixes a defect rather than
+   restating a value. Left standing it drew a filled box that said nothing:
+   rgb(255,255,255) in light, which is the card it sits on, so the chosen
+   segment was invisible — measured on /knowledge's scope group at 390px,
+   2026-09-14 — and rgb(72,72,76) in dark, which reads as a fill rather than as
+   a choice once every other fill on the page has gone.
+   What carries the state instead is the accent, which is what `.uf-pick` below
+   does for the same "this is the one", and weight beside it. Two channels
+   because the accent on its own is one that greyscale loses: measured on this
+   page 2026-09-14, the chosen segment reads 5.22:1 against the card in light
+   and the unchosen 5.54:1, so the hue is nearly all of the difference and a
+   reader who cannot see it has none. Weight is the channel that survives, and
+   in a monospace face it is the only one besides colour that costs no width —
+   measured, `[Whole vault]` is 94.5px in both states, so no neighbour moves
+   when the selection does, which is the property the brackets above were sized
+   for. A marker character is what the pick adds instead and what a segment
+   cannot have: every one of its own characters is spoken for by the brackets,
+   and a sixth glyph in the toolbar's five-segment strip at 390px has nowhere to
+   come from. `aria-checked` is on the button either way and nothing here
+   touches it. */
+:root[data-skin="ascii"] .uf-segment[aria-checked="true"] {
+  color: var(--accent);
+  font-weight: 700;
+}
+/* The two washes back, for the reason `.uf-button`'s pair are: `background:
+   none` above is unlayered and so beats the hover and press utilities the
+   component states, and a control that answers a pointer with nothing at all
+   is the one interaction state this skin may not take. */
+:root[data-skin="ascii"] .uf-segment:not(:disabled):hover  { background: var(--fill-hover); }
+:root[data-skin="ascii"] .uf-segment:not(:disabled):active { background: var(--fill-active); }
 /* Restores what `gap: 0` took between a segment's glyph and its word. Inert
    where the label is `sr-only`, which is out of flow.
    `:not(:first-child)` because `option.icon` is optional and the glyph is the
@@ -1045,6 +1104,7 @@
 
   --radius-sm: var(--corner-sm);
   --radius-lg: var(--corner-lg);
+  --radius-pill: var(--corner-pill);
 
   /* Three steps, retuned to what AppKit actually casts. e1 used to be a 1px
      web-card drop shadow, which put every `default` card a visible distance off
@@ -1293,36 +1353,15 @@ h2 { font-size: 15px; font-weight: 600; margin: 0 0 12px; }
 /* Meters                                                              */
 /* ------------------------------------------------------------------ */
 
-.meter { margin-top: 10px; }
-.meter-head {
-  display: flex; justify-content: space-between; align-items: baseline;
-  font-size: 12px; color: var(--fg-muted); margin-bottom: 6px;
-}
-.meter-value { font-variant-numeric: tabular-nums; color: var(--fg); font-weight: 600; }
-.meter-upper { color: var(--fg-muted); font-weight: 500; }
-.meter-track {
-  height: 7px; border-radius: 99px;
-  background: var(--bg-inset);
-  overflow: hidden;
-  border: 1px solid var(--border);
-  /* Fills are absolutely positioned so the hatched upper band can sit *behind*
-     the solid known-spend bar. As block siblings the second one would be laid
-     out below the first and clipped away by overflow:hidden. */
-  position: relative;
-}
-.meter-fill {
-  position: absolute; top: 0; bottom: 0; left: 0;
-  border-radius: 99px; transition: width .4s ease;
-}
-.meter-fill[data-sev="ok"] { background: var(--ok); }
-.meter-fill[data-sev="warn"] { background: var(--warn); }
-.meter-fill[data-sev="danger"] { background: var(--danger); }
-.meter-fill[data-unknown="true"] {
-  background: repeating-linear-gradient(
-    45deg, var(--border-strong), var(--border-strong) 4px,
-    transparent 4px, transparent 8px
-  );
-}
+/* `.meter`, `.meter-head`, `.meter-value`, `.meter-upper`, `.meter-track`,
+   `.meter-fill` and its four `[data-sev]`/`[data-unknown]` selectors used to
+   live here. `components/Meter.tsx` has drawn all of it in utilities since the
+   kit landed, and `grep -rn` across src/ found no call site for any of the six
+   — no literal, and no `` `meter-${…}` `` assembling one, which is the check a
+   grep for a class name cannot make on its own.
+   The hatch the last of them drew is not lost with it: `@utility hatched`
+   above is the same 45° repeat off `--border-strong`, `Meter.tsx` draws the
+   unknown band with it, and `Meter.test.tsx` asserts that. */
 
 /* ------------------------------------------------------------------ */
 /* Tables                                                              */

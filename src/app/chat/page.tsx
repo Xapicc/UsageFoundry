@@ -1291,7 +1291,7 @@ export default function ChatPage() {
                 onClick={() => scrollToLatest(true)}
                 aria-hidden={!showJump}
                 tabIndex={showJump ? 0 : -1}
-                className={`absolute right-3 bottom-3 flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-line-strong bg-surface px-3 text-xs font-medium text-ink shadow-e2 transition duration-[var(--motion-base)] ease-standard hover:border-ink-faint ${
+                className={`absolute right-3 bottom-3 flex h-8 cursor-pointer items-center gap-1.5 rounded-pill border border-line-strong bg-surface px-3 text-xs font-medium text-ink shadow-e2 transition duration-[var(--motion-base)] ease-standard hover:border-ink-faint ${
                   JUMP_STATE[showJump ? "shown" : "hidden"]
                 }`}
               >

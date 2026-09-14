@@ -201,7 +201,7 @@ function waitingDetail(
 function SkeletonBar({ className = "" }: { className?: string }) {
   // No pulse: a loop would be the only motion on a page that is otherwise
   // still, and it says nothing the layout is not already saying.
-  return <div className={`h-3 rounded-full bg-line ${className}`} />;
+  return <div className={`h-3 rounded-pill bg-line ${className}`} />;
 }
 
 /**

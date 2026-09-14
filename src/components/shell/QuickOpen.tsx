@@ -374,7 +374,7 @@ export function QuickOpen({
                     // target below the breakpoint that every other tappable
                     // row in the shell does. See Sidebar's pane link.
                     "uf-pick ui-transition mt-0.5 flex min-h-[var(--control-h)] max-md:min-h-11 cursor-pointer " +
-                    `items-center gap-2 rounded-[6px] px-2 text-sm ${ITEM[state]}`
+                    `items-center gap-2 rounded-sm px-2 text-sm ${ITEM[state]}`
                   }
                 >
                   <span className="truncate">{item.label}</span>

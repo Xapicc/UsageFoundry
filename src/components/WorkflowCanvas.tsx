@@ -555,8 +555,12 @@ export function WorkflowCanvas({
             // hand-rolled rather than `Button`s — they carry a pointer sequence
             // of their own — so the floor the kit applies once has to be
             // repeated here, and it is the only route a finger has to the
-            // palette.
-            className="ui-transition inline-flex min-h-[var(--control-h)] max-md:min-h-11
+            // palette. `uf-button` for the same reason and the same cost: the
+            // kit's hook class is inert in the default skin and is the only
+            // thing that puts a hand-rolled control inside the ascii skin's
+            // `[ … ]`, which these four were the last unbracketed buttons on
+            // their page for want of.
+            className="uf-button ui-transition inline-flex min-h-[var(--control-h)] max-md:min-h-11
               cursor-grab touch-none select-none items-center rounded-sm border border-line
               bg-bezel px-2.5 text-sm font-medium text-ink shadow-e1
               not-disabled:hover:bg-bezel-hover not-disabled:active:shadow-press
@@ -722,7 +726,7 @@ export function WorkflowCanvas({
                 // edge by a translate — so the link it labels does not move.
                 className={`ui-transition absolute z-10 inline-flex min-h-[var(--control-h)]
                   max-md:min-h-11 -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center
-                  gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-2xs font-semibold
+                  gap-1.5 whitespace-nowrap rounded-pill border px-2.5 py-1 text-2xs font-semibold
                   ${LINK_CHIP[tone]}`}
               >
                 {EDGE_CHIP_LABEL[link.edge]}
@@ -823,17 +827,33 @@ export function WorkflowCanvas({
                       // on a card can touch. `max-md:relative` rather than a
                       // bare one, so the containing block this creates does
                       // not exist above the breakpoint either.
-                      className={`ui-transition inline-flex min-h-[var(--control-h)] cursor-pointer
+                      //
+                      // The target sits on the *label's* `::after` and not this
+                      // element's, which is the price of `uf-button`: the ascii
+                      // skin draws its closing bracket in `.uf-button::after`,
+                      // and that block is unlayered, so it outranks the utility
+                      // outright — one element cannot be both. The rectangle is
+                      // unchanged, because an absolutely positioned pseudo of a
+                      // static child resolves against the same containing block
+                      // the button's own would have.
+                      // `uf-button-primary` for the armed state, because the
+                      // fill that state is drawn with is gone under the skin
+                      // and the accent has to survive it as a text colour.
+                      className={`uf-button ${armed ? "uf-button-primary" : ""} ui-transition
+                        inline-flex min-h-[var(--control-h)] cursor-pointer max-md:relative
                         touch-none items-center rounded-sm border px-2 py-1 text-2xs font-semibold
-                        max-md:relative max-md:after:absolute max-md:after:-inset-y-[6px]
-                        max-md:after:-inset-x-[3px] max-md:after:content-['']
                         ${
                           armed
                             ? "border-accent-line bg-accent-dim text-ink"
                             : "border-line bg-bezel text-ink-muted shadow-e1 hover:bg-bezel-hover hover:text-ink"
                         }`}
                     >
-                      {armed ? "Cancel" : linking ? "Link here" : "Link"}
+                      <span
+                        className="max-md:after:absolute max-md:after:-inset-y-[6px]
+                          max-md:after:-inset-x-[3px] max-md:after:content-['']"
+                      >
+                        {armed ? "Cancel" : linking ? "Link here" : "Link"}
+                      </span>
                     </button>
                   </div>
                 </div>
@@ -922,11 +942,16 @@ export function WorkflowCanvas({
                   type="button"
                   onClick={() => toggleLink(block.id)}
                   aria-pressed={armed}
-                  className={`ui-transition min-h-11 shrink-0 cursor-pointer rounded-md border px-3 text-xs ${
-                    armed
-                      ? "border-accent-line bg-accent-dim text-accent"
-                      : "border-line text-ink-muted hover:bg-inset"
-                  }`}
+                  // The same control as the card's below the breakpoint, so it
+                  // takes the same two hook classes: this is the Link the ascii
+                  // skin reaches at 390px, where the canvas is not drawn at all
+                  // and the card's own never renders.
+                  className={`uf-button ${armed ? "uf-button-primary" : ""} ui-transition
+                    min-h-11 shrink-0 cursor-pointer rounded-md border px-3 text-xs ${
+                      armed
+                        ? "border-accent-line bg-accent-dim text-accent"
+                        : "border-line text-ink-muted hover:bg-inset"
+                    }`}
                 >
                   {linkFrom !== null && !armed ? "Link here" : "Link"}
                 </button>

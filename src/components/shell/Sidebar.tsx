@@ -207,7 +207,7 @@ export function Sidebar({
                     // it takes the 44px target the doc records there; above it
                     // the pointer keeps the 32px control height every other
                     // row in the app has.
-                    "max-md:min-h-11 items-center gap-2.5 rounded-[6px] px-2 text-sm no-underline " +
+                    "max-md:min-h-11 items-center gap-2.5 rounded-sm px-2 text-sm no-underline " +
                     `hover:no-underline ${ROW[current ? "active" : "inactive"]}`
                   }
                 >

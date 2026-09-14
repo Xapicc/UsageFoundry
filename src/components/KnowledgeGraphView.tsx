@@ -1141,7 +1141,7 @@ function GroupList({
                 >
                   <span
                     aria-hidden
-                    className="h-2 w-2 shrink-0 rounded-full border border-line-strong"
+                    className="h-2 w-2 shrink-0 rounded-pill border border-line-strong"
                     // The one colour here that cannot come from a token: it is
                     // the operator's own hex, out of the colour input above.
                     style={

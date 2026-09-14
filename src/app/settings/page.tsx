@@ -863,7 +863,7 @@ function EditedRail({ on }: { on: boolean }) {
   return (
     <span
       aria-hidden
-      className={`pointer-events-none absolute inset-y-0 -left-3 w-0.5 rounded-full transition-colors duration-150 ${
+      className={`pointer-events-none absolute inset-y-0 -left-3 w-0.5 rounded-pill transition-colors duration-150 ${
         on ? "bg-accent" : "bg-transparent"
       }`}
     />

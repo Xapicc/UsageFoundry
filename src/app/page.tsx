@@ -253,13 +253,13 @@ function DashboardSkeleton() {
         <div className="h-3 w-40 rounded-sm bg-inset" />
         <div className="mt-4 h-7 w-32 rounded-sm bg-inset" />
         <div className="mt-2 h-3 w-48 rounded-sm bg-inset" />
-        <div className="mt-5 h-3 w-full rounded-full bg-inset" />
+        <div className="mt-5 h-3 w-full rounded-pill bg-inset" />
         <div className="mt-3 h-3 w-3/4 rounded-sm bg-inset" />
         <div className="mt-5 border-t border-line pt-4">
           <div className="h-3 w-28 rounded-sm bg-inset" />
           <div className="mt-4 h-6 w-24 rounded-sm bg-inset" />
           <div className="mt-2 h-3 w-40 rounded-sm bg-inset" />
-          <div className="mt-5 h-2 w-full rounded-full bg-inset" />
+          <div className="mt-5 h-2 w-full rounded-pill bg-inset" />
         </div>
       </Card>
       <Card emphasis="quiet">

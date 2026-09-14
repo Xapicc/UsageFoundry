@@ -2206,6 +2206,114 @@ is `docs/agent/testing.md`; interface defects and their classes are
   headroom on this page is now 6px, which the seven `max-md:w-72` literals on
   it would widen to 12px — filed rather than done here.
 
+**The ascii skin's radius override now reaches every call site that should take
+it, 2026-09-14.** `rounded-full` is one of Tailwind's static utilities and bakes
+in a literal `calc(infinity * 1px)`, so no selector could flatten it; the fix is
+a third corner token, `--corner-pill` (9999px, 0 under the skin), mapped to
+`--radius-pill` in `@theme` and spelled `rounded-pill` at the call sites that
+are boxes with their ends taken off. Verified in the emitted stylesheet, which
+is where an override that does not land is silent:
+`.rounded-pill{border-radius:var(--corner-pill)}` against `.rounded-full{border-radius:3.40282e+38px}`.
+Verified again as computed radii over ten routes at 1280 in both skins — 68
+`rounded-pill` elements read 0px under ascii, and in the default skin 61 read
+9999px and 7 read 0px, those seven being `Field`'s range inputs, where the class
+carries a `[&::-webkit-slider-thumb]:` variant and the element's own corner was
+never the target. 13 call sites moved: the two skeleton bars on `/`, one each on
+`/runs` and `/branches`, `/branches`' step ring, `/chat`'s floating chip,
+`/settings`' 2px section rail, `KnowledgeGraphView`'s tag dot,
+`WorkflowCanvas`'s link chip and `Field`'s four slider variants. 35 stay
+`rounded-full` deliberately: 27 legend swatches on `/knowledge`,
+`/runs/[id]/touched` and `/runs/[id]/conflicts` stand for nodes a canvas draws
+as circles and both maps read a square as a different kind of node, and the
+other 8 are on components the skin already redraws or hides. Caveat: 9999px and
+infinity render identically only because every box carrying the token is under
+19998px in its shorter axis, which is true today and is not enforced.
+
+**There is no bare `rounded`, `rounded-b` or `rounded-t` call site in src/, and
+the count of 26 was a grep artefact, 2026-09-14.** The measurement that produced
+it was `grep -rnoE "\brounded(-[a-z0-9]+)?(-\[[^]]*\])?" src/`, whose single
+optional segment matches `rounded-b-lg` as `rounded-b` and `rounded-t-lg` as
+`rounded-t`, and whose bare alternative matches the English word "rounded" in a
+comment. Re-derived with `grep -rnoP ".{0,45}\brounded(?![-a-z])"` over
+`*.tsx`/`*.ts`: 20 hits, every one of them prose, 0 class names; plus 4
+`rounded-b-lg` and 2 `rounded-t-lg`, which resolve through `--radius-lg` and
+which the skin already flattens. 20 + 4 + 2 = 26. Caveat: Tailwind's scanner
+reads that prose too, so `.rounded{border-radius:.25rem}` is still emitted into
+the stylesheet — it is an unused 40 bytes, not a call site.
+
+**The four arbitrary-value corners the skin could reach have moved onto tokens;
+the two that are left are flattened by hand, 2026-09-14.** `rounded-[6px]` on
+`Sidebar`'s row and `QuickOpen`'s option became `rounded-sm`, which is exactly
+6px in the default skin: measured on `/runs` at 1280, both read 6px in the
+default skin and 0px under ascii, against 6px in both before. `rounded-[3px]` on
+`Field`'s colour swatch became `rounded-[calc(var(--corner-sm)*0.5)]`, which is
+exactly 3px in the default skin; `getComputedStyle` on `::-webkit-color-swatch`
+reports the originating element's style rather than the pseudo's, so this one was
+measured in pixels instead — a `deviceScaleFactor: 4` clip of the control on
+`/knowledge` in light, sampled 3 CSS px in from its top-left corner, reads
+rgb(245,245,247) in the default skin, the input's own `bg-inset` showing through
+a rounded corner, and rgb(224,87,106) under ascii, the swatch colour reaching a
+square one. The two `rounded-[4px]`, on `.uf-segment` and `.uf-kbd`, keep their
+hand-written `border-radius: 0` — 4px is not a value on this scale and a token
+for two call sites costs more than the two declarations.
+
+**The five unskinned controls on `/workflows` are bracketed, and the sixth was
+the Link at 390px, 2026-09-14.** `WorkflowCanvas`'s four block-type buttons and
+both Link controls — the card's, drawn on the canvas above the breakpoint, and
+the narrow list's, which is the only one that renders at 390 — take `uf-button`,
+the kit's hook class, which is inert in the default skin. Screenshotted at 390
+and 1280 in ascii × {light, dark} and in default × {light, dark}: `[ Runs a task ]`,
+`[ Decides what to run ]`, `[ Lands the branches ]`, `[ Repeats a task ]` and
+`[ Link ]` under the skin, unchanged rounded boxes without it. The card's Link
+cost one restructure: its 44px hit target was a `max-md:after:` overlay on the
+button, and `.uf-button::after` is the skin's closing bracket in an unlayered
+block, so one element could not be both — the overlay moved to a `<span>` around
+the label, whose absolutely positioned `::after` resolves against the same
+containing block. Measured: at 390 the span's `::after` is `content: ""`,
+`position: absolute`, inset -6px/-3px in both skins, the button's own is `" ]"`
+under ascii and `none` without it, and the narrow list's Link is 74×44 under
+ascii against 47×44 in the default skin. Caveat: the card's Link is `visible:
+false` at 390 in both skins, because the canvas is not laid out below the
+breakpoint at all, so its `max-md:` overlay is inert in practice and the
+measurement above is of the recipe rather than of a target a finger can reach.
+
+**The `/knowledge` control at y≈883 was the selected segment, and it was
+invisible in light, 2026-09-14.** Enumerated every filled or bordered control on
+the page under ascii at 390×2600: the only one whose fill said nothing was
+`SegmentedControl`'s chosen segment, `rgb(255,255,255)` in light — the card it
+sits on — and `rgb(72,72,76)` in dark, at y=884, both figures matching the task's
+own. `.uf-segment` now takes `background: none` and the chosen segment says so in
+the accent and in weight. Measured on this page: 5.22:1 against the card in light
+and 5.06:1 in dark for the chosen segment, 5.54:1 and 5.56:1 for the unchosen,
+worst reading anywhere on the page 4.59:1 where a segment sits on `--bg` rather
+than a card — all above the 4.5:1 floor. Weight is there because the accent alone
+is a channel greyscale loses: 5.22 against 5.54 is very nearly the same
+luminance. Bold costs no width in this face — flipping `aria-checked` on the
+live element leaves `[Whole vault]` at 94.5px and `[Title]` at 55.5px — so
+nothing moves when the selection does, which is what the brackets on both states
+were sized for. `aria-checked` is untouched. The two hover and press washes are
+restated for `.uf-button`'s reason: `background: none` is unlayered and would
+otherwise beat the component's own hover utility. Caveat: contrast is computed
+from the two declared colours rather than sampled off the glyphs, so it is the
+best case for an antialiased mono face at this size.
+
+**The legacy `.meter*` block had no call sites and is gone; `.grid` does,
+2026-09-14.** `.meter`, `.meter-head`, `.meter-value`, `.meter-upper`,
+`.meter-track`, `.meter-fill` and its four `[data-sev]`/`[data-unknown]`
+selectors: `grep` over `src/**/*.{ts,tsx}` finds no literal for any of the six
+and no `` `meter-${…}` `` assembling one. The hatch survives the deletion —
+`@utility hatched` is the same 45° repeat off `--border-strong`, `Meter.tsx`
+draws the unknown band with it and `Meter.test.tsx` asserts it. Of the four
+neighbours the task asked to check while here, `.grid-2` and `.table-wrap` have
+0 call sites and `.lede` has 0 as a class, but `.grid` is **not** dead and was
+left alone: `@layer legacy` is declared before `utilities`, so Tailwind's `grid`
+utility wins the `display`, and `.grid`'s `gap: 16px` then applies to any
+element carrying the bare utility that states no `gap-*` of its own. Measured
+over twelve routes at 1280: 5 elements carry bare `grid`, 1 of them states no
+gap, and it computes `gap: 16px` — the recessed graph card on `/knowledge`.
+Deleting the rule would move that card's contents, so it is filed rather than
+fixed.
+
 ## Not yet verified by hand
 
 - **The graph at a size no hand-drawn ordering reaches.** Every reading above is

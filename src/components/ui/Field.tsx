@@ -548,19 +548,19 @@ export function Toggle({
  * double-count a margin, so it gets none.
  */
 const SLIDER_TRACK =
-  "[&::-webkit-slider-runnable-track]:h-1 [&::-webkit-slider-runnable-track]:rounded-full " +
+  "[&::-webkit-slider-runnable-track]:h-1 [&::-webkit-slider-runnable-track]:rounded-pill " +
   "[&::-webkit-slider-runnable-track]:border [&::-webkit-slider-runnable-track]:border-line " +
   "[&::-webkit-slider-runnable-track]:bg-inset " +
-  "[&::-moz-range-track]:h-1 [&::-moz-range-track]:rounded-full " +
+  "[&::-moz-range-track]:h-1 [&::-moz-range-track]:rounded-pill " +
   "[&::-moz-range-track]:border [&::-moz-range-track]:border-line [&::-moz-range-track]:bg-inset";
 
 const SLIDER_THUMB =
   "[&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:-mt-[5px] " +
   "[&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 " +
-  "[&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-tint " +
+  "[&::-webkit-slider-thumb]:rounded-pill [&::-webkit-slider-thumb]:bg-tint " +
   "[&::-webkit-slider-thumb]:shadow-e1 " +
   "[&::-moz-range-thumb]:h-3.5 [&::-moz-range-thumb]:w-3.5 [&::-moz-range-thumb]:border-0 " +
-  "[&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-tint [&::-moz-range-thumb]:shadow-e1";
+  "[&::-moz-range-thumb]:rounded-pill [&::-moz-range-thumb]:bg-tint [&::-moz-range-thumb]:shadow-e1";
 
 /**
  * A continuous setting, with the number it is currently at beside it.
@@ -671,8 +671,15 @@ export function ColorSwatch({
         "border border-line bg-inset p-0.5 enabled:hover:border-line-strong " +
         "disabled:cursor-not-allowed disabled:opacity-50 " +
         "[&::-webkit-color-swatch-wrapper]:p-0 " +
-        "[&::-webkit-color-swatch]:rounded-[3px] [&::-webkit-color-swatch]:border-0 " +
-        "[&::-moz-color-swatch]:rounded-[3px] [&::-moz-color-swatch]:border-0 " +
+        // The swatch's corner is stated against the box's rather than as the
+        // 3px literal it used to be, so it flattens with the box under a skin
+        // that takes --corner-sm to 0. An arbitrary value is a literal in the
+        // emitted utility and nothing can reach it afterwards, so a swatch left
+        // at 3px stayed round inside a square box, silently. Half is what 3px
+        // was against this box's 6px, kept exactly rather than re-derived from
+        // the 2px padding, which would have said 4.
+        "[&::-webkit-color-swatch]:rounded-[calc(var(--corner-sm)*0.5)] [&::-webkit-color-swatch]:border-0 " +
+        "[&::-moz-color-swatch]:rounded-[calc(var(--corner-sm)*0.5)] [&::-moz-color-swatch]:border-0 " +
         `${className}`
       }
     />

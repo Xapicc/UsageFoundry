@@ -310,7 +310,7 @@ function QueueStep({
           the next. */}
       <div className="flex w-5 shrink-0 flex-col items-center">
         <span
-          className={`flex h-5 w-5 items-center justify-center rounded-full border text-2xs font-semibold tabular-nums transition-colors duration-200 ${STEP_RING[item.status]}`}
+          className={`flex h-5 w-5 items-center justify-center rounded-pill border text-2xs font-semibold tabular-nums transition-colors duration-200 ${STEP_RING[item.status]}`}
         >
           {item.position + 1}
         </span>
@@ -683,7 +683,7 @@ function CheckoutStores({ stores }: { stores: CheckoutStoreDTO[] }) {
 }
 
 function SkeletonBar({ className = "" }: { className?: string }) {
-  return <div className={`h-3 rounded-full bg-line ${className}`} />;
+  return <div className={`h-3 rounded-pill bg-line ${className}`} />;
 }
 
 /** Placeholder rows in the real grid, so nothing jumps when the read lands. */
