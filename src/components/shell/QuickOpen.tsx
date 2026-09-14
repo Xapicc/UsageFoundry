@@ -63,8 +63,16 @@ const ITEM: Record<ItemState, string> = {
   plain: "text-ink hover:bg-fill-hover active:bg-fill-active",
 };
 
+/**
+ * The detail line is quieter than the title on both rows, and on the
+ * highlighted one it is quieter by alpha because --tint-fg is the only colour
+ * guaranteed legible on the fill under it. 85% and not the 75% this was:
+ * measured against the capped accent in globals.css, 75% is 4.16:1 and 85% is
+ * 4.92:1, so only one of them clears 4.5:1 for a line of body text. It still
+ * reads as secondary — the title beside it is the same white at 6.20:1.
+ */
 const DETAIL: Record<ItemState, string> = {
-  highlighted: "text-tint-fg/75",
+  highlighted: "text-tint-fg/85",
   plain: "text-ink-faint",
 };
 

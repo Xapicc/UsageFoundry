@@ -252,8 +252,11 @@ is `docs/agent/testing.md`; interface defects and their classes are
 - **Four real prunes at `aggressive` removed 29.1-52.8%, 2026-08-24.** All
   early-end, at 167,326-169,283 tokens; removal matched the observed context
   drop to about 3% (266,683 claimed, 274,619 observed). The resume
-  invalidation was understated 16.6%, so `netReceipt` now prices it off the
-  first billed turn's `cache_creation_input_tokens`.
+  invalidation was understated 16.6% — charged against `tokens_after`,
+  405,049 across the four, where the resumes actually wrote 485,828 — which
+  overstated the net by 22.6% (`+$4.39` displayed against `+$3.58`
+  corrected), so `netReceipt` now prices it off the first billed turn's
+  `cache_creation_input_tokens`.
 
 - **Both prune triggers have fired: 54 receipts, 52 `early-end` and 2
   `boundary`, read 2026-09-07.** 2026-08-24 to 2026-08-28, 47 runs, read from
@@ -537,6 +540,24 @@ is `docs/agent/testing.md`; interface defects and their classes are
   throwaway database, 246,362 bytes to 1,136 at 500 messages and 1,004,522 to
   1,137 at 2,000, the cursored read now on `idx_chat_messages_seq` with no
   sort. A thread's first read costs 2.0% more, once.
+
+- **`propose_schedule`, `list_past_proposals` and `list_recurring_failures`,
+  driven in-process through `/api/mcp`, 2026-09-14.** Throwaway `DATA_DIR`, a
+  minted chat capability, no CLI. `propose_schedule` refused an unbudgeted
+  workflow, `25:00`, an unknown zone and a second waiting card for one workflow;
+  `supersedes` replaced one; approval through `POST /api/chat/[id]/proposals`
+  wrote the schedule and the thread note, and a card whose workflow then lost its
+  limits was refused on the card and at the click. The failures tool returned a
+  seeded note with its vault path and the unwritten recurrence; the proposals
+  tool excluded the asking thread and reported a purged run as gone. Three
+  sentences were wrong and were fixed before this entry. Caveat: no model called
+  any of it.
+
+- **The schedule card rendered under `next dev` at 390 and 1280, 2026-09-14**,
+  over a seeded thread: replacing a paused schedule, refused after its limits
+  were cleared, an interval, a run card beside them, and an approved row reading
+  "— scheduled". No sideways scroll, no console error, `Select all (skips 1)`.
+  Not clicked; not the standalone build.
 
 ### Taskboard
 
@@ -1711,6 +1732,76 @@ is `docs/agent/testing.md`; interface defects and their classes are
 
 ### Interface
 
+- **A disabled bracketed button, re-measured either side of its floor,
+  2026-09-14.** Headless Chromium 151.0.7922.34, dpr 2, against
+  `.next/standalone/server.js`; `/settings`' sticky footer at 1280 under
+  `data-skin="ascii"`, crop backdrop taken as the modal colour and the glyph as
+  the pixel furthest from it. Before: the resting `[ Save ]` drew #345c90 on
+  #1e1e20, **2.44:1** dark, and #77abe5 on #f0f0f3, **2.11:1** light — both the
+  variant's `--accent` at `disabled:opacity-50`, and the arithmetic agrees, a
+  50% composite of #4a9bff over #1e1e20 being #345c90 exactly. After: #8a8a8f on
+  #1e1e20, **4.84:1**, and #86868b on #f0f0f3, **3.19:1**. The target was 3:1
+  and not 4.5:1 — WCAG 1.4.3 exempts a disabled control, and the bar taken
+  instead was the graphical-object floor the skin's frame tones already sit at,
+  because under this skin the brackets are the mark that says a control is
+  there. A *busy* button was checked separately and does not take the floor:
+  two buttons built from the live page's own class string, one `disabled` and
+  one `disabled aria-busy="true"` with `disabled:opacity-50` dropped the way
+  `Button` drops it, compute `--fg-faint` and `--danger` respectively, both at
+  opacity 1. They had to be built rather than toggled — setting `aria-busy` on
+  an element already in the page flips `matches()` and leaves the computed
+  colour behind, Chromium not invalidating the cascade for an attribute that
+  appears only inside a `:not()`. The app never sits in that state: React
+  rewrites `className` in the same commit, which invalidates.
+  **Caveats:** the light figure is `--fg-faint`'s own worst reading and
+  has no margin over the floor; the glyph sample is the best pixel of an
+  antialiased stroke, so the true reading is a little under both; and the
+  figures filed on the task were 1.93:1 and 1.74:1, measured on
+  `uf/usagefoundry-721638d11c0b-1-66a74a67` against a backdrop that is not the
+  #1e1e20/#f0f0f3 this footer draws today.
+
+- **Bracketed buttons back on the column, 2026-09-14.** Same engine and bundle;
+  `/runs`' `[ New run ]` at 390 and 1280 in both themes, the button's border-box
+  edge read from `getBoundingClientRect` and the bracket's edge as the first
+  column of ink in a viewport frame. Before, identical in all four states: box
+  left 16, ink left 32.5, so **16.5px** — `px-3.5` plus the 1px border is 15px
+  of box and the `[` glyph's own side bearing is the rest; the right-aligned
+  case the same, gutter 1260 against ink at 1243.5. After: **1.5px** on both
+  sides in all four states, which is the side bearing alone, with
+  `padding-inline` and `border-inline-width` both reading 0. The label spacing
+  inside the brackets is untouched, being `::before`/`::after` content.
+  **Caveat:** the accompanying page walk — 23 routes at 390 and 1280 in both
+  themes under the skin, 92 loads — asserted only two things, that nothing
+  scrolls sideways and that no `.uf-button` has `scrollWidth` past its
+  `clientWidth`, and it is a one-off pass rather than a check in the tree;
+  `smoke-pages` still has no skin axis, so it was green before and after
+  without seeing any of this.
+
+- **The OS accent pair bounded, and what the bound costs, 2026-09-14.** Same
+  engine and bundle. Before, `AccentColor` resolved to #0075ff and
+  `AccentColorText` to white, **4.21:1**, and that one reading is what every
+  `bg-tint text-tint-fg` call site drew at 390 and 1280 in both themes: the
+  primary `Button`/`ButtonLink`, the sidebar's active row and its label span,
+  and the quick-open highlight. After, with `--tint` taken as
+  `oklch(from AccentColor min(l, 0.5) c h)` and `--tint-fg` back to white, the
+  fill paints #0056de and all of them measure **6.20:1**; `QuickOpen`'s detail
+  line, raised from `text-tint-fg/75` to `/85`, measures **4.92:1** against
+  **4.16:1** — read off the app's own emitted classes rendered in the live page,
+  the panel's own keystrokes not being reachable from this context. The cap is
+  0.5 rather than 0.52 because **this engine clips out-of-gamut channels instead
+  of reducing chroma the way CSS Color 4 §13 asks**: painted,
+  `oklch(from #00ff00 min(l, 0.5) c h)` is #008400 and carries white at 4.88:1,
+  where the same expression at 0.52 is #008b00 and 4.47:1. **What it costs, and
+  it is not free:** a darker fill stands off a dark page less well, and the
+  primary button's fill against the toolbar goes 3.95:1 → **2.68:1** in dark
+  while light goes 3.70:1 → 5.45:1. That trade is forced — white needs the fill
+  under Y 0.183 and a 3:1 stand-off from this app's near-black needs it over
+  Y 0.139, a band narrower than one OKLCH lightness spans across the hue circle
+  — and the label was taken over the fill. **Caveat:** the only accent seen is
+  the #0075ff this headless engine reports; on a real desktop it is the
+  operator's, so the floor is the sweep's argument rather than a reading, and
+  nothing here was run in a second engine.
+
 - **The Settings `Tools` section, in a browser against the production bundle,
   2026-09-12.** A throwaway install seeded with
   `UF_PY_TOOLS="ruff==0.5.0|/workspace/winnow|cozempic>=1.8,<2"` and
@@ -2314,6 +2405,44 @@ gap, and it computes `gap: 16px` — the recessed graph card on `/knowledge`.
 Deleting the rule would move that card's contents, so it is filed rather than
 fixed.
 
+- **`smoke-pages` now sees a clipped overflow, and caught three on its first
+  run, 2026-09-14** (`npm run smoke-pages` against a standalone build of
+  `uf/usagefoundry-721638d11c0b-2-6a9afb21`, Playwright Chromium, 23 routes ×
+  2 skins × 2 widths). The fourth assertion — no box wider than a parent that is
+  not a scroll container — closes the blind spot the entry "The chat surface at
+  390px" names as its reason for existing: `AppShell` clips rather than scrolls,
+  so a pane-wide box leaves `scrollWidth` equal to `clientWidth`. It found
+  `/branches` at standard 390 (a `<label>` 333px in a 324px row, the Repository
+  select's last 9px outside the card), `/knowledge` at standard 1280 (the graph's
+  group query `<input>` drawn 22px inside a `min-w-0 flex-1` track that collapsed
+  to 2px), and the permission-mode segmented control 338px in 322px on
+  `/settings` and `/runs/new` at ascii 390 — filed as `d876bace`, `8b7aa64c` and
+  `1cefeb31` rather than fixed there. Result: `88/92 page loads clean`, exit 1.
+  Three exclusions were read off runs rather than guessed and are written out in
+  `clippedOverflow()`: a parent whose `clientWidth` is 0, anything inside an
+  `<svg>` (268 hits in the first run, all from `offsetWidth` being `undefined` on
+  an `SVGElement` so that `undefined - 346` is `NaN` and passes every `<=`),
+  out-of-flow elements (`.uf-ascii-frame` is `inset: calc(-0.5em - 1px)` by
+  design), and the margin box rather than the border box (a `-mx-4` full-bleed
+  sticky footer measured 390px in a 358px `<form>` and 1056 in 1016, both exactly
+  its own margins). Caveat: headless Chromium at two widths only, and the pass
+  now exits 1 on this branch until those three are fixed — a green run is not
+  available to compare against.
+
+- **`smoke-pages` drives the ascii skin, and the axis is otherwise clean,
+  2026-09-14** (same run). A second browser context per skin, with
+  `addInitScript` writing the key read out of `SkinToggle.tsx` — not a third
+  spelling of `"uf-skin"` — so `layout.tsx`'s pre-paint script sets `data-skin`
+  before the first frame exactly as it does for a person. Each page load then
+  asserts the attribute arrived, because an axis that silently failed to apply
+  would report 92/92 clean rather than an error. All 23 routes passed at ascii
+  390 and ascii 1280 on all four assertions but for the segmented control above,
+  which is the first defect the skin axis has caught and which neither the skin
+  axis nor the clipped-overflow check finds alone. Cost: 44 page loads became 92,
+  which `CLAUDE.md`'s position that this pass is deliberately outside CI is what
+  makes affordable. Caveat: light theme only — the skin and the theme are
+  separate attributes and this adds the skin axis, not a theme one.
+
 ## Not yet verified by hand
 
 - **The graph at a size no hand-drawn ordering reaches.** Every reading above is
@@ -2700,6 +2829,15 @@ measurement under *Verified* and cut the item down to what is still open.
   append path is unit-tested only. Unseen: a mid-turn reply appending, the
   unseen count and scroll on a tail, a thread switch mid-poll. Open `/chat`,
   send a message to a thread with history, and watch the reply land.
+
+- **No model has called `propose_schedule`, `list_past_proposals` or
+  `list_recurring_failures` (2026-09-14).** Unmeasured: whether a turn reaches
+  for the two read tools on the system prompt's pointer alone, whether it asks
+  for a time zone rather than guessing one, and what a cold
+  `list_recurring_failures` scan adds to a turn on a real corpus. Settling it:
+  on a real install with a saved, budgeted workflow, ask the chat to "run the
+  sweep every Monday morning" and to "fix the bwrap failures", and read the
+  turn's tool calls and cost.
 
 ### Taskboard
 
@@ -3431,8 +3569,10 @@ measurement under *Verified* and cut the item down to what is still open.
   since been measured on four routes at 390 and 1280 in both themes, see the
   three 2026-09-13 entries above, but that is the toolbar and the source list
   and nothing a route draws under them; the live flip (task `d8e5f614`) was
-  never driven; `smoke-pages` is default-skin only (`4e6dd0b9`). No second
-  browser (where `█` measures 0.602em), touch, zoom or screen reader.
+  never driven. `smoke-pages` is no longer default-skin only — see the
+  2026-09-14 entry above — but what it adds is four load assertions per route,
+  not a look. No second browser (where `█` measures 0.602em), touch, zoom or
+  screen reader.
 
 - **Open under the ascii skin, 2026-09-11.** Findings stay on the board —
   `New run` clipped off at 390px is no longer among them, see the 2026-09-12

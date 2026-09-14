@@ -1,3 +1,4 @@
+import path from "node:path";
 import { NextResponse } from "next/server";
 import {
   appendMessage,
@@ -12,6 +13,8 @@ import {
   normalizeChoices,
   pendingProposals,
   pendingQuestions,
+  findPastProposals,
+  PAST_PROPOSALS_MAX,
   proposalByReference,
   proposalDeps,
   subjectForCapability,
@@ -19,12 +22,32 @@ import {
   type ChatProposalRow,
   type ProposalDependency,
   type ProposalInput,
+  type ProposalStatus,
   type QuestionInput,
 } from "@/lib/chat";
+import {
+  describeSchedule,
+  getSchedule,
+  nextOccurrence,
+  normalizeScheduleInput,
+  proposedScheduleBlob,
+  proposedScheduleOf,
+  scheduleRefusal,
+  scheduleView,
+} from "@/lib/schedules";
+import { scanDreaming } from "@/lib/dreaming";
+import {
+  ledgerCounts,
+  listNotes,
+  noteStillPresent,
+  writtenSignatures,
+} from "@/lib/dreamingLedger";
+import { resolveKnowledgeRoot } from "@/lib/knowledge";
 import {
   currentKnowledge,
   emitBlockRuns,
   folderRefusal,
+  getWorkflow,
   instanceOwnsRun,
   lastRunAt,
   listWorkflows,
@@ -117,6 +140,19 @@ const MAX_DIFF_TEXT_BYTES = 60_000;
  */
 const SPEC_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
+/**
+ * The most `list_recurring_failures` returns per list.
+ *
+ * `proposals/Dreaming` measured 78 signatures spanning two or more days over 23
+ * days of this install's corpus, each carrying a sample, and a turn that read
+ * all of them has spent part of `chatTurnBudgetUSD` on error text before
+ * thinking about any of it.
+ */
+const MAX_FAILURES_LISTED = 40;
+
+/** How much of one error sample the tool repeats. The pane shows more. */
+const FAILURE_SAMPLE_CHARS = 300;
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -155,12 +191,14 @@ export const dynamic = "force-dynamic";
  * nothing here presses Run on a workflow, nothing here writes to a folder, and
  * nothing here sets a budget, a permission mode or an isolation choice. A chat's
  * most is a `chat_proposals` row, inert until a person approves it — of a run,
- * of a run ordered behind another one, or of a whole workflow, and approving
- * that last one *saves* a graph rather than starting it, so the press of Run
- * stays the operator's. A block's most is a list of run specs, which start —
- * under the guards the block's *saved* template supplies, in the mount that
- * block was pointed at, up to the number a person agreed to when they saved the
- * graph.
+ * of a run ordered behind another one, of a whole workflow, or of a schedule
+ * for a workflow a person saved. Approving a workflow *saves* a graph rather
+ * than starting it, so the press of Run stays the operator's; approving a
+ * schedule hands that press to a clock, which is why it can only name a
+ * workflow whose limits a person already set. A block's most is a list of run
+ * specs, which start — under the guards the block's *saved* template supplies,
+ * in the mount that block was pointed at, up to the number a person agreed to
+ * when they saved the graph.
  */
 
 const PROTOCOL_VERSION = "2025-06-18";
@@ -380,6 +418,43 @@ const SHARED_TOOLS = [
         taskId: { type: "string", description: "An id from list_tasks." },
       },
       required: ["taskId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    // Shared, because it only reads and both callers write briefs a run then
+    // works from. What it hands over is clipped error text out of the
+    // transcript corpus and vault paths on a mount both children are already
+    // `--add-dir`ed into — never a transcript, never a session's own words.
+    name: "list_recurring_failures",
+    description:
+      "Tool failures that recurred on more than one day across every Claude " +
+      "Code session on this machine, and the notes this app's nightly Dreaming " +
+      "pass wrote about them in the operator's knowledge vault, with the path " +
+      "to Read each one at. Call it before proposing or briefing work that " +
+      "fixes a failure, or that touches something that keeps failing: a note " +
+      "says what is already known, and a brief that names its path spares the " +
+      "run rediscovering it. A signature is the error text with numbers, " +
+      "hashes and path interiors collapsed — a string, not a cause. One cause " +
+      "often shows up as several signatures and one signature often has " +
+      "several causes, so never report a count here as a count of problems, " +
+      "and treat a note's diagnosis as a hypothesis to check. Failures are " +
+      "install-wide and carry no folder.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description:
+            "Text to find in the error, case-insensitive — a command, a tool " +
+            "name, a message. Omit for the most recurrent.",
+        },
+        limit: {
+          type: "number",
+          description:
+            `How many of each list to return (default 15, at most ${MAX_FAILURES_LISTED}).`,
+        },
+      },
       additionalProperties: false,
     },
   },
@@ -734,6 +809,48 @@ const CHAT_TOOLS = [
       "The proposals already made in this conversation and what became of " +
       "them, so the same work is not proposed twice.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "list_past_proposals",
+    description:
+      "Proposals made in the operator's OTHER conversations, newest decision " +
+      "first, and what became of each: still waiting, approved (with how the " +
+      "run it started ended and what it spent), rejected, or failed (with why). " +
+      "Read it before proposing work that sounds familiar — the operator may " +
+      "have rejected it already, another conversation may be waiting on the " +
+      "same card, or it may have run and failed for a reason your brief should " +
+      "address. A rejection records no reason: do not invent one, and if it " +
+      "matters, ask. Replaced proposals are left out, since each is the same " +
+      "work as the card that replaced it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: ["pending", "approved", "rejected", "failed"],
+          description: "Only proposals that ended this way. Omit for all.",
+        },
+        mountId: {
+          type: "string",
+          description: "Only proposals for this mount, from list_folders.",
+        },
+        folder: {
+          type: "string",
+          description:
+            "With mountId: only proposals for this folder or one inside it. " +
+            "Workflow and schedule proposals name no folder and never match.",
+        },
+        query: {
+          type: "string",
+          description: "Text to find in a proposal's title or task.",
+        },
+        limit: {
+          type: "number",
+          description: `How many to return (default 20, at most ${PAST_PROPOSALS_MAX}).`,
+        },
+      },
+      additionalProperties: false,
+    },
   },
   {
     name: "save_template",
@@ -1171,6 +1288,67 @@ const CHAT_TOOLS = [
         },
       },
       required: ["name", "blocks"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "propose_schedule",
+    description:
+      "Propose putting a saved workflow on a schedule, for the operator to " +
+      "approve. Unlike propose_run and propose_workflow, approving this DOES " +
+      "lead to spending with nobody present: from then on the workflow presses " +
+      "Run on itself at every occurrence. Only a workflow with a workflow-wide " +
+      "limit can be scheduled — list_workflows shows each one's instanceBudget, " +
+      "and one with every limit null is refused; ask the operator to set one in " +
+      "the workflow editor rather than proposing around it. A workflow has at " +
+      "most one schedule, and list_workflows shows it: proposing for a workflow " +
+      "that already has one replaces its recurrence when approved, and a " +
+      "paused one stays paused. Nothing here reaches a guard: what each start " +
+      "may do and spend is whatever the workflow's blocks and limits already " +
+      "say. A missed occurrence is never made up later.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workflowId: {
+          type: "string",
+          description: "workflowId from list_workflows.",
+        },
+        kind: {
+          type: "string",
+          enum: ["everyHours", "daily", "weekly"],
+          description:
+            "everyHours repeats on an interval counted from the approval; " +
+            "daily and weekly start at a wall-clock time in timeZone.",
+        },
+        hours: {
+          type: "number",
+          description: "everyHours only: the interval, 1 to 168.",
+        },
+        time: {
+          type: "string",
+          description: 'daily and weekly: the local start time as "HH:MM", 24-hour.',
+        },
+        weekday: {
+          type: "string",
+          enum: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
+          description: "weekly only.",
+        },
+        timeZone: {
+          type: "string",
+          description:
+            "IANA zone the time is in, e.g. Europe/Berlin. Required for every " +
+            "kind. Never guess it: this server runs in UTC and the operator " +
+            "may not, so ask if they have not said.",
+        },
+        supersedes: {
+          type: "string",
+          description:
+            "A proposal in this conversation that this one replaces — the id " +
+            "you gave it, or the proposalId that came back. Only a proposal " +
+            "still waiting can be replaced.",
+        },
+      },
+      required: ["workflowId", "kind", "timeZone"],
       additionalProperties: false,
     },
   },
@@ -1929,6 +2107,12 @@ async function callTool(
       );
     }
 
+    case "list_past_proposals":
+      return pastProposalsTool(args, chatId!);
+
+    case "list_recurring_failures":
+      return await recurringFailuresTool(args);
+
     case "list_tasks":
       return listTasksTool(args);
 
@@ -1986,6 +2170,9 @@ async function callTool(
 
     case "propose_workflow":
       return proposeWorkflow(args, chatId!);
+
+    case "propose_schedule":
+      return proposeSchedule(args, chatId!);
 
     case "emit_runs": {
       // Narrowed rather than asserted: `subject.kind` is what decides, and the
@@ -2230,6 +2417,8 @@ function workflowReport() {
     JSON.stringify(
       workflows.map((w) => {
         const last = lastRunAt(w.id);
+        const stored = getSchedule(w.id);
+        const view = stored ? scheduleView(stored, w) : null;
         return {
           workflowId: w.id,
           name: w.name,
@@ -2237,6 +2426,18 @@ function workflowReport() {
           liveRuns: liveRunsOf(w.id).length,
           liveBlocks: liveBlocksOf(w.id),
           instanceBudget: w.instanceBudget,
+          // Reported so a schedule is proposed against what is already there
+          // rather than beside it: a workflow holds one, and a proposal for a
+          // scheduled workflow replaces its recurrence on approval.
+          schedule: view && {
+            description: view.description,
+            paused: view.paused,
+            nextFireAt:
+              view.nextFireAt === null ? null : new Date(view.nextFireAt).toISOString(),
+            lastOutcome: view.lastCode,
+            lastReason: view.lastReason,
+            refusal: view.refusal,
+          },
           blocks: w.graph.nodes.map((n) => ({
             id: n.id,
             name: n.name,
@@ -2398,6 +2599,353 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
         : "") +
       " It is saved with no workflow-wide budget, so it can be run by hand and " +
       "cannot be scheduled until the operator sets one.",
+  );
+}
+
+/** `ScheduleSpec.weekday`'s numbering, which is `Date#getUTCDay`'s. */
+const WEEKDAY_NAMES = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+
+/** `"09:30"` → `570`, or null for anything that is not a 24-hour clock time. */
+function clockMinutes(raw: unknown): number | null {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(String(raw ?? "").trim());
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  return hours < 24 && minutes < 60 ? hours * 60 + minutes : null;
+}
+
+/**
+ * Record one schedule proposal, refusing anything approval would refuse.
+ *
+ * The recurrence goes through the same `normalizeScheduleInput` the schedule
+ * form's route calls, and the workflow through the same `scheduleRefusal`, for
+ * `proposeWorkflow`'s reason: a second reading of what a schedule may be would be
+ * confidently wrong about the click the day one of them changed. Both are asked
+ * again at approval, because the workflow is read live.
+ *
+ * The tool takes a clock time and a weekday *name* where the form sends minutes
+ * and a number, because those are what a model writes without arithmetic, and a
+ * weekday off by one is a schedule firing on the wrong day under words that name
+ * the right one.
+ *
+ * A second waiting schedule for the same workflow is refused rather than
+ * written: a workflow holds one schedule, so two cards are two answers to one
+ * question, and approving both in one click would keep whichever the route
+ * happened to reach last.
+ */
+function proposeSchedule(args: Record<string, unknown>, chatId: string) {
+  const workflowId = String(args.workflowId ?? "").trim();
+  const workflow = workflowId ? getWorkflow(workflowId) : null;
+  if (!workflow) {
+    return text(`No workflow with id "${workflowId}". Call list_workflows.`, true);
+  }
+
+  const refusal = scheduleRefusal(workflow);
+  if (refusal) return text(`${refusal} Nothing was proposed.`, true);
+
+  const kind = String(args.kind ?? "");
+  const raw: Record<string, unknown> = { kind, timeZone: args.timeZone };
+  if (kind === "everyHours") raw.hours = args.hours;
+  if (kind === "daily" || kind === "weekly") {
+    const minutes = clockMinutes(args.time);
+    if (minutes === null) {
+      return text(
+        'A daily or weekly schedule needs time as a 24-hour "HH:MM", such as "09:30".',
+        true,
+      );
+    }
+    raw.minutes = minutes;
+  }
+  if (kind === "weekly") {
+    const weekday = WEEKDAY_NAMES.indexOf(String(args.weekday ?? ""));
+    if (weekday < 0) {
+      return text("A weekly schedule needs weekday, Sunday through Saturday.", true);
+    }
+    raw.weekday = weekday;
+  }
+
+  const now = Date.now();
+  const parsed = normalizeScheduleInput(raw, now);
+  if (!parsed.ok) return text(parsed.error, true);
+  const { spec, timeZone } = parsed.value;
+
+  const supersedesRef = String(args.supersedes ?? "").trim() || null;
+  let superseded: ChatProposalRow | null = null;
+  if (supersedesRef !== null) {
+    const found = supersedeTarget(listProposals(chatId), supersedesRef);
+    if (!found.ok) return text(found.message, true);
+    superseded = found.target;
+  }
+
+  const pending = pendingProposals(chatId).filter((p) => p.id !== superseded?.id);
+  const rival = pending.find(
+    (p) => p.kind === "schedule" && proposedScheduleOf(p)?.workflowId === workflow.id,
+  );
+  if (rival) {
+    return text(
+      `A schedule for “${workflow.name}” is already waiting (proposalId ` +
+        `${rival.id}). Pass that as supersedes to correct it rather than ` +
+        "proposing a second one. Nothing was proposed.",
+      true,
+    );
+  }
+  if (pending.length >= MAX_PENDING_PROPOSALS) {
+    return text(pendingLimitMessage(pending.length), true);
+  }
+
+  const description = describeSchedule(spec, timeZone);
+  const input: ProposalInput = {
+    kind: "schedule",
+    templateId: null,
+    // The workflow's own name and nothing around it: every sentence that quotes
+    // a proposal title already wraps it in quotation marks, and the card's badge
+    // and the decided row's "— scheduled" say what kind it is.
+    title: workflow.name,
+    task: description,
+    promptOverride: null,
+    mountId: null,
+    folder: null,
+    schedule: proposedScheduleBlob(workflow.id, spec, timeZone),
+    // `proposeWorkflow`'s reason: no id argument, so the only label this card
+    // carries is one handed over from the card it replaced.
+    specId: null,
+  };
+
+  const written = superseded
+    ? createProposalReplacing(chatId, input, superseded.id)
+    : { ok: true as const, proposal: createProposal(chatId, input) };
+  if (!written.ok) {
+    return text(
+      `${written.reason} You named "${supersedesRef}", and nothing was ` +
+        "proposed — not this schedule, and no change to that one.",
+      true,
+    );
+  }
+
+  const existing = getSchedule(workflow.id);
+  const first =
+    spec.kind === "everyHours"
+      ? `${spec.hours} hour(s) after approval`
+      : `at ${new Date(nextOccurrence(spec, timeZone, now)).toISOString()}`;
+  return text(
+    `Proposed putting “${workflow.name}” on a schedule (id ` +
+      `${written.proposal.id}): ${description}. Nothing starts until the ` +
+      "operator approves it. Once approved, the workflow starts itself at " +
+      `every occurrence with nobody present — the first ${first} — under ` +
+      "its own workflow-wide limits." +
+      (existing
+        ? ` It replaces the current schedule: ${describeSchedule(existing.spec, existing.timeZone)}` +
+          (existing.paused ? " (paused, and it stays paused)." : ".")
+        : "") +
+      (superseded
+        ? ` It replaces “${superseded.title}”, which is no longer waiting.`
+        : ""),
+  );
+}
+
+const PAST_PROPOSAL_STATUSES: readonly ProposalStatus[] = [
+  "pending",
+  "approved",
+  "rejected",
+  "failed",
+];
+
+/**
+ * Other conversations' proposals, and how the work they started ended.
+ *
+ * The run outcome is read off the run row rather than off the proposal, because
+ * `approved` only says a person agreed: whether the work then happened is the
+ * run's `status` and `reported_done`, and a model told only "approved" proposes
+ * the same job again believing it is done. A run since purged is said to be
+ * gone rather than dropped, for the reason a deleted task is.
+ */
+function pastProposalsTool(args: Record<string, unknown>, chatId: string) {
+  const status = args.status === undefined ? null : String(args.status);
+  if (status !== null && !PAST_PROPOSAL_STATUSES.includes(status as ProposalStatus)) {
+    return text(`status must be one of ${PAST_PROPOSAL_STATUSES.join(", ")}.`, true);
+  }
+  const mountId = String(args.mountId ?? "").trim() || null;
+  const folder = String(args.folder ?? "").trim() || null;
+  if (folder !== null && mountId === null) {
+    return text("folder needs the mountId it is in, from list_folders.", true);
+  }
+  const query = String(args.query ?? "").trim();
+
+  const { proposals, total } = findPastProposals({
+    excludeChatId: chatId,
+    status: status as ProposalStatus | null,
+    mountId,
+    folder,
+    q: query,
+    limit: Number(args.limit) || undefined,
+  });
+  if (total === 0) {
+    const filtered = status !== null || mountId !== null || query !== "";
+    return text(
+      filtered
+        ? "No proposal in any other conversation matches that."
+        : "No other conversation has proposed anything yet.",
+    );
+  }
+
+  const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
+  return text(
+    JSON.stringify(
+      {
+        total,
+        shown: proposals.length,
+        proposals: proposals.map((p) => {
+          const run = p.run_id ? getRun(p.run_id) : null;
+          return {
+            proposalId: p.id,
+            conversation: p.chat_title,
+            kind: p.kind,
+            title: p.title,
+            status: p.status,
+            proposedAt: iso(p.created_at),
+            decidedAt: iso(p.decided_at),
+            mountId: p.mount_id,
+            folder: p.folder,
+            templateId: p.template_id,
+            task: p.task.slice(0, 200),
+            // Why it failed, in the approval's own words. A rejection has none.
+            error: p.error,
+            workflowId: p.workflow_id,
+            run: !p.run_id
+              ? null
+              : run
+                ? {
+                    runId: run.id,
+                    status: run.status,
+                    reportedDone: run.reported_done === 1,
+                    stopReason: run.stop_reason,
+                    spent: providerRecordsSpend(run.provider) ? fmtUSD(run.spent_usd) : null,
+                  }
+                : { runId: p.run_id, gone: true },
+          };
+        }),
+      },
+      null,
+      1,
+    ),
+  );
+}
+
+/**
+ * The recurrence readout and the Dreaming ledger, joined for a turn to read.
+ *
+ * Two lists rather than one, and `docs/agent/dreaming.md`'s three kinds of
+ * nothing are why: a failure with no note is either one no night has qualified
+ * yet or one on an install where Dreaming is off, and a note whose failure no
+ * longer recurs is still what is known about it. Merged, an empty notes column
+ * reads as "nothing is known" on an install that simply never turned the writer
+ * on.
+ *
+ * A note's path is handed over only when `noteStillPresent` proves it is a file
+ * inside the vault now — the row's path is what a run *reported*, and a stored
+ * path is not evidence about the filesystem it is read back into.
+ */
+async function recurringFailuresTool(args: Record<string, unknown>) {
+  const settings = getSettings();
+  const limit = Math.min(Math.max(Math.trunc(Number(args.limit)) || 15, 1), MAX_FAILURES_LISTED);
+  const query = String(args.query ?? "").trim().toLowerCase();
+  const matches = (signature: string, sample: string) =>
+    !query ||
+    signature.toLowerCase().includes(query) ||
+    sample.toLowerCase().includes(query);
+
+  const readout = await scanDreaming({
+    timeZone: settings.dreamingTimeZone,
+    sinceDays: settings.transcriptRetentionDays,
+  });
+  const root = resolveKnowledgeRoot(settings);
+  const recurring = new Map(readout.recurring.map((r) => [r.signature, r]));
+
+  // `listNotes` stops at `NOTE_LIMIT`; the suppression set must not, or a note
+  // past the cut would list its failure as never written.
+  const ledger = listNotes();
+  const ledgerCut = ledgerCounts().notes > ledger.length;
+  const written = writtenSignatures();
+  const notes = ledger.filter((n) => matches(n.signature, n.sample));
+  const unwritten = readout.recurring.filter(
+    (r) => !written.has(r.signature) && matches(r.signature, r.sample),
+  );
+
+  return text(
+    JSON.stringify(
+      {
+        caveat:
+          "A signature is normalised error text, not a cause: one cause can " +
+          "appear as several signatures and one signature can carry several " +
+          "causes. A note's diagnosis is a hypothesis to check.",
+        window: {
+          daysWithErrors: readout.days.length,
+          since: readout.days[0] ?? null,
+        },
+        vault: root.ok ? { path: root.root } : { path: null, reason: root.reason },
+        notes: {
+          total: notes.length,
+          shown: Math.min(notes.length, limit),
+          ...(ledgerCut
+            ? { searchedNewest: ledger.length, olderNotesNotSearched: true }
+            : {}),
+          // Which of the three kinds of nothing, because an empty list reads as
+          // "nothing is known" on an install that simply never turned the writer
+          // on — and as "Dreaming is off" to a query that matched no note.
+          ...(notes.length === 0
+            ? {
+                why:
+                  ledger.length > 0
+                    ? "No note matches this query."
+                    : settings.dreamingEnabled
+                      ? "Dreaming is on and has not written a note yet."
+                      : "Dreaming is off, so no notes have been written. The failures below are still counted.",
+              }
+            : {}),
+          items: notes.slice(0, limit).map((n) => {
+            const present = root.ok ? noteStillPresent(root.root, n.notePath) : null;
+            const now = recurring.get(n.signature);
+            return {
+              signature: n.signature,
+              sample: n.sample.slice(0, FAILURE_SAMPLE_CHARS),
+              notePath:
+                present === true && root.ok && n.notePath
+                  ? path.resolve(root.root, n.notePath)
+                  : null,
+              // null is "no path recorded, or the vault is unreachable" — never
+              // "deleted", which is `false`.
+              present,
+              writtenFor: n.night,
+              recurringNow: now
+                ? { days: now.days.length, instances: now.instances, lastSeen: now.days.at(-1) }
+                : null,
+            };
+          }),
+        },
+        notYetWritten: {
+          total: unwritten.length,
+          shown: Math.min(unwritten.length, limit),
+          items: unwritten.slice(0, limit).map((r) => ({
+            signature: r.signature,
+            sample: r.sample.slice(0, FAILURE_SAMPLE_CHARS),
+            days: r.days.length,
+            firstSeen: r.days[0],
+            lastSeen: r.days.at(-1),
+            instances: r.instances,
+          })),
+        },
+      },
+      null,
+      1,
+    ),
   );
 }
 

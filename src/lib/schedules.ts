@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { instanceBudgetIsOff, type InstanceBudgetPolicy } from "./budget";
+import { getProposal, markProposal } from "./chat";
 import { db } from "./db";
 import { mayWriteDataDir } from "./serverLock";
 import { currentSnapshot } from "./orchestrator";
@@ -1025,4 +1026,145 @@ export function scheduleView(
     nextFireAt,
     refusal: unreadable ?? scheduleRefusal(workflow),
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Proposed by the chat                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What a schedule proposal carries: the workflow, and the recurrence as the
+ * form would have sent it.
+ *
+ * The recurrence is stored as `normalizeScheduleInput`'s *input* rather than as
+ * a `ScheduleSpec`, and that is for `everyHours` alone: its spec carries an
+ * anchor, and an anchor taken when the model wrote the card would make "every 6
+ * hours" fire on a cycle counted from a moment nobody approved. Re-normalized at
+ * the click, the interval counts from the approval, which is what the schedule
+ * form does with a press of Save.
+ */
+export interface ProposedSchedule {
+  workflowId: string;
+  recurrence: { kind: ScheduleSpec["kind"]; hours?: number; minutes?: number; weekday?: number; timeZone: string };
+}
+
+export function proposedScheduleBlob(
+  workflowId: string,
+  spec: ScheduleSpec,
+  timeZone: string,
+): string {
+  const recurrence: ProposedSchedule["recurrence"] =
+    spec.kind === "everyHours"
+      ? { kind: spec.kind, hours: spec.hours, timeZone }
+      : spec.kind === "daily"
+        ? { kind: spec.kind, minutes: spec.minutes, timeZone }
+        : { kind: spec.kind, weekday: spec.weekday, minutes: spec.minutes, timeZone };
+  const blob: ProposedSchedule = { workflowId, recurrence };
+  return JSON.stringify(blob);
+}
+
+/**
+ * The column read back, or null.
+ *
+ * Never throws, for `proposalDeps`' reason: a row an older build or a hand edit
+ * left must not be able to 500 the chat page. Null is then refused by name at
+ * the click, which is the direction that starts nothing.
+ */
+export function proposedScheduleOf(row: { schedule: string | null }): ProposedSchedule | null {
+  if (!row.schedule) return null;
+  try {
+    const raw = JSON.parse(row.schedule) as Record<string, unknown> | null;
+    const recurrence = raw?.recurrence as ProposedSchedule["recurrence"] | undefined;
+    if (typeof raw?.workflowId !== "string" || !recurrence || typeof recurrence !== "object") {
+      return null;
+    }
+    return { workflowId: raw.workflowId, recurrence };
+  } catch {
+    return null;
+  }
+}
+
+export type ScheduleProposalPlan =
+  | { ok: true; workflowId: string; name: string; spec: ScheduleSpec; timeZone: string }
+  | { ok: false; reason: string };
+
+/**
+ * Whether a schedule proposal may be approved now, and what it becomes.
+ *
+ * Pure and unit-tested, for `planWorkflowProposal`'s reason sharpened by what
+ * this one authorises: it is the step at which a model's text turns into a
+ * workflow that starts itself with nobody present. Every refusal is by name.
+ *
+ * The workflow is read **live** and refuses the click when it has gone or lost
+ * its limits, because it is what decides what each start may spend —
+ * `scheduleRefusal` is asked here for the reason it is asked at every fire.
+ * The recurrence is **frozen** and is re-normalized rather than trusted, so a
+ * zone this build's ICU has since stopped recognising is refused rather than
+ * stored.
+ */
+export function planScheduleProposal(
+  proposal: { schedule: string | null },
+  workflow: Pick<Workflow, "id" | "name" | "instanceBudget"> | null,
+  now: number,
+): ScheduleProposalPlan {
+  const stored = proposedScheduleOf(proposal);
+  if (!stored) {
+    return { ok: false, reason: "This proposal's schedule could not be read." };
+  }
+  if (!workflow || workflow.id !== stored.workflowId) {
+    return {
+      ok: false,
+      reason:
+        "The workflow this schedule was proposed for has been deleted, so there " +
+        "is nothing to put on a schedule.",
+    };
+  }
+  const refusal = scheduleRefusal(workflow);
+  if (refusal) return { ok: false, reason: refusal };
+
+  const parsed = normalizeScheduleInput(stored.recurrence, now);
+  if (!parsed.ok) return { ok: false, reason: parsed.error };
+  return {
+    ok: true,
+    workflowId: workflow.id,
+    name: workflow.name,
+    spec: parsed.value.spec,
+    timeZone: parsed.value.timeZone,
+  };
+}
+
+export type ScheduleApproval =
+  | { ok: true; workflowId: string; name: string }
+  | { ok: false; reason: string };
+
+/**
+ * Put the workflow a proposal names on its recurrence, and record that it did.
+ *
+ * `putSchedule` is the whole write, so everything that door already decides
+ * holds here unchanged: the cursor is stamped at the click, so an occurrence
+ * that passed while the card was waiting is not fired, and a schedule the
+ * operator had **paused** stays paused with its new recurrence — the card says
+ * which of the two this approval is.
+ */
+export function approveScheduleProposal(id: string, now = Date.now()): ScheduleApproval {
+  const proposal = getProposal(id);
+  if (!proposal) return { ok: false, reason: "No such proposal." };
+  if (proposal.kind !== "schedule") {
+    return { ok: false, reason: `This proposal is a ${proposal.kind}, not a schedule.` };
+  }
+
+  const stored = proposedScheduleOf(proposal);
+  const plan = planScheduleProposal(
+    proposal,
+    stored ? getWorkflow(stored.workflowId) : null,
+    now,
+  );
+  if (!plan.ok) {
+    markProposal(id, "failed", { error: plan.reason });
+    return { ok: false, reason: plan.reason };
+  }
+
+  putSchedule(plan.workflowId, plan.spec, plan.timeZone, now);
+  markProposal(id, "approved", { workflowId: plan.workflowId });
+  return { ok: true, workflowId: plan.workflowId, name: plan.name };
 }

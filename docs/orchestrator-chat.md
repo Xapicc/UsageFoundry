@@ -89,12 +89,25 @@ without one. It runs by hand exactly as it is; putting it on a
 [schedule](workflows.md#on-a-schedule) needs a budget, which you add in the
 editor. The card says so.
 
-The one place in this tool where runs *do* start without a click is a workflow's
-[orchestrator block](workflows.md#a-block-that-decides-what-to-run), and it is not this
-gate switched off — it is the same gate moved. There, you approved a graph that
-already named the folder, the guard set and the largest number of runs the block
-may ever start. The chat has none of those fixed in advance, which is exactly
-why it stops at a card.
+**It can propose a schedule, and approving one is the exception worth reading
+twice.** Ask for *"run the dependency sweep every Monday at nine"* and you get a
+card naming a workflow you already saved, how often, and in which time zone.
+Approving it puts that workflow on a [schedule](workflows.md#on-a-schedule), so
+it **starts itself at every occurrence with nobody present**. The chat can only
+propose one for a workflow that already has a workflow budget. That budget, and
+every block's guards, are what bound each start, and the chat can set neither.
+The card shows the first start in your own time, so a schedule written in the
+wrong zone is visibly an hour out before you approve it. It also shows the limits
+each start runs under and any schedule this one replaces. A paused schedule stays
+paused. If the workflow loses its budget before you click, the card says approval
+will be refused, and it is.
+
+The other places runs start without a click are a schedule you approved and a
+workflow's [orchestrator block](workflows.md#a-block-that-decides-what-to-run),
+and neither is this gate switched off. Both are the same gate moved. For a block,
+you approved a graph that already named the folder, the guard set and the largest
+number of runs the block may ever start. The chat has none of those fixed in
+advance, which is exactly why it stops at a card.
 
 **What the chat itself may do: anything, and it is told not to.** It runs with no
 tool allowlist at all — every tool the CLI has, this app's own alongside them —
@@ -120,6 +133,12 @@ windows, so it can tell you that approving ten runs into a nearly-spent window
 means ten runs that stop on their first guard check. `get_run` gives it any run's
 log, spend, status and the list of files that run changed, so "why did that one
 fail, and what should we do about it" is a question it can actually answer.
+`list_past_proposals` shows it what your *other* conversations proposed and what
+became of each, so it can notice work you already rejected, or work that already
+ran and failed. A rejection records no reason, so the chat cannot know why you
+rejected something unless it asks. `list_recurring_failures` shows the tool
+failures that keep coming back across sessions and the notes the **Dreaming**
+pass wrote about them, so a brief can point a run at what is already known.
 
 The one tool that is narrower than the rest is `get_run_diff`, which returns
 **patch text** and only for the runs this conversation proposed (for a workflow

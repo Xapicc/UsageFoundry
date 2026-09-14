@@ -7,6 +7,8 @@ import {
   FIRE_GRACE_MS,
   nextOccurrence,
   normalizeScheduleInput,
+  planScheduleProposal,
+  proposedScheduleBlob,
   scheduleRefusal,
   type ScheduleContext,
   type ScheduleSpec,
@@ -574,5 +576,72 @@ describe("describeSchedule", () => {
       describeSchedule({ kind: "everyHours", hours: 6, anchorAt: 0 }, BERLIN),
       "Every 6 hours",
     );
+  });
+});
+
+describe("planScheduleProposal — a cadence a model wrote becomes a schedule", () => {
+  // The step at which a chat's text turns into a workflow that starts itself
+  // with nobody present. Every way of getting it wrong is silent: a schedule
+  // stored against a workflow that has lost its limits fires unbounded, one
+  // anchored when the card was written fires on a cycle nobody approved, and a
+  // weekday that did not survive the round trip fires on the wrong day under
+  // words that name the right one.
+  const limited = {
+    id: "wf-1",
+    name: "Nightly",
+    instanceBudget: { maxInstanceCostUSD: 5, maxSessionFraction: null, maxWeeklyFraction: null },
+  };
+  const row = (spec: ScheduleSpec, timeZone = BERLIN, workflowId = "wf-1") => ({
+    schedule: proposedScheduleBlob(workflowId, spec, timeZone),
+  });
+
+  it("carries a weekly recurrence and its zone through the stored row unchanged", () => {
+    const plan = planScheduleProposal(
+      row({ kind: "weekly", weekday: 1, minutes: 540 }),
+      limited,
+      Date.UTC(2026, 8, 14),
+    );
+    assert.ok(plan.ok);
+    assert.deepEqual(plan.spec, { kind: "weekly", weekday: 1, minutes: 540 });
+    assert.equal(plan.timeZone, BERLIN);
+    assert.equal(plan.workflowId, "wf-1");
+  });
+
+  it("anchors an interval at the approval, not at the moment the card was written", () => {
+    const writtenAt = Date.UTC(2026, 8, 14, 9);
+    const approvedAt = writtenAt + 5 * 3_600_000 + 17 * 60_000;
+    const plan = planScheduleProposal(
+      row({ kind: "everyHours", hours: 6, anchorAt: writtenAt }),
+      limited,
+      approvedAt,
+    );
+    assert.ok(plan.ok);
+    assert.deepEqual(plan.spec, { kind: "everyHours", hours: 6, anchorAt: approvedAt });
+  });
+
+  it("refuses a workflow that has lost every limit since the card was written", () => {
+    const plan = planScheduleProposal(
+      row(DAILY_0900),
+      { ...limited, instanceBudget: { maxInstanceCostUSD: null, maxSessionFraction: null, maxWeeklyFraction: null } },
+      0,
+    );
+    assert.equal(plan.ok, false);
+    assert.match((plan as { reason: string }).reason, /Nightly/);
+  });
+
+  it("refuses by name when the workflow is gone, rather than scheduling another", () => {
+    assert.equal(planScheduleProposal(row(DAILY_0900), null, 0).ok, false);
+    // A workflow handed in for a different id is the caller's mistake, and the
+    // one direction it must fail is towards scheduling nothing.
+    assert.equal(
+      planScheduleProposal(row(DAILY_0900, BERLIN, "wf-other"), limited, 0).ok,
+      false,
+    );
+  });
+
+  it("refuses a row whose schedule cannot be read", () => {
+    assert.equal(planScheduleProposal({ schedule: null }, limited, 0).ok, false);
+    assert.equal(planScheduleProposal({ schedule: "{not json" }, limited, 0).ok, false);
+    assert.equal(planScheduleProposal({ schedule: '{"workflowId":"wf-1"}' }, limited, 0).ok, false);
   });
 });

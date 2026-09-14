@@ -10,6 +10,7 @@ import {
   type DecisionTally,
 } from "@/lib/chat";
 import { approveWorkflowProposal } from "@/lib/workflows";
+import { approveScheduleProposal } from "@/lib/schedules";
 import { promoteQueued } from "@/lib/orchestrator";
 import { chatDTO } from "../../dto";
 import { auditMutation } from "../../../../../lib/requestLog";
@@ -45,6 +46,14 @@ type Ctx = { params: Promise<{ id: string }> };
  * **saves a workflow** and starts nothing. It is still an approval — the
  * operator is agreeing to a graph a model wrote — and the second gate, the one
  * that turns it into agents, is the press of Run on the workflow page.
+ *
+ * A schedule proposal is the third, and the one whose approval *does* lead to
+ * agents with nobody present: it puts a workflow a person saved on a
+ * recurrence, through the same `putSchedule` the schedule form uses. It claims
+ * no folder and starts nothing inside this click, so like a workflow it is
+ * settled after the run half and is not asked the install ceiling here: each
+ * occurrence goes through `startWorkflow`, which is what a press of Run goes
+ * through.
  */
 async function postHandler(req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
@@ -98,6 +107,7 @@ async function postHandler(req: Request, ctx: Ctx) {
           rejected: 0,
           failed: [],
           saved: 0,
+          scheduled: 0,
           decided,
           foreign,
         }),
@@ -115,6 +125,7 @@ async function postHandler(req: Request, ctx: Ctx) {
       rejected,
       failed: [],
       saved: 0,
+      scheduled: 0,
       decided,
       foreign,
     });
@@ -124,6 +135,7 @@ async function postHandler(req: Request, ctx: Ctx) {
       rejected,
       failed: [],
       saved: [],
+      scheduled: [],
       chat: chatDTO(getChat(id)!),
     });
   }
@@ -157,6 +169,15 @@ async function postHandler(req: Request, ctx: Ctx) {
     else failed.push({ title: proposal.title, reason: res.reason, kind: "workflow" });
   }
 
+  const scheduled: Array<{ workflowId: string; name: string }> = [];
+  for (const pid of targets) {
+    const proposal = getProposal(pid);
+    if (proposal?.kind !== "schedule") continue;
+    const res = approveScheduleProposal(pid);
+    if (res.ok) scheduled.push({ workflowId: res.workflowId, name: res.name });
+    else failed.push({ title: proposal.title, reason: res.reason, kind: "schedule" });
+  }
+
   // Runs are admitted or queued by `createRun`; this is what starts whatever
   // the last approval made startable, exactly as `POST /api/runs` relies on.
   if (batch.started.length > 0) promoteQueued();
@@ -170,6 +191,7 @@ async function postHandler(req: Request, ctx: Ctx) {
     rejected: 0,
     failed,
     saved: saved.length,
+    scheduled: scheduled.length,
     decided,
     foreign,
   });
@@ -180,6 +202,7 @@ async function postHandler(req: Request, ctx: Ctx) {
     rejected: 0,
     failed,
     saved,
+    scheduled,
     chat: chatDTO(getChat(id)!),
   });
 }

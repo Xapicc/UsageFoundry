@@ -155,8 +155,17 @@ export type QuestionStatus = "pending" | "answered" | "superseded";
  * first of those two gates and it has to spell out what a canvas would show:
  * which guard set each block runs under, how many runs a deciding block may
  * start, and whether a merge block may pay to reconcile a conflict.
+ *
+ * `schedule` is the third, and it is the one kind whose approval **does** lead to
+ * agents with nobody present — later, at every occurrence. That is why it can
+ * only name a workflow a person already saved *with* a workflow-wide limit
+ * (`scheduleRefusal`, asked at the tool call and again at the click), and why
+ * the recurrence it carries is frozen on the row: the card spells the cadence
+ * out, and a cadence on a card is a promise about when spending starts. The
+ * workflow itself is read live, as a template is — it is a handle the operator
+ * can open, and what a press of Run may do is decided there, not here.
  */
-export type ProposalKind = "run" | "workflow";
+export type ProposalKind = "run" | "workflow" | "schedule";
 
 /**
  * "Start this proposal's run after that one's."
@@ -303,6 +312,12 @@ export interface ChatProposalRow {
    * read off the other's column.
    */
   graph: string | null;
+  /**
+   * A schedule proposal's workflow and recurrence, as JSON, or null. Read
+   * through `proposedScheduleOf` in `schedules.ts`; null on the other two kinds,
+   * for `graph`'s reason.
+   */
+  schedule: string | null;
   /**
    * The untemplated guard set frozen at proposal time, as JSON, or null.
    *
@@ -660,6 +675,85 @@ export function pendingProposals(chatId: string): ChatProposalRow[] {
   return listProposals(chatId).filter((p) => p.status === "pending");
 }
 
+/** The widest page `findPastProposals` answers with, whatever it was asked for. */
+export const PAST_PROPOSALS_MAX = 50;
+
+export interface PastProposalRow extends ChatProposalRow {
+  chat_title: string | null;
+}
+
+/**
+ * Proposals made in *other* conversations, newest decision first.
+ *
+ * `list_proposals` answers "what did this thread propose", and every turn of a
+ * new thread started with that answer empty — so the orchestrator re-proposed
+ * work the operator had rejected last week, and could not see that a run it was
+ * about to propose had already been approved elsewhere and failed. This is the
+ * install-wide half.
+ *
+ * `superseded` rows are left out whatever is asked: each is the same work as the
+ * card that replaced it, which is already in the list, and counting both reads
+ * as a job proposed twice. A rejection carries no reason — `rejectProposal`
+ * records none — and the caller must not present the absence as one.
+ *
+ * The text search is `findChats`' `LIKE` with its escape, for its reason: an
+ * unescaped `%` matches everything, and a search that returns everything reads
+ * exactly like one that found everything.
+ */
+export function findPastProposals(o: {
+  excludeChatId: string;
+  status?: ProposalStatus | null;
+  mountId?: string | null;
+  folder?: string | null;
+  q?: string;
+  limit?: number;
+}): { proposals: PastProposalRow[]; total: number } {
+  const escape = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+  const where = ["p.chat_id <> ?", "p.status <> 'superseded'"];
+  const args: unknown[] = [o.excludeChatId];
+
+  if (o.status) {
+    where.push("p.status = ?");
+    args.push(o.status);
+  }
+  if (o.mountId) {
+    where.push("p.mount_id = ?");
+    args.push(o.mountId);
+    const folder = (o.folder ?? "").replace(/^\/+|\/+$/g, "");
+    // A folder matches itself and what is under it, because "work on acme/web"
+    // proposed against `acme/web/api` is still work on that repository.
+    if (folder) {
+      where.push("(p.folder = ? OR p.folder LIKE ? ESCAPE '\\')");
+      args.push(folder, `${escape(folder)}/%`);
+    }
+  }
+  const q = (o.q ?? "").trim();
+  if (q) {
+    where.push("(p.title LIKE ? ESCAPE '\\' OR p.task LIKE ? ESCAPE '\\')");
+    const pattern = `%${escape(q)}%`;
+    args.push(pattern, pattern);
+  }
+
+  const clause = ` WHERE ${where.join(" AND ")}`;
+  const limit = Math.max(1, Math.min(PAST_PROPOSALS_MAX, Math.trunc(o.limit ?? 20) || 20));
+
+  const total = (
+    db()
+      .prepare(`SELECT COUNT(*) AS n FROM chat_proposals p${clause}`)
+      .get(...args) as { n: number }
+  ).n;
+  const proposals = db()
+    .prepare(
+      `SELECT p.*, s.title AS chat_title
+         FROM chat_proposals p JOIN chat_sessions s ON s.id = p.chat_id${clause}
+        ORDER BY COALESCE(p.decided_at, p.created_at) DESC, p.id
+        LIMIT ?`,
+    )
+    .all(...args, limit) as PastProposalRow[];
+
+  return { proposals, total };
+}
+
 /* ------------------------------------------------------------------ */
 /* Questions to the operator                                           */
 /* ------------------------------------------------------------------ */
@@ -993,6 +1087,8 @@ export interface ProposalInput {
   dependsOn?: readonly ProposalDependency[];
   /** A workflow proposal's normalized graph, as JSON. Null on a run one. */
   graph?: string | null;
+  /** A schedule proposal's workflow and recurrence, as JSON. Null otherwise. */
+  schedule?: string | null;
 }
 
 export function createProposal(
@@ -1024,8 +1120,8 @@ function insertProposal(
       `INSERT INTO chat_proposals
          (id, chat_id, created_at, kind, template_id, agent_id, model, task_ids,
           title, task, prompt_override, mount_id, folder, spec_id, depends_on,
-          graph, guards_json, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+          graph, schedule, guards_json, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
     )
     .run(
       id,
@@ -1053,6 +1149,7 @@ function insertProposal(
       input.specId ?? null,
       deps.length > 0 ? JSON.stringify(deps) : null,
       input.graph ?? null,
+      input.schedule ?? null,
       // Read here rather than at the click, and read from *settings* rather
       // than from anything on `input`: the card an untemplated proposal draws
       // spells its guards out, so the values it shows and the values the run
@@ -1754,7 +1851,7 @@ export function approveProposal(
     // sentence about the wrong thing entirely.
     return {
       ok: false,
-      reason: "This proposal is a workflow, not a run.",
+      reason: `This proposal is a ${proposal.kind}, not a run.`,
     };
   }
 
@@ -1992,11 +2089,26 @@ export interface DecisionTally {
    * report honestly.
    */
   saved: number;
+  /**
+   * Schedule proposals approved, each of which put a saved workflow on a
+   * recurrence. Counted apart from both of the above for `saved`'s reason
+   * turned around: nothing is running *yet*, but agents will start later with
+   * nobody present, and a sentence folding that into "saved" would hide the one
+   * approval in the panel that spends money unattended.
+   */
+  scheduled: number;
   /** Proposals of this chat that are no longer pending. */
   decided: number;
   /** Ids naming no proposal of this chat — another thread's, or gone. */
   foreign: number;
 }
+
+/** What a failed approval of each kind was an attempt to do. */
+const FAILED_VERB: Record<ProposalKind, string> = {
+  run: "start",
+  workflow: "save",
+  schedule: "schedule",
+};
 
 /**
  * The sentence a decision is recorded by — a note in the thread when something
@@ -2018,10 +2130,14 @@ export function decisionNote(t: DecisionTally): string {
       ? `Saved ${t.saved} workflow(s). Nothing is running — open one and press ` +
         "Run when you want it to."
       : "",
+    t.scheduled > 0
+      ? `Put ${t.scheduled} workflow(s) on a schedule. Each now starts itself at ` +
+        "every occurrence, with nobody present, under its own workflow-wide limits."
+      : "",
     t.rejected > 0 ? `Rejected ${t.rejected} proposal(s).` : "",
     ...t.failed.map(
       (f) =>
-        `Could not ${f.kind === "workflow" ? "save" : "start"} “${f.title}”: ${f.reason}`,
+        `Could not ${FAILED_VERB[f.kind ?? "run"]} “${f.title}”: ${f.reason}`,
     ),
     t.decided > 0
       ? `${t.decided} proposal(s) had already been decided and were left alone.`
@@ -2036,7 +2152,11 @@ export function decisionNote(t: DecisionTally): string {
   // proposals it declined to touch, which is what "the button appears to have
   // done nothing" looks like from the thread.
   const acted =
-    t.started > 0 || t.saved > 0 || t.rejected > 0 || t.failed.length > 0;
+    t.started > 0 ||
+    t.saved > 0 ||
+    t.scheduled > 0 ||
+    t.rejected > 0 ||
+    t.failed.length > 0;
   if (!acted && parts.length > 0) {
     parts.unshift(
       t.action === "approve" ? "Nothing was approved." : "Nothing was rejected.",
@@ -3697,9 +3817,9 @@ function systemPrompt(): string {
     "operator in a chat panel.",
     "",
     "You cannot start, stop or resume a run, and you cannot press Run on a",
-    "workflow. The two things you can do are propose_run and propose_workflow,",
-    "and both only record a proposal the operator approves or rejects by hand.",
-    "Say so plainly rather than implying work has started.",
+    "workflow. What you can do is propose_run, propose_workflow and",
+    "propose_schedule, and each only records a proposal the operator approves",
+    "or rejects by hand. Say so plainly rather than implying work has started.",
     "",
     "You have every tool the CLI offers, and you are trusted with them because",
     "your job is to look, not to build: read files, grep, run read-only",
@@ -3734,7 +3854,13 @@ function systemPrompt(): string {
     "  `cd <that> && git log …` to see who has touched it lately.",
     "- If a 5-hour or weekly window is nearly spent, say so — approving ten runs",
     "  into a full window means ten runs that stop on their first guard check.",
-    "- list_proposals carries the id you gave each proposal in this chat.",
+    "- list_proposals carries the id you gave each proposal in this chat;",
+    "  list_past_proposals is every other conversation's, and what became of",
+    "  them. Check it before proposing work the operator may already have",
+    "  rejected, or that already ran and failed.",
+    "- Before proposing work on a failure, list_recurring_failures says whether",
+    "  it has happened before and whether a note about it already exists. Put",
+    "  the note's path in the brief rather than having the run rediscover it.",
     "",
     "When the operator writes @something in their message, they are naming a",
     "saved agent from list_agents: propose the work under it, using its agentId.",
@@ -3804,6 +3930,13 @@ function systemPrompt(): string {
     "  may start. That is the number the operator is agreeing to.",
     "- Tell the operator to set a workflow-wide budget in the editor; without one",
     "  the workflow cannot be put on a schedule.",
+    "",
+    "Proposing a schedule:",
+    "- Unlike the other two, approving one does lead to spending with nobody",
+    "  present: the workflow then starts itself at every occurrence. Say that,",
+    "  and say how often and in which time zone.",
+    "- Never guess the time zone. If the operator has not said where they are,",
+    "  ask.",
     "",
     "Be brief. When you have proposed, reply with a short list of what you",
     "proposed and what you deliberately left out. The proposals appear in the",

@@ -11,6 +11,7 @@ import type {
   ChatProposalDTO,
   ChatQuestionDTO,
   ProposedBlockDTO,
+  ProposedScheduleDTO,
 } from "@/lib/apiTypes";
 import { chatRequest } from "@/lib/chatRequest";
 import { mergeMessages, threadItems, turnStartInstant } from "@/lib/chatThread";
@@ -169,9 +170,17 @@ const GUARD_TONE: Record<"missing" | "set", string> = {
  * started. Under-selecting costs one tick, over-selecting is the defect.
  */
 function approvalRefused(proposal: ChatProposalDTO): boolean {
-  return proposal.kind === "workflow"
-    ? proposal.blocks.length === 0
-    : proposal.guardsSource === "missing" || proposal.agentMissing;
+  switch (proposal.kind) {
+    case "workflow":
+      return proposal.blocks.length === 0;
+    // The one kind whose refusal the server already worded: a schedule depends on
+    // a live workflow and its limits, so the DTO carries `planScheduleProposal`'s
+    // own verdict rather than leaving this page to re-derive it.
+    case "schedule":
+      return proposal.schedule === null || proposal.schedule.refusal !== null;
+    case "run":
+      return proposal.guardsSource === "missing" || proposal.agentMissing;
+  }
 }
 
 /**
@@ -945,10 +954,11 @@ export default function ChatPage() {
   // three of the four selections were workflows.
   const chosen = pending.filter((p) => selected.has(p.id));
   const runCount = chosen.filter((p) => p.kind === "run").length;
-  const graphCount = chosen.length - runCount;
+  const graphCount = chosen.filter((p) => p.kind === "workflow").length;
+  const scheduleCount = chosen.filter((p) => p.kind === "schedule").length;
   const approveConsequence =
     chosen.length === 0
-      ? "Approving starts each run under the guards shown on it, and saves each workflow without starting it."
+      ? "Approving starts each run under the guards shown on it, saves each workflow without starting it, and puts each schedule in place."
       : [
           runCount === 1
             ? "Approve starts one unattended run that spends real money, under the guards shown on it."
@@ -959,6 +969,11 @@ export default function ChatPage() {
             ? "It saves one workflow without starting it — press Run on the workflow itself when you want it."
             : graphCount > 1
               ? `It saves ${graphCount} workflows without starting them — press Run on each when you want it.`
+              : "",
+          scheduleCount === 1
+            ? "It puts one workflow on a schedule, so it starts itself at every occurrence with nobody present."
+            : scheduleCount > 1
+              ? `It puts ${scheduleCount} workflows on schedules, so each starts itself at every occurrence with nobody present.`
               : "",
         ]
           .filter(Boolean)
@@ -2202,6 +2217,7 @@ function Proposal({
   onToggle: () => void;
 }) {
   const workflow = proposal.kind === "workflow";
+  const schedule = proposal.kind === "schedule";
   const missing = proposal.guardsSource === "missing";
   const folder = proposal.folderLabel ?? "folder from the template";
   // Named from what is actually behind it rather than from a fixed phrase: a
@@ -2253,6 +2269,7 @@ function Proposal({
             </span>
           )}
           {workflow && <Badge tone="neutral">workflow</Badge>}
+          {schedule && <Badge tone="neutral">schedule</Badge>}
         </div>
         <p className="mt-1 line-clamp-3 text-xs leading-normal text-ink-muted">
           {proposal.task}
@@ -2260,6 +2277,8 @@ function Proposal({
 
         {workflow ? (
           <ProposedGraph proposal={proposal} />
+        ) : schedule ? (
+          <ProposedSchedule schedule={proposal.schedule} />
         ) : (
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-ink-muted">
             <span className="inline-flex min-w-0 max-w-full items-center gap-1" title={folder}>
@@ -2383,7 +2402,7 @@ function Proposal({
           </p>
         )}
 
-        {missing && !workflow && (
+        {missing && proposal.kind === "run" && (
           <p className="mt-2 text-2xs leading-normal font-medium text-danger">
             The template this names has been deleted, so approving it will be
             refused.
@@ -2395,7 +2414,7 @@ function Proposal({
             about deletion: an agent missing its description or its prompt is
             one Claude Code will not register, so a run started as it would
             fail the moment it spawned. */}
-        {proposal.agentMissing && !workflow && (
+        {proposal.agentMissing && proposal.kind === "run" && (
           <p className="mt-2 text-2xs leading-normal font-medium text-danger">
             {proposal.agentName
               ? `The “${proposal.agentName}” agent is missing its description or its prompt, so approving this will be refused.`
@@ -2422,38 +2441,96 @@ function Proposal({
             Inside the `<label>` and safe there: `details` is interactive
             content, so a label's activation behaviour skips a press on the
             summary and anything under it. Measured in Chromium against this
-            nesting — the fold opens and the checkbox does not move. */}
-        <Disclosure className="mt-2 text-2xs text-ink-muted" summary={folded}>
-          <div className="mt-1.5 flex flex-col gap-2 border-l border-line pl-2.5">
-            <p className="leading-normal whitespace-pre-wrap">{proposal.task}</p>
+            nesting — the fold opens and the checkbox does not move.
 
-            {/* The figures the name stands for. The name stays the card's
-                answer and is the link here, which is the other half of "a
-                template is a thing the operator wrote and can go and read": the
-                run form is the only page that writes, applies or deletes one,
-                the workflow editor's picker being a read of the list. */}
-            {proposal.guardsDetail && (
-              <p className="leading-normal">
-                <Link href="/runs/new">{proposal.templateName}</Link> —{" "}
-                {proposal.guardsDetail}
-              </p>
-            )}
+            Not on a schedule card, whose "task" is the recurrence in one line
+            that is never clipped: the fold would only repeat it. */}
+        {!schedule && (
+          <Disclosure className="mt-2 text-2xs text-ink-muted" summary={folded}>
+            <div className="mt-1.5 flex flex-col gap-2 border-l border-line pl-2.5">
+              <p className="leading-normal whitespace-pre-wrap">{proposal.task}</p>
 
-            {/* The mark above says a prompt was rewritten and this is the only
-                place that says what it now reads — the one half of a run a
-                model may write, and until now marked and unreadable. */}
-            {proposal.promptOverride !== null && (
-              <div>
-                <p className="font-medium text-warn">The prompt the chat wrote</p>
-                <p className="mt-1 leading-normal whitespace-pre-wrap">
-                  {proposal.promptOverride}
+              {/* The figures the name stands for. The name stays the card's
+                  answer and is the link here, which is the other half of "a
+                  template is a thing the operator wrote and can go and read": the
+                  run form is the only page that writes, applies or deletes one,
+                  the workflow editor's picker being a read of the list. */}
+              {proposal.guardsDetail && (
+                <p className="leading-normal">
+                  <Link href="/runs/new">{proposal.templateName}</Link> —{" "}
+                  {proposal.guardsDetail}
                 </p>
-              </div>
-            )}
-          </div>
-        </Disclosure>
+              )}
+
+              {/* The mark above says a prompt was rewritten and this is the only
+                  place that says what it now reads — the one half of a run a
+                  model may write, and until now marked and unreadable. */}
+              {proposal.promptOverride !== null && (
+                <div>
+                  <p className="font-medium text-warn">The prompt the chat wrote</p>
+                  <p className="mt-1 leading-normal whitespace-pre-wrap">
+                    {proposal.promptOverride}
+                  </p>
+                </div>
+              )}
+            </div>
+          </Disclosure>
+        )}
       </div>
     </label>
+  );
+}
+
+/**
+ * What approving a schedule proposal puts in place.
+ *
+ * `ProposedGraph`'s argument with the direction reversed: that card leads with
+ * *saves*, because approving it starts nothing, and this one leads with the
+ * opposite, because approving it is agreeing to spending that begins later with
+ * nobody looking. The facts the agreement is taken on follow — the first start
+ * as an instant in the reader's own time, so a schedule written in the wrong zone
+ * is visibly an hour out before it is approved; the limits each start runs under;
+ * and whatever schedule this replaces.
+ */
+function ProposedSchedule({ schedule }: { schedule: ProposedScheduleDTO | null }) {
+  if (schedule === null) {
+    return (
+      <Hint tone="danger">
+        This proposal&rsquo;s schedule could not be read, so approving it will be
+        refused.
+      </Hint>
+    );
+  }
+
+  return (
+    <div className="mt-2 flex flex-col gap-1 text-2xs leading-normal text-ink-muted">
+      <p className="font-medium text-warn">
+        Approving makes{" "}
+        {schedule.workflowName ? (
+          <Link href={`/workflows/${schedule.workflowId}`}>{schedule.workflowName}</Link>
+        ) : (
+          "the workflow"
+        )}{" "}
+        start itself at every occurrence, with nobody present.
+      </p>
+      {schedule.intervalHours !== null ? (
+        <p>First start {schedule.intervalHours} h after you approve.</p>
+      ) : (
+        schedule.nextFireAt !== null && (
+          <p>First start {fmtDateTime(schedule.nextFireAt)}, your time.</p>
+        )
+      )}
+      {schedule.limitsLabel && <p>Each start is limited to {schedule.limitsLabel}.</p>}
+      {schedule.replaces && (
+        <p>
+          Replaces its current schedule: {schedule.replaces.description}
+          {schedule.replaces.paused ? " (paused, and it stays paused)." : "."}
+        </p>
+      )}
+      {schedule.refusal && (
+        <Hint tone="danger">{schedule.refusal} Approving it will be refused.</Hint>
+      )}
+    </div>
   );
 }
 
@@ -2592,7 +2669,9 @@ function Decided({
           >
             {proposal.title}
             {proposal.workflowId && (
-              <span className="text-ink-muted"> — saved, not started</span>
+              <span className="text-ink-muted">
+                {proposal.kind === "schedule" ? " — scheduled" : " — saved, not started"}
+              </span>
             )}
           </Link>
         ) : (

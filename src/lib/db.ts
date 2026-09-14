@@ -1159,6 +1159,16 @@ function migrate(db: Database.Database) {
   addColumn(db, "chat_proposals", "graph", "TEXT");
   addColumn(db, "chat_proposals", "workflow_id", "TEXT");
 
+  // A schedule proposal's target workflow and recurrence, as JSON, and null on
+  // the other two kinds for `graph`'s reason. The recurrence is frozen here
+  // because the card spells it out; the workflow is an id read live, because it
+  // is a handle the operator can open. Approving one settles onto `workflow_id`
+  // above — the workflow it scheduled — and never onto `run_id`.
+  //
+  // Deliberately not in PROPOSAL_BASE_COLUMNS, for the reason `guards_json`
+  // below states — `relaxProposalTemplate` runs before every `addColumn` here.
+  addColumn(db, "chat_proposals", "schedule", "TEXT");
+
   // The saved agent a proposed run is started as, by id — and an **id**
   // rather than the frozen copy `runs.agent` holds, for `run_templates`'
   // reason: a proposal is form input that a person reads and decides on, so it

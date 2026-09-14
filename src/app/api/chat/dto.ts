@@ -18,22 +18,33 @@ import {
 } from "../../../lib/chat";
 import {
   currentKnowledge,
+  getWorkflow,
   summarizeProposedGraph,
   type WorkflowGraph,
   type WorkflowKnowledge,
 } from "../../../lib/workflows";
+import {
+  describeSchedule,
+  getSchedule,
+  nextOccurrence,
+  normalizeScheduleInput,
+  planScheduleProposal,
+  proposedScheduleOf,
+} from "../../../lib/schedules";
+import type { InstanceBudgetPolicy } from "../../../lib/budget";
 import { getTemplate } from "../../../lib/templates";
 import { getAgent } from "../../../lib/agents";
 import { getTask } from "../../../lib/tasks";
 import { chatGuards, type RunGuards } from "../../../lib/settings";
 import { mountById } from "../../../lib/config";
-import { fmtUSD } from "../../../lib/format";
+import { fmtPct, fmtUSD } from "../../../lib/format";
 import type {
   ChatDTO,
   ChatListEntryDTO,
   ChatProposalDTO,
   ChatQuestionDTO,
   ProposedBlockDTO,
+  ProposedScheduleDTO,
 } from "../../../lib/apiTypes";
 
 /**
@@ -259,6 +270,7 @@ function proposalDTO(
       continueBranch: d.continueBranch,
     })),
     blocks: known ? proposedBlocks(p.graph, known, untemplated) : [],
+    schedule: p.kind === "schedule" ? proposedSchedule(p, Date.now()) : null,
     status: p.status,
     runId: p.run_id,
     workflowId: p.workflow_id,
@@ -297,6 +309,81 @@ function proposedBlocks(
   } catch {
     return [];
   }
+}
+
+/**
+ * A schedule proposal, in the terms its card has to state, or null where the
+ * row's schedule cannot be read — which the page draws as a refusal, because
+ * approval refuses it.
+ *
+ * The refusal is `planScheduleProposal`'s own sentence rather than a second
+ * reading of the same conditions, so the card and the click cannot disagree
+ * about whether the click will work. Only while pending: on a decided card the
+ * outcome is already on the row.
+ */
+function proposedSchedule(
+  p: ReturnType<typeof listProposals>[number],
+  now: number,
+): ProposedScheduleDTO | null {
+  const stored = proposedScheduleOf(p);
+  if (!stored) return null;
+  const workflow = getWorkflow(stored.workflowId);
+  const plan = planScheduleProposal(p, workflow, now);
+
+  const parsed = normalizeScheduleInput(stored.recurrence, now);
+  let nextFireAt: number | null = null;
+  if (parsed.ok) {
+    try {
+      nextFireAt = nextOccurrence(parsed.value.spec, parsed.value.timeZone, now);
+    } catch {
+      // `scheduleView`'s rule: an instant that cannot be worked out is not drawn,
+      // and the refusal above already carries the zone this build rejects.
+      nextFireAt = null;
+    }
+  }
+  const existing = workflow ? getSchedule(workflow.id) : null;
+
+  return {
+    workflowId: stored.workflowId,
+    workflowName: workflow?.name ?? null,
+    description: parsed.ok
+      ? describeSchedule(parsed.value.spec, parsed.value.timeZone)
+      : p.task,
+    nextFireAt,
+    intervalHours:
+      parsed.ok && parsed.value.spec.kind === "everyHours"
+        ? parsed.value.spec.hours
+        : null,
+    limitsLabel: workflow ? spellInstanceBudget(workflow.instanceBudget) : null,
+    replaces: existing
+      ? {
+          description: describeSchedule(existing.spec, existing.timeZone),
+          paused: existing.paused,
+        }
+      : null,
+    refusal: p.status === "pending" && !plan.ok ? plan.reason : null,
+  };
+}
+
+/**
+ * A workflow-wide limit written out, or null where none is set.
+ *
+ * Null is not "unlimited" on a card that schedules: `scheduleRefusal` refuses
+ * such a workflow, so the card is already carrying that refusal beside it.
+ */
+function spellInstanceBudget(budget: InstanceBudgetPolicy): string | null {
+  const parts = [
+    budget.maxInstanceCostUSD === null
+      ? null
+      : `${fmtUSD(budget.maxInstanceCostUSD)} per start`,
+    budget.maxSessionFraction === null
+      ? null
+      : `stops at ${fmtPct(budget.maxSessionFraction)} of the 5-hour window`,
+    budget.maxWeeklyFraction === null
+      ? null
+      : `stops at ${fmtPct(budget.maxWeeklyFraction)} of the weekly window`,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 /**
