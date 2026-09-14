@@ -252,8 +252,11 @@ is `docs/agent/testing.md`; interface defects and their classes are
 - **Four real prunes at `aggressive` removed 29.1-52.8%, 2026-08-24.** All
   early-end, at 167,326-169,283 tokens; removal matched the observed context
   drop to about 3% (266,683 claimed, 274,619 observed). The resume
-  invalidation was understated 16.6%, so `netReceipt` now prices it off the
-  first billed turn's `cache_creation_input_tokens`.
+  invalidation was understated 16.6% — charged against `tokens_after`,
+  405,049 across the four, where the resumes actually wrote 485,828 — which
+  overstated the net by 22.6% (`+$4.39` displayed against `+$3.58`
+  corrected), so `netReceipt` now prices it off the first billed turn's
+  `cache_creation_input_tokens`.
 
 - **Both prune triggers have fired: 54 receipts, 52 `early-end` and 2
   `boundary`, read 2026-09-07.** 2026-08-24 to 2026-08-28, 47 runs, read from

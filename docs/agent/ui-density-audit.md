@@ -174,11 +174,16 @@ Each of these is a thing a build run would plausibly reach for. None is allowed.
    configuration page.
 
    **Which row loses the digit is the order's business, not the new pane's.**
-   The digit follows position, so `/dreaming` moving up to eighth — beside
-   `/knowledge`, the pane it is nearest in kind — pushed API account to ⌘9 and
-   left Settings, the tenth row, with no shortcut at all. See
-   `docs/agent/dreaming.md` for that trade and for why the compromise (moving
-   the row, keeping the digits) is the one arrangement that is forbidden.
+   The digit follows position, and two insertions have each cost a row its
+   own. `/dreaming` was built at the bottom of the list carrying no digit
+   (`5bf2502`); moving it up to eighth — beside `/knowledge`, the pane it is
+   nearest in kind — took ⌘8, pushed API account from ⌘8 to ⌘9 and left
+   Settings, then the tenth row, with no shortcut at all (`700e277`).
+   Taskboard then went in fourth, under Runs, and pushed every row beneath it
+   down one (`4bc98a5`), so Dreaming holds ⌘9 today and API account, the tenth
+   row, joined Settings in having none. See `docs/agent/dreaming.md` for the
+   first of those two trades and for why the compromise (moving the row,
+   keeping the digits) is the one arrangement that is forbidden.
 2. **An accordion** — a *coordinated* set where opening one panel closes
 another. It is cards with extra clicks and a lost scroll position, and the
 coordination is a second state machine nothing else here has. **Independent
