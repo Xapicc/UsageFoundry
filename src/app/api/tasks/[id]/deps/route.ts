@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
-import { addTaskDep, depsForTask, removeTaskDep } from "../../../../../lib/taskDeps";
+import {
+  addTaskDep,
+  depsForTask,
+  depsForTasks,
+  removeTaskDep,
+} from "../../../../../lib/taskDeps";
 import { getTask } from "../../../../../lib/tasks";
 import { auditMutation } from "../../../../../lib/requestLog";
-import type { TaskDepsDTO } from "../../../../../lib/apiTypes";
+import type { TaskDepsDTO, TaskDepsReplyDTO } from "../../../../../lib/apiTypes";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,7 +35,7 @@ type Ctx = { params: Promise<{ id: string }> };
  */
 
 /**
- * One task's edges, both directions.
+ * One task's edges, both directions — and, on `?depth=2`, its neighbours' too.
  *
  * A task that is not there is a **404** rather than an empty neighbourhood, the
  * comments route's split and its reason: the two are answers to different
@@ -42,13 +47,54 @@ type Ctx = { params: Promise<{ id: string }> };
  * from the page fetch, where a press that changed an edge needs the
  * neighbourhood back without re-reading the whole task — and answering with one
  * shape from both is `chatDTO`'s rule.
+ *
+ * **The depth is the route's question rather than the caller's**, which is why
+ * this is a `depth` and not an `ids` list. The pane that draws a two-level graph
+ * used to read this route once per level-one neighbour — up to
+ * `MAX_TASK_DEP_LINKS` on each list, so twenty requests on mount — and each of
+ * those re-entered `depsForTasks`, the function that exists to answer for a list
+ * in two queries. A caller passing back ids it read from the previous answer
+ * would be the same round trip with the ids written down in between. Four
+ * queries now, whatever the task's degree: two for the anchor, two for all of
+ * its neighbours at once.
+ *
+ * Depth 1 stays the default and stays the same shape on the wire, because it is
+ * also what `POST` and `DELETE` embed under `deps` and neither of those draws a
+ * second level.
  */
-export async function GET(_req: Request, ctx: Ctx) {
+export async function GET(req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   if (!getTask(id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  const body: TaskDepsDTO = depsForTask(id);
+
+  const deps: TaskDepsDTO = depsForTask(id);
+  // Exactly "2" rather than a parsed number: this route answers two depths and
+  // nothing else, and a `parseInt` would quietly read `depth=7` as a promise it
+  // cannot keep.
+  if (new URL(req.url).searchParams.get("depth") !== "2") {
+    return NextResponse.json(deps, { headers: { "Cache-Control": "no-store" } });
+  }
+
+  // The level-one ids off the answer just built, deduplicated because a task can
+  // be reached on both lists at once — an ordering in both directions is two
+  // edges and one neighbour.
+  const neighbourIds = [
+    ...new Set([...deps.dependsOn, ...deps.dependents].map((ref) => ref.id)),
+  ];
+  // Sorted, and it is the drawing's order rather than a tidy-up:
+  // `taskNeighbourhoodGraph` walks `beyond` to collect the second level's edges,
+  // so this key order is the order the `<path>` elements are emitted in and
+  // therefore which stroke is on top where two curves cross. Left as
+  // `depsForTasks` returns it, that is the order the rows came back in, and two
+  // reads of an unchanged neighbourhood could paint a crossing differently.
+  const beyond = depsForTasks(neighbourIds);
+  const body: TaskDepsReplyDTO = {
+    ...deps,
+    beyond: Object.fromEntries(
+      [...beyond.keys()].sort().map((id) => [id, beyond.get(id)!]),
+    ),
+  };
   return NextResponse.json(body, { headers: { "Cache-Control": "no-store" } });
 }
 

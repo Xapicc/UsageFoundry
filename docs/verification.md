@@ -717,6 +717,58 @@ is `docs/agent/testing.md`; interface defects and their classes are
   opposite ordering, a second level expanded the wrong way reads as a
   neighbourhood, and none of them throws or fails a typecheck.
 
+- **The thread on the run page, in a real browser, 2026-09-14.** The block
+  `RunTaskComments` draws in the inspector on `/runs/[id]`, against the branch's
+  own `.next/standalone/server.js` with a throwaway `DATA_DIR` and a `CLAUDE_BIN`
+  that cannot spawn, seeded through the real routes. One run linked to four task
+  ids so a single page carries every state the block has: a thread of **zero**, a
+  thread of **one**, a thread of **nine**, and an id whose task was deleted after
+  the link was written. Opened at **390px and 1280px**, in **light and dark**, in
+  the **default and ascii skins** — eight combinations, every one of them with no
+  console error, no sideways scroll, and the region measured inside its parent's
+  content box (322px in a 354px column at 390, 300px in 332px at 1280). All four
+  states drew: *Nothing said yet* with a link to the task, the single note under
+  `Operator`, *Newest 3 of 9* over notes 7–9 with a *Read the thread* link — the
+  newest end, measured rather than inferred — and *a task since deleted* with no
+  thread asked for and none drawn. A body's backticks and its wrapping survived at
+  390px in both skins. The poll gate was measured on its own: with the row forced
+  to `running`, **three** requests to `/api/runs/[id]/task-comments` in 25s at
+  0/10.1/20.1s; with it `failed`, **one**, the mount's, over the same span. Caveat:
+  one browser engine, and nothing here pressed anything — this block has no
+  control on it to press.
+
+- **The whole gate for the run page's thread, 2026-09-14**, on the worktree
+  mount: `npm run typecheck` exit 0; `npm test` **2789 tests, 2789 pass, 0 fail**;
+  `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` exit 0 with
+  `.next/standalone` written; `npm run smoke-pages` served
+  `.next/standalone/server.js` rather than the `next start` fallback and reported
+  **46/46 page loads clean, 0 of 23 pages failing at either width**. The one test
+  added covers `newestCommentsForTasks`, which is the bar rather than a convention:
+  a window reading the oldest rows instead of the newest draws a thread that looks
+  right and hides the note somebody just wrote, and a missing partition attributes
+  one brief's notes to another. Neither throws.
+
+- **The dependency pane's request count, before and after, 2026-09-14.** One
+  seeded database read by two builds of the same worktree, so the ids — and
+  therefore the layout — are the same in both. The anchor sits at
+  `MAX_TASK_DEP_LINKS` on **both** lists (ten dependencies and ten dependents)
+  with one task further out on each side, which is 41 nodes and 40 edges drawn.
+  **Before: 20 requests on mount**, one `GET /api/tasks/<neighbour>/deps` per
+  level-one neighbour, at both 1280px and 390px. **After: 1**, a single
+  `GET /api/tasks/<anchor>/deps?depth=2`. The drawing is unchanged and that was
+  measured rather than argued: the node list — titles, absolute `left`/`top`, and
+  the sheet's own width and height — hashes identically across the two builds
+  (`1803062a51df591e`), and so does the set of 40 SVG path `d` strings
+  (`5d71c1973efcf5b6`). The **ordered** path hash first diverged, because the new
+  `beyond` arrived in database order where it had arrived sorted; sorting the
+  reply's keys brought it back to `e4d7e610958c5a8f`, identical to before, so the
+  emitted DOM matches element for element. No console error at either width. The
+  three other states were checked on the same build: a task with no edges makes
+  **no** request and draws the empty state; a task with one edge makes one and
+  draws two nodes; and the read aborted in the page draws *the tasks beyond this
+  one could not be read* with the immediate neighbours still on the graph.
+  Caveat: one browser engine, and the default skin only.
+
 ### Workflows and schedules
 
 - **Workflows end to end, live dev server, stub CLI:** save refuses each bad

@@ -3821,6 +3821,28 @@ export interface TaskDepsDTO {
 }
 
 /**
+ * What `GET /api/tasks/[id]/deps` answers with, at whichever depth was asked for.
+ *
+ * The anchor's own neighbourhood, unchanged and still at the top level, plus —
+ * for `?depth=2` only — each of its level-one neighbours' own. That is exactly
+ * the `ReadonlyMap<string, TaskDepsDTO>` `taskNeighbourhoodGraph` already takes
+ * as its second argument, which is why the depth belongs to the **route** rather
+ * than to the caller: a page that read the anchor and then asked for its
+ * neighbours by id would be making the same round trip with the ids written down
+ * in between, and the ids it would send are ones the route just handed it.
+ *
+ * A neighbour with no edges of its own is **absent** from `beyond` rather than
+ * present and empty — `depsForTasks`' rule, which the graph builder already
+ * treats as nothing to expand. So is a neighbour deleted between the two reads,
+ * and that is now the truth rather than a gap: `ON DELETE CASCADE` took its edges
+ * with it.
+ */
+export interface TaskDepsReplyDTO extends TaskDepsDTO {
+  /** Keyed by level-one neighbour id. Absent unless `?depth=2` was asked for. */
+  beyond?: Record<string, TaskDepsDTO>;
+}
+
+/**
  * One task on the board, whole.
  *
  * `mountId` and `folder` are null together or set together — the wire shape of
@@ -3951,6 +3973,42 @@ export interface RunTaskDTO {
   title: string | null;
   status: TaskStatusDTO | null;
 }
+
+/**
+ * The newest notes on one task a run was started for, as
+ * `GET /api/runs/[id]/task-comments` answers for it.
+ *
+ * A shape and a route of its own rather than a field on `RunTaskDTO`, and the
+ * separation is the affordability rule `TaskDTO.deps` states the other way
+ * round. There, a bounded thing rides the payload because a second request would
+ * be an N+1; here the payload is the run detail route, which the run page polls
+ * every three seconds for the life of a run, and a note's body runs to
+ * `MAX_TASK_COMMENT` characters — so `MAX_RUN_TASKS` threads a poll is what
+ * riding it would cost. `RunAgentCost`'s route makes the same trade for the same
+ * page and says so.
+ *
+ * There is no entry for a task the operator has since deleted: `ON DELETE
+ * CASCADE` took its notes with it, and a row saying "0 notes" about a task that
+ * is not there would answer a question the surface never asked.
+ */
+export interface RunTaskNotesDTO {
+  taskId: string;
+  /** Oldest first, and the newest `MAX_RUN_TASK_NOTES` of them. */
+  newest: TaskCommentDTO[];
+  /** Notes on this task, counted over the table; may exceed `newest.length`. */
+  total: number;
+}
+
+/**
+ * Notes the run page draws per board task before it stops and links to the rest.
+ *
+ * Three rather than the whole thread, because the run page's copy is a block in
+ * a column beside ten others and a thread drawn whole would be the column. Three
+ * is the last exchange — a note, an answer and a reply — which is the span that
+ * makes the newest one readable; a longer thread is a page of its own and there
+ * is one, one link away.
+ */
+export const MAX_RUN_TASK_NOTES = 3;
 
 /**
  * Characters of a task's brief the list carries.

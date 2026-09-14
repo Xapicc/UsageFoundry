@@ -7,6 +7,7 @@ import type {
   TaskDTO,
   TaskDepRefDTO,
   TaskDepsDTO,
+  TaskDepsReplyDTO,
   TaskListDTO,
 } from "@/lib/apiTypes";
 import { TASK_STATUS_TONE, fmtTaskPlace, fmtTaskRefPlace } from "@/lib/format";
@@ -55,9 +56,10 @@ import { TaskDepGraph } from "@/components/TaskDepGraph";
  *
  * **It reads on arrival and after every write, and it does not poll.** The page
  * around it refuses to for the reason its own docblock gives, and this pane
- * holds the same kind of state: a half-made choice across two selects. What it
- * reads is each level-one neighbour's own neighbourhood, which is how the
- * drawing gets a second level without a route that answers for one.
+ * holds the same kind of state: a half-made choice across two selects. The read
+ * is `?depth=2` against the anchor's own route, which answers with every
+ * level-one neighbour's neighbourhood at once — **one** request whatever the
+ * degree, where it was one per neighbour and up to twenty on mount.
  */
 
 /** What the two selects add up to. The wire has one direction; the page has two. */
@@ -164,8 +166,11 @@ export function TaskDependencies({
    *
    * `task.deps` is a fresh object on every read of the row, and the row is
    * re-read after every press that moves the task — so an effect keyed on it
-   * would re-issue up to twenty requests each time a status changed. The ids
-   * are what the answer actually depends on.
+   * would re-read the second level each time a status changed, which changes
+   * nothing about who this task's neighbours are. The ids are what the answer
+   * actually depends on. Still worth its `useMemo` now that the read is one
+   * request rather than twenty: the request is four queries and the effect
+   * would otherwise fire on every press.
    */
   const neighbourKey = useMemo(
     () =>
@@ -176,41 +181,46 @@ export function TaskDependencies({
   );
 
   useEffect(() => {
-    const ids = neighbourKey === "" ? [] : neighbourKey.split(" ");
-    if (ids.length === 0) {
+    if (neighbourKey === "") {
+      // Nothing beyond a task with no edges, and nothing to ask: the graph is
+      // the anchor alone and the route would answer for an empty second level.
       setBeyond(new Map());
       setBeyondError(null);
       return;
     }
     let alive = true;
     void (async () => {
-      const answers = await Promise.all(
-        ids.map(
-          async (id) =>
-            [id, await jsonRequest<TaskDepsDTO>(`/api/tasks/${id}/deps`)] as const,
-        ),
+      // One request whatever this task's degree. It used to be one per level-one
+      // neighbour — up to `MAX_TASK_DEP_LINKS` on each list, so twenty on mount
+      // — and each of them re-entered the function that exists to answer for a
+      // list in two queries. The anchor's own neighbourhood comes back too and
+      // is ignored here: `task.deps` is the row's, read by the page, and two
+      // readings of it on screen at once is what `chatDTO`'s one-shape rule is
+      // against.
+      const res = await jsonRequest<TaskDepsReplyDTO>(
+        `/api/tasks/${task.id}/deps?depth=2`,
       );
       if (!alive) return;
-      const read = new Map<string, TaskDepsDTO>();
-      let failed = false;
-      for (const [id, res] of answers) {
-        if (res.ok) read.set(id, res.data);
-        else failed = true;
+      if (!res.ok) {
+        // Never a failed read drawn as a rim: what a reader would otherwise take
+        // for the end of the ordering is the request stopping, and the two look
+        // exactly alike on a graph. All of the second level at once now, so the
+        // sentence no longer says "on that side".
+        setBeyond(new Map());
+        setBeyondError(
+          "The tasks beyond this one could not be read, so the graph stops at its immediate neighbours.",
+        );
+        return;
       }
-      setBeyond(read);
-      // Never a failed read drawn as a rim: what a reader would otherwise take
-      // for the end of the ordering is the request stopping, and the two look
-      // exactly alike on a graph.
-      setBeyondError(
-        failed
-          ? "One of the neighbouring tasks could not be read, so the graph stops a level short on that side."
-          : null,
-      );
+      // A neighbour with no edges of its own is absent rather than empty, which
+      // is what `taskNeighbourhoodGraph` already reads as nothing to expand.
+      setBeyond(new Map(Object.entries(res.data.beyond ?? {})));
+      setBeyondError(null);
     })();
     return () => {
       alive = false;
     };
-  }, [neighbourKey]);
+  }, [task.id, neighbourKey]);
 
   const loadCandidates = useCallback(async () => {
     const res = await jsonRequest<TaskListDTO>(`/api/tasks?limit=${MAX_TASK_PAGE}`);

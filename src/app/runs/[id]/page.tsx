@@ -63,6 +63,7 @@ import { RunHandoff } from "@/components/RunHandoff";
 import { RunLand } from "@/components/RunLand";
 import { RunOutput } from "@/components/RunOutput";
 import { RunReview } from "@/components/RunReview";
+import { RunTaskComments } from "@/components/RunTaskComments";
 import { RunTasks } from "@/components/RunTasks";
 
 /* ------------------------------------------------------------------ */
@@ -1777,6 +1778,19 @@ export default function RunDetail({
               by it, which `orchestrator.test.ts` asserts again with one
               selected. Tidying it into the guards is a change nothing would
               report. */}
+          {/* The notes on the brief, beside the brief: the region below holds
+              `Task`, which is the prompt the agent was handed, and this is what
+              has been said about it since without changing it. Gated on the run
+              naming a board task at all — a run started from the form names
+              none, and an empty region on every one of those costs more than
+              the block is worth on the few that have one, which is the rule the
+              background-task panel already follows. */}
+          {run.tasks && run.tasks.length > 0 && (
+            <Region title="On the board">
+              <RunTaskComments runId={id} tasks={run.tasks} active={active} />
+            </Region>
+          )}
+
           <Region title="How it was set up">
             {/* Both models in one place, in precedence order, because that is
                 the only order in which either row answers anything: the run's

@@ -367,6 +367,58 @@ export function commentCountsForTasks(
   return counts;
 }
 
+/**
+ * The newest few notes on each of these tasks, in one query rather than one each.
+ *
+ * `commentCountsForTasks`' shape for a caller that needs the notes themselves,
+ * and the same reason one table over: a run may name up to `MAX_RUN_TASKS`
+ * tasks, so a thread fetched per task would be an N+1 on whatever timer the
+ * surface drawing them runs. A task with no notes is **absent** from the map
+ * rather than present as an empty array, which is what lets the caller's `?? []`
+ * be the one place the default is written.
+ *
+ * Each list reads oldest first and a task carrying more than `perTask` loses its
+ * **oldest** end — `listTaskComments`' rule, and it has to be the same one:
+ * whichever surface draws a slice of a thread, the note that changes what a
+ * reader does is the one just written.
+ */
+export function newestCommentsForTasks(
+  taskIds: readonly string[],
+  perTask: number,
+): Map<string, TaskComment[]> {
+  const newest = new Map<string, TaskComment[]>();
+  const capped = Math.max(0, Math.floor(perTask) || 0);
+  if (taskIds.length === 0 || capped === 0) return newest;
+
+  const placeholders = taskIds.map(() => "?").join(", ");
+  // A window rather than a `LIMIT` per task: answering for a list in one
+  // statement is the whole reason this takes one. The ordering inside the
+  // partition is `listTaskComments`' descending one, for its reason — the rows
+  // kept are the newest — and the outer `ORDER BY` puts each task's slice back
+  // into the order a thread is read in.
+  const rows = db()
+    .prepare(
+      `SELECT ${COLUMNS} FROM (
+         SELECT ${COLUMNS},
+                ROW_NUMBER() OVER (
+                  PARTITION BY task_id ORDER BY created_at DESC, id DESC
+                ) AS row_num
+           FROM task_comments
+          WHERE task_id IN (${placeholders})
+       )
+       WHERE row_num <= ?
+       ORDER BY task_id, created_at ASC, id ASC`,
+    )
+    .all(...taskIds, capped) as TaskCommentRow[];
+
+  for (const row of rows) {
+    const list = newest.get(row.task_id);
+    if (list) list.push(rowToTaskComment(row));
+    else newest.set(row.task_id, [rowToTaskComment(row)]);
+  }
+  return newest;
+}
+
 /* ------------------------------------------------------------------ */
 /* The wire                                                            */
 /* ------------------------------------------------------------------ */
