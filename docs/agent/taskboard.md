@@ -845,7 +845,9 @@ value is absent resolves to the first option and an unrelated save would then
 move the task to a folder nobody picked.
 
 **The thread is drawn on the task's own page, and it does not poll either.**
-`TaskThread` in `src/app/tasks/[id]/page.tsx` reads
+`TaskThread` in `src/components/TaskThread.tsx` — lifted out of the page when the
+run page grew a second reader, and `TaskCommentRows` beside it is why a note looks
+the same on both — reads
 `GET /api/tasks/[id]/comments` on arrival and again after a post it made itself,
 and there is no interval anywhere on that route. It holds a **second** draft
 beside the editor's, so the page's own reason applies to it twice over: a timer
@@ -862,6 +864,49 @@ write one, and a thread longer than `MAX_TASK_COMMENTS` says how many of how man
 it is showing and which end is missing. The composer is drawn in all three,
 including the failed read — a thread that could not be read says nothing about
 whether a note can be written, and the door answers for that itself.
+
+**The run page draws the same notes, carries no composer, and polls — and the
+three are one decision rather than three.** `RunTaskComments` in
+`src/components/` is a block in the inspector on `/runs/[id]`, under a region
+called *On the board* and beside `Task`, which is the prompt the agent was handed;
+this is what has been said about that brief since. A run's work cycle can write a
+note on its own task, and until this block the operator watching the run had to
+open `/tasks/[id]` to read one — on the page they were already on. **No composer**
+comes first: the operator writes where the thread is read whole, and a second box
+here would be a second draft to lose on a page whose business is something else.
+That is what makes the rest available. **It polls** because the reason the task
+page refuses to is spent — with no draft there is nothing a re-read can throw
+away — and because what it is watching, a live agent writing a note, is the whole
+reason the block exists; a note that appeared only on reload would miss it. The
+interval is the **board's** ten seconds rather than the run page's three: a note
+is a row in the same table a board asks about on that cadence, and nothing here
+moves faster than somebody finishing a sentence. It is gated on `active`, so a run
+that can no longer write stops being asked about — measured 2026-09-14 at three
+requests in twenty-five seconds while `running` and one, the mount's, over the
+same span once `failed`.
+
+**One request whatever the run names, and it is keyed on the run.**
+`GET /api/runs/[id]/task-comments` answers for every board task the run is linked
+to at once, in two queries — `newestCommentsForTasks` and `commentCountsForTasks`,
+both of which take the list. A thread fetched per task would be `MAX_RUN_TASKS`
+requests every poll, which is the N+1 the board's own listing already refuses one
+table up. It is **not** a field on `GET /api/runs/[id]`: that payload is polled
+every three seconds for the life of a run and a note's body runs to
+`MAX_TASK_COMMENT` characters, which is `RunAgentCost`'s route's reason for
+existing and the same trade. A task the operator has deleted is absent from the
+reply rather than present and empty — `ON DELETE CASCADE` took its notes with it —
+and the block draws *a task since deleted* for it and asks nothing, which is the
+fourth way of having nothing this surface has and the task page does not.
+
+**What it may draw is `MAX_RUN_TASK_NOTES`, and the line saying so is not the task
+page's notice.** Three notes — the last exchange, which is the span that makes the
+newest one readable — because the block sits in a column beside ten others and a
+thread drawn whole would be the column. Above them, *Newest 3 of 9* and a link to
+the task. That is deliberately **not** the `warn` notice the task page draws for
+the same shortfall: there the route ran out of room and dropped the oldest end,
+which is a caveat, and here the block is drawing exactly what it is for with the
+rest one link away, which is a fact about where to find it. `total` covers both
+causes because it is counted over the table either way.
 
 **A note's body is drawn as the characters it is, and that is decided by the
 field above it rather than by what the text might be.** `whitespace-pre-wrap`,

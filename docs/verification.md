@@ -686,6 +686,37 @@ is `docs/agent/testing.md`; interface defects and their classes are
   opposite ordering, a second level expanded the wrong way reads as a
   neighbourhood, and none of them throws or fails a typecheck.
 
+- **The thread on the run page, in a real browser, 2026-09-14.** The block
+  `RunTaskComments` draws in the inspector on `/runs/[id]`, against the branch's
+  own `.next/standalone/server.js` with a throwaway `DATA_DIR` and a `CLAUDE_BIN`
+  that cannot spawn, seeded through the real routes. One run linked to four task
+  ids so a single page carries every state the block has: a thread of **zero**, a
+  thread of **one**, a thread of **nine**, and an id whose task was deleted after
+  the link was written. Opened at **390px and 1280px**, in **light and dark**, in
+  the **default and ascii skins** — eight combinations, every one of them with no
+  console error, no sideways scroll, and the region measured inside its parent's
+  content box (322px in a 354px column at 390, 300px in 332px at 1280). All four
+  states drew: *Nothing said yet* with a link to the task, the single note under
+  `Operator`, *Newest 3 of 9* over notes 7–9 with a *Read the thread* link — the
+  newest end, measured rather than inferred — and *a task since deleted* with no
+  thread asked for and none drawn. A body's backticks and its wrapping survived at
+  390px in both skins. The poll gate was measured on its own: with the row forced
+  to `running`, **three** requests to `/api/runs/[id]/task-comments` in 25s at
+  0/10.1/20.1s; with it `failed`, **one**, the mount's, over the same span. Caveat:
+  one browser engine, and nothing here pressed anything — this block has no
+  control on it to press.
+
+- **The whole gate for the run page's thread, 2026-09-14**, on the worktree
+  mount: `npm run typecheck` exit 0; `npm test` **2789 tests, 2789 pass, 0 fail**;
+  `env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build` exit 0 with
+  `.next/standalone` written; `npm run smoke-pages` served
+  `.next/standalone/server.js` rather than the `next start` fallback and reported
+  **46/46 page loads clean, 0 of 23 pages failing at either width**. The one test
+  added covers `newestCommentsForTasks`, which is the bar rather than a convention:
+  a window reading the oldest rows instead of the newest draws a thread that looks
+  right and hides the note somebody just wrote, and a missing partition attributes
+  one brief's notes to another. Neither throws.
+
 ### Workflows and schedules
 
 - **Workflows end to end, live dev server, stub CLI:** save refuses each bad

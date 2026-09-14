@@ -53,6 +53,7 @@ const {
   addTaskComment,
   commentAuthor,
   listTaskComments,
+  newestCommentsForTasks,
   normalizeTaskCommentInput,
 } = require("./taskComments") as typeof import("./taskComments");
 const { createTask, deleteTask, getTask } = require("./tasks") as typeof import("./tasks");
@@ -255,4 +256,59 @@ test("a deleted task takes its thread with it, and leaves every other thread sta
   const written = addTaskComment(doomed, { body: "too late" }, ACTORS.operator);
   assert.equal(written.ok, false);
   assert.equal(!written.ok && written.kind, "missing");
+});
+
+test("the newest few per task, in one query, in reading order and never mixed", () => {
+  const first = seedTask("first");
+  const second = seedTask("second");
+  const silent = seedTask("silent");
+
+  // Interleaved across the two tasks and written straight afterwards, because
+  // five inserts inside one millisecond would tie on `created_at` and the
+  // partition's own order would be the tiebreak instead of what is under test.
+  const write = (taskId: string, body: string, at: number) => {
+    const written = addTaskComment(taskId, { body }, ACTORS.operator);
+    assert.ok(written.ok);
+    db()
+      .prepare("UPDATE task_comments SET created_at = ? WHERE id = ?")
+      .run(at, written.comment.id);
+  };
+  write(first, "first 0", 1_000);
+  write(second, "second 0", 1_001);
+  write(first, "first 1", 1_002);
+  write(second, "second 1", 1_003);
+  write(first, "first 2", 1_004);
+  write(first, "first 3", 1_005);
+
+  const newest = newestCommentsForTasks([first, second, silent], 2);
+
+  // The direction. Taking the oldest two instead would draw a thread that looks
+  // right and hides the note somebody wrote a minute ago, which is the only one
+  // a reader on the run page is there for.
+  assert.deepEqual(
+    (newest.get(first) ?? []).map((c) => c.body),
+    ["first 2", "first 3"],
+  );
+  // The partition. A window without one would hand this task rows written
+  // against another brief, attributed to the wrong task and readable as an
+  // instruction about it.
+  assert.deepEqual(
+    (newest.get(second) ?? []).map((c) => c.body),
+    ["second 0", "second 1"],
+  );
+  // Absent rather than empty, so `?? []` at the call site is the one place the
+  // default is written.
+  assert.equal(newest.has(silent), false);
+
+  // A task carrying fewer than the cap comes back whole, still oldest first.
+  assert.deepEqual(
+    (newestCommentsForTasks([second], 5).get(second) ?? []).map((c) => c.body),
+    ["second 0", "second 1"],
+  );
+
+  // The two ways of asking for nothing, neither of which may reach SQL: an
+  // empty list would build `IN ()`, and a cap of zero a `LIMIT` nothing could
+  // satisfy.
+  assert.equal(newestCommentsForTasks([], 3).size, 0);
+  assert.equal(newestCommentsForTasks([first], 0).size, 0);
 });
