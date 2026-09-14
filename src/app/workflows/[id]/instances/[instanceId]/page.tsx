@@ -597,9 +597,16 @@ export default function WorkflowInstancePage() {
                 instance.spentUnmeasured > 0
                 ? `${fmtUSD(instance.spentUSD)} reported so far`
                 : `${fmtUSD(instance.spentUSD)} measured so far`
-              : `of ${fmtUSD(budget.maxInstanceCostUSD)}; the guard reads ${fmtUSD(
-                  instance.spentGuardUSD,
-                )}`
+              : // The ceiling and nothing else. `value`/`upperValue` put both
+                // dollar figures in the head, so a "the guard reads …" clause
+                // here printed one of them twice a hand's width apart; and where
+                // the two agree `Meter` draws no band at all, so the head's
+                // single figure already *is* the guard's. What the band means is
+                // said by the live-blocks hint below and, to a screen reader, by
+                // `upperHint`. `InstallSpendCard` keeps the clause because its
+                // head is percentages and its detail is the only place its
+                // dollar figures appear.
+                `of ${fmtUSD(budget.maxInstanceCostUSD)}`
           }
         />
 
