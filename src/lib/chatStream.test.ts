@@ -23,7 +23,9 @@ import { totalTokens } from "./pricing";
  * branch here is a warning on every turn, and a warning on every turn is one
  * nobody reads. So the handled list is asserted against the Claude parser's —
  * `assistant`, `user`, `result`, `system`, `tool_progress`,
- * `rate_limit_event` — rather than against what this file acts on.
+ * `rate_limit_event` — rather than against what this file acts on. The two
+ * lists agree on all six now; what differs is what each parser *does* with
+ * them, and that is asserted separately rather than left to the same test.
  */
 
 const line = (o: unknown) => JSON.stringify(o);
@@ -179,12 +181,26 @@ describe("readChatEvent", () => {
     readChatEvent(acc, line({ type: "user", message: { content: [] } }));
     assert.deepEqual([...acc.unknownTypes], []);
 
-    // The divergence that is left, asserted rather than described so that
-    // closing it has to come back through this file. `handleStreamLine` reads
-    // `tool_progress` into the run page's live tool strip; the chat has no such
-    // strip, so here it is still a type with no branch.
-    readChatEvent(acc, line({ type: "tool_progress", tool_use_id: "tu_1" }));
-    assert.deepEqual([...acc.unknownTypes], ["tool_progress"]);
+    // `tool_progress` was the divergence that was left, and this assertion is
+    // what made closing it come back through this file. It is now claimed here
+    // too, on `rate_limit_event`'s reasoning one notch quieter: the CLI emits
+    // one per open tool call roughly every 30 seconds, so it put a
+    // `chat.stream_unread` on every turn whose tool ran longer than that.
+    //
+    // Claimed, and deliberately not *read*. `handleStreamLine` folds it into
+    // the run page's live tool strip; the chat panel has no strip, so a reader
+    // here would be inventing a live-only field with nothing drawing it. That
+    // is the half this asserts — the event changes nothing about the turn —
+    // because a future strip should have to come back through this file too.
+    const before = { ...acc, tokens: { ...acc.tokens } };
+    const moved = readChatEvent(acc, line({ type: "tool_progress", tool_use_id: "tu_1" }));
+    assert.deepEqual([...acc.unknownTypes], []);
+    assert.deepEqual(moved, { textGrew: false, spendGrew: false, sawResult: false });
+    assert.equal(acc.text, before.text);
+    assert.equal(acc.costGuardUSD, before.costGuardUSD);
+    assert.equal(totalTokens(acc.tokens), totalTokens(before.tokens));
+    assert.equal(acc.result, before.result);
+    assert.equal(acc.unreadable, before.unreadable);
   });
 
   it("counts an event type it has no branch for, by name", () => {

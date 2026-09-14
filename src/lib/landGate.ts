@@ -98,6 +98,68 @@ export function landVerdict(o: {
   };
 }
 
+/**
+ * Environment for the verify child.
+ *
+ * The same strip every other child this app spawns gets, and every exclusion's
+ * reasoning is the block above `CONTEXT_SHAPING_ENV` in `orchestrator.ts`,
+ * which the copies of this list cite in turn. It is a copy and not an import:
+ * `docs/agent/security.md` is explicit that a new spawn site takes a copy
+ * rather than a shared module, because a denylist that moves has to be read at
+ * every site that spawns and an import is what stops it being read — and here
+ * the import would also put the whole run loop behind the Land button, the
+ * same objection `authEnv` records and the same one that split
+ * `verifyCommand.ts` out of this file.
+ *
+ * Until this existed the spawn below passed **no `env` at all**, so the child
+ * inherited `process.env` whole. Two consequences, and only the first is a
+ * security one:
+ *
+ * - `UF_AUTH_TOKEN` opens `POST /api/runs`, `PUT /api/settings` and every other
+ *   run's diff; `ANTHROPIC_ADMIN_KEY` and `DATA_DIR` are the same shape one
+ *   notch down. The command is the operator's, written in Settings, but *what
+ *   it runs* is not: the default shape of a verify command is `npm test`, and
+ *   the script behind that name lives in the `package.json` of the tree Land is
+ *   about to merge — a tree an agent wrote. That is the argument the docblock
+ *   over `runVerify` already makes for the uid, and this is the half it did not
+ *   carry through.
+ * - `__NEXT_PRIVATE_STANDALONE_CONFIG` breaks `npm run build` as a verify
+ *   command in every Next repository: this server is a Next standalone server,
+ *   so the variable is set on it in production and carries *this* app's
+ *   resolved config, and an inheriting child gets `loadConfig()` returning that
+ *   JSON verbatim instead of reading its own `next.config.ts`. The build dies
+ *   on the `generateBuildId` a JSON round trip could not carry, and
+ *   `landVerdict` reports that as a failing check — so the operator is told
+ *   their branch is bad by an error that names none of this.
+ *
+ * `PATH` is deliberately not on the list, here as everywhere: the command is
+ * resolved on it, and a gate that could not find `npm` would refuse every land.
+ *
+ * `FORCE_COLOR: "0"` for a reason the other copies do not have: a failing
+ * check's last output is carried into `landVerdict`'s refusal and rendered as
+ * text, so a test runner that decided it was talking to a terminal would spell
+ * that sentence with escape sequences in it.
+ */
+export function verifyEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, FORCE_COLOR: "0" };
+  for (const key of Object.keys(env)) {
+    if (
+      key.startsWith("UF_") ||
+      key.startsWith("OTEL_") ||
+      key.startsWith("__NEXT_") ||
+      key === "ANTHROPIC_ADMIN_KEY" ||
+      key === "OPENAI_API_KEY" ||
+      key === "CODEX_API_KEY" ||
+      key === "CLAUDE_CODE_ENABLE_TELEMETRY" ||
+      key === "DATA_DIR" ||
+      key === "NODE_OPTIONS"
+    ) {
+      delete env[key];
+    }
+  }
+  return env;
+}
+
 /** How long a check may take before Land stops waiting on it. */
 export const VERIFY_TIMEOUT_MS = 15 * 60_000;
 
@@ -110,7 +172,8 @@ export const VERIFY_TAIL_BYTES = 2000;
  * As the child uid, not the server's: this runs a command an operator wrote
  * against a tree an agent produced, and `docs/agent/security.md`'s reason for
  * separating those uids does not stop applying because the command came from
- * Settings rather than from a model.
+ * Settings rather than from a model. `verifyEnv` is the same argument applied
+ * to what the child can read, which for a long time this spawn did not make.
  */
 export function runVerify(
   cwd: string,
@@ -139,6 +202,7 @@ export function runVerify(
     try {
       child = spawn(bin, args, {
         cwd,
+        env: verifyEnv(),
         ...childCredentials(),
         stdio: ["ignore", "pipe", "pipe"],
       });

@@ -123,6 +123,13 @@ process.env.CLAUDE_HOME = path.join(tmp, "claude");
 // Belt to the fake `spawn` below: if the replacement ever stopped taking
 // effect, this is a path that cannot be executed rather than a real, billed CLI.
 process.env.CLAUDE_BIN = path.join(tmp, "no-such-claude");
+// Set here rather than inside the one describe that needs it, because
+// `githubEnv()`'s default is a module constant `config.ts` fixes at load. It is
+// what makes `chatEnv`'s composition the larger of its two shapes — the one
+// with extras that land after the strip and could collide with a key it kept.
+// Not a real credential and never sent anywhere: `spawn` is replaced below, and
+// what the block carries is a helper command, not the token.
+process.env.UF_GITHUB_TOKEN = "ghp_" + "x".repeat(36);
 
 // `require`, not `import`: imports are hoisted above the environment above, and
 // `config.ts` fixes `DATA_DIR` and `CLAUDE_HOME` at load. Same reason
@@ -133,6 +140,7 @@ const {
   STALE_TURN_MARGIN_MS,
   answerChatQuestions,
   answerMessage,
+  chatEnv,
   chatOwnsRun,
   chatPrompt,
   composeTask,
@@ -2406,5 +2414,64 @@ describe("mintRunCapability", () => {
     });
 
     revokeRunCapabilities("run-holding-another");
+  });
+});
+
+/**
+ * THE PATH THE CHAT'S TOOLS ARE RESOLVED ON.
+ *
+ * `chatEnv` is one of six hand-copies of the same strip list
+ * (`docs/agent/security.md`), and until this only `childEnv` was pinned by a
+ * test. The list is a denylist and `PATH` is deliberately not on it:
+ * `proposals/CustomStacks/01c-reach-and-permission.md` §2 argues that a toolbox
+ * the `Dockerfile` puts on this server's `PATH` therefore reaches every agent
+ * child for free, and the chat child is one of the children that claim rests
+ * on. An edit that added `PATH` here would have to be made in six places and
+ * nothing fails if it is made in one: the chat would simply stop finding a
+ * tool, inside a tool call nobody reads, with no page and no log in this app
+ * mentioning it.
+ *
+ * The assertion is over a *planted* directory rather than over equality alone,
+ * for the reason `childEnv`'s is: what §2 claims is that a directory added to
+ * this server's `PATH` arrives, in the position it was added at.
+ *
+ * And it is over `chatEnv()` rather than over a bare strip, because that is
+ * what the spawn site passes — `chatEnv` returns `{ ...env, ...githubEnv() }`
+ * and the extras land after the strip and win every key they name.
+ * `UF_GITHUB_TOKEN` is set at the top of this file so that half is non-empty
+ * here; with it blank the composition is `{}` and this would pass without
+ * measuring anything.
+ */
+describe("chatEnv — the PATH the chat's tools are resolved on", () => {
+  const previous = process.env.PATH;
+  after(() => {
+    if (previous === undefined) delete process.env.PATH;
+    else process.env.PATH = previous;
+  });
+
+  const TOOLBOX = "/var/lib/uf-stacks/bin";
+
+  it("carries a planted toolbox directory through to the chat child", () => {
+    process.env.PATH = `${TOOLBOX}:${previous ?? "/usr/bin"}`;
+    const env = chatEnv();
+    assert.equal(env.PATH, process.env.PATH);
+    assert.equal(
+      env.PATH?.split(path.delimiter)[0],
+      TOOLBOX,
+      "a directory prepended to the server's PATH did not reach the chat child first",
+    );
+  });
+
+  it("composes the GitHub block over the strip without touching PATH", () => {
+    // The half that makes the line above a statement about the composition
+    // rather than about the strip. If this is empty the test above is vacuous,
+    // so it is asserted rather than assumed.
+    process.env.PATH = `${TOOLBOX}:${previous ?? "/usr/bin"}`;
+    const env = chatEnv();
+    assert.ok(
+      Object.keys(env).some((k) => k.startsWith("GIT_CONFIG_")),
+      "githubEnv() contributed nothing, so the composition above is untested",
+    );
+    assert.equal(env.PATH, process.env.PATH);
   });
 });

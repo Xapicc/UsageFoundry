@@ -1184,6 +1184,24 @@ is `docs/agent/testing.md`; interface defects and their classes are
   truncate a `loop.md` given content between the two. With the directory at
   0555 it returned ten problems and threw nothing.
 
+- **The chat's default cwd moved off `/workspace`, and what that is resting
+  on, 2026-09-14.** `chatCwd()` no longer returns `WORKSPACE_ROOT`; under
+  privilege separation it returns `/run/uf-chat`, made 0700 and `chownForChild`,
+  falling back to `os.tmpdir()` on any failure and warning
+  `chat.scratch_cwd_failed` when it does. What was measured is the base, not the
+  turn: `/run/uf-mcp` is present on this install at mode 0711, which is
+  `mcpConfigBase()`'s own `mkdirSync` + `chmodSync` pair having run as the
+  server, so `/run` is writable by it and the identical pair will make
+  `/run/uf-chat`. The caveat is that ownership could not be read from inside a
+  work cycle at all — this session's own sandbox idmaps every uid outside its
+  worktree to `nobody:nogroup`, so `stat` on `/workspace`, `/workspace2` and
+  `/run/uf-mcp` alike reports an owner that is an artefact of the reader. The
+  0755 and `nobody:nogroup` in the 2026-09-13 entry above stand on that entry's
+  own method and not on anything re-read here. `npm run typecheck` clean and
+  `npm test` green apart from one failure that predates the change
+  (`deployment.test.ts`, the container memory ceiling against the server heap).
+  **No live turn has run at the new cwd** — see *Not yet verified by hand*.
+
 - **The tree-root list does fail, for the one cwd that is not a run's,
   2026-09-13.** 18 failures at `/workspace` and 8 at `/workspace2` in the 460,
   last 2026-09-11, against `SANDBOX_TREE_ROOT_NAMES` — which the docblock said
@@ -3170,6 +3188,24 @@ measurement under *Verified* and cut the item down to what is still open.
   the count falls to zero for project trees — was measured on 2026-09-13 and is
   in *Verified* above: it did, the same afternoon. What is still open is the
   other direction, that a placeholder is bound rather than merely tolerated.
+
+- **No chat turn has been watched constructing its sandbox at the new cwd, and
+  the failure count has not been re-measured, 2026-09-14.** `chatCwd()` now
+  returns `/run/uf-chat` rather than `/workspace`, which is *Verified* above as
+  far as the base goes, and the mechanism it is aimed at is the 18 + 8 failures
+  in the 2026-09-13 entry. Neither half of the demonstration is available from
+  inside a work cycle, for the reasons the 2026-09-13 item above sets out in
+  full: a nested `bwrap` dies at `open /proc/<pid>/ns/ns`, a mount point the
+  outer sandbox holds cannot be removed to stage the failure, and re-running the
+  transcript count today measures the corpus from *before* the change and so
+  answers nothing. Settle it the same way that item is settled — from outside a
+  sandboxed session, against a running container carrying this commit: open an
+  orchestrator chat with no folder selected so the turn falls through to
+  `chatCwd()`, ask it for a `Bash` tool call, and read the result for a `bwrap:
+  Can't create file at` line; then re-run the 2026-09-13 count over transcripts
+  dated after the deploy and expect zero at `/workspace` and `/workspace2`.
+  Worth also reading whether the eleven placeholders arrive in `/run/uf-chat`
+  and are swept, which is the half `sweepSandboxTreeRoot` is there for.
 
 - **No tool call has been watched dying of a config-directory mount point and
   then running, 2026-09-13.** The fix is measured against a scratch directory
