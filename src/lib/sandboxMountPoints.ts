@@ -423,28 +423,26 @@ export function ensureSandboxMountPoints(cwds: readonly string[]): MountPointRes
  * this app owes a run here is the clearing away, which is `sweepSandboxTreeRoot`
  * below.
  *
- * **The case it does not cover is the orchestrator chat.** Its cwd is
- * `chatCwd()` — `WORKSPACE_ROOT`, the mount root itself — and on this image that
- * is `/workspace`, owned by `nobody:nogroup` at 0755 with the agent uid outside
- * it. bwrap's create is refused there, so the turn dies before its command runs,
- * with the same message a run used to get. Measured over 2026-09-04 to
- * 2026-09-13: 18 such failures at `/workspace` and 8 at `/workspace2`, last seen
- * 2026-09-11, out of the 200 in that window that fall outside the config
- * directory.
- *
- * Pre-creating is not the fix available for that, and not because of a trade —
- * the server cannot write `/workspace` either, so there is nothing this module
- * could do there that would not fail the same way. What would settle it is the
- * chat being given a cwd it owns, which is a decision about what that child is
- * pointed at rather than about this list, and is deliberately not taken here.
- * Anyone changing `chatCwd()` should know this is one of the things it fixes.
+ * **The case it did not cover was the orchestrator chat**, and it was fixed by
+ * moving the child rather than by anything here. `chatCwd()` returned
+ * `WORKSPACE_ROOT`, the mount root itself, which on this image is `/workspace`
+ * — `nobody:nogroup` at 0755, with the agent uid outside it. bwrap's create was
+ * refused there and the turn died before its command ran, with the same message
+ * a run used to get: measured over 2026-09-04 to 2026-09-13, 18 such failures at
+ * `/workspace` and 8 at `/workspace2`, last seen 2026-09-11, out of the 200 in
+ * that window that fall outside the config directory. Pre-creating was never the
+ * fix available, and not because of a trade — the server cannot write
+ * `/workspace` either, so there is nothing this module could do there that would
+ * not fail the same way. `chatCwd()` now stands the child in a scratch directory
+ * it owns, where bwrap's create is the ordinary path; its own docblock carries
+ * why that is a scratch directory and not a mount.
  *
  * The working directory only, and that is measured rather than assumed: a
  * session whose cwd was `.uf-worktrees/usagefoundry-721638d11c0b-7` had all
  * eleven bound there, none at `/workspace` — an exposed ancestor that does get
  * the `.claude` list — and none at `/workspace2`, an added directory. The CLI
- * resolves this list against `process.cwd()` and nothing else, which is what
- * makes the chat's single read-only cwd the whole of the exposure above.
+ * resolves this list against `process.cwd()` and nothing else, which is why
+ * moving that one cwd was the whole of the fix.
  */
 export const SANDBOX_TREE_ROOT_NAMES: readonly string[] = [
   ".bash_profile",

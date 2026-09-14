@@ -8,12 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Readable } from "node:stream";
-import {
-  CLAUDE_BIN,
-  MCP_SELF_URL,
-  WORKSPACE_MOUNTS,
-  WORKSPACE_ROOT,
-} from "./config";
+import { CLAUDE_BIN, MCP_SELF_URL, WORKSPACE_MOUNTS } from "./config";
 import { db } from "./db";
 import {
   chatGuards,
@@ -3812,14 +3807,80 @@ function systemPrompt(): string {
 }
 
 /**
- * Where the chat's child runs.
+ * Where the chat's scratch cwd lives, under privilege separation.
  *
- * The first mount, so `Read`/`Grep` land somewhere useful, falling back to a
- * temporary directory when nothing is mounted — a spawn with a cwd that does
- * not exist fails with an ENOENT that reads like a missing `claude` binary.
+ * Beside `MCP_CONFIG_BASE` and for the same reason it is not in `/tmp`: a fixed
+ * base the *server* creates, so nothing about it is a path from a request or
+ * from a repository. 0700 and handed to the child, because the child is what
+ * has to write in it.
+ */
+export const CHAT_CWD_BASE = "/run/uf-chat";
+
+/**
+ * Where the chat's child runs, when the turn was not pointed at a folder.
+ *
+ * **This used to be `WORKSPACE_ROOT` and that was a defect, not a preference.**
+ * Claude Code's sandbox binds `/dev/null` over the eleven names in
+ * `SANDBOX_TREE_ROOT_NAMES` at the root of the working directory; bwrap creates
+ * a missing bind target itself, and a create it is refused aborts the whole
+ * sandbox **before the command runs**. On this image `WORKSPACE_ROOT` is
+ * `/workspace`, `nobody:nogroup` at 0755 — neither the child nor the server can
+ * create a file there — so every tool call in such a turn died with
+ * `bwrap: Can't create file at /workspace/.gitconfig: Permission denied` or one
+ * of its ten siblings. Measured over every transcript under `~/.claude/projects`
+ * on 2026-09-13: 18 of those at `/workspace` and 8 at `/workspace2`.
+ * `sandboxMountPoints.ts`'s docblock names the case and says why pre-creating is
+ * not the fix available — the server cannot write there either, so there is
+ * nothing that file could do that would not fail the same way. What was left to
+ * decide was this: where the child should stand instead.
+ *
+ * A scratch directory, and **not** the first mount, because standing in a mount
+ * buys the turn nothing it does not already have. Reach comes from `--add-dir`,
+ * which lists every mount whatever the cwd is. And the one affordance a mount
+ * would add — a bare `ls` finding the folders — is one the prompt already
+ * forbids relying on: "Folder paths must come from list_folders; do not invent
+ * one. A folder on disk is `<mount path>/<folder>`." The prompt also already
+ * tells this child it has a scratch space ("a temporary file outside the mounts
+ * is fine if it helps you think"), so this is where that sentence points.
+ *
+ * Not a run's checkout either, for the reason `chatEnv` hands this child the
+ * install-wide GitHub token: an orchestrator turn roams every mount by design
+ * and is not scoped to one repository.
+ *
+ * Shared across turns rather than made per turn, which is safe here for exactly
+ * the reason `/workspace` was not: the directory is writable by the child, so a
+ * turn that finds a placeholder missing — swept by a sibling turn that ended
+ * between the fill and the spawn — has bwrap create it, which is the ordinary
+ * path and the one that was being refused. It does **not** separate this child
+ * from a work cycle: every child in this app is one uid, which `docs/security.md`
+ * already records as the boundary that does not exist.
+ *
+ * Falls back to `os.tmpdir()` whenever the base cannot be made — including with
+ * no privilege separation at all, where `/run` is not this process's to write
+ * and the one uid makes the ownership moot. Never throws: a spawn with a cwd
+ * that does not exist fails with an ENOENT that reads like a missing `claude`
+ * binary, which is the failure this function has always been shaped to avoid.
  */
 function chatCwd(): string {
-  return fs.existsSync(WORKSPACE_ROOT) ? WORKSPACE_ROOT : os.tmpdir();
+  try {
+    if (!privilegeSeparated()) return os.tmpdir();
+    fs.mkdirSync(CHAT_CWD_BASE, { recursive: true, mode: 0o700 });
+    // `mkdir` masks the mode through the umask and does nothing at all when the
+    // directory already exists, so both are set rather than requested — the
+    // same reason `mcpConfigBase` does it.
+    fs.chmodSync(CHAT_CWD_BASE, 0o700);
+    chownForChild(CHAT_CWD_BASE);
+    return CHAT_CWD_BASE;
+  } catch (err) {
+    // Warned rather than swallowed: `os.tmpdir()` works, but it is 1777 and
+    // shared with every other child, so an install quietly running there should
+    // say so once per turn rather than never.
+    opsLog("warn", "chat.scratch_cwd_failed", {
+      base: CHAT_CWD_BASE,
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return os.tmpdir();
+  }
 }
 
 /**
