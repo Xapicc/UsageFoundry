@@ -3852,8 +3852,17 @@ function chatCwd(): string {
  * No telemetry, for the reason a review gets none: `otlp_requests.run_id` is
  * compared against a run's own spend, and a chat's requests in that comparison
  * would make an accounted-for run look unaccounted-for.
+ *
+ * Exported for a test and nothing else, on `childEnv`'s grounds rather than as
+ * an exception to them: `PATH` is not on the strip list, and
+ * `proposals/CustomStacks/01c-reach-and-permission.md` §2 rests on that — a
+ * toolbox the `Dockerfile` puts on this server's `PATH` reaches every agent
+ * child for free, and this child is one. A copy that grew a `PATH` line would
+ * take the toolbox away from the chat and from nothing else, which no page and
+ * no log in this app reports. The list moves by hand in six places
+ * (`docs/agent/security.md`); the export is what stops it moving here unseen.
  */
-function chatEnv(): NodeJS.ProcessEnv {
+export function chatEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, FORCE_COLOR: "0" };
   for (const key of Object.keys(env)) {
     if (
