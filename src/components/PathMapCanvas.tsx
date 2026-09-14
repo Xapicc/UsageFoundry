@@ -94,6 +94,10 @@ const CULL_MARGIN_PX = 140;
 /** Screen pixels left around the map when it is framed to fit. */
 const FIT_PAD = 48;
 
+/** Screen pixels a clamped label keeps off the canvas edge, so that the ink of
+ *  a glyph that overhangs its advance width is inside too. */
+const LABEL_EDGE_PAD = 2;
+
 /** Frames a non-animated build may burn settling before it draws. */
 const FREEZE_BUDGET = 300;
 
@@ -399,9 +403,36 @@ export function PathMapCanvas<P extends object, R extends object, T extends stri
         : Math.min(1, (view.k - FILE_LABEL_FROM) / FILE_LABEL_RAMP);
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
+    /* A label is centred on its node, so a node the layout put within half a
+       label of an edge paints its name outside the canvas and the container
+       clips it — the dot is inside, the text is not. Only horizontally: a fit
+       pads by FIT_PAD on every side, which is more than the ~14px a label
+       hangs below a node and less than the ~70px a long one reaches sideways.
+       So the anchor is clamped inboard at paint time rather than the layout
+       being inset, which would cost usable area at every width. The cost is
+       that a near-edge label no longer sits centred under its node. */
+    const canvasRect = visibleWorldRect(view, width, height, 0);
+    const labelPad = LABEL_EDGE_PAD / view.k;
+    const labelLeft = canvasRect.left + labelPad;
+    const labelRight = canvasRect.right - labelPad;
+    const anchorFor = (text: string, x: number) => {
+      const half = ctx.measureText(text).width / 2;
+      // Wider than the canvas: no anchor keeps it in, so centre it and let it
+      // lose the same amount at each end rather than all of it at one.
+      if (half * 2 >= labelRight - labelLeft) return (labelLeft + labelRight) / 2;
+      return Math.min(Math.max(x, labelLeft + half), labelRight - half);
+    };
     for (let i = 0; i < nodes.length; i++) {
       const node = nodes[i];
-      if (!visible(node.x, node.y)) continue;
+      // The cull margin keeps an off-canvas node's *edges* drawn; clamping its
+      // label as well would pin a name to the edge with no dot under it.
+      if (
+        node.x < canvasRect.left ||
+        node.x > canvasRect.right ||
+        node.y < canvasRect.top ||
+        node.y > canvasRect.bottom
+      )
+        continue;
       const item = meta[i];
       // The marked node forces its own name on for the reason hover and
       // selection do: a mark an operator has to zoom in to read is a mark they
@@ -418,15 +449,12 @@ export function PathMapCanvas<P extends object, R extends object, T extends stri
         alpha * (dimmed !== null && dimmed.has(item.id) && !forced ? DIM_ALPHA : 1);
       ctx.fillStyle = item.kind === "file" ? palette["--fg"] : palette["--fg-muted"];
       ctx.font = `${(item.kind === "file" ? 11 : 12) / view.k}px ${palette.font}`;
-      ctx.fillText(item.label, node.x, node.y + radius + 3 / view.k);
+      ctx.fillText(item.label, anchorFor(item.label, node.x), node.y + radius + 3 / view.k);
       if (item.kind === "folded") {
         ctx.font = `${10 / view.k}px ${palette.font}`;
         ctx.fillStyle = palette["--fg-faint"];
-        ctx.fillText(
-          `${item.files} file${item.files === 1 ? "" : "s"}`,
-          node.x,
-          node.y + radius + 16 / view.k,
-        );
+        const count = `${item.files} file${item.files === 1 ? "" : "s"}`;
+        ctx.fillText(count, anchorFor(count, node.x), node.y + radius + 16 / view.k);
       }
     }
 

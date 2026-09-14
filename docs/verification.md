@@ -2206,6 +2206,27 @@ is `docs/agent/testing.md`; interface defects and their classes are
   headroom on this page is now 6px, which the seven `max-md:w-72` literals on
   it would widen to 12px — filed rather than done here.
 
+- **A map label centred on a node near the canvas edge is painted outside it,
+  and clamping the anchor is what puts it back (2026-09-14).** Measured against
+  `.next/standalone/server.js` in headless Chromium at 390px, dpr 2, in both
+  themes and both skins, by wrapping `CanvasRenderingContext2D.prototype
+  .fillText` and mapping every call through the live transform into the
+  canvas's own backing store — painted overflow, which no box metric and no
+  sideways-scroll check can see, and which `scripts/smoke-pages.mjs` therefore
+  passes. The reproducing arrangement is four files across two directories:
+  few enough nodes that the fit lands at `k` 1.004, above `FILE_LABEL_FROM`, so
+  file names are drawn at all, and names long enough that half of one is wider
+  than the 48px `FIT_PAD` leaves. Before: `workflows-and-schedules.md` painted
+  21.2px past the left edge in the default skin and 23.4px under ascii, and
+  `RunTaskComments.tsx` 7.2px and 4.2px past the right. After: worst overflow
+  −2.0px in all four states, which is `LABEL_EDGE_PAD` exactly, with `k`, the
+  label count and the twenty-four-file control arrangement's readings all
+  unmoved to the tenth of a pixel — so the clamp moves only labels that were
+  outside. Caveat: horizontal only. A label hangs about 14px below its node
+  against the same 48px pad, so the bottom edge has never been reachable in a
+  fitted view and is not clamped; the reading says nothing about a view the
+  operator has panned.
+
 ## Not yet verified by hand
 
 - **The graph at a size no hand-drawn ordering reaches.** Every reading above is
@@ -2761,8 +2782,10 @@ measurement under *Verified* and cut the item down to what is still open.
   a real git; what has not been watched is the CLI's own git picking it up out
   of the environment mid-run.
 
-- **The Files tab's *What it touched* card has never been rendered**, in a
-  browser or a container. To walk at 1280px and 390px:
+- **The Files tab's *What it touched* card has been rendered but never
+  walked.** The 2026-09-14 label-clamp entry above drew it at 390px in all four
+  states against a seeded `run_events` fixture, so the card and its graph are
+  known to paint; nothing below it was read. To walk at 1280px and 390px:
   - write down the header's distinct-file and work-cycle counts: the deferred
     file-by-cycle grid in `proposals/SessionFlow/` waits on them;
   - a gone branch (`kind: "none"`) drops to two groups with a warn notice and
