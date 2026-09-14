@@ -618,18 +618,22 @@ describe("the container's memory ceiling and the server's heap agree", () => {
     // 1,024 MiB, which is the same bound at twice the share.
     const source = (...parts: string[]) =>
       fs.readFileSync(path.join(root, ...parts), "utf8");
-    const perTurnBytes = Number(
-      /Roughly (\d+) bytes\s*\n\s*\*\s*are retained per turn/.exec(
-        source("src", "lib", "config.ts"),
+    // Matched against the docblock with its comment leaders flattened away, and
+    // with the emphasis on *record* optional: the sentence wraps wherever the
+    // line happens to run out, so a regex spelling one wrapping point is a test
+    // that fails on a one-word edit rather than on the drift it is here for.
+    const perRecordBytes = Number(
+      /Roughly (\d+) bytes are retained per \*?record\*?/.exec(
+        source("src", "lib", "config.ts").replace(/\n\s*\*\s?/g, " "),
       )?.[1],
     );
     assert.ok(
-      Number.isFinite(perTurnBytes),
-      "config.ts no longer states the per-turn retention its own default is " +
+      Number.isFinite(perRecordBytes),
+      "config.ts no longer states the per-record retention its own default is " +
         "derived from, so nothing below can be checked against it.",
     );
 
-    const share = (TRANSCRIPT_CACHE_MAX_ENTRIES * perTurnBytes) / heapCeilingBytes();
+    const share = (TRANSCRIPT_CACHE_MAX_ENTRIES * perRecordBytes) / heapCeilingBytes();
     const stated = Math.round(share * 100);
 
     for (const file of [["docker-compose.yml"], [".env.example"], ["src", "lib", "config.ts"]]) {
@@ -648,7 +652,7 @@ describe("the container's memory ceiling and the server's heap agree", () => {
         `${file.join("/")} says the transcript cache is ~${claim[1]}% of the ` +
           `server's ` +
           `heap. At the shipped ${TRANSCRIPT_CACHE_MAX_ENTRIES} entries × ` +
-          `${perTurnBytes} B against ${heapCeilingBytes() / 2 ** 20} MiB it is ` +
+          `${perRecordBytes} B against ${heapCeilingBytes() / 2 ** 20} MiB it is ` +
           `${stated}%.`,
       );
     }

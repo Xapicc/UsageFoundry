@@ -239,10 +239,11 @@ services:
       # was actually made — see docs/install.md, "More than four workspaces".
       UF_UNMOUNTED_WORKSPACES: "${UF_WORKSPACE_5_NAME:+UF_WORKSPACE_5_NAME }${UF_WORKSPACE_6_NAME:+UF_WORKSPACE_6_NAME }${UF_WORKSPACE_7_NAME:+UF_WORKSPACE_7_NAME }${UF_WORKSPACE_8_NAME:+UF_WORKSPACE_8_NAME }"
       WORKSPACE_ROOT: /workspace
-      # Optional: how many parsed transcript turns this process keeps in memory.
-      # Blank takes the default, ~165 MB, which is sized against the heap
+      # Optional: how many parsed transcript records this process keeps in
+      # memory — a record is a turn *or* a tool call, which is what the bound
+      # counts. Blank takes the default, ~77 MB, which is sized against the heap
       # ceiling stated below rather than against whatever V8 would have derived
-      # from the host — so it is ~15% of UF_NODE_HEAP_MB's 1024 MiB, and raising
+      # from the host — so it is ~7% of UF_NODE_HEAP_MB's 1024 MiB, and raising
       # one of the two without the other is what makes this the term that
       # overruns. Past the bound the coldest files are re-read from disk on each
       # scan, so raising it trades memory for speed and lowering it the other
