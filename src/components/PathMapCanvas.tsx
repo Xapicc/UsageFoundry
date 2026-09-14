@@ -680,6 +680,14 @@ export function PathMapCanvas<P extends object, R extends object, T extends stri
     if (sim && grabbed !== null) {
       sim.nodes[grabbed].fx = sim.nodes[grabbed].x;
       sim.nodes[grabbed].fy = sim.nodes[grabbed].y;
+      // Taking hold of a node ends the automatic framing, which `tick` runs on
+      // every frame of a cooling layout: the `reheat` below is a hot simulation
+      // again, and a camera still framing it rescales the map under the hand
+      // moving it — measured at 12%, k 2.227 to 1.964, on a node dragged 270px
+      // during the cooling. Not `touchedRef`, which means the view itself was
+      // moved: a node dragged somewhere is not a pan, and `onPointerMove` sets
+      // that one only on the branch where nothing was grabbed.
+      fittedRef.current = true;
       reheat(sim, 0.3);
       schedule();
     }

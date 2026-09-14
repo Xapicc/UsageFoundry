@@ -461,6 +461,14 @@ export function KnowledgeGraphCanvas({
     // the layout is untouched by it, so this re-frames rather than trying to
     // work out whether the new box is one the old fit still suits.
     //
+    // Two narrower repairs were weighed and are worse. Keeping the view's
+    // *centre* across the resize rather than its top-left stops a node falling
+    // out of the band that was lost, but leaves the scale wrong wherever height
+    // was the binding axis, which is exactly the vault this was reported on.
+    // And gating this on `!fittedRef.current` — refit only while the opening
+    // cooling is still running — fixes nothing at all: the flip that was
+    // reported happens on a settled graph, by which time that ref is long set.
+    //
     // Under the same rule as `tick`'s fit and not under `fittedRef`: a resize is
     // a new box rather than more of the opening one, so having finished cooling
     // does not spend it — but an operator who panned somewhere on purpose keeps

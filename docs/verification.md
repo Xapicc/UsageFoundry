@@ -1742,7 +1742,7 @@ is `docs/agent/testing.md`; interface defects and their classes are
   frames whatever the vault, but how far the framing travels over them is not.
 
 - **Both graph canvases now keep their framing across a live skin flip, a live
-  theme flip and a window resize, 2026-09-13** (`a5694e4`; `npm run build` then
+  theme flip and a window resize, 2026-09-13/14** (`a5694e4`; `npm run build` then
   the standalone bundle, seeded `DATA_DIR`, a scratch vault and a run whose tool
   events were written straight into `run_events`, Playwright over Chromium at
   1280x900, dpr 1; no container). The same instrument as the entry above — disc
@@ -1756,16 +1756,23 @@ is `docs/agent/testing.md`; interface defects and their classes are
   curve. On `/knowledge` a skin flip takes the graph card 662x974 to 662x1008,
   because the panel beside it is laid out from type — before, the flipped view
   kept k=4.898 where a load in ascii frames at 5.085 (0.963, and 18px off centre)
-  and the other direction kept 5.085 in the shorter box; after, each flip lands on
-  the reload's k exactly and its disc ink to the pixel (4671 and 4273). A window
-  resize to 900 wide is the same defect on the other canvas: both kept k (1.434
-  and 1.771) in boxes that had gone 662x1055 to 602x452 and 622x576 to 594x480,
-  and the drawn graph ran off both; they now refit to 1.286 and 1.416 with nothing
-  clipped. `touchedRef` still holds the line — widening 1100 to 1280, an untouched
-  canvas re-frames (0.990 to 1.434, 1.218 to 1.771) and one the pointer has panned
-  keeps 0.990 and 1.218 through the same resize. Caveats: one machine at dpr 1,
-  three-note and five-file graphs, and a theme flip changes no box here, so what
-  that axis proves is that nothing *else* moves the framing.
+  and the other direction, which is the one that loses a band rather than gaining
+  it, kept 5.085 in the shorter box and ran the graph to y=973 of a 974px canvas —
+  pinned to the edge, against a reload ending at 967 with 7px to spare, which is
+  the "a node is simply absent until reload" half of the report. After, each flip
+  lands on the reload's k exactly, its disc ink to the pixel (4671 and 4273) and
+  its bbox to the pixel. A window resize to 900 wide is the same defect on the
+  other canvas: both kept k (1.434 and 1.771) in boxes that had gone 662x1055 to
+  602x452 and 622x576 to 594x480, and the drawn graph ran off both; they now refit
+  to 1.286 and 1.416 with nothing clipped. `touchedRef` still holds the line —
+  widening 1100 to 1280, an untouched canvas re-frames (0.990 to 1.434, 1.218 to
+  1.771) and one the pointer has panned keeps 0.990 and 1.218 through the same
+  resize. So does the companion guard `PathMapCanvas` was missing, which only
+  matters once the fit runs during the cooling: a node grabbed at t=600ms and
+  dragged 270px took the camera from k=2.227 to 1.964 under the hand, and now
+  holds 1.872 through the grab, the drag and the release. Caveats: one machine at
+  dpr 1, three-note and five-file graphs, and a theme flip changes no box here, so
+  what that axis proves is that nothing *else* moves the framing.
 
 - **`/settings`' section strip clears 4.5:1 in all eighty readings,
   2026-09-12** (`dd66cfb`): the built standalone bundle served against a

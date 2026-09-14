@@ -153,8 +153,11 @@ nothing about it.
   fixed by fitting on every frame of the cooling and setting `fittedRef` on the
   cold one rather than gating on it. C rather than D because nothing about it is
   layout: a DOM with a driveable clock and `requestAnimationFrame` would see the
-  call land only on the last frame.
-
+  call land only on the last frame. Fitting during the cooling then exposed a
+  second half: `onPointerDown` was not setting `fittedRef` when a node was
+  grabbed, the way `KnowledgeGraphCanvas` does, so the drag's `reheat` left the
+  camera framing a layout the hand was moving — k 2.227 to 1.964 on a node
+  dragged 270px, and a frozen 1.872 with the guard.
 - **2026-09-13, `a5694e4`, class C.** Neither graph canvas re-framed when its own
   box changed under it, so a view framed against the old box was left off-centre
   and, where height bound the fit, overhanging. On `/knowledge` the skin control
