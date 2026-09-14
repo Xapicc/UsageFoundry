@@ -15,9 +15,15 @@ import { totalTokens } from "./pricing";
  * rename that makes every turn look thinner rather than making one fail.
  *
  * The last is the one with a precedent in this repository and it is why the
- * unknown-type case is here at all — `orchestrator.ts`'s Claude parser has four
- * branches and no fifth, and the Codex parser twelve lines below it spends a
- * docblock on why that is not survivable.
+ * unknown-type case is here at all — `orchestrator.ts`'s Codex parser spends a
+ * docblock on why an event dropped without a name is not survivable, and both
+ * parsers over there hand an unclaimed `type` to `noteUnknownStreamEvent`.
+ *
+ * Which puts a second thing on the same counter: a *routine* type with no
+ * branch here is a warning on every turn, and a warning on every turn is one
+ * nobody reads. So the handled list is asserted against the Claude parser's —
+ * `assistant`, `user`, `result`, `system`, `tool_progress`,
+ * `rate_limit_event` — rather than against what this file acts on.
  */
 
 const line = (o: unknown) => JSON.stringify(o);
@@ -160,6 +166,25 @@ describe("readChatEvent", () => {
     );
     assert.equal(moved.sawResult, true);
     assert.equal(acc.result?.total_cost_usd, 0.4);
+  });
+
+  it("reads the routine types the orchestrator's parser reads", () => {
+    const acc = newChatTurnAccumulator();
+    // Every type `handleStreamLine` claims and this file is not otherwise
+    // tested on. `rate_limit_event` is the one that made this test necessary:
+    // the CLI emits it on most turns, so counting it as unknown put a
+    // `chat.stream_unread` warning on every single chat turn, and a warning
+    // that is always on cannot report the rename it exists to report.
+    readChatEvent(acc, line({ type: "rate_limit_event", rate_limit: {} }));
+    readChatEvent(acc, line({ type: "user", message: { content: [] } }));
+    assert.deepEqual([...acc.unknownTypes], []);
+
+    // The divergence that is left, asserted rather than described so that
+    // closing it has to come back through this file. `handleStreamLine` reads
+    // `tool_progress` into the run page's live tool strip; the chat has no such
+    // strip, so here it is still a type with no branch.
+    readChatEvent(acc, line({ type: "tool_progress", tool_use_id: "tu_1" }));
+    assert.deepEqual([...acc.unknownTypes], ["tool_progress"]);
   });
 
   it("counts an event type it has no branch for, by name", () => {
