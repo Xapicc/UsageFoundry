@@ -84,11 +84,19 @@ export const PROJECTS_DIR = path.join(CLAUDE_HOME, "projects");
  *
  * Process-level rather than a setting, because what it bounds is the heap this
  * process was given rather than anything the user is choosing. Roughly 330 bytes
- * are retained per turn, so the default is ~165 MB against V8's ~2 GB default
- * limit. Raise it alongside `--max-old-space-size` on a larger host; lower it on
- * a smaller one. A value that is not a positive number falls back to the
- * default, which is the safe direction for a figure only an operator tuning
- * memory ever sets.
+ * are retained per turn, so the default is ~165 MB — and what that is a share
+ * *of* is now stated rather than inherited: `docker-compose.yml` ships
+ * `--max-old-space-size=${UF_NODE_HEAP_MB:-1024}`, so it is ~15% of the heap
+ * where it was ~8% of the ~2 GB V8 used to size from the host's RAM. The bound
+ * did not move; the ceiling above it did, which is the direction that matters
+ * — this is the largest single thing the process retains on purpose.
+ *
+ * Raise the two together or neither: `UF_TRANSCRIPT_CACHE_MAX_ENTRIES` alone
+ * spends heap that `UF_NODE_HEAP_MB` has not been told about. Eviction here is
+ * driven by the entry count and never by heap pressure, so a cache sized past
+ * the ceiling cannot rescue it — V8 aborts the process instead. A value that is
+ * not a positive number falls back to the default, which is the safe direction
+ * for a figure only an operator tuning memory ever sets.
  */
 export const TRANSCRIPT_CACHE_MAX_ENTRIES = ((): number => {
   const raw = Number(optionalEnv("UF_TRANSCRIPT_CACHE_MAX_ENTRIES"));

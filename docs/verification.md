@@ -1294,6 +1294,21 @@ is `docs/agent/testing.md`; interface defects and their classes are
 
 ### Container and environment
 
+- **How full the transcript cache actually gets on this install, 2026-09-13**,
+  counted rather than modelled: a pass over `/home/node/.claude/projects` — 2,286
+  `.jsonl` files, 1.74 GiB, 548,963 lines — found **219,599 records carrying both
+  a `message.usage` and a `message.id`**, which is what `transcripts.ts` retains
+  before its cross-file dedupe. That is **44% of the 500,000-record bound**, so
+  `TRANSCRIPT_CACHE_MAX_ENTRIES` has never evicted anything here and the heap
+  measurements taken on this corpus were taken at a **partly full** cache. At the
+  ~330 B/turn the comments assume, the cache held ~72 MB of the peaks recorded
+  under *Dreaming* above, against the ~165 MB the bound permits. Caveat, and it
+  is the whole reason the figure is worth having: the corpus grows, so the same
+  measurement on a fuller one is not this one, and the ~93 MB between here and
+  the bound is heap that the 1,024 MiB ceiling shipped in `docker-compose.yml`
+  has not yet been observed carrying. The per-turn figure it is multiplied by is
+  itself an estimate, not a measurement.
+
 - **Multiple workspaces:** slots list independently, a disabled one is skipped,
   a missing one reads unavailable rather than empty, and a folder maps back to
   its workspace through a symlinked mount.
@@ -2996,6 +3011,39 @@ measurement under *Verified* and cut the item down to what is still open.
   visible to it.
 
 ### Container and environment
+
+- **Nothing has been measured at a full transcript cache under the 1,024 MiB
+  heap the compose file now ships.** The *Dreaming* entry's 898-949 MB at 1,024
+  was measured when 1,024 was this install's `.env` and 2,048 was the shipped
+  default; that has since inverted, and the entry is left as written because an
+  entry is never amended in place. What it does not cover is the bound: the
+  cache was 44% full at the time (measured, above), so ~93 MB of what
+  `TRANSCRIPT_CACHE_MAX_ENTRIES` permits has never been resident during a
+  measurement. Settling it: set `UF_TRANSCRIPT_CACHE_MAX_ENTRIES=219000` — just
+  under what this corpus actually produces — and repeat the *Dreaming* entry's
+  procedure, which forces the eviction path rather than the retention one; then
+  grow the corpus or lower the bound further until a run evicts, and read the
+  header strip's at-bound indicator. Until then the headroom between a 44%-full
+  cache and a full one is arithmetic over an estimated per-turn size, not a
+  reading.
+
+- **No child's `oom_score_adj` has been read back, and no cgroup OOM has been
+  made to choose.** `deprioritiseChildForOom` writes
+  `/proc/<pid>/oom_score_adj` one line after each long-lived spawn, and what is
+  measured of it is only that the raise direction needs no privilege: writing
+  500 to `/proc/self/oom_score_adj` as uid 1000 succeeds on kernel
+  6.12.76-linuxkit, 2026-09-13. The cross-process write — a root server
+  adjusting a child at `UF_AGENT_UID` — could not be exercised from a work
+  cycle, whose sandbox mounts a `/proc` in which no other pid resolves at all,
+  so both halves of the claim are reasoned: that the write lands, and that a
+  grandchild (an agent's `npm test`, which is what actually holds the memory)
+  inherits it. Settling it: `docker compose up --build`, start a run, then
+  `docker exec usagefoundry sh -c 'for p in /proc/[0-9]*; do printf "%s %s %s\n"
+  "$p" "$(cat $p/oom_score_adj)" "$(tr "\0" " " <$p/cmdline | cut -c1-60)"; done'`
+  and read next-server's 0 against each `claude` child's 500. What that still
+  does not settle is which one the kernel picks: that needs a container driven
+  over `mem_limit` with `dmesg` read for the `Memory cgroup out of memory` line
+  naming the victim.
 
 - **Only `archive` has ever run.** `uv-tool` and `npm-global` are in the format
   and refused by name at parse in this build, so the two verbs that execute a

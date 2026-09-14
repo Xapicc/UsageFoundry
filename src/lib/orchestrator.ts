@@ -21,7 +21,7 @@ import {
 import { git, gitSync } from "./git";
 import { withRepoAdmin } from "./repoLock";
 import { dataDirRefusal, mayWriteDataDir, requireDataDir } from "./serverLock";
-import { childCredentials, chownForChild } from "./privsep";
+import { childCredentials, chownForChild, deprioritiseChildForOom } from "./privsep";
 import { currentSandbox, sandboxRefusal } from "./sandbox";
 import { STACKS_STATE_DIR, stackGrants } from "./stacks";
 import {
@@ -6410,6 +6410,10 @@ export function runIteration(
       // has no process groups to signal, and `process.kill(-pid)` throws there.
       detached: getSettings().killProcessGroup && process.platform !== "win32",
     });
+
+    // The largest child this container starts, and the one whose death costs
+    // least: a cycle rather than every run the server is carrying.
+    deprioritiseChildForOom(child.pid);
 
     procs.set(runId, child);
 

@@ -35,6 +35,7 @@ import {
   chatChildCredentials,
   chownForChild,
   chownToGroup,
+  deprioritiseChildForOom,
   mcpConfigOwnership,
   privilegeSeparated,
   type McpConfigOwnership,
@@ -2971,6 +2972,10 @@ export function runOrchestratorChild(o: OrchestratorChildOptions): void {
     stdio: ["ignore", "pipe", "pipe"],
     detached: settings.killProcessGroup && process.platform !== "win32",
   });
+
+  // A worse OOM victim than the server, like every other long-lived child. A
+  // turn that dies ends one turn, with a person in front of it to say so.
+  deprioritiseChildForOom(child.pid);
 
   // Registered before anything can go wrong with it, so an operator pressing
   // Stop reaches the child rather than orphaning it.

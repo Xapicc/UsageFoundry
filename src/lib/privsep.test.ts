@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 
 import type { ChildCredentials, McpConfigOwnership } from "./privsep";
 import {
+  CHILD_OOM_SCORE_ADJ,
+  deprioritiseChildForOom,
   resolveChatGid,
   resolveChildCredentials,
   resolveMcpConfigOwnership,
@@ -267,5 +269,50 @@ describe("resolveMcpConfigOwnership", () => {
       resolveMcpConfigOwnership({ separated: agents, chatGid: null }),
       null,
     );
+  });
+});
+
+/**
+ * The other way a child differs from the server, and its failure is the
+ * quietest in this file: nothing observes an OOM preference until the kernel
+ * acts on it, months later, on the one night the container is over its ceiling.
+ * A `deprioritiseChildForOom` that wrote nothing, wrote the wrong value, or
+ * threw and took the spawn with it would all look identical from every page.
+ */
+describe("deprioritiseChildForOom", () => {
+  it("writes the offset to the child's own procfs entry", () => {
+    if (process.platform !== "linux") return;
+    const writes: Array<[string, string]> = [];
+    deprioritiseChildForOom(4242, (p, v) => writes.push([p, v]));
+    assert.deepEqual(writes, [["/proc/4242/oom_score_adj", `${CHILD_OOM_SCORE_ADJ}\n`]]);
+  });
+
+  it("writes nothing for a child that never started", () => {
+    // `spawn` gives `pid` as undefined when the fork itself failed, and
+    // `/proc/undefined/oom_score_adj` is a path that exists on no machine —
+    // but the ENOENT it raises is the same one a child that has already exited
+    // raises, so writing it at all would spend the one warning below on a case
+    // that is not the one worth hearing about.
+    const writes: string[] = [];
+    deprioritiseChildForOom(undefined, (p) => writes.push(p));
+    assert.deepEqual(writes, []);
+  });
+
+  it("does not fail a spawn over an adjustment it could not make", () => {
+    if (process.platform !== "linux") return;
+    // The whole reason this is best-effort. Every caller is one line after a
+    // `spawn` that has already succeeded: a throw here would take down a work
+    // cycle, a review or a chat turn to protect them from a memory pressure
+    // that may never arrive. Both shapes — the child that exited between the
+    // spawn and this line, and a kernel or uid that refuses the write.
+    for (const code of ["ENOENT", "EACCES", "EPERM"]) {
+      assert.doesNotThrow(() =>
+        deprioritiseChildForOom(4242, () => {
+          const err: NodeJS.ErrnoException = new Error(`${code}: refused`);
+          err.code = code;
+          throw err;
+        }),
+      );
+    }
   });
 });
