@@ -3087,14 +3087,46 @@ export interface ProposedBlockDTO {
   after: string[];
 }
 
+/**
+ * What a schedule proposal would put in place, as the card has to state it.
+ *
+ * Every field is a fact the approval is taken on: how often, from when, under
+ * which workflow-wide limits, and what it replaces. The cadence is the row's
+ * own and frozen; the workflow's name, limits and current schedule are read
+ * live, because the workflow is a handle the operator can open.
+ */
+export interface ProposedScheduleDTO {
+  workflowId: string;
+  /** Null when the workflow has since been deleted, which approval refuses. */
+  workflowName: string | null;
+  /** The recurrence in words, zone included — `describeSchedule`'s. */
+  description: string;
+  /**
+   * The first start if approved now, or null where it cannot be worked out.
+   * For an every-N-hours schedule this moves with every poll, because the
+   * interval counts from the approval — see `intervalHours`.
+   */
+  nextFireAt: number | null;
+  /** Set on an every-N-hours schedule, whose first start is N hours after approval. */
+  intervalHours: number | null;
+  /** The workflow-wide limits each start runs under, written out. */
+  limitsLabel: string | null;
+  /** The schedule this would replace, or null for a workflow with none. */
+  replaces: { description: string; paused: boolean } | null;
+  /** Why approving would be refused as things stand, or null. */
+  refusal: string | null;
+}
+
 export interface ChatProposalDTO {
   id: string;
   createdAt: number;
   /**
    * What approving this does. `run` queues a run; `workflow` **saves** a
-   * workflow and starts nothing — the press of Run is still the operator's.
+   * workflow and starts nothing — the press of Run is still the operator's;
+   * `schedule` puts a saved workflow on a recurrence, so it starts itself later
+   * with nobody present.
    */
-  kind: "run" | "workflow";
+  kind: "run" | "workflow" | "schedule";
   /** Null when the proposal runs under the operator's default guard set. */
   templateId: string | null;
   /** Null when there is no template, or when it has since been deleted. */
@@ -3194,6 +3226,8 @@ export interface ChatProposalDTO {
   dependsOn: Array<{ label: string; edge: "on-success" | "on-finish"; continueBranch: boolean }>;
   /** A workflow proposal's blocks. Empty on a run proposal. */
   blocks: ProposedBlockDTO[];
+  /** A schedule proposal's recurrence and target. Null on the other two kinds. */
+  schedule: ProposedScheduleDTO | null;
   /**
    * `superseded` is the chat having replaced this card with a corrected one,
    * and — like a superseded question — it is not a failure and should not read
@@ -3202,7 +3236,10 @@ export interface ChatProposalDTO {
    */
   status: "pending" | "approved" | "rejected" | "failed" | "superseded";
   runId: string | null;
-  /** The workflow an approved workflow proposal saved. Never a run. */
+  /**
+   * The workflow an approved workflow proposal saved, or the one an approved
+   * schedule proposal scheduled. Never a run.
+   */
   workflowId: string | null;
   /**
    * The proposal that replaced this one, by id, or null where none did.

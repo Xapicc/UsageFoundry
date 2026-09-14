@@ -296,6 +296,8 @@ size/mtime stamp per file plus the error results, and the whole error corpus is
 0.90 MiB across 23 days. It is bounded by the retention horizon through
 `forgetDreamingFiles`. If it ever holds successful results it needs both.
 
+**The orchestrator reads both halves through `list_recurring_failures`, and the rules above follow it there.** It is the readout joined to the ledger, and it keeps the pane's disciplines rather than inventing its own: the signature caveat is in the tool description and in the payload, not only on the page; notes and not-yet-written signatures are two lists, and an empty notes list says which kind of nothing it is — Dreaming off, on and not yet written, or a query that matched no note; a note's absolute path is handed over only when `noteStillPresent` answers `true`, because a stored path is what a run reported; and the suppression set is `writtenSignatures()` rather than the capped `listNotes()`. It writes nothing, needs no setting, and works with Dreaming off, which is the readout half's own property.
+
 **Both lists on the pane say when they are cut.** `git-and-review.md`'s rule,
 and it matters most here: the notes table is the record of what this app has
 written into a store with no version control, so a list that silently stopped at

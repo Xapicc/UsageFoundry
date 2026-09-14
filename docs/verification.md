@@ -538,6 +538,24 @@ is `docs/agent/testing.md`; interface defects and their classes are
   1,137 at 2,000, the cursored read now on `idx_chat_messages_seq` with no
   sort. A thread's first read costs 2.0% more, once.
 
+- **`propose_schedule`, `list_past_proposals` and `list_recurring_failures`,
+  driven in-process through `/api/mcp`, 2026-09-14.** Throwaway `DATA_DIR`, a
+  minted chat capability, no CLI. `propose_schedule` refused an unbudgeted
+  workflow, `25:00`, an unknown zone and a second waiting card for one workflow;
+  `supersedes` replaced one; approval through `POST /api/chat/[id]/proposals`
+  wrote the schedule and the thread note, and a card whose workflow then lost its
+  limits was refused on the card and at the click. The failures tool returned a
+  seeded note with its vault path and the unwritten recurrence; the proposals
+  tool excluded the asking thread and reported a purged run as gone. Three
+  sentences were wrong and were fixed before this entry. Caveat: no model called
+  any of it.
+
+- **The schedule card rendered under `next dev` at 390 and 1280, 2026-09-14**,
+  over a seeded thread: replacing a paused schedule, refused after its limits
+  were cleared, an interval, a run card beside them, and an approved row reading
+  "— scheduled". No sideways scroll, no console error, `Select all (skips 1)`.
+  Not clicked; not the standalone build.
+
 ### Taskboard
 
 - **The taskboard in a browser, 2026-09-07**, standalone server, seeded
@@ -2592,6 +2610,15 @@ measurement under *Verified* and cut the item down to what is still open.
   append path is unit-tested only. Unseen: a mid-turn reply appending, the
   unseen count and scroll on a tail, a thread switch mid-poll. Open `/chat`,
   send a message to a thread with history, and watch the reply land.
+
+- **No model has called `propose_schedule`, `list_past_proposals` or
+  `list_recurring_failures` (2026-09-14).** Unmeasured: whether a turn reaches
+  for the two read tools on the system prompt's pointer alone, whether it asks
+  for a time zone rather than guessing one, and what a cold
+  `list_recurring_failures` scan adds to a turn on a real corpus. Settling it:
+  on a real install with a saved, budgeted workflow, ask the chat to "run the
+  sweep every Monday morning" and to "fix the bwrap failures", and read the
+  turn's tool calls and cost.
 
 ### Taskboard
 

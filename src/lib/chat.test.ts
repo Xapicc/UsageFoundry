@@ -24,7 +24,8 @@ import type { RegistryAgent } from "./agents";
  * Covers `planProposal`, `planApprovalBatch`, `chatPrompt`, `decisionNote`,
  * `githubSlug`, `settleOnExit`, `staleTurn`, the three that decide what the
  * operator is asked and what an answer settles — `normalizeChoices`,
- * `answerMessage`, `settleQuestions` — and the turn claim in `sendChatMessage`.
+ * `answerMessage`, `settleQuestions` — the turn claim in `sendChatMessage`, and
+ * `findPastProposals`, which earns its cases on `findChats`' grounds.
  *
  * Each is the same class of failure the rest of this suite is reserved for —
  * silent, and expensive:
@@ -139,6 +140,7 @@ const {
   createProposal,
   createProposalReplacing,
   findChats,
+  findPastProposals,
   getProposal,
   pendingProposals,
   proposalByReference,
@@ -920,6 +922,7 @@ describe("decisionNote", () => {
     rejected: 0,
     failed: [],
     saved: 0,
+    scheduled: 0,
     decided: 0,
     foreign: 0,
   };
@@ -966,6 +969,24 @@ describe("decisionNote", () => {
     });
     assert.match(note, /Could not start .Fix a bug.: That folder is not in any mount\./);
     assert.doesNotMatch(note, /Nothing was/);
+  });
+
+  it("says a schedule will start work unattended, and never folds it into saved", () => {
+    // The one approval in the panel that leads to spending with nobody present.
+    // Counted under "saved", the thread would read as though nothing will ever
+    // run until the operator presses something.
+    const note = decisionNote({ ...nothing, saved: 1, scheduled: 1 });
+    assert.match(note, /Saved 1 workflow\(s\)\. Nothing is running/);
+    assert.match(note, /Put 1 workflow\(s\) on a schedule\. .*with nobody present/);
+    assert.doesNotMatch(decisionNote({ ...nothing, scheduled: 1 }), /Nothing was/);
+  });
+
+  it("says a schedule could not be scheduled, not that it could not be started", () => {
+    const note = decisionNote({
+      ...nothing,
+      failed: [{ title: "Nightly sweep", reason: "No limit.", kind: "schedule" }],
+    });
+    assert.match(note, /Could not schedule .Nightly sweep.: No limit\./);
   });
 });
 
@@ -1225,6 +1246,77 @@ describe("chatOwnsRun — what a capability may ask for the patch of", () => {
       specId: "pending",
     });
     assert.equal(chatOwnsRun(chat.id, "run-mine"), false);
+  });
+});
+
+describe("findPastProposals — what other conversations proposed", () => {
+  // Driven against the database for `findChats`' reason: the failures are in the
+  // query. Each case names text no other case in this file writes, because the
+  // database is shared across the file.
+  const propose = (chatId: string, title: string, over: Record<string, unknown> = {}) =>
+    createProposal(chatId, {
+      templateId: null,
+      title,
+      task: `${title}, in full.`,
+      promptOverride: null,
+      mountId: "work",
+      folder: "repo",
+      ...over,
+    });
+
+  it("leaves out the asking conversation and every replaced card", () => {
+    // The asking thread already has `list_proposals`, and a replaced card is the
+    // same work as its replacement: listing either reads as a job proposed twice.
+    const asking = createChat();
+    const other = createChat();
+    propose(asking.id, "zqp-own mine");
+    const replaced = propose(other.id, "zqp-own draft");
+    const replacement = createProposalReplacing(
+      other.id,
+      { templateId: null, title: "zqp-own fixed", task: "zqp-own fixed.", promptOverride: null, mountId: "work", folder: "repo" },
+      replaced.id,
+    );
+    assert.ok(replacement.ok);
+
+    const found = findPastProposals({ excludeChatId: asking.id, q: "zqp-own" });
+    assert.deepEqual(
+      found.proposals.map((p: { title: string }) => p.title),
+      ["zqp-own fixed"],
+    );
+    assert.equal(found.total, 1);
+  });
+
+  it("matches a literal % rather than everything", () => {
+    // Unescaped, `100%` becomes the pattern `%100%%` and matches "1000" too — a
+    // search that returns more than it found, which reads as a match.
+    const asking = createChat();
+    const other = createChat();
+    propose(other.id, "Raise coverage to 100% zqp-pct");
+    propose(other.id, "Raise coverage to 1000 zqp-pct");
+
+    const found = findPastProposals({ excludeChatId: asking.id, q: "100%" });
+    assert.deepEqual(
+      found.proposals.map((p: { title: string }) => p.title),
+      ["Raise coverage to 100% zqp-pct"],
+    );
+  });
+
+  it("matches a folder and what is under it, never a sibling that shares its prefix", () => {
+    const asking = createChat();
+    const other = createChat();
+    propose(other.id, "web", { mountId: "zqp-mount", folder: "acme/web" });
+    propose(other.id, "api", { mountId: "zqp-mount", folder: "acme/web/api" });
+    propose(other.id, "webby", { mountId: "zqp-mount", folder: "acme/webby" });
+
+    const found = findPastProposals({
+      excludeChatId: asking.id,
+      mountId: "zqp-mount",
+      folder: "acme/web",
+    });
+    assert.deepEqual(
+      found.proposals.map((p: { title: string }) => p.title).sort(),
+      ["api", "web"],
+    );
   });
 });
 
