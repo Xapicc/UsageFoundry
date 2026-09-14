@@ -56,7 +56,7 @@
  * built app. Run it by hand:
  *
  *     env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build
- *     npm run smoke
+ *     npm run smoke-pages
  *
  * Exit codes are three-valued on purpose. 0 passed, 1 a page failed, **2 the
  * pass did not run** — no build, no Playwright, no browser. A skip that exited 0
