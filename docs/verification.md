@@ -2506,6 +2506,42 @@ fixed.
   six and were not rendered — the sandbox has no templates and no agents — so
   they are covered by the shared class and not by a reading of their own.
 
+- **`ListRow`'s control side may now shrink below the breakpoint, and it moves
+  only the controls it was for: 98 of 1,248 readings changed, none of them a
+  switch or a `w-24` field and none of them at 1280px (2026-09-14).** A scratch
+  Playwright probe staging the same throwaway install `scripts/smoke-pages.mjs`
+  does, against a standalone build, reading every `ListRow` on `/settings`,
+  `/runs/new` and `/workflows/[id]/edit` at 320px, 390px and 1280px in both
+  themes and both skins, once before `max-md:shrink max-md:min-w-0` and once
+  after. Of the 98 readings that changed, 64 are a `SegmentedControl` and 34 a
+  wide wrapper; 0 of 516 switch readings and 0 of 24 `w-24` readings moved, and
+  every reading at 1280px is identical. The mechanism is why the blast radius
+  is that small: with `flex-wrap` on there is negative free space to distribute
+  only when a single item is wider than the line, which a switch or a short
+  number field never is. What the changed rows do is wrap — `/settings`' two
+  permission-mode rows go from a 310px control side in a 294px content box to
+  294px and a row 46px taller, and at 320px from 310px against 224px to 224px
+  exactly. `/runs/new`'s `When a limit is reached` row takes `max-md:w-full`
+  with it, retiring the seventh literal the entry above could not. Caveat: the
+  themes were set through the stored key, so the OS-default state (no
+  `[data-theme]`) was not one of the four measured.
+
+- **`npm run smoke-pages` is 92/92 against 85/92, and the four narrow-viewport
+  defects it had found are gone (2026-09-14).** Same standalone build. Before:
+  `/branches`, `/knowledge`, `/runs/new` and `/settings` failed the
+  clipped-overflow assertion in some skin at some width. After the row change,
+  the `/knowledge` colour-group track (`grow basis-40`, so the trailing
+  Up/Down/Remove cluster wraps instead of squeezing the query field to 2px) and
+  the `/branches` repository label (`min-w-0` on both boxes), all four are
+  clean. Two further defects surfaced in the same pass and were fixed with it,
+  both one cause: `break-words` does not change an unbreakable token's
+  *min-content* contribution, so an operator path sized the box it was in —
+  `EnvRow`'s pair measured 433px in a 358px `dl` on `/settings` and the mount
+  path 433px in a 294px row on `/runs/new`, both now `break-all`. Caveat: those
+  two are only reachable with a long path. The harness's sandbox sits under
+  `/private/var/folders/…`; the container's own `/data` and `/workspace` are
+  short enough that neither would ever have shown there.
+
 ## Not yet verified by hand
 
 - **The graph at a size no hand-drawn ordering reaches.** Every reading above is

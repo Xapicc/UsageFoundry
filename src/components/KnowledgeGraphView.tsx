@@ -1070,8 +1070,22 @@ function GroupList({
                 label={`Colour for group ${index + 1}`}
               />
               {/* Grows on the wrapper rather than on the control: `Input`'s own
-                  `w-full` outranks anything a caller writes about width. */}
-              <div className="min-w-0 flex-1">
+                  `w-full` outranks anything a caller writes about width.
+
+                  `basis-40` rather than `flex-1`'s zero basis, and it is the
+                  floor that makes the row wrap: the trailing Up/Down/Remove
+                  cluster is 174px that neither wraps nor shrinks, so in this
+                  268px rail the 16px index, the 28px swatch and it consumed the
+                  line and left this track 2px — an `<input>` cannot draw
+                  narrower than its own padding and border, so it rendered 22px
+                  and hung out of its own track, one character wide, at a
+                  desktop width. A basis wide enough to break the line sends the
+                  cluster to a line of its own and this track takes what is
+                  left. Written as `grow basis-40` and not `flex-1 basis-40`,
+                  because two utilities setting `flex-basis` on one element
+                  resolve by stylesheet order rather than by what is written
+                  here. */}
+              <div className="min-w-0 grow basis-40">
                 <Input
                   value={group.query}
                   onChange={(e) =>

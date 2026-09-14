@@ -1437,7 +1437,11 @@ export default function NewRunPage() {
                   {activeMount ? (
                     <>
                       Mounted at{" "}
-                      <span className="mono">{activeMount.path}</span>
+                      {/* `break-all` for `EnvRow`'s reason on `/settings`: a
+                          mount path is one unbreakable token, and a
+                          description is prose with no width of its own to
+                          break it against. 433px in a 294px row, measured. */}
+                      <span className="mono break-all">{activeMount.path}</span>
                       {activeMount.error ? ` — ${activeMount.error}` : ""}
                     </>
                   ) : !foldersLoaded ? (
@@ -2368,21 +2372,15 @@ export default function NewRunPage() {
                   wraps to two lines instead of hanging off both edges of the
                   card.
 
-                  The one literal on this page that `max-md:w-full` cannot
-                  replace, and the six rows above are the contrast: `ListRow`'s
-                  control side is `shrink-0`, so it is only ever as wide as its
-                  content, and a percentage against it resolves to that content.
-                  For a control *narrower* than the line, `max-md:grow` widens
-                  the side to the line first and the percentage is the column;
-                  for this one it is 352px of itself, measured, so `w-full`
-                  leaves the row wider than the card instead of wrapping it.
-                  288px is wrong away from 390px and stays until the row's
-                  control side may shrink below the breakpoint, which is every
-                  `ListRow` on every page and not this form's call to make.
+                  The width is the column rather than a pixel figure because
+                  `ListRow`'s control side may now shrink below the breakpoint;
+                  until it could, a percentage here resolved against the
+                  control's own 352px and this row carried a `max-md:w-72` that
+                  was only right at 390px.
 
                   The other two segmented controls on this page fit and take no
                   wrapper. */}
-              <div className="max-md:w-72">
+              <div className="max-md:w-full">
                 <SegmentedControl
                   options={ENFORCEMENT_OPTIONS}
                   value={enforcement}

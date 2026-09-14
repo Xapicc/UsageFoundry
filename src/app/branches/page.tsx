@@ -1043,7 +1043,15 @@ export default function Branches() {
             than over a page, which is the difference between a page that stops
             at sixty and a page that has stopped counting. */}
         <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-3">
-          <label className="flex items-center gap-2 text-sm text-ink-muted">
+          {/* `min-w-0` on both boxes, because a flex item's `min-width: auto`
+              floors it at its own min-content and a `<select>`'s min-content is
+              its widest option — so at 390px this label was 333px of a 324px
+              row and the chevron gutter was outside the card. `AppShell` clips
+              rather than scrolls, so nothing showed it: the document's
+              `scrollWidth` never exceeded its `clientWidth`. Above the
+              breakpoint there is free space and neither floor was ever reached,
+              which is why this is unprefixed. */}
+          <label className="flex min-w-0 items-center gap-2 text-sm text-ink-muted">
             Repository
             {/* The width is on this wrapper, exactly as the land-strategy
                 picker below states its own: `Select` already carries `w-full`,
@@ -1053,7 +1061,7 @@ export default function Branches() {
                 rendered at 155px where 34ch is 284. Measured in a browser, not
                 deduced. The `max-md:min-h-11` beside it was `CONTROL_LINE`'s
                 own figure repeated, which is the same rule one property over. */}
-            <div className="w-[34ch] max-w-full">
+            <div className="w-[34ch] min-w-0 max-w-full">
               <Select
                 value={repo}
                 onChange={(e) => {

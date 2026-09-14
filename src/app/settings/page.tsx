@@ -1983,7 +1983,14 @@ function EnvRow({ label, children }: { label: string; children: ReactNode }) {
     // narrower than the 6px between rows, so a stacked pair still reads as one.
     <div className="flex max-md:flex-col gap-2 max-md:gap-0.5">
       <dt className="w-24 max-md:w-auto shrink-0 text-ink-faint">{label}</dt>
-      <dd className="min-w-0 break-words text-ink-muted">{children}</dd>
+      {/* `break-all` and not `break-words`: these values are operator paths, and
+          a path is one unbreakable token. `overflow-wrap: break-word` lets a
+          box break such a token only once it already has a width — it does not
+          change the *min-content* contribution, so the grid column above still
+          sized itself to the whole string and the pair measured 433px in a
+          358px `dl`. Measured against a `DATA_DIR` under `/private/var/…`; the
+          container's own `/data` is short enough to have hidden it. */}
+      <dd className="min-w-0 break-all text-ink-muted">{children}</dd>
     </div>
   );
 }

@@ -189,7 +189,19 @@ export function ListRow({
           </p>
         )}
       </div>
-      <div className="flex shrink-0 items-center gap-2 max-md:grow max-md:justify-end">
+      {/* `shrink-0` is what stops a long label squeezing a control they share a
+          line with, and above the breakpoint that is the only case there is.
+          Below it the row wraps, and with `flex-wrap` on there is negative free
+          space to distribute only when a *single* item is wider than the line —
+          so `max-md:shrink max-md:min-w-0` reaches the wide-control case and
+          nothing else: a switch or a `w-24` number field is never alone on a
+          line it overflows. Without it the side takes the control's max-content
+          width, a caller's `max-md:w-full` resolves against that same width
+          rather than the column, and the row ends up wider than the card —
+          measured at 352px in a 294px column for `/runs/new`'s enforcement
+          control, and at 338px in a 322px row for the permission-mode one under
+          the ascii skin, where the mono face is what takes it past the line. */}
+      <div className="flex shrink-0 max-md:min-w-0 max-md:shrink items-center gap-2 max-md:grow max-md:justify-end">
         <FieldControlContext.Provider
           value={{ describedBy: descriptionId, invalid: false, disabled }}
         >
