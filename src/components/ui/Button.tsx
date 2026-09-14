@@ -134,6 +134,14 @@ export function Button({
         "disabled:cursor-not-allowed " +
         // Busy is disabled, but it must not *look* disabled — a dimmed button
         // with a spinner on it reads as "unavailable", not as "working".
+        //
+        // Half opacity is the right answer only while there is a filled block
+        // under the label saying a control is there. The ascii skin takes the
+        // block away, so under it a disabled button takes a measured floor
+        // instead of this — 3:1, the graphical-object floor, at --fg-faint.
+        // The rule is in globals.css beside the rest of the skin; this file
+        // names no skin, and the `aria-busy` above is what keeps that rule off
+        // a working button.
         (busy ? " " : "disabled:opacity-50 ") +
         `${SIZE[size]} ${VARIANT[variant]} ${className}`
       }

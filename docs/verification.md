@@ -1711,6 +1711,67 @@ is `docs/agent/testing.md`; interface defects and their classes are
 
 ### Interface
 
+- **A disabled bracketed button, re-measured either side of its floor,
+  2026-09-14.** Headless Chromium 151.0.7922.34, dpr 2, against
+  `.next/standalone/server.js`; `/settings`' sticky footer at 1280 under
+  `data-skin="ascii"`, crop backdrop taken as the modal colour and the glyph as
+  the pixel furthest from it. Before: the resting `[ Save ]` drew #345c90 on
+  #1e1e20, **2.44:1** dark, and #77abe5 on #f0f0f3, **2.11:1** light — both the
+  variant's `--accent` at `disabled:opacity-50`, and the arithmetic agrees, a
+  50% composite of #4a9bff over #1e1e20 being #345c90 exactly. After: #8a8a8f on
+  #1e1e20, **4.84:1**, and #86868b on #f0f0f3, **3.19:1**. The target was 3:1
+  and not 4.5:1 — WCAG 1.4.3 exempts a disabled control, and the bar taken
+  instead was the graphical-object floor the skin's frame tones already sit at,
+  because under this skin the brackets are the mark that says a control is
+  there. **Caveats:** the light figure is `--fg-faint`'s own worst reading and
+  has no margin over the floor; the glyph sample is the best pixel of an
+  antialiased stroke, so the true reading is a little under both; and the
+  figures filed on the task were 1.93:1 and 1.74:1, measured on
+  `uf/usagefoundry-721638d11c0b-1-66a74a67` against a backdrop that is not the
+  #1e1e20/#f0f0f3 this footer draws today.
+
+- **Bracketed buttons back on the column, 2026-09-14.** Same engine and bundle;
+  `/runs`' `[ New run ]` at 390 and 1280 in both themes, the button's border-box
+  edge read from `getBoundingClientRect` and the bracket's edge as the first
+  column of ink in a viewport frame. Before, identical in all four states: box
+  left 16, ink left 32.5, so **16.5px** — `px-3.5` plus the 1px border is 15px
+  of box and the `[` glyph's own side bearing is the rest; the right-aligned
+  case the same, gutter 1260 against ink at 1243.5. After: **1.5px** on both
+  sides in all four states, which is the side bearing alone, with
+  `padding-inline` and `border-inline-width` both reading 0. The label spacing
+  inside the brackets is untouched, being `::before`/`::after` content.
+  **Caveat:** the accompanying page walk — 23 routes at 390 and 1280 in both
+  themes under the skin, 92 loads — asserted only two things, that nothing
+  scrolls sideways and that no `.uf-button` has `scrollWidth` past its
+  `clientWidth`, and it is a one-off pass rather than a check in the tree;
+  `smoke-pages` still has no skin axis, so it was green before and after
+  without seeing any of this.
+
+- **The OS accent pair bounded, and what the bound costs, 2026-09-14.** Same
+  engine and bundle. Before, `AccentColor` resolved to #0075ff and
+  `AccentColorText` to white, **4.21:1**, and that one reading is what every
+  `bg-tint text-tint-fg` call site drew at 390 and 1280 in both themes: the
+  primary `Button`/`ButtonLink`, the sidebar's active row and its label span,
+  and the quick-open highlight. After, with `--tint` taken as
+  `oklch(from AccentColor min(l, 0.5) c h)` and `--tint-fg` back to white, the
+  fill paints #0056de and all of them measure **6.20:1**; `QuickOpen`'s detail
+  line, raised from `text-tint-fg/75` to `/85`, measures **4.92:1** against
+  **4.16:1** — read off the app's own emitted classes rendered in the live page,
+  the panel's own keystrokes not being reachable from this context. The cap is
+  0.5 rather than 0.52 because **this engine clips out-of-gamut channels instead
+  of reducing chroma the way CSS Color 4 §13 asks**: painted,
+  `oklch(from #00ff00 min(l, 0.5) c h)` is #008400 and carries white at 4.88:1,
+  where the same expression at 0.52 is #008b00 and 4.47:1. **What it costs, and
+  it is not free:** a darker fill stands off a dark page less well, and the
+  primary button's fill against the toolbar goes 3.95:1 → **2.68:1** in dark
+  while light goes 3.70:1 → 5.45:1. That trade is forced — white needs the fill
+  under Y 0.183 and a 3:1 stand-off from this app's near-black needs it over
+  Y 0.139, a band narrower than one OKLCH lightness spans across the hue circle
+  — and the label was taken over the fill. **Caveat:** the only accent seen is
+  the #0075ff this headless engine reports; on a real desktop it is the
+  operator's, so the floor is the sweep's argument rather than a reading, and
+  nothing here was run in a second engine.
+
 - **The Settings `Tools` section, in a browser against the production bundle,
   2026-09-12.** A throwaway install seeded with
   `UF_PY_TOOLS="ruff==0.5.0|/workspace/winnow|cozempic>=1.8,<2"` and
