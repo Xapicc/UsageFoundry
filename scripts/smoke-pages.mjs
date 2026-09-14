@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * The smoke pass: open every page this app has, at two widths, and assert three
- * things about each.
+ * The smoke pass: open every page this app has, in two skins at two widths, and
+ * assert four things about each.
  *
  * `proposals/UIChecks/` surveyed what could check the interface and recommended
  * exactly this and no more — Option C2, "the smoke pass", against Option C1, a
@@ -14,7 +14,7 @@
  * A page-object, a login helper, a second file, or an assertion that some
  * particular text is present is C1 arriving one commit at a time.
  *
- * The three assertions are the survey's, in its order:
+ * The first three assertions are the survey's, in its order:
  *
  *   1. the response is 200 — a page that 500s on load is caught by nothing else
  *      in this repository;
@@ -23,6 +23,12 @@
  *   3. the body does not scroll sideways — the class of the one interface defect
  *      this project has actually recorded (the `w-auto`/`w-full` ordering in
  *      `RunLand.tsx`) and the reason a *browser* was bought rather than jsdom.
+ *
+ * The fourth is the half of assertion 3 the document cannot show: no box is
+ * wider than a parent that is not a scroll container. `AppShell` clips rather
+ * than scrolls, so the app's worst narrow-viewport failure leaves `scrollWidth`
+ * equal to `clientWidth` and assertion 3 green. `clippedOverflow` below carries
+ * the measurement that proved it.
  *
  * Assertion 2 has no exception list, and `/knowledge` is why it does not need
  * one. That page is the only one here whose interesting half — the note list,
@@ -72,6 +78,28 @@ const REPO = path.resolve(import.meta.dirname, "..");
 const WIDTHS = [390, 1280];
 
 /**
+ * The second axis: both skins, because nothing else scripted opens the ascii one.
+ *
+ * `:root[data-skin="ascii"]` restyles the whole interface — the token block,
+ * the kit primitives, the charts, the meters and the app shell — and an
+ * overlong fill string clipped by an `overflow: hidden` is exactly the failure
+ * the assertions below already look for. They simply never looked for it with
+ * the skin on.
+ *
+ * It doubles the pass. That is affordable here and nowhere else: `CLAUDE.md`
+ * keeps this file out of `npm test` and out of CI on purpose, so the minutes
+ * are paid by whoever runs it by hand and never by a push.
+ *
+ * The standard skin sets nothing, because that is what it *is*: `SkinToggle`
+ * removes the key rather than writing "standard", and the pre-paint script in
+ * `src/app/layout.tsx` keys on the stored value being exactly "ascii".
+ */
+const SKINS = [
+  { name: "standard", attribute: null },
+  { name: "ascii", attribute: "ascii" },
+];
+
+/**
  * How long to let a page settle after `load` before reading the console and the
  * scroll width.
  *
@@ -91,6 +119,41 @@ const BOOT_TIMEOUT_MS = 60_000;
 function skip(reason) {
   console.error(`\nSKIPPED — the smoke pass did not run.\n\n  ${reason}\n`);
   process.exit(2);
+}
+
+/**
+ * The `localStorage` key the skin is stored under, read out of the component
+ * that declares it.
+ *
+ * `src/components/SkinToggle.tsx` and the pre-paint script in
+ * `src/app/layout.tsx` already spell that string twice. A third spelling here
+ * would be a third thing to keep in step, and it is the one whose drift is
+ * silent: a stale key puts every ascii-skin page load into the standard skin
+ * and reports the whole axis green. This file cannot import the constant — the
+ * component is TSX and this is plain Node with no build step — so it reads the
+ * declaration, and refuses to run rather than guess.
+ */
+function skinStorageKey() {
+  const owner = path.join("src", "components", "SkinToggle.tsx");
+  let match = null;
+  try {
+    const source = fs.readFileSync(path.join(REPO, owner), "utf8");
+    match = /export const SKIN_STORAGE_KEY = "([^"]+)"/.exec(source);
+  } catch (error) {
+    // A skip rather than a throw, because the exit code is the whole contract
+    // here: an unreadable source file means the pass did not run, and a bare
+    // throw would exit 1 and report it as a page that failed.
+    skip(`could not read ${owner}: ${error.message}`);
+  }
+  if (match === null) {
+    skip(
+      `${owner} no longer declares SKIN_STORAGE_KEY where this can read it.\n` +
+        "  The ascii half of the pass sets that key on a browser context before the\n" +
+        "  first paint. Guessing it would run every page in the standard skin twice\n" +
+        "  and report it clean.",
+    );
+  }
+  return match[1];
 }
 
 /**
@@ -475,6 +538,84 @@ function label(route, seeds) {
 }
 
 /**
+ * Boxes wider than the box they sit in — the overflow the document cannot show.
+ *
+ * Assertion 3 stands on the *document's* scroll width, and that is blind to the
+ * most damaging narrow-viewport failure this app has: `AppShell`'s outermost
+ * wrapper is `flex overflow-hidden`, so a box wider than the pane is **clipped**
+ * rather than allowed to scroll the document. `scrollWidth` stays equal to
+ * `clientWidth` and the page reports clean with its right-hand side off screen
+ * and unreachable. Measured 2026-09-10 on `/chat` at 390x844: the thread card
+ * and the proposals card were each 584px inside a 358px grid track, and this
+ * file passed that page at that width with an identical `44/44 page loads
+ * clean`.
+ *
+ * The guard is on the **parent**, and it is the whole of what keeps the true
+ * positives. A parent that declares a scroll mechanism is overflowing on
+ * purpose: a `<pre class="overflow-x-auto">` whose `<code>` is 824px inside
+ * 318px is correct, and so is a `TableWrap` around a wide table. Only a parent
+ * whose `overflow-x` is `visible` is claiming its child fits.
+ *
+ * Three things are excluded, and each was read off a run rather than guessed:
+ *
+ *   - a parent whose `clientWidth` is 0 has no content box to measure against.
+ *     An inline `<span>` or `<a>` reports 0, and so does a stacked `Table`'s
+ *     cell; comparing against it would call every child's full width overflow.
+ *   - **inside an `<svg>`** nothing is a CSS box: a `<path>` is laid out in the
+ *     viewBox's own coordinate system, which is then scaled to fit. The root
+ *     `<svg>` is a replaced CSS box and is measured, through its client rect —
+ *     `offsetWidth` is an `HTMLElement` property and is `undefined` on every
+ *     SVG element, and `undefined - 346` is `NaN`, which slips past a `<=`
+ *     rather than failing it. 268 hits in the first run, all of them this.
+ *   - an **out-of-flow** element is measured against its nearest positioned
+ *     ancestor, not against its parent, so the two numbers are different boxes.
+ *     `.uf-ascii-frame` is the case that proved it: `globals.css` gives it
+ *     `inset: calc(-0.5em - 1px)`, deliberately drawing the character border
+ *     *outside* its host, and it reported 361px in 346px on every ascii page.
+ */
+function clippedOverflow() {
+  function describe(element) {
+    const classes =
+      typeof element.className === "string" && element.className.trim() !== ""
+        ? "." + element.className.trim().split(/\s+/).slice(0, 3).join(".")
+        : "";
+    return element.tagName.toLowerCase() + classes;
+  }
+  const hits = [];
+  for (const element of document.querySelectorAll("body *")) {
+    if (!(element instanceof HTMLElement) && !(element instanceof SVGSVGElement)) continue;
+    const parent = element.parentElement;
+    if (parent === null || parent.clientWidth === 0) continue;
+    const width =
+      element instanceof HTMLElement
+        ? element.offsetWidth
+        : Math.round(element.getBoundingClientRect().width);
+    // The 1px allowance is for a fractional layout rounded up to an integer;
+    // a real clipping defect is tens of pixels or more.
+    if (width - parent.clientWidth <= 1) continue;
+    // The style reads sit behind that arithmetic on purpose: `getComputedStyle`
+    // forces a style recalculation, and a page has thousands of elements but
+    // only a handful that are over-wide at all.
+    if (getComputedStyle(parent).overflowX !== "visible") continue;
+    const style = getComputedStyle(element);
+    if (style.position === "absolute" || style.position === "fixed") continue;
+    // The **margin** box is what occupies the parent, and a negative horizontal
+    // margin is the author asking for the extra width rather than losing it: a
+    // full-bleed sticky footer is `-mx-4` inside a padded pane, and it measured
+    // 390px in a 358px <form> at 390 and 1056 in 1016 at 1280 — both exactly
+    // its own margins, both reaching the pane edge with nothing cut off.
+    const over =
+      width + parseFloat(style.marginLeft) + parseFloat(style.marginRight) - parent.clientWidth;
+    if (over <= 1) continue;
+    hits.push({
+      over,
+      text: `<${describe(element)}> ${width}px in ${parent.clientWidth}px <${describe(parent)}>`,
+    });
+  }
+  return hits.sort((a, b) => b.over - a.over).map((hit) => hit.text);
+}
+
+/**
  * Name the widest thing on the page, so a sideways-scroll failure is actionable
  * rather than merely true. Diagnostic only — the assertion above it stands on
  * the document's own scroll width.
@@ -495,7 +636,7 @@ function widestOffender() {
   return worst;
 }
 
-async function checkPage(context, baseUrl, route, width) {
+async function checkPage(context, baseUrl, route, width, skin) {
   const page = await context.newPage();
   const problems = [];
   const consoleErrors = [];
@@ -519,6 +660,15 @@ async function checkPage(context, baseUrl, route, width) {
 
     await page.waitForTimeout(SETTLE_MS);
 
+    // Not a check of the interface but of this harness: everything the skin axis
+    // asserts is worthless if the attribute never arrived, and it would arrive
+    // as a clean run rather than as an error.
+    const applied = await page.evaluate(() => document.documentElement.dataset.skin ?? null);
+    if (applied !== skin.attribute) {
+      const spell = (value) => (value === null ? "absent" : `"${value}"`);
+      problems.push(`skin not applied: data-skin is ${spell(applied)}, expected ${spell(skin.attribute)}`);
+    }
+
     const scroll = await page.evaluate(() => {
       const el = document.scrollingElement ?? document.documentElement;
       return { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth };
@@ -531,6 +681,18 @@ async function checkPage(context, baseUrl, route, width) {
       );
     }
 
+    const clipped = await page.evaluate(clippedOverflow);
+    if (clipped.length > 0) {
+      // Three, then a count: one clipped box usually drags its whole subtree
+      // over with it, and the widest few are what name the container at fault.
+      problems.push(
+        `clipped overflow: ${clipped.length} box${clipped.length === 1 ? "" : "es"} wider than ` +
+          `a parent that is not a scroll container\n          ` +
+          clipped.slice(0, 3).join("\n          ") +
+          (clipped.length > 3 ? `\n          …and ${clipped.length - 3} more` : ""),
+      );
+    }
+
     for (const text of consoleErrors) {
       problems.push(`console error: ${text.replace(/\s+/g, " ").slice(0, 200)}`);
     }
@@ -539,10 +701,11 @@ async function checkPage(context, baseUrl, route, width) {
   } finally {
     await page.close();
   }
-  return { route, width, problems };
+  return { route, width, skin: skin.name, problems };
 }
 
 async function main() {
+  const storageKey = skinStorageKey();
   const playwrightEntry = resolvePlaywright();
   if (playwrightEntry === null) {
     skip(
@@ -623,26 +786,43 @@ async function main() {
 
     const seeds = await seed(baseUrl, headers, sandbox.workspace);
     const pages = routes(seeds);
-    console.log(`${pages.length} pages × ${WIDTHS.length} widths against ${baseUrl}\n`);
+    console.log(
+      `${pages.length} pages × ${SKINS.length} skins × ${WIDTHS.length} widths ` +
+        `against ${baseUrl}\n`,
+    );
 
-    for (const width of WIDTHS) {
-      const context = await browser.newContext({
-        viewport: { width, height: 900 },
-        extraHTTPHeaders: headers,
-      });
-      for (const route of pages) {
-        const result = await checkPage(context, baseUrl, route, width);
-        checked += 1;
-        const name = label(route, seeds);
-        if (result.problems.length === 0) {
-          console.log(`  ok    ${String(width).padEnd(5)} ${name}`);
-        } else {
-          console.log(`  FAIL  ${String(width).padEnd(5)} ${name}`);
-          for (const problem of result.problems) console.log(`          ${problem}`);
-          failures.push({ width, name, problems: result.problems });
+    for (const skin of SKINS) {
+      for (const width of WIDTHS) {
+        const context = await browser.newContext({
+          viewport: { width, height: 900 },
+          extraHTTPHeaders: headers,
+        });
+        if (skin.attribute !== null) {
+          // Before any of the page's own scripts, which is what makes this the
+          // state a person is in rather than a page caught mid-swap: the
+          // pre-paint script reads the key and sets the attribute before the
+          // first frame. Uncaught on purpose — a `localStorage` that refused
+          // the write must fail the run, not skin half of it.
+          await context.addInitScript(
+            ([key, value]) => localStorage.setItem(key, value),
+            [storageKey, skin.attribute],
+          );
         }
+        for (const route of pages) {
+          const result = await checkPage(context, baseUrl, route, width, skin);
+          checked += 1;
+          const name = label(route, seeds);
+          const where = `${skin.name.padEnd(8)} ${String(width).padEnd(5)}`;
+          if (result.problems.length === 0) {
+            console.log(`  ok    ${where} ${name}`);
+          } else {
+            console.log(`  FAIL  ${where} ${name}`);
+            for (const problem of result.problems) console.log(`          ${problem}`);
+            failures.push({ skin: skin.name, width, name, problems: result.problems });
+          }
+        }
+        await context.close();
       }
-      await context.close();
     }
   } finally {
     await browser.close();
@@ -653,7 +833,8 @@ async function main() {
   const failedPages = new Set(failures.map((f) => f.name));
   console.log(
     `\n${checked - failures.length}/${checked} page loads clean; ` +
-      `${failedPages.size} of the ${checked / WIDTHS.length} pages failed at some width.`,
+      `${failedPages.size} of the ${checked / (SKINS.length * WIDTHS.length)} pages ` +
+      `failed in some skin at some width.`,
   );
   if (failures.length > 0) {
     console.log("\nFailing pages:");

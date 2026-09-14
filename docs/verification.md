@@ -2206,6 +2206,44 @@ is `docs/agent/testing.md`; interface defects and their classes are
   headroom on this page is now 6px, which the seven `max-md:w-72` literals on
   it would widen to 12px — filed rather than done here.
 
+- **`smoke-pages` now sees a clipped overflow, and caught three on its first
+  run, 2026-09-14** (`npm run smoke-pages` against a standalone build of
+  `uf/usagefoundry-721638d11c0b-2-6a9afb21`, Playwright Chromium, 23 routes ×
+  2 skins × 2 widths). The fourth assertion — no box wider than a parent that is
+  not a scroll container — closes the blind spot the entry "The chat surface at
+  390px" names as its reason for existing: `AppShell` clips rather than scrolls,
+  so a pane-wide box leaves `scrollWidth` equal to `clientWidth`. It found
+  `/branches` at standard 390 (a `<label>` 333px in a 324px row, the Repository
+  select's last 9px outside the card), `/knowledge` at standard 1280 (the graph's
+  group query `<input>` drawn 22px inside a `min-w-0 flex-1` track that collapsed
+  to 2px), and the permission-mode segmented control 338px in 322px on
+  `/settings` and `/runs/new` at ascii 390 — filed as `d876bace`, `8b7aa64c` and
+  `1cefeb31` rather than fixed there. Result: `88/92 page loads clean`, exit 1.
+  Three exclusions were read off runs rather than guessed and are written out in
+  `clippedOverflow()`: a parent whose `clientWidth` is 0, anything inside an
+  `<svg>` (268 hits in the first run, all from `offsetWidth` being `undefined` on
+  an `SVGElement` so that `undefined - 346` is `NaN` and passes every `<=`),
+  out-of-flow elements (`.uf-ascii-frame` is `inset: calc(-0.5em - 1px)` by
+  design), and the margin box rather than the border box (a `-mx-4` full-bleed
+  sticky footer measured 390px in a 358px `<form>` and 1056 in 1016, both exactly
+  its own margins). Caveat: headless Chromium at two widths only, and the pass
+  now exits 1 on this branch until those three are fixed — a green run is not
+  available to compare against.
+
+- **`smoke-pages` drives the ascii skin, and the axis is otherwise clean,
+  2026-09-14** (same run). A second browser context per skin, with
+  `addInitScript` writing the key read out of `SkinToggle.tsx` — not a third
+  spelling of `"uf-skin"` — so `layout.tsx`'s pre-paint script sets `data-skin`
+  before the first frame exactly as it does for a person. Each page load then
+  asserts the attribute arrived, because an axis that silently failed to apply
+  would report 92/92 clean rather than an error. All 23 routes passed at ascii
+  390 and ascii 1280 on all four assertions but for the segmented control above,
+  which is the first defect the skin axis has caught and which neither the skin
+  axis nor the clipped-overflow check finds alone. Cost: 44 page loads became 92,
+  which `CLAUDE.md`'s position that this pass is deliberately outside CI is what
+  makes affordable. Caveat: light theme only — the skin and the theme are
+  separate attributes and this adds the skin axis, not a theme one.
+
 ## Not yet verified by hand
 
 - **The graph at a size no hand-drawn ordering reaches.** Every reading above is
@@ -3323,8 +3361,10 @@ measurement under *Verified* and cut the item down to what is still open.
   since been measured on four routes at 390 and 1280 in both themes, see the
   three 2026-09-13 entries above, but that is the toolbar and the source list
   and nothing a route draws under them; the live flip (task `d8e5f614`) was
-  never driven; `smoke-pages` is default-skin only (`4e6dd0b9`). No second
-  browser (where `█` measures 0.602em), touch, zoom or screen reader.
+  never driven. `smoke-pages` is no longer default-skin only — see the
+  2026-09-14 entry above — but what it adds is four load assertions per route,
+  not a look. No second browser (where `█` measures 0.602em), touch, zoom or
+  screen reader.
 
 - **Open under the ascii skin, 2026-09-11.** Findings stay on the board —
   `New run` clipped off at 390px is no longer among them, see the 2026-09-12
