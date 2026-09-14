@@ -39,10 +39,13 @@ import {
  * Which is why a routine type is named below even when nothing here acts on it.
  * A counter that fires on every turn is a counter nobody reads, so the handled
  * list has to track the Claude parser's rather than only the types this file
- * does something with. That parser handles `assistant`, `user`, `result`,
- * `system`, `tool_progress` and `rate_limit_event`; this one handles all of
- * those but `tool_progress`, which is still counted here as unknown and is the
- * one remaining divergence between the two.
+ * does something with. Both parsers now claim the same six — `assistant`,
+ * `user`, `result`, `system`, `tool_progress` and `rate_limit_event` — and
+ * there is no divergence left between them. They diverge in what they *do* with
+ * them, which is a different thing and is a decision written out at the branch
+ * below: `orchestrator.ts` folds `tool_progress` into the run page's live tool
+ * strip, and this parser names it so `chat.stream_unread` stays trustworthy
+ * without inventing a strip the chat panel does not have.
  */
 
 /** The main thread's text, the measured usage, and what could not be read. */
@@ -211,7 +214,28 @@ export function readChatEvent(
   // files a routine event as a lost vocabulary once per chat turn, and a
   // `chat.stream_unread` that fires on every turn is what teaches the operator
   // to stop reading the one line that says the pin has moved.
-  if (type === "system" || type === "user" || type === "rate_limit_event") {
+  //
+  // `tool_progress` is named here rather than read, and that is a decision
+  // rather than the cheaper of two options. On the run side it is not a no-op:
+  // `noteToolProgress` folds it into the run page's live tool strip, published
+  // on a channel that writes no `run_events` row. The chat's live channel
+  // carries one thing, the partial assistant text, and it carries it by
+  // persisting and republishing a row — so reading this event here would mean
+  // inventing a second live-only field, a component to draw it and a place in
+  // `docs/agent/chat.md` to argue for both, for a frame that carries no text,
+  // no usage and nothing the turn's ending does not already say. What it does
+  // carry is the cost of misfiling it: the CLI emits one per open tool call
+  // roughly every 30 seconds, so any turn whose tool runs longer than that had
+  // `chat.stream_unread` reporting a routine event as a vocabulary the app had
+  // lost — the same failure `rate_limit_event` had, on slow turns instead of on
+  // every turn. A chat tool strip is a feature, and it can be built without
+  // this line being wrong first.
+  if (
+    type === "system" ||
+    type === "user" ||
+    type === "rate_limit_event" ||
+    type === "tool_progress"
+  ) {
     return { textGrew: false, spendGrew: false, sawResult: false };
   }
 
