@@ -1723,7 +1723,16 @@ is `docs/agent/testing.md`; interface defects and their classes are
   and not 4.5:1 — WCAG 1.4.3 exempts a disabled control, and the bar taken
   instead was the graphical-object floor the skin's frame tones already sit at,
   because under this skin the brackets are the mark that says a control is
-  there. **Caveats:** the light figure is `--fg-faint`'s own worst reading and
+  there. A *busy* button was checked separately and does not take the floor:
+  two buttons built from the live page's own class string, one `disabled` and
+  one `disabled aria-busy="true"` with `disabled:opacity-50` dropped the way
+  `Button` drops it, compute `--fg-faint` and `--danger` respectively, both at
+  opacity 1. They had to be built rather than toggled — setting `aria-busy` on
+  an element already in the page flips `matches()` and leaves the computed
+  colour behind, Chromium not invalidating the cascade for an attribute that
+  appears only inside a `:not()`. The app never sits in that state: React
+  rewrites `className` in the same commit, which invalidates.
+  **Caveats:** the light figure is `--fg-faint`'s own worst reading and
   has no margin over the floor; the glyph sample is the best pixel of an
   antialiased stroke, so the true reading is a little under both; and the
   figures filed on the task were 1.93:1 and 1.74:1, measured on
