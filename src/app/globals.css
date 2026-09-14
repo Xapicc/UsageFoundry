@@ -80,9 +80,8 @@
      control gets its own, deeper blue and white stays legible at 5.1:1.
 
      The @supports block below swaps in the operator's own accent where the
-     browser exposes it. AccentColorText is defined as the colour of text placed
-     on AccentColor, so the pair stays legible whatever the operator picked —
-     which is why the system colour is taken as a *pair* and never on its own.
+     browser exposes it, with its lightness capped so white stays legible on it;
+     the reasoning, and the measurement that retired AccentColorText, are there.
      Highlight/HighlightText was the other candidate and is rejected: engines
      return the selection *wash* there, not the accent, and a white label on a
      pale wash is the failure this split exists to prevent. */
@@ -328,15 +327,68 @@
    currentColor — visible, wrong, and silent. Testing the whole expression means
    such a browser simply keeps the blue.
 
-   The keyword is taken as a *pair*. AccentColorText is specified as the colour
-   of text placed on AccentColor, so a Graphite or Yellow accent stays legible
-   under its own label; --accent is deliberately left alone, because nothing
-   guarantees an arbitrary accent clears 4.5:1 as body text on a card. */
+   Only --accent-source is taken here, and --accent is deliberately left alone,
+   because nothing guarantees an arbitrary accent clears 4.5:1 as body text on a
+   card. A ring and a selection wash are neither text nor a surface a label sits
+   on, so they can take whatever the operator picked. */
 @supports (color: color-mix(in oklab, AccentColor 45%, transparent)) {
   :root {
     --accent-source: AccentColor;
-    --tint:          AccentColor;
-    --tint-fg:       AccentColorText;
+  }
+}
+
+/* The filled control's pair, bounded rather than asserted.
+
+   This used to be `--tint: AccentColor; --tint-fg: AccentColorText`, on the
+   grounds that CSS Color 4 defines AccentColorText as the colour of text placed
+   on AccentColor, so the pair is legible by construction. The spec says that;
+   it does not promise a ratio, and the default pair does not clear one.
+   Measured from rendered pixels, headless Chromium 151.0.7922.34, dpr 2,
+   2026-09-14: AccentColor resolves to #0075ff, AccentColorText to white, and
+   white on #0075ff is **4.21:1** — under the 4.5:1 floor for the label on every
+   `bg-tint text-tint-fg` call site, which is the primary button, the sidebar's
+   active row and the quick-open highlight. Nothing bounded it, and on a real
+   desktop a pale accent is far worse than 4.21:1.
+
+   So the accent is adopted with its OKLCH lightness capped instead, and the
+   label goes back to plain white. Hue and chroma are untouched, so the accent
+   is still recognisably the operator's.
+
+   The cap is what makes white safe, and 0.5 rather than anything higher because
+   lowering `l` can put `c` outside sRGB and **this engine clips the channels
+   rather than reducing chroma the way CSS Color 4 §13 asks**. Measured from
+   painted pixels, same engine and date: `oklch(from #00ff00 min(l, 0.5) c h)`
+   paints #008400, white on it 4.88:1 — the clipped prediction, not the 5.60:1
+   the mapped one would give. Swept over the whole sRGB cube, the clipped floor
+   at 0.5 is 4.86:1, worst input a pure green. 0.52 was the other candidate and
+   is rejected on the same measurement: predicted 4.49:1 clipped, painted
+   4.47:1, one hundredth the wrong side of the floor.
+
+   The app's own declared blues are not run through this — they are literals,
+   and they already measure 5.22:1 light and 5.06:1 dark. They sit at OKLCH L
+   0.538 and 0.545, which is why the cap reads as "no lighter than the blue this
+   app already chose".
+
+   What the cap costs, so nobody thinks it was missed: a darker fill stands off
+   a dark page less well. The primary button's fill against the toolbar goes
+   3.95:1 → 2.68:1 in dark and 3.70:1 → 5.45:1 in light. There is no cap that
+   avoids that, and the arithmetic says so rather than the taste: white needs
+   the fill under Y 0.183, standing 3:1 off this app's near-black needs it over
+   Y 0.139, and that 0.044-wide band is narrower than the spread one OKLCH
+   lightness covers across the hue circle. So one of the two floors has to give
+   for an accent this app has never seen, and it is the fill's — the label is
+   what identifies a filled control, and the declared dark blue already draws
+   at 2.83:1 against a dark --bg-raised card, so a fill under 3:1 there is the
+   regime this palette was already in rather than a new one.
+
+   A second @supports, and not a branch inside the one above, because the two
+   features shipped years apart: a browser with color-mix and without relative
+   colour syntax must keep the declared blues rather than lose --tint to an
+   invalid value, which is a transparent fill under a white label. */
+@supports (color: oklch(from AccentColor min(l, 0.5) c h)) {
+  :root {
+    --tint:    oklch(from AccentColor min(l, 0.5) c h);
+    --tint-fg: #ffffff;
   }
 }
 
@@ -724,11 +776,29 @@
    fills the palette already carries for exactly this, so all five states
    survive the skin and none of them moves the box. `:not(:disabled)` and not
    `:enabled`, because `ButtonLink` is an `<a>` and `:enabled` matches neither
-   it nor anything else outside a form control. */
+   it nor anything else outside a form control.
+
+   The inline inset goes with the fill, and that is the point of it: `px-3.5`
+   plus the 1px border put the `[` 15px inside the box, so every left-aligned
+   button used to start 15px right of the column it heads and every right-
+   aligned one ended 15px short of the gutter. Measured at 390 in dark before
+   this: `[ New run ]`'s box left edge at x=16, the bracket's ink at x=32.5.
+   Those 15px were the padding a *filled block* needs to keep its label off its
+   own edge — under this skin the bracket is the edge, so it belongs on it.
+   Only the outer inset goes: the space inside the brackets is in the ::before
+   and ::after content below, where the idiom wants it.
+
+   `border-inline-width` rather than leaving the transparent 1px in place,
+   because the box is `border-box` and a transparent border is still an inset.
+   The block ones stay, so the height and the two `min-h` hit targets are
+   untouched — this may take a width off a control and may never take a
+   target. */
 :root[data-skin="ascii"] .uf-button {
   gap: 0;
   border-color: transparent;
   background: none;
+  padding-inline: 0;
+  border-inline-width: 0;
 }
 :root[data-skin="ascii"] .uf-button::before { content: "[ "; white-space: pre; }
 :root[data-skin="ascii"] .uf-button::after  { content: " ]"; white-space: pre; }
@@ -740,6 +810,35 @@
    state a text colour that works unfilled. */
 :root[data-skin="ascii"] .uf-button-primary { color: var(--accent); }
 :root[data-skin="ascii"] .uf-button-danger  { color: var(--danger); }
+
+/* A disabled button, at a floor rather than at half of whatever it was.
+
+   `disabled:opacity-50` was chosen against the default skin, where a disabled
+   primary is grey-on-blue and the *block* is what says a control is there
+   whatever the label measures. This skin takes the block away and leaves the
+   brackets doing that job, so halving the opacity halves the only mark left.
+   Measured before this, at 1280 under the skin, `/settings`' resting `[ Save ]`:
+   1.93:1 in dark and 1.74:1 in light.
+
+   WCAG 1.4.3 exempts a disabled control, so 4.5:1 is not the bar and is not
+   what this targets — a disabled button that reads as strongly as an enabled
+   one is its own defect. The bar is "legible as present-but-disabled", and the
+   floor taken for it is 3:1, the graphical-object floor, which is the same one
+   the frame tones at the top of this block are held to and for the same reason:
+   the brackets are a mark, not prose. --fg-faint is the tone that was already
+   measured against it — worst 3.19:1, light on --bg — so this is one token
+   rather than a fourth grey nobody will re-measure. It also reads as clearly
+   quieter than every enabled variant, the nearest of which is ghost at
+   --fg-muted, 4.87:1 on the same surface.
+
+   `:not([aria-busy="true"])` because `Button` disables itself while busy and
+   must not *look* disabled then — the comment on that in Button.tsx is the
+   whole reason it drops `disabled:opacity-50` in the busy branch, and a rule
+   here that ignored it would put the skin's floor back on a working button. */
+:root[data-skin="ascii"] .uf-button:disabled:not([aria-busy="true"]) {
+  opacity: 1;
+  color: var(--fg-faint);
+}
 
 /* A grid rather than a list of rows: the column separator is what the default
    skin deliberately does not draw, and it is the mark that makes a table read
