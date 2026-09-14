@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { after, describe, it } from "node:test";
 
-import { landVerdict, parseVerifyCommand } from "./landGate";
+import { landVerdict, parseVerifyCommand, runVerify, verifyEnv } from "./landGate";
 import { verifyTreeVerdict } from "./land";
 
 /**
@@ -107,6 +110,136 @@ describe("landVerdict never turns 'could not check' into 'passed'", () => {
     });
     assert.equal(v.passed, false);
     assert.match(v.reason, /not runnable/);
+  });
+});
+
+/**
+ * WHAT THE CHECK CAN READ, which nothing else in this app would report.
+ *
+ * The spawn used to pass no `env` at all, so the child took `process.env`
+ * whole. Nothing about that was visible: the gate ran, the exit code meant what
+ * it always meant, and the only thing that changed was that a command whose
+ * script body lives in the tree an agent just wrote could read this app's
+ * master token. These are the four names the shared strip exists for, and they
+ * are asserted on the same grounds as `childEnv`'s four describes — no page, no
+ * log and no other test would notice if one came back.
+ *
+ * The planted values are set on this process rather than passed in, for the
+ * reason those describes give: reading `process.env` is the whole of what the
+ * builder does.
+ */
+describe("verifyEnv — what a command an agent's tree defines may read", () => {
+  const planted = {
+    UF_AUTH_TOKEN: "master-token-that-opens-every-run",
+    ANTHROPIC_ADMIN_KEY: "sk-ant-admin-that-nothing-here-bills-against",
+    DATA_DIR: "/data",
+    __NEXT_PRIVATE_STANDALONE_CONFIG: JSON.stringify({
+      output: "standalone",
+      outputFileTracingRoot: "/app",
+    }),
+  };
+  const previous = Object.fromEntries(
+    Object.keys(planted).map((k) => [k, process.env[k]]),
+  );
+  after(() => {
+    for (const [k, v] of Object.entries(previous)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  it("withholds the app's own credentials and DATA_DIR from the verify child", () => {
+    for (const [k, v] of Object.entries(planted)) process.env[k] = v;
+    const env = verifyEnv();
+    for (const [k, v] of Object.entries(planted)) {
+      assert.equal(env[k], undefined, `${k} reached the verify command`);
+      for (const [key, value] of Object.entries(env)) {
+        assert.equal(
+          value?.includes(v),
+          false,
+          `${key} carries ${k}'s value under another name`,
+        );
+      }
+    }
+  });
+
+  it("passes PATH through, because the command is resolved on it", () => {
+    // The strip is three prefixes and six names and PATH is in none of them.
+    // A copy that took it would not fail visibly — it would refuse every land
+    // with "could not start", which reads as the operator's command being
+    // wrong. The assertion is over a *planted* directory rather than equality
+    // alone, for the reason `childEnv`'s is: what
+    // `proposals/CustomStacks/01c-reach-and-permission.md` §2 claims is that a
+    // directory added to this server's PATH arrives, in the position it was
+    // added at.
+    const before = process.env.PATH;
+    const TOOLBOX = "/var/lib/uf-stacks/bin";
+    try {
+      process.env.PATH = `${TOOLBOX}:${before ?? "/usr/bin"}`;
+      const env = verifyEnv();
+      assert.equal(env.PATH, process.env.PATH);
+      assert.equal(
+        env.PATH?.split(path.delimiter)[0],
+        TOOLBOX,
+        "a directory prepended to the server's PATH did not reach the verify child first",
+      );
+    } finally {
+      if (before === undefined) delete process.env.PATH;
+      else process.env.PATH = before;
+    }
+  });
+});
+
+/**
+ * And the same question asked of the child rather than of the builder.
+ *
+ * `verifyEnv` above is a pure function, so every assertion in it still holds if
+ * the `env:` option is dropped from the spawn — which is precisely the defect
+ * that was there. This one runs the gate for real and lets the child report its
+ * own environment, so the two halves cannot drift apart silently.
+ *
+ * It is the only subprocess in this file and it costs one `node` start. The
+ * script is written to a temp file rather than passed with `-e` because
+ * `parseVerifyCommand` refuses every shell metacharacter, quotes included.
+ */
+describe("runVerify hands the child that environment and not this process's", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "uf-landgate-env-"));
+  after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const previous = {
+    UF_AUTH_TOKEN: process.env.UF_AUTH_TOKEN,
+    DATA_DIR: process.env.DATA_DIR,
+  };
+  after(() => {
+    for (const [k, v] of Object.entries(previous)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  it("exits 0 only because the stripped names are absent and PATH is not", async () => {
+    process.env.UF_AUTH_TOKEN = "master-token-that-opens-every-run";
+    process.env.DATA_DIR = "/data";
+
+    // Exits non-zero, and says which name, if the child can see any of them —
+    // so a regression arrives as a named failure rather than as a missing
+    // assertion. PATH is checked in the same breath: a strip that took it
+    // would otherwise look identical to one that works.
+    const probe = path.join(dir, "probe.cjs");
+    fs.writeFileSync(
+      probe,
+      [
+        "const leaked = ['UF_AUTH_TOKEN', 'ANTHROPIC_ADMIN_KEY', 'DATA_DIR',",
+        "  '__NEXT_PRIVATE_STANDALONE_CONFIG'].filter((k) => process.env[k]);",
+        "if (leaked.length) { console.log('leaked ' + leaked.join(',')); process.exit(1); }",
+        "if (!process.env.PATH) { console.log('no PATH'); process.exit(2); }",
+        "process.exit(0);",
+      ].join("\n"),
+    );
+
+    const outcome = await runVerify(dir, `${process.execPath} ${probe}`);
+    assert.equal(outcome.ran, true);
+    assert.equal(outcome.passed, true, outcome.reason);
   });
 });
 
