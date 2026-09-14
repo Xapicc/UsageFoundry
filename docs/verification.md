@@ -1059,6 +1059,67 @@ is `docs/agent/testing.md`; interface defects and their classes are
   applies to the cwd and every ancestor. After the fill a linked worktree's
   `git status --porcelain` is empty.
 
+- **The fill worked and the failures moved to the config directory,
+  2026-09-13.** Every failed tool result under `~/.claude/projects` whose body is
+  nothing but bwrap mount-time lines, deduped by `tool_use_id`: 460 since the
+  fill shipped at `a2194e7` on 2026-09-04. Not one of the twelve project-tree
+  `.claude` names has failed since the afternoon it shipped, and 260 of the 460
+  are in `$CLAUDE_CONFIG_DIR`, which the fill deliberately skipped. Named: 135
+  are the ten files `SANDBOX_CONFIG_DIR_NAMES` now creates, 125 are refused with
+  a reason — 77 in directories, which stopped on their own on 2026-09-07 because
+  the CLI makes its own caches, and 48 in the two policy documents, last seen
+  2026-09-11 — and 0 are unaccounted for by either list. Every one of the 26
+  recorded on 2026-09-12 and 2026-09-13 is one of the ten. The stricter dedupe is
+  why this counts fewer than the 2026-09-11 entry above does for an overlapping
+  window: a body with prose around the `bwrap:` line is a transcript discussing
+  the defect, not a call that died of it. Counted off transcripts, so it also
+  sees this host's non-UsageFoundry sessions.
+
+- **The same defect speaks with three messages, and only one of them is the one
+  the fix removes, 2026-09-13.** Of the 135 on the ten names, 119 are `Can't
+  create file at` — the create refused — and 16 are `Can't get type of source`
+  (9) and `Can't find source path` (7), where the CLI saw the path when it built
+  the argv and bwrap found it gone. One landed on this session: `npm run
+  typecheck` died with `bwrap: Can't find source path
+  /home/node/.claude/policy-limits.json.signature.json`, and the same command
+  succeeded on the retry, which is the whole shape of it. **What deletes them was
+  not established.** Read out of `claude.exe` 2.1.260: the sandbox's own scrub
+  (`bareGitRepoScrubPaths`) takes planted bare-repo files and nothing in the
+  config directory, and the managed-policy code does unlink both
+  `policy-limits.json` signatures, but only on a fetch returning no signature —
+  which this install, holding a 214-byte `policy-limits.json` and no signature
+  beside it, may or may not be doing. Pre-creating runs immediately before every
+  spawn and so narrows that window rather than closing it; whether the 16 go to
+  zero is the open half of the item below.
+
+- **Both lists are now read out of `claude.exe` 2.1.260 by `npm test`,
+  2026-09-13.** `sandboxMountPoints.test.ts` extracts the sandbox construction
+  from the shipped binary and asserts that `SANDBOX_TREE_ROOT_NAMES` is exactly
+  what it binds at a checkout's root, and that `SANDBOX_CONFIG_DIR_NAMES` and
+  `SANDBOX_CONFIG_DIR_REFUSED` together are exactly what it binds in the config
+  directory, with the file/directory split taken from the CLI's own flag. Watched
+  to fail both ways: dropping `remote-settings-helper-consent` fails, and adding
+  a name the CLI does not bind fails. It is skipped, with a reason, where no CLI
+  is installed. One real defect it caught while being written: anchoring the
+  tree-root list on `.ripgreprc` alone matches a second, 38-name array of project
+  configuration files that the sandbox never binds.
+
+- **The fill itself, driven end to end against a scratch config directory,
+  2026-09-13.** `ensureSandboxMountPoints([])` on a directory holding every
+  refused name and none of the ten created exactly the ten, left every refused
+  name alone, wrote each as empty, was a no-op on a second call and did not
+  truncate a `loop.md` given content between the two. With the directory at
+  0555 it returned ten problems and threw nothing.
+
+- **The tree-root list does fail, for the one cwd that is not a run's,
+  2026-09-13.** 18 failures at `/workspace` and 8 at `/workspace2` in the 460,
+  last 2026-09-11, against `SANDBOX_TREE_ROOT_NAMES` — which the docblock said
+  needed no pre-creation because "the working directory is writable". True of a
+  run, false of the orchestrator chat, whose cwd is `chatCwd()` →
+  `WORKSPACE_ROOT` → `/workspace`, `nobody:nogroup` at 0755. Neither the agent
+  uid nor the server can create there, so pre-creating is not the fix available;
+  the docblock now says which case it covers and which it does not.
+
 - **The `bwrap:` markers were pinned to a wording this install stopped
   producing, 2026-09-11.** Every failed tool result in every session transcript
   under `~/.claude/projects` carrying a `bwrap:` line: 945 of them, 223 of which
@@ -1281,6 +1342,21 @@ is `docs/agent/testing.md`; interface defects and their classes are
   `BUILD_CACHE_DIRS` still reads `$GOPATH`. The stack's own `state/` is empty.
 
 ### Container and environment
+
+- **How full the transcript cache actually gets on this install, 2026-09-13**,
+  counted rather than modelled: a pass over `/home/node/.claude/projects` — 2,286
+  `.jsonl` files, 1.74 GiB, 548,963 lines — found **219,599 records carrying both
+  a `message.usage` and a `message.id`**, which is what `transcripts.ts` retains
+  before its cross-file dedupe. That is **44% of the 500,000-record bound**, so
+  `TRANSCRIPT_CACHE_MAX_ENTRIES` has never evicted anything here and the heap
+  measurements taken on this corpus were taken at a **partly full** cache. At the
+  ~330 B/turn the comments assume, the cache held ~72 MB of the peaks recorded
+  under *Dreaming* above, against the ~165 MB the bound permits. Caveat, and it
+  is the whole reason the figure is worth having: the corpus grows, so the same
+  measurement on a fuller one is not this one, and the ~93 MB between here and
+  the bound is heap that the 1,024 MiB ceiling shipped in `docker-compose.yml`
+  has not yet been observed carrying. The per-turn figure it is multiplied by is
+  itself an estimate, not a measurement.
 
 - **Multiple workspaces:** slots list independently, a disabled one is skipped,
   a missing one reads unavailable rather than empty, and a folder maps back to
@@ -1790,6 +1866,39 @@ is `docs/agent/testing.md`; interface defects and their classes are
   four-node vault on one machine: the cooling curve is `ALPHA_DECAY`'s ~250
   frames whatever the vault, but how far the framing travels over them is not.
 
+- **Both graph canvases now keep their framing across a live skin flip, a live
+  theme flip and a window resize, 2026-09-13/14** (`a5694e4`; `npm run build` then
+  the standalone bundle, seeded `DATA_DIR`, a scratch vault and a run whose tool
+  events were written straight into `run_events`, Playwright over Chromium at
+  1280x900, dpr 1; no container). The same instrument as the entry above — disc
+  ink as a 5x5 erosion of the opaque mask, plus the 2D context's transform read
+  back after the frame — against a **reload in the target state** rather than
+  against the pre-flip view, which is the comparison that caught the box change
+  the earlier one could not see. `PathMapCanvas` carried the pre-fix shape: on a
+  five-file map it held k=1.000 from load to t=4.0s and then 1.771 at t=4.6s, one
+  frame, disc ink 94 to 911; it now opens at k=2.111 at t=300ms and falls
+  monotonically to the same settled 1.771 by t=4.0s, with no step anywhere on the
+  curve. On `/knowledge` a skin flip takes the graph card 662x974 to 662x1008,
+  because the panel beside it is laid out from type — before, the flipped view
+  kept k=4.898 where a load in ascii frames at 5.085 (0.963, and 18px off centre)
+  and the other direction, which is the one that loses a band rather than gaining
+  it, kept 5.085 in the shorter box and ran the graph to y=973 of a 974px canvas —
+  pinned to the edge, against a reload ending at 967 with 7px to spare, which is
+  the "a node is simply absent until reload" half of the report. After, each flip
+  lands on the reload's k exactly, its disc ink to the pixel (4671 and 4273) and
+  its bbox to the pixel. A window resize to 900 wide is the same defect on the
+  other canvas: both kept k (1.434 and 1.771) in boxes that had gone 662x1055 to
+  602x452 and 622x576 to 594x480, and the drawn graph ran off both; they now refit
+  to 1.286 and 1.416 with nothing clipped. `touchedRef` still holds the line —
+  widening 1100 to 1280, an untouched canvas re-frames (0.990 to 1.434, 1.218 to
+  1.771) and one the pointer has panned keeps 0.990 and 1.218 through the same
+  resize. So does the companion guard `PathMapCanvas` was missing, which only
+  matters once the fit runs during the cooling: a node grabbed at t=600ms and
+  dragged 270px took the camera from k=2.227 to 1.964 under the hand, and now
+  holds 1.872 through the grab, the drag and the release. Caveats: one machine at
+  dpr 1, three-note and five-file graphs, and a theme flip changes no box here, so
+  what that axis proves is that nothing *else* moves the framing.
+
 - **`/settings`' section strip clears 4.5:1 in all eighty readings,
   2026-09-12** (`dd66cfb`): the built standalone bundle served against a
   throwaway `DATA_DIR` and a `CLAUDE_BIN` that cannot spawn, Chromium at dpr 2,
@@ -1850,6 +1959,200 @@ is `docs/agent/testing.md`; interface defects and their classes are
   reported half of this — a band or track wider than the fill *within* one bar —
   was not reproduced: nothing installed here answers `█ ▒ ░` at three different
   widths. The fix covers that half by construction, unmeasured.
+
+- **`AsciiEdge` now lands its stroke on its host's border box edge, and the
+  sidebar's halo is gone, 2026-09-13** (Chromium 151 via the globally installed
+  Playwright 1.62.1, against `.next/standalone/server.js` on a throwaway
+  `DATA_DIR`, `/` at 390x900 and 1280x900, DPR 2, `localStorage["uf-skin"]` set
+  before first paint, both themes and both skins). `AsciiEdge` emits
+  `uf-ascii-edge-right`/`uf-ascii-edge-bottom` and `globals.css` backs the
+  host's still-1px border out of each on its own axis, the directional form of
+  the `.uf-unboxed > .uf-ascii-frame` rule that fixed `AsciiFrame`. At 1280 in
+  light, the sidebar's `│` moved from device columns 445-446, ink-weighted
+  centre css 222.99 against a border box ending at 224.00, to columns 447-448,
+  centre 223.99 — a `Card` on the same page reads 1260.00 against a box edge of
+  1260.00, so the two now agree — and device column 447, which was `bg-inset`
+  (245) against the pane's 240, is the stroke. Dark reads 224.00 and column 447
+  goes 22 to 89. The toolbar's `─` moves the same one pixel at both widths and
+  in both themes, rows 102-103 to 104-105, centre 51.36 to 52.36 against a box
+  bottom of 52.00. Under `default` nothing inked at either edge at either width,
+  which is `.uf-ascii { display: none }` holding. Caveats: the `─` reads 0.36
+  outside where the card's reads 0.03 inside, and that gap is the device grid
+  and not the rule — a 13px `─` inks two rows weighted 0.22 of a device row
+  below its em centre, and the toolbar's centre lands on a whole css pixel where
+  the card's lands on 412.39; the sidebar is a drawer at 390 and has no edge to
+  measure there; and this is one Chromium on one font stack, so the figures are
+  this container's rather than a reader's.
+
+- **The toolbar's appearance panel is framed below the breakpoint and carries no
+  frame above it, 2026-09-13** (same rig as the entry above: Chromium
+  151.0.7922.34 via Playwright 1.62.1, `.next/standalone/server.js`, `/`, DPR 2,
+  skin and theme in `localStorage` before first paint). `AsciiFrame` gained a
+  `widths` prop whose `narrow` value emits `uf-ascii-frame-narrow`, which
+  `globals.css` takes to `display: none` inside `@media (width >= 48rem)`. At
+  390 in ascii the opened panel's CSS border is `rgba(0, 0, 0, 0)` in both
+  themes — it was `rgb(227, 227, 230)` light and `rgb(58, 58, 61)` dark — and the
+  character frame inks on the panel's own border box edges: left `│` centre css
+  217.97 light and 218.00 dark against an edge at 218.00, right 378.00 and
+  377.98 against 378.00, which is the reading a `Card` on the same page gives
+  (374.00 against 374.00). The frame's own rect is x 211.5 w 173 against a panel
+  box of x 218 w 160, so `.uf-unboxed > .uf-ascii-frame` is backing the panel's
+  1px out as well. Under `default` the frame is in the DOM at `display: none`,
+  and the panel keeps its CSS border.
+
+  The failure this exists to avoid was checked in the state that reaches it
+  rather than in a fresh one: with the panel open at 390, `setViewportSize` to
+  1280 without a reload — a phone turned to landscape. The header holds one
+  `.uf-ascii-frame`, `display: none`, 0x0, and the window's top and right edges
+  have no ink on them in either theme (`rotated-light-ascii.png`,
+  `rotated-dark-ascii.png`). Caveats: the panel takes `uf-unboxed` *without*
+  `uf-framed`, which is the only place in the app the pair comes apart —
+  `uf-framed` is unlayered `position: relative` and would outrank the panel's
+  own `max-md:absolute`, dropping it into the strip under the ascii skin only;
+  the panel is already positioned wherever it has a box, which is what that
+  class would have been for. And this is one Chromium: a `display: contents`
+  element generating no containing block is specified behaviour, but only this
+  engine was measured.
+
+- **The toolbar's drawer button holds its natural width, and the strip overflows
+  visibly instead, 2026-09-13** (same rig: Chromium 151.0.7922.34 via Playwright
+  1.62.1, `.next/standalone/server.js`, DPR 2, skin in `localStorage` before
+  first paint; `/`, `/runs` and `/workflows` at 320, 390 and 1280). The button
+  gained `shrink-0`. At 390 in ascii on `/` — the only route carrying a New run,
+  so the tightest on the strip — it goes from 59.83px to 64.00px, and 64.00 is
+  what the same button measures on `/runs` and `/workflows` at the same width,
+  where the row has slack. At 320 on `/` it goes from 44.00px, which is its
+  `max-md:min-w-11` hit-target floor, to 64.00px, and the header's `scrollWidth`
+  goes from 320 to 330 against a `clientWidth` of 320: the overflow is now
+  visible rather than absorbed. In the `default` skin the button reads 44.00px
+  at every width before and after, because 44 is both its natural width and its
+  floor there — which is why this was invisible.
+
+  Two things this cost, both recorded beside the code. The route title is now
+  the only item that gives way and takes the whole deficit: 52.67px to 48.50px
+  at 390 in ascii on `/`, `Dashbo…` to `Dashb…` against a natural 58.5. And the
+  59.8px figure written into `Toolbar.tsx`'s own arithmetic was never the
+  button's width — it was read off the over-budget strip — so the sum there is
+  523.5px rather than 519.3px. Caveats: 320 is below the 390 the interface
+  claims, and is measured here only because it is where the over-budget case is
+  reachable; `npm run smoke-pages` sees none of this, since the strip does not
+  scroll the document at either width it opens.
+
+- **The toolbar's route title is gone below the breakpoint, and every page has
+  the <h1> that makes that safe, 2026-09-13** (same rig: Chromium
+  151.0.7922.34 via Playwright 1.62.1, `.next/standalone/server.js`, DPR 2, skin
+  in `localStorage` before first paint; 320, 390 and 1280, both themes, both
+  skins). The title div took `max-md:hidden`. The check the decision rests on
+  was run rather than assumed: all 23 pages `scripts/smoke-pages.mjs` opens
+  render an `<h1>`, and on seven of them it is the more specific of the two —
+  `/` is "Claude Code usage" against a toolbar title of "Dashboard",
+  `/runs/[id]/conflicts` is "Where the conflicts are" against "Run",
+  `/tasks/new` is "New task" against "Taskboard". The div carries no role, no id
+  and nothing points at it, which is why `max-md:hidden` rather than
+  `max-md:sr-only`.
+
+  At 390 in ascii on `/` — the tightest route, the only one with a New run — the
+  row went from filling its 390px exactly, with this drawing "Dashb…" at 48.5px
+  of a natural 58.5, to 333.5px with nothing on it squeezed. At 1280 the title
+  is untouched in both skins: 58.50px ascii, 61.53px default, `flex-shrink: 1`.
+  Caveats: the premise the task was filed on had already moved — with both
+  appearance pickers still on the row this drew one character, and moving them
+  into the disclosure had taken it back to a six-character truncation, so what
+  was decided here is the duplication and the headroom rather than the original
+  symptom. And 320 is measured only because it is where the over-budget case is
+  reachable; the interface claims 390.
+
+- **`ListRow`'s wrap threshold and its wrapped line, 2026-09-13** (Chromium 151
+  via the globally installed Playwright 1.62.1, against `.next/standalone/
+  server.js`, at 390px and 1280px in both themes and both skins, on `/settings`'
+  105 rows and `/runs/new`'s 15). Two readings, both on the live page. *When it
+  wraps:* the narrowest description column on `/settings` measured **132.3px**
+  in the default skin and **144px** under ascii — the row content is 294px, so a
+  145.7px `SegmentedControl` beside the old 128px floor left four words to a
+  line over fourteen — and against a 176px floor for any row carrying a
+  `description` the same figures are **176.2px** and **210px**. The wrapped
+  count went 41 → 41 and 42 → 43 on `/settings`, 10 → 10 and 10 → 11 on
+  `/runs/new`: switch rows (40px control) and short-value rows (up to 78.6px)
+  did not move, and the twenty-five `max-md:w-40` stacking hints on
+  `src/app/settings/page.tsx` came out with the rows they were holding still
+  wrapping. *What a wrapped line is worth:* on `/runs/new`'s Workspace row,
+  setting `width: 100%` on the caller's own wrapper resolved to **294px** with
+  `ListRow`'s children wrapper as it now ships and to **117px** (114px ascii)
+  with its `grow` taken straight back off in the same frame — the shrink-to-fit
+  width of its own content, which is what made `max-md:w-full` inert there and
+  what `WorkflowEditor`'s `ROW_CONTROL` was carrying a 288px literal to work
+  around. At 1280px all 120 rows measured identical before and after in all four
+  states, which is what the `max-md:` prefix on every class touched predicts.
+  `npm run smoke-pages` 46/46 against the standalone bundle, and nothing on
+  either page reaches past a clipping ancestor at 390px in any of the four
+  states. Caveat: measured through a headless Chromium, no touch and no other
+  engine; and `WorkflowEditor`'s inspector rows were not driven in a browser,
+  because reaching them needs a block selected on the canvas — the mechanism was
+  measured on `/runs/new` instead, and that reading covered `WorkflowEditor`'s
+  `ROW_CONTROL` only — see the entry below for the call site it missed.
+
+- **The schedule editor's two open-ended rows, 2026-09-13** (same tooling as the
+  `ListRow` entry above, with the editor opened by its own `Add schedule`
+  button). The entry above counted `WorkflowEditor`'s `ROW_CONTROL` as the only
+  holder of a 288px literal standing in for a percentage, and that was wrong:
+  `WorkflowSchedule.tsx` held two more, on `How often` and on the `Timezone`
+  field that has to show an IANA name like `America/Argentina/Buenos_Aires`.
+  Converted to `max-md:w-full`, both rows wrap at 390px in all four states and
+  their control goes **288px → 294px**, the full column. `Time` stays flat at
+  **128px** — the comment there argues a bounded two-digit value should not be
+  widened to the card, and it still holds. At 1280px all three rows are
+  unchanged at 208px/208px/128px, none wrapped, and nothing on the page is
+  clipped in any of the four states. Method caveat worth more than the numbers:
+  the editor is behind a click, and a probe that reads the DOM *before* pressing
+  the button comes back with the budget card's three rows — a clean-looking
+  answer about the wrong rows, not an error.
+
+- **The replay row on `/runs/[id]/touched` at 390px, 2026-09-13** (Chromium 151
+  via the globally installed Playwright 1.62.1, against `.next/standalone/
+  server.js`, both themes and both skins, with `/api/runs/*/touched` and its
+  `sequence` answered from a fixture of 24 files and 60 calls so the map and the
+  scrubber both draw). The column is **324px** inside the card. The row's
+  min-content measured **361.5px** in the default skin and **468.2px** under
+  ascii, where a compact button draws twice as wide — 52.3px against 26.3px for
+  `‹`. It fitted anyway because the scrubber carried `min-w-0`: under ascii the
+  four buttons and four gaps took 291.1px and left it **32.8px**, of which its
+  own `w-10` value readout is 40, so the track was zero pixels wide and the
+  figure overhung its box by **15.2px** onto Reset. With the `min-w-0` off and
+  `flex-wrap` on the row, min-content is **177px** in both skins — the readout
+  plus what a range input needs to still be one — the scrubber measures
+  **202.5px** (default) and **235.5px** (ascii), and nothing on the page reaches
+  past its parent that did not before. At 1280px the row is one line in both
+  skins with the same arithmetic it had. The map itself does **not** overflow:
+  its container measured 324px against a 324px column, and the `minmax(0,1fr)`
+  on the grid track that the page's own comment records is what already holds
+  that. Caveats: headless Chromium only; the map's *canvas* draws node labels
+  past its own edge at this width and is clipped there, which is the force
+  layout's own doing and is filed separately; and the fixture is not a real
+  run's touch history, so only the row's geometry was measured, never the
+  replay's behaviour.
+
+- **The Model picker on `/runs/new` at 390px, 2026-09-13** (Chromium 151 via the
+  globally installed Playwright 1.62.1, against `.next/standalone/server.js`,
+  both themes and both skins). Asked for its intrinsic width with
+  `width: max-content` and the option text substituted in place, the control
+  needs **322px under ascii** for `Inherit — Claude Code's own default` against
+  the **288px** its wrapper gives it — 34px over, and 300px/12px over in the
+  default skin; `measureText` in the element's own computed font puts the string
+  at **280px** of a 266px content box before the chevron takes any of it. The
+  same measurement says `Inherit — Claude Code's default` still needs 290px, so
+  the shorter sentence would not have been enough either. What the control now
+  shows where Settings names no default is `Inherit`, and the floor is then the
+  **catalogue's own widest option**: 282px under ascii and 267px in the default
+  skin, 6px and 21px inside the box. The named case takes the catalogue's label
+  rather than the id, which is what holds it to that same floor — a raw
+  `claude-haiku-4-5-20251001` behind `Inherit — ` is the 35 characters again.
+  Every other select on the page fits at 390px and 1280px in all four states,
+  the widest being Folder's `workspace — the whole workspace` at 18px inside its
+  box under ascii, and nothing on the page reaches past a clipping ancestor.
+  Caveat: headless Chromium only, so the chevron's own width is inferred from
+  the intrinsic-width reading rather than measured directly; and the ascii
+  headroom on this page is now 6px, which the seven `max-md:w-72` literals on
+  it would widen to 12px — filed rather than done here.
 
 ## Not yet verified by hand
 
@@ -2565,9 +2868,31 @@ measurement under *Verified* and cut the item down to what is still open.
   unable to write their worktrees. Do not add it on reasoning alone.
 
 - **No sandboxed cycle has run with the mount-point fill, 2026-09-04.** Bwrap
-  binding over the placeholders is unseen. After a rebuild the `run_events`
-  count should fall to zero for project trees, keeping the config-directory
-  handful and the one `.idea`.
+  binding over the placeholders is unseen. What that item also asked — whether
+  the count falls to zero for project trees — was measured on 2026-09-13 and is
+  in *Verified* above: it did, the same afternoon. What is still open is the
+  other direction, that a placeholder is bound rather than merely tolerated.
+
+- **No tool call has been watched dying of a config-directory mount point and
+  then running, 2026-09-13.** The fix is measured against a scratch directory
+  and the corpus is accounted for name by name, both in *Verified* above, but
+  the two have not been joined on a live sandbox, and not for want of trying:
+  every route is closed from inside this container, because a work cycle is
+  already inside the sandbox whose construction it would have to watch. A nested
+  `bwrap` dies at `open /proc/<pid>/ns/ns` before it mounts anything, on every
+  option set tried including a minimal root. A mount point the outer sandbox
+  holds cannot be removed to stage the failure — `rm` on one returns `EBUSY`.
+  And the config directory's true state is masked: five of the ten read as
+  character devices because this session's own sandbox bound `/dev/null` over
+  them, so an `O_CREAT|O_EXCL` against one returns `EEXIST` from the overmount
+  and writes nothing to the disk underneath. Settle it from outside a sandboxed
+  session — a `docker compose up --build` with `UF_SANDBOX=1`, a run started
+  from the UI, and the config directory's ten names watched across two cycles:
+  before the fix five oscillate between absent and `/dev/null`-bound, and after
+  it they should stay regular empty files and the `bwrap: Can't create file`
+  count should reach zero. Read the other two messages separately: if `Can't find
+  source path` and `Can't get type of source` survive on these names, something
+  is still deleting them and the entry above says what has been ruled out.
 
 - **The post-cycle `sweepSandboxTreeRoot` call is unseen, 2026-09-09.** No
   sandboxed cycle since; its log line, the `EBUSY` branch and the interplay
@@ -2735,6 +3060,39 @@ measurement under *Verified* and cut the item down to what is still open.
   visible to it.
 
 ### Container and environment
+
+- **Nothing has been measured at a full transcript cache under the 1,024 MiB
+  heap the compose file now ships.** The *Dreaming* entry's 898-949 MB at 1,024
+  was measured when 1,024 was this install's `.env` and 2,048 was the shipped
+  default; that has since inverted, and the entry is left as written because an
+  entry is never amended in place. What it does not cover is the bound: the
+  cache was 44% full at the time (measured, above), so ~93 MB of what
+  `TRANSCRIPT_CACHE_MAX_ENTRIES` permits has never been resident during a
+  measurement. Settling it: set `UF_TRANSCRIPT_CACHE_MAX_ENTRIES=219000` — just
+  under what this corpus actually produces — and repeat the *Dreaming* entry's
+  procedure, which forces the eviction path rather than the retention one; then
+  grow the corpus or lower the bound further until a run evicts, and read the
+  header strip's at-bound indicator. Until then the headroom between a 44%-full
+  cache and a full one is arithmetic over an estimated per-turn size, not a
+  reading.
+
+- **No child's `oom_score_adj` has been read back, and no cgroup OOM has been
+  made to choose.** `deprioritiseChildForOom` writes
+  `/proc/<pid>/oom_score_adj` one line after each long-lived spawn, and what is
+  measured of it is only that the raise direction needs no privilege: writing
+  500 to `/proc/self/oom_score_adj` as uid 1000 succeeds on kernel
+  6.12.76-linuxkit, 2026-09-13. The cross-process write — a root server
+  adjusting a child at `UF_AGENT_UID` — could not be exercised from a work
+  cycle, whose sandbox mounts a `/proc` in which no other pid resolves at all,
+  so both halves of the claim are reasoned: that the write lands, and that a
+  grandchild (an agent's `npm test`, which is what actually holds the memory)
+  inherits it. Settling it: `docker compose up --build`, start a run, then
+  `docker exec usagefoundry sh -c 'for p in /proc/[0-9]*; do printf "%s %s %s\n"
+  "$p" "$(cat $p/oom_score_adj)" "$(tr "\0" " " <$p/cmdline | cut -c1-60)"; done'`
+  and read next-server's 0 against each `claude` child's 500. What that still
+  does not settle is which one the kernel picks: that needs a container driven
+  over `mem_limit` with `dmesg` read for the `Memory cgroup out of memory` line
+  naming the victim.
 
 - **Only `archive` has ever run.** `uv-tool` and `npm-global` are in the format
   and refused by name at parse in this build, so the two verbs that execute a
@@ -2909,10 +3267,12 @@ measurement under *Verified* and cut the item down to what is still open.
 
 - **The ascii skin (2026-09-11) has been looked at narrowly.** Of 22 routes,
   eight were looked at for the tokens and four for the kit primitives, the
-  rest load-asserted; only the dashboard at 1920; the live flip (task
-  `d8e5f614`) was never driven; `smoke-pages` is default-skin only
-  (`4e6dd0b9`). No second browser (where `█` measures 0.602em), touch, zoom
-  or screen reader.
+  rest load-asserted; only the dashboard at 1920 — the shell's own chrome has
+  since been measured on four routes at 390 and 1280 in both themes, see the
+  three 2026-09-13 entries above, but that is the toolbar and the source list
+  and nothing a route draws under them; the live flip (task `d8e5f614`) was
+  never driven; `smoke-pages` is default-skin only (`4e6dd0b9`). No second
+  browser (where `█` measures 0.602em), touch, zoom or screen reader.
 
 - **Open under the ascii skin, 2026-09-11.** Findings stay on the board —
   `New run` clipped off at 390px is no longer among them, see the 2026-09-12

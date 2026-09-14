@@ -83,12 +83,21 @@ export const PROJECTS_DIR = path.join(CLAUDE_HOME, "projects");
  * exactly the same records: what the bound costs is CPU, never accuracy.
  *
  * Process-level rather than a setting, because what it bounds is the heap this
- * process was given rather than anything the user is choosing. Roughly 153 bytes
- * are retained per *record*, so the default is ~77 MB against V8's ~2 GB default
- * limit. Raise it alongside `--max-old-space-size` on a larger host; lower it on
- * a smaller one. A value that is not a positive number falls back to the
- * default, which is the safe direction for a figure only an operator tuning
- * memory ever sets.
+ * process was given rather than anything the user is choosing. Roughly 153
+ * bytes are retained per *record*, so the default is ~77 MB, and what that is a
+ * share *of* is now stated rather than inherited: `docker-compose.yml` ships
+ * `--max-old-space-size=${UF_NODE_HEAP_MB:-1024}`, so it is ~7% of that stated
+ * ceiling rather than some share of the ~2 GB V8 used to size from the host's
+ * RAM. The entry bound has not moved; the ceiling above it and the bytes below
+ * it both have, which is why the share is restated here rather than left to be
+ * inferred. This is the largest single thing the process retains on purpose.
+ *
+ * Raise the two together or neither: `UF_TRANSCRIPT_CACHE_MAX_ENTRIES` alone
+ * spends heap that `UF_NODE_HEAP_MB` has not been told about. Eviction here is
+ * driven by the entry count and never by heap pressure, so a cache sized past
+ * the ceiling cannot rescue it — V8 aborts the process instead. A value that is
+ * not a positive number falls back to the default, which is the safe direction
+ * for a figure only an operator tuning memory ever sets.
  *
  * **Per record and not per turn**, which is the correction rather than a
  * wording preference: `evictToBound` counts turns *and* the composition

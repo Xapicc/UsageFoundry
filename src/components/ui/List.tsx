@@ -130,12 +130,26 @@ export function ListRow({
       // border and this padding, so the label was squeezed to nothing and its
       // description came out as a column of single letters.
       //
-      // `min-w-32` on the label is what decides *when*. Flex line breaking
+      // The label's min-width is what decides *when*. Flex line breaking
       // clamps an item's hypothetical main size by its min-width, so a label
-      // that cannot have 128px sends the control to a line of its own, and a
-      // switch or a short number field — which can — stays on the right where
-      // a grouped list puts it. A blanket `basis-full` would have moved every
-      // switch in Settings off the right edge to fix the four wide selects.
+      // that cannot have that many pixels sends the control to a line of its
+      // own, and a switch or a short number field — which can — stays on the
+      // right where a grouped list puts it. A blanket `basis-full` would have
+      // moved every switch in Settings off the right edge to fix the four wide
+      // selects.
+      //
+      // The floor is 176px where the row carries a `description` and 128px
+      // where it does not, because those two labels hold different things: a
+      // name, or prose. At 128px the description column measured 132px on
+      // `/settings` at 390px — four words to a line over fourteen lines — and
+      // twenty-five rows were in that state, held off it only by a
+      // `max-md:w-40` written at each call site. 176px is the largest floor
+      // that still leaves room beside it for the `w-24` number field this
+      // component's callers use (294px of row content, less 16px of gap,
+      // leaves 102px), so switch rows and short-value rows do not move and
+      // everything wider than a short value wraps without the call site
+      // saying so.
+      //
       // `justify-end` is what keeps one group from showing two alignments. The
       // label is `flex-1`, so on a line it shares there is no free space and
       // the two are identical; on a *wrapped* line the control is the only
@@ -144,7 +158,21 @@ export function ListRow({
       // ones at the left.
       className={`relative flex min-h-[var(--control-h-lg)] max-md:min-h-11 max-md:flex-wrap items-center justify-between max-md:justify-end gap-4 px-3.5 py-2.5 ${className}`}
     >
-      <div className="min-w-0 max-md:min-w-32 flex-1">
+      <div
+        // `max-md:grow-[9999]` against the control wrapper's `max-md:grow` is
+        // what lets a wrapped control fill its line. A flex item only takes
+        // free space when there is some: on a line these two share, this one
+        // outweighs the other ten-thousand to one and takes all of it to within
+        // a fiftieth of a pixel, so the control still sits at its own width on
+        // the right; on a line the control has to itself it is the only item
+        // and fills it. There is no selector for "this line wrapped", and the
+        // alternative — a width the call site states in pixels — cannot be a
+        // percentage, because a shrink-to-fit wrapper gives one nothing to
+        // resolve against.
+        className={`min-w-0 flex-1 max-md:grow-[9999] ${
+          description ? "max-md:min-w-44" : "max-md:min-w-32"
+        }`}
+      >
         {htmlFor ? (
           <label htmlFor={htmlFor} className={labelClasses}>
             {label}
@@ -161,7 +189,7 @@ export function ListRow({
           </p>
         )}
       </div>
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2 max-md:grow max-md:justify-end">
         <FieldControlContext.Provider
           value={{ describedBy: descriptionId, invalid: false, disabled }}
         >

@@ -6,7 +6,7 @@ import { SkinToggle } from "@/components/SkinToggle";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
-import { AsciiEdge } from "@/components/ui/AsciiFrame";
+import { AsciiEdge, AsciiFrame } from "@/components/ui/AsciiFrame";
 import { SIDEBAR_DRAWER_ID, SIDEBAR_ID } from "@/components/shell/Sidebar";
 import { toolbarAction, toolbarTitle } from "@/components/shell/panes";
 
@@ -93,10 +93,17 @@ export function Toolbar({
 
   return (
     <header
-      // The title is the only item here that shrinks (`min-w-0 truncate`, and
-      // the group on the right is `shrink-0`), so the strip is one row at any
-      // width — the tighter gap below the breakpoint is what it has left to
-      // give back to the title before it starts eating words.
+      // Above the breakpoint the route title is the only item that shrinks
+      // (`min-w-0 truncate`, and the group on the right and the drawer button
+      // are both `shrink-0`). Below it, *nothing* does: the title is not drawn
+      // there at all. So the strip is one row at any width, and past the width
+      // it fits in, an overflow goes off the right edge rather than being taken
+      // out of a control.
+      //
+      // That is the visible failure and it is the one to prefer. What it
+      // replaced was two silent ones, both at 390 in ascii on `/`: a drawer
+      // button standing on its own 44px hit-target floor, and a title shrunk
+      // to zero and therefore not drawn at all rather than truncated.
       //
       // `relative` is the appearance panel's containing block, and it is
       // load-bearing only in the *default* skin: `uf-framed` states the same
@@ -160,25 +167,48 @@ export function Toolbar({
         aria-expanded={drawerOpen}
         aria-controls={SIDEBAR_DRAWER_ID}
         aria-label={drawerOpen ? "Hide navigation" : "Show navigation"}
-        className="app-no-drag md:hidden max-md:min-h-11 max-md:min-w-11"
+        // `shrink-0`, because nobody decided this button should be the thing
+        // that gives way and `max-md:min-w-11` hid it when it was: the button
+        // shrank until it stood on its own hit-target floor and then stopped,
+        // which looks exactly like a button that fits. In the default skin it
+        // is worse than silent — the natural width *is* 44px there, so the
+        // squeeze cannot be seen at all. Measured in ascii at 390 on `/`: 64px
+        // natural, 59.83px squeezed; at 320, 44px.
+        //
+        // A figure read off a strip that is over budget is not this button's
+        // width, and that trap has already cost one wrong number in a comment
+        // below. Check the strip fits before believing a measurement from it.
+        className="app-no-drag shrink-0 md:hidden max-md:min-h-11 max-md:min-w-11"
       >
         <Icon name="sidebar" />
       </Button>
 
       {/* Not a heading: every page still carries its own <h1>, and a second one
-          up here would put two titles in the document outline.
+          up here would put two titles in the document outline. That claim is
+          what makes hiding this below the breakpoint safe, so it was checked
+          rather than repeated — all 23 pages the smoke pass opens have an <h1>,
+          and on seven of them it is the more specific of the two: `/` says
+          "Claude Code usage" where this says "Dashboard".
 
-          It is meant to be the item that gives way, and the figure to hold on
-          to is how little is left. At 390px on `/` in the ascii skin — where
-          three bracketed icon buttons cost 55.8px over the default skin's —
-          this has 52.7px against a natural 59 and draws "Dashbo…". Every other
-          route and the whole of the default skin draw it in full. That 6.3px
-          is the entire headroom on this strip, so anything added to the
-          right-hand group spends it and starts eating words. What spending it
-          past zero looks like is the failure this replaced, and it is worth
-          knowing by sight: `min-w-0` shrinks to nothing, and the title is then
-          silently not drawn at all rather than truncating. */}
-      <div className="min-w-0 truncate text-sm font-semibold text-ink">
+          `max-md:hidden` and not the `max-md:sr-only` the rail's labels and
+          Quick open use. Those name a control whose glyph would otherwise go
+          unnamed. This is a plain div with no role, no id and nothing pointing
+          at it, one line above a heading that says the same thing or better, so
+          there is nothing in the accessibility tree to keep.
+
+          The strip is what it buys. At 390 in ascii on `/` — the tightest
+          route, because it is the only one carrying a New run — the row filled
+          its 390px exactly and this was drawing "Dashb…" at 48.5px of a natural
+          58.5. It now occupies 333.5px with nothing on it squeezed. The symptom
+          that put this on the board was worse still: with both appearance
+          pickers on the row it drew a single character. None of those is a
+          title.
+
+          Above the breakpoint it stays, and stays the one item that gives way.
+          There is room for it there, and the pane scrolls under this strip — so
+          once a page has been scrolled at all, the <h1> this duplicates is gone
+          and this is the only name on screen. */}
+      <div className="min-w-0 truncate text-sm font-semibold text-ink max-md:hidden">
         {toolbarTitle(pathname)}
       </div>
 
@@ -194,12 +224,13 @@ export function Toolbar({
           className="app-no-drag max-md:min-h-11 max-md:min-w-11"
         >
           <Icon name="search" />
-          {/* Below the breakpoint the strip has a sidebar button, a title, this,
-              the appearance disclosure and sometimes New run to fit in 390px,
-              and this is the one of them whose label can go without a
-              destination going with it. It is still the tightest route on the
-              strip — see the appearance pair below for the measurement — so the
-              label stays gone even though the pickers moved.
+          {/* Below the breakpoint the strip has a sidebar button, this, the
+              appearance disclosure and sometimes New run to fit in 390px, and
+              this is the one of them whose label can go without a destination
+              going with it. The label stays gone through two rounds of the
+              strip getting room back — the pickers moving into the disclosure,
+              then the route title going — because neither was spent on
+              recovering it: see the appearance pair below.
               The words go to the accessibility tree rather than away,
               for the rail's reason — the glyph is then the only thing naming
               the control. The chord goes entirely: there is no ⌘ key on a phone,
@@ -215,22 +246,27 @@ export function Toolbar({
             thing on this strip that can.
 
             Measured on `/` in the ascii skin at 390px, at natural widths: 24px
-            of padding, a 59.8px drawer button, a 64px quick open, 142px of
-            theme segments, 96px of skin segments, a 93.5px New run and five
-            8px gaps want 519.3px of a 390px window — before the title is given
-            a pixel. (Read a *narrower* drawer button off the broken layout and
-            it is the overflow you are measuring: that button carries no
-            `shrink-0`, so it was being squeezed to its 44px hit-target floor,
-            which is the second thing on this strip that was silently giving
-            way.)
+            of padding, a 64px drawer button, a 64px quick open, 142px of theme
+            segments, 96px of skin segments, a 93.5px New run and five 8px gaps
+            want 523.5px of a 390px window — before the title is given a pixel.
+            (That drawer button was written down here as 59.8px, which is not
+            its width: it was read off the broken layout, where the overflow was
+            being squeezed out of it. It carries `shrink-0` now, so a reading
+            from this strip is the button's again.)
 
-            Everything else here was tried against that 129.3px first and none
-            of it reaches: hiding the route title recovers one gap — 8px — and
-            dropping New run as well is still 19.8px over, while dropping
-            either picker instead makes the skin a one-way trap for anyone who
-            set ascii on a desktop. Only moving both pickers off the row fits.
-            It saves 254px and spends 72px back on the disclosure, which is
-            what puts the title on screen as well.
+            Everything else here was tried against that 133.5px first and none
+            of it reaches: hiding the route title recovers one gap — 8px, the
+            title itself not being in the sum — and dropping New run as well is
+            still 24px over, while dropping either picker instead makes the
+            skin a one-way trap for anyone who set ascii on a desktop. Only
+            moving both pickers off the row fits. It saves 254px and spends
+            72px back on the disclosure.
+
+            The title has since gone below the breakpoint too, for its own
+            reasons — see its comment — so the row is 333.5px of a 390px window
+            on this route. That 56.5px is slack and not a budget, because
+            nothing on the strip shrinks any more: the next thing added to it
+            overflows visibly rather than being absorbed.
 
             It is also the right one to move on grounds other than arithmetic.
             This strip's job — see the top of this file — is what you are
@@ -270,13 +306,18 @@ export function Toolbar({
         <div
           id={appearanceId}
           ref={panelRef}
-          // No `AsciiFrame` on the panel, and that is not an oversight: the
-          // frame is `absolute inset-0` and carries no `display` of its own by
-          // decision, so above the breakpoint — where this element is
-          // `contents` and has no box for it to line — it would resolve against
-          // the strip and draw a character frame around the whole toolbar.
+          // `uf-unboxed` without `uf-framed`, which is the one place in the app
+          // the pair comes apart, and it has to: `uf-framed` is
+          // `position: relative` under the skin and unlayered, so it outranks
+          // the `max-md:absolute` below — the panel would stop dropping from
+          // under the strip and sit in the row, in the ascii skin only. What
+          // that class is for here is already true without it. This element is
+          // positioned at every width it has a box at, so the frame's
+          // containing block is the panel itself; and the frame is the only
+          // positioned thing inside it, so nothing later paints over it, which
+          // is the other half of what `uf-framed` guards.
           className={
-            "app-no-drag md:contents " +
+            "app-no-drag uf-unboxed md:contents " +
             (appearanceOpen
               ? "max-md:absolute max-md:right-3 max-md:top-full max-md:z-20 " +
                 "max-md:mt-1 max-md:flex max-md:flex-col max-md:items-end " +
@@ -285,6 +326,13 @@ export function Toolbar({
               : "max-md:hidden")
           }
         >
+          {/* The one frame in the app that is not drawn at every width. Above
+              the breakpoint this element is `contents` and has no box, so a
+              frame here would resolve against the `<header>` and draw a
+              character box around the whole strip — `widths="narrow"` is how
+              globals.css is told to stop it, and the reasoning is beside
+              `AsciiFrameWidths`. */}
+          <AsciiFrame widths="narrow" />
           <div className="app-no-drag">
             <ThemeToggle />
           </div>

@@ -62,7 +62,40 @@ const TONE: Record<AsciiFrameTone, string> = {
   strong: "text-ink-muted",
 };
 
-export function AsciiFrame({ tone = "faint" }: { tone?: AsciiFrameTone }) {
+/**
+ * The widths a frame is drawn at, for the one host that does not have a box at
+ * all of them.
+ *
+ * `always` is every surface in the app but that one. `narrow` exists for the
+ * toolbar's appearance panel, which is `md:contents` above the shell's
+ * breakpoint: an element with `display: contents` generates no box, so an
+ * `absolute` frame inside it resolves against the nearest ancestor that does —
+ * the `<header>` — and draws a character box around the whole toolbar. That is
+ * not a hypothetical state. Open the panel on a phone in portrait and turn it
+ * to landscape: the panel is still open, the frame is still rendered, and the
+ * viewport has crossed 48rem.
+ *
+ * A hook class and not a Tailwind `display` utility at the call site, for the
+ * reason `display` is absent from this component altogether — `.uf-ascii` and
+ * `.uf-ascii-frame` state it in both directions from globals.css, and a utility
+ * here would be a second answer to the same question in a different file. The
+ * query that reads this is `md:`'s own boundary, which is the same thing one
+ * level down: see the `.uf-ascii-frame-narrow` rule.
+ */
+export type AsciiFrameWidths = "always" | "narrow";
+
+const WIDTHS: Record<AsciiFrameWidths, string> = {
+  always: "",
+  narrow: "uf-ascii-frame-narrow",
+};
+
+export function AsciiFrame({
+  tone = "faint",
+  widths = "always",
+}: {
+  tone?: AsciiFrameTone;
+  widths?: AsciiFrameWidths;
+}) {
   return (
     <span
       aria-hidden="true"
@@ -86,7 +119,7 @@ export function AsciiFrame({ tone = "faint" }: { tone?: AsciiFrameTone }) {
       // pixel — see the `.uf-unboxed > .uf-ascii-frame` rule in globals.css,
       // which is keyed on the class that states the border is still there. The
       // `uf-ascii-frame` class below is that rule's only hook.
-      className={`uf-ascii uf-ascii-frame pointer-events-none absolute -inset-[0.5em] select-none flex-col overflow-hidden text-sm leading-none ${TONE[tone]}`}
+      className={`uf-ascii uf-ascii-frame ${WIDTHS[widths]} pointer-events-none absolute -inset-[0.5em] select-none flex-col overflow-hidden text-sm leading-none ${TONE[tone]}`}
     >
       <span className="flex">
         <span>┌</span>
@@ -122,6 +155,25 @@ export function AsciiFrame({ tone = "faint" }: { tone?: AsciiFrameTone }) {
   );
 }
 
+export type AsciiEdgeSide = "right" | "bottom";
+
+/**
+ * The hook `globals.css` backs the host's border pixel out through, one class
+ * per side.
+ *
+ * Per side and not one for both, because the correction has to be directional.
+ * `AsciiFrame` takes it as `inset`, which is a shorthand — and a shorthand here
+ * would overwrite the `inset-y-0` the right edge carries and the `inset-x-0`
+ * the bottom one does, collapsing the edge to a single character. Only the axis
+ * its host actually has a border on may move, too: the sidebar has `border-r`
+ * and no top or bottom, the toolbar `border-b` and no sides, so correcting the
+ * other axis would push the stroke a pixel *out* of true rather than into it.
+ */
+const SIDE_HOOK: Record<AsciiEdgeSide, string> = {
+  right: "uf-ascii-edge-right",
+  bottom: "uf-ascii-edge-bottom",
+};
+
 /**
  * One edge of a surface rather than a box around it, for the two separators the
  * shell draws: the source list's right-hand edge and the toolbar's underline.
@@ -138,15 +190,20 @@ export function AsciiFrame({ tone = "faint" }: { tone?: AsciiFrameTone }) {
  * pane instead of dividing it. Pulled out by half, the stroke lands exactly
  * where the 1px border was. The half that hangs over the neighbour is the
  * glyph's empty side, so nothing is drawn there.
+ *
+ * And half is the whole correction only on a host with no border of its own —
+ * `AsciiFrame`'s second paragraph above, and both of these hosts are the case
+ * it describes. `SIDE_HOOK` is how `globals.css` reaches the axis that needs
+ * the extra pixel.
  */
 export function AsciiEdge({
   side,
   tone = "faint",
 }: {
-  side: "right" | "bottom";
+  side: AsciiEdgeSide;
   tone?: AsciiFrameTone;
 }) {
-  const common = `uf-ascii pointer-events-none absolute select-none overflow-hidden text-sm leading-none ${TONE[tone]}`;
+  const common = `uf-ascii ${SIDE_HOOK[side]} pointer-events-none absolute select-none overflow-hidden text-sm leading-none ${TONE[tone]}`;
 
   // `display` is left to globals.css for `AsciiFrame`'s reason — and an
   // absolutely positioned box computes its `inline` to `block` anyway, so the

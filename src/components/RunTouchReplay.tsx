@@ -160,7 +160,16 @@ export function RunTouchReplay({
     <div className={className} onKeyDown={onKeyDown}>
       <GroupLabel>Replay, one tool call at a time</GroupLabel>
 
-      <div className="flex items-center gap-2">
+      {/* It wraps because it does not fit. The single column this sits in is
+          324px inside the card at 390px, and this row's min-content is 361.5px
+          in the default skin and 468.2px under ascii, where a compact button
+          draws twice as wide. It fitted only because the scrubber carried a
+          `min-w-0` that let it shrink past the point where it has a track at
+          all: under ascii the buttons took 291.1px of the 324 and left the
+          scrubber 32.8, of which its own value readout is 40 — so the track
+          was zero pixels wide and the figure sat on top of Reset. Wrapping
+          costs a line at 390px and nothing at any width the row already fits. */}
+      <div className="flex flex-wrap items-center gap-2">
         <Button
           variant="secondary"
           size="compact"
@@ -194,7 +203,12 @@ export function RunTouchReplay({
           max={total}
           step={1}
           label="Position in the sequence of tool calls"
-          className="min-w-0 flex-1"
+          // No `min-w-0`. A flex item's automatic minimum is its min-content
+          // size, which here is the value readout plus whatever a range input
+          // needs to still be one — 177px measured — and that is exactly the
+          // floor this control wants. Overriding it to zero is what let the
+          // track disappear rather than let the row wrap.
+          className="flex-1"
         />
         <Button
           variant="ghost"

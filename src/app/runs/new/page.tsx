@@ -1646,10 +1646,29 @@ export default function NewRunPage() {
                     value={model}
                     onChange={(e) => setModel(e.target.value)}
                   >
+                    {/* What it inherits *from*, and nothing about what that
+                        resolves to when nothing is set: the description under
+                        this row already says the default comes from Settings,
+                        and the sentence that used to stand in for a missing one
+                        — "Inherit — Claude Code's own default" — was 35
+                        characters. Measured 2026-09-13 at 390px: it asked
+                        Chromium for a 322px control under the ascii skin
+                        against the 288px it has, so the tail was drawn under
+                        the chevron.
+
+                        The named case takes the catalogue's own label rather
+                        than the id it is keyed on, which is what keeps this
+                        option the same length as the ones under it: a raw id
+                        can be `claude-haiku-4-5-20251001`, and "Inherit — "
+                        plus that is the 35 characters again. */}
                     <option value="">
-                      {settings === null
-                        ? "Inherit"
-                        : `Inherit — ${settings.defaultModel ?? "Claude Code's own default"}`}
+                      {settings?.defaultModel
+                        ? `Inherit — ${
+                            settings.modelCatalogue.find(
+                              (entry) => entry.id === settings.defaultModel,
+                            )?.label ?? settings.defaultModel
+                          }`
+                        : "Inherit"}
                     </option>
                     {(settings?.modelCatalogue ?? [])
                       .filter((entry) => entry.enabled)

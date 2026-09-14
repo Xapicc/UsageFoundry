@@ -179,19 +179,15 @@ const DEFAULT_MERGE_STRATEGY: MergeStrategyDTO = "merge";
 /** The width a control takes in the inspector's rows. See `ui/Field`'s note:
  *  a width never goes on the control, because two width utilities on one
  *  element resolve by stylesheet order rather than class order. */
-/*  `w-72` and not `max-md:w-full`, which was measured inert here on
- *  2026-09-10: this sits on a flex item of `ListRow`'s `shrink-0` children
- *  wrapper, whose own width comes from its content, so a percentage has no
- *  definite containing block to resolve against. `ListRow` wraps the control
- *  onto its own line below the breakpoint and right-aligns it there, and at
- *  176px what that line then shows is a 20-character window onto a block's
- *  name. 288px is what fits: the row measured 322px at 390px against `px-3.5`,
- *  leaving 294px, and 288 still clears a 320px viewport. It is a number
- *  because the shrink-to-fit wrapper leaves no percentage to use — the fix
- *  that would is `max-md:w-full` on that wrapper in `ui/List.tsx`, which this
- *  run does not own. `ROW_CONTROL_NARROW` keeps its 96px: it holds two digits
+/*  `max-md:w-full` and no longer the 288px `w-72` that stood in for it: a
+ *  percentage was inert here until `ListRow`'s children wrapper stopped being
+ *  shrink-to-fit below the breakpoint, because a percentage had no definite
+ *  containing block to resolve against. 288px was what fitted a 390px screen
+ *  and nothing else; the full column is what this control wants at every
+ *  width, and it clears a 320px viewport by being a fraction of it rather than
+ *  by being under it. `ROW_CONTROL_NARROW` keeps its 96px: it holds two digits
  *  at every width, and `Field` gives it the 44px height on its own. */
-const ROW_CONTROL = "w-44 max-md:w-72";
+const ROW_CONTROL = "w-44 max-md:w-full";
 const ROW_CONTROL_NARROW = "w-24";
 
 function emptyBlock(id: string, mountId: string, kind: WorkflowNodeKind): BlockDraft {

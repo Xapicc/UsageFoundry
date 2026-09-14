@@ -319,18 +319,20 @@ export function WorkflowSchedule({
               limits still stop the whole graph — nothing here changes either.
             </Notice>
 
-            {/* `max-md:w-72` on the two rows whose content has no length a
-                reader can predict, for `WorkflowEditor`'s reason and to the
-                same number: `ListRow` wraps a control onto its own line below
-                the breakpoint, 208px is a short window onto an IANA name like
-                America/Argentina/Buenos_Aires, and 288 is what the row's
-                294px of content box takes. The day, the time and the hour
-                count keep their widths — each holds a bounded value that
-                already fits, and widening a two-digit box to the width of the
-                card says it holds more than it does. */}
+            {/* `max-md:w-full` on the two rows whose content has no length a
+                reader can predict, for `WorkflowEditor`'s reason: `ListRow`
+                wraps a control onto its own line below the breakpoint, and
+                208px is a short window onto an IANA name like
+                America/Argentina/Buenos_Aires. It was a 288px literal until
+                `ListRow`'s children wrapper stopped being shrink-to-fit there,
+                because against one a percentage had no definite containing
+                block and resolved to the control's own content width. The day,
+                the time and the hour count keep their widths — each holds a
+                bounded value that already fits, and widening a two-digit box
+                to the width of the card says it holds more than it does. */}
             <ListGroup>
               <ListRow label="How often" htmlFor="sched-kind">
-                <div className="w-52 max-md:w-72">
+                <div className="w-52 max-md:w-full">
                   <Select
                     id="sched-kind"
                     value={draft.kind}
@@ -430,7 +432,7 @@ export function WorkflowSchedule({
                   htmlFor="sched-tz"
                   description="an IANA name — the server runs in UTC and reads this time in the zone you name"
                 >
-                  <div className="w-52 max-md:w-72">
+                  <div className="w-52 max-md:w-full">
                     <Input
                       id="sched-tz"
                       value={draft.timeZone}

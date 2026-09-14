@@ -255,6 +255,84 @@ export function childCredentials(): { uid?: number; gid?: number } {
 }
 
 /**
+ * How much worse an OOM victim a child is than the server that spawned it.
+ *
+ * The second thing a child differs from the server in, and it is here for the
+ * reason the uid is: it is decided once and spread over every site that starts
+ * one of the long-lived children.
+ *
+ * Under a cgroup OOM the kernel scores each process by what it holds —
+ * `oom_badness()`, in thousandths of the cgroup's own limit — and adds that
+ * process's `oom_score_adj`. Docker sets neither `memory.oom.group` nor any
+ * adjustment, so every process in this container starts at 0 and the kill goes
+ * to whichever is biggest at that instant. That is the wrong answer whenever
+ * the server is: killing a work cycle costs one cycle, where killing the server
+ * costs every run in flight — `restart: unless-stopped` brings the container
+ * back and `reconcileOnBoot` closes each of them out with a reason.
+ *
+ * 500 is a thousandth of the limit rather than a tuning knob, and it is the
+ * bound `deployment.test.ts` already pins: the server may not be given a heap
+ * ceiling above half the container, so holding its whole heap cannot take its
+ * badness to 500. A child carrying this offset therefore outranks it long
+ * before the server is near its own ceiling — and because the offset is the
+ * *same* on every child that carries it, which child dies is still decided by
+ * which one is biggest.
+ *
+ * Carried by the children whose death costs one unit of work: a work cycle, a
+ * review or merge-conflict resolution, a chat or orchestrator-block turn, and
+ * the prune that executes a cut. Deliberately not by `git.ts`'s, by
+ * `claudeAuth.ts`'s, or by the three winnow calls that only read — those are
+ * megabytes and seconds, and preferring one of them is a kill that frees
+ * nothing and is followed immediately by another.
+ */
+export const CHILD_OOM_SCORE_ADJ = 500;
+
+/** Whether this process has already said it cannot make that adjustment. */
+let oomAdjustWarned = false;
+
+/**
+ * Hand a freshly spawned child a worse OOM score than the server's.
+ *
+ * Best-effort and deliberately not fatal: what fails here is a preference
+ * between victims rather than the work, and a spawn that threw over it would
+ * turn a memory-pressure safeguard into an outage of its own. Warned about once
+ * per process rather than once per spawn, because what makes it fail — a kernel
+ * with no procfs, or a server that is neither root nor the child's own uid —
+ * fails identically for every child after it.
+ *
+ * A child that has already exited is the ordinary case rather than a symptom,
+ * so `ENOENT` is not warned about at all.
+ *
+ * There is a window between `spawn` returning and this write in which the child
+ * still carries the server's own score. It is microseconds against a process
+ * that lives for minutes, and closing it would mean setting the value between
+ * fork and exec, which Node does not expose.
+ *
+ * @param write injected by the test; the real one is `fs.writeFileSync`.
+ */
+export function deprioritiseChildForOom(
+  pid: number | undefined,
+  write: (path: string, value: string) => void = (p, v) => fs.writeFileSync(p, v),
+): void {
+  // No procfs to write, and nothing to arbitrate: a laptop running `npm run
+  // dev` has no cgroup ceiling for this to decide under either.
+  if (process.platform !== "linux" || pid === undefined) return;
+  try {
+    write(`/proc/${pid}/oom_score_adj`, `${CHILD_OOM_SCORE_ADJ}\n`);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+    if (oomAdjustWarned) return;
+    oomAdjustWarned = true;
+    console.warn(
+      `[usagefoundry] cannot set oom_score_adj on spawned children: ` +
+        `${(err as Error).message}. Under a cgroup OOM the kernel will pick ` +
+        `whichever process is largest, which may be this server — and that ` +
+        `fails every run in flight rather than one work cycle.`,
+    );
+  }
+}
+
+/**
  * The same, for the one child that is not a work cycle: the orchestrator chat
  * and a workflow's orchestrator block, which share `runOrchestratorChild`.
  *

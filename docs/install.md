@@ -482,8 +482,8 @@ to what is stored.
 | `UF_CHAT_GID` | The group the orchestrator chat runs in, which owns the per-turn MCP capability file that a concurrent agent must not read. Default 65533. **Must differ from `UF_GID`** — the server refuses to boot when they match rather than hand that file to the group it is being kept from. |
 | `UF_BACKUP_DIR` | Host directory mounted at `/backups`, where `scripts/backup-db.mjs` writes. Default `./backups`, which this repository ships. Point it elsewhere and create that directory first: Docker makes a missing bind source root-owned, and the children that write it are `UF_UID`. |
 | `UF_STACKS_DIR` | Host directory bind-mounted read-only at `/etc/uf-stacks`, holding one directory per stack. Default `./stacks`, which this repository ships empty. A stack is a `stack.json` naming an archive and its checksum manifest, or a `uv`/`npm` package, plus the binaries to link onto `PATH`; the applier runs at boot and Settings → Tools reads back what it did. |
-| `UF_MEM_LIMIT` | What the container may take before Docker kills it. Default `10g`, sized for the shipped 4 runs plus 2 other Claude processes. |
-| `UF_NODE_HEAP_MB` | The server's own heap ceiling, in MiB. Default 2048. |
+| `UF_MEM_LIMIT` | What the container may take before Docker kills it. Default `9g`, sized for the shipped 4 runs plus 2 other Claude processes. |
+| `UF_NODE_HEAP_MB` | The server's own heap ceiling, in MiB. Default 1024. Raise it and `UF_MEM_LIMIT` together — the two defaults are one number twice. |
 | `UF_PIDS_LIMIT` | Tasks the container may hold. Default 2048. |
 | `UF_CPUS` | CPUs the container may use. Unset means no quota; Docker refuses a value larger than the host has. |
 

@@ -6,8 +6,10 @@ import { describe, it } from "node:test";
 import {
   BLANK_MEANINGFUL_ENV_VARS,
   MOUNTED_WORKSPACE_SLOTS,
+  TRANSCRIPT_CACHE_MAX_ENTRIES,
   unmountedWorkspaceRefusal,
 } from "./config";
+import { CHILD_OOM_SCORE_ADJ } from "./privsep";
 
 /**
  * Covers the agreement between `Dockerfile` and `docker-compose.yml` about who
@@ -601,6 +603,78 @@ describe("the container's memory ceiling and the server's heap agree", () => {
         `${(limit / 2 ** 30).toFixed(1)} GiB container. Raise mem_limit or ` +
         `lower --max-old-space-size; README's "Sizing the container" has the ` +
         `arithmetic both numbers came from.`,
+    );
+  });
+
+  it("states the cache's share of the heap as the share it actually is", () => {
+    // The transcript cache is the largest thing this process retains on
+    // purpose, and three files state its size *as a fraction of the heap*:
+    // compose beside the setting, .env.example beside the variable, and
+    // config.ts's docblock. That fraction is derived from two numbers that live
+    // somewhere else — the entry bound here and the ceiling in NODE_OPTIONS —
+    // so moving either leaves three sentences quietly describing the old one.
+    // It has already happened once: all three still said the bound was ~8% of
+    // "V8's ~2 GB default" after the ceiling became an explicitly shipped
+    // 1,024 MiB, which is the same bound at twice the share.
+    const source = (...parts: string[]) =>
+      fs.readFileSync(path.join(root, ...parts), "utf8");
+    const perTurnBytes = Number(
+      /Roughly (\d+) bytes\s*\n\s*\*\s*are retained per turn/.exec(
+        source("src", "lib", "config.ts"),
+      )?.[1],
+    );
+    assert.ok(
+      Number.isFinite(perTurnBytes),
+      "config.ts no longer states the per-turn retention its own default is " +
+        "derived from, so nothing below can be checked against it.",
+    );
+
+    const share = (TRANSCRIPT_CACHE_MAX_ENTRIES * perTurnBytes) / heapCeilingBytes();
+    const stated = Math.round(share * 100);
+
+    for (const file of [["docker-compose.yml"], [".env.example"], ["src", "lib", "config.ts"]]) {
+      const claim = /~(\d+)% of/.exec(source(...file));
+      assert.ok(
+        claim,
+        `${file.join("/")} no longer states the transcript cache's share of ` +
+          `the heap. ` +
+          `It is ${stated}% at the shipped figures, and the three files that ` +
+          `carry that sentence are how an operator raising one of the two ` +
+          `numbers learns it has to raise the other.`,
+      );
+      assert.equal(
+        Number(claim[1]),
+        stated,
+        `${file.join("/")} says the transcript cache is ~${claim[1]}% of the ` +
+          `server's ` +
+          `heap. At the shipped ${TRANSCRIPT_CACHE_MAX_ENTRIES} entries × ` +
+          `${perTurnBytes} B against ${heapCeilingBytes() / 2 ** 20} MiB it is ` +
+          `${stated}%.`,
+      );
+    }
+  });
+
+  it("leaves the server outranked by the children that carry an OOM offset", () => {
+    // The arithmetic behind `CHILD_OOM_SCORE_ADJ`, and it is arithmetic over
+    // *these* two numbers rather than a figure somebody liked. Under a cgroup
+    // OOM the kernel scores a process at its share of the limit in thousandths
+    // and adds `oom_score_adj`, so the server's own score is bounded by the
+    // heap ceiling it is given: raise the ceiling far enough, or lower the
+    // limit far enough, and next-server becomes the preferred victim again with
+    // every child still carrying its offset. Nothing anywhere reports that —
+    // the container simply starts dying at the wrong end on the one night it
+    // is over its limit, and `reconcileOnBoot` files the runs as interrupted.
+    const limit = bytes(shippedDefault("mem_limit"));
+    const heap = heapCeilingBytes();
+    const serverScore = Math.round((heap / limit) * 1000);
+
+    assert.ok(
+      serverScore < CHILD_OOM_SCORE_ADJ,
+      `the server's heap alone scores ${serverScore}/1000 of the container ` +
+        `against an offset of ${CHILD_OOM_SCORE_ADJ} on every long-lived ` +
+        `child, so a cgroup OOM can pick the server over a work cycle. Lower ` +
+        `--max-old-space-size, raise mem_limit, or raise CHILD_OOM_SCORE_ADJ ` +
+        `in privsep.ts, which states which of the three it is derived from.`,
     );
   });
 
@@ -1503,6 +1577,54 @@ describe("the intake filter runs as the agent uid, holding no credential", () =>
       `${dir} is not a named volume in docker-compose.yml. Without one it is ` +
         `the image's writable layer, which \`docker compose up --build\` ` +
         `discards along with every correction the ledger recorded.`,
+    );
+  });
+
+  /**
+   * The virtualenv the filter runs in, read off the launch environment the same
+   * way the ledger directory is — `UV_PROJECT_ENVIRONMENT` is what decides it,
+   * and a test that spelled the path itself would go on passing after a rename.
+   */
+  function filterVirtualenv(): string {
+    const passed = /UV_PROJECT_ENVIRONMENT=(\S+)/.exec(filterLaunch());
+    assert.ok(
+      passed,
+      "docker-entrypoint.sh no longer names UV_PROJECT_ENVIRONMENT for the " +
+        "intake filter. Without it `uv sync` deletes and rebuilds the `.venv` " +
+        "inside the operator's own bind-mounted checkout on every boot.",
+    );
+    return passed[1];
+  }
+
+  it("puts the virtualenv on a named volume too, which a rebuild does not discard", () => {
+    // Same mechanism as the ledger above, different loss: not a correction that
+    // can never be made again, but the ninety seconds the wait below this launch
+    // budgets for building a virtualenv — paid on every `up --build`, with the
+    // filter absent for that whole window and every request going unfiltered
+    // and unrecorded. In the writable layer that is the cost of any rebuild.
+    const venv = filterVirtualenv();
+    const mounts = [...compose.matchAll(/^\s*-\s*[A-Za-z0-9][\w.-]*:(\/\S+?)(?::\w+)?\s*$/gm)]
+      .map((m) => m[1]);
+    assert.ok(
+      mounts.includes(venv),
+      `${venv} is not a named volume in docker-compose.yml, so it is the ` +
+        `image's writable layer and \`docker compose up --build\` discards it. ` +
+        `The next boot rebuilds it, and the filter is not there while it does.`,
+    );
+  });
+
+  it("ships nothing in the image at that mount point", () => {
+    // The trap the `/opt/winnow` assertion above states in full: a volume takes
+    // the image's contents exactly once, at creation, so anything the Dockerfile
+    // wrote here would be present on a fresh install and masked on every
+    // existing one. Nothing does today — the venv is built at boot by `uv` —
+    // and this is what says so if that changes.
+    const venv = filterVirtualenv();
+    assert.ok(
+      !dockerfile.includes(venv),
+      `the Dockerfile names ${venv}, which is now a named volume. Whatever it ` +
+        `puts there is visible on a fresh install and invisible on every ` +
+        `machine whose volume already exists.`,
     );
   });
 });
