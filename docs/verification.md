@@ -717,6 +717,27 @@ is `docs/agent/testing.md`; interface defects and their classes are
   right and hides the note somebody just wrote, and a missing partition attributes
   one brief's notes to another. Neither throws.
 
+- **The dependency pane's request count, before and after, 2026-09-14.** One
+  seeded database read by two builds of the same worktree, so the ids — and
+  therefore the layout — are the same in both. The anchor sits at
+  `MAX_TASK_DEP_LINKS` on **both** lists (ten dependencies and ten dependents)
+  with one task further out on each side, which is 41 nodes and 40 edges drawn.
+  **Before: 20 requests on mount**, one `GET /api/tasks/<neighbour>/deps` per
+  level-one neighbour, at both 1280px and 390px. **After: 1**, a single
+  `GET /api/tasks/<anchor>/deps?depth=2`. The drawing is unchanged and that was
+  measured rather than argued: the node list — titles, absolute `left`/`top`, and
+  the sheet's own width and height — hashes identically across the two builds
+  (`1803062a51df591e`), and so does the set of 40 SVG path `d` strings
+  (`5d71c1973efcf5b6`). The **ordered** path hash first diverged, because the new
+  `beyond` arrived in database order where it had arrived sorted; sorting the
+  reply's keys brought it back to `e4d7e610958c5a8f`, identical to before, so the
+  emitted DOM matches element for element. No console error at either width. The
+  three other states were checked on the same build: a task with no edges makes
+  **no** request and draws the empty state; a task with one edge makes one and
+  draws two nodes; and the read aborted in the page draws *the tasks beyond this
+  one could not be read* with the immediate neighbours still on the graph.
+  Caveat: one browser engine, and the default skin only.
+
 ### Workflows and schedules
 
 - **Workflows end to end, live dev server, stub CLI:** save refuses each bad

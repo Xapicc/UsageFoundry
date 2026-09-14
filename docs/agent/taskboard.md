@@ -1003,13 +1003,35 @@ origin, since the layout puts everything in front of the task to its left and a
 chain three deep would otherwise open showing the dependencies and not the task
 they are for.
 
+**The second level is one request, and the depth is the route's question rather
+than the caller's.** `GET /api/tasks/[id]/deps?depth=2` answers with the anchor's
+own neighbourhood and a `beyond` map of each level-one neighbour's, which is
+exactly the second argument `taskNeighbourhoodGraph` already takes. The pane used
+to read the plain route once per neighbour — `MAX_TASK_DEP_LINKS` on each list, so
+**twenty requests on mount**, each re-entering `depsForTasks`, the function that
+exists to answer for a list in two queries. Four queries now, whatever the task's
+degree, measured 2026-09-14 as 20 → 1 with the drawing's DOM byte-identical. A
+route taking `?ids=a,b,c` was the other way to get there and is the wrong one: the
+ids a caller would send are the ones the previous answer just handed it, so it is
+the same round trip with a step written down in between. Depth 1 stays the default
+and keeps its shape, because it is also what `POST` and `DELETE` embed under
+`deps` and neither of those draws a second level. `beyond`'s keys are **sorted**,
+and that is the drawing rather than tidiness: the graph walks the map to collect
+the second level's edges, so the key order is the order `<path>` elements are
+emitted in and therefore which stroke is on top where two curves cross. A
+neighbour with no edges of its own is absent from `beyond` rather than present and
+empty — `depsForTasks`' rule, which the builder already reads as nothing to
+expand — and so is one deleted between the two reads, which is now true of it
+rather than a gap, since `ON DELETE CASCADE` took its edges. A task with no edges
+at all makes **no** request: there is no second level to ask about.
+
 **Three ways of having nothing again, and two of them are not the empty canvas.**
 A task with no edges gets the board's empty state — what an ordering is and that
 it is advisory — because a surface with nothing drawn on it says the drawing
 failed as readily as it says there is nothing to draw, and most rows here have no
-ordering at all. A neighbour whose own read failed leaves the graph one level
-short on that side and **says so**: what a reader would otherwise take for the
-end of the ordering is the request stopping, and the two look identical on a
+ordering at all. A read of the second level that failed leaves the graph at
+its immediate neighbours and **says so**: what a reader would otherwise take for
+the end of the ordering is the request stopping, and the two look identical on a
 canvas. A neighbourhood clipped by `MAX_TASK_DEP_LINKS` says that too, on
 `TaskDepsDTO`'s own instruction that anything drawing the graph check the counts
 against the lists — an incomplete picture of an ordering does not look

@@ -3808,6 +3808,28 @@ export interface TaskDepsDTO {
 }
 
 /**
+ * What `GET /api/tasks/[id]/deps` answers with, at whichever depth was asked for.
+ *
+ * The anchor's own neighbourhood, unchanged and still at the top level, plus —
+ * for `?depth=2` only — each of its level-one neighbours' own. That is exactly
+ * the `ReadonlyMap<string, TaskDepsDTO>` `taskNeighbourhoodGraph` already takes
+ * as its second argument, which is why the depth belongs to the **route** rather
+ * than to the caller: a page that read the anchor and then asked for its
+ * neighbours by id would be making the same round trip with the ids written down
+ * in between, and the ids it would send are ones the route just handed it.
+ *
+ * A neighbour with no edges of its own is **absent** from `beyond` rather than
+ * present and empty — `depsForTasks`' rule, which the graph builder already
+ * treats as nothing to expand. So is a neighbour deleted between the two reads,
+ * and that is now the truth rather than a gap: `ON DELETE CASCADE` took its edges
+ * with it.
+ */
+export interface TaskDepsReplyDTO extends TaskDepsDTO {
+  /** Keyed by level-one neighbour id. Absent unless `?depth=2` was asked for. */
+  beyond?: Record<string, TaskDepsDTO>;
+}
+
+/**
  * One task on the board, whole.
  *
  * `mountId` and `folder` are null together or set together — the wire shape of
