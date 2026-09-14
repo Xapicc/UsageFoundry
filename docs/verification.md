@@ -1010,6 +1010,67 @@ is `docs/agent/testing.md`; interface defects and their classes are
   applies to the cwd and every ancestor. After the fill a linked worktree's
   `git status --porcelain` is empty.
 
+- **The fill worked and the failures moved to the config directory,
+  2026-09-13.** Every failed tool result under `~/.claude/projects` whose body is
+  nothing but bwrap mount-time lines, deduped by `tool_use_id`: 460 since the
+  fill shipped at `a2194e7` on 2026-09-04. Not one of the twelve project-tree
+  `.claude` names has failed since the afternoon it shipped, and 260 of the 460
+  are in `$CLAUDE_CONFIG_DIR`, which the fill deliberately skipped. Named: 135
+  are the ten files `SANDBOX_CONFIG_DIR_NAMES` now creates, 125 are refused with
+  a reason — 77 in directories, which stopped on their own on 2026-09-07 because
+  the CLI makes its own caches, and 48 in the two policy documents, last seen
+  2026-09-11 — and 0 are unaccounted for by either list. Every one of the 26
+  recorded on 2026-09-12 and 2026-09-13 is one of the ten. The stricter dedupe is
+  why this counts fewer than the 2026-09-11 entry above does for an overlapping
+  window: a body with prose around the `bwrap:` line is a transcript discussing
+  the defect, not a call that died of it. Counted off transcripts, so it also
+  sees this host's non-UsageFoundry sessions.
+
+- **The same defect speaks with three messages, and only one of them is the one
+  the fix removes, 2026-09-13.** Of the 135 on the ten names, 119 are `Can't
+  create file at` — the create refused — and 16 are `Can't get type of source`
+  (9) and `Can't find source path` (7), where the CLI saw the path when it built
+  the argv and bwrap found it gone. One landed on this session: `npm run
+  typecheck` died with `bwrap: Can't find source path
+  /home/node/.claude/policy-limits.json.signature.json`, and the same command
+  succeeded on the retry, which is the whole shape of it. **What deletes them was
+  not established.** Read out of `claude.exe` 2.1.260: the sandbox's own scrub
+  (`bareGitRepoScrubPaths`) takes planted bare-repo files and nothing in the
+  config directory, and the managed-policy code does unlink both
+  `policy-limits.json` signatures, but only on a fetch returning no signature —
+  which this install, holding a 214-byte `policy-limits.json` and no signature
+  beside it, may or may not be doing. Pre-creating runs immediately before every
+  spawn and so narrows that window rather than closing it; whether the 16 go to
+  zero is the open half of the item below.
+
+- **Both lists are now read out of `claude.exe` 2.1.260 by `npm test`,
+  2026-09-13.** `sandboxMountPoints.test.ts` extracts the sandbox construction
+  from the shipped binary and asserts that `SANDBOX_TREE_ROOT_NAMES` is exactly
+  what it binds at a checkout's root, and that `SANDBOX_CONFIG_DIR_NAMES` and
+  `SANDBOX_CONFIG_DIR_REFUSED` together are exactly what it binds in the config
+  directory, with the file/directory split taken from the CLI's own flag. Watched
+  to fail both ways: dropping `remote-settings-helper-consent` fails, and adding
+  a name the CLI does not bind fails. It is skipped, with a reason, where no CLI
+  is installed. One real defect it caught while being written: anchoring the
+  tree-root list on `.ripgreprc` alone matches a second, 38-name array of project
+  configuration files that the sandbox never binds.
+
+- **The fill itself, driven end to end against a scratch config directory,
+  2026-09-13.** `ensureSandboxMountPoints([])` on a directory holding every
+  refused name and none of the ten created exactly the ten, left every refused
+  name alone, wrote each as empty, was a no-op on a second call and did not
+  truncate a `loop.md` given content between the two. With the directory at
+  0555 it returned ten problems and threw nothing.
+
+- **The tree-root list does fail, for the one cwd that is not a run's,
+  2026-09-13.** 18 failures at `/workspace` and 8 at `/workspace2` in the 460,
+  last 2026-09-11, against `SANDBOX_TREE_ROOT_NAMES` — which the docblock said
+  needed no pre-creation because "the working directory is writable". True of a
+  run, false of the orchestrator chat, whose cwd is `chatCwd()` →
+  `WORKSPACE_ROOT` → `/workspace`, `nobody:nogroup` at 0755. Neither the agent
+  uid nor the server can create there, so pre-creating is not the fix available;
+  the docblock now says which case it covers and which it does not.
+
 - **The `bwrap:` markers were pinned to a wording this install stopped
   producing, 2026-09-11.** Every failed tool result in every session transcript
   under `~/.claude/projects` carrying a `bwrap:` line: 945 of them, 223 of which
@@ -2743,9 +2804,31 @@ measurement under *Verified* and cut the item down to what is still open.
   unable to write their worktrees. Do not add it on reasoning alone.
 
 - **No sandboxed cycle has run with the mount-point fill, 2026-09-04.** Bwrap
-  binding over the placeholders is unseen. After a rebuild the `run_events`
-  count should fall to zero for project trees, keeping the config-directory
-  handful and the one `.idea`.
+  binding over the placeholders is unseen. What that item also asked — whether
+  the count falls to zero for project trees — was measured on 2026-09-13 and is
+  in *Verified* above: it did, the same afternoon. What is still open is the
+  other direction, that a placeholder is bound rather than merely tolerated.
+
+- **No tool call has been watched dying of a config-directory mount point and
+  then running, 2026-09-13.** The fix is measured against a scratch directory
+  and the corpus is accounted for name by name, both in *Verified* above, but
+  the two have not been joined on a live sandbox, and not for want of trying:
+  every route is closed from inside this container, because a work cycle is
+  already inside the sandbox whose construction it would have to watch. A nested
+  `bwrap` dies at `open /proc/<pid>/ns/ns` before it mounts anything, on every
+  option set tried including a minimal root. A mount point the outer sandbox
+  holds cannot be removed to stage the failure — `rm` on one returns `EBUSY`.
+  And the config directory's true state is masked: five of the ten read as
+  character devices because this session's own sandbox bound `/dev/null` over
+  them, so an `O_CREAT|O_EXCL` against one returns `EEXIST` from the overmount
+  and writes nothing to the disk underneath. Settle it from outside a sandboxed
+  session — a `docker compose up --build` with `UF_SANDBOX=1`, a run started
+  from the UI, and the config directory's ten names watched across two cycles:
+  before the fix five oscillate between absent and `/dev/null`-bound, and after
+  it they should stay regular empty files and the `bwrap: Can't create file`
+  count should reach zero. Read the other two messages separately: if `Can't find
+  source path` and `Can't get type of source` survive on these names, something
+  is still deleting them and the entry above says what has been ruled out.
 
 - **The post-cycle `sweepSandboxTreeRoot` call is unseen, 2026-09-09.** No
   sandboxed cycle since; its log line, the `EBUSY` branch and the interplay

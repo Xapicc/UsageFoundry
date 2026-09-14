@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it } from "node:test";
 import type { PlaceholderStats } from "./sandboxMountPoints";
 import {
+  SANDBOX_CONFIG_DIR_NAMES,
+  SANDBOX_CONFIG_DIR_REFUSED,
+  SANDBOX_MOUNT_POINT_NAMES,
   SANDBOX_TREE_ROOT_EXCLUDES,
   SANDBOX_TREE_ROOT_NAMES,
   isAbandonedMountPoint,
@@ -186,5 +191,250 @@ describe("SANDBOX_TREE_ROOT_EXCLUDES", () => {
     // it, and a file of bare paths would look like a mistake worth deleting.
     assert.equal(SANDBOX_TREE_ROOT_EXCLUDES.startsWith("#"), true);
     assert.equal(SANDBOX_TREE_ROOT_EXCLUDES.includes("UsageFoundry"), true);
+  });
+});
+
+/**
+ * Covers the three lists against the CLI that is actually installed, and nothing
+ * else in that module.
+ *
+ * This is the only test here that reads something outside the repository, and it
+ * earns that because the lists are a transcription of another program's private
+ * decision. Every other test above asks whether this module does what it says;
+ * this one asks whether what it says is still true. Both ways of being wrong are
+ * silent in the way that costs most: a name the CLI **adds** is a mount point
+ * nobody creates, which is a dead tool call attributed to anything but a CLI
+ * upgrade — 423 of them here between 2026-09-04 and 2026-09-13 — and a name the
+ * CLI **drops** is this app writing an empty file into somebody's repository or
+ * config directory for no reason at all, forever, with nothing to notice it.
+ *
+ * It reads the sandbox construction out of the shipped single-file binary the
+ * same way the lists were first written, and deliberately anchors on string
+ * literals rather than on minified identifiers wherever a literal will do: the
+ * identifiers change every release and the literals are the CLI's own data. The
+ * two identifiers it cannot avoid — the config-directory accessor and the set
+ * that marks which entries are files — are *discovered* from a literal anchor
+ * rather than written down. When the shape changes past recognising, the
+ * extraction throws and this test fails saying so, which is the right answer:
+ * somebody has to go and read it again.
+ *
+ * Skipped, loudly, only when there is no CLI to read. That is a checkout outside
+ * the image rather than a defect, and `npm test` is meant to run in one.
+ */
+
+const CLI_PATH = (() => {
+  const configured = process.env.CLAUDE_BIN;
+  const candidates = [
+    ...(configured ? [configured] : []),
+    "/usr/local/bin/claude",
+    "/usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+  ];
+  for (const candidate of candidates) {
+    try {
+      const resolved = fs.realpathSync(candidate);
+      // A test-suite stub is a few hundred bytes of JavaScript; the real thing
+      // is a ~200 MB Bun binary. Reading a stub would extract nothing and fail
+      // for the wrong reason, so it counts as "no CLI" rather than as a defect.
+      if (fs.statSync(resolved).size > 50_000_000) return resolved;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+})();
+
+const NO_CLI = CLI_PATH
+  ? false
+  : "no Claude Code binary on this machine, so there is nothing to pin against";
+
+/** Every `"..."` in one array or set literal, in source order. */
+function literals(source: string): string[] {
+  return [...source.matchAll(/"([^"]*)"/g)].map((match) => match[1]);
+}
+
+function must(pattern: RegExp, haystack: string, what: string): RegExpExecArray {
+  const found = pattern.exec(haystack);
+  if (found === null) {
+    throw new Error(
+      `could not find ${what} in ${path.basename(CLI_PATH ?? "")}. The CLI's ` +
+        `sandbox construction has changed shape; re-read it and update ` +
+        `sandboxMountPoints.ts rather than loosening this.`,
+    );
+  }
+  return found;
+}
+
+/**
+ * What the CLI binds, read out of it.
+ *
+ * `latin1` and not `utf8` deliberately: this is a binary holding compressed
+ * sections either way, the literals are ASCII, and a lossy multi-byte decode
+ * would silently move the offsets the anchors are found at.
+ */
+function bindLists(cli: string): {
+  treeRoot: string[];
+  configDirFiles: string[];
+  configDirDirs: string[];
+} {
+  const src = fs.readFileSync(cli, "latin1");
+
+  // Two arrays declared together, and matched together for exactly that reason:
+  // the dotfiles bound as files and the three directories beside them, of which
+  // `.git` is filtered back out by the CLI itself. Anchoring on the pair rather
+  // than on `.ripgreprc` alone matters — the CLI carries a second, much longer
+  // array of project configuration files that also names it, and matching that
+  // one instead reads 38 names off a list the sandbox never binds.
+  const rootPair = must(
+    /\[("\.gitconfig","\.gitmodules"[^\]]*)\],\w+=\[("\.git","\.vscode","\.idea")\]/,
+    src,
+    "the tree-root bind lists",
+  );
+  const rootFiles = literals(rootPair[1]);
+  const rootDirs = literals(rootPair[2]);
+
+  // The config directory's main list, and the accessor that turns a name in it
+  // into a path. Both anchored on the list's own first two entries.
+  const main = must(
+    /for\(let (\w+) of(\["shell-snapshots","session-env"[^\]]*\])\)\{let \w+=\w+\(tl\((\w+)\(\),\1\)\)/,
+    src,
+    "the config-directory bind loop",
+  );
+  const configDir = main[3];
+
+  // Which of the main list's entries are files. The rest take the CLI's
+  // directory form, which on Windows is the same path with a trailing separator.
+  const fileSet = new Set(
+    literals(must(/new Set\(\["scheduled_tasks\.json"[^\]]*\]/, src, "the config-directory file set")[0]),
+  );
+  // The two signature names are spliced into both lists as template literals, so
+  // they are read from the functions that build them rather than from the array.
+  const suffixes = ["\\.signature\\.json", "\\.signature-iat\\.json"].map(
+    (suffix) =>
+      must(
+        new RegExp(`function \\w+\\(\\w+\\)\\{return\`\\$\\{\\w+\\}(${suffix})\``),
+        src,
+        `the ${suffix.replace(/\\/g, "")} suffix`,
+      )[1],
+  );
+  const files = new Set<string>();
+  const dirs = new Set<string>();
+  for (const name of literals(main[2])) {
+    (fileSet.has(name) ? files : dirs).add(name);
+    if (name === "policy-limits.json") for (const s of suffixes) files.add(name + s);
+  }
+
+  // Everything the CLI binds one name at a time rather than through that list.
+  // Its binder takes the directory flag third, so the *call* is what says which
+  // of the two a name is — and `SN(...)`, the trailing-separator wrapper, says
+  // the same thing at the one site that pushes a path straight on.
+  //
+  // The call and not merely the path expression: `tl(cfg(),"plugins")` also
+  // appears on the right of a `!==` deciding whether a plugin root was
+  // redirected, and reading that as a bind puts `plugins` on both lists at once.
+  // Hence four shapes, and a name matching none of them is left out rather than
+  // guessed — it then fails the accounting assertion, which is where a reader
+  // should find out that the CLI grew a fifth.
+  const DIRECTORY_FLAG = String.raw`,\s*![01](,\s*!0)`;
+  for (const found of src.matchAll(new RegExp(`tl\\(${configDir}\\(\\),"([^"]+)"\\)`, "g"))) {
+    const name = found[1];
+    const head = src.slice(Math.max(0, found.index - 48), found.index);
+    const tail = src.slice(found.index + found[0].length, found.index + found[0].length + 400);
+
+    // `SN(tl(…))` — pushed on as a path, in the CLI's directory spelling.
+    if (head.endsWith("SN(")) {
+      dirs.add(name);
+      continue;
+    }
+    // `binder(tl(…), !x)` and `binder(tl(…), !x, !0)`.
+    if (/\w+\($/.test(head)) {
+      const direct = new RegExp(`^(?:${DIRECTORY_FLAG}?)\\)`).exec(tail);
+      if (direct) {
+        (direct[1] === undefined ? files : dirs).add(name);
+        continue;
+      }
+    }
+    // `v=tl(…)` first, bound a few statements later.
+    const assigned = /(?:^|[,;{(\s])(\w+)=$/.exec(head);
+    if (assigned) {
+      const via = new RegExp(`\\w+\\(${assigned[1]}${DIRECTORY_FLAG}?\\)`).exec(tail);
+      if (via) {
+        (via[1] === undefined ? files : dirs).add(name);
+        continue;
+      }
+    }
+    // One of several paths collected into a set and bound in the loop's body.
+    const iterated = new RegExp(String.raw`for\(let (\w+) of new Set\(\[$`).exec(head);
+    if (iterated) {
+      const via = new RegExp(`\\w+\\(${iterated[1]}${DIRECTORY_FLAG}?\\)`).exec(tail);
+      if (via) (via[1] === undefined ? files : dirs).add(name);
+    }
+  }
+  // …and the loops over a literal list of names, which carry the same flag once
+  // for every name in them.
+  const grouped = new RegExp(
+    `for\\(let (\\w+) of(\\[(?:"[^"]*",)*"[^"]*"\\])\\)\\s*\\w+\\(tl\\(${configDir}\\(\\),\\1\\)${DIRECTORY_FLAG}?\\)`,
+    "g",
+  );
+  for (const loop of src.matchAll(grouped)) {
+    for (const name of literals(loop[2])) (loop[3] === undefined ? files : dirs).add(name);
+  }
+  // The two policy documents each have their signature pair bound beside them.
+  for (const document of ["policy-limits.json", "remote-settings.json"]) {
+    if (files.has(document)) for (const s of suffixes) files.add(document + s);
+  }
+
+  return {
+    treeRoot: [...rootFiles, ...rootDirs.filter((name) => name !== ".git")].sort(),
+    configDirFiles: [...files].sort(),
+    configDirDirs: [...dirs].sort(),
+  };
+}
+
+describe("the lists against the installed CLI", { skip: NO_CLI }, () => {
+  const bound = bindLists(CLI_PATH ?? "");
+
+  it("names every path the sandbox binds at the root of the checkout", () => {
+    assert.deepEqual([...SANDBOX_TREE_ROOT_NAMES].sort(), bound.treeRoot);
+  });
+
+  it("accounts for every name the sandbox binds in the config directory", () => {
+    // One or the other, never both and never neither: a name in neither is a
+    // mount point nobody decided about, which is the dead tool call this exists
+    // to turn into a failing test.
+    assert.deepEqual(
+      [...SANDBOX_CONFIG_DIR_NAMES, ...SANDBOX_CONFIG_DIR_REFUSED].sort(),
+      [...bound.configDirFiles, ...bound.configDirDirs].sort(),
+    );
+    assert.deepEqual(
+      SANDBOX_CONFIG_DIR_NAMES.filter((name) => SANDBOX_CONFIG_DIR_REFUSED.includes(name)),
+      [],
+    );
+  });
+
+  it("creates nothing the CLI wants as a directory", () => {
+    // The harm the `.claude` list already names, one directory over: an empty
+    // file at `projects` or `plugins` is the operator's own tree gone.
+    assert.deepEqual(
+      SANDBOX_CONFIG_DIR_NAMES.filter((name) => bound.configDirDirs.includes(name)),
+      [],
+    );
+  });
+
+  it("refuses only the three files it gives a reason for", () => {
+    // Every other refusal must be a directory. A file quietly joining this list
+    // is a failure left in place with the docblock's reasoning no longer
+    // covering it.
+    assert.deepEqual(
+      SANDBOX_CONFIG_DIR_REFUSED.filter((name) => bound.configDirFiles.includes(name)),
+      ["CLAUDE.md", "policy-limits.json", "remote-settings.json"],
+    );
+  });
+
+  it("keeps the two lists apart: no config-directory name is a .claude name", () => {
+    // They overlap by name — `scheduled_tasks.json` and `loop.md` are on both —
+    // and they are bound in different places for different reasons. Asserted so
+    // that a future edit does not merge them on the strength of the overlap.
+    assert.equal(SANDBOX_MOUNT_POINT_NAMES.includes("policy-limits.json"), false);
+    assert.equal(SANDBOX_CONFIG_DIR_NAMES.includes("settings.json"), false);
   });
 });
