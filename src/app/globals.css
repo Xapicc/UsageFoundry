@@ -479,6 +479,26 @@
 .uf-ascii { display: none; }
 :root[data-skin="ascii"] .uf-ascii { display: inline; }
 :root[data-skin="ascii"] .uf-ascii-frame { display: flex; }
+/* The one host that does not have a box at every width: the toolbar's
+   appearance panel is `md:contents` above the shell's breakpoint, and an
+   element with `display: contents` generates none — so an `absolute` frame
+   inside it resolves against the `<header>` instead and draws a character box
+   around the whole strip. Reachable by opening the panel in portrait and
+   turning the phone.
+
+   Here rather than as a Tailwind `display` utility on the frame, because the
+   frame deliberately carries no `display` of its own: both lines above state it
+   from this file, and a utility at the call site would be a second answer to
+   the same question somewhere else. `AsciiFrame`'s `widths` prop is the hook.
+
+   Same specificity as the line above, so this wins by coming after it; keep
+   them in that order. The query is `md:`'s own boundary rather than a
+   min-width, for the reason the `48rem` down by the text controls gives: both
+   sides then flip at exactly the figure Tailwind emits, whatever it spells it
+   as. */
+@media (width >= 48rem) {
+  :root[data-skin="ascii"] .uf-ascii-frame-narrow { display: none; }
+}
 
 /* Character art sized to its container: the wordmark in the source list, and
    the mark in the strip above it.
@@ -632,6 +652,37 @@
    width because the rule above is what makes a literal safe here: a box keeps
    its 1px under this skin, so there is no second figure to read. */
 :root[data-skin="ascii"] .uf-unboxed > .uf-ascii-frame { inset: calc(-0.5em - 1px); }
+
+/* The same pixel on the shell's two single edges, whose hosts are the same
+   case: `Sidebar`'s `border-r` and `Toolbar`'s `border-b` are both painted out
+   by `uf-unboxed` and both still 1px of layout.
+
+   Two rules and not the `inset` shorthand above, which is why `AsciiEdge` had
+   to grow a class per side to be reachable at all. The right edge carries
+   `inset-y-0` and the bottom one `inset-x-0`; a shorthand would take those with
+   it and leave a single character where an edge was. And only the axis its host
+   actually has a border on may move — neither host has one on the other axis,
+   so correcting it would push the stroke a pixel *out* of true.
+
+   Measured on `/` at 1280x900, DPR 2, ascii, light, against a `Card` on the
+   same page — the reference the rule above already fixed. Before: the sidebar's
+   border box ended at x=224.00 and its `│` inked on device columns 445-446,
+   ink-weighted centre css 222.99, a full pixel in, where the card's `│` sat at
+   1260.00 against a box edge of 1260.00; device column 447 was still `bg-inset`
+   (245) against the pane's 240, the last of the halo. After: columns 447-448,
+   centre css 223.99, and column 447 is the stroke. The toolbar's `─` moves the
+   same one pixel, 51.36 to 52.36 against a border box bottom of 52.00.
+
+   That second figure reads as 0.36 *outside* and the card's `─` as 0.03 inside,
+   and the difference is the device grid rather than the rule: a 13px `─` inks
+   two rows with its weight 0.22 of a device row below the em box's centre, the
+   toolbar's centre now lands on a whole css pixel (52.00) and the card's on a
+   fractional one (412.39), and 0.39 of that is the whole gap. Both centres sit
+   on their host's border box edge, which is what this rule is for. The
+   toolbar's halo was never visible either way — the strip and the pane under it
+   are both `bg-canvas` — which is why this sat unfixed after the frame's. */
+:root[data-skin="ascii"] .uf-unboxed > .uf-ascii-edge-right { right: calc(-0.5em - 1px); }
+:root[data-skin="ascii"] .uf-unboxed > .uf-ascii-edge-bottom { bottom: calc(-0.5em - 1px); }
 
 /* `[ok]`, not a pill. The brackets are generated content rather than two more
    spans because a span would be a flex item and would take the badge's `gap`

@@ -1802,6 +1802,108 @@ is `docs/agent/testing.md`; interface defects and their classes are
   was not reproduced: nothing installed here answers `█ ▒ ░` at three different
   widths. The fix covers that half by construction, unmeasured.
 
+- **`AsciiEdge` now lands its stroke on its host's border box edge, and the
+  sidebar's halo is gone, 2026-09-13** (Chromium 151 via the globally installed
+  Playwright 1.62.1, against `.next/standalone/server.js` on a throwaway
+  `DATA_DIR`, `/` at 390x900 and 1280x900, DPR 2, `localStorage["uf-skin"]` set
+  before first paint, both themes and both skins). `AsciiEdge` emits
+  `uf-ascii-edge-right`/`uf-ascii-edge-bottom` and `globals.css` backs the
+  host's still-1px border out of each on its own axis, the directional form of
+  the `.uf-unboxed > .uf-ascii-frame` rule that fixed `AsciiFrame`. At 1280 in
+  light, the sidebar's `│` moved from device columns 445-446, ink-weighted
+  centre css 222.99 against a border box ending at 224.00, to columns 447-448,
+  centre 223.99 — a `Card` on the same page reads 1260.00 against a box edge of
+  1260.00, so the two now agree — and device column 447, which was `bg-inset`
+  (245) against the pane's 240, is the stroke. Dark reads 224.00 and column 447
+  goes 22 to 89. The toolbar's `─` moves the same one pixel at both widths and
+  in both themes, rows 102-103 to 104-105, centre 51.36 to 52.36 against a box
+  bottom of 52.00. Under `default` nothing inked at either edge at either width,
+  which is `.uf-ascii { display: none }` holding. Caveats: the `─` reads 0.36
+  outside where the card's reads 0.03 inside, and that gap is the device grid
+  and not the rule — a 13px `─` inks two rows weighted 0.22 of a device row
+  below its em centre, and the toolbar's centre lands on a whole css pixel where
+  the card's lands on 412.39; the sidebar is a drawer at 390 and has no edge to
+  measure there; and this is one Chromium on one font stack, so the figures are
+  this container's rather than a reader's.
+
+- **The toolbar's appearance panel is framed below the breakpoint and carries no
+  frame above it, 2026-09-13** (same rig as the entry above: Chromium
+  151.0.7922.34 via Playwright 1.62.1, `.next/standalone/server.js`, `/`, DPR 2,
+  skin and theme in `localStorage` before first paint). `AsciiFrame` gained a
+  `widths` prop whose `narrow` value emits `uf-ascii-frame-narrow`, which
+  `globals.css` takes to `display: none` inside `@media (width >= 48rem)`. At
+  390 in ascii the opened panel's CSS border is `rgba(0, 0, 0, 0)` in both
+  themes — it was `rgb(227, 227, 230)` light and `rgb(58, 58, 61)` dark — and the
+  character frame inks on the panel's own border box edges: left `│` centre css
+  217.97 light and 218.00 dark against an edge at 218.00, right 378.00 and
+  377.98 against 378.00, which is the reading a `Card` on the same page gives
+  (374.00 against 374.00). The frame's own rect is x 211.5 w 173 against a panel
+  box of x 218 w 160, so `.uf-unboxed > .uf-ascii-frame` is backing the panel's
+  1px out as well. Under `default` the frame is in the DOM at `display: none`,
+  and the panel keeps its CSS border.
+
+  The failure this exists to avoid was checked in the state that reaches it
+  rather than in a fresh one: with the panel open at 390, `setViewportSize` to
+  1280 without a reload — a phone turned to landscape. The header holds one
+  `.uf-ascii-frame`, `display: none`, 0x0, and the window's top and right edges
+  have no ink on them in either theme (`rotated-light-ascii.png`,
+  `rotated-dark-ascii.png`). Caveats: the panel takes `uf-unboxed` *without*
+  `uf-framed`, which is the only place in the app the pair comes apart —
+  `uf-framed` is unlayered `position: relative` and would outrank the panel's
+  own `max-md:absolute`, dropping it into the strip under the ascii skin only;
+  the panel is already positioned wherever it has a box, which is what that
+  class would have been for. And this is one Chromium: a `display: contents`
+  element generating no containing block is specified behaviour, but only this
+  engine was measured.
+
+- **The toolbar's drawer button holds its natural width, and the strip overflows
+  visibly instead, 2026-09-13** (same rig: Chromium 151.0.7922.34 via Playwright
+  1.62.1, `.next/standalone/server.js`, DPR 2, skin in `localStorage` before
+  first paint; `/`, `/runs` and `/workflows` at 320, 390 and 1280). The button
+  gained `shrink-0`. At 390 in ascii on `/` — the only route carrying a New run,
+  so the tightest on the strip — it goes from 59.83px to 64.00px, and 64.00 is
+  what the same button measures on `/runs` and `/workflows` at the same width,
+  where the row has slack. At 320 on `/` it goes from 44.00px, which is its
+  `max-md:min-w-11` hit-target floor, to 64.00px, and the header's `scrollWidth`
+  goes from 320 to 330 against a `clientWidth` of 320: the overflow is now
+  visible rather than absorbed. In the `default` skin the button reads 44.00px
+  at every width before and after, because 44 is both its natural width and its
+  floor there — which is why this was invisible.
+
+  Two things this cost, both recorded beside the code. The route title is now
+  the only item that gives way and takes the whole deficit: 52.67px to 48.50px
+  at 390 in ascii on `/`, `Dashbo…` to `Dashb…` against a natural 58.5. And the
+  59.8px figure written into `Toolbar.tsx`'s own arithmetic was never the
+  button's width — it was read off the over-budget strip — so the sum there is
+  523.5px rather than 519.3px. Caveats: 320 is below the 390 the interface
+  claims, and is measured here only because it is where the over-budget case is
+  reachable; `npm run smoke-pages` sees none of this, since the strip does not
+  scroll the document at either width it opens.
+
+- **The toolbar's route title is gone below the breakpoint, and every page has
+  the <h1> that makes that safe, 2026-09-13** (same rig: Chromium
+  151.0.7922.34 via Playwright 1.62.1, `.next/standalone/server.js`, DPR 2, skin
+  in `localStorage` before first paint; 320, 390 and 1280, both themes, both
+  skins). The title div took `max-md:hidden`. The check the decision rests on
+  was run rather than assumed: all 23 pages `scripts/smoke-pages.mjs` opens
+  render an `<h1>`, and on seven of them it is the more specific of the two —
+  `/` is "Claude Code usage" against a toolbar title of "Dashboard",
+  `/runs/[id]/conflicts` is "Where the conflicts are" against "Run",
+  `/tasks/new` is "New task" against "Taskboard". The div carries no role, no id
+  and nothing points at it, which is why `max-md:hidden` rather than
+  `max-md:sr-only`.
+
+  At 390 in ascii on `/` — the tightest route, the only one with a New run — the
+  row went from filling its 390px exactly, with this drawing "Dashb…" at 48.5px
+  of a natural 58.5, to 333.5px with nothing on it squeezed. At 1280 the title
+  is untouched in both skins: 58.50px ascii, 61.53px default, `flex-shrink: 1`.
+  Caveats: the premise the task was filed on had already moved — with both
+  appearance pickers still on the row this drew one character, and moving them
+  into the disclosure had taken it back to a six-character truncation, so what
+  was decided here is the duplication and the headroom rather than the original
+  symptom. And 320 is measured only because it is where the over-budget case is
+  reachable; the interface claims 390.
+
 - **`ListRow`'s wrap threshold and its wrapped line, 2026-09-13** (Chromium 151
   via the globally installed Playwright 1.62.1, against `.next/standalone/
   server.js`, at 390px and 1280px in both themes and both skins, on `/settings`'
@@ -2952,10 +3054,12 @@ measurement under *Verified* and cut the item down to what is still open.
 
 - **The ascii skin (2026-09-11) has been looked at narrowly.** Of 22 routes,
   eight were looked at for the tokens and four for the kit primitives, the
-  rest load-asserted; only the dashboard at 1920; the live flip (task
-  `d8e5f614`) was never driven; `smoke-pages` is default-skin only
-  (`4e6dd0b9`). No second browser (where `█` measures 0.602em), touch, zoom
-  or screen reader.
+  rest load-asserted; only the dashboard at 1920 — the shell's own chrome has
+  since been measured on four routes at 390 and 1280 in both themes, see the
+  three 2026-09-13 entries above, but that is the toolbar and the source list
+  and nothing a route draws under them; the live flip (task `d8e5f614`) was
+  never driven; `smoke-pages` is default-skin only (`4e6dd0b9`). No second
+  browser (where `█` measures 0.602em), touch, zoom or screen reader.
 
 - **Open under the ascii skin, 2026-09-11.** Findings stay on the board —
   `New run` clipped off at 390px is no longer among them, see the 2026-09-12
