@@ -424,8 +424,9 @@ export function KnowledgeGraphCanvas({
     // `onPointerDown` ends this the moment a node is grabbed, so the camera
     // never chases a node being dragged.
     if (!fittedRef.current && !touchedRef.current && sim && sim.nodes.length > 0) {
-      // Cold is the terminus rather than the trigger: this is the last
-      // automatic framing there will be for this mount.
+      // Cold is the terminus rather than the trigger: this is the last framing
+      // the cooling will do. Not the last of the mount — a box that changes
+      // under a settled graph is re-framed from the size effect below.
       if (!hot) fittedRef.current = true;
       fitView();
     }
@@ -448,8 +449,36 @@ export function KnowledgeGraphCanvas({
 
     // Sizing clears the surface, so every resize is followed by a draw — which
     // is what `schedule` is doing as the callback rather than after the call.
-    return observeCanvasSize(host, canvas, schedule);
-  }, [schedule]);
+    //
+    // And by a refit, because a view is only ever framed against the box it was
+    // measured in. This host's height is the taller of its 4:3 sizer and the
+    // panel beside it, and that panel is laid out from type — so the skin
+    // control, which changes the whole font family, changes this box without
+    // touching the graph. Keeping the old view then shows the settled graph
+    // off-centre, and wherever height was the binding axis, cropped: measured at
+    // 1280 on a three-note vault, the box went 974 → 1008 and the framed graph
+    // stayed at 0.96 of the scale the same vault loads at. A fit is cheap and
+    // the layout is untouched by it, so this re-frames rather than trying to
+    // work out whether the new box is one the old fit still suits.
+    //
+    // Two narrower repairs were weighed and are worse. Keeping the view's
+    // *centre* across the resize rather than its top-left stops a node falling
+    // out of the band that was lost, but leaves the scale wrong wherever height
+    // was the binding axis, which is exactly the vault this was reported on.
+    // And gating this on `!fittedRef.current` — refit only while the opening
+    // cooling is still running — fixes nothing at all: the flip that was
+    // reported happens on a settled graph, by which time that ref is long set.
+    //
+    // Under the same rule as `tick`'s fit and not under `fittedRef`: a resize is
+    // a new box rather than more of the opening one, so having finished cooling
+    // does not spend it — but an operator who panned somewhere on purpose keeps
+    // what they panned to, at whatever size the window ends up.
+    const resized = () => {
+      if (!touchedRef.current) fitView();
+      schedule();
+    };
+    return observeCanvasSize(host, canvas, resized);
+  }, [fitView, schedule]);
 
   /* ---------------------------- the palette ---------------------------- */
 

@@ -144,3 +144,31 @@ nothing about it.
   readings. D and not B because the markup was already correct — the same
   character counts, from the ranges the file's own test pins — and only a real
   engine with a real font stack says what they draw.
+- **2026-09-13, `a5694e4`, class C.** `PathMapCanvas` framed its map on the one
+  frame the layout went cold, four seconds after it had visibly stopped moving —
+  the shape `KnowledgeGraphCanvas` was fixed out of in `2425ab8` and left on its
+  sibling. Measured on `/runs/[id]/touched` with five files: k=1.000 from load to
+  t=4.0s, then 1.771 at t=4.6s in a single frame. Found by porting the sibling's
+  fix and sampling `k` off the 2D context down the cooling curve, in Chromium;
+  fixed by fitting on every frame of the cooling and setting `fittedRef` on the
+  cold one rather than gating on it. C rather than D because nothing about it is
+  layout: a DOM with a driveable clock and `requestAnimationFrame` would see the
+  call land only on the last frame. Fitting during the cooling then exposed a
+  second half: `onPointerDown` was not setting `fittedRef` when a node was
+  grabbed, the way `KnowledgeGraphCanvas` does, so the drag's `reheat` left the
+  camera framing a layout the hand was moving — k 2.227 to 1.964 on a node
+  dragged 270px, and a frozen 1.872 with the guard.
+- **2026-09-13, `a5694e4`, class C.** Neither graph canvas re-framed when its own
+  box changed under it, so a view framed against the old box was left off-centre
+  and, where height bound the fit, overhanging. On `/knowledge` the skin control
+  is enough to do it — it changes the font family the panel beside the graph card
+  is laid out from, taking the card 662x974 to 662x1008 — and the flipped view
+  then held k=4.898 where a load in that skin frames at 5.085. `PathMapCanvas`
+  had it against a window resize: 1280 to 900 wide left a 543x513 graph in a
+  594x480 box. Found by comparing a flipped view against a *reload in the same
+  state* rather than against the pre-flip view, which is what the 2026-09-12
+  measurement compared and why it read clean. Fixed by refitting from the size
+  observer, gated on `touchedRef` so a deliberate pan survives. C and not D: the
+  box change needs an engine to *happen*, but the defect is that a
+  `ResizeObserver` callback resizes the backing store and does not refit, which a
+  DOM with a stub observer would catch.
