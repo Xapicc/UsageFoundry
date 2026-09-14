@@ -1399,14 +1399,15 @@ export default function NewRunPage() {
               >
                 {/* The width is on a wrapper, never on the control: `Select`
                     already states `w-full`, and two width utilities on one
-                    element resolve by stylesheet order, not class order. Both
-                    figures are absolute for `ListRow`'s sake — its control side
-                    is `shrink-0`, so a percentage there resolves against a
-                    shrink-to-fit box and does nothing. 288px is what the line
-                    holds at 390px once the row has wrapped, and it is the
-                    figure the limit rows below already use, so every wide
-                    control on this form is the same width on a phone. */}
-                <div className="w-64 max-md:w-72">
+                    element resolve by stylesheet order, not class order. Below
+                    `md` it is the wrapped line itself rather than a pixel
+                    figure: `ListRow`'s control side used to be `shrink-0`, so a
+                    percentage resolved against a shrink-to-fit box and did
+                    nothing, and every wide control on this form wrote 288px
+                    instead — what a 390px screen happened to leave, and the
+                    same 288px at 320px and at 767px. That side now grows, so
+                    `w-full` is the column at whatever width it is. */}
+                <div className="w-64 max-md:w-full">
                   <Select
                     id="tpl"
                     value={templateId}
@@ -1458,7 +1459,7 @@ export default function NewRunPage() {
                 </>
               }
             >
-              <div className="w-64 max-md:w-72">
+              <div className="w-64 max-md:w-full">
                 <Select
                   id="mount"
                   value={mountId}
@@ -1491,7 +1492,7 @@ export default function NewRunPage() {
               }
             >
               {mark("where")}
-              <div className="w-64 max-md:w-72">
+              <div className="w-64 max-md:w-full">
                 <Select
                   id="folder"
                   value={folder}
@@ -1565,7 +1566,7 @@ export default function NewRunPage() {
                 }
               >
                 {mark("agent")}
-                <div className="w-64 max-md:w-72">
+                <div className="w-64 max-md:w-full">
                   <Select
                     id="agent"
                     value={agentId}
@@ -1622,7 +1623,7 @@ export default function NewRunPage() {
               }
             >
               {mark("model")}
-              <div className="w-64 max-md:w-72">
+              <div className="w-64 max-md:w-full">
                 {provider === "codex" ? (
                   <Input
                     id="model"
@@ -1708,7 +1709,7 @@ export default function NewRunPage() {
               label="Provider"
               description="Which agent CLI runs the work cycles"
             >
-              <div className="w-64 max-md:w-72">
+              <div className="w-64 max-md:w-full">
                 <Select
                   id="provider"
                   value={provider}
@@ -2360,12 +2361,27 @@ export default function NewRunPage() {
             <ListRow label="When a limit is reached">
               {mark("enforcement")}
               {/* Three options of prose come to 352px, which is wider than the
-                  ~288px this row leaves on a phone, and `SegmentedControl` is
-                  `inline-flex`: its own `max-md:flex-wrap` never fires, because
-                  a shrink-to-fit box has no width to wrap against and the row's
-                  control side does not shrink. The wrapper gives it one, and it
+                  294px this row leaves on a 390px screen, and
+                  `SegmentedControl` is `inline-flex`: its own
+                  `max-md:flex-wrap` never fires, because a shrink-to-fit box
+                  has no width to wrap against. The wrapper gives it one, and it
                   wraps to two lines instead of hanging off both edges of the
-                  card. The other two on this page fit and take no wrapper. */}
+                  card.
+
+                  The one literal on this page that `max-md:w-full` cannot
+                  replace, and the six rows above are the contrast: `ListRow`'s
+                  control side is `shrink-0`, so it is only ever as wide as its
+                  content, and a percentage against it resolves to that content.
+                  For a control *narrower* than the line, `max-md:grow` widens
+                  the side to the line first and the percentage is the column;
+                  for this one it is 352px of itself, measured, so `w-full`
+                  leaves the row wider than the card instead of wrapping it.
+                  288px is wrong away from 390px and stays until the row's
+                  control side may shrink below the breakpoint, which is every
+                  `ListRow` on every page and not this form's call to make.
+
+                  The other two segmented controls on this page fit and take no
+                  wrapper. */}
               <div className="max-md:w-72">
                 <SegmentedControl
                   options={ENFORCEMENT_OPTIONS}

@@ -2227,6 +2227,30 @@ is `docs/agent/testing.md`; interface defects and their classes are
   fitted view and is not clamped; the reading says nothing about a view the
   operator has panned.
 
+- **Six of `/runs/new`'s seven `max-md:w-72` literals are now the wrapped line,
+  worth 6px at 390px; the seventh cannot be and stays a literal
+  (2026-09-14).** Same instrument and build, at 320px, 390px and 1280px in all
+  four states. At 390px Workspace, Folder, Model and Provider each go from the
+  288px literal to 294px of column, and the widest option's headroom inside the
+  select's text box moves with it: Folder's `workspace — the whole workspace`
+  from 19.9px to 25.9px in the default skin and 18px to 24px under ascii, Model
+  from 42.0px to 48.0px and 26px to 32px. At 1280px every reading is identical
+  to the byte, the literal being inert above the breakpoint. At 320px the
+  column is 224px and the wrappers now respect it — Workspace and Provider fit
+  it exactly where the literal put them 64px past it, Model narrows to 267px
+  (282px under ascii) and Folder holds at 289px, both floored by the select's
+  own intrinsic width rather than by a written figure. No option text is newly
+  clipped at any width, no sideways scroll and no console error in any of the
+  twelve loads. The seventh, the `When a limit is reached` `SegmentedControl`,
+  keeps `max-md:w-72`: `ListRow`'s control side is `shrink-0`, so it is only as
+  wide as its content and a percentage against it resolves to that content —
+  measured 352px, the control's own max-content, which leaves the row wider
+  than the card instead of wrapping it. `max-md:grow` widens that side to the
+  line first only for a control *narrower* than the line, which is why the six
+  above work and this one does not. Caveat: Template and Agent carry two of the
+  six and were not rendered — the sandbox has no templates and no agents — so
+  they are covered by the shared class and not by a reading of their own.
+
 ## Not yet verified by hand
 
 - **The graph at a size no hand-drawn ordering reaches.** Every reading above is
