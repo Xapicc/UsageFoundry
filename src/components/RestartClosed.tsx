@@ -122,10 +122,15 @@ export function RestartClosed({ onReopened }: { onReopened: () => void }) {
         confirmDisabled={busy}
         busy={busy}
       >
+        {/* Both conditions in one clause, and neither of them first: naming
+            the folder as *the* condition and the cap as a postscript is what
+            `/runs` and `/runs/[id]` were just corrected for, and a batch
+            pick-up is the case where the cap, not the folder, is what most of
+            them will wait on. "run slot" is the phrase those two surfaces
+            already use. */}
         <p>
           Each goes back in the queue under the limits it was started with, and
-          starts spending again as soon as its folder is free. Your concurrency
-          limit still applies.
+          starts spending again when its folder and a run slot are both free.
         </p>
       </Sheet>
     </>

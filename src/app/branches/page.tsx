@@ -1200,9 +1200,12 @@ export default function Branches() {
             // interactive widget like the keyboard, and it is this bar's own
             // control — so without this the operator picks a strategy behind
             // the thing they are picking it with. Inline rather than a
-            // `bottom-[var(…)]` class so the `bottom-0` above stays the
-            // readable default and the override is unambiguous; both are 0px
-            // wherever there is no keyboard, which is every pointer device.
+            // `bottom` utility carrying the custom property as an arbitrary
+            // value — written as prose because Tailwind scans this file as
+            // plain text and would compile the literal out of this comment into
+            // the stylesheet — so the `bottom-0` above stays the readable
+            // default and the override is unambiguous; both are 0px wherever
+            // there is no keyboard, which is every pointer device.
             style={{
               bottom: "var(--keyboard-inset, 0px)",
               paddingBottom: "env(safe-area-inset-bottom, 0px)",

@@ -183,14 +183,14 @@ function combinedUSD(
  *
  * ## What it may not do up here
  *
- * `default` against the meters' `primary` is what keeps this away from the
- * money it sits next to, and the footnote's standing half is the only other
- * thing doing that — which is the reason not to reach for a louder tone. It is
- * also why that half prints unconditionally where the overlap clause beside it
- * does not: the tone alone has never been asked to carry it. Neither half is
- * spend: the meters are priced from `usage` frames, which report the request
- * the filter had already rewritten, so both of these are counterfactuals whose
- * value is already absent from every number beside them.
+ * `default` against the meters' `primary` is now the only thing keeping this
+ * away from the money it sits next to: the footnote's standing half used to
+ * share that work and went with the rest of the footnote. So the tone may not
+ * be traded for a louder one — the contrast with `primary` is the whole signal,
+ * and nothing beside it is left saying so in words. Neither half is spend: the
+ * meters are priced from `usage` frames, which report the request the filter had
+ * already rewritten, so both of these are counterfactuals whose value is already
+ * absent from every number beside them.
  *
  * The derivation of both stays in a band lower down. A net is three or four
  * figures netted, and an operator deciding whether to leave either on is

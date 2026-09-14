@@ -335,13 +335,29 @@ function RunList({
 
               conventions.md ranks those two costs and this is the losing side
               of it: "a table must not be the reason the pane scrolls
-              sideways". What it buys is that a long status wraps — "next up —
-              starts when the folder frees" comes out one word per line at
-              84px. That is a real cost, recorded rather than fixed, and the
-              fix is to shorten the status line or give the pane a wrapper, not
-              to change these back. */}
+              sideways". What it cost was that a long status wrapped — "next up
+              — starts when the folder frees" came out one word per line, seven
+              of them, in a Status column drawn 62px however wide the window
+              got.
+
+              `lg:min-w-[150px]` below buys that back. A floor here is only
+              unaffordable where the table is already at its tightest, and `lg`
+              is where it stops being. Measured 2026-09-14 against the
+              standalone bundle with three runs (one running, two queued), the
+              floor forced on at each width: that sentence sets 203px on one
+              line and the floor takes it to two lines everywhere. At 768px it
+              pushes the pane 27px sideways, which is the rule above; from
+              800px up nothing scrolls, but the width comes out of the Run
+              column, which collapses to 40px at 800 and 105px at 880 — a run's
+              own task line truncated to nothing to spare its status three
+              lines is the worse trade, and that is why this is `lg` and not a
+              media query at 800. At 1024px the Run column still has 249px with
+              the floor on, and 505px at 1280.
+
+              The other three columns still get no floor: what makes this one
+              affordable is the breakpoint, not the number. */}
           <tr>
-            <Th scope="col" className={`w-[150px] ${STICKY_HEAD}`}>
+            <Th scope="col" className={`w-[150px] lg:min-w-[150px] ${STICKY_HEAD}`}>
               Status
             </Th>
             <Th scope="col" className={`w-full ${STICKY_HEAD}`}>
