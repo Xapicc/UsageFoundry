@@ -2461,6 +2461,51 @@ fixed.
   makes affordable. Caveat: light theme only — the skin and the theme are
   separate attributes and this adds the skin axis, not a theme one.
 
+- **A map label centred on a node near the canvas edge is painted outside it,
+  and clamping the anchor is what puts it back (2026-09-14).** Measured against
+  `.next/standalone/server.js` in headless Chromium at 390px, dpr 2, in both
+  themes and both skins, by wrapping `CanvasRenderingContext2D.prototype
+  .fillText` and mapping every call through the live transform into the
+  canvas's own backing store — painted overflow, which no box metric and no
+  sideways-scroll check can see, and which `scripts/smoke-pages.mjs` therefore
+  passes. The reproducing arrangement is four files across two directories:
+  few enough nodes that the fit lands at `k` 1.004, above `FILE_LABEL_FROM`, so
+  file names are drawn at all, and names long enough that half of one is wider
+  than the 48px `FIT_PAD` leaves. Before: `workflows-and-schedules.md` painted
+  21.2px past the left edge in the default skin and 23.4px under ascii, and
+  `RunTaskComments.tsx` 7.2px and 4.2px past the right. After: worst overflow
+  −2.0px in all four states, which is `LABEL_EDGE_PAD` exactly, with `k`, the
+  label count and the twenty-four-file control arrangement's readings all
+  unmoved to the tenth of a pixel — so the clamp moves only labels that were
+  outside. Caveat: horizontal only. A label hangs about 14px below its node
+  against the same 48px pad, so the bottom edge has never been reachable in a
+  fitted view and is not clamped; the reading says nothing about a view the
+  operator has panned.
+
+- **Six of `/runs/new`'s seven `max-md:w-72` literals are now the wrapped line,
+  worth 6px at 390px; the seventh cannot be and stays a literal
+  (2026-09-14).** Same instrument and build, at 320px, 390px and 1280px in all
+  four states. At 390px Workspace, Folder, Model and Provider each go from the
+  288px literal to 294px of column, and the widest option's headroom inside the
+  select's text box moves with it: Folder's `workspace — the whole workspace`
+  from 19.9px to 25.9px in the default skin and 18px to 24px under ascii, Model
+  from 42.0px to 48.0px and 26px to 32px. At 1280px every reading is identical
+  to the byte, the literal being inert above the breakpoint. At 320px the
+  column is 224px and the wrappers now respect it — Workspace and Provider fit
+  it exactly where the literal put them 64px past it, Model narrows to 267px
+  (282px under ascii) and Folder holds at 289px, both floored by the select's
+  own intrinsic width rather than by a written figure. No option text is newly
+  clipped at any width, no sideways scroll and no console error in any of the
+  twelve loads. The seventh, the `When a limit is reached` `SegmentedControl`,
+  keeps `max-md:w-72`: `ListRow`'s control side is `shrink-0`, so it is only as
+  wide as its content and a percentage against it resolves to that content —
+  measured 352px, the control's own max-content, which leaves the row wider
+  than the card instead of wrapping it. `max-md:grow` widens that side to the
+  line first only for a control *narrower* than the line, which is why the six
+  above work and this one does not. Caveat: Template and Agent carry two of the
+  six and were not rendered — the sandbox has no templates and no agents — so
+  they are covered by the shared class and not by a reading of their own.
+
 ## Not yet verified by hand
 
 - **The graph at a size no hand-drawn ordering reaches.** Every reading above is
@@ -3025,8 +3070,10 @@ measurement under *Verified* and cut the item down to what is still open.
   a real git; what has not been watched is the CLI's own git picking it up out
   of the environment mid-run.
 
-- **The Files tab's *What it touched* card has never been rendered**, in a
-  browser or a container. To walk at 1280px and 390px:
+- **The Files tab's *What it touched* card has been rendered but never
+  walked.** The 2026-09-14 label-clamp entry above drew it at 390px in all four
+  states against a seeded `run_events` fixture, so the card and its graph are
+  known to paint; nothing below it was read. To walk at 1280px and 390px:
   - write down the header's distinct-file and work-cycle counts: the deferred
     file-by-cycle grid in `proposals/SessionFlow/` waits on them;
   - a gone branch (`kind: "none"`) drops to two groups with a warn notice and
