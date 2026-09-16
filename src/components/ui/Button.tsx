@@ -69,6 +69,30 @@ const VARIANT: Record<ButtonVariant, string> = {
  * how a "nothing is happening" state gets shipped. `primary` reads --tint-fg
  * rather than white for the same reason the fill reads --tint: under an
  * operator accent the pair is whatever the OS says is legible on it.
+ *
+ * The `/40` track — the three sides the moving quarter travels on — is
+ * deliberately under the 3:1 WCAG 1.4.11 asks of a graphical object, and stays
+ * there. Measured from painted pixels against each variant's own fill,
+ * headless Chromium 151.0.7922.34, dpr 4, 2026-09-16: primary composites to
+ * #669aeb on the capped #0056de, 2.18:1; danger to #e76673 on #d70015 light,
+ * 1.68:1, and #ffa5a0 on #ff6961 dark, 1.50:1. What carries the state is the
+ * full-alpha quarter, and that clears the floor — 6.20:1 on primary, 5.38:1 on
+ * danger light. The track is the unfilled remainder rather than the mark, the
+ * reading 1.4.11 already allows for a progress indicator's empty half.
+ *
+ * Raising the alpha is what was rejected, and the sweep is why. Primary needs
+ * /60 for 3.17:1 — /55 paints 2.90:1, so the arithmetic that suggests it
+ * undershoots — danger light needs /70, and danger *dark* has no such value:
+ * white at alpha 1 on #ff6961 is 2.82:1, so the quarter is already under the
+ * floor there and nothing drawn behind it can beat it. A floor only half this
+ * map can reach is not a floor. And the alpha that buys track-against-fill
+ * spends quarter-against-track: primary's 2.84:1 falls to 1.95:1 at /60, which
+ * is where a spinner stops reading as a spinner and starts reading as a ring.
+ *
+ * The case against, so the next reader does not have to reconstruct it: @layer
+ * base flattens `animate-spin` under prefers-reduced-motion, so that operator
+ * gets a stationary frame, which is three-quarters track. It rests on the
+ * quarter still being 6.20:1 in it.
  */
 const BUSY_RING: Record<ButtonVariant, string> = {
   primary: "border-tint-fg/40 border-t-tint-fg",

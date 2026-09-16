@@ -1750,6 +1750,20 @@ is `docs/agent/testing.md`; interface defects and their classes are
 
 ### Interface
 
+- **The busy button's spinner ring, measured on both filled variants,
+  2026-09-16.** Headless Chromium 151.0.7922.34, dpr 4; `<Button busy>`
+  rendered to static markup against the built stylesheet rather than reached
+  through a route, because no page holds the state long enough to navigate to.
+  Track against its own fill: primary #669aeb on the capped #0056de, 2.18:1;
+  danger #e76673 on #d70015 light, 1.68:1, and #ffa5a0 on #ff6961 dark,
+  1.50:1 — all under the 3:1 WCAG 1.4.11 asks of a graphical object, and left
+  there deliberately for the reasoning now in `BUSY_RING`'s comment. The
+  full-alpha quarter is 6.20:1 on primary and 5.38:1 on danger light, so what
+  carries the state clears the floor on three of the four; on danger dark it
+  is 2.82:1, which is the dark `--danger` fill and not the ring, and is filed
+  separately. Caveat: one engine, and its `AccentColor` is #0075ff, so the
+  primary figures are that accent capped rather than a desktop's.
+
 - **A disabled bracketed button, re-measured either side of its floor,
   2026-09-14.** Headless Chromium 151.0.7922.34, dpr 2, against
   `.next/standalone/server.js`; `/settings`' sticky footer at 1280 under
