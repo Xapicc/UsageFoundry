@@ -1434,6 +1434,47 @@ is `docs/agent/testing.md`; interface defects and their classes are
 
 ### Container and environment
 
+- **What a work cycle actually weighs, 2026-09-16** — n is **one cycle**, the run that
+  wrote this entry, so these are a range and not a distribution. Method: `VmRSS` out of
+  `/proc/<pid>/status` for the cycle's own `claude` process and every descendant, every
+  20 s for the life of the run, against the `api` context size read off the session
+  transcript (`input_tokens` + `cache_read_input_tokens` + `cache_creation_input_tokens`
+  on the last assistant message); tool phases sampled twice a second over the subtree
+  rooted at the call that started them. **Context is not what makes a cycle heavy.**
+  `claude` held **326-385 MB** of RSS while its context grew from 69k to 220k tokens —
+  a slope near 0.4 KB per token, the wrong order of magnitude to explain a 1.5 GiB
+  budget. What the cycle *starts* is: `npm run build` peaked at **1,749 MB over 23
+  processes** in 37 s, `npm run smoke-pages` at **981 MB over 12** in 194 s, `npm test`
+  at **784 and 815 MB over 16**. So a cycle sitting still is ~0.4 GiB and a cycle inside
+  `next build` is ~2.0 GiB; `docker-compose.yml` keeps 1.5 GiB as a mixed-fleet budget
+  with the worst case now written down beside it. Two figures the previous notes had
+  wrong, both corrected in place: `claude --help` peaks at **144.6 MB** of RSS by
+  `getrusage` (n=3), not 309 MB, and this container exposes **10** CPUs, not 12.
+  Caveats, and they matter: the highest context this cycle reached was 220k tokens,
+  well short of the 604k a run has reached on this install, so the top of the curve is
+  unmeasured and the slope is only measured over 69k-220k; the tool peaks are this
+  repository's own commands, and another repository's build is another number; and five
+  concurrent cycles plus the server sat at 6.1-8.0 GiB of `memory.current` throughout,
+  so none of it was measured on an idle machine.
+
+- **What a cpuset would and would not bound, 2026-09-16.** Measured with `taskset -c 0-2`
+  standing in for `cpuset: "0-2"`, against the same commands, on 10 CPUs. A cpuset does
+  move what the kernel reports — `nproc` and `os.availableParallelism()` both fall to 3 —
+  but **`os.cpus().length` ignores CPU affinity and still reports 10**, and that split is
+  the whole result. `npm test`, on node's own runner, followed it: **815 → 707 MB** and
+  **16 → 5 processes**, at a cost of 3-4 s on a 20 s run. `next build` did not move at
+  all: **1,749 MB / 23 processes / 36.9 s** unrestricted against **1,759 MB / 23
+  processes / 33.7 s** on three CPUs. Nor did `npm run smoke-pages`, which drives one
+  browser sequentially: **981 → 986 MB**, 193.6 → 194.3 s. Since the phase the per-cycle
+  budget is sized against is the one a cpuset cannot bound, it was not shipped as a knob;
+  the reasoning sits beside `cpus` in `docker-compose.yml`. Two facts collected on the
+  way: `VITEST_MAX_WORKERS=3`, a compose `environment:` entry, **was read back out of a
+  running work cycle's own shell**, so a compose variable does reach an agent child
+  unstripped, while `NODE_OPTIONS` and `DATA_DIR` were absent as `childEnv` intends; and
+  no `.bin/jest` exists in any checkout under `/workspace` or `/workspace2` (searched to
+  depth 6), so the jest worker counts some notes assume are not a load this container
+  actually carries.
+
 - **The container's cgroup limits are in force, 2026-09-16**, read from inside a
   running install (`/sys/fs/cgroup/*`, cgroup v2): `memory.max` 12884901888 (12 GiB),
   `memory.swap.max` 0, `pids.max` 2048, `cpu.max` `max 100000` — no CPU quota — and
