@@ -679,11 +679,20 @@ services:
     # that pins `UF_NODE_HEAP_MB` back to 2048 has to pin `UF_MEM_LIMIT` to 10g
     # beside it, or it is running the old server under the new ceiling.
     #
-    # 1.5 GiB per work cycle is a budget rather than a measurement: `claude
-    # --help` on the pinned CLI peaks at 309 MB before it has held a
-    # conversation or made a request, and a real cycle also holds the context
-    # window, the transcript it is writing and every tool result — then starts
-    # builds and test suites of its own inside this same cgroup.
+    # 1.5 GiB per work cycle is a measurement as of 2026-09-16, and it stays at
+    # 1.5 GiB. Sampled off one real cycle in this container at 0.5s over its
+    # whole process tree (n=1 cycle; `docs/verification.md`, *Container and
+    # environment*): the CLI is the small half — `claude` held 326-381 MB of RSS
+    # while its context grew from 69k to 175k `api` tokens, a slope of about half
+    # a KB per token, so context is not what makes a cycle heavy. What it starts
+    # is: `npm run build` peaks at 1,749 MB, `npm run smoke-pages` at 981 MB,
+    # `npm test` at 784-815 MB. So a cycle sitting still is ~0.4 GiB and a cycle
+    # inside `next build` is ~2.0 GiB. 1.5 GiB is therefore the right budget for
+    # a mixed fleet and deliberately not a worst case: four cycles building at
+    # the same moment would want 8 GiB against the 6.0 reserved above, which is
+    # the case an install doing build-heavy work has to raise `UF_MEM_LIMIT` for.
+    # The 309 MB this note used to quote for `claude --help` is not reproducible
+    # on the current pin: peak RSS by `getrusage` is 144.6 MB (n=3).
     #
     # **Raise this together with `maxConcurrentRuns` and
     # `maxConcurrentAssists`, never after the fact.** A fleet raised past the
