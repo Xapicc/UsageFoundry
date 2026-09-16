@@ -1445,14 +1445,19 @@ is `docs/agent/testing.md`; interface defects and their classes are
   Three variants, **n=3 each**. At 210 s idle: baseline **296 MB** (263-313), `[heap]`
   40 MB (8-57); `MALLOC_ARENA_MAX=2` **294 MB** (268-316), `[heap]` 54 MB (28-74);
   `MALLOC_ARENA_MAX=2` plus `MALLOC_MMAP_THRESHOLD_=131072 MALLOC_TRIM_THRESHOLD_=131072`
-  **247 MB** (246-250), `[heap]` 9 MB (9-11). So **the arena count on its own is worth
-  −2 MB**, which is nothing against baseline's own 50 MB spread, and it *raises* the main
-  arena rather than shrinking it — the opposite of what it was proposed for. The
-  thresholds are worth **−49 MB**, and they also collapse the run-to-run spread from
-  50 MB to 4 MB, which is the more useful half: the sbrk heap stops ratcheting because
+  **247 MB** (246-250), `[heap]` 9 MB (9-11). A fourth variant run afterwards to isolate
+  the thresholds from the arena count, same n: the two thresholds **alone** give
+  **250 MB** (245-257), `[heap]` 8 MB (7-8). So **the arena count on its own is worth
+  −2 MB**, which is nothing against baseline's own 50 MB spread, it *raises* the main
+  arena rather than shrinking it — the opposite of what it was proposed for — and adding
+  it to the thresholds changes nothing they do not already do. The thresholds are worth
+  **−46 MB** on their own, and they also collapse the run-to-run spread from 50 MB to
+  12 MB, which is the more useful half: the sbrk heap stops ratcheting because
   buffers over 128 KB become their own mappings and go back to the OS when freed. No
-  scan-time cost either way — cold scan 7.25 s baseline, 6.96 s and 6.84 s for the two
-  variants. **Nothing measurable is lost by letting children inherit them**, which they
+  scan-time cost from any of them — cold scan 7.25 s baseline against 6.96 s, 6.84 s and
+  7.08 s. The thresholds are now set in `docker-compose.yml`, `MALLOC_ARENA_MAX` is not,
+  and the reasoning for both sits there beside `NODE_OPTIONS` and again at
+  `docs/agent/environment.md`. **Nothing measurable is lost by letting children inherit them**, which they
   would: none of `childEnv`, `chatEnv`, `reviewEnv`, `gitEnv` or `authEnv` touches
   `MALLOC_*` (read, all five), and a compose `environment:` entry was confirmed to reach
   an agent child by reading `VITEST_MAX_WORKERS=3` back out of a running cycle's own

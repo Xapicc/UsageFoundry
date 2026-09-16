@@ -280,6 +280,32 @@ services:
       # would abort a work cycle mid-flight on a figure chosen for something
       # else, and the run loop would file that as the agent crashing.
       NODE_OPTIONS: "--max-old-space-size=${UF_NODE_HEAP_MB:-1024}"
+      # Two glibc allocator thresholds, measured 2026-09-16 against a second server
+      # built from the same tree and started beside the running one, because the
+      # running one serves this install and may not be restarted to find out
+      # (`docs/verification.md`, *Container and environment*). Pinning the mmap
+      # threshold stops freed transcript-read buffers ratcheting the sbrk heap:
+      # buffers over 128 KB become their own mapping and go back to the kernel when
+      # freed instead of sitting at the top of `[heap]` waiting for a trim that a
+      # live allocation above them prevents. At 210 s idle after repeated cold
+      # scans, n=3 each: 250 MB with these against 296 MB without, and the
+      # run-to-run spread falls from 50 MB to 12 MB, which is the half that matters
+      # to the arithmetic further down this file. No scan-time cost — 7.08 s cold
+      # against 7.25 s. `MALLOC_ARENA_MAX=2` is deliberately **not** set beside
+      # them, though that is the variable this was proposed as: on its own it moved
+      # idle RSS by 2 MB and *raised* `[heap]` from 40 to 54 MB, and adding it to
+      # these two changed nothing they do not already do.
+      #
+      # Unlike NODE_OPTIONS above these are not stripped from a child's environment,
+      # and that is on purpose rather than an oversight: no `MALLOC_*` appears in
+      # `childEnv`, `chatEnv`, `reviewEnv`, `gitEnv` or `authEnv`, so every `node` an
+      # agent starts takes them too, and that was measured to cost nothing — `npm
+      # test` 823/833 MB of peak tree RSS without against 777/820 MB with, `next
+      # build` inside its own 1,710-1,759 MB noise, wall time identical throughout.
+      # The CLI itself is indifferent: `claude.exe` is a Bun single-file binary
+      # carrying mimalloc and `claude --help` peaks at 144.3-144.8 MB either way.
+      MALLOC_MMAP_THRESHOLD_: "131072"
+      MALLOC_TRIM_THRESHOLD_: "131072"
       # The uid every spawned child is dropped to — the same UF_UID/UF_GID the
       # `user:` line above used to carry, so an existing .env needs no edit and
       # the processes that write your files are the uid they always were. The
