@@ -2556,7 +2556,7 @@ export default function NewRunPage() {
                   ? "One thing to fix first."
                   : `${visible.length} things to fix first.`}
               </strong>
-              <ul className="mt-1 grid">
+              <ul className="mt-1 grid gap-4">
                 {visible.map((p) => (
                   <li key={p.focus}>
                     <button

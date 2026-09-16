@@ -1750,6 +1750,21 @@ is `docs/agent/testing.md`; interface defects and their classes are
 
 ### Interface
 
+- **The legacy `.grid` rule's reach, 2026-09-16.** Against
+  `.next/standalone/server.js`, all 23 routes `smoke-pages` knows, at 1280px and
+  390px, `<details>` forced open. Deleting the `@layer legacy` `.grid` rule from
+  the live CSSOM and re-reading every element's rect moved **nothing** on any of
+  the 46 loads — 9 rendered elements carry the bare `grid` class and 8 state
+  their own `gap-*`, and the ninth, `/knowledge`'s recessed graph card, holds
+  both its children in one cell so its inherited 16px painted no track. The one
+  call site that really was being spaced by it is not reachable from a page
+  load: `runs/new/page.tsx`'s validation list, whose rows sat 16px apart with
+  the rule and went flush without it, measured by cloning its single row to
+  three. It now says `gap-4` and measures 1928/1976/2024 at 1280px and
+  2574/2634/2694 at 390px — the same figures as before the rule was deleted.
+  Caveat: a state reached only by pressing something other than **Start run** is
+  outside this, and the static call-site list is what stands behind those.
+
 - **The busy button's spinner ring, measured on both filled variants,
   2026-09-16.** Headless Chromium 151.0.7922.34, dpr 4; `<Button busy>`
   rendered to static markup against the built stylesheet rather than reached

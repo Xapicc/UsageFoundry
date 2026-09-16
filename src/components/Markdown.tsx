@@ -840,9 +840,10 @@ function inlineLines(text: string, key: string, ctx: Ctx): ReactNode[] {
  * A note is read in the wide column of a two-column grid, so a paragraph with
  * nothing capping it runs to whatever the window is — and a line the eye has to
  * track back across is the one typographic failure that gets *worse* on a
- * better display. 68ch is the figure `.lede` in `globals.css` already carries
- * and the one the knowledge page's own intro paragraph is set to, so this is
- * that column's existing answer rather than a second one.
+ * better display. 68ch is the measure the kit already spells wherever it holds
+ * a sentence — `max-w-[68ch]`, on `ui/Hint`, on `ui/List`'s description and on
+ * the knowledge page's own intro paragraph — so this is that column's existing
+ * answer rather than a second one.
  *
  * A class on each block rather than one on the root, because the three things
  * that legitimately want the whole column — a table, a fenced block and a

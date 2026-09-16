@@ -1435,8 +1435,21 @@
    Their only call sites were layout.tsx and Nav.tsx, both now on the kit, and
    `grep -rn` across src/ finds none of the five. */
 
-.grid { display: grid; gap: 16px; }
-.grid-2 { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+/* `.grid` and `.grid-2` used to live here, and `.grid` was the one rule in this
+   layer that was never dead. It collided by name with Tailwind's own `grid`
+   display utility: `legacy` is declared before `utilities`, so Tailwind won the
+   `display` and this rule kept the `gap`, which Tailwind's utility does not
+   state. Every element carrying the bare `grid` class and no `gap-*` of its own
+   was silently taking 16px from a layer meant to be on its way out.
+   Measured 2026-09-16 against `.next/standalone/server.js`, 23 routes at 1280px
+   and 390px, `<details>` forced open: 18 call sites across src/, 16 of which
+   state their own `gap-*`. Of the other two, `runs/new/page.tsx`'s validation
+   list really was being spaced by this — three rows sat 16px apart and went
+   flush when the rule was deleted from the live CSSOM — and now says `gap-4`
+   itself; `KnowledgeGraphView`'s recessed card puts both its children in one
+   cell, so its 16px painted nothing and it is left stating nothing. Deleting
+   the rule moved no element on any of those 46 loads. `.grid-2` had no call
+   site at all. */
 
 section + section { margin-top: 24px; }
 
@@ -1446,7 +1459,11 @@ section + section { margin-top: 24px; }
 
 h1 { font-size: 20px; font-weight: 650; letter-spacing: -0.02em; margin: 0 0 4px; }
 h2 { font-size: 15px; font-weight: 600; margin: 0 0 12px; }
-.lede { color: var(--fg-muted); margin: 0 0 20px; max-width: 68ch; }
+/* `.lede { color: var(--fg-muted); margin: 0 0 20px; max-width: 68ch }` used to
+   live here. `grep -rn` across src/ finds a Settings prop called `lede` and some
+   prose, and no call site for the class. Its 68ch is not lost with it: the kit
+   spells that measure `max-w-[68ch]` in a dozen places, and `Markdown.tsx`'s
+   MEASURE comment now cites those rather than this. */
 
 /* ------------------------------------------------------------------ */
 /* Meters                                                              */
@@ -1466,7 +1483,10 @@ h2 { font-size: 15px; font-weight: 600; margin: 0 0 12px; }
 /* Tables                                                              */
 /* ------------------------------------------------------------------ */
 
-.table-wrap { overflow-x: auto; }
+/* `.table-wrap { overflow-x: auto }` used to live here. No call site across
+   src/, and nothing wants one: `ui/Table` stacks below `md` rather than
+   scrolling sideways, which is the decision its own header records. */
+
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 /* Sentence case at 12px, matching ui/Table's Th. macOS does not shout a column
    heading, and two treatments for the same thing is what this layer exists to
