@@ -1440,7 +1440,10 @@ is `docs/agent/testing.md`; interface defects and their classes are
   20 s for the life of the run, against the `api` context size read off the session
   transcript (`input_tokens` + `cache_read_input_tokens` + `cache_creation_input_tokens`
   on the last assistant message); tool phases sampled twice a second over the subtree
-  rooted at the call that started them. **Context is not what makes a cycle heavy.**
+  rooted at the call that started them — rooted there rather than found by pid, because every
+  Bash call in this container gets its own pid namespace while `/proc` is the host's, so a host
+  pid read back out of `/proc` cannot be signalled or even matched from the next call.
+  **Context is not what makes a cycle heavy.**
   `claude` held **326-385 MB** of RSS while its context grew from 69k to 220k tokens —
   a slope near 0.4 KB per token, the wrong order of magnitude to explain a 1.5 GiB
   budget. What the cycle *starts* is: `npm run build` peaked at **1,749 MB over 23
