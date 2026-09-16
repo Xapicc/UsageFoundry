@@ -3615,15 +3615,15 @@ measurement under *Verified* and cut the item down to what is still open.
   .State.Health}}' usagefoundry`; after `kill -STOP 1` it should read
   `unhealthy` within ~3 min. Docker reports that and restarts nothing.
 
-- **No Docker has applied the container's resource limits.** `mem_limit`,
-  `memswap_limit`, `pids_limit`, `cpus` and the heap ceiling parse by eye only;
-  README's per-child memory figures are estimates. `memory.max` reading `max`
-  means not in force (likely cgroup v1). The OOM kill and `reconcileOnBoot`
-  after it are unexercised.
+- **The OOM kill itself is unexercised.** That the limits reach the kernel is now
+  measured — see *Container and environment* above, 2026-09-16: cgroup v2, `memory.max`
+  12 GiB, `memory.swap.max` 0, `pids.max` 2048, no CPU quota — and README's per-child
+  memory figures are measurements rather than estimates as of the same date. What is
+  still open is the behaviour at the ceiling: nothing has driven the container into an
+  OOM kill and watched `reconcileOnBoot` come back from it, and nothing has confirmed
+  from the host side that the kill names the container rather than a host process.
   ```bash
   docker inspect --format '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.PidsLimit}} {{.HostConfig.NanoCpus}}' usagefoundry
-  docker exec usagefoundry cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/pids.max
-  docker stats --no-stream usagefoundry
   docker exec usagefoundry node -e 'const a=[];for(;;)a.push(Buffer.alloc(1<<26))'
   docker inspect -f '{{.State.OOMKilled}}' usagefoundry   # expect true
   dmesg | tail                                            # expect no host process named
