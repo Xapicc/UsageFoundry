@@ -1434,6 +1434,19 @@ is `docs/agent/testing.md`; interface defects and their classes are
 
 ### Container and environment
 
+- **The container's cgroup limits are in force, 2026-09-16**, read from inside a
+  running install (`/sys/fs/cgroup/*`, cgroup v2): `memory.max` 12884901888 (12 GiB),
+  `memory.swap.max` 0, `pids.max` 2048, `cpu.max` `max 100000` — no CPU quota — and
+  `cpuset.cpus` empty with `cpuset.cpus.effective` `0-9`. So `mem_limit`,
+  `memswap_limit` and `pids_limit` do reach the kernel, and the shipped `UF_CPUS=0`
+  default does leave the container uncapped on CPU. Caveat: this install's `.env`
+  sets none of the `UF_MEM_LIMIT`/`UF_CPUS` variables and `memory.max` is not
+  compose's `9g` default, so what is confirmed is that Docker applies the limits,
+  not that these particular numbers came from this repository's `docker-compose.yml`.
+  Two more figures off the same read: `nproc` is **10** here, not the 12 that several
+  notes assume, and `memory.current` sat between 6.6 and 8.0 GiB with five concurrent
+  work cycles and the server running.
+
 - **How full the transcript cache actually gets on this install, 2026-09-13**,
   counted rather than modelled: a pass over `/home/node/.claude/projects` — 2,286
   `.jsonl` files, 1.74 GiB, 548,963 lines — found **219,599 records carrying both
