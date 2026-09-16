@@ -1434,6 +1434,39 @@ is `docs/agent/testing.md`; interface defects and their classes are
 
 ### Container and environment
 
+- **`MALLOC_ARENA_MAX=2` is not the lever; the mmap and trim thresholds are, 2026-09-16.**
+  The running server could not be used for this — it serves this install — so the
+  measurement is a second server built from the same tree and started beside it on a free
+  port, against the real 1.9 GiB transcript corpus under the shipped
+  `--max-old-space-size=1024`, driven through repeated cold scans of `/api/usage`,
+  `/api/repo-spend`, `/api/calibrate`, `/api/storage` and `/api/status` and then left
+  idle. `/proc/<pid>/smaps` sampled at boot, hot, and 90 s and 210 s into idle; the
+  parser was checked against the raw `Rss:` sum and `VmRSS` on a throwaway process first.
+  Three variants, **n=3 each**. At 210 s idle: baseline **296 MB** (263-313), `[heap]`
+  40 MB (8-57); `MALLOC_ARENA_MAX=2` **294 MB** (268-316), `[heap]` 54 MB (28-74);
+  `MALLOC_ARENA_MAX=2` plus `MALLOC_MMAP_THRESHOLD_=131072 MALLOC_TRIM_THRESHOLD_=131072`
+  **247 MB** (246-250), `[heap]` 9 MB (9-11). So **the arena count on its own is worth
+  −2 MB**, which is nothing against baseline's own 50 MB spread, and it *raises* the main
+  arena rather than shrinking it — the opposite of what it was proposed for. The
+  thresholds are worth **−49 MB**, and they also collapse the run-to-run spread from
+  50 MB to 4 MB, which is the more useful half: the sbrk heap stops ratcheting because
+  buffers over 128 KB become their own mappings and go back to the OS when freed. No
+  scan-time cost either way — cold scan 7.25 s baseline, 6.96 s and 6.84 s for the two
+  variants. **Nothing measurable is lost by letting children inherit them**, which they
+  would: none of `childEnv`, `chatEnv`, `reviewEnv`, `gitEnv` or `authEnv` touches
+  `MALLOC_*` (read, all five), and a compose `environment:` entry was confirmed to reach
+  an agent child by reading `VITEST_MAX_WORKERS=3` back out of a running cycle's own
+  shell. Measured on the two heaviest things a cycle starts: `npm test` 823 and 833 MB of
+  peak tree RSS with nothing set, 777 and 820 MB with the thresholds; `next build`
+  1,725 MB against 1,630 MB; wall time identical to a tenth of a second throughout. And
+  the CLI is indifferent, as expected of a Bun single-file binary carrying mimalloc:
+  `claude --help` peaks at 144.3-144.8 MB of RSS by `getrusage` across all three
+  variants, n=3 each. Caveats: the −90 to −110 MB this was filed on was a projection from
+  a cold-scan process and is **not** what the server does; the load exercised is the
+  transcript-read path plus this repository's own test and build commands, not the SSE,
+  SQLite-write or agent-spawn paths; and what a server several days old would do is still
+  open — see *Container and environment* under *Not yet verified by hand*.
+
 - **What a work cycle actually weighs, 2026-09-16** — n is **one cycle**, the run that
   wrote this entry, so these are a range and not a distribution. Method: `VmRSS` out of
   `/proc/<pid>/status` for the cycle's own `claude` process and every descendant, every
