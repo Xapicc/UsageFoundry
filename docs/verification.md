@@ -1457,8 +1457,10 @@ is `docs/agent/testing.md`; interface defects and their classes are
   `MALLOC_*` (read, all five), and a compose `environment:` entry was confirmed to reach
   an agent child by reading `VITEST_MAX_WORKERS=3` back out of a running cycle's own
   shell. Measured on the two heaviest things a cycle starts: `npm test` 823 and 833 MB of
-  peak tree RSS with nothing set, 777 and 820 MB with the thresholds; `next build`
-  1,725 MB against 1,630 MB; wall time identical to a tenth of a second throughout. And
+  peak tree RSS with nothing set against 777 and 820 MB with the thresholds (n=2 each);
+  `next build` 1,725 MB against 1,630 MB (n=1 each, and four unrelated builds the same
+  afternoon spanned 1,710-1,759 MB, so that 95 MB is inside the noise rather than a
+  saving); wall time identical to a tenth of a second throughout. And
   the CLI is indifferent, as expected of a Bun single-file binary carrying mimalloc:
   `claude --help` peaks at 144.3-144.8 MB of RSS by `getrusage` across all three
   variants, n=3 each. Caveats: the −90 to −110 MB this was filed on was a projection from
