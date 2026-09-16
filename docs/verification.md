@@ -3532,6 +3532,24 @@ measurement under *Verified* and cut the item down to what is still open.
 
 ### Container and environment
 
+- **Whether a long-lived server's glibc arenas respond to `MALLOC_*`.** The reading the
+  question was filed on — `/proc/7/smaps` showing ~135 MB of arenas, 108 MB of `[heap]`
+  and 27 MB non-main, against ~16 MB of live native content — could not be re-read on
+  2026-09-16: from inside an agent sandbox the server's `smaps`, `environ` and `cwd` are
+  uid 65534, so only `VmRSS` (612 MB, 11 threads, 3.3 days up) was readable. A server
+  built and started beside it for the measurement never reached that state — under the
+  shipped `--max-old-space-size=1024` its `[heap]` stayed at 8 MB however hard it was
+  scanned — so what several days of mixed work does to the arenas is still open, and it
+  cannot be settled without restarting the process that serves this install.
+  ```bash
+  # from the host, not from inside a work cycle
+  docker compose stop usagefoundry
+  # add MALLOC_ARENA_MAX=2 to the service's environment:, then
+  docker compose up -d usagefoundry
+  # and after a day of ordinary use:
+  docker exec usagefoundry sh -c 'grep -c . /proc/7/smaps; grep VmRSS /proc/7/status'
+  ```
+
 - **Nothing has been measured at a full transcript cache under the 1,024 MiB
   heap the compose file now ships.** The *Dreaming* entry's 898-949 MB at 1,024
   was measured when 1,024 was this install's `.env` and 2,048 was the shipped
