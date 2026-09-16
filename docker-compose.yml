@@ -728,6 +728,27 @@ services:
     # share the same quota.
     cpus: ${UF_CPUS:-0}
 
+    # A cpuset — `cpuset: "0-3"`, which narrows *which* CPUs the container may use
+    # rather than how much of them it gets — was measured on 2026-09-16 and is
+    # deliberately not offered as a knob beside `cpus` above. The reason to want
+    # one is memory rather than speed: a quota leaves `nproc` at the host's count,
+    # so a test runner still starts one worker per CPU and still pays for each of
+    # them. A cpuset does move `nproc` — `taskset -c 0-2 nproc` reports 3 against
+    # 10 here — but it only reaches tools that ask the kernel, and not all of them
+    # do. Measured on this container: under the same `taskset`, `nproc` and
+    # `os.availableParallelism()` both report 3 while `os.cpus().length` still
+    # reports 10. That split is what decides it. `npm test`, on node's own runner,
+    # follows `availableParallelism` and fell from 815 to 707 MB of peak tree RSS
+    # (16 processes down to 5). `next build` — the heaviest phase a work cycle
+    # has, and the one the budget above is sized against — did not move at all:
+    # 1,749 MB over 23 processes unrestricted, 1,759 MB over 23 processes on three
+    # CPUs, and no slower for it. Neither did `npm run smoke-pages`, which is
+    # sequential: 981 MB against 986 MB. A knob that cannot bound the peak it
+    # exists to bound is not worth an `.env` line. The lever that does work is a
+    # compose `environment:` entry the tool itself reads, which is exactly what
+    # `VITEST_MAX_WORKERS` above is: it was confirmed to reach an agent child
+    # unstripped by reading it back out of a running work cycle's own shell.
+
     # A ceiling on the container's own log — the fourth store this install
     # grows, and the only one nothing in the app bounds, measures or alerts on.
     #
