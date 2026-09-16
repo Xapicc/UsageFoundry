@@ -874,8 +874,8 @@ If the machine cannot spare it the answer is fewer runs rather than a bigger
 number: a limit above what the host can supply is not a limit. The per-child
 figures have been measured once, on 2026-09-16, against a single real work cycle
 in the development container — so treat them as a range, not a distribution. The
-CLI itself stayed between 326 and 381 MB of RSS while its context grew from 69k
-to 175k tokens, which is a slope of roughly half a kilobyte per token: the
+CLI itself stayed between 325 and 407 MB of RSS while its context grew from 69k
+to 281k tokens, which is a slope of about 0.4 kilobytes per token: the
 context window is not what makes a cycle heavy. What the cycle *starts* is.
 Sampled twice a second over the whole process tree, `npm run build` peaked at
 1,749 MB, `npm run smoke-pages` at 981 MB and `npm test` at 784-815 MB, so a

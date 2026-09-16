@@ -1484,7 +1484,7 @@ is `docs/agent/testing.md`; interface defects and their classes are
   Bash call in this container gets its own pid namespace while `/proc` is the host's, so a host
   pid read back out of `/proc` cannot be signalled or even matched from the next call.
   **Context is not what makes a cycle heavy.**
-  `claude` held **326-385 MB** of RSS while its context grew from 69k to 220k tokens —
+  `claude` held **325-407 MB** of RSS while its context grew from 69k to 281k tokens —
   a slope near 0.4 KB per token, the wrong order of magnitude to explain a 1.5 GiB
   budget. What the cycle *starts* is: `npm run build` peaked at **1,749 MB over 23
   processes** in 37 s, `npm run smoke-pages` at **981 MB over 12** in 194 s, `npm test`
@@ -1493,9 +1493,9 @@ is `docs/agent/testing.md`; interface defects and their classes are
   with the worst case now written down beside it. Two figures the previous notes had
   wrong, both corrected in place: `claude --help` peaks at **144.6 MB** of RSS by
   `getrusage` (n=3), not 309 MB, and this container exposes **10** CPUs, not 12.
-  Caveats, and they matter: the highest context this cycle reached was 220k tokens,
+  Caveats, and they matter: the highest context this cycle reached was 281k tokens,
   well short of the 604k a run has reached on this install, so the top of the curve is
-  unmeasured and the slope is only measured over 69k-220k; the tool peaks are this
+  unmeasured and the slope is only measured over 69k-281k; the tool peaks are this
   repository's own commands, and another repository's build is another number; and five
   concurrent cycles plus the server sat at 6.1-8.0 GiB of `memory.current` throughout,
   so none of it was measured on an idle machine.
