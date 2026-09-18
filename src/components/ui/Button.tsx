@@ -39,11 +39,12 @@ export type ButtonSize = "default" | "compact";
 /**
  * Two of the four carry a hook for the ascii skin, and only two, because only
  * two state a label colour that was chosen to sit on a fill: `--tint-fg` is
- * whatever the OS says is legible on the accent, and `text-white` is white on
- * red. The skin takes both fills away, and either of those on a card is a
- * button nobody can read. `secondary` and `ghost` already name a text colour
- * that works unfilled, so a hook on them would be a selector with nothing
- * behind it. The rule itself is in globals.css — this file names no skin.
+ * whatever the OS says is legible on the accent, and `--danger-fg` is white on
+ * the red chosen to carry it. The skin takes both fills away, and either of
+ * those on a card is a button nobody can read. `secondary` and `ghost` already
+ * name a text colour that works unfilled, so a hook on them would be a selector
+ * with nothing behind it. The rule itself is in globals.css — this file names
+ * no skin.
  */
 const VARIANT: Record<ButtonVariant, string> = {
   primary:
@@ -55,8 +56,11 @@ const VARIANT: Record<ButtonVariant, string> = {
   // Reads as destructive before it is clicked, and keeps saying so through
   // focus: an accent focus ring on a red button would be the app's "go ahead"
   // colour drawn around the one control that cannot be undone.
+  // The fill is --danger-solid and not --danger: the status tone is measured
+  // against the page and cannot also carry a label. globals.css has the pair
+  // and the numbers.
   danger:
-    "uf-button-danger border-transparent bg-danger text-white shadow-e1 focus-visible:outline-ring-danger " +
+    "uf-button-danger border-transparent bg-danger-solid text-danger-fg shadow-e1 focus-visible:outline-ring-danger " +
     "not-disabled:hover:brightness-110 not-disabled:active:brightness-95 not-disabled:active:shadow-press",
   ghost:
     "border-transparent bg-transparent text-ink-muted focus-visible:outline-ring " +
@@ -68,12 +72,15 @@ const VARIANT: Record<ButtonVariant, string> = {
  * colour: `border-t-accent` is invisible on an accent-filled button, which is
  * how a "nothing is happening" state gets shipped. `primary` reads --tint-fg
  * rather than white for the same reason the fill reads --tint: under an
- * operator accent the pair is whatever the OS says is legible on it.
+ * operator accent the pair is whatever the OS says is legible on it. `danger`
+ * reads --danger-fg for the narrower version of that: the value is white, and
+ * naming it keeps the ring on the same side of the pair as the label it is
+ * drawn over, so a future edit to one is visibly an edit to both.
  */
 const BUSY_RING: Record<ButtonVariant, string> = {
   primary: "border-tint-fg/40 border-t-tint-fg",
   secondary: "border-line-strong border-t-accent",
-  danger: "border-white/40 border-t-white",
+  danger: "border-danger-fg/40 border-t-danger-fg",
   ghost: "border-line-strong border-t-accent",
 };
 

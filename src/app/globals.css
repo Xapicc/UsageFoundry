@@ -88,6 +88,38 @@
   --tint:          light-dark(#0069d9, #0a6cd8);
   --tint-fg:       #ffffff;
 
+  /* The other filled control's pair, split for the same reason and measured the
+     same way. --danger is read *against the page* everywhere else it is used —
+     a status tone, a chart mark, the `text-danger` on a badge and on a deleted
+     diff line — so in dark it is a light salmon, and a light salmon carries
+     white at 2.82:1. One token cannot be both, and the arithmetic says so
+     rather than the taste: on --bg-raised in dark, `text-danger` needs the
+     colour over Y 0.280 to clear 4.5:1 and white-on-fill needs it under Y
+     0.183, and those do not overlap. The button is the only `bg-danger` in the
+     app with a label on it — the meter fill, the legend dot and the two canvas
+     marks carry none — so it is the fill that moves and --danger stays put.
+
+     The fill is therefore the light scheme's red in both, and the label is
+     plain white. Measured from painted pixels, headless Chromium
+     151.0.7922.34, dpr 4, 2026-09-18, sampling the button's own fill and the
+     brightest glyph pixel of its label: white on #d70015 is 5.38:1 at rest and
+     4.55:1 under the `brightness-110` hover, against 2.82:1 and 2.64:1 before.
+
+     What the deeper fill costs, so nobody thinks it was missed: it stands off a
+     *dark* page less well — 2.66:1 on --bg-raised and 2.37:1 on --bg-grouped,
+     where #ff6961 measured 5.07:1 and 4.53:1. That is the trade --tint above
+     settles, settled the same way and for the same reason: the label is what
+     identifies a filled control, and the dark primary button already draws at
+     2.31:1 on that same card, so a fill under 3:1 there is the regime this
+     palette is in rather than a new one.
+
+     --ring-danger and --danger-line stay on --danger deliberately. A focus halo
+     and a hairline are drawn on the page rather than under a label, so they
+     want the colour that is legible against it — the same split --accent-source
+     below is making between --accent and --tint. */
+  --danger-solid:  #d70015;
+  --danger-fg:     #ffffff;
+
   /* A bezeled control — a secondary button, an unselected segment. AppKit
      draws these as a raised chip rather than a recess, so they are lighter than
      the window in dark and white in light, which is the opposite of --bg-inset
@@ -832,9 +864,11 @@
 :root[data-skin="ascii"] .uf-button:not(:disabled):hover  { background: var(--fill-hover); }
 :root[data-skin="ascii"] .uf-button:not(:disabled):active { background: var(--fill-active); }
 /* The two variants whose label colour was chosen to sit on a fill that is now
-   gone: `--tint-fg` is white-on-accent and `text-white` is white-on-red, and
+   gone: `--tint-fg` is white-on-accent and `--danger-fg` is white-on-red, and
    either of them on a card is a button you cannot read. The other two already
-   state a text colour that works unfilled. */
+   state a text colour that works unfilled. Both fall back to the *mark* colour
+   rather than to the fill they had: unfilled, the label is text on a card, and
+   --danger-solid is the value chosen to sit under white, not on a page. */
 :root[data-skin="ascii"] .uf-button-primary { color: var(--accent); }
 :root[data-skin="ascii"] .uf-button-danger  { color: var(--danger); }
 
@@ -1158,6 +1192,8 @@
   --color-ok:          var(--ok);
   --color-warn:        var(--warn);
   --color-danger:      var(--danger);
+  --color-danger-solid: var(--danger-solid);
+  --color-danger-fg:   var(--danger-fg);
   --color-ok-line:     var(--ok-line);
   --color-warn-line:   var(--warn-line);
   --color-danger-line: var(--danger-line);

@@ -2542,6 +2542,32 @@ fixed.
   `/private/var/folders/…`; the container's own `/data` and `/workspace` are
   short enough that neither would ever have shown there.
 
+- **The dark-skin danger button's label goes 2.82:1 → 5.38:1, and the busy
+  ring's arc with it, by splitting `--danger-solid`/`--danger-fg` off
+  `--danger` (2026-09-18).** Measured from painted pixels, headless Chromium
+  151.0.7922.34, dpr 4, against the standalone build's own
+  `.next/static/css/*.css`: `<Button variant="danger">` and
+  `<Button variant="danger" busy>` rendered with `renderToStaticMarkup` onto
+  each of the four surface tokens in both `[data-theme]` states, sampling the
+  modal colour of a strip inside the button and the glyph pixel furthest from
+  it in luminance. Before: fill `#ff6961`, label 2.82:1 at rest and 2.64:1
+  under the `brightness-110` hover, the full-opacity busy arc 2.82:1 with it.
+  After: fill `#d70015` in both schemes, label 5.38:1 and 4.55:1, arc 5.38:1,
+  the `/40` track `#e76673` at 1.68:1 — the same three figures the light skin
+  already measured, which is the point of the value being one literal rather
+  than a `light-dark()` pair. The light skin is unchanged at every reading.
+  What the deeper fill cost, measured in the same frames: the fill's own
+  contrast against the dark page went 5.90/5.07/6.41/4.53:1 on
+  `--bg`/`--bg-raised`/`--bg-inset`/`--bg-grouped` to 3.09/2.66/3.36/2.37:1,
+  so two of the four now sit under 1.4.11's 3:1 — against the dark primary
+  button, measured beside it in the same frames at 2.68/2.31/2.91/2.06:1.
+  `npm run typecheck`, `npm test` (2827 pass) and `npm run smoke-pages` (92/92,
+  serving `.next/standalone/server.js`) are clean on the change. Caveat: the
+  glyph reading is the *best* pixel of an antialiased 14px stroke and the fill
+  is flat, so the label figure is the pair's endpoint rather than what most of
+  the stroke measures; and the static shell carries no `next/font`, so the
+  glyphs were painted in the fallback face rather than in SF.
+
 ## Not yet verified by hand
 
 - **The graph at a size no hand-drawn ordering reaches.** Every reading above is
