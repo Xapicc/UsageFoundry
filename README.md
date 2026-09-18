@@ -872,11 +872,18 @@ So 25 simultaneous runs with 5 other Claude processes wants roughly
 `UF_MEM_LIMIT=43g` and `UF_PIDS_LIMIT=8192`, on a host with that much to give.
 If the machine cannot spare it the answer is fewer runs rather than a bigger
 number: a limit above what the host can supply is not a limit. The per-child
-figures are estimates rather than measurements — `claude --help` on the pinned
-CLI peaks at 309 MB before it has held a conversation or made a request, and a
-real cycle also holds the context window, the transcript it is writing and every
-tool result, so watch `docker stats` against your own repositories and adjust.
-A work cycle's real footprint is mostly whatever *your* build does.
+figures have been measured once, on 2026-09-16, against a single real work cycle
+in the development container — so treat them as a range, not a distribution. The
+CLI itself stayed between 325 and 407 MB of RSS while its context grew from 69k
+to 281k tokens, which is a slope of about 0.4 kilobytes per token: the
+context window is not what makes a cycle heavy. What the cycle *starts* is.
+Sampled twice a second over the whole process tree, `npm run build` peaked at
+1,749 MB, `npm run smoke-pages` at 981 MB and `npm test` at 784-815 MB, so a
+cycle sitting still costs about 0.4 GiB and a cycle inside `next build` about
+2.0 GiB. A work cycle's real footprint is mostly whatever *your* build does,
+which is why the budget above is sized for a mixed fleet rather than for four
+simultaneous builds; watch `docker stats` against your own repositories and
+raise `UF_MEM_LIMIT` if your work is build-heavy.
 
 That the limits are actually applied, rather than merely present in the YAML:
 

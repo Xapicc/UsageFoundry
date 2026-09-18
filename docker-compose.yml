@@ -280,6 +280,32 @@ services:
       # would abort a work cycle mid-flight on a figure chosen for something
       # else, and the run loop would file that as the agent crashing.
       NODE_OPTIONS: "--max-old-space-size=${UF_NODE_HEAP_MB:-1024}"
+      # Two glibc allocator thresholds, measured 2026-09-16 against a second server
+      # built from the same tree and started beside the running one, because the
+      # running one serves this install and may not be restarted to find out
+      # (`docs/verification.md`, *Container and environment*). Pinning the mmap
+      # threshold stops freed transcript-read buffers ratcheting the sbrk heap:
+      # buffers over 128 KB become their own mapping and go back to the kernel when
+      # freed instead of sitting at the top of `[heap]` waiting for a trim that a
+      # live allocation above them prevents. At 210 s idle after repeated cold
+      # scans, n=3 each: 250 MB with these against 296 MB without, and the
+      # run-to-run spread falls from 50 MB to 12 MB, which is the half that matters
+      # to the arithmetic further down this file. No scan-time cost — 7.08 s cold
+      # against 7.25 s. `MALLOC_ARENA_MAX=2` is deliberately **not** set beside
+      # them, though that is the variable this was proposed as: on its own it moved
+      # idle RSS by 2 MB and *raised* `[heap]` from 40 to 54 MB, and adding it to
+      # these two changed nothing they do not already do.
+      #
+      # Unlike NODE_OPTIONS above these are not stripped from a child's environment,
+      # and that is on purpose rather than an oversight: no `MALLOC_*` appears in
+      # `childEnv`, `chatEnv`, `reviewEnv`, `gitEnv` or `authEnv`, so every `node` an
+      # agent starts takes them too, and that was measured to cost nothing — `npm
+      # test` 823/833 MB of peak tree RSS without against 777/820 MB with, `next
+      # build` inside its own 1,710-1,759 MB noise, wall time identical throughout.
+      # The CLI itself is indifferent: `claude.exe` is a Bun single-file binary
+      # carrying mimalloc and `claude --help` peaks at 144.3-144.8 MB either way.
+      MALLOC_MMAP_THRESHOLD_: "131072"
+      MALLOC_TRIM_THRESHOLD_: "131072"
       # The uid every spawned child is dropped to — the same UF_UID/UF_GID the
       # `user:` line above used to carry, so an existing .env needs no edit and
       # the processes that write your files are the uid they always were. The
@@ -679,11 +705,20 @@ services:
     # that pins `UF_NODE_HEAP_MB` back to 2048 has to pin `UF_MEM_LIMIT` to 10g
     # beside it, or it is running the old server under the new ceiling.
     #
-    # 1.5 GiB per work cycle is a budget rather than a measurement: `claude
-    # --help` on the pinned CLI peaks at 309 MB before it has held a
-    # conversation or made a request, and a real cycle also holds the context
-    # window, the transcript it is writing and every tool result — then starts
-    # builds and test suites of its own inside this same cgroup.
+    # 1.5 GiB per work cycle is a measurement as of 2026-09-16, and it stays at
+    # 1.5 GiB. Sampled off one real cycle in this container at 0.5s over its
+    # whole process tree (n=1 cycle; `docs/verification.md`, *Container and
+    # environment*): the CLI is the small half — `claude` held 325-407 MB of RSS
+    # while its context grew from 69k to 281k `api` tokens, a slope of about 0.4 KB
+    # per token, so context is not what makes a cycle heavy. What it starts
+    # is: `npm run build` peaks at 1,749 MB, `npm run smoke-pages` at 981 MB,
+    # `npm test` at 784-815 MB. So a cycle sitting still is ~0.4 GiB and a cycle
+    # inside `next build` is ~2.0 GiB. 1.5 GiB is therefore the right budget for
+    # a mixed fleet and deliberately not a worst case: four cycles building at
+    # the same moment would want 8 GiB against the 6.0 reserved above, which is
+    # the case an install doing build-heavy work has to raise `UF_MEM_LIMIT` for.
+    # The 309 MB this note used to quote for `claude --help` is not reproducible
+    # on the current pin: peak RSS by `getrusage` is 144.6 MB (n=3).
     #
     # **Raise this together with `maxConcurrentRuns` and
     # `maxConcurrentAssists`, never after the fact.** A fleet raised past the
@@ -718,6 +753,27 @@ services:
     # does not protect the server's event loop from its own children, which
     # share the same quota.
     cpus: ${UF_CPUS:-0}
+
+    # A cpuset — `cpuset: "0-3"`, which narrows *which* CPUs the container may use
+    # rather than how much of them it gets — was measured on 2026-09-16 and is
+    # deliberately not offered as a knob beside `cpus` above. The reason to want
+    # one is memory rather than speed: a quota leaves `nproc` at the host's count,
+    # so a test runner still starts one worker per CPU and still pays for each of
+    # them. A cpuset does move `nproc` — `taskset -c 0-2 nproc` reports 3 against
+    # 10 here — but it only reaches tools that ask the kernel, and not all of them
+    # do. Measured on this container: under the same `taskset`, `nproc` and
+    # `os.availableParallelism()` both report 3 while `os.cpus().length` still
+    # reports 10. That split is what decides it. `npm test`, on node's own runner,
+    # follows `availableParallelism` and fell from 815 to 707 MB of peak tree RSS
+    # (16 processes down to 5). `next build` — the heaviest phase a work cycle
+    # has, and the one the budget above is sized against — did not move at all:
+    # 1,749 MB over 23 processes unrestricted, 1,759 MB over 23 processes on three
+    # CPUs, and no slower for it. Neither did `npm run smoke-pages`, which is
+    # sequential: 981 MB against 986 MB. A knob that cannot bound the peak it
+    # exists to bound is not worth an `.env` line. The lever that does work is a
+    # compose `environment:` entry the tool itself reads, which is exactly what
+    # `VITEST_MAX_WORKERS` above is: it was confirmed to reach an agent child
+    # unstripped by reading it back out of a running work cycle's own shell.
 
     # A ceiling on the container's own log — the fourth store this install
     # grows, and the only one nothing in the app bounds, measures or alerts on.
