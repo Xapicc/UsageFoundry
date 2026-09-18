@@ -205,8 +205,8 @@ Both readers that put the digit into a string — `Sidebar.tsx`'s
 compile-time obligation rather than a warning in a docblock, and it is why this
 reordering needed no change in either reader. The docblock in `panes.ts` that
 stated the ceiling was itself once wrong about which row sat on it (it said
-Knowledge, which has been seventh since it moved above the two configuration
-panes and is seventh still, with Dreaming under it).
+Knowledge, which has been eighth since it moved above the two configuration
+panes and is eighth still, with Dreaming under it).
 
 **The scan deduplicates on the record, never on the signature, and the
 distinction is load-bearing.** A resumed session copies its earlier records into

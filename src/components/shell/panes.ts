@@ -21,8 +21,8 @@ import type { IconName } from "@/components/ui/Icon";
  * digit back is a different decision and not one this file may make on its own.
  *
  * That used to be a warning rather than a mechanism, and it named the wrong row
- * (Knowledge, which has been the seventh since it moved above the two
- * configuration panes, and is still seventh with Dreaming under it). It is now
+ * (Knowledge, which has been the eighth since it moved above the two
+ * configuration panes, and is still eighth with Dreaming under it). It is now
  * a type: `shortcut` is optional, and the two readers that put the digit into a
  * string guard it. Both were unguarded, and both failed silently rather than
  * loudly — a screen reader announcing `Meta+undefined` and a palette printing
