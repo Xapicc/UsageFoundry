@@ -184,19 +184,23 @@ the explicit press**, on quick open's rule: a keystroke away from spending money
 is what every approval gate in this app exists to prevent, and a readout is
 exactly where a Run Now button looks convenient.
 
-**The pane is the eighth row, directly under Knowledge, and `Pane.shortcut` is
+**The pane is the ninth row, directly under Knowledge, and `Pane.shortcut` is
 optional because of where that leaves the digits.** It reads as a readout of what
 the install did to itself, which is nearer in kind to the vault than to the two
 configuration panes it used to sit below, and the operator asked for that order
-knowing what it costs. The digit follows the row's position, so Dreaming is ⌘8,
-API account is ⌘9, and **Settings, now the tenth row, carries no shortcut at
-all** — ⌘1…⌘9 is nine digits against ten rows. The earlier arrangement put
-Dreaming last and kept ⌘9 on Settings, on the ground that Settings is where
-somebody goes when something is wrong; that trade was overruled, not forgotten,
-and Settings stays one press away in quick open. The one thing that may never be
-done is the compromise between the two — a digit that names the eighth row and
-lands on the ninth is exactly the failure `panes.ts`'s position rule exists to
-prevent, so moving a pane and leaving the digits alone is not an option.
+knowing what it costs. The digit follows the row's position, so Dreaming is ⌘9,
+and **both API account and Settings, the tenth and eleventh rows, carry no
+shortcut at all** — ⌘1…⌘9 is nine digits against eleven rows. Dreaming held ⌘8
+and API account held ⌘9 until Taskboard went in fourth and pushed every row
+beneath it down one (`4bc98a5`): Dreaming's ⌘8 became ⌘9, and API account,
+pushed past the ninth row, lost its digit outright and joined Settings in
+having none. The earlier arrangement put Dreaming last and kept ⌘9 on Settings,
+on the ground that Settings is where somebody goes when something is wrong;
+that trade was overruled, not forgotten, and both API account and Settings
+stay one press away in quick open. The one thing that may never be done is the
+compromise between the two — a digit that names the ninth row and lands on the
+tenth is exactly the failure `panes.ts`'s position rule exists to prevent, so
+moving a pane and leaving the digits alone is not an option.
 
 Both readers that put the digit into a string — `Sidebar.tsx`'s
 `aria-keyshortcuts` and `QuickOpen.tsx`'s `detail` — were unguarded and failed
