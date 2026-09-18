@@ -156,7 +156,7 @@ Notes that are part of the rule, not commentary:
 
 Each of these is a thing a build run would plausibly reach for. None is allowed.
 
-1. **An eleventh pane.** `panes.ts` is eleven rows against ⌘1–⌘9, read by four
+1. **A twelfth pane.** `panes.ts` is eleven rows against ⌘1–⌘9, read by four
    things (`panes.ts:3-18`). The digits are spent: the tenth and eleventh rows
    — API account and Settings — already have none, and a twelfth would be a
    third row you cannot reach from the keyboard. New destinations are
@@ -166,8 +166,17 @@ Each of these is a thing a build run would plausibly reach for. None is allowed.
    `/dreaming` was.* The ban's whole ground was the digit — "a ninth
    destination has no digit" — and nine rows still had one, so the ninth was
    allowed and the sentence moved up by one rather than being waived. The tenth
-   was the row that spent the last digit, and it is where the ground the ban
-   always gave finally runs out, so the sentence does not move again.
+   was the row that spent the last digit, and the note here used to say that
+   was where the ground ran out for good, so the sentence would not move
+   again. Taskboard's insertion (`4bc98a5`) is why that no longer holds: the
+   claim only ever covered an append, since `/knowledge` and `/dreaming` both
+   landed at the bottom of the list, and Taskboard did not — it went in
+   fourth, under Runs, and pushed every row beneath it down one. What moves
+   the sentence is the total row count against the fixed nine digits, not
+   which end of the list grows, so an insertion partway down spends the same
+   ground an append does. The heading above reads "a twelfth pane" rather than
+   "an eleventh" because of that insertion, and it will move again the next
+   time any pane is added, wherever in the list it lands.
    `/knowledge` earned a row rather than a sub-route because it is not *about*
    any existing pane: a vault is neither a run, a workflow nor a setting, and
    filing it under Settings would have made a destination out of a

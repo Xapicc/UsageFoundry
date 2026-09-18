@@ -76,6 +76,38 @@ const VARIANT: Record<ButtonVariant, string> = {
  * reads --danger-fg for the narrower version of that: the value is white, and
  * naming it keeps the ring on the same side of the pair as the label it is
  * drawn over, so a future edit to one is visibly an edit to both.
+ *
+ * The `/40` track — the three sides the moving quarter travels on — is
+ * deliberately under the 3:1 WCAG 1.4.11 asks of a graphical object, and stays
+ * there. Measured from painted pixels against each variant's own fill,
+ * headless Chromium 151.0.7922.34, dpr 4, 2026-09-16: primary composites to
+ * #669aeb on the capped #0056de, 2.18:1, and danger to #e76673 on #d70015,
+ * 1.68:1. That danger figure is now both schemes rather than light alone — it
+ * read #ffa5a0 on #ff6961, 1.50:1, in dark while the fill was --danger, and
+ * was re-measured under --danger-solid on 2026-09-18. What carries the state
+ * is the full-alpha quarter, and that clears the floor — 6.20:1 on primary,
+ * 5.38:1 on danger. The track is the unfilled remainder rather than the mark,
+ * the reading 1.4.11 already allows for a progress indicator's empty half.
+ *
+ * Raising the alpha is what was rejected, and the sweep is why: the alpha that
+ * buys track-against-fill spends quarter-against-track. Primary needs /60 for
+ * 3.17:1 — /55 paints 2.90:1, so the arithmetic that suggests it undershoots —
+ * and its quarter falls from 2.84:1 against its own track to 1.95:1 there,
+ * which is where a spinner stops reading as a spinner and starts reading as a
+ * ring. Danger needs /70, further down the same slope.
+ *
+ * The sweep had a second leg, written down rather than deleted because it is
+ * the one the fill split spent: while danger was --danger, danger *dark* had
+ * no qualifying alpha at all — white at alpha 1 on #ff6961 is 2.82:1, so the
+ * quarter was already under the floor and nothing drawn behind it could beat
+ * it — and a floor only half this map could reach was not a floor.
+ * --danger-solid closed that, and the quarter-against-track cost above now
+ * holds the /40 on its own.
+ *
+ * The case against, so the next reader does not have to reconstruct it: @layer
+ * base flattens `animate-spin` under prefers-reduced-motion, so that operator
+ * gets a stationary frame, which is three-quarters track. It rests on the
+ * quarter still being 6.20:1 in it.
  */
 const BUSY_RING: Record<ButtonVariant, string> = {
   primary: "border-tint-fg/40 border-t-tint-fg",
