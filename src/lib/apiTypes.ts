@@ -1225,6 +1225,25 @@ export function providerReportsSpend(
   return provider !== "codex";
 }
 
+/**
+ * Everything this run has spent parked as of `at`, open park included.
+ *
+ * Lives here rather than beside the guard because the browser needs the same
+ * arithmetic: `maxDurationMinutes` caps worked minutes, so the time bar has to
+ * subtract exactly what `evaluateBudget` subtracts or a parked run's bar creeps
+ * towards a limit the guard will not act on. Clamped at zero because the two
+ * instants come from different clocks — the row's from the server, `at` from
+ * whichever machine is asking.
+ */
+export function pausedMsAt(
+  run: { paused_ms?: number; paused_at?: number | null },
+  at: number,
+): number {
+  const closed = run.paused_ms ?? 0;
+  const open = run.paused_at == null ? 0 : Math.max(0, at - run.paused_at);
+  return closed + open;
+}
+
 export interface RunDTO {
   id: string;
   /** Absolute, canonicalised folder the operator picked. */
@@ -1306,6 +1325,12 @@ export interface RunDTO {
   resume_at?: number | null;
   paused_at?: number | null;
   pause_count?: number;
+  /**
+   * Parked milliseconds already closed off, excluding the park the run is in
+   * right now. Carried to the browser so the time bar can draw worked minutes —
+   * the same figure the duration guard acts on. See `pausedMsAt`.
+   */
+  paused_ms?: number;
   /** How many times the agent said DONE and was sent back in anyway. */
   done_retriggers?: number;
   /**

@@ -291,8 +291,11 @@ describe("evaluateBudget", () => {
   });
 
   it("ends rather than parks a run that is also out of time", () => {
-    // The ordering is load-bearing. If the session check ran first, a run whose
-    // wall clock had expired would park, wake, park again, and never terminate.
+    // The ordering is load-bearing. If the session check ran first, a run that
+    // had worked past its cap would park, wake, park again, and never terminate.
+    // Sharper now that parked time is subtracted: waking cannot give this run
+    // its minutes back, so a park here is a wait for an answer that cannot
+    // change.
     const v = evaluateBudget(
       {
         ...base,
@@ -683,6 +686,87 @@ describe("evaluateBudget", () => {
     );
   });
 
+  it("does not charge a run for the window it sat out", () => {
+    // The shape the accumulator exists for. 50 minutes of work, then four hours
+    // parked on the 5-hour window, and the first check after the resume: read as
+    // wall clock this run is 4h50m into a 60-minute cap and dies on the cycle it
+    // just waited four hours to spawn, having spent nothing in between.
+    const policy = { ...base, maxDurationMinutes: 60 };
+    const parked = 4 * 60 * 60_000;
+    const v = evaluateBudget(
+      policy,
+      snapshot(null, null),
+      { ...noProgress, pausedMs: parked },
+      STARTED_AT + 50 * 60_000 + parked,
+    );
+    assert.equal(v.allowed, true, "50 worked minutes of a 60-minute cap is inside it");
+  });
+
+  it("still stops the same run once it has worked past the cap", () => {
+    // The other half, and what keeps this a terminus: parked time comes off the
+    // span, worked time does not, so the cap is still reached — just later in
+    // wall clock than it used to be.
+    const policy = { ...base, maxDurationMinutes: 60 };
+    const parked = 4 * 60 * 60_000;
+    const v = evaluateBudget(
+      policy,
+      snapshot(null, null),
+      { ...noProgress, pausedMs: parked },
+      STARTED_AT + 61 * 60_000 + parked,
+    );
+    assert.equal(v.allowed, false);
+    assert.equal(v.allowed === false && v.code, "duration");
+  });
+
+  it("subtracts every park, not just the last one", () => {
+    // `paused_ms` accumulates rather than being overwritten, so a run that has
+    // parked twice carries both. Reading only the most recent park would leave
+    // the earlier one charged as worked minutes, which is the same defect in
+    // slower motion — and a `live-resume` run is allowed four of them.
+    const policy = { ...base, maxDurationMinutes: 60 };
+    const parked = 2 * 60 * 60_000 + 90 * 60_000;
+    const worked = 59 * 60_000;
+    assert.equal(
+      evaluateBudget(
+        policy,
+        snapshot(null, null),
+        { ...noProgress, pausedMs: parked },
+        STARTED_AT + worked + parked,
+      ).allowed,
+      true,
+      "59 worked minutes across two parks is still inside the cap",
+    );
+  });
+
+  it("reads a missing parked total as none, so an old row guards as it did", () => {
+    // Rows written before the column, and every caller that has no park to
+    // report. Zero rather than a special case anywhere in the arithmetic.
+    const policy = { ...base, maxDurationMinutes: 10 };
+    const v = evaluateBudget(
+      policy,
+      snapshot(null, null),
+      noProgress,
+      STARTED_AT + 10 * 60_000,
+    );
+    assert.equal(v.allowed === false && v.code, "duration");
+  });
+
+  it("floors the worked span at zero rather than running the clock backwards", () => {
+    // A parked total larger than the span is a bug in the accumulator, and the
+    // guard must not amplify it into a negative elapsed time: with a huge enough
+    // figure the duration terminus would simply never fire again.
+    const policy = { ...base, maxDurationMinutes: 10 };
+    const v = evaluateBudget(
+      policy,
+      snapshot(null, null),
+      { ...noProgress, pausedMs: 10 * 60 * 60_000 },
+      STARTED_AT + 60_000,
+    );
+    assert.equal(v.allowed, true);
+    const meter = v.meters.find((m) => m.unit === "minutes");
+    assert.equal(meter?.value, 0, "clamped, not negative");
+  });
+
   it("stops at the run's spending limit exactly, not a cent past it", () => {
     // The figure moves in whole `result`-event jumps, so "one cent past" is in
     // practice a whole work cycle past.
@@ -754,7 +838,7 @@ describe("evaluateBudget", () => {
       // them, so the card shows what the guard decided on.
       { label: "Weekly window", value: 0.25, limit: 0.8, unit: "fraction" },
       { label: "5-hour window", value: 0.5, limit: 0.9, unit: "fraction" },
-      { label: "Time elapsed", value: 30, limit: 60, unit: "minutes" },
+      { label: "Time worked", value: 30, limit: 60, unit: "minutes" },
     ]);
 
     // Nothing configured but the cycle cap: one meter, and no rows carrying a

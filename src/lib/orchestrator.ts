@@ -148,6 +148,7 @@ import { clipToolInput, MAX_LOG_CHARS, toolArgs } from "./logLine";
 import { fmtDuration, fmtTokens, shortId } from "./format";
 import {
   RUN_PROVIDER_LABEL,
+  pausedMsAt,
   providerReportsSpend,
   type QueueBlockerDTO,
   type RunDependencyDTO,
@@ -288,6 +289,13 @@ export interface RunRow {
   resume_at: number | null;
   paused_at: number | null;
   pause_count: number;
+  /**
+   * Parked milliseconds already closed off. Open parks are not in here — the
+   * total at any instant is this plus `now - paused_at` while `paused_at` is
+   * set. The duration guard subtracts it, because `maxDurationMinutes` caps
+   * worked minutes rather than wall clock.
+   */
+  paused_ms: number;
   done_retriggers: number;
   /**
    * Whether the last work cycle replied DONE. `completed` covers both that and
@@ -1202,6 +1210,21 @@ function setStatus(id: string, status: RunStatus, patch: Partial<RunRow> = {}) {
   emit({ runId: id, ts: Date.now(), kind: "status", payload: { status, ...patch } });
 }
 
+/**
+ * The `setStatus` patch that closes an open park, for a run leaving `paused`
+ * for a status it will not resume from.
+ *
+ * Every terminal write reachable from a parked row needs it. Left half-open,
+ * `paused_ms` is short by the park the run died in — so the run page's time bar
+ * would draw those hours as worked minutes, on a row where the figure is now
+ * final and nothing will ever correct it. `paused_at` is nulled beside it
+ * because past that write the row is no longer in a park, and `installSpend`
+ * reads the column against exactly that question.
+ */
+function pauseClosedAt(run: RunRow, at: number): Partial<RunRow> {
+  return { paused_ms: pausedMsAt(run, at), paused_at: null };
+}
+
 /* ------------------------------------------------------------------ */
 /* Folder validation                                                   */
 /* ------------------------------------------------------------------ */
@@ -1772,9 +1795,12 @@ const TRANSIENT_BACKOFF_MS = [5_000, 20_000, 60_000];
  * That bounds the tolerance; it does not promise the fleet survives, and the
  * stop reason at the end says so and names the lever that actually fixes it —
  * `maxConcurrentRuns`, which is the N this whole failure is proportional to.
- * The run's own wall clock still bounds the ladder from the other side: a retry
+ * The run's own time limit still bounds the ladder from the other side: a retry
  * re-enters the loop at the top, so `evaluateBudget` reads `maxDurationMinutes`
- * before every one of these re-spawns.
+ * before every one of these re-spawns — and this wait counts against it, unlike
+ * a park, because the run sleeps in its own frame rather than yielding the row.
+ * `paused_at` is what `maxDurationMinutes` now subtracts, and nothing here sets
+ * it.
  */
 const RATE_LIMIT_BACKOFF_MS = [30_000, 2 * 60_000, 5 * 60_000, 10 * 60_000];
 
@@ -8580,17 +8606,42 @@ export async function startRun(id: string): Promise<void> {
   // reach here, and exactly one sees a row change.
   //
   // COALESCE rather than an unconditional write: a run coming back from a pause
-  // keeps its original start instant, so the duration guard measures the whole
-  // run including the hours it spent parked. That is what makes wall clock the
-  // terminus of a resuming run rather than a limit it can wait out.
+  // keeps its original start instant, so `started_at` stays the one anchor every
+  // reading of this run's age is taken from.
+  //
+  // The park it is coming back from is closed off into `paused_ms` in the same
+  // statement, and that is what keeps `maxDurationMinutes` a terminus under its
+  // new meaning: the guard subtracts this total, so what only ever goes up is
+  // the time the run *worked*. Closed here rather than at the `paused`→`queued`
+  // flip, because a run waiting on `maxConcurrentRuns` is not working either.
+  // Done in SQL so the row is never observed between the two writes; the same
+  // instant feeds the local below.
+  const claimedAt = Date.now();
   const claim = db()
     .prepare(
-      "UPDATE runs SET status = 'running', started_at = COALESCE(started_at, ?), resume_at = NULL WHERE id = ? AND status = 'queued'",
+      `UPDATE runs
+          SET status = 'running',
+              started_at = COALESCE(started_at, ?),
+              resume_at = NULL,
+              paused_ms = paused_ms
+                + CASE WHEN paused_at IS NULL THEN 0 ELSE ? - paused_at END,
+              paused_at = NULL
+        WHERE id = ? AND status = 'queued'`,
     )
-    .run(Date.now(), id);
+    .run(claimedAt, claimedAt, id);
   if (claim.changes !== 1) return;
 
-  const startedAt = run.started_at ?? Date.now();
+  const startedAt = run.started_at ?? claimedAt;
+  /**
+   * What the UPDATE above just wrote. Hydrated from the row for the same reason
+   * `spentUSD` below is: this call may be a resume, and every guard in this
+   * frame has to subtract the parks of previous segments too. No park can open
+   * while this frame runs — `paused_at` is only written on the way out of it —
+   * so this stays correct for the life of the run loop without being re-read.
+   */
+  const pausedMs =
+    (run.paused_ms ?? 0) +
+    (run.paused_at === null ? 0 : Math.max(0, claimedAt - run.paused_at));
   emit({
     runId: id,
     ts: Date.now(),
@@ -8837,6 +8888,7 @@ export async function startRun(id: string): Promise<void> {
           spentGuardUSD: spentUSD + spentGuardEstUSD,
           spentGuardTokens: spentTokens + spentEstTokens,
           startedAt,
+          pausedMs,
           // What this task has cost before. Read here rather than inside the
           // guard so `evaluateBudget` stays a pure function of numbers.
           costBaseline: costBaselineFor(run),
@@ -9350,6 +9402,7 @@ export async function startRun(id: string): Promise<void> {
               spentGuardUSD: spentUSD + spentGuardEstUSD + inFlight.costUSD,
               spentGuardTokens: spentTokens + spentEstTokens + inFlight.tokens,
               startedAt,
+              pausedMs,
             };
           },
         });
@@ -10359,10 +10412,12 @@ export function stopRun(id: string, cause: string = OPERATOR_CAUSE): StopOutcome
   // a kill switch matters most — without this branch, Stop does nothing to the
   // runs most likely to be left unattended.
   if (run.status === "paused") {
+    const at = Date.now();
     setStatus(id, "stopped", {
-      finished_at: Date.now(),
+      finished_at: at,
       stop_reason: `${cause} while it was waiting for the next 5-hour window.`,
       resume_at: null,
+      ...pauseClosedAt(run, at),
     });
     releaseDependents();
     promoteQueued();
@@ -11248,6 +11303,13 @@ export async function sweepPaused(): Promise<void> {
           spentGuardUSD: run.spent_usd + run.spent_usd_est,
           spentGuardTokens: run.spent_tokens + run.spent_tokens_est,
           startedAt: run.started_at,
+          // The one guard site with a park in flight, so the open one is added
+          // rather than just the closed total. Without it the duration a parked
+          // run is measured against would go on growing while it sat here, and
+          // this loop would end on `duration` every run it was supposed to be
+          // waiting to resume — which is the whole shape this accumulator
+          // exists to stop.
+          pausedMs: pausedMsAt(run, now),
         },
         now,
       );
@@ -11330,6 +11392,7 @@ export async function sweepPaused(): Promise<void> {
             finished_at: now,
             stop_reason: plan.reason,
             resume_at: null,
+            ...pauseClosedAt(run, now),
           });
           // A parked run that ends here is a settled dependency like any other.
           releaseDependents();
@@ -11721,9 +11784,17 @@ export function reopenRun(
       // without re-entering the loop at all — stopped while queued, closed out
       // by a boot — after which a reason left behind would be describing an
       // ending two segments old.
+      //
+      // `paused_ms=0` travels with `started_at=NULL` and may never be separated
+      // from it: the accumulator is a correction to the span since that instant,
+      // so carrying yesterday's four parked hours over to a clock that restarts
+      // here would hand the picked-up run four hours of credit against a
+      // duration cap it has not spent a minute of. `paused_at=NULL` for the same
+      // reason — a row reopened from `stopped` may still carry the park it was
+      // stopped in on a database written before that was closed off.
       `UPDATE runs SET status=?, budget=?, max_iterations=?, follow_up=?, reopened_at=?,
          started_at=NULL, finished_at=NULL, exit_code=NULL, stop_reason=NULL,
-         needs_review_reason=NULL,
+         needs_review_reason=NULL, paused_ms=0, paused_at=NULL,
          resume_at=NULL, restart_closed=0, set_aside_at=NULL WHERE id=? AND status=?`,
     )
     .run(
@@ -12359,14 +12430,16 @@ export function reconcileOnBoot(): void {
         kept += 1;
         continue;
       }
+      const closedAt = Date.now();
       setStatus(run.id, "stopped", {
-        finished_at: Date.now(),
+        finished_at: closedAt,
         stop_reason:
           "This run was waiting for the next 5-hour window when the server " +
           "restarted, and has been waiting too long to pick up on its own. " +
           "Start it again if it is still wanted.",
         resume_at: null,
         restart_closed: 1,
+        ...pauseClosedAt(run, closedAt),
       });
       closed += 1;
       continue;

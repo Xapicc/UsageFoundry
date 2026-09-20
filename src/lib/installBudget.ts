@@ -61,11 +61,14 @@ function windowStart(now: number): number {
  *   parked at $40 each read $120 against a $100 ceiling on every call, and
  *   nothing could start, resume or continue while they stayed parked: the
  *   refusal says spend will age out of the window, and this was the one shape
- *   where it never would. The status test is load-bearing and not decoration —
- *   nothing clears `paused_at` on the way out of a park, so a run that parked
- *   yesterday and is spending right now still carries it, and a bare
- *   `COALESCE(finished_at, paused_at)` would drop the live spender out of the
- *   reading. Both instants null is a run that has never stopped, counted whole.
+ *   where it never would. The status test is load-bearing and not decoration.
+ *   `startRun` closes a park off into `paused_ms` and clears `paused_at`, so a
+ *   *running* row no longer carries a stale one — but the flip out of `paused`
+ *   is into `queued`, and a run held there by `maxConcurrentRuns` keeps the
+ *   open park for as long as it waits. A bare `COALESCE(finished_at, paused_at)`
+ *   would bound that row on an instant a day old and drop a run that is about to
+ *   spend out of the reading. Both instants null is a run that has never
+ *   stopped, counted whole.
  * - A block: `finished_at`, or `started_at` while it has none. Every UPDATE
  *   that adds to `workflow_instance_blocks.cost_usd` writes `finished_at` in
  *   the same statement, so nothing live is dropped by this and the case it

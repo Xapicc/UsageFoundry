@@ -127,6 +127,7 @@ const {
   startsFresh,
   SEARCH_TOOLS,
   selectPromotable,
+  stopRun,
   sweepPaused,
   telemetryEnv,
   toolProgressReading,
@@ -5642,6 +5643,27 @@ describe("picking up a blocked run", () => {
     assert.notEqual(row.status, "queued");
     assert.equal(row.work_dir, null);
   });
+
+  it("clears the parked total with the clock it corrects", () => {
+    // `paused_ms` is a correction to the span since `started_at`, and this
+    // statement nulls `started_at`. Carried over, a run that had sat out two
+    // 5-hour windows would come back with ten hours of credit against a
+    // duration cap it has not spent a minute of — a guard switched off by a
+    // column nobody looks at, on a row that reads completely ordinary.
+    const stopped = insertRun({ status: "stopped", workDir: `${ws}/RepoOne` });
+    db()
+      .prepare("UPDATE runs SET paused_ms=?, paused_at=? WHERE id=?")
+      .run(10 * 3_600_000, Date.now() - 3_600_000, stopped);
+    // Something else in that folder, so the promotion at the end starts nothing.
+    insertRun({ status: "running", workDir: `${ws}/RepoOne` });
+
+    assert.equal(reopenRun(stopped, RAISED).ok, true);
+
+    const row = getRun(stopped)!;
+    assert.equal(row.started_at, null, "the clock restarts");
+    assert.equal(row.paused_ms, 0, "and so does what is subtracted from it");
+    assert.equal(row.paused_at, null);
+  });
 });
 
 /**
@@ -5954,23 +5976,30 @@ describe("applying the sweeper's decision", () => {
     status: string;
     workDir: string;
     resumeAt?: number | null;
+    budget?: string;
+    startedAt?: number;
+    pausedAt?: number | null;
+    pausedMs?: number;
   }): string {
     const id = `sweep-${++seq}`;
     db()
       .prepare(
         `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations,
-                           iterations, created_at, started_at, work_dir, resume_at)
-         VALUES (?, ?, 'do the thing', ?, ?, 5, 0, ?, ?, ?, ?)`,
+                           iterations, created_at, started_at, work_dir, resume_at,
+                           paused_at, paused_ms)
+         VALUES (?, ?, 'do the thing', ?, ?, 5, 0, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
         fields.workDir,
         fields.status,
-        BUDGET_BLOB,
+        fields.budget ?? BUDGET_BLOB,
         Date.now() + seq,
-        Date.now() - 60_000,
+        fields.startedAt ?? Date.now() - 60_000,
         fields.workDir,
         fields.resumeAt ?? null,
+        fields.pausedAt ?? null,
+        fields.pausedMs ?? 0,
       );
     return id;
   }
@@ -6052,6 +6081,119 @@ describe("applying the sweeper's decision", () => {
     }
 
     saveSettings({ maxConcurrentRuns: null });
+  });
+
+  // The three below are the other write this loop makes, and the one guard site
+  // in the app with a park in flight. Nothing pure reaches it: `evaluateBudget`
+  // is handed a parked total by its caller, and whether *this* caller adds the
+  // park the row is sitting in is exactly what decides between a run that
+  // resumes and a run the sweeper kills for time it did not spend.
+  const HOUR = 3_600_000;
+  const ONE_HOUR_CAP = '{"maxIterations":5,"maxDurationMinutes":60}';
+
+  /**
+   * Sweep once with nothing able to start, and answer what the row became.
+   *
+   * The cap and the occupant are the same device the first case in this suite
+   * uses, for the same reason twice over: a resumed run stays `queued` where it
+   * can be read, and `promoteQueued` at the end of the tick spawns nothing. The
+   * folder is per case because `pauseVerdictClears` asks who is *running* in it,
+   * and a run this suite resumed earlier is exactly who.
+   */
+  async function sweepAlone(fields: Parameters<typeof insertRun>[0]) {
+    saveSettings({ maxConcurrentRuns: 1 });
+    insertRun({ status: "running", workDir: `${ws}/blocker-${seq}` });
+    const id = insertRun(fields);
+    try {
+      await sweepPaused();
+      return getRun(id)!;
+    } finally {
+      saveSettings({ maxConcurrentRuns: null });
+    }
+  }
+
+  it("does not end a parked run for the hours it spent parked", async () => {
+    const now = Date.now();
+    // 50 minutes of work, then four hours on the 5-hour window. Read as wall
+    // clock it is 4h50m into a 60-minute cap, so the tick that was supposed to
+    // hand this run back kills it instead — for time it did not spend, on the
+    // window it had just finished waiting for.
+    const row = await sweepAlone({
+      status: "paused",
+      workDir: `${ws}/parked-under-cap`,
+      budget: ONE_HOUR_CAP,
+      startedAt: now - 4 * HOUR - 50 * 60_000,
+      pausedAt: now - 4 * HOUR,
+    });
+
+    assert.equal(
+      row.status,
+      "queued",
+      "it has worked 50 of its 60 minutes, so the window clearing hands it back",
+    );
+  });
+
+  it("still ends one that has worked past its cap", async () => {
+    const now = Date.now();
+    const row = await sweepAlone({
+      status: "paused",
+      workDir: `${ws}/parked-over-cap`,
+      budget: ONE_HOUR_CAP,
+      // 70 worked minutes before it parked, and a park that adds nothing to
+      // them. The cap is still a terminus; it is just reached by working.
+      startedAt: now - 4 * HOUR - 70 * 60_000,
+      pausedAt: now - 4 * HOUR,
+    });
+
+    assert.equal(row.status, "stopped");
+    assert.equal(
+      row.paused_at,
+      null,
+      "the park it died in is closed, not left open on a row nothing will " +
+        "write again — the time bar reads `paused_ms` to draw worked minutes",
+    );
+    assert.ok(
+      row.paused_ms >= 4 * HOUR,
+      `the four parked hours are on the row, not dropped (${row.paused_ms}ms)`,
+    );
+  });
+
+  it("adds the park it is in to the ones already closed", async () => {
+    const now = Date.now();
+    // Parked twice: 30 minutes already closed off by an earlier resume, plus
+    // the four hours it is sitting in now. Counting only the open one leaves 55
+    // worked minutes reading as 85 and the run dead at its cap.
+    const row = await sweepAlone({
+      status: "paused",
+      workDir: `${ws}/parked-twice`,
+      budget: ONE_HOUR_CAP,
+      startedAt: now - 4 * HOUR - 85 * 60_000,
+      pausedAt: now - 4 * HOUR,
+      pausedMs: 30 * 60_000,
+    });
+
+    assert.equal(row.status, "queued");
+  });
+
+  it("closes the park when the operator stops a parked run", async () => {
+    const now = Date.now();
+    const parked = insertRun({
+      status: "paused",
+      workDir: `${ws}/parked-stopped`,
+      startedAt: now - 3 * HOUR,
+      pausedAt: now - 2 * HOUR,
+      pausedMs: 15 * 60_000,
+    });
+
+    assert.equal(stopRun(parked), "cancelled");
+
+    const row = getRun(parked)!;
+    assert.equal(row.status, "stopped");
+    assert.equal(row.paused_at, null, "no half-open accumulator on a dead row");
+    assert.ok(
+      row.paused_ms >= 15 * 60_000 + 2 * HOUR,
+      `both parks are on the row (${row.paused_ms}ms)`,
+    );
   });
 });
 

@@ -202,16 +202,18 @@ describe("what the install-wide ceiling is measured from", () => {
     assert.equal(installBudget.installSpend(NOW).spentUSD, 7);
   });
 
-  it("counts a run that parked yesterday and is spending again now", () => {
+  it("counts a run that parked yesterday and is about to spend again", () => {
     clearAll();
 
-    // Nothing clears `paused_at` on the way out of a park, so this row carries
-    // an instant a day old while an agent works in it. Bounding an unfinished
-    // run on that column alone would drop the live spender out of the reading —
-    // the one direction a ceiling must never move by accident.
+    // The park is closed off at the claim in `startRun`, not at the flip out of
+    // `paused` — so a run the sweeper requeued yesterday and `maxConcurrentRuns`
+    // has held in the queue ever since still carries an instant a day old, and
+    // starts the moment a slot frees. Bounding an unfinished run on that column
+    // alone would drop that spender out of the reading, which is the one
+    // direction a ceiling must never move by accident.
     addRun({
-      id: "resumed",
-      status: "running",
+      id: "requeued",
+      status: "queued",
       spent: 12,
       finishedAt: null,
       pausedAt: NOW - 30 * HOUR,

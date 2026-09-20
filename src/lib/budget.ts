@@ -109,9 +109,14 @@ export interface BudgetPolicy {
    */
   maxIterations: number | null;
   /**
-   * Wall-clock cap for the whole run, measured from when it first started and
-   * **including any time spent parked**. That is what makes it the terminus of
-   * a resuming run. null = run for as long as it takes.
+   * Cap on the minutes this run has **worked**: wall clock since it first
+   * started, less every window it sat out. null = run for as long as it takes.
+   *
+   * Still a monotone terminus — worked time only moves one way, and the only
+   * way to add to the parked total is to stop working — but deliberately no
+   * longer a bound on how long a run may *exist*: one that parks repeatedly can
+   * outlast its cap in wall clock by however long the 5-hour windows kept it
+   * waiting. `maxIterations` is the terminus that bounds that.
    */
   maxDurationMinutes: number | null;
   /** When a tripped guard is acted on. */
@@ -148,6 +153,18 @@ export interface RunProgress {
    */
   costBaseline?: { medianUSD: number; samples: number } | null;
   startedAt: number | null;
+  /**
+   * Everything this run has spent parked since `startedAt`, including the park
+   * it is in right now when the caller is one that can see an open one.
+   *
+   * `maxDurationMinutes` caps the minutes a run *worked*, so this is subtracted
+   * from the wall clock below. Optional and defaulting to zero: a caller with
+   * no park to report says nothing, and the arithmetic then reads exactly as it
+   * did. Never negative — `elapsedMinutes` floors at zero rather than trusting
+   * it, because a total larger than the span is a bug in the accumulator and
+   * letting it run the clock backwards would turn the terminus off.
+   */
+  pausedMs?: number;
 }
 
 export type BudgetMeter = {
@@ -481,8 +498,19 @@ export function evaluateBudget(
 ): BudgetVerdict {
   const meters: BudgetMeter[] = [];
 
+  // Worked minutes, not wall clock: every park since `startedAt` comes back off
+  // the span. A run that sits out a 5-hour window must come back with the time
+  // it had when it parked, or the duration guard ends it on the first check
+  // after a resume for hours in which it did nothing and spent nothing.
+  //
+  // This stays a terminus because what it measures still only ever goes up
+  // while the run is working, and nothing a run does subtracts from it — the
+  // only way to add to `pausedMs` is to stop working. It is no longer a bound
+  // on how long a run may exist: a run that parks repeatedly can outlive its cap
+  // in wall clock by however long the windows kept it waiting. `maxIterations`
+  // is the terminus that did not move.
   const elapsedMinutes = progress.startedAt
-    ? (now - progress.startedAt) / 60_000
+    ? Math.max(0, now - progress.startedAt - (progress.pausedMs ?? 0)) / 60_000
     : 0;
 
   // Both read the guard figure rather than the reported one, for the same
@@ -539,7 +567,7 @@ export function evaluateBudget(
   }
   if (policy.maxDurationMinutes !== null) {
     meters.push({
-      label: "Time elapsed",
+      label: "Time worked",
       value: elapsedMinutes,
       limit: policy.maxDurationMinutes,
       unit: "minutes",
@@ -671,10 +699,13 @@ export function evaluateBudget(
       const aged = stalenessNote(planReadingAgeMs(snapshot, snapshot.session, now));
       // A full 5-hour window is the one tripped guard that comes back on its
       // own, so it is the one a run can wait out. Every check above measures
-      // something that only moves one way — cycles used, wall clock, this run's
-      // own spend, the weekly window — and they are ordered ahead of it
+      // something that only moves one way — cycles used, minutes worked, this
+      // run's own spend, the weekly window — and they are ordered ahead of it
       // deliberately: a run that is out of time *and* out of window must end,
-      // not park, or the clock stops being a terminus. Keep that order.
+      // not park, or the clock stops being a terminus. Sharper now that parked
+      // time is subtracted: waiting cannot give a run its worked minutes back,
+      // so parking on a duration verdict is a wait for an answer that cannot
+      // change. Keep that order.
       if (policy.enforcement === "live-resume") {
         return park(
           `5-hour window is at ${at}, at or past the ${guard} guard. ` +

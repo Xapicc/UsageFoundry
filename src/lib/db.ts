@@ -941,6 +941,15 @@ function migrate(db: Database.Database) {
   addColumn(db, "runs", "resume_at", "INTEGER");
   addColumn(db, "runs", "paused_at", "INTEGER");
   addColumn(db, "runs", "pause_count", "INTEGER NOT NULL DEFAULT 0");
+  // Milliseconds this run has spent parked, closed off every time it leaves a
+  // park. `maxDurationMinutes` is a cap on *worked* minutes, so the guard
+  // subtracts this from the wall clock since `started_at`; without it a run that
+  // parked for four hours came back already out of time and ended on its first
+  // pre-cycle check having done nothing with the window that had just refilled.
+  // Rows written before this column read 0, which is the old behaviour for the
+  // parks they have already served — the pause they are in right now, if any, is
+  // still closed off correctly, because that arithmetic reads `paused_at`.
+  addColumn(db, "runs", "paused_ms", "INTEGER NOT NULL DEFAULT 0");
   addColumn(db, "runs", "done_retriggers", "INTEGER NOT NULL DEFAULT 0");
 
   // Whether the agent's last work cycle actually replied DONE. `completed` is
