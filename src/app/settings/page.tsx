@@ -3862,7 +3862,7 @@ export default function SettingsPage() {
               <Toned tone={noTerminus ? "danger" : "neutral"}>
                 {noTerminus
                   ? "Set this or a work-cycle limit — a run with neither would never have to end"
-                  : "Wall clock, and the only limit that keeps moving whether or not a cycle reports what it spent"}
+                  : "Minutes worked, not time parked — and the only limit that keeps moving whether or not a cycle reports what it spent"}
               </Toned>
             }
           >

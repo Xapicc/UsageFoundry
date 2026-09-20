@@ -210,9 +210,13 @@ isolated checkout is strongly advised so the output arrives as a branch you can
 throw away.
 
 Because `DONE` no longer ends the run, something else has to. A run with no cycle
-limit is refused unless it has a time limit — the clock is the only limit that
-keeps advancing whether or not a cycle survived long enough to report what it
-spent.
+limit is refused unless it has a time limit — the clock is the only other limit
+that keeps advancing whether or not a cycle survived long enough to report what
+it spent. It counts the minutes the run *worked*: a run parked on the 5-hour
+window stops the clock while it waits and starts it again when it resumes, so a
+time limit is never used up by waiting. The other side of that is real and worth
+knowing — a run that parks repeatedly can be alive for far longer than its time
+limit in hours on the wall.
 
 One correction to *"the run ends only when a limit is reached"*: it can also end
 when the agent reports that it cannot get past something. **Needs review** is
@@ -283,7 +287,8 @@ not top-ups: a run that used 1 of 1 cycles needs the cycle limit raised above 1,
 and the button refuses and says so rather than queueing a run that would stop
 again on its first check. The time limit is the exception — it runs from the
 moment it starts again, since counting the hours it spent dead would refuse
-every run older than its own limit. Everything else carries over untouched.
+every run older than its own limit. (A run that *parks* keeps its worked
+minutes; only a pick-up restarts the clock.) Everything else carries over untouched.
 
 ### Keeping a run out of the bulk pick-ups
 
@@ -513,7 +518,7 @@ started later, so nothing spawns unattended from a prompt you have forgotten abo
 |---|---|
 | `maxIterations` | Cap on iterations. `null` disables it, but only alongside `maxDurationMinutes`. |
 | `maxRunCostUSD` | Stop when this run's own spend reaches it. `null` disables it. |
-| `maxDurationMinutes` | Wall-clock cap, **including time spent parked**. `null` disables it. |
+| `maxDurationMinutes` | Cap on the minutes the run **worked** — wall clock since it started, less every window it sat out. `null` disables it. |
 | `maxWeeklyFraction` | Stop at N% of the weekly window (cost-denominated). **Needs a reading** — Anthropic's own percentage, or a ceiling you set. Always ends the run. |
 | `maxSessionFraction` | Stop at N% of the 5-hour window (cost-denominated). **Needs a reading**, as above. Parks the run instead under `live-resume`. |
 | `enforcement` | `between-cycles` \| `live` \| `live-resume` — when a tripped rule is acted on. Under `live-resume` a run also parks when **Claude itself** refuses a cycle for want of allowance, which needs no fraction and no ceiling. |
@@ -553,7 +558,7 @@ So a cycle also has a deadline — **Settings → Unattended runs → Silent cyc
 limit**, two hours by default. It measures *silence*, not duration: the clock is
 the time since Claude Code last printed anything, and any output resets it. A
 cycle that is still reporting is working however long it takes, which is why a
-run is never ended for taking its time here — ending one for its wall clock is
+run is never ended for taking its time here — ending one for the time it has worked is
 what `maxDurationMinutes` under `live` enforcement is for. The default is
 generous on purpose, because the stream is silent for the whole of one model turn
 and the whole of one tool call: a run whose test suite takes an hour is silent for

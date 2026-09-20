@@ -2185,13 +2185,13 @@ export default function NewRunPage() {
                   {!timeLimited
                     ? "The run continues until Claude reports the task complete, or another limit stops it"
                     : live
-                      ? "Measured from the start and including any time parked; a cycle can be cut off part-way"
-                      : "Measured from the start and including any time parked; a cycle already underway is never cut off mid-edit"}
+                      ? "Counts the minutes it works, not time parked; a cycle can be cut off part-way"
+                      : "Counts the minutes it works, not time parked; a cycle already underway is never cut off mid-edit"}
                   {timeLimited && resuming && (effMinutes ?? 0) > 720 && (
                     <Toned tone="warn">
                       <span className="mt-0.5 block">
                         That is about {((effMinutes ?? 0) / 60).toFixed(0)} hours
-                        of unattended agent, most of it likely spent waiting
+                        of unattended agent working, on top of any time it parks
                       </span>
                     </Toned>
                   )}
