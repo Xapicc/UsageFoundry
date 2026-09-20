@@ -3,7 +3,7 @@
 import { Fragment, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { RUN_PROVIDER_LABEL, providerReportsSpend } from "@/lib/apiTypes";
+import { RUN_PROVIDER_LABEL, pausedMsAt, providerReportsSpend } from "@/lib/apiTypes";
 import type {
   ContextOccupancyDTO,
   ContextPrunerDTO,
@@ -483,7 +483,14 @@ function guardBars(run: RunDTO, now: number) {
     // `finished_at` first: the clock only ticks while the run can still move,
     // so on a run that is over `now` is whenever the page happened to be
     // opened, and the bar would read how long ago that was.
-    const elapsed = (run.finished_at ?? now) - run.started_at;
+    //
+    // Then the same subtraction `evaluateBudget` makes, from the same fields:
+    // the cap is on worked minutes, so a parked run's bar is frozen at what it
+    // read when the run parked rather than creeping towards a limit that will
+    // not fire. A bar and a guard disagreeing about the one number they are both
+    // drawing is the failure this shares an arithmetic to avoid.
+    const at = run.finished_at ?? now;
+    const elapsed = at - run.started_at - pausedMsAt(run, at);
     bars.push({
       label: "Time",
       fraction: elapsed / (minutes * 60_000),
