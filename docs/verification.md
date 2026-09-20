@@ -128,6 +128,17 @@ is `docs/agent/testing.md`; interface defects and their classes are
   unknown model read `$0`, yet `guardFraction` is 45× a $100 ceiling and the
   guard blocks; priced windows are unchanged, and no ceiling still refuses.
 
+- **A parked run's time bar is frozen, and a resumed one starts where it left
+  off.** Measured 2026-09-20 against the standalone bundle from this branch's
+  own `npm run build`, on a scratch `DATA_DIR` with two hand-seeded rows: both
+  `started_at` 4h50m ago with a 60-minute cap, one `running` carrying
+  `paused_ms = 4h`, one `paused` with `paused_at` 4h ago. Both drew
+  `50m 0s / 60m`; reloaded 45 seconds later the running one read `50m 47s` and
+  the parked one still read `50m 0s`. Caveat: the rows were written straight
+  into `runs` rather than reached by parking a real run, so this measures the
+  page's arithmetic against the columns and not the orchestrator's writes to
+  them — those are covered by `src/lib/orchestrator.test.ts`.
+
 - **Reserved headroom:** a 50% reserve halves a $200 ceiling to $100, doubling
   the reading (13.8% → 27.5%) past a 20% guard; 400% clamps to 95%.
 
