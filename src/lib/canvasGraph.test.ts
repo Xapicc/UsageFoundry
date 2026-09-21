@@ -712,7 +712,11 @@ test("a section is the “repeats” link's target and everything after it", () 
   assert.deepEqual(sectionOf("l", blocks, links), ["a", "b", "c"]);
 });
 
-test("a loop with no “repeats” link repeats its own task", () => {
+test("an ordinary link out of a loop is not what says what it repeats", () => {
+  // A loop with no “repeats” link frames nothing, whatever else leaves it: an
+  // ordinary link from a loop is what runs *after* the whole loop, and reading
+  // one as containment would put the block after the loop inside it — running
+  // once per pass instead of once, billed, with the frame agreeing.
   const blocks = [loop("l"), block("a")];
   assert.deepEqual(sectionOf("l", blocks, [chain("l", "a")]), []);
 });
@@ -720,7 +724,7 @@ test("a loop with no “repeats” link repeats its own task", () => {
 test("a section stops at the loop and at another loop's own link", () => {
   // Two facts one walk has to get right. A member linked back to its loop is a
   // mistake the server names; swallowing the loop into its own section here
-  // would draw a region round it instead. And a second loop drawn inside a
+  // would draw a frame round it instead. And a second loop drawn inside a
   // section contributes its own members to its own section, not to this one —
   // the nesting is then refused by name rather than silently flattened.
   const blocks = [loop("l"), block("a"), loop("k"), block("z")];

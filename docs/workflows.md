@@ -167,8 +167,8 @@ Some work does not fit in one run. "Work through the failing tests until they
 pass" is a real task and an agent given one work cycle for it stops half way,
 `completed`, with the job undone. A **loop block** is the fourth kind, and it is
 not a block that does work: it is a **frame round a section of the workflow that
-repeats**. Draw a *repeats* link from it to the first block of that section and
-every block in the section runs again on every **pass**.
+repeats**. Put a frame round some blocks and every one of them runs again on
+every **pass**.
 
 > A pass is not a work cycle. A work cycle is one invocation of Claude Code
 > inside a run; a pass is a whole section, each block of it a run with its own
@@ -183,8 +183,10 @@ choice quietly dropped. What a loop does hold is the pass cap, the optional
 spending limit across passes, and the optional board condition; each of those
 bounds the *repetition* rather than describing a run.
 
-A loop with nothing linked to it is refused too. There is no such thing as a
-loop that repeats its own work, because it has none.
+A loop with nothing inside it is refused too. There is no such thing as a loop
+that repeats its own work, because it has none. On the canvas an empty frame is
+still drawn — it is the ordinary state of one whose last member was just deleted
+— so there is always something to put a block into, or to delete.
 
 **It unrolls; it does not loop.** The obvious implementation is an edge pointing
 backwards — pass 2 depends on the loop block, which depends on pass 1 — and that
@@ -307,42 +309,70 @@ be read before the first pass as well as between them.
 
 ## What a section may be
 
-**What you link is what repeats.** Link the loop block to the first block of the
-section with a **repeats** link, join the section's own blocks with ordinary
-links, and link whatever comes after the loop from the loop block itself. That
-is the whole mechanism: the section is the block the *repeats* link points at
-and everything reachable from it. There is nothing else to tick and no second
-list to keep in step.
+**What is inside the frame is what repeats.** The section is the block each pass
+starts at and everything linked after it; whatever comes after the loop is
+linked from the frame itself. That is the whole mechanism — the frame is read
+off the links rather than stored as a rectangle, so there is nothing else to
+tick and no second list to keep in step. Move a member across the canvas and the
+frame follows it; drag one right out from between the others and the frame
+stretches to hold it, because it is still linked into the section whatever it
+looks like.
 
 "Plan the next slice, do it, write down what changed, land it" is four different
 jobs and four different prompts, and a single block asked to do all four every
 pass is one agent losing the plan in its own context.
 
-**Drawing it.** Press **Repeat** on the loop's own card and then the block each
-pass should start at — dragging from the handle onto it, or pressing the handle
-and then the block, exactly as **Link** works. Pressing the same block again
-takes the link away. Then use **Link** to join that block to the next one along,
-and so on. The *repeats* link is drawn dashed in the loop's own colour, because
-it is containment rather than a dependency: nothing waits for the block it
-points at.
+**Drawing it: a loop is a frame, and you make one by framing blocks.** There is
+no Loop in the palette, because a loop with nothing inside it is a graph that
+cannot be saved — making one *is* framing something. Click a block, shift-click
+any others you want in from the start, and press **Repeat**. A frame appears
+round them.
 
-The section is drawn as a tinted area round its members, labelled with the loop
-that owns it, and each member is marked with where it sits — *first of 3*, *2 of
-3*, *last of 3* — so "which of these runs first" and "whose `DONE` ends the
-loop" are answerable by looking. The loop's own panel reads the section back in
-pass order; it is a statement, not a control, because the canvas is where it is
-said. Nothing on the page decides whether the section is *legal*: the sentence
-under the canvas is the server's answer and it names the block at fault.
+What the frame then holds is not the list you clicked: it is the block you
+marked first **and everything linked after it**. So marking the head of a chain
+and marking the whole chain do the same thing, which is also the gesture on a
+phone, where there is no modifier to hold — tap one block, press Repeat, and the
+chain it starts is framed.
 
-**A *repeats* link is never a dependency.** It is offered only on a link whose
-source is a loop block, and a loop has at most one — two is refused, naming both
-targets. Nothing is ever waiting for the block it names, because that block is
-created once per pass by the loop itself. Reading it as a dependency would be
-the backwards edge this whole design avoids: the loop would wait for a run only
-the loop can start, for ever.
+**Putting a block in and taking one out are gestures on the frame.** Press
+**Put in** on the frame's own strip and then a block, the way **Link** works: by
+dragging onto it, or by pressing the handle and then the block. A block already
+inside comes out again the same way, and the handle stays armed so a section is
+assembled in one go rather than one round trip per block. Taking a block out of
+the middle of a section **splices** — the blocks after it stay in the frame,
+linked on to what came before it — because this app has no undo and losing four
+blocks to a gesture aimed at one is not recoverable.
 
-**One way in and one way out.** The way in is the *repeats* link. The way out is
-the single block the section ends at, and it must be a merge block. Between
+Deleting the frame unmakes the loop and leaves every block that was inside it
+exactly where it was.
+
+**The frame is the whole of how a loop is drawn.** It has no card of its own:
+what a loop *is* is a boundary round a section, and a card beside its members
+would draw it as a seventh block in a graph of six. Its strip carries the name,
+how many blocks are in the pass, the pass cap and what ends it, plus its two
+handles — **Put in**, and **Link** for what runs before and after the whole
+loop. Each member is marked with where it sits in the pass: *starts a pass*, *2
+of 3*, *lands the pass*. So "what runs first" and "where the work lands" are
+answerable by looking.
+
+There is **no arrow for containment**. The frame says it. An arrow from the loop
+to the block its pass starts at would read as "the section runs after the loop",
+which is exactly what a loop is not.
+
+The loop's own panel reads the section back in pass order; it is a statement,
+not a control, because the canvas is where it is said. Nothing on the page
+decides whether the section is *legal*: the sentence under the canvas is the
+server's answer and it names the block at fault.
+
+**The link into the frame is refused as you draw it.** A block outside cannot
+start a block inside — see below — and the canvas says so at the moment you let
+go, naming the frame to link to instead. Waiting for Save would mean drawing an
+arrow, watching it appear, and then reading a sentence about one of its two
+ends.
+
+**One way in and one way out.** The way in is the frame's **entry**, the block
+each pass starts at. The way out is its **exit**, the single block the section
+ends at, and it must be a merge block. Both are marked on the frame. Between
 those two ends the shape is free: the section may fork, and two branches that
 fork may meet again at the merge that lands them both.
 
@@ -353,10 +383,11 @@ Three things are refused, each naming the block to fix:
   the exit — link it on towards the block that lands.
 - A section whose **last block is not a merge block**. Add one at the end and
   link the last block to it.
-- A **link across the boundary**. A block outside the section cannot link to a
-  block inside it: link it to the loop instead, and the loop hands on to it after
-  the last pass. Otherwise "when does this block start" has two answers — once,
-  or once per pass — and only one of them is what anybody meant.
+- A **link across the boundary**. A block outside the frame cannot link to a
+  block inside it: link it to the frame instead, and the loop hands on to it
+  after the last pass. Otherwise "when does this block start" has two answers —
+  once, or once per pass — and only one of them is what anybody meant. The canvas
+  says this one as you draw it rather than waiting for Save.
 
 **A section holds run blocks, orchestrator blocks and merge blocks.** A loop
 inside a loop is the one kind left out, and it is refused by name: one pass cap
@@ -577,9 +608,18 @@ front of it ended in a way its link could not accept, and the count is how many
 blocks that was. The last of those is the one to open: nothing is coming, and
 the block that decided it says so on the instance page.
 
+**A loop's passes get a card of their own**, one per loop, under the tables of
+runs. A pass is several blocks of several kinds, so it is drawn as a group: its
+members in pass order with their own statuses and spend, the runs an
+orchestrator member decided on underneath that member, and what the pass
+**landed** — which is the fact that decides whether the next pass could see this
+one's work. A pass that landed nothing leaves the next one starting where this
+one did. The loop's own row in the table above still reads in passes rather than
+runs: a three-pass loop over a two-block section says three.
+
 The instance keeps its own copy of the graph and of the workflow's name, so
 editing or renaming the workflow afterwards cannot rewrite what it says
-happened. Deleting a workflow takes those records with it and **no run**: the
+happened — including the order the pass ran its blocks in. Deleting a workflow takes those records with it and **no run**: the
 runs carry their own prompt, guards and history. It is refused while runs it
 started are still going, because those records are the only thing saying where
 those runs came from.
