@@ -2637,20 +2637,29 @@ export function blocksOf(instanceId: string): WorkflowInstanceBlock[] {
   // it was never set in. The orchestrator block's count stays the *specs* it
   // accepted: a spec whose `createRun` was refused is still something it
   // decided on, and `createEmitted` records that failure separately.
+  //
+  // Read off the **member ids of both tables** rather than off `emitted_by`,
+  // and the difference is a whole kind of section: a pass of a section with no
+  // run block in it — one deciding turn and the merge behind it — leaves no row
+  // whose `emitted_by` is the loop at all, because its members are ledger rows
+  // and the runs its orchestrator member decided on name that member. Counted
+  // that way the loop reports 0 passes for ever, having taken several.
+  // `passMemberOf` is the one parser, as it is in `loopPasses`.
   const passKeys = new Map<string, Set<string>>();
+  const countMember = (memberId: string) => {
+    const member = passMemberOf(memberId);
+    if (!member) return;
+    const seen = passKeys.get(member.loopNodeId) ?? new Set<string>();
+    seen.add(String(member.pass));
+    passKeys.set(member.loopNodeId, seen);
+  };
   for (const row of db()
     .prepare(
-      "SELECT emitted_by AS nodeId, node_id AS memberId FROM workflow_instance_runs" +
-        " WHERE instance_id = ? AND emitted_by IS NOT NULL",
+      "SELECT node_id AS memberId FROM workflow_instance_runs WHERE instance_id = ?" +
+        " UNION SELECT node_id AS memberId FROM workflow_instance_blocks WHERE instance_id = ?",
     )
-    .all(instanceId) as Array<{ nodeId: string; memberId: string }>) {
-    const seen = passKeys.get(row.nodeId) ?? new Set<string>();
-    // A member id carrying no pass number counts as a pass of its own, which is
-    // `groupPasses`' reading and the same safe direction: over-counting can only
-    // stop a loop early, where folding two passes into one would let it run past
-    // the cap the operator set.
-    seen.add(String(passNumberOf(row.memberId) ?? row.memberId));
-    passKeys.set(row.nodeId, seen);
+    .all(instanceId, instanceId) as Array<{ memberId: string }>) {
+    countMember(row.memberId);
   }
   const passes = new Map(
     [...passKeys].map(([nodeId, seen]) => [nodeId, seen.size] as const),

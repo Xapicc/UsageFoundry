@@ -681,6 +681,12 @@ describe("an orchestrator member of a pass", () => {
         `${run.memberId} is outside the prefix the pass is summed on`,
       );
     }
+
+    // And the pass is counted. A section with no run block in it leaves no row
+    // whose `emitted_by` is the loop — its members are ledger rows and its
+    // emitted runs name the member — so a count taken from that column reports
+    // a loop that took a pass as having taken none.
+    assert.equal(loopBlock(instanceId).emitted, 1);
   });
 
   it("holds the pass open until the runs it emitted have settled", async () => {
