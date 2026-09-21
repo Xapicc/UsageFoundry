@@ -1262,21 +1262,26 @@ export function planPass(input: {
 export function groupPasses(
   members: readonly { memberId: string; run: LoopRunState | null }[],
 ): LoopPass[] {
-  const passes: Array<{ pass: number; runs: LoopRunState[] }> = [];
+  const passes: Array<{ key: string; pass: number; runs: LoopRunState[] }> = [];
   for (const member of members) {
     const number = passNumberOf(member.memberId);
+    // Grouped on a key rather than on the number, so that a member id carrying
+    // no pass at all cannot be folded into the pass beside it: it becomes a
+    // pass of its own, which is the safe direction. An extra entry in the count
+    // can only ever stop a loop early, where a member folded into the wrong
+    // pass changes which run every exit condition is read off.
+    const key = number === null ? `id:${member.memberId}` : `pass:${number}`;
     const current = passes.at(-1);
-    // A member id with no pass in it cannot be grouped with anything, so it
-    // becomes a pass of its own rather than joining the one before it — the
-    // safe direction, since an extra pass in the count can only ever stop a
-    // loop early, where a member folded into the wrong pass changes which run
-    // the exit conditions are read off.
-    if (!current || number === null || number !== current.pass) {
-      passes.push({ pass: number ?? (current ? current.pass + 1 : 1), runs: [] });
+    if (!current || current.key !== key) {
+      passes.push({
+        key,
+        pass: number ?? (current ? current.pass + 1 : 1),
+        runs: [],
+      });
     }
     if (member.run) passes.at(-1)!.runs.push(member.run);
   }
-  return passes;
+  return passes.map(({ pass, runs }) => ({ pass, runs }));
 }
 
 /* ------------------------------------------------------------------ */

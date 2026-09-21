@@ -16,9 +16,13 @@ import {
   mergeBlockOutcome,
   normalizeWorkflowInput,
   planEmission,
+  groupPasses,
+  passMemberId,
+  passNumberOf,
   planInstanceStep,
   planNode,
   planLoopPass,
+  planPass,
   planWorkflowProposal,
   summarizeProposedGraph,
   type BlockStatus,
@@ -988,6 +992,250 @@ describe("normalizeWorkflowInput — loop blocks", () => {
       ),
     );
     assert.equal(v.graph.edges[0].continueBranch, true);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Loop blocks: the section a loop repeats                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Every refusal that makes a repeated *section* safe, and the one reading that
+ * makes every graph saved before it existed keep working.
+ *
+ * All seven fail silently or late. A body naming a block that is not there, or
+ * a block two loops both claim, is a run created twice on one folder by two
+ * things that each believe they own it. An orchestrator, a merge or a nested
+ * loop inside a body is a fan-out cap, a landing or a pass cap spent once per
+ * pass — three different ways of multiplying a number the operator set once. A
+ * member whose guards do not isolate loses every pass's work into a folder with
+ * no branch under it. An edge across the boundary gives "when is this released"
+ * two answers. A branching body puts two runs on one predecessor, which
+ * `admitDependencies` refuses **mid-instance**, as a throw with nobody to show
+ * it to. And the ceiling is the arithmetic nobody does: 20 passes over a
+ * 25-block body is 500 runs from one press of Run.
+ */
+describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
+  it("reads an absent, null or malformed body as a loop that repeats itself", () => {
+    // The compatibility rule of the whole feature. Every graph saved before the
+    // field existed says nothing here, and must go on meaning one run per pass
+    // of the loop's own task.
+    for (const raw of [undefined, null, "", 0, {}, "a"]) {
+      const v = value(graph([repeater("a", { bodyNodeIds: raw })]));
+      assert.deepEqual(v.graph.nodes[0].bodyNodeIds, [], `for ${String(raw)}`);
+    }
+  });
+
+  it("keeps a body on a loop and an empty one on every other kind", () => {
+    const v = value(
+      graph(
+        [repeater("l", { bodyNodeIds: ["a", "b"] }), node("a"), node("b")],
+        [edge("a", "b", { continueBranch: true })],
+      ),
+    );
+    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "b"]);
+    assert.deepEqual(v.graph.nodes[1].bodyNodeIds, []);
+  });
+
+  it("refuses a body on a block that has no passes to repeat it in", () => {
+    // Refused rather than dropped, `stopWhenTasks`' treatment one field over: a
+    // section nobody repeats is work this app would quietly have run once.
+    for (const make of [node, decider, merger]) {
+      assert.match(
+        error(graph([make("x", { bodyNodeIds: ["a"] }), node("a")])),
+        /only a repeating block/,
+      );
+    }
+  });
+
+  it("refuses a body naming a block that is not in this workflow", () => {
+    assert.match(
+      error(graph([repeater("l", { bodyNodeIds: ["ghost"] })])),
+      /not in this workflow: ghost/,
+    );
+  });
+
+  it("refuses a loop inside its own body", () => {
+    assert.match(
+      error(graph([repeater("l", { bodyNodeIds: ["l"] })])),
+      /inside its own body/,
+    );
+  });
+
+  it("refuses a block claimed by two loops, naming both", () => {
+    const refusal = error(
+      graph([
+        repeater("l", { bodyNodeIds: ["a"] }),
+        repeater("m", { bodyNodeIds: ["a"] }),
+        node("a"),
+      ]),
+    );
+    assert.match(refusal, /“A” is in the body of both “L” and “M”/);
+  });
+
+  it("refuses the same block named twice in one body", () => {
+    assert.match(
+      error(graph([repeater("l", { bodyNodeIds: ["a", "a"] }), node("a")])),
+      /repeats “A” twice in one pass/,
+    );
+  });
+
+  it("refuses an orchestrator, a merge and a nested loop by name", () => {
+    // By name rather than by one sentence about "not a run", because the three
+    // go wrong in three different ways and only one of them is the operator's.
+    assert.match(
+      error(
+        graph([repeater("l", { bodyNodeIds: ["d"] }), decider("d")]),
+      ),
+      /fan-out cap would be spent again on every pass/,
+    );
+    // With a run block in front of it inside the body, so the merge clears the
+    // "nothing to land" refusal above and is judged as a *member*.
+    assert.match(
+      error(
+        graph(
+          [repeater("l", { bodyNodeIds: ["a", "m"] }), node("a"), merger("m")],
+          [edge("a", "m")],
+        ),
+      ),
+      /still writing to the one it would land/,
+    );
+    assert.match(
+      error(
+        graph([
+          repeater("l", { bodyNodeIds: ["k"] }),
+          repeater("k"),
+        ]),
+      ),
+      /multiplies one pass cap by another/,
+    );
+  });
+
+  it("refuses a body member whose guards work directly in the folder", () => {
+    // The loop's own isolation rule, per member and for its reason: every pass
+    // carries on the branch the last one built.
+    assert.match(
+      error(
+        graph([
+          repeater("l", { bodyNodeIds: ["a"] }),
+          node("a", { templateId: "t-flat" }),
+        ]),
+      ),
+      /needs a checkout of its own/,
+    );
+  });
+
+  it("refuses an edge across the body boundary in either direction", () => {
+    const into = error(
+      graph(
+        [repeater("l", { bodyNodeIds: ["a"] }), node("a"), node("z")],
+        [edge("z", "a")],
+      ),
+    );
+    assert.match(into, /the loop block is the only way in and out/);
+    const outOf = error(
+      graph(
+        [repeater("l", { bodyNodeIds: ["a"] }), node("a"), node("z")],
+        [edge("a", "z")],
+      ),
+    );
+    assert.match(outOf, /the loop block is the only way in and out/);
+  });
+
+  it("allows the loop block's own edges to and from its members", () => {
+    // Containment as a canvas would draw it. `bodyNodeIds` is what states the
+    // relationship; the edge is inert, and reading it as a dependency is
+    // exactly the back edge nothing would ever wake.
+    const v = value(
+      graph(
+        [repeater("l", { bodyNodeIds: ["a"] }), node("a")],
+        [edge("l", "a")],
+      ),
+    );
+    assert.equal(v.graph.edges.length, 1);
+  });
+
+  it("refuses a body that branches, because a pass is one branch", () => {
+    // A diamond would have two runs continuing one predecessor, which
+    // `admitDependencies` refuses part-way through a pass rather than at Save.
+    const fanOut = error(
+      graph(
+        [
+          repeater("l", { bodyNodeIds: ["a", "b", "c"] }),
+          node("a"),
+          node("b"),
+          node("c"),
+        ],
+        [edge("a", "b"), edge("a", "c")],
+      ),
+    );
+    assert.match(fanOut, /hands its branch to 2 blocks/);
+    const fanIn = error(
+      graph(
+        [
+          repeater("l", { bodyNodeIds: ["a", "b", "c"] }),
+          node("a"),
+          node("b"),
+          node("c"),
+        ],
+        [edge("a", "c"), edge("b", "c")],
+      ),
+    );
+    assert.match(fanIn, /carries on 2 blocks/);
+  });
+
+  it("refuses a body left in two pieces", () => {
+    // Two members with no link between them: every degree is at most one, so
+    // only the link count catches it.
+    assert.match(
+      error(
+        graph([repeater("l", { bodyNodeIds: ["a", "b"] }), node("a"), node("b")]),
+      ),
+      /are not in one order/,
+    );
+  });
+
+  it("refuses a loop whose worst case is more runs than anyone agreed to", () => {
+    // Both factors named, because a cap on the product alone is a number the
+    // operator cannot act on. 20 × 4 is 80, past the 60 this app will start.
+    const refusal = error(
+      graph(
+        [
+          repeater("l", { maxPasses: 20, bodyNodeIds: ["a", "b", "c", "d"] }),
+          node("a"),
+          node("b"),
+          node("c"),
+          node("d"),
+        ],
+        [
+          edge("a", "b", { continueBranch: true }),
+          edge("b", "c", { continueBranch: true }),
+          edge("c", "d", { continueBranch: true }),
+        ],
+      ),
+    );
+    assert.match(refusal, /repeats 4 block\(s\) up to 20 time\(s\)/);
+    assert.match(refusal, /which is 80 runs/);
+    assert.match(refusal, /at most 60/);
+  });
+
+  it("allows a body whose worst case is exactly the ceiling", () => {
+    // The boundary the arithmetic is decided on: 20 × 3 is 60, which is allowed.
+    const v = value(
+      graph(
+        [
+          repeater("l", { maxPasses: 20, bodyNodeIds: ["a", "b", "c"] }),
+          node("a"),
+          node("b"),
+          node("c"),
+        ],
+        [
+          edge("a", "b", { continueBranch: true }),
+          edge("b", "c", { continueBranch: true }),
+        ],
+      ),
+    );
+    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "b", "c"]);
   });
 });
 
@@ -3378,6 +3626,249 @@ describe("planInstanceStep — a loop block among the others", () => {
           ],
         },
       ],
+    );
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* One pass of a loop, and the passes read back out of the rows        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What one pass is made of, and how a body's rows group back into passes.
+ *
+ * `planLoopPass` above decides whether to spend the money; these two decide
+ * what is bought and what the next decision is read off, and both fail
+ * silently. A member left off the chain is a second run continuing one
+ * predecessor, which `admitDependencies` refuses mid-pass with nobody to show
+ * it to. A chain wired backwards runs the section in reverse and looks exactly
+ * like a section that ran. And the grouping is what every exit condition is
+ * read against: three passes of two read as six passes of one trips the cap
+ * four passes early and reports it as the loop running out, while six read as
+ * one never trips it at all.
+ *
+ * A body-less loop is in here too, in every case, because "empty means what a
+ * loop has always meant" is the compatibility rule of the whole feature and it
+ * is a claim about these two functions before it is a claim about anything else.
+ */
+
+const LOOP = { id: "L", name: "Chip away" };
+const BODY = [
+  { id: "plan", name: "Plan it" },
+  { id: "do", name: "Do it" },
+];
+
+/** What the first pass of a loop released by one predecessor carries. */
+const RELEASED = [
+  { runId: "r-before", edge: "on-success" as const, continueBranch: false },
+];
+
+describe("planPass — the runs of one pass", () => {
+  it("plans one run for a loop with no body, exactly as it always did", () => {
+    const members = planPass({ loop: LOOP, body: [], pass: 1, carry: RELEASED });
+    assert.deepEqual(members, [
+      {
+        nodeId: "L",
+        memberId: "L#pass-1",
+        memberName: "Chip away — pass 1",
+        dependsOn: RELEASED,
+      },
+    ]);
+  });
+
+  it("plans one run per body block, in the order it was given", () => {
+    const members = planPass({ loop: LOOP, body: BODY, pass: 1, carry: [] });
+    assert.deepEqual(
+      members.map((m) => [m.nodeId, m.memberId, m.memberName]),
+      [
+        ["plan", "L#pass-1#plan", "Plan it — pass 1"],
+        ["do", "L#pass-1#do", "Do it — pass 1"],
+      ],
+    );
+  });
+
+  it("chains the members of a pass onto one branch", () => {
+    const members = planPass({ loop: LOOP, body: BODY, pass: 2, carry: RELEASED });
+    // The first member carries whatever the pass was given — for pass 2 that is
+    // the last run of pass 1 — and every member after it carries the one before.
+    assert.deepEqual(members[0].dependsOn, RELEASED);
+    assert.deepEqual(members[1].dependsOn, [
+      { member: 0, edge: "on-success", continueBranch: true },
+    ]);
+  });
+
+  it("names a member by an index rather than a run id, because it has none yet", () => {
+    // The whole pass is created in one synchronous turn, so the run a member
+    // depends on does not exist when the pass is planned. Stating the link as a
+    // position is what lets the plan be pure and still be wired correctly.
+    const members = planPass({ loop: LOOP, body: BODY, pass: 1, carry: [] });
+    assert.deepEqual(members[0].dependsOn, []);
+    assert.ok(!("runId" in members[1].dependsOn[0]));
+  });
+
+  it("unrolls a two-block body over three passes as one chain", () => {
+    // The whole feature in one case. Each pass is planned against the last run
+    // of the pass before it, which is what `createPass` does with the ids it
+    // has just minted — so the six runs are one branch with one owner, and
+    // `loopVerdict` releasing on the last of them releases on all six.
+    const ids: string[] = [];
+    const links: unknown[][] = [];
+    let carry: Parameters<typeof planPass>[0]["carry"] = [];
+    for (const pass of [1, 2, 3]) {
+      const members = planPass({ loop: LOOP, body: BODY, pass, carry });
+      const minted = members.map((m) => `run-${m.memberId}`);
+      ids.push(...members.map((m) => m.memberId));
+      links.push(
+        members.map((m, index) =>
+          m.dependsOn.map((link) =>
+            "runId" in link
+              ? [link.runId, link.edge, link.continueBranch]
+              : [minted[link.member], link.edge, link.continueBranch],
+          ),
+        ).flat(),
+      );
+      carry = [
+        {
+          runId: minted[minted.length - 1],
+          edge: "on-success",
+          continueBranch: true,
+        },
+      ];
+    }
+
+    assert.deepEqual(ids, [
+      "L#pass-1#plan",
+      "L#pass-1#do",
+      "L#pass-2#plan",
+      "L#pass-2#do",
+      "L#pass-3#plan",
+      "L#pass-3#do",
+    ]);
+    // Pass 1 starts from nothing; every later link continues the branch, and
+    // every one of them is `on-success` — a pass that did not complete has
+    // already stopped the loop, so a race can only be refused at admission.
+    assert.deepEqual(links[0], [
+      ["run-L#pass-1#plan", "on-success", true],
+    ]);
+    assert.deepEqual(links[1], [
+      ["run-L#pass-1#do", "on-success", true],
+      ["run-L#pass-2#plan", "on-success", true],
+    ]);
+    assert.deepEqual(links[2], [
+      ["run-L#pass-2#do", "on-success", true],
+      ["run-L#pass-3#plan", "on-success", true],
+    ]);
+  });
+});
+
+describe("passMemberId and passNumberOf — one spelling, read back", () => {
+  it("keeps the name a body-less pass has always had", () => {
+    // Every row already in a database says this, and `bootBlocks.test.ts`
+    // builds one by hand.
+    assert.equal(passMemberId("L", 1, null), "L#pass-1");
+    assert.equal(passNumberOf("L#pass-1"), 1);
+  });
+
+  it("names the member when there is one, and reads the pass back out", () => {
+    assert.equal(passMemberId("L", 12, "do"), "L#pass-12#do");
+    assert.equal(passNumberOf("L#pass-12#do"), 12);
+  });
+
+  it("answers null for a member id that carries no pass", () => {
+    // An orchestrator block's emitted run, which shares the column.
+    assert.equal(passNumberOf("some-node"), null);
+  });
+});
+
+describe("groupPasses — the rows of a loop read back as passes", () => {
+  const run = (id: string) => ({
+    id,
+    status: "completed" as const,
+    iterations: 1,
+    reportedDone: false,
+  });
+
+  it("reads a body-less loop as one run per pass", () => {
+    assert.deepEqual(
+      groupPasses([
+        { memberId: "L#pass-1", run: run("a") },
+        { memberId: "L#pass-2", run: run("b") },
+      ]),
+      [
+        { pass: 1, runs: [run("a")] },
+        { pass: 2, runs: [run("b")] },
+      ],
+    );
+  });
+
+  it("groups a two-block body into passes rather than counting rows", () => {
+    // Six rows, three passes. Counted as rows this loop would look four passes
+    // further through its cap than it is.
+    const grouped = groupPasses(
+      [1, 2, 3].flatMap((pass) => [
+        { memberId: `L#pass-${pass}#plan`, run: run(`plan-${pass}`) },
+        { memberId: `L#pass-${pass}#do`, run: run(`do-${pass}`) },
+      ]),
+    );
+    assert.equal(grouped.length, 3);
+    assert.deepEqual(
+      grouped.map((p) => [p.pass, p.runs.map((r) => r.id)]),
+      [
+        [1, ["plan-1", "do-1"]],
+        [2, ["plan-2", "do-2"]],
+        [3, ["plan-3", "do-3"]],
+      ],
+    );
+  });
+
+  it("keeps the last run of a pass last, because the ending is read off it", () => {
+    const grouped = groupPasses([
+      { memberId: "L#pass-1#plan", run: run("plan-1") },
+      { memberId: "L#pass-1#do", run: run("do-1") },
+    ]);
+    assert.equal(grouped.at(-1)?.runs.at(-1)?.id, "do-1");
+  });
+
+  it("leaves a member whose run has gone as an empty slot, not a missing pass", () => {
+    // A deleted run must not shorten every pass after it by one: the member row
+    // still says which pass it belongs to, and that is what the grouping reads.
+    const grouped = groupPasses([
+      { memberId: "L#pass-1#plan", run: null },
+      { memberId: "L#pass-1#do", run: run("do-1") },
+      { memberId: "L#pass-2#plan", run: run("plan-2") },
+      { memberId: "L#pass-2#do", run: null },
+    ]);
+    assert.deepEqual(
+      grouped.map((p) => [p.pass, p.runs.map((r) => r.id)]),
+      [
+        [1, ["do-1"]],
+        [2, ["plan-2"]],
+      ],
+    );
+  });
+
+  it("keeps a pass whose every run has gone, which is what stops the loop", () => {
+    // `planLoopPass` ends a loop whose last pass started no run at all, because
+    // the next would be created the same way and fail the same way.
+    const grouped = groupPasses([
+      { memberId: "L#pass-1#plan", run: run("plan-1") },
+      { memberId: "L#pass-2#plan", run: null },
+      { memberId: "L#pass-2#do", run: null },
+    ]);
+    assert.deepEqual(grouped.at(-1), { pass: 2, runs: [] });
+  });
+
+  it("gives a member id with no pass number a pass of its own", () => {
+    // Over-counting can only stop a loop early; folding two passes into one
+    // would let it run past the cap the operator set.
+    const grouped = groupPasses([
+      { memberId: "stray", run: run("a") },
+      { memberId: "L#pass-1#plan", run: run("b") },
+    ]);
+    assert.equal(grouped.length, 2);
+    assert.deepEqual(
+      grouped.map((p) => p.runs.map((r) => r.id)),
+      [["a"], ["b"]],
     );
   });
 });
