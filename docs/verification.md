@@ -854,6 +854,43 @@ is `docs/agent/testing.md`; interface defects and their classes are
   the `next start` fallback. `npm run typecheck` and `npm test` (2898 tests)
   are clean from the repo root.
 
+- **A section of two blocks ran three passes end to end on one branch,
+  2026-09-21.** Against the built standalone server on a throwaway `DATA_DIR`,
+  a stub `CLAUDE_BIN` emitting one `stream-json` cycle, and a git repository
+  under `WORKSPACE_ROOTS`: a loop capped at 3 passes over `Build → Test`
+  produced six member runs — `Build — pass 1`, `Test — pass 1`, … `Test — pass
+  3` — each completing in order, and `/api/branches` reported **one** branch
+  for the whole instance (`heldByRuns: 1`), not one per run and not one per
+  pass. That is "every pass is one branch, handed from each block to the next
+  and carried into the next pass", measured. Caveats: the agent was a stub, so
+  the branch carries no commits and nothing here says content accumulates
+  along it; and it never printed DONE, so the loop stopped on its pass cap
+  rather than on the last member's report.
+
+- **The instance page draws those passes as passes, 2026-09-21.** Same run,
+  Chromium at 1440px and 390px: the loop's own row read `REPEATING` and `3
+  pass(es)` — passes, not the six runs — and a *Passes of Grind* card carried
+  three group headings (`Pass 1  2 runs · $1.68`, `Pass 2  2 runs · $1.68`,
+  `Pass 3  2 runs · $0.63`) with each pass's two runs beneath it in body
+  order, with their own status, cycles and spend. No console error at either
+  width. A workflow whose loop has no section kept the flat table it has
+  today, which is `groupPasses` returning null.
+
+- **Both routes into a section were driven in a browser, 2026-09-21.** Same
+  harness, 1440px: dragging a loop card's Repeat handle onto `Build` put it in
+  the section — the region appeared and `Build`'s accessible name gained
+  "Repeated by Grind" — dragging onto it again took it out, two presses
+  (handle, then block) did the same, and pressing Enter on a block while the
+  handle was armed added it. Escape stopped the mode and the next click only
+  selected. Marking a third block that did not chain drew the server's own
+  refusal under the canvas ("The 3 blocks “Grind” repeats are not in one
+  order"), which is the contract: the client restates none of them. Worth
+  knowing before writing the next scripted drag — arming the mode inserts the
+  strip above the sheet and moves everything under it about 30px, so a script
+  that reads its target's box *before* the press releases above the card it
+  aimed at and the gesture only arms. A hand watching the canvas follows the
+  shift; the measurement re-reads the box mid-drag.
+
 - **The section's new tests were checked against three mutants, 2026-09-21.**
   Chaining a pass onto the *first* run of the one before rather than the last
   (2 failures), dropping the member from a pass member's id (7), and dropping
@@ -3189,13 +3226,14 @@ measurement under *Verified* and cut the item down to what is still open.
   `loopSection.test.ts` occupies the folder so nothing is released, and writes
   the branch columns a release would have written, because they are filled in
   at release and the next pass's `resolveIsolation` refuses a hand-over from a
-  run without them. So the one thing nothing here has exercised is the actual
-  worktree hand-over *between two blocks of one pass* — the claim that a
-  section's second block picks up the first's branch rather than cutting its
-  own. Settle: save a two-block section on a real repository under a template
-  that isolates, press Run, and after pass 2 check `git log --oneline` on the
-  branch — four runs' commits on one ref, and `branchInventory` showing one row
-  rather than four.
+  run without them. The hand-over itself has since been driven for
+  real — six member runs of a three-pass section on one branch, recorded
+  above — so what is still open is narrower: **no run of a section has
+  committed anything**, because the stub agent that drove it does not, and
+  `git log --oneline` on that one ref showing several runs' commits in order
+  has not been seen. Settle: give the stub a `git commit` per cycle, run the
+  same two-block section, and read the log on the branch `/api/branches`
+  names.
 
 - **No real restart has been taken over a live loop block**; the
   `reconcileBlocksOnBoot` fix is unit-tested only. Settle: park a pass inside

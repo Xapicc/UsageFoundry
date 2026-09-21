@@ -269,6 +269,16 @@ on every pass. Name the blocks to repeat on the loop and it starts no run of
 its own; each pass creates one run per named block, in the order the section's
 own links give.
 
+**Marking one.** Select the loop and switch on the blocks it repeats under
+*What it repeats*, or press **Repeat** on the loop's own card and then the
+blocks — dragging from the handle onto one, or pressing the handle and then the
+block, exactly as **Link** works. A block already in the section comes back out
+the same way. The section is drawn on the canvas as a tinted area round its
+members, labelled with the loop that owns it, and each marked block says which
+run of a pass it will be. Nothing here decides whether the section is *legal*:
+the sentence under the canvas is the server's answer and it names the block at
+fault.
+
 "Plan the next slice, do it, write down what changed" is three different jobs
 and three different prompts, and a single block asked to do all three every
 pass is one agent losing the plan in its own context. As a section it is three
