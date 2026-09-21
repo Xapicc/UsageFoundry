@@ -942,6 +942,15 @@ is `docs/agent/testing.md`; interface defects and their classes are
   both. Caveat: measured in the default skin only — `npm run smoke-pages`
   covers the ascii one for load, not for this row.
 
+- **The project row's two sentences were read out of the DOM, 2026-09-21.**
+  With a project picked it says `5 open now — 1 urgent, 1 high, 2 normal, 1
+  low`; set back to off it says `Counted before every pass, including the first
+  — a backlog already clear starts no run`, the threshold rows go (0 number
+  fields in the DOM) and the block's statement loses its board clause,
+  ending at `or after 5 passes.` Caveat: the count is the server's, so this
+  says the row draws what the route answered, not that the route counted
+  right — the entry above is what says that.
+
 ### Concurrency and ownership
 
 - **Folder collision, `npm test` 8 cases:** self, parent/child both ways, a

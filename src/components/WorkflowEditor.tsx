@@ -1343,8 +1343,9 @@ function BlockStatement({
     const stated =
       drafted.length > 0 &&
       drafted.every((t) => {
-        const n = Number(t.atMost);
-        return t.atMost !== "" && Number.isInteger(n) && n >= 0;
+        const typed = t.atMost.trim();
+        const n = Number(typed);
+        return typed !== "" && Number.isInteger(n) && n >= 0;
       });
     const board =
       block.stopWhenTasksMountId === "" ? null : (
@@ -1552,7 +1553,7 @@ function BlockPanel({
     });
   }
 
-  /** The first priority no threshold has taken, or null when all four are. */
+  /** The first choice no threshold has taken, or null when all five are. */
   const unusedPriority =
     Object.keys(THRESHOLD_PRIORITY_LABEL).find(
       (p) => !thresholds.some((t) => t.priority === p),
@@ -1585,9 +1586,16 @@ function BlockPanel({
    * one can see what it means today rather than saving a guess and finding out
    * a pass later. Every priority, because the row under it can name any of
    * them. The server's own reading — see `boards` in the editor above.
+   *
+   * With the condition off, or before the first check has answered, the row
+   * says *when* the condition is read instead: that it is read before the first
+   * pass is what lets it stop a loop that has not started, and it is the fact
+   * that says what turning this on buys.
    */
+  const WHEN_COUNTED =
+    "Counted before every pass, including the first — a backlog already clear starts no run";
   const boardCountLine = !boardOn
-    ? null
+    ? WHEN_COUNTED
     : board?.error
       ? board.error
       : board?.counts
@@ -1597,7 +1605,7 @@ function BlockPanel({
           Object.entries(board.counts.byPriority)
             .map(([priority, n]) => `${n} ${priority}`)
             .join(", ")
-        : null;
+        : WHEN_COUNTED;
   const missingTemplate =
     block.templateId !== "" && templateName(block.templateId) === null;
   const agent = agents.find((a) => a.id === block.agentId) ?? null;
@@ -1839,7 +1847,7 @@ function BlockPanel({
           <ListRow
             label="Stop when a project's board is clear"
             htmlFor={`${block.id}-boardproject`}
-            description={boardCountLine ?? undefined}
+            description={boardCountLine}
           >
             <div className={ROW_CONTROL}>
               <Select

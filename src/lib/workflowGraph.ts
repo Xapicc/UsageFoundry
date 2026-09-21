@@ -766,10 +766,10 @@ export function normalizeBoardCondition(
   // place that knows the single-number shape is the one every other reader
   // uses. A graph saved before thresholds existed arrives here on every
   // re-save and every validate keystroke, and must come back out meaning what
-  // it meant: one threshold over the project whole.
-  // Typed back to `unknown`, because what `boardThresholds` was handed is wire
-  // data wearing the DTO's type: every field below still has to be read as if
-  // somebody had typed it, which is what this function is for.
+  // it meant: one threshold over the project whole. Typed back to `unknown` on
+  // the way out, because what that function was handed is wire data wearing the
+  // DTO's type and every field below still has to be read as if somebody had
+  // typed it — which is what this function is for.
   const rawThresholds: readonly unknown[] = boardThresholds(
     o as unknown as LoopBoardCondition,
   );
