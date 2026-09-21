@@ -1733,17 +1733,25 @@ export const MAX_LOOP_PASSES = 20;
 /**
  * How many runs one loop block may put on the machine over its whole life.
  *
- * The ceiling the two numbers above cannot state between them, and it exists
- * because they *multiply*: a loop that repeats a section creates one run per
- * body block per pass, so `MAX_LOOP_PASSES` passes over a body the size of
- * `MAX_WORKFLOW_NODES` is 500 runs from one press of Run — a number nobody
+ * The ceiling the numbers above cannot state between them, and it exists
+ * because they *multiply*. A loop frames a section and repeats the whole of it,
+ * so one pass is one run for every run member — **plus, for every orchestrator
+ * member, the deciding turn and every run its fan-out cap allows**, because a
+ * fan-out cap is what that block may start each time it is reached and a
+ * section reaches it once a pass. `MAX_LOOP_PASSES` passes over a section the
+ * size of `MAX_WORKFLOW_NODES` is 500 runs before a single orchestrator is
+ * counted, and one orchestrator at `MAX_FAN_OUT` adds 200 more — numbers nobody
  * would agree to and nobody typed. Refused at save with the arithmetic spelled
- * out, both factors named, because "60" on its own is a limit the operator
+ * out and every factor named, because "60" on its own is a limit the operator
  * cannot act on.
  *
  * Deliberately larger than `MAX_WORKFLOW_NODES`: these runs arrive one pass at
  * a time over hours rather than in one synchronous creating pass, so what this
- * bounds is the bill rather than what a single event-loop turn claims.
+ * bounds is the bill rather than what a single event-loop turn claims. It is
+ * not raised for the fan-out term either — three run blocks and the merge that
+ * lands them, at the full 20 passes, is exactly 60, so the ordinary section
+ * still clears it and what the term costs is an orchestrator's room, which is
+ * the spend the operator has least visibility of.
  */
 export const MAX_LOOP_RUNS = 60;
 

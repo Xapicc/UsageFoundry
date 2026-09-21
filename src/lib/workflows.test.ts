@@ -117,9 +117,79 @@ function merger(id: string, extra: Record<string, unknown> = {}) {
   return node(id, { kind: "merge", mergeStrategy: "merge", ...extra });
 }
 
-/** A loop block, with the pass cap a saved graph must carry. */
+/**
+ * A loop block, with the pass cap a saved graph must carry and **nothing else**.
+ *
+ * Not built on `node` like the other three, and that is the rule under test
+ * rather than tidiness: a loop is a region, it starts no run of its own, and
+ * every field that describes one is refused by name. A helper that carried a
+ * task and a template would make every case below assert against a graph no
+ * door would accept.
+ */
 function repeater(id: string, extra: Record<string, unknown> = {}) {
-  return node(id, { kind: "loop", maxPasses: 3, ...extra });
+  return { id, name: id.toUpperCase(), kind: "loop", maxPasses: 3, ...extra };
+}
+
+/** The link that states containment, as a graph carries it. */
+function repeats(from: string, to: string) {
+  return edge(from, to, { edge: "repeats" });
+}
+
+/**
+ * A link that hands its branch along.
+ *
+ * Ordinary now rather than the one kind a section's links could be: the chain
+ * rule went when a pass started landing its own work, so a link inside a
+ * section is judged by the same rules as one anywhere else. It is still how a
+ * section is usually drawn, which is why it has a name here.
+ */
+function inside(from: string, to: string) {
+  return edge(from, to, { edge: "on-success", continueBranch: true });
+}
+
+/**
+ * A loop around the smallest legal section: one run block, landed by a merge.
+ *
+ * Every rule about a loop's own fields has to be asked of a graph that is
+ * otherwise savable, and a loop with no section is no longer one — so this is
+ * what "a loop block" means to a case that is about something else. `nodes[0]`
+ * is the loop.
+ */
+function looped(extra: Record<string, unknown> = {}, id = "l") {
+  return graph(
+    [repeater(id, extra), node(`${id}a`), merger(`${id}m`)],
+    [repeats(id, `${id}a`), edge(`${id}a`, `${id}m`)],
+  );
+}
+
+/**
+ * A legal outer section with a loop block sitting in it, which is the one kind
+ * of block a section may not hold.
+ *
+ * Every other rule has to pass or the refusal under test is not the one that
+ * answers: “M” needs a producer that is not the inner loop — a loop lands each
+ * pass's work itself and contributes no branch — and the inner loop needs its
+ * own section, because a loop that frames nothing is refused before this.
+ */
+function nested() {
+  return graph(
+    [
+      repeater("l"),
+      node("a"),
+      repeater("k"),
+      merger("m"),
+      node("z"),
+      merger("n"),
+    ],
+    [
+      repeats("l", "a"),
+      edge("a", "k"),
+      edge("a", "m"),
+      edge("k", "m"),
+      repeats("k", "z"),
+      edge("z", "n"),
+    ],
+  );
 }
 
 function edge(
@@ -915,7 +985,7 @@ describe("mergeBlockOutcome — what a merge block reports", () => {
 
 describe("normalizeWorkflowInput — loop blocks", () => {
   it("keeps both caps on a loop block", () => {
-    const v = value(graph([repeater("a", { maxLoopCostUSD: 12.5 })]));
+    const v = value(looped({ maxLoopCostUSD: 12.5 }));
     assert.equal(v.graph.nodes[0].kind, "loop");
     assert.equal(v.graph.nodes[0].maxPasses, 3);
     assert.equal(v.graph.nodes[0].maxLoopCostUSD, 12.5);
@@ -926,30 +996,62 @@ describe("normalizeWorkflowInput — loop blocks", () => {
     // whether to start another billed run, so without a quantity that only goes
     // up there is nothing that has to end.
     assert.match(
-      error(graph([repeater("a", { maxPasses: null })])),
+      error(looped({ maxPasses: null })),
       /how many times it may repeat/,
     );
+    assert.match(error(looped({ maxPasses: 0 })), /how many times it may repeat/);
     assert.match(
-      error(graph([repeater("a", { maxPasses: 0 })])),
-      /how many times it may repeat/,
-    );
-    assert.match(
-      error(graph([repeater("a", { maxPasses: 2.5 })])),
+      error(looped({ maxPasses: 2.5 })),
       /how many times it may repeat/,
     );
   });
 
   it("refuses a pass cap past the ceiling", () => {
-    assert.match(error(graph([repeater("a", { maxPasses: 99 })])), /at most 20/);
+    assert.match(error(looped({ maxPasses: 99 })), /at most 20/);
   });
 
   it("reads a blank, zero or negative spending cap as no cap", () => {
     // The rule every budget field in this app follows: a limit nobody typed is
     // not a limit, and there is no default to restore.
     for (const raw of ["", 0, -5, null, undefined]) {
-      const v = value(graph([repeater("a", { maxLoopCostUSD: raw })]));
+      const v = value(looped({ maxLoopCostUSD: raw }));
       assert.equal(v.graph.nodes[0].maxLoopCostUSD, null, `for ${String(raw)}`);
     }
+  });
+
+  it("refuses every field a loop is not told, by name", () => {
+    // A loop is a region: it frames the blocks it repeats and starts no run of
+    // its own, so each of these describes a run that does not exist. Refused
+    // rather than coerced away, which is the treatment an agent on a merge
+    // block gets — a choice the operator made that no process would ever act
+    // on is exactly what this door exists to answer out loud.
+    const told: Array<[Record<string, unknown>, RegExp]> = [
+      [{ task: "Do the thing" }, /no task for it to do/],
+      [{ templateId: "t-iso" }, /no guards for it to run under/],
+      [{ agentId: "a-rev" }, /nothing for that agent to be/],
+      [{ mountId: "work" }, /no workspace for it to work in/],
+      [{ folder: "repo" }, /no folder for it to work in/],
+      [{ promptOverride: "Be brief" }, /no standing instructions/],
+    ];
+    for (const [field, says] of told) {
+      const refusal = error(looped(field));
+      assert.match(refusal, says, JSON.stringify(field));
+      assert.match(refusal, /starts no run of its own/, JSON.stringify(field));
+    }
+  });
+
+  it("keeps a loop's own fields empty once it has been read", () => {
+    // Nothing is *coerced* in — the refusals above are what keeps these empty —
+    // but a reader is entitled to the same shape a merge block has, because
+    // `planNode`, `folderRefusal` and `guardsFor` are all skipped on the
+    // strength of it.
+    const loop = value(looped()).graph.nodes[0];
+    assert.equal(loop.task, "");
+    assert.equal(loop.templateId, null);
+    assert.equal(loop.agentId, null);
+    assert.equal(loop.mountId, "");
+    assert.equal(loop.folder, "");
+    assert.equal(loop.promptOverride, null);
   });
 
   it("leaves both caps null on every other kind", () => {
@@ -975,26 +1077,44 @@ describe("normalizeWorkflowInput — loop blocks", () => {
     );
   });
 
-  it("refuses a loop whose guards work directly in the folder", () => {
-    // Every pass carries on the one before it, which needs a checkout of its
-    // own. Refused here rather than at the first pass, where it would be a
-    // throw inside an instance that had already started.
-    assert.match(
-      error(graph([repeater("a", { templateId: "t-flat" })])),
-      /needs a checkout of its own/,
-    );
-  });
-
-  it("lets a block carry on a loop's branch", () => {
-    // A loop has a branch — its passes share one ref — so unlike an
-    // orchestrator block it is a legal end of a hand-over.
-    const v = value(
+  it("refuses a hand-over at either end of a loop, by name", () => {
+    // A loop used to be a legal end of one, when its passes were runs on a
+    // shared ref. Each pass now lands its own work through the section's exit,
+    // so the loop block holds no ref at all — and the sentence has to say that
+    // rather than the isolation test's "its guards work directly in the
+    // folder", which is about a checkout a loop does not have.
+    const out = error(
       graph(
-        [repeater("a"), node("b")],
-        [edge("a", "b", { continueBranch: true })],
+        [repeater("l"), node("a"), merger("m"), node("z")],
+        [
+          repeats("l", "a"),
+          edge("a", "m"),
+          edge("l", "z", { continueBranch: true }),
+        ],
       ),
     );
-    assert.equal(v.graph.edges[0].continueBranch, true);
+    assert.match(out, /frames the blocks it repeats and each pass lands/);
+    const into = error(
+      graph(
+        [repeater("l"), node("a"), merger("m"), node("z")],
+        [
+          repeats("l", "a"),
+          edge("a", "m"),
+          edge("z", "l", { continueBranch: true }),
+        ],
+      ),
+    );
+    assert.match(into, /frames the blocks it repeats and each pass lands/);
+  });
+
+  it("lets a loop hand on without a branch", () => {
+    const v = value(
+      graph(
+        [repeater("l"), node("a"), merger("m"), node("z")],
+        [repeats("l", "a"), edge("a", "m"), edge("l", "z")],
+      ),
+    );
+    assert.equal(v.graph.edges[2].continueBranch, false);
   });
 });
 
@@ -1003,40 +1123,54 @@ describe("normalizeWorkflowInput — loop blocks", () => {
 /* ------------------------------------------------------------------ */
 
 /**
- * Every refusal that makes a repeated *section* safe, and the one reading that
- * makes every graph saved before it existed keep working.
+ * Every refusal that makes a repeated *section* safe, and the arithmetic a
+ * press of Run is approved against.
  *
- * All seven fail silently or late. A body naming a block that is not there, or
- * a block two loops both claim, is a run created twice on one folder by two
- * things that each believe they own it. An orchestrator, a merge or a nested
- * loop inside a body is a fan-out cap, a landing or a pass cap spent once per
- * pass — three different ways of multiplying a number the operator set once. A
- * member whose guards do not isolate loses every pass's work into a folder with
- * no branch under it. An edge across the boundary gives "when is this released"
- * two answers. A branching body puts two runs on one predecessor, which
- * `admitDependencies` refuses **mid-instance**, as a throw with nobody to show
- * it to. And the ceiling is the arithmetic nobody does: 20 passes over a
- * 25-block body is 500 runs from one press of Run.
+ * All of them fail silently or late. A section naming a block that is not
+ * there, or a block two loops both claim, is a run created twice on one folder
+ * by two things that each believe they own it. A loop inside a loop multiplies
+ * one pass cap by another, which is a number nobody can work out from the two
+ * they typed. A run member whose guards do not isolate loses every pass's work
+ * into a folder with no branch under it. An edge across the boundary gives
+ * "when is this released" two answers. A section that ends anywhere but at a
+ * merge block leaves the next pass working from a branch that cannot see what
+ * the last one did — silent, and paid for a pass at a time. And the ceiling is
+ * the arithmetic nobody does: an orchestrator member spends its fan-out cap
+ * again on every pass, so 20 passes over a section holding one is not 20 runs.
  */
 describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
-  it("reads an absent, null or malformed body as a loop that repeats itself", () => {
-    // The compatibility rule of the whole feature. Every graph saved before the
-    // field existed says nothing here, and must go on meaning one run per pass
-    // of the loop's own task.
-    for (const raw of [undefined, null, "", 0, {}, "a"]) {
-      const v = value(graph([repeater("a", { bodyNodeIds: raw })]));
-      assert.deepEqual(v.graph.nodes[0].bodyNodeIds, [], `for ${String(raw)}`);
-    }
+  it("refuses a loop that frames nothing", () => {
+    // The end of the body-less loop, and the reason it has to be a refusal
+    // rather than a reading: a loop holds no work of its own now, so one with
+    // no section is a block that could only ever report that it had nothing
+    // to do — after a save, and on the page.
+    assert.match(error(graph([repeater("l")])), /has nothing to repeat/);
+    assert.match(error(graph([repeater("l")])), /Draw a “repeats” link/);
   });
 
-  it("keeps a body on a loop and an empty one on every other kind", () => {
-    const v = value(
+  it("refuses a section stated as a list with no link to match", () => {
+    // Its own sentence, because the caller said what it wanted and is owed the
+    // half that is missing rather than "nothing to repeat" — which is false of
+    // a graph carrying the list. This is the reading that used to be the
+    // compatibility path; nothing on this machine was saved that way.
+    const refusal = error(
       graph(
-        [repeater("l", { bodyNodeIds: ["a", "b"] }), node("a"), node("b")],
-        [edge("a", "b", { continueBranch: true })],
+        [repeater("l", { bodyNodeIds: ["a", "m"] }), node("a"), merger("m")],
+        [edge("a", "m")],
       ),
     );
-    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "b"]);
+    assert.match(refusal, /names the blocks it repeats but is not linked/);
+    assert.match(refusal, /a list on its own no longer says it/);
+  });
+
+  it("keeps a section on a loop and an empty one on every other kind", () => {
+    const v = value(
+      graph(
+        [repeater("l"), node("a"), node("b"), merger("m")],
+        [repeats("l", "a"), inside("a", "b"), edge("b", "m")],
+      ),
+    );
+    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "b", "m"]);
     assert.deepEqual(v.graph.nodes[1].bodyNodeIds, []);
   });
 
@@ -1051,101 +1185,109 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
     }
   });
 
-  it("refuses a body naming a block that is not in this workflow", () => {
-    assert.match(
-      error(graph([repeater("l", { bodyNodeIds: ["ghost"] })])),
-      /not in this workflow: ghost/,
-    );
-  });
-
-  it("refuses a loop inside the section it repeats", () => {
-    assert.match(
-      error(graph([repeater("l", { bodyNodeIds: ["l"] })])),
-      /inside the section it repeats/,
-    );
-  });
-
-  it("refuses a block claimed by two loops, naming both", () => {
+  it("refuses a block two loops both repeat, naming both", () => {
+    // The one claim question the derivation leaves open: two `repeats` links
+    // into one block make two sections that both own it, and each pass of each
+    // loop would create it again on one folder.
     const refusal = error(
-      graph([
-        repeater("l", { bodyNodeIds: ["a"] }),
-        repeater("m", { bodyNodeIds: ["a"] }),
-        node("a"),
-      ]),
-    );
-    assert.match(
-      refusal,
-      /“A” is in the section repeated by both “L” and “M”/,
-    );
-  });
-
-  it("refuses the same block named twice in one body", () => {
-    assert.match(
-      error(graph([repeater("l", { bodyNodeIds: ["a", "a"] }), node("a")])),
-      /repeats “A” twice in one pass/,
-    );
-  });
-
-  it("refuses an orchestrator, a merge and a nested loop by name", () => {
-    // By name rather than by one sentence about "not a run", because the three
-    // go wrong in three different ways and only one of them is the operator's.
-    assert.match(
-      error(
-        graph([repeater("l", { bodyNodeIds: ["d"] }), decider("d")]),
+      graph(
+        [repeater("l"), repeater("k"), node("a"), merger("m")],
+        [repeats("l", "a"), repeats("k", "a"), edge("a", "m")],
       ),
-      /fan-out cap would be spent again on every pass/,
     );
-    // With a run block in front of it inside the body, so the merge clears the
-    // "nothing to land" refusal above and is judged as a *member*.
+    assert.match(refusal, /“A” is in the section repeated by both/);
+    assert.match(refusal, /can only be repeated by one loop/);
+  });
+
+  it("holds a run block, an orchestrator block and a merge block", () => {
+    // The three refusals that used to name them are gone. An orchestrator
+    // block's fan-out is now spent per pass and stated in the arithmetic
+    // below; a merge block is what a section *ends* at.
+    const v = value(
+      graph(
+        [repeater("l"), node("a"), decider("d"), merger("m")],
+        [repeats("l", "a"), edge("a", "d"), edge("d", "m")],
+      ),
+    );
+    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "d", "m"]);
+  });
+
+  it("refuses a loop inside a loop, as the one kind left out", () => {
+    const refusal = error(nested());
+    assert.match(refusal, /multiplies one pass cap by another/);
+    assert.match(refusal, /the one kind of block a section may not hold/);
+  });
+
+  it("refuses a run member whose guards work directly in the folder", () => {
+    // Per member and for the section's own reason: every pass has to land what
+    // it produced, and guards that work in the folder leave nothing to land.
+    // The flat block sits behind another run block rather than in front of the
+    // merge, so it is *this* rule that answers rather than the merge's own
+    // "leaves no branch for me to land".
     assert.match(
       error(
         graph(
-          [repeater("l", { bodyNodeIds: ["a", "m"] }), node("a"), merger("m")],
-          [edge("a", "m")],
+          [
+            repeater("l"),
+            node("a", { templateId: "t-flat" }),
+            node("b"),
+            merger("m"),
+          ],
+          [repeats("l", "a"), edge("a", "b"), edge("b", "m")],
         ),
-      ),
-      /still writing to the one it would land/,
-    );
-    assert.match(
-      error(
-        graph([
-          repeater("l", { bodyNodeIds: ["k"] }),
-          repeater("k"),
-        ]),
-      ),
-      /multiplies one pass cap by another/,
-    );
-  });
-
-  it("refuses a body member whose guards work directly in the folder", () => {
-    // The loop's own isolation rule, per member and for its reason: every pass
-    // carries on the branch the last one built.
-    assert.match(
-      error(
-        graph([
-          repeater("l", { bodyNodeIds: ["a"] }),
-          node("a", { templateId: "t-flat" }),
-        ]),
       ),
       /needs a checkout of its own/,
     );
   });
 
-  it("refuses an edge across the body boundary in either direction", () => {
-    const into = error(
+  it("exempts an orchestrator member from that test, by name", () => {
+    // By name rather than by passing a test written about a checkout: an
+    // orchestrator spends nothing on disk, so "its guards work directly in the
+    // folder" would be a sentence about a folder it never works in. It names
+    // the flat template here, which is exactly what the run member above is
+    // refused for — and it sits behind a run block rather than in front of the
+    // merge, because a *merge's* own producers are a rule of their own.
+    const v = value(
       graph(
-        [repeater("l", { bodyNodeIds: ["a"] }), node("a"), node("z")],
-        [edge("z", "a")],
+        [
+          repeater("l"),
+          node("a"),
+          decider("d", { templateId: "t-flat" }),
+          node("b"),
+          merger("m"),
+        ],
+        [repeats("l", "a"), edge("a", "d"), edge("d", "b"), edge("b", "m")],
       ),
     );
-    assert.match(into, /the “repeats” link is the only way in/);
-    const outOf = error(
-      graph(
-        [repeater("l", { bodyNodeIds: ["a"] }), node("a"), node("z")],
-        [edge("a", "z")],
+    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "d", "b", "m"]);
+  });
+
+  it("refuses a link into a section from outside it", () => {
+    assert.match(
+      error(
+        graph(
+          [repeater("l"), node("a"), merger("m"), node("z")],
+          [repeats("l", "a"), edge("a", "m"), edge("z", "a")],
+        ),
       ),
+      /the “repeats” link is the only way in/,
     );
-    assert.match(outOf, /the “repeats” link is the only way in/);
+  });
+
+  it("absorbs a link drawn out of a section rather than refusing it", () => {
+    // There is no way *out* to refuse: membership is the forward closure of the
+    // entry, so a block linked after the section's exit joins the section. What
+    // answers is the exit rule — the section now ends at “Z”, which lands
+    // nothing — and that is the sentence the operator can act on.
+    assert.match(
+      error(
+        graph(
+          [repeater("l"), node("a"), merger("m"), node("z")],
+          [repeats("l", "a"), edge("a", "m"), edge("m", "z")],
+        ),
+      ),
+      /ends at “Z”, which is not a merge block/,
+    );
   });
 
   it("refuses the loop's own ordinary edges to and from its members", () => {
@@ -1156,8 +1298,8 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
     assert.match(
       error(
         graph(
-          [repeater("l", { bodyNodeIds: ["a"] }), node("a")],
-          [edge("l", "a")],
+          [repeater("l"), node("a"), merger("m")],
+          [repeats("l", "a"), edge("a", "m"), edge("l", "m")],
         ),
       ),
       /A loop has one way in: the “repeats” link/,
@@ -1165,111 +1307,132 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
     assert.match(
       error(
         graph(
-          [repeater("l", { bodyNodeIds: ["a"] }), node("a")],
-          [edge("a", "l")],
+          [repeater("l"), node("a"), merger("m")],
+          [repeats("l", "a"), edge("a", "m"), edge("m", "l")],
         ),
       ),
       /linked from the loop block, not from inside the section/,
     );
   });
 
-  it("refuses a body that branches, because a pass is one branch", () => {
-    // A diamond would have two runs continuing one predecessor, which
-    // `admitDependencies` refuses part-way through a pass rather than at Save.
-    const fanOut = error(
+  it("lets a section fork and meet again at its merge block", () => {
+    // The chain rule, gone. Two members off one predecessor is a diamond, and
+    // what makes it safe is that neither carries the branch: each cuts its own
+    // and the section's exit lands both.
+    const v = value(
       graph(
+        [repeater("l"), node("a"), node("b"), node("c"), merger("m")],
         [
-          repeater("l", { bodyNodeIds: ["a", "b", "c"] }),
-          node("a"),
-          node("b"),
-          node("c"),
+          repeats("l", "a"),
+          edge("a", "b"),
+          edge("a", "c"),
+          edge("b", "m"),
+          edge("c", "m"),
         ],
-        [edge("a", "b"), edge("a", "c")],
       ),
     );
-    assert.match(fanOut, /hands its branch to 2 blocks/);
-    const fanIn = error(
-      graph(
-        [
-          repeater("l", { bodyNodeIds: ["a", "b", "c"] }),
-          node("a"),
-          node("b"),
-          node("c"),
-        ],
-        [edge("a", "c"), edge("b", "c")],
-      ),
-    );
-    assert.match(fanIn, /carries on 2 blocks/);
+    assert.deepEqual(v.graph.nodes[0].bodyNodeIds.length, 4);
   });
 
-  it("refuses a body left in two pieces", () => {
-    // Two members with no link between them: every degree is at most one, so
-    // only the link count catches it.
-    assert.match(
-      error(
-        graph([repeater("l", { bodyNodeIds: ["a", "b"] }), node("a"), node("b")]),
+  it("refuses a section that ends in more than one place", () => {
+    // One sentence for two defects, because they are one fact: “B” has no path
+    // to the block that lands the pass, and where it stops instead is the
+    // second end. Its work would sit on a branch nothing ever lands.
+    const refusal = error(
+      graph(
+        [repeater("l"), node("a"), node("b"), merger("m")],
+        [repeats("l", "a"), edge("a", "m"), edge("a", "b")],
       ),
-      /are not in one order/,
     );
+    assert.match(refusal, /ends in 2 places: “M”, “B”|ends in 2 places: “B”, “M”/);
+    assert.match(refusal, /committed on a branch nothing ever lands/);
+  });
+
+  it("refuses a section that does not end at a merge block", () => {
+    const refusal = error(
+      graph(
+        [repeater("l"), node("a"), node("b")],
+        [repeats("l", "a"), inside("a", "b")],
+      ),
+    );
+    assert.match(refusal, /ends at “B”, which is not a merge block/);
+    assert.match(refusal, /add a merge block at the end of the section/);
   });
 
   it("refuses a loop whose worst case is more runs than anyone agreed to", () => {
-    // Both factors named, because a cap on the product alone is a number the
-    // operator cannot act on. 20 × 4 is 80, past the 60 this app will start.
+    // Every factor named, because a cap on the product alone is a number the
+    // operator cannot act on. Four run blocks and a merge, 20 passes: 80.
     const refusal = error(
       graph(
         [
-          repeater("l", { maxPasses: 20, bodyNodeIds: ["a", "b", "c", "d"] }),
+          repeater("l", { maxPasses: 20 }),
           node("a"),
           node("b"),
           node("c"),
           node("d"),
+          merger("m"),
         ],
         [
-          edge("a", "b", { continueBranch: true }),
-          edge("b", "c", { continueBranch: true }),
-          edge("c", "d", { continueBranch: true }),
+          repeats("l", "a"),
+          inside("a", "b"),
+          inside("b", "c"),
+          inside("c", "d"),
+          edge("d", "m"),
         ],
       ),
     );
-    assert.match(refusal, /repeats 4 block\(s\) up to 20 time\(s\)/);
+    assert.match(refusal, /repeats 5 block\(s\) up to 20 time\(s\)/);
+    assert.match(refusal, /Each pass is 4 run\(s\)/);
     assert.match(refusal, /which is 80 runs/);
     assert.match(refusal, /at most 60/);
   });
 
-  it("allows a body whose worst case is exactly the ceiling", () => {
-    // The boundary the arithmetic is decided on: 20 × 3 is 60, which is allowed.
+  it("charges an orchestrator member's fan-out again on every pass", () => {
+    // The arithmetic the operator chose, and the whole cost of letting one into
+    // a section: a fan-out cap is what that block may start each time it is
+    // reached, and a section reaches it once a pass. One run block, one decider
+    // with a cap of 3 and a merge is 1 + 1 + 3 = 5 a pass, so 20 passes is 100.
+    const refusal = error(
+      graph(
+        [repeater("l", { maxPasses: 20 }), node("a"), decider("d"), merger("m")],
+        [repeats("l", "a"), edge("a", "d"), edge("d", "m")],
+      ),
+    );
+    assert.match(refusal, /repeats 3 block\(s\) up to 20 time\(s\)/);
+    assert.match(refusal, /Each pass is 5 run\(s\)/);
+    assert.match(refusal, /“D” the deciding turn plus the 3 runs/);
+    assert.match(refusal, /spent again on every pass/);
+    assert.match(refusal, /which is 100 runs/);
+  });
+
+  it("allows a section whose worst case is exactly the ceiling", () => {
+    // The boundary the arithmetic is decided on. Three run blocks and a merge
+    // is 3 runs a pass, and 20 × 3 is 60, which is allowed — the merge block
+    // is not a run and is not counted.
     const v = value(
       graph(
         [
-          repeater("l", { maxPasses: 20, bodyNodeIds: ["a", "b", "c"] }),
+          repeater("l", { maxPasses: 20 }),
           node("a"),
           node("b"),
           node("c"),
+          merger("m"),
         ],
         [
-          edge("a", "b", { continueBranch: true }),
-          edge("b", "c", { continueBranch: true }),
+          repeats("l", "a"),
+          inside("a", "b"),
+          inside("b", "c"),
+          edge("c", "m"),
         ],
       ),
     );
-    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "b", "c"]);
+    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "b", "c", "m"]);
   });
 });
 
 /* ------------------------------------------------------------------ */
 /* Loop blocks: the link that says what a loop repeats                 */
 /* ------------------------------------------------------------------ */
-
-/** The link that states containment, as a graph carries it. */
-function repeats(from: string, to: string) {
-  return edge(from, to, { edge: "repeats" });
-}
-
-/** A link of the one kind a section's own links may be. */
-function inside(from: string, to: string) {
-  return edge(from, to, { edge: "on-success", continueBranch: true });
-}
 
 /**
  * What an operator *draws* is what a loop repeats, and every way of getting
@@ -1283,32 +1446,30 @@ function inside(from: string, to: string) {
  * a run only the loop creates, and the instance would never finish with nothing
  * on the page to say why.
  *
- * The compatibility half is the other silent one. Every workflow saved before
- * this link existed carries the list alone, and a reading that needed the link
- * would quietly stop repeating anything.
+ * The link is the *only* thing that states a section now. A list sent beside it
+ * is a cross-check and a list sent without one is refused, which is what ended
+ * the loop that repeated its own task.
  */
 describe("normalizeWorkflowInput — the link that makes a section", () => {
   it("derives the section from the link and everything after it", () => {
     const v = value(
       graph(
-        [repeater("l"), node("a"), node("b"), node("c")],
-        [repeats("l", "a"), inside("a", "b"), inside("b", "c")],
+        [repeater("l"), node("a"), node("b"), node("c"), merger("m")],
+        [
+          repeats("l", "a"),
+          inside("a", "b"),
+          inside("b", "c"),
+          edge("c", "m"),
+        ],
       ),
     );
-    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "b", "c"]);
+    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "b", "c", "m"]);
     // And the link survives the round trip: the editor redraws the graph from
     // it, so dropping it here would lose the section on the next save.
     assert.equal(
       v.graph.edges.filter((e) => e.edge === "repeats").length,
       1,
     );
-  });
-
-  it("leaves a loop with no link repeating its own task", () => {
-    const v = value(
-      graph([repeater("l"), node("a")], [edge("l", "a")]),
-    );
-    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, []);
   });
 
   it("refuses two “repeats” links out of one loop, naming both targets", () => {
@@ -1352,61 +1513,48 @@ describe("normalizeWorkflowInput — the link that makes a section", () => {
     // they did not ask for.
     const refusal = error(
       graph(
-        [repeater("l", { bodyNodeIds: ["a", "b"] }), node("a"), node("b")],
-        [repeats("l", "a")],
+        [repeater("l", { bodyNodeIds: ["a"] }), node("a"), merger("m")],
+        [repeats("l", "a"), edge("a", "m")],
       ),
     );
     assert.match(refusal, /says twice what it repeats, and the two disagree/);
-    assert.match(refusal, /makes a section of “A”/);
-    assert.match(refusal, /names “A”, “B”/);
+    assert.match(refusal, /makes a section of “A”, “M”/);
   });
 
   it("accepts a link and a list that agree", () => {
     const v = value(
       graph(
-        [repeater("l", { bodyNodeIds: ["b", "a"] }), node("a"), node("b")],
-        [repeats("l", "a"), inside("a", "b")],
+        [repeater("l", { bodyNodeIds: ["m", "a"] }), node("a"), merger("m")],
+        [repeats("l", "a"), edge("a", "m")],
       ),
     );
     // Stored in the order a pass creates them, whichever order the list was in.
-    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "b"]);
+    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "m"]);
   });
 
-  it("refuses a link inside a section that does not carry the branch", () => {
-    // The silent override, said out loud. `planPass` used to create every
-    // member of a pass on-success and carrying the branch whatever the operator
-    // had drawn, which made both controls on an intra-section link decoration.
-    assert.match(
-      error(
-        graph(
-          [repeater("l"), node("a"), node("b")],
-          [repeats("l", "a"), edge("a", "b")],
-        ),
+  it("lets a link inside a section say either condition", () => {
+    // The chain rule went, and this went with it: "every link inside a section
+    // is on-success and carries the branch" was that rule stated a second way,
+    // because a section whose every link carries the branch cannot fork —
+    // `graphRefusal` refuses two runs extending one ref everywhere. A section
+    // is now judged by its two ends, and the links in between are ordinary.
+    const v = value(
+      graph(
+        [repeater("l"), node("a"), node("b"), merger("m")],
+        [
+          repeats("l", "a"),
+          edge("a", "b", { edge: "on-finish" }),
+          edge("b", "m"),
+        ],
       ),
-      /does not carry the branch/,
     );
+    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "b", "m"]);
   });
 
-  it("refuses a link inside a section that starts either way", () => {
-    assert.match(
-      error(
-        graph(
-          [repeater("l"), node("a"), node("b")],
-          [
-            repeats("l", "a"),
-            edge("a", "b", { edge: "on-finish", continueBranch: true }),
-          ],
-        ),
-      ),
-      /every link inside a section is “only if it completes”/,
-    );
-  });
-
-  it("names the chain before the condition on a section that is not one yet", () => {
+  it("names the exit before the condition on a section still being drawn", () => {
     // Order between two refusals, and it is the useful one: a section still
-    // being assembled has links with no branch on them *and* is not a chain,
-    // and "these are not in one order" is the sentence that gets the operator
-    // to the next step.
+    // being assembled has no merge block at the end of it yet, and that is the
+    // sentence that gets the operator to the next step.
     assert.match(
       error(
         graph(
@@ -1414,7 +1562,7 @@ describe("normalizeWorkflowInput — the link that makes a section", () => {
           [repeats("l", "a"), edge("a", "b"), edge("a", "c")],
         ),
       ),
-      /hands its branch to 2 blocks/,
+      /ends in 2 places/,
     );
   });
 
@@ -1425,8 +1573,8 @@ describe("normalizeWorkflowInput — the link that makes a section", () => {
     assert.match(
       error(
         graph(
-          [repeater("l"), node("a")],
-          [repeats("l", "a"), edge("a", "l")],
+          [repeater("l"), node("a"), merger("m")],
+          [repeats("l", "a"), edge("a", "m"), edge("m", "l")],
         ),
       ),
       /linked from the loop block, not from inside the section/,
@@ -1436,50 +1584,54 @@ describe("normalizeWorkflowInput — the link that makes a section", () => {
   it("lets the loop hand on to what comes after the section", () => {
     const v = value(
       graph(
-        [repeater("l"), node("a"), node("b"), node("z")],
-        [repeats("l", "a"), inside("a", "b"), edge("l", "z")],
+        [repeater("l"), node("a"), merger("m"), node("z")],
+        [repeats("l", "a"), edge("a", "m"), edge("l", "z")],
       ),
     );
-    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "b"]);
+    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "m"]);
   });
 
-  it("refuses a nested loop by name rather than flattening it", () => {
-    // The walk does not follow a `repeats` link, so an inner loop's members
-    // stay its own — which leaves the inner loop itself a member of the outer
-    // section, and that is the thing with a sentence written for it.
-    assert.match(
-      error(
-        graph(
-          [repeater("l"), node("a"), repeater("k"), node("z")],
-          [repeats("l", "a"), inside("a", "k"), repeats("k", "z")],
-        ),
+  it("stops the walk at the next loop's own “repeats” link", () => {
+    // Two loops one after the other, which is legal and is the shape that
+    // catches a walk following the wrong arrow: “K” is linked after “L”, so a
+    // walk that took its `repeats` link would swallow “K”'s section into “L”'s
+    // and refuse the graph for a nesting nobody drew.
+    const v = value(
+      graph(
+        [
+          repeater("l"),
+          node("a"),
+          merger("m"),
+          repeater("k"),
+          node("z"),
+          merger("n"),
+        ],
+        [
+          repeats("l", "a"),
+          edge("a", "m"),
+          edge("l", "k"),
+          repeats("k", "z"),
+          edge("z", "n"),
+        ],
       ),
-      /multiplies one pass cap by another/,
     );
+    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "m"]);
+    assert.deepEqual(v.graph.nodes[3].bodyNodeIds, ["z", "n"]);
   });
 
-  it("reads a saved graph's list exactly as it always has", () => {
-    // The compatibility rule, and the strongest form of it: the same section
-    // stated the old way and the new way has to normalize to the same thing.
-    const asList = value(
+  it("orders the section the way a pass creates it", () => {
+    // `loopBody` reads the same section off the same edges, so a graph that
+    // normalized and a walk of it cannot disagree about which block is last —
+    // which is the block whose `DONE` a pass is read off.
+    const v = value(
       graph(
-        [repeater("l", { bodyNodeIds: ["a", "b"] }), node("a"), node("b")],
-        [inside("a", "b")],
-      ),
-    );
-    const asLinks = value(
-      graph(
-        [repeater("l"), node("a"), node("b")],
-        [repeats("l", "a"), inside("a", "b")],
+        [repeater("l"), node("a"), node("b"), merger("m")],
+        [repeats("l", "a"), inside("a", "b"), edge("b", "m")],
       ),
     );
     assert.deepEqual(
-      asList.graph.nodes[0].bodyNodeIds,
-      asLinks.graph.nodes[0].bodyNodeIds,
-    );
-    assert.deepEqual(
-      loopBody(asList.graph, asList.graph.nodes[0]).map((n) => n.id),
-      loopBody(asLinks.graph, asLinks.graph.nodes[0]).map((n) => n.id),
+      loopBody(v.graph, v.graph.nodes[0]).map((n) => n.id),
+      ["a", "b", "m"],
     );
   });
 });
@@ -1501,7 +1653,7 @@ function board(over: Record<string, unknown> = {}) {
 
 describe("normalizeWorkflowInput — a loop's board condition", () => {
   it("keeps a condition a loop block set", () => {
-    const v = value(graph([repeater("a", { stopWhenTasks: board() })]));
+    const v = value(looped({ stopWhenTasks: board() }, "a"));
     assert.deepEqual(v.graph.nodes[0].stopWhenTasks, {
       mountId: "work",
       folder: "repo",
@@ -1516,7 +1668,7 @@ describe("normalizeWorkflowInput — a loop's board condition", () => {
     // working: every one of them says nothing here, and the other reading would
     // turn each into a graph refused at save for a condition nobody wrote.
     for (const raw of [undefined, null, ""]) {
-      const v = value(graph([repeater("a", { stopWhenTasks: raw })]));
+      const v = value(looped({ stopWhenTasks: raw }, "a"));
       assert.equal(v.graph.nodes[0].stopWhenTasks, null, `for ${String(raw)}`);
     }
   });
@@ -1535,11 +1687,11 @@ describe("normalizeWorkflowInput — a loop's board condition", () => {
 
   it("refuses a workspace that is not mounted", () => {
     assert.match(
-      error(graph([repeater("a", { stopWhenTasks: board({ mountId: "gone" }) })])),
+      error(looped({ stopWhenTasks: board({ mountId: "gone" }) }, "a")),
       /not mounted: gone/,
     );
     assert.match(
-      error(graph([repeater("a", { stopWhenTasks: board({ mountId: "" }) })])),
+      error(looped({ stopWhenTasks: board({ mountId: "" }) }, "a")),
       /names no workspace to count them in/,
     );
   });
@@ -1551,7 +1703,7 @@ describe("normalizeWorkflowInput — a loop's board condition", () => {
     for (const status of ["done", "dropped"]) {
       assert.match(
         error(
-          graph([repeater("a", { stopWhenTasks: board({ statuses: [status] }) })]),
+          looped({ stopWhenTasks: board({ statuses: [status] }) }, "a"),
         ),
         new RegExp(`counts ${status} tasks, and that count only ever grows`),
         status,
@@ -1562,23 +1714,21 @@ describe("normalizeWorkflowInput — a loop's board condition", () => {
   it("refuses a status the board does not have, and an empty list", () => {
     assert.match(
       error(
-        graph([repeater("a", { stopWhenTasks: board({ statuses: ["parked"] }) })]),
+        looped({ stopWhenTasks: board({ statuses: ["parked"] }) }, "a"),
       ),
       /a state the board does not have: parked/,
     );
     assert.match(
-      error(graph([repeater("a", { stopWhenTasks: board({ statuses: [] }) })])),
+      error(looped({ stopWhenTasks: board({ statuses: [] }) }, "a")),
       /names no task states to count/,
     );
   });
 
   it("keeps both countable statuses, once each", () => {
     const v = value(
-      graph([
-        repeater("a", {
+      looped({
           stopWhenTasks: board({ statuses: ["open", "claimed", "open"] }),
-        }),
-      ]),
+        }, "a"),
     );
     assert.deepEqual(v.graph.nodes[0].stopWhenTasks?.statuses, [
       "open",
@@ -1590,11 +1740,9 @@ describe("normalizeWorkflowInput — a loop's board condition", () => {
     for (const atMost of [1.5, -1, null, undefined, "", "many", Number.NaN]) {
       assert.match(
         error(
-          graph([
-            repeater("a", {
+          looped({
               stopWhenTasks: board({ thresholds: [{ priority: "any", atMost }] }),
-            }),
-          ]),
+            }, "a"),
         ),
         /whole number of tasks to stop at/,
         String(atMost),
@@ -1604,11 +1752,9 @@ describe("normalizeWorkflowInput — a loop's board condition", () => {
 
   it("keeps zero, which is the whole point of the condition", () => {
     const v = value(
-      graph([
-        repeater("a", {
+      looped({
           stopWhenTasks: board({ thresholds: [{ priority: "any", atMost: 0 }] }),
-        }),
-      ]),
+        }, "a"),
     );
     assert.deepEqual(v.graph.nodes[0].stopWhenTasks?.thresholds, [
       { priority: "any", atMost: 0 },
@@ -1621,16 +1767,14 @@ describe("normalizeWorkflowInput — a loop's board condition", () => {
     // hands the stored blob back to this function, and a graph written before
     // thresholds existed has to come out meaning what it meant.
     const v = value(
-      graph([
-        repeater("a", {
+      looped({
           stopWhenTasks: {
             mountId: "work",
             folder: "repo",
             statuses: ["open"],
             atMost: 7,
           },
-        }),
-      ]),
+        }, "a"),
     );
     assert.deepEqual(v.graph.nodes[0].stopWhenTasks, {
       mountId: "work",
@@ -1647,7 +1791,7 @@ describe("normalizeWorkflowInput — a loop's board condition", () => {
     // somebody who cleared the field.
     for (const thresholds of [[], null, undefined]) {
       assert.match(
-        error(graph([repeater("a", { stopWhenTasks: board({ thresholds }) })])),
+        error(looped({ stopWhenTasks: board({ thresholds }) }, "a")),
         /names no number to stop at/,
         String(thresholds),
       );
@@ -1657,13 +1801,11 @@ describe("normalizeWorkflowInput — a loop's board condition", () => {
   it("refuses a priority the board does not have", () => {
     assert.match(
       error(
-        graph([
-          repeater("a", {
+        looped({
             stopWhenTasks: board({
               thresholds: [{ priority: "blocker", atMost: 1 }],
             }),
-          }),
-        ]),
+          }, "a"),
       ),
       /a priority the board does not have: blocker/,
     );
@@ -1674,16 +1816,14 @@ describe("normalizeWorkflowInput — a loop's board condition", () => {
     // numbers is a line the operator wrote that can never fire.
     assert.match(
       error(
-        graph([
-          repeater("a", {
+        looped({
             stopWhenTasks: board({
               thresholds: [
                 { priority: "normal", atMost: 5 },
                 { priority: "normal", atMost: 2 },
               ],
             }),
-          }),
-        ]),
+          }, "a"),
       ),
       /names normal twice/,
     );
@@ -1692,8 +1832,7 @@ describe("normalizeWorkflowInput — a loop's board condition", () => {
   it("refuses more numbers than a condition may carry", () => {
     assert.match(
       error(
-        graph([
-          repeater("a", {
+        looped({
             stopWhenTasks: board({
               thresholds: [
                 { priority: "any", atMost: 1 },
@@ -1704,8 +1843,7 @@ describe("normalizeWorkflowInput — a loop's board condition", () => {
                 { priority: "any", atMost: 2 },
               ],
             }),
-          }),
-        ]),
+          }, "a"),
       ),
       /may stop on at most 5 numbers/,
     );
@@ -1713,16 +1851,14 @@ describe("normalizeWorkflowInput — a loop's board condition", () => {
 
   it("keeps several thresholds, in the order they were written", () => {
     const v = value(
-      graph([
-        repeater("a", {
+      looped({
           stopWhenTasks: board({
             thresholds: [
               { priority: "any", atMost: 10 },
               { priority: "normal", atMost: 5 },
             ],
           }),
-        }),
-      ]),
+        }, "a"),
     );
     assert.deepEqual(v.graph.nodes[0].stopWhenTasks?.thresholds, [
       { priority: "any", atMost: 10 },
@@ -1732,9 +1868,7 @@ describe("normalizeWorkflowInput — a loop's board condition", () => {
 
   it("reads a threshold with no priority on it as the project whole", () => {
     const v = value(
-      graph([
-        repeater("a", { stopWhenTasks: board({ thresholds: [{ atMost: 3 }] }) }),
-      ]),
+      looped({ stopWhenTasks: board({ thresholds: [{ atMost: 3 }] }) }, "a"),
     );
     assert.deepEqual(v.graph.nodes[0].stopWhenTasks?.thresholds, [
       { priority: "any", atMost: 3 },
@@ -1747,9 +1881,7 @@ describe("normalizeWorkflowInput — a loop's board condition", () => {
     // would count a backlog the operator was never shown.
     for (const raw of [undefined, null, "", 0, "true"]) {
       const v = value(
-        graph([
-          repeater("a", { stopWhenTasks: board({ includeSubfolders: raw }) }),
-        ]),
+        looped({ stopWhenTasks: board({ includeSubfolders: raw }) }, "a"),
       );
       assert.equal(
         v.graph.nodes[0].stopWhenTasks?.includeSubfolders,
@@ -1758,9 +1890,7 @@ describe("normalizeWorkflowInput — a loop's board condition", () => {
       );
     }
     const on = value(
-      graph([
-        repeater("a", { stopWhenTasks: board({ includeSubfolders: true }) }),
-      ]),
+      looped({ stopWhenTasks: board({ includeSubfolders: true }) }, "a"),
     );
     assert.equal(on.graph.nodes[0].stopWhenTasks?.includeSubfolders, true);
   });
@@ -1768,7 +1898,7 @@ describe("normalizeWorkflowInput — a loop's board condition", () => {
   it("keeps the mount root as a folder rather than as an absence", () => {
     // `""` is the workspace root, the same real selection it is on the block's
     // own folder — the reader canonicalises it through the board's resolver.
-    const v = value(graph([repeater("a", { stopWhenTasks: board({ folder: "" }) })]));
+    const v = value(looped({ stopWhenTasks: board({ folder: "" }) }, "a"));
     assert.equal(v.graph.nodes[0].stopWhenTasks?.folder, "");
   });
 });

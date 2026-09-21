@@ -119,7 +119,11 @@ function fileTask(
   return created.task.id;
 }
 
-/** A loop node as a saved graph carries one: the folder is inside the mount. */
+/**
+ * A loop node as a saved graph carries one: the folder the condition counts is
+ * inside the mount, and the loop itself is told nothing — it frames the section
+ * beside it, which is the smallest one a graph may carry.
+ */
 function loopNode(
   condition: Partial<import("./workflowGraph").LoopBoardCondition> | null,
 ): import("./workflowGraph").WorkflowNode {
@@ -132,9 +136,6 @@ function loopNode(
             id: "a",
             name: "Chip away at it",
             kind: "loop",
-            mountId,
-            folder: "backlog",
-            task: "work",
             maxPasses: 3,
             stopWhenTasks: condition && {
               mountId,
@@ -144,8 +145,19 @@ function loopNode(
               ...condition,
             },
           },
+          {
+            id: "b",
+            name: "Take one off the board",
+            mountId,
+            folder: "backlog",
+            task: "work",
+          },
+          { id: "m", name: "Land it", kind: "merge", mergeStrategy: "merge" },
         ],
-        edges: [],
+        edges: [
+          { from: "a", to: "b", edge: "repeats", continueBranch: false },
+          { from: "b", to: "m", edge: "on-success", continueBranch: false },
+        ],
       },
     },
     {

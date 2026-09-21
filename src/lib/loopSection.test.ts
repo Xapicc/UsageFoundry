@@ -475,6 +475,14 @@ describe("a pass that fails half way", () => {
 /* The compatibility rule                                              */
 /* ------------------------------------------------------------------ */
 
+/*
+ * **No door produces this shape any more.** A loop is a region now: it holds no
+ * task, and `resolveSections` refuses one with no `repeats` link, so there is no
+ * way to save a workflow whose loop repeats itself. What is left below is the
+ * runtime that still serves such a row, and the runtime is the next run's to
+ * take out — deleting the test here first would leave that code with nothing
+ * saying what it was for.
+ */
 describe("a loop saved before a body was a thing", () => {
   it("repeats its own task, one run per pass, from a graph with no such key", () => {
     // The instance blob is what an older build wrote: no `bodyNodeIds` at all,

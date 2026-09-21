@@ -67,17 +67,25 @@ export interface WorkflowNode {
    * blocks in front of it built. See `WorkflowNodeKind` and the two notes above.
    */
   kind: WorkflowNodeKind;
-  /** The template supplying every guard, or null for `chatDefaultGuards`. */
+  /**
+   * The template supplying every guard, or null for `chatDefaultGuards`. Null
+   * on the two kinds that start no child of their own — a merge block and a
+   * loop — because guards decide what an agent may do and neither has one.
+   */
   templateId: string | null;
   /**
    * The workspace this block works in. `""` on a merge block, which works in
    * whichever repository each branch it lands came from — recorded on the run
-   * that cut the branch, and never named here.
+   * that cut the branch, and never named here — and `""` on a loop, which works
+   * nowhere: each block of the section it frames names its own.
    */
   mountId: string;
   /** Path within the mount. `""` is the mount root, and is a real answer. */
   folder: string;
-  /** What this block is asked to do, or to decide. `""` on a merge block. */
+  /**
+   * What this block is asked to do, or to decide. `""` on a merge block and on
+   * a loop, neither of which is asked anything — see `LOOP_IS_TOLD_NOTHING`.
+   */
   task: string;
   /**
    * Standing instructions this node's task is appended to, replacing the
@@ -216,28 +224,28 @@ export interface WorkflowNode {
    */
   stopWhenTasks: LoopBoardCondition | null;
   /**
-   * The blocks this loop repeats instead of its own task. Empty on every other
-   * kind, and empty on a loop that repeats itself.
+   * The blocks this loop repeats. Empty on every other kind, and **never empty
+   * on a loop**: a loop holds no work of its own, so one that frames nothing is
+   * refused rather than read as a block that repeats itself.
    *
-   * **Derived from the loop's `repeats` link when it has one**, by
-   * `resolveSections`, and taken as sent when it has not — which is every graph
-   * saved before the link existed and every graph built through the API. A
-   * graph that states both and disagrees is refused by name. What is stored is
+   * **Derived from the loop's `repeats` link**, by `resolveSections`, which is
+   * the only thing that states a section. A list may arrive beside it and is
+   * then a cross-check: one that disagrees with the links is refused by name,
+   * and one that arrives with no link at all is refused too. What is stored is
    * this list either way, so every rule below and every runtime reader is
    * written against one field and not two.
    *
-   * **Empty is what a loop meant before this field existed.** Every graph saved
-   * without it repeats the block's own task, one run per pass, and behaves
-   * identically — the same reading `kind` gets when it is absent, and the same
-   * reading `stopWhenTasks` gets. Non-empty means the block starts no run of its
-   * own: each pass creates one run per named block, in the order the body's own
-   * edges give, and the last of them is the run whose `DONE` ends the loop.
+   * Each pass creates one run per member that runs — see the arithmetic in
+   * `loopBodyRefusal`, which is where an orchestrator member's fan-out is
+   * charged per pass — in the order the section's own edges give, and the
+   * section's exit lands what the pass produced.
    *
    * Validated in `graphRefusal` rather than here, and that is not a placement
-   * detail: every question worth asking about a body is a question about the
+   * detail: every question worth asking about a section is a question about the
    * *graph* — whether those ids are blocks at all, whether one of them is in
-   * another body, whether an edge crosses the boundary, whether the members form
-   * a chain. `normalizeNode` sees one block and could answer none of them.
+   * another section, whether an edge crosses the boundary, whether the members
+   * have one way out. `normalizeNode` sees one block and could answer none of
+   * them.
    */
   bodyNodeIds: string[];
 }
@@ -585,25 +593,32 @@ export function normalizeWorkflowInput(
     // safe.
     const continueBranch = e.continueBranch === true;
     if (continueBranch) {
-      // A run block has a checkout of its own, and so does a loop — its passes
-      // are runs on one shared ref, which is the whole of why a non-isolated
-      // loop is refused above. An orchestrator block decides and spends nothing
-      // on disk; a merge block writes into somebody else's checkout and cuts no
-      // branch. Those two are refused by name at either end rather than left to
-      // the isolation test below, which would say "its guards work directly in
-      // the folder" — true of neither and misleading about what would have to
-      // change.
+      // A run block has a checkout of its own. The other three do not, each for
+      // its own reason, and each is refused by name at either end rather than
+      // left to the isolation test below — which would say "its guards work
+      // directly in the folder", true of none of them and misleading about what
+      // would have to change. An orchestrator block decides and spends nothing
+      // on disk. A merge block writes into somebody else's checkout and cuts no
+      // branch. A loop used to be the exception here, when its passes were runs
+      // on one shared ref it could hand on; now each pass lands its own work
+      // through the section's exit, so the loop block itself never holds a ref
+      // — it has no template, no folder and no run, and the next thing along
+      // starts from what the last pass landed rather than from a branch.
       for (const node of [source, target]) {
-        if (node.kind === "run" || node.kind === "loop") continue;
+        if (node.kind === "run") continue;
         return {
           ok: false,
           error:
             node.kind === "orchestrator"
               ? `“${node.name}” decides what to run rather than working in a ` +
                 "checkout, so it has no branch to hand over or carry on."
-              : `“${node.name}” lands other blocks' branches rather than ` +
-                "working in a checkout of its own, so it has no branch to hand " +
-                "over or carry on.",
+              : node.kind === "loop"
+                ? `“${node.name}” frames the blocks it repeats and each pass ` +
+                  "lands its own work, so it holds no branch to hand over or " +
+                  "carry on."
+                : `“${node.name}” lands other blocks' branches rather than ` +
+                  "working in a checkout of its own, so it has no branch to " +
+                  "hand over or carry on.",
         };
       }
 
@@ -667,6 +682,35 @@ export function normalizeWorkflowInput(
 type NodeNormalization =
   | { ok: true; value: WorkflowNode }
   | { ok: false; error: string };
+
+/**
+ * What a loop block may not be told, and what each field would have decided.
+ *
+ * A loop is a **region**: a frame round the blocks it repeats. It starts no
+ * child of its own, so every field here describes a run that does not exist —
+ * each member of the section names its own task, workspace, folder, guards and
+ * agent, and there is nothing left over for the frame to hold.
+ *
+ * Refused **by name** rather than coerced away, which is the treatment `agentId`
+ * on a merge block gets and the reason is the same one: each of these is a
+ * choice the operator made that no process would ever act on, and dropping it
+ * in silence is what this door exists to stop. What a loop does keep —
+ * `maxPasses`, `maxLoopCostUSD`, `stopWhenTasks` — is on the other side of that
+ * line: each of them bounds the repetition rather than describing a run.
+ *
+ * A table rather than six branches because the sentences differ only in their
+ * nouns, and somebody checking that the list is complete should be able to read
+ * it as a list. The keys are the **wire's**: this is what arrived, before any of
+ * it has been coerced.
+ */
+const LOOP_IS_TOLD_NOTHING = [
+  { key: "task", missing: "no task for it to do", instead: "Put it on a block inside the section." },
+  { key: "templateId", missing: "no guards for it to run under", instead: "Put the template on the blocks inside the section." },
+  { key: "agentId", missing: "nothing for that agent to be", instead: "Put it on a block inside the section." },
+  { key: "mountId", missing: "no workspace for it to work in", instead: "Each block inside the section names its own." },
+  { key: "folder", missing: "no folder for it to work in", instead: "Each block inside the section names its own." },
+  { key: "promptOverride", missing: "no standing instructions for it to stand above", instead: "Put them on the blocks inside the section." },
+] as const;
 
 /** Whether a node says nothing at all about a board condition. */
 function boardConditionIsOff(raw: unknown): boolean {
@@ -914,20 +958,41 @@ function normalizeNode(
     }
     const kind = rawKind as WorkflowNodeKind;
 
+    // A loop is told nothing, and every field it is told anyway is refused by
+    // name. See `LOOP_IS_TOLD_NOTHING` for why each of them describes a run a
+    // loop block does not have.
+    if (kind === "loop") {
+      const told = LOOP_IS_TOLD_NOTHING.find(
+        (field) => String(n[field.key] ?? "").trim() !== "",
+      );
+      if (told) {
+        return {
+          ok: false,
+          error:
+            `“${nodeName}” frames the blocks it repeats and starts no run of ` +
+            `its own, so there is ${told.missing}. ${told.instead}`,
+        };
+      }
+    }
+
+    // The two kinds that start no child of their own hold none of the fields
+    // that describe one. They get there differently — a merge block has these
+    // coerced away, a loop has them refused by name above — and past this point
+    // the two are the same block: nothing to run, and nowhere to run it.
+    const startsNoRun = kind === "merge" || kind === "loop";
+
     // A merge block is told nothing. What it lands is whatever the blocks in
     // front of it left on a branch, and where each branch belongs was recorded
     // when its run cut it — so there is no task here for a person to write and
     // an empty one is the right answer rather than a missing one.
-    const task = kind === "merge" ? "" : String(n.task ?? "").trim();
-    if (kind !== "merge" && !task) {
+    const task = startsNoRun ? "" : String(n.task ?? "").trim();
+    if (!startsNoRun && !task) {
       return {
         ok: false,
         error:
           kind === "orchestrator"
             ? `“${nodeName}” has nothing to decide. An orchestrator block with no brief is a billed turn that starts whatever it feels like.`
-            : kind === "loop"
-              ? `“${nodeName}” has no task to repeat. A loop with nothing to do is a billed run per pass that spends a work cycle finding that out.`
-              : `“${nodeName}” has no task. A block with nothing to do is a run that spends a work cycle finding that out.`,
+            : `“${nodeName}” has no task. A block with nothing to do is a run that spends a work cycle finding that out.`,
       };
     }
 
@@ -1074,9 +1139,11 @@ function normalizeNode(
     //
     // A merge block names none and can name none: guards decide what an agent
     // may do, this block starts no agent, and the one child it can cause —
-    // `resolveConflicts`' — runs under that function's own fixed mode.
+    // `resolveConflicts`' — runs under that function's own fixed mode. A loop
+    // names none for the same reason, so `guardsFor` is never asked about one;
+    // the guards a pass runs under are each member's own.
     const templateId =
-      kind === "merge" ||
+      startsNoRun ||
       n.templateId === null ||
       n.templateId === undefined ||
       String(n.templateId) === ""
@@ -1092,28 +1159,14 @@ function normalizeNode(
       };
     }
 
-    // A loop accumulates: every pass carries on the previous pass's branch,
-    // through the same `continue_branch` mechanism a hand-over edge uses. Guards
-    // that work directly in the folder have no branch to carry, so the loop
-    // would be a run repeated on top of itself with no record of what each pass
-    // added. Refused here rather than at the first pass, where it would surface
-    // as a throw in the middle of an instance that had already started.
-    if (kind === "loop" && !isolatedTemplate(templateId, known)) {
-      return {
-        ok: false,
-        error:
-          `“${nodeName}” repeats, and each pass carries on the one before it — ` +
-          "which needs a checkout of its own. Its guards work directly in the " +
-          "folder instead.",
-      };
-    }
-
     // A merge block works in whichever repository each branch came from, so it
     // names no workspace at all rather than one it would never read. Requiring
     // one would make a block refusable — at save and at every Run — over a mount
-    // that decides nothing about it.
-    const mountId = kind === "merge" ? "" : String(n.mountId ?? "");
-    if (kind !== "merge") {
+    // that decides nothing about it. A loop names none for the same shape of
+    // reason: its members each name their own, and the frame round them works
+    // nowhere.
+    const mountId = startsNoRun ? "" : String(n.mountId ?? "");
+    if (!startsNoRun) {
       if (!mountId) {
         return {
           ok: false,
@@ -1128,8 +1181,9 @@ function normalizeNode(
       }
     }
 
-    const promptOverride =
-      kind === "merge" ? "" : String(n.promptOverride ?? "").trim();
+    const promptOverride = startsNoRun
+      ? ""
+      : String(n.promptOverride ?? "").trim();
 
     // The agent this block's own child is started as.
     //
@@ -1157,7 +1211,7 @@ function normalizeNode(
           "put it on the block that does the work.",
       };
     }
-    const agentId = kind === "merge" ? null : namedAgent;
+    const agentId = startsNoRun ? null : namedAgent;
     if (agentId !== null) {
       // The same wording the run door and the template door give, prefixed with
       // the block — a graph is read as a list of steps, so every refusal here
@@ -1178,7 +1232,7 @@ function normalizeNode(
           // The empty string is the mount root — the one selection that blocks
           // every other run in the tree — so it is kept rather than collapsed into
           // "no folder", exactly as a template's is.
-          folder: kind === "merge" ? "" : String(n.folder ?? ""),
+          folder: startsNoRun ? "" : String(n.folder ?? ""),
           task,
           promptOverride: promptOverride || null,
           fanOut,
@@ -1316,13 +1370,17 @@ function sectionFrom(
  * reader and every saved graph is already written against — so this is a change
  * to the door and not to the machinery behind it.
  *
- * **Both directions stay open.** A graph that arrives with `bodyNodeIds` and no
- * `repeats` link keeps today's reading untouched, which is every workflow saved
- * before this and every graph built through the API. A graph that carries both
- * and disagrees is refused by *name* rather than resolved in favour of one: a
- * caller who sent both meant something by each, and dropping half of it in
- * silence is what this app's doors exist to stop. The editor sends both and
- * derives the list from the link, so it cannot produce the disagreement.
+ * **The link is now required.** A loop with none is refused, and that is what
+ * ended the body-less loop — the mode where a loop held a task and repeated it.
+ * A region frames work; it does not do any, so a loop that names no section has
+ * nothing to repeat at all. The list alone no longer states one either: it is a
+ * cross-check on what the links say and never a second way of saying it.
+ *
+ * A graph that carries both and disagrees is refused by *name* rather than
+ * resolved in favour of one: a caller who sent both meant something by each, and
+ * dropping half of it in silence is what this app's doors exist to stop. The
+ * editor sends both and derives the list from the link, so it cannot produce the
+ * disagreement.
  */
 function resolveSections(
   nodes: readonly WorkflowNode[],
@@ -1347,7 +1405,23 @@ function resolveSections(
           "one “repeats” link: the one to the block its pass starts at.",
       };
     }
-    if (doors.length === 0) continue;
+    if (doors.length === 0) {
+      // Two sentences, because there are two ways to arrive here and only one
+      // of them is "you have not drawn it yet". A caller that sent the list on
+      // its own said what it wanted and is told which half is missing; an
+      // operator with a bare loop block is told what a loop is for.
+      return {
+        ok: false,
+        error:
+          bodyOf(loop).length > 0
+            ? `“${loop.name}” names the blocks it repeats but is not linked to ` +
+              "them. A section is stated by a “repeats” link to the block each " +
+              "pass starts at, and a list on its own no longer says it."
+            : `“${loop.name}” has nothing to repeat. Draw a “repeats” link from ` +
+              "it to the first block of the section it frames — a loop holds no " +
+              "work of its own.",
+      };
+    }
 
     const derived = sectionFrom(loop.id, doors[0].to, edges);
     const declared = bodyOf(loop);
@@ -1389,9 +1463,10 @@ function resolveSections(
  * own links, so "this is not allowed" is only half an answer: the other half is
  * which of the two kinds of link the operator meant.
  *
- * Read after the cycle and ordering checks above, so the chain test below may
- * assume the body is acyclic — a body that is not is refused there, by the same
- * sentence any other cyclic set gets.
+ * Read after the cycle and ordering checks above, and the exit test below leans
+ * on that: a section is any acyclic subgraph, so it has a sink, and a section
+ * that is *not* acyclic is refused there by the same sentence any other cyclic
+ * set gets.
  */
 function loopBodyRefusal(
   nodes: readonly WorkflowNode[],
@@ -1405,52 +1480,61 @@ function loopBodyRefusal(
   /** Which loop claimed each block, so a block in two bodies can name both. */
   const owner = new Map<string, WorkflowNode>();
 
+  // Three questions that used to be asked here are not asked any more, and
+  // `resolveSections` is why: a section is **derived** from the `repeats` link
+  // and a list sent without one is refused, so a member is a node in this graph
+  // by construction, is never the loop itself — `sectionFrom` seeds its walk
+  // with the loop's own id — and is never named twice, because the walk is a
+  // visited set. They were reachable only through the list, and the list is now
+  // a cross-check on the links rather than a second way of stating a section.
   for (const loop of loops) {
     for (const memberId of bodyOf(loop)) {
-      const member = byId.get(memberId);
-      if (!member) {
-        return (
-          `“${loop.name}” repeats a block that is not in this workflow: ` +
-          `${memberId || "(blank)"}. A section is the block its “repeats” ` +
-          "link points at and everything linked after it."
-        );
-      }
-      if (member.id === loop.id) {
-        return (
-          `“${loop.name}” is inside the section it repeats, so each pass would ` +
-          "create the loop again rather than the work it repeats. Link " +
-          `“${loop.name}” to the first block of the section instead.`
-        );
-      }
+      const member = byId.get(memberId)!;
+      // Two sections *can* still overlap: two loops with a `repeats` link into
+      // the same block derive two sections that both claim it, and each pass of
+      // each loop would create it again on one folder.
       const claimed = owner.get(memberId);
       if (claimed) {
-        return claimed.id === loop.id
-          ? `“${loop.name}” repeats “${member.name}” twice in one pass. A block can only be in a section once.`
-          : `“${member.name}” is in the section repeated by both “${claimed.name}” and “${loop.name}”. A block can only be repeated by one loop.`;
+        return `“${member.name}” is in the section repeated by both “${claimed.name}” and “${loop.name}”. A block can only be repeated by one loop.`;
       }
       owner.set(memberId, loop);
 
-      // Refused by name rather than by one sentence about "a block that is not
-      // a run", because the three of them go wrong in three different ways and
-      // the operator can only act on the one that is theirs.
-      if (member.kind !== "run") {
-        return member.kind === "orchestrator"
-          ? `“${member.name}” decides what to run with nobody looking, and “${loop.name}” would run it once per pass — so its fan-out cap would be spent again on every pass. A repeated section holds fixed work only.`
-          : member.kind === "merge"
-            ? `“${member.name}” lands branches, and “${loop.name}” is still writing to the one it would land. A merge belongs behind a loop, not inside it.`
-            : `“${member.name}” is itself a loop, and a loop inside a body multiplies one pass cap by another. Repeat one section, not a section that repeats.`;
+      // A loop inside a loop is the **one** kind of block a section may not
+      // hold, and it is left out for a reason none of the others share: one
+      // pass cap multiplying another is a number no operator can hold in their
+      // head. An orchestrator block is in, because its fan-out cap is spent per
+      // pass and that is stated at Save in the arithmetic below rather than
+      // discovered on the bill. A merge block is in, because a section *ends*
+      // in one — each pass lands what it produced.
+      if (member.kind === "loop") {
+        return (
+          `“${member.name}” is itself a loop, and a loop inside a section ` +
+          "multiplies one pass cap by another — a number nobody can work out " +
+          "from the two they typed. It is the one kind of block a section may " +
+          "not hold. Repeat one section, not a section that repeats."
+        );
       }
 
-      // The loop's own isolation rule, applied per member and for its reason:
-      // every pass carries on the branch the last one built, so a member whose
-      // guards work directly in the folder would leave no record of what each
-      // pass added. Refused here rather than at the first pass, where it would
-      // be a throw in the middle of an instance that had already started.
-      if (!isolatedTemplate(member.templateId, known)) {
+      // Guards that isolate, asked of the members that work in a checkout and
+      // of no others.
+      //
+      // A run member needs one because it commits: a pass whose guards work
+      // directly in the folder leaves no branch for the section's own merge
+      // block to land, so the work of every pass would go into the operator's
+      // checkout with nothing recording which pass put it there. An
+      // orchestrator member spends nothing on disk — it decides, and the runs
+      // it emits carry their own guards — and a merge block has no guards at
+      // all. Both are exempt **by name** rather than by passing a test written
+      // about a checkout, which would answer them with a sentence about a
+      // folder neither of them works in.
+      //
+      // Refused here rather than at the first pass, where it would be a throw
+      // in the middle of an instance that had already started.
+      if (member.kind === "run" && !isolatedTemplate(member.templateId, known)) {
         return (
-          `“${member.name}” is repeated by “${loop.name}”, and each pass ` +
-          "carries on the one before it — which needs a checkout of its own. " +
-          "Its guards work directly in the folder instead."
+          `“${member.name}” is repeated by “${loop.name}”, and every pass has ` +
+          "to land what it produced — which needs a checkout of its own. Its " +
+          "guards work directly in the folder instead."
         );
       }
     }
@@ -1493,75 +1577,93 @@ function loopBodyRefusal(
       );
     }
 
-    // A body has to be a **chain**, and that is what keeps "one branch, all the
-    // passes" true rather than being a limitation of this implementation: the
-    // members of one pass hand the branch along, so two members continuing one
-    // predecessor is two runs on one ref — which `admitDependencies` refuses by
-    // name, so a diamond here would surface as a throw part-way through a pass
-    // rather than as a sentence at Save.
+    // **One way in and one way out**, and the way out has to land.
     //
-    // Degrees of at most one make the body a set of paths; `size - 1` links
-    // make it exactly one of them. The cycle check above has already ruled out
-    // the third shape those two counts would otherwise admit.
+    // A section used to have to be a *chain*, because a pass was one branch
+    // handed from each member to the next and two members continuing one
+    // predecessor is two runs on one ref. That is what "a pass lands its own
+    // work" replaced: the section ends in a merge block, each pass lands what it
+    // produced, and the next pass starts from the landed branch rather than
+    // carrying a ref along. So the shape is free — any acyclic subgraph — and
+    // what is fixed is its two ends.
+    //
+    // The way in is the `repeats` link's target, which is what `sectionFrom`
+    // walked from. The way out is the section's single **sink**, and the two
+    // refusals below are the whole of what is left of the chain rule.
+    //
+    // A second sink is the same defect as a member with no path to the exit,
+    // and it is answered by one sentence rather than two because it *is* one
+    // fact: a member whose work nothing lands ends the section somewhere, and
+    // where it ends is that second sink. (The section is acyclic by the time
+    // this runs, and every member is reachable from the entry, so "one sink"
+    // and "every member reaches it" are the same statement.) The sentence says
+    // both halves — what is wrong and what the work would cost — because "the
+    // section ends in two places" on its own is a shape complaint and the
+    // reason it matters is a branch nobody lands.
     const within = edges.filter((e) => members.has(e.from) && members.has(e.to));
-    for (const member of members) {
-      for (const [side, verb] of [
-        ["from", "hands its branch to"],
-        ["to", "carries on"],
-      ] as const) {
-        const links = within.filter((e) => e[side] === member);
-        if (links.length <= 1) continue;
-        return (
-          `“${byId.get(member)!.name}” ${verb} ${links.length} blocks inside ` +
-          `“${loop.name}”. A repeated section is a chain: every pass is one ` +
-          "branch, and two runs cannot extend one branch."
-        );
-      }
-    }
-    if (within.length !== members.size - 1) {
+    const sinks = [...members].filter(
+      (id) => !within.some((e) => e.from === id),
+    );
+    if (sinks.length > 1) {
       return (
-        `The ${members.size} blocks “${loop.name}” repeats are not in one ` +
-        "order. A repeated section is a chain, because every pass is one " +
-        "branch handed from each block to the next: link each block of the " +
-        "section to the next one along."
+        `The section “${loop.name}” repeats ends in ${sinks.length} places: ` +
+        `${sinks.map((id) => `“${byId.get(id)!.name}”`).join(", ")}. A ` +
+        "section has one way out, and what it ends at is what lands the pass " +
+        "— so link each of these on towards the block that does, or its work " +
+        "is committed on a branch nothing ever lands."
+      );
+    }
+    const exit = byId.get(sinks[0])!;
+    if (exit.kind !== "merge") {
+      return (
+        `The section “${loop.name}” repeats ends at “${exit.name}”, which is ` +
+        "not a merge block. Every pass has to land what it produced, because " +
+        "the next one starts from the landed branch: add a merge block at the " +
+        `end of the section and link “${exit.name}” to it.`
       );
     }
 
-    // What a link inside a section may say, stated rather than overridden.
-    //
-    // `planPass` creates every member of a pass `on-success` and carrying the
-    // branch, because the section is a chain precisely so that "one branch, all
-    // the passes" holds — the last member's tip is what the next pass continues.
-    // It used to do that to whatever the operator had drawn, which made the two
-    // controls on an intra-section link read as choices and behave as decoration.
-    // Refused here instead, after the chain rules above so that a section which
-    // is not a chain yet is answered by the sentence about *that* first.
-    for (const e of within) {
-      if (e.edge === "on-success" && e.continueBranch) continue;
-      const pair = `“${byId.get(e.from)!.name}” and “${byId.get(e.to)!.name}”`;
-      return e.edge === "on-success"
-        ? `The link between ${pair} inside “${loop.name}” does not carry the ` +
-            "branch. One pass is one branch, handed from each block of a " +
-            "section to the next, so every link inside one carries it."
-        : `The link between ${pair} inside “${loop.name}” starts “${byId.get(e.to)!.name}” ` +
-            "once the block before it finishes either way. A pass that did not " +
-            "complete has already stopped the loop, so every link inside a " +
-            "section is “only if it completes”.";
-    }
-
     // What one press of Run would put on the machine over the life of this
-    // block, with both factors named: a cap on the product alone is a number
+    // block, with every factor named: a cap on the product alone is a number
     // the operator cannot act on.
+    //
+    // **An orchestrator block's fan-out is spent per pass**, which is the whole
+    // of what letting one into a section costs and the reason the worst case is
+    // no longer passes × members. A fan-out cap is what that block may start
+    // *each time it is reached*, and a section reaches it once a pass — so a
+    // pass is one run for each run member, plus for each orchestrator member the
+    // deciding turn and every run it is allowed to emit. A merge block is
+    // neither: it creates no run and spawns no agent of its own.
+    //
     // `maxPasses` is never null on a loop by the time this runs — `normalizeNode`
     // refuses one without it — but the fallback keeps the sentence from saying
     // "null time(s)" if that order ever changes.
+    const membership = [...members].map((id) => byId.get(id)!);
+    const perPass = membership.reduce(
+      (total, m) =>
+        m.kind === "run"
+          ? total + 1
+          : m.kind === "orchestrator"
+            ? total + 1 + (m.fanOut ?? 0)
+            : total,
+      0,
+    );
     const passes = loop.maxPasses ?? 1;
-    const worst = passes * members.size;
+    const worst = passes * perPass;
     if (worst > MAX_LOOP_RUNS) {
+      const deciders = membership
+        .filter((m) => m.kind === "orchestrator")
+        .map(
+          (m) =>
+            `for “${m.name}” the deciding turn plus the ${m.fanOut ?? 0} runs ` +
+            "its fan-out cap allows, spent again on every pass",
+        )
+        .join(", ");
       return (
-        `“${loop.name}” repeats ${members.size} block(s) up to ` +
-        `${passes} time(s), which is ${worst} runs from one press of ` +
-        `Run. A loop may start at most ${MAX_LOOP_RUNS}.`
+        `“${loop.name}” repeats ${members.size} block(s) up to ${passes} ` +
+        `time(s). Each pass is ${perPass} run(s) — one for each block that ` +
+        `runs${deciders ? `, and ${deciders}` : ""} — which is ${worst} runs ` +
+        `from one press of Run. A loop may start at most ${MAX_LOOP_RUNS}.`
       );
     }
   }
@@ -1620,13 +1722,18 @@ function graphRefusal(
   //
   // A merge block *may* sit behind another merge block — that is sequencing, and
   // it contributes no branches — so the requirement is one predecessor that
-  // produces runs, not one predecessor.
+  // produces runs, not one predecessor. A loop block is the second kind that
+  // contributes none: each of its passes lands its own work through the
+  // section's own exit, so by the time the loop hands on there is no branch of
+  // its own left to land.
   for (const node of nodes) {
     if (node.kind !== "merge") continue;
     const sources = edges
       .filter((e) => e.to === node.id)
       .map((e) => byId.get(e.from)!);
-    const producers = sources.filter((s) => s.kind !== "merge");
+    const producers = sources.filter(
+      (s) => s.kind !== "merge" && s.kind !== "loop",
+    );
     if (producers.length === 0) {
       return (
         `“${node.name}” has no block in front of it whose work it could ` +
@@ -1720,8 +1827,11 @@ export function currentKnowledge(): WorkflowKnowledge {
 export function folderRefusal(graph: WorkflowGraph): string | null {
   for (const node of graph.nodes) {
     // A merge block names no workspace: it works in whichever repository each
-    // branch it lands came from, which `landRun` reads off that branch's own run.
-    if (node.kind === "merge") continue;
+    // branch it lands came from, which `landRun` reads off that branch's own
+    // run. A loop names none either — it frames the blocks it repeats and each
+    // of those resolves its own, so asking here would be resolving `""` against
+    // no mount at all and refusing the graph over a folder nobody chose.
+    if (node.kind === "merge" || node.kind === "loop") continue;
     try {
       resolveWorkspaceFolder(node.folder, node.mountId);
     } catch (err) {

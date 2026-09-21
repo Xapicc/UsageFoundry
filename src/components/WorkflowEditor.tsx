@@ -1615,8 +1615,12 @@ function BlockPanel({
   // Only once the registry has answered — see `agentsLoaded`.
   const missingAgent = block.agentId !== "" && agentsLoaded && agent === null;
   const orchestrator = block.kind === "orchestrator";
-  // A loop block holds every field a run block does — it *is* a run block
-  // repeated — plus the two caps that make the repetition finite.
+  // A loop block is a **region**: a frame round the blocks it repeats. It holds
+  // the two caps and the board condition, and nothing that describes a run —
+  // `draftToGraph` sends none of those fields for a loop, and `normalizeNode`
+  // refuses each of them by name, so the controls below that still offer them
+  // are inert. Removing those controls is the canvas run's; leaving them
+  // costs a graph nothing, because what they set is dropped before the wire.
   const loop = block.kind === "loop";
   // A merge block holds none of the fields below the kind picker: no guards,
   // because it starts no agent; no workspace or folder, because it works in
@@ -1626,8 +1630,9 @@ function BlockPanel({
 
   // The section in the order a pass will create it, which is the order the
   // statement reads out and the rows below number. Empty on every kind but a
-  // loop, and on a loop with no “repeats” link — which is every loop saved
-  // before a section could be drawn, and every loop that repeats its own task.
+  // loop, and on a loop with no “repeats” link yet — which is a graph the
+  // server refuses, so what this surface draws for it is a loop mid-assembly
+  // rather than a loop that repeats itself. That mode is gone.
   const body = sectionOf(block.id, blocks, links)
     .map((id) => blocks.find((b) => b.id === id))
     .filter((b): b is BlockDraft => b !== undefined);

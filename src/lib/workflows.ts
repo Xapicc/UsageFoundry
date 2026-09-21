@@ -3010,13 +3010,15 @@ export function startWorkflow(
   // template, and finding that out an hour into the graph would mean a turn
   // billed for a decision nothing can act on.
   //
-  // A merge block is the one kind that is not, and there is nothing left to
-  // plan: it names no template, no mount, no folder and no task, so every
-  // refusal `planNode` has is about a field it does not hold.
+  // A merge block and a loop are the two kinds that are not, and there is
+  // nothing left to plan for either: neither names a template, a mount, a
+  // folder or a task, so every refusal `planNode` has is about a field they do
+  // not hold. A loop frames the blocks it repeats and each of those is planned
+  // on its own account, which is where the guards a pass runs under come from.
   const defaults = chatGuards();
   const plans = new Map<string, Omit<CreateRunInput, "dependsOn" | "origin">>();
   for (const node of graph.nodes) {
-    if (node.kind === "merge") continue;
+    if (node.kind === "merge" || node.kind === "loop") continue;
     const plan = planNode(
       node,
       node.templateId ? getTemplate(node.templateId) : null,
@@ -3044,18 +3046,19 @@ export function startWorkflow(
   // ordinary — a subdirectory of a repository, submodules, no commits yet — and
   // every one of them would otherwise surface as a throw part-way through the
   // creating pass. Read-only, so asking early costs a few git processes.
-  // A loop block is in the same position as either end of a hand-over: every
-  // pass carries on the one before it, so it needs a checkout of its own for
-  // exactly the same reason and fails in exactly the same way without one.
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
-  // A loop, and — since a loop may repeat a *section* — every block in one. The
-  // members of a pass hand the branch along to each other and the last of them
-  // hands it to the next pass, so each one is on a branch for the same reason
-  // the loop itself is. `graphRefusal` has already established that their
-  // *guards* isolate; this is the other half, which only the disk can answer.
+  // Every **run** member of a section, and nothing else about a loop. A pass
+  // commits and then lands what it committed, so each run member is on a branch
+  // for the same reason either end of a hand-over is. The loop block itself is
+  // not asked: it frames the section and names no folder at all, so resolving
+  // one for it would be resolving `""` against no mount. Its orchestrator and
+  // merge members are not asked either — neither works in a checkout, which is
+  // the same exemption `graphRefusal` gives them by name one file over.
+  // `graphRefusal` has already established that the run members' *guards*
+  // isolate; this is the other half, which only the disk can answer.
   const inSomeBody = loopBodyOwners(graph);
   const needBranch = new Set<WorkflowNode>(
-    graph.nodes.filter((n) => n.kind === "loop" || inSomeBody.has(n.id)),
+    graph.nodes.filter((n) => n.kind === "run" && inSomeBody.has(n.id)),
   );
   for (const link of graph.edges.filter((e) => e.continueBranch)) {
     needBranch.add(nodeById.get(link.from)!);
@@ -3068,12 +3071,11 @@ export function startWorkflow(
     if (probe.mode !== "worktree") {
       return {
         ok: false,
-        reason:
-          node.kind === "loop" || inSomeBody.has(node.id)
-            ? `“${node.name}” repeats, and each pass carries on the one before ` +
-              `it, which needs a checkout of its own. ${probe.reason ?? "It cannot have one."}`
-            : `“${node.name}” is part of a branch hand-over, which needs a ` +
-              `checkout of its own. ${probe.reason ?? "It cannot have one."}`,
+        reason: inSomeBody.has(node.id)
+          ? `“${node.name}” is repeated, and every pass has to land what it ` +
+            `produced, which needs a checkout of its own. ${probe.reason ?? "It cannot have one."}`
+          : `“${node.name}” is part of a branch hand-over, which needs a ` +
+            `checkout of its own. ${probe.reason ?? "It cannot have one."}`,
       };
     }
   }
