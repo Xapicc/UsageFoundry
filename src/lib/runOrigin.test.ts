@@ -129,6 +129,7 @@ function runBlockGraph(kind: "run" | "orchestrator") {
         maxPasses: null,
         maxLoopCostUSD: null,
         stopWhenTasks: null,
+        bodyNodeIds: [],
       },
     ],
     edges: [],

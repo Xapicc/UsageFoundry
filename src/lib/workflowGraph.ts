@@ -22,6 +22,7 @@ import { WORKSPACE_MOUNTS } from "./config";
 import {
   MAX_FAN_OUT,
   MAX_LOOP_PASSES,
+  MAX_LOOP_RUNS,
   MAX_WORKFLOW_NAME,
   MAX_WORKFLOW_NODES,
   type LoopBoardConditionDTO,
@@ -210,6 +211,24 @@ export interface WorkflowNode {
    * `kind`.
    */
   stopWhenTasks: LoopBoardCondition | null;
+  /**
+   * The blocks this loop repeats instead of its own task. Empty on every other
+   * kind, and empty on a loop that repeats itself.
+   *
+   * **Empty is what a loop meant before this field existed.** Every graph saved
+   * without it repeats the block's own task, one run per pass, and behaves
+   * identically — the same reading `kind` gets when it is absent, and the same
+   * reading `stopWhenTasks` gets. Non-empty means the block starts no run of its
+   * own: each pass creates one run per named block, in the order the body's own
+   * edges give, and the last of them is the run whose `DONE` ends the loop.
+   *
+   * Validated in `graphRefusal` rather than here, and that is not a placement
+   * detail: every question worth asking about a body is a question about the
+   * *graph* — whether those ids are blocks at all, whether one of them is in
+   * another body, whether an edge crosses the boundary, whether the members form
+   * a chain. `normalizeNode` sees one block and could answer none of them.
+   */
+  bodyNodeIds: string[];
 }
 
 /** Which tasks a loop counts, and the number it stops at. See the DTO. */
@@ -781,6 +800,7 @@ function normalizeNode(
     let maxPasses: number | null = null;
     let maxLoopCostUSD: number | null = null;
     let stopWhenTasks: LoopBoardCondition | null = null;
+    let bodyNodeIds: string[] = [];
     if (kind === "loop") {
       const raw = Number(n.maxPasses);
       if (!Number.isInteger(raw) || raw < 1) {
@@ -815,7 +835,28 @@ function normalizeNode(
       const board = normalizeBoardCondition(n.stopWhenTasks, nodeName, known);
       if (!board.ok) return board;
       stopWhenTasks = board.value;
-    } else if (!boardConditionIsOff(n.stopWhenTasks)) {
+
+      // Absent, null and a non-array all read as "this loop repeats its own
+      // task", which is what every graph saved before the field existed says.
+      // Nothing more is decided here: whether these ids name blocks, and
+      // whether the blocks they name can be a body, is `graphRefusal`'s.
+      bodyNodeIds = Array.isArray(n.bodyNodeIds)
+        ? n.bodyNodeIds.map((entry) => String(entry ?? "").trim())
+        : [];
+    } else if (Array.isArray(n.bodyNodeIds) && n.bodyNodeIds.length > 0) {
+      // Refused rather than dropped, on `stopWhenTasks`' grounds one field
+      // over: a body is a section of the graph the operator said to repeat, and
+      // a block with no passes has nothing to repeat it in — so discarding it
+      // would leave somebody watching for blocks to run again and again that
+      // this app had quietly decided to run once.
+      return {
+        ok: false,
+        error:
+          `“${nodeName}” names blocks to repeat, and only a repeating block ` +
+          "has passes to repeat them in. Make it a loop, or clear the list.",
+      };
+    }
+    if (kind !== "loop" && !boardConditionIsOff(n.stopWhenTasks)) {
       // Refused rather than dropped, which is where this parts company with the
       // two caps above it. A cap on a run block is a number nothing reads; a
       // board condition is an *ending* the operator wrote down, and a block with
@@ -952,18 +993,235 @@ function normalizeNode(
           maxPasses,
           maxLoopCostUSD,
           stopWhenTasks,
+          bodyNodeIds,
     },
   };
+}
+
+/**
+ * The blocks one loop repeats, in the order its pass will create them.
+ *
+ * Empty for a loop that repeats its own task, which is every loop saved before
+ * `bodyNodeIds` existed — so a caller that walks this list gets today's
+ * behaviour with no branch of its own for the compatible case.
+ *
+ * Ordered by the body's **own** edges through the same `topologicalOrder` the
+ * instantiation uses, so "the order the body's edges give" has one definition
+ * and the same tie-break. `graphRefusal` has already established that those
+ * edges form a single chain, so the order is total rather than merely
+ * deterministic; this function does not restate that and would return a
+ * declaration-order list for a body that never passed it.
+ */
+export function loopBody(
+  graph: WorkflowGraph,
+  loop: WorkflowNode,
+): WorkflowNode[] {
+  const ids = bodyOf(loop);
+  if (ids.length === 0) return [];
+  const members = new Set(ids);
+  const nodes = graph.nodes.filter((n) => members.has(n.id));
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const { order } = topologicalOrder({
+    nodes,
+    edges: graph.edges.filter(
+      (e) => members.has(e.from) && members.has(e.to),
+    ),
+  });
+  return order.map((id) => byId.get(id)!);
+}
+
+/**
+ * Every block that is inside some loop's body, and which loop claims it.
+ *
+ * One walk shared by the refusal below and by the two runtime readers, because
+ * "is this node a body member" is asked in three places and a second answer
+ * would be a node instantiated *and* repeated — a run started once by the graph
+ * and again by every pass, on the same folder.
+ */
+export function loopBodyOwners(
+  graph: WorkflowGraph,
+): Map<string, WorkflowNode> {
+  const owner = new Map<string, WorkflowNode>();
+  for (const node of graph.nodes) {
+    if (node.kind !== "loop") continue;
+    for (const memberId of bodyOf(node)) {
+      if (!owner.has(memberId)) owner.set(memberId, node);
+    }
+  }
+  return owner;
+}
+
+/**
+ * One loop's body, from a node that may predate the field.
+ *
+ * **Every read of `bodyNodeIds` outside `normalizeNode` goes through here**, and
+ * that is the compatibility rule of the whole feature rather than defensive
+ * habit: an instance carries a *copy* of its graph taken when it was created, so
+ * a loop that has been repeating since before this field existed is read back
+ * from a blob with no `bodyNodeIds` at all — `undefined`, which a `for…of`
+ * throws on and `.length` reads as a crash in the middle of an advance. The
+ * trap `advanceLoop` records one field over for `maxPasses`, and it fails the
+ * same way: nothing typechecks it away, because the type says the field is
+ * there and the blob was written by an older build that agreed.
+ *
+ * A node carrying anything but an array reads as an empty body, which is what a
+ * loop has always meant.
+ */
+function bodyOf(loop: WorkflowNode): readonly string[] {
+  return Array.isArray(loop.bodyNodeIds) ? loop.bodyNodeIds : [];
+}
+
+/**
+ * Why a loop's body could not be repeated, or null when every body can be.
+ *
+ * Six refusals, and each one stands in front of a failure that is silent or
+ * arrives mid-instance. A body is a *section* of the graph repeated whole, so
+ * the questions are about the graph rather than about a block, which is why
+ * none of this is in `normalizeNode`.
+ *
+ * Read after the cycle and ordering checks above, so the chain test below may
+ * assume the body is acyclic — a body that is not is refused there, by the same
+ * sentence any other cyclic set gets.
+ */
+function loopBodyRefusal(
+  nodes: readonly WorkflowNode[],
+  edges: readonly WorkflowEdge[],
+  byId: ReadonlyMap<string, WorkflowNode>,
+  known: WorkflowKnowledge,
+): string | null {
+  const loops = nodes.filter((n) => n.kind === "loop" && bodyOf(n).length > 0);
+  if (loops.length === 0) return null;
+
+  /** Which loop claimed each block, so a block in two bodies can name both. */
+  const owner = new Map<string, WorkflowNode>();
+
+  for (const loop of loops) {
+    for (const memberId of bodyOf(loop)) {
+      const member = byId.get(memberId);
+      if (!member) {
+        return (
+          `“${loop.name}” repeats a block that is not in this workflow: ` +
+          `${memberId || "(blank)"}.`
+        );
+      }
+      if (member.id === loop.id) {
+        return (
+          `“${loop.name}” is inside its own body, so each pass would create ` +
+          "the loop again rather than the work it repeats."
+        );
+      }
+      const claimed = owner.get(memberId);
+      if (claimed) {
+        return claimed.id === loop.id
+          ? `“${loop.name}” repeats “${member.name}” twice in one pass. A block can only be in a body once.`
+          : `“${member.name}” is in the body of both “${claimed.name}” and “${loop.name}”. A block can only be repeated by one loop.`;
+      }
+      owner.set(memberId, loop);
+
+      // Refused by name rather than by one sentence about "a block that is not
+      // a run", because the three of them go wrong in three different ways and
+      // the operator can only act on the one that is theirs.
+      if (member.kind !== "run") {
+        return member.kind === "orchestrator"
+          ? `“${member.name}” decides what to run with nobody looking, and “${loop.name}” would run it once per pass — so its fan-out cap would be spent again on every pass. A repeated section holds fixed work only.`
+          : member.kind === "merge"
+            ? `“${member.name}” lands branches, and “${loop.name}” is still writing to the one it would land. A merge belongs behind a loop, not inside it.`
+            : `“${member.name}” is itself a loop, and a loop inside a body multiplies one pass cap by another. Repeat one section, not a section that repeats.`;
+      }
+
+      // The loop's own isolation rule, applied per member and for its reason:
+      // every pass carries on the branch the last one built, so a member whose
+      // guards work directly in the folder would leave no record of what each
+      // pass added. Refused here rather than at the first pass, where it would
+      // be a throw in the middle of an instance that had already started.
+      if (!isolatedTemplate(member.templateId, known)) {
+        return (
+          `“${member.name}” is repeated by “${loop.name}”, and each pass ` +
+          "carries on the one before it — which needs a checkout of its own. " +
+          "Its guards work directly in the folder instead."
+        );
+      }
+    }
+  }
+
+  for (const loop of loops) {
+    const members = new Set(bodyOf(loop));
+
+    // The loop block is the only door in and out. Anything else makes "when is
+    // this block released" a question with two answers: the block behind a body
+    // member would be waiting on a run that is created again on every pass, and
+    // the block in front of one would release a member the loop also creates.
+    for (const e of edges) {
+      const inFrom = members.has(e.from);
+      const inTo = members.has(e.to);
+      if (inFrom === inTo) continue;
+      const outside = inFrom ? e.to : e.from;
+      if (outside === loop.id) continue;
+      return (
+        `“${byId.get(outside)!.name}” is linked to “${byId.get(inFrom ? e.from : e.to)!.name}”, ` +
+        `which is inside “${loop.name}”. Link it to “${loop.name}” instead — ` +
+        "the loop block is the only way in and out of what it repeats."
+      );
+    }
+
+    // A body has to be a **chain**, and that is what keeps "one branch, all the
+    // passes" true rather than being a limitation of this implementation: the
+    // members of one pass hand the branch along, so two members continuing one
+    // predecessor is two runs on one ref — which `admitDependencies` refuses by
+    // name, so a diamond here would surface as a throw part-way through a pass
+    // rather than as a sentence at Save.
+    //
+    // Degrees of at most one make the body a set of paths; `size - 1` links
+    // make it exactly one of them. The cycle check above has already ruled out
+    // the third shape those two counts would otherwise admit.
+    const within = edges.filter((e) => members.has(e.from) && members.has(e.to));
+    for (const member of members) {
+      for (const [side, verb] of [
+        ["from", "hands its branch to"],
+        ["to", "carries on"],
+      ] as const) {
+        const links = within.filter((e) => e[side] === member);
+        if (links.length <= 1) continue;
+        return (
+          `“${byId.get(member)!.name}” ${verb} ${links.length} blocks inside ` +
+          `“${loop.name}”. A repeated section is a chain: every pass is one ` +
+          "branch, and two runs cannot extend one branch."
+        );
+      }
+    }
+    if (within.length !== members.size - 1) {
+      return (
+        `The ${members.size} blocks “${loop.name}” repeats are not in one ` +
+        "order. A repeated section is a chain, because every pass is one " +
+        "branch handed from each block to the next."
+      );
+    }
+
+    // What one press of Run would put on the machine over the life of this
+    // block, with both factors named: a cap on the product alone is a number
+    // the operator cannot act on.
+    const worst = (loop.maxPasses ?? 1) * members.size;
+    if (worst > MAX_LOOP_RUNS) {
+      return (
+        `“${loop.name}” repeats ${members.size} block(s) up to ` +
+        `${loop.maxPasses} time(s), which is ${worst} runs from one press of ` +
+        `Run. A loop may start at most ${MAX_LOOP_RUNS}.`
+      );
+    }
+  }
+
+  return null;
 }
 
 /**
  * Why a graph as a whole could never run, or null when nothing is wrong with it.
  *
  * The checks a single block or a single link cannot see: two links carrying on
- * one branch, a merge block with nothing in front of it to land, and the two
- * orderings. Separated from `normalizeWorkflowInput` because it is the phase
- * that reads the finished graph rather than the wire, and it is the one that
- * grows as the kinds of block do.
+ * one branch, a merge block with nothing in front of it to land, the two
+ * orderings, and everything about a loop's repeated section. Separated from
+ * `normalizeWorkflowInput` because it is the phase that reads the finished
+ * graph rather than the wire, and it is the one that grows as the kinds of
+ * block do.
  *
  * Shaped like `folderRefusal` — a sentence or null — for the same reason: a
  * refusal here is something the operator can change.
@@ -1057,7 +1315,8 @@ function graphRefusal(
     );
   }
 
-  return null;
+  // Last, so the chain test inside it may assume an acyclic body.
+  return loopBodyRefusal(nodes, edges, byId, known);
 }
 
 

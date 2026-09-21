@@ -1471,6 +1471,7 @@ const RUN_BLOCK: WorkflowNode = {
   maxPasses: null,
   maxLoopCostUSD: null,
   stopWhenTasks: null,
+  bodyNodeIds: [],
 };
 
 /** A template as `planNode` takes one, with every field it reads different. */
@@ -2468,6 +2469,7 @@ function graphNode(
     maxPasses: null,
     maxLoopCostUSD: null,
     stopWhenTasks: null,
+    bodyNodeIds: [],
     ...extra,
   };
 }

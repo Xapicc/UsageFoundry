@@ -223,6 +223,8 @@ function emptyBlock(id: string, mountId: string, kind: WorkflowNodeKind): BlockD
     stopWhenTasksFolder: "",
     stopWhenTasksStatuses: DEFAULT_STOP_STATUSES,
     stopWhenTasksAtMost: DEFAULT_STOP_AT_MOST,
+    // A new loop repeats its own task, which is what a loop has always been.
+    bodyNodeIds: [],
   };
 }
 
@@ -253,6 +255,10 @@ function toBlocks(workflow: WorkflowDTO): BlockDraft[] {
       n.stopWhenTasks?.statuses.join(",") ?? DEFAULT_STOP_STATUSES,
     stopWhenTasksAtMost:
       n.stopWhenTasks?.atMost.toString() ?? DEFAULT_STOP_AT_MOST,
+    // Read back and sent again untouched. No control on this panel edits it
+    // yet, so the only thing that matters here is that Save does not clear a
+    // body a graph already carries — see `BlockDraft.bodyNodeIds`.
+    bodyNodeIds: n.bodyNodeIds ?? [],
   }));
 }
 

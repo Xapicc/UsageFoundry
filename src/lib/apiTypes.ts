@@ -1731,6 +1731,23 @@ export const MAX_FAN_OUT = 10;
 export const MAX_LOOP_PASSES = 20;
 
 /**
+ * How many runs one loop block may put on the machine over its whole life.
+ *
+ * The ceiling the two numbers above cannot state between them, and it exists
+ * because they *multiply*: a loop that repeats a section creates one run per
+ * body block per pass, so `MAX_LOOP_PASSES` passes over a body the size of
+ * `MAX_WORKFLOW_NODES` is 500 runs from one press of Run — a number nobody
+ * would agree to and nobody typed. Refused at save with the arithmetic spelled
+ * out, both factors named, because "60" on its own is a limit the operator
+ * cannot act on.
+ *
+ * Deliberately larger than `MAX_WORKFLOW_NODES`: these runs arrive one pass at
+ * a time over hours rather than in one synchronous creating pass, so what this
+ * bounds is the bill rather than what a single event-loop turn claims.
+ */
+export const MAX_LOOP_RUNS = 60;
+
+/**
  * What a block *is*.
  *
  * `run` is the original and the default: a fixed task, decided when the graph
@@ -1847,6 +1864,24 @@ export interface WorkflowNodeDTO {
    * here — which reads as off, the same way `kind` reads as `run`.
    */
   stopWhenTasks: LoopBoardConditionDTO | null;
+  /**
+   * The blocks a loop repeats instead of its own task, in no particular order.
+   * Empty on every other kind, and empty on a loop that repeats itself.
+   *
+   * **Empty is what a loop meant before this field existed**, and that reading
+   * is the compatibility rule of the whole feature: a graph saved without it
+   * repeats the loop block's own task, one run per pass, exactly as it always
+   * did. Non-empty means the block starts no run of its own and each pass
+   * creates one run per named block instead, in the order the body's own edges
+   * give.
+   *
+   * A list of ids rather than a parent pointer on each member, because the
+   * membership is a fact about the loop: the refusals that make a body safe —
+   * one body per block, a linear chain, no edge across its boundary — are
+   * whole-graph facts, and reading them off a field scattered over the members
+   * would be reading them off the wrong record.
+   */
+  bodyNodeIds: string[];
 }
 
 /**

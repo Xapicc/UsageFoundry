@@ -309,6 +309,7 @@ function node(id: string, kind: WorkflowNode["kind"]): WorkflowNode {
     maxPasses: null,
     maxLoopCostUSD: null,
     stopWhenTasks: null,
+    bodyNodeIds: [],
   };
 }
 

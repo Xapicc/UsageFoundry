@@ -56,6 +56,7 @@ function block(id: string, over: Partial<BlockDraft> = {}): BlockDraft {
     stopWhenTasksFolder: "",
     stopWhenTasksStatuses: "open",
     stopWhenTasksAtMost: "0",
+    bodyNodeIds: [],
     ...over,
   };
 }
