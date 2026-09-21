@@ -687,12 +687,22 @@ export function WorkflowEditor({
   const connect = useCallback(
     (from: string, to: string) => {
       // A link drawn out of a block some loop already repeats extends that
-      // section, and inside a section there is exactly one legal answer: one
-      // pass is one branch, handed from each block to the next. So it is drawn
+      // section, and inside a section the condition has one safe answer: a pass
+      // has to land what it produced, so a member that did not finish is not
+      // something the rest of the section should carry on from. So it is drawn
       // carrying that answer rather than unanswered, and the panel *states* it
-      // instead of asking — which is what stops the two controls being choices
-      // that something downstream then overrules. Everywhere else neither
-      // condition is safe to assume: see `EDGE_OPTION_LABEL`.
+      // instead of asking. Everywhere else neither condition is safe to assume:
+      // see `EDGE_OPTION_LABEL`.
+      //
+      // The branch is the **second** link's question rather than the first's. A
+      // section may fork, and two links carrying one block's branch is refused
+      // at Save by name — "two runs cannot extend one branch" — so an editor
+      // that set it on every link inside a section would make a section that
+      // fans out unsavable, with the sentence naming a control the operator was
+      // never shown. The first way out of a block carries its branch, which is
+      // the chain a person drawing one block after another means; each later
+      // one cuts its own and leaves it for the section's merge block, which is
+      // exactly what a fork means.
       const inSection = blocks.some(
         (b) => b.kind === "loop" && sectionOf(b.id, blocks, links).includes(from),
       );
@@ -702,7 +712,14 @@ export function WorkflowEditor({
           : [
               ...prev,
               inSection
-                ? { from, to, edge: "on-success" as const, continueBranch: true }
+                ? {
+                    from,
+                    to,
+                    edge: "on-success" as const,
+                    continueBranch: !prev.some(
+                      (l) => l.from === from && l.continueBranch,
+                    ),
+                  }
                 : { from, to, edge: "" as const, continueBranch: false },
             ],
       );
@@ -2406,23 +2423,28 @@ function LinkPanel({
     );
   }
 
-  // Inside a section every link says the same thing, and there is nothing here
-  // to choose. `planPass` creates each member of a pass on the one before it,
-  // completing and on its branch, because the section is a chain precisely so
-  // that one pass is one branch — the two controls below would be choices
-  // something downstream overrules, which is what this panel used to offer.
-  // Drawn conforming by `connect`; a link that says otherwise is refused at
-  // Save, and remove-and-redraw is what brings it into line.
+  // Inside a section the condition is not a choice, and this panel states it
+  // rather than offering a control something downstream overrules: a pass has
+  // to land what it produced, so a member that did not finish is not something
+  // the rest of the section carries on from.
+  //
+  // The branch is not stated, because it is not the same for every link: a
+  // section may fork, and two links carrying one block's branch is refused at
+  // Save. `connect` gives the first way out of a block its branch and each
+  // later one its own, so what this says is what that link actually does.
   if (insideSection !== undefined) {
-    const conforms = link.edge === "on-success" && link.continueBranch;
+    const conforms = link.edge === "on-success";
     return (
       <>
         <p className="mb-3.5 text-sm leading-normal text-ink-muted">
-          <strong className="font-semibold text-ink">{toName}</strong> carries on
-          from <strong className="font-semibold text-ink">{fromName}</strong>{" "}
+          <strong className="font-semibold text-ink">{toName}</strong> starts
+          after <strong className="font-semibold text-ink">{fromName}</strong>{" "}
           inside the section{" "}
           <strong className="font-semibold text-ink">{insideSection}</strong>{" "}
-          repeats: one pass is one branch, handed from each block to the next.
+          repeats, only if it completes.{" "}
+          {link.continueBranch
+            ? `${toName} commits onto ${fromName}'s branch.`
+            : `${toName} cuts its own branch, and the section's merge block lands it.`}
           {!conforms && (
             <span className="text-warn">
               {" "}

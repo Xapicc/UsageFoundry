@@ -562,9 +562,9 @@ export interface PassGroup<T> {
  * A repeating block's runs, grouped into the passes they belong to.
  *
  * **`rows` must already be in creation order**, which is `position` on the
- * wire: that is the order `planPass` created the section in, so it is the order
- * each pass's runs are listed in and there is no second sort that could
- * disagree with the body's own links.
+ * wire: that is the order `stepPass` released each pass's members in, so it is
+ * the order they are listed in and there is no second sort that could disagree
+ * with the section's own links.
  *
  * Grouped on a key rather than on the number, which is `groupPasses`' reading
  * on the server and the same safe direction: a member id carrying no pass at

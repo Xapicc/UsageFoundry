@@ -594,14 +594,18 @@ function migrate(db: Database.Database) {
     --   dashboard meter. It *is* added to the instance's own total, because that
     --   is money this press of Run spent; see instanceSpend.
     --
-    --   'loop' repeats one task, creating a fresh run per pass — each carrying
-    --   on the previous pass's branch, so the run graph stays a DAG and no edge
-    --   ever points backwards. It spawns nothing of its own, so its cost_usd
-    --   stays 0 and every pass's spend is on that pass's own run row. Its
-    --   passes are workflow_instance_runs rows with emitted_by set to it, the
-    --   same column an orchestrator block's runs use, which is what makes the
-    --   instance budget guard, the halt and the second-press refusal cover a
-    --   pass with no new code.
+    --   'loop' repeats a *section* of the graph, instantiating it whole per
+    --   pass, so the run graph stays a DAG and no edge ever points backwards.
+    --   Nothing is carried between passes: each one lands its own work through
+    --   the section's own merge block, and the next one's runs cut fresh
+    --   branches from what that landed. It spawns nothing of its own, so its
+    --   cost_usd stays 0 and every pass's spend is on the rows that pass
+    --   caused. Its members are rows here and in workflow_instance_runs with
+    --   emitted_by set to it, the same column an orchestrator block's runs use,
+    --   which is what makes the instance budget guard, the halt and the
+    --   second-press refusal cover a pass with no new code — and the runs a
+    --   pass's own orchestrator member decides on are named under that member,
+    --   which is why loopSpend sums on the id prefix rather than on emitted_by.
     --
     --   'run' is a block that was never created, because the block in front of
     --   it emitted nothing, took no passes, or could not decide. There is no run

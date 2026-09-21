@@ -843,7 +843,7 @@ is `docs/agent/testing.md`; interface defects and their classes are
   untouched page raised no unsaved-work dialog. Pressing **Repeat** and then a
   block redrew the section live, at 2 links and no refusal. Caveat: driven
   against a `CLAUDE_BIN` that cannot spawn, so nothing here ran a pass; what a
-  pass *does* with the section is `planPass`' own tests. The duplicate-link
+  pass *does* with the section is `stepPass`' own tests. The duplicate-link
   defect this found — the gesture appending beside an ordinary link the loop
   already had to that block, which `normalizeWorkflowInput` refuses as "set to
   start after … twice" — was fixed and re-measured green in the same way.

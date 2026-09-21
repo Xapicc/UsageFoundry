@@ -577,7 +577,7 @@ export function normalizeWorkflowInput(
     // Refused rather than ignored, this file's standing treatment of a field
     // that would otherwise be read by nothing: a `repeats` link hands over no
     // branch, because it starts no run. What a pass does with the branch is
-    // `planPass`', and it is stated on the section's own links.
+    // `stepPass`', and it is stated on the section's own links.
     if (edge === REPEATS_EDGE && e.continueBranch === true) {
       return {
         ok: false,
@@ -1256,10 +1256,11 @@ function normalizeNode(
  *
  * Ordered by the body's **own** edges through the same `topologicalOrder` the
  * instantiation uses, so "the order the body's edges give" has one definition
- * and the same tie-break. `graphRefusal` has already established that those
- * edges form a single chain, so the order is total rather than merely
- * deterministic; this function does not restate that and would return a
- * declaration-order list for a body that never passed it.
+ * and the same tie-break. The order is a topological one rather than a total
+ * one, because a section may fork: what it guarantees is that a member comes
+ * after everything the section's links put in front of it, and `stepPass` needs
+ * exactly that much — the entry sorts first, which is what it reads off this,
+ * and it releases the rest through `planInstanceStep` rather than in order.
  */
 export function loopBody(
   graph: WorkflowGraph,
