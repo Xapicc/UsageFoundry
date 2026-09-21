@@ -5703,26 +5703,44 @@ async function startMergeBlock(
     return;
   }
 
+  // Recorded before the rows exist rather than after `enqueue` returns, which
+  // is why the id is minted here. Two things rest on it, and only the first
+  // used to: a restart or a halt leaves the block pointing at the rows that say
+  // what happened to each branch — and, since the doors in `land.ts` read this
+  // column to tell the pass's own merge block from a person reaching in behind
+  // it, the tie is also this block's *identity*. `enqueue` starts the worker,
+  // so a row drained before the tie was written would be refused by the very
+  // guard the tie exists to lift, and a pass would land nothing for want of a
+  // statement a microtask away.
+  const batchId = randomUUID();
+  db()
+    .prepare(
+      "UPDATE workflow_instance_blocks SET merge_batch_id=?" +
+        " WHERE instance_id=? AND node_id=? AND status='thinking'",
+    )
+    .run(batchId, instanceId, nodeId);
+
   const queued = enqueue(queueable, {
     strategy: node.mergeStrategy,
     autoResolve: node.mergeAutoResolve,
+    batchId,
   });
   if (!queued.ok) {
+    // Nothing was queued, so the id names no rows. Cleared rather than left,
+    // because a block pointing at a batch that does not exist reads on the
+    // instance page as a merge whose rows have been swept.
+    db()
+      .prepare(
+        "UPDATE workflow_instance_blocks SET merge_batch_id=NULL" +
+          " WHERE instance_id=? AND node_id=? AND merge_batch_id=?",
+      )
+      .run(instanceId, nodeId, batchId);
     finishMergeBlock(instanceId, nodeId, {
       ok: false,
       note: `Its branches could not be queued: ${queued.reason}`,
     });
     return;
   }
-
-  // Recorded before the wait, so a restart or a halt leaves the block pointing
-  // at the rows that say what happened to each branch.
-  db()
-    .prepare(
-      "UPDATE workflow_instance_blocks SET merge_batch_id=?" +
-        " WHERE instance_id=? AND node_id=? AND status='thinking'",
-    )
-    .run(queued.batchId, instanceId, nodeId);
 
   const rows = await awaitBatch(queued.batchId, instanceId, nodeId);
   for (const row of rows) {
@@ -5790,6 +5808,12 @@ async function branchVerdict(
 
   let state: Awaited<ReturnType<typeof landState>>;
   try {
+    // No asker, and **nothing below may read `state.blocked`**. This runs
+    // before the batch exists, so there is no asker to give; a caller here that
+    // started refusing on `blocked` would refuse every branch of a live pass —
+    // its own — before the queue ever saw them, which is the defect the asker
+    // exists to close, one step earlier where no door is looking. The four
+    // questions asked below are about the branch and about git alone.
     state = await landState(runId);
   } catch (err) {
     return fail(

@@ -4,6 +4,7 @@ import {
   landRun,
   landState,
   resolveConflicts,
+  type LandAsker,
   type LandState,
   type LandStrategy,
 } from "./land";
@@ -439,7 +440,19 @@ export type EnqueueOutcome =
  */
 export function enqueue(
   runIds: string[],
-  opts: { strategy: LandStrategy; autoResolve: boolean },
+  opts: {
+    strategy: LandStrategy;
+    autoResolve: boolean;
+    /**
+     * The id to file these rows under, for a caller that has to record what it
+     * queued **before** the rows exist. `startMergeBlock` is the one: the tie
+     * from a batch back to the block that queued it is how a door knows the
+     * pass's own merge block is asking, and this call starts the worker, so an
+     * id minted here and written afterwards leaves a window in which the first
+     * row drains unowned.
+     */
+    batchId?: string;
+  },
 ): EnqueueOutcome {
   // A merge writes into a directory the operator also works in, and one worker
   // per process is the whole of what keeps the queue sequential — two processes
@@ -472,7 +485,7 @@ export function enqueue(
 
   if (items.length === 0) return { ok: false, reason: "Nothing was selected." };
 
-  const batchId = randomUUID();
+  const batchId = opts.batchId ?? randomUUID();
   const now = Date.now();
   const insert = db().prepare(
     `INSERT INTO merge_queue
@@ -847,7 +860,13 @@ async function processOne(
   row: QueueRow,
   opts: { autoResolve: boolean; resolutionsRefused: string | null },
 ): Promise<ItemOutcome> {
-  const plan = planItem(await landState(row.run_id), opts);
+  // The row itself is who is asking, at all three doors below. A branch a live
+  // workflow pass owns is refused to everyone except that pass's own merge
+  // block, and `merge_batch_id` is what ties this batch back to the block that
+  // queued it — see `LandAsker`. A batch nothing queued carries no tie and is
+  // therefore a person, which is the right reading of the operator's own Land.
+  const asker = { batchId: row.batch_id };
+  const plan = planItem(await landState(row.run_id, asker), opts);
 
   if (plan.action === "halt") return { status: "skipped", message: plan.reason, halt: true };
   if (plan.action === "fail") return { status: "failed", message: plan.reason };
@@ -855,7 +874,7 @@ async function processOne(
   let resolveCost = 0;
   if (plan.action === "resolve") {
     setStatus(row.id, "resolving");
-    const resolved = await resolveWithClaude(row.run_id);
+    const resolved = await resolveWithClaude(row.run_id, asker);
     resolveCost = resolved.costUSD;
 
     if (!resolved.ok) {
@@ -873,7 +892,7 @@ async function processOne(
     }
   }
 
-  const landed = await landRun(row.run_id, row.strategy as LandStrategy);
+  const landed = await landRun(row.run_id, row.strategy as LandStrategy, asker);
   if (landed.ok) {
     return {
       status: "landed",
@@ -900,8 +919,11 @@ interface ResolveOutcome {
  * on the `run_reviews` row it created — the same row the run page polls. Cost is
  * read off it whatever the outcome, because it was billed either way.
  */
-async function resolveWithClaude(runId: string): Promise<ResolveOutcome> {
-  const started = await resolveConflicts(runId);
+async function resolveWithClaude(
+  runId: string,
+  asker: LandAsker,
+): Promise<ResolveOutcome> {
+  const started = await resolveConflicts(runId, asker);
   if (!started.ok) {
     return {
       ok: false,

@@ -5,7 +5,7 @@ import path from "node:path";
 import { git } from "./git";
 import { withRepoAdmin } from "./repoLock";
 import { db } from "./db";
-import { passNumberOf } from "./passIds";
+import { passMemberOf, passNumberOf } from "./passIds";
 import { commitDiff, type DiffFile } from "./diff";
 import { githubTokenFor } from "./config";
 import { getSettings } from "./settings";
@@ -437,7 +437,15 @@ async function checkoutStateOf(folder: string): Promise<CheckoutState> {
  * Returns null when the run never had a branch — a non-isolated run, or one
  * that died before its checkout existed. That is an empty state, not an error.
  */
-export async function landState(runId: string): Promise<LandState | null> {
+export async function landState(
+  runId: string,
+  /**
+   * Who is asking. See `LandAsker` — it changes exactly one answer, whether a
+   * live pass's hold on this branch applies to the caller, and the default is
+   * the strict one.
+   */
+  asker: LandAsker | null = null,
+): Promise<LandState | null> {
   const run = getRun(runId);
   if (!run || run.isolation !== "worktree" || !run.worktree_branch || !run.repo_root) {
     return null;
@@ -573,7 +581,7 @@ export async function landState(runId: string): Promise<LandState | null> {
     blocked: landRefusal({
       ...state,
       pendingCount: pending?.count ?? 0,
-      loopBlock: loopStillRepeating(state.chain),
+      loopBlock: loopStillRepeating(state.chain, asker),
     }),
   };
 }
@@ -766,7 +774,52 @@ export function chainBlocker(
 }
 
 /**
- * A live pass of a workflow loop that owns this chain's branch, by name.
+ * Who is asking a door about a branch, when the asker is not a person.
+ *
+ * A merge-queue batch and nothing else, because the batch is the only thing
+ * about the asker that is **recorded**: `workflow_instance_blocks.merge_batch_id`
+ * names the block that queued it, and a pass's merge block is a row whose
+ * `node_id` carries the loop and the pass it belongs to. Everything else — that
+ * a land arrived while a pass happened to be running, that no other explanation
+ * fits — would be inferred, and this is not a decision inference may make: it is
+ * the difference between landing a live pass's branch and refusing it.
+ *
+ * Absent means a person, which is the strict reading. Every door that is only
+ * ever reachable from a button passes `null` in as many words rather than
+ * defaulting, so "who is asking" is answered at each of them rather than
+ * assumed.
+ */
+export interface LandAsker {
+  /** The `merge_queue.batch_id` whose row is being drained. */
+  batchId: string;
+}
+
+/** Which pass of which loop queued this batch, if a pass's merge block did. */
+function batchOwner(
+  asker: LandAsker | null,
+): { instanceId: string; loopNodeId: string; pass: number } | null {
+  if (!asker) return null;
+  const row = db()
+    .prepare(
+      "SELECT instance_id AS instanceId, node_id AS nodeId" +
+        " FROM workflow_instance_blocks WHERE merge_batch_id = ?",
+    )
+    .get(asker.batchId) as { instanceId: string; nodeId: string } | undefined;
+  if (!row) return null;
+  // Null for a merge block of the graph itself rather than of a pass — an
+  // ordinary merge, which owns nothing and is exempt from nothing.
+  const member = passMemberOf(row.nodeId);
+  if (!member) return null;
+  return {
+    instanceId: row.instanceId,
+    loopNodeId: member.loopNodeId,
+    pass: member.pass,
+  };
+}
+
+/**
+ * A live pass of a workflow loop that owns this chain's branch and is not the
+ * caller, by name.
  *
  * A pass of a loop lands its own work: the section it repeats ends in a merge
  * block, and that block is what puts the pass's branches onto their target. So
@@ -777,6 +830,22 @@ export function chainBlocker(
  * going to land it, deleting or purging one destroys work the pass is not
  * finished with, and either way the loop's own reading of whether the pass
  * landed everything is decided by something the operator did behind it.
+ *
+ * **And the pass's own merge block comes through here too**, which is what the
+ * `asker` is for. That block only ever runs while its loop is `looping` — the
+ * loop is not settled until the pass is — so a refusal that could not see who
+ * was asking fired against the one mechanism it exists to protect: every branch
+ * of the pass was refused, the pass landed nothing, and the loop stopped on the
+ * rule that a pass which did not land everything stops the loop. The operator
+ * was told to stop the workflow so that the branch could be landed by the merge
+ * block of the workflow they had just been told to stop.
+ *
+ * The exemption is the **owning pass alone**: same instance, same loop, same
+ * pass number. A different loop's merge block, and a later pass of the same
+ * loop, are as much strangers to this branch as a person is, and are refused
+ * with the sentence a person gets. One function rather than an exemption at
+ * each door, because four call sites agreeing about a question none of them
+ * could ask completely is how this got in.
  *
  * Matched on the member id rather than on `emitted_by`, because the runs a
  * pass's *orchestrator* member decided on are named under that member rather
@@ -791,11 +860,21 @@ export function chainBlocker(
  */
 function loopStillRepeating(
   chain: readonly ChainMember[],
+  /** See `LandAsker`. `null` is a person, and a person is never exempt. */
+  asker: LandAsker | null,
 ): { blockName: string; pass: number | null } | null {
   if (chain.length === 0) return null;
-  const row = db()
+  const owner = batchOwner(asker);
+  // Every match rather than the first, and the asker's own pass dropped from
+  // them rather than compared against one of them: a section may itself hold a
+  // loop, so a member of an inner pass sits under two `looping` rows at once
+  // and which of the two a `LIMIT 1` returned was arbitrary. Dropping leaves
+  // the outer hold standing, which is the conservative reading for a door that
+  // destroys work.
+  const rows = db()
     .prepare(
-      `SELECT b.node_name AS name, w.node_id AS memberId
+      `SELECT DISTINCT b.instance_id AS instanceId, b.node_id AS loopNodeId,
+                       b.node_name AS name, w.node_id AS memberId
          FROM workflow_instance_runs w
          JOIN workflow_instance_blocks b
            ON b.instance_id = w.instance_id
@@ -804,14 +883,31 @@ function loopStillRepeating(
           -- length of that separator. See passMemberId, which writes it.
           AND substr(w.node_id, 1, length(b.node_id) + 6) = b.node_id || '#pass-'
         WHERE w.run_id IN (${chain.map(() => "?").join(",")})
-        LIMIT 1`,
+        ORDER BY b.node_id, w.node_id`,
     )
-    .get(...chain.map((m) => m.runId)) as
-    | { name: string; memberId: string }
-    | undefined;
-  return row
-    ? { blockName: row.name, pass: passNumberOf(row.memberId) }
-    : null;
+    .all(...chain.map((m) => m.runId)) as Array<{
+    instanceId: string;
+    loopNodeId: string;
+    name: string;
+    memberId: string;
+  }>;
+
+  for (const row of rows) {
+    // Read off the **suffix** the matched loop prefixes, not off the whole id:
+    // a member of a loop nested in a loop carries two pass numbers, and the one
+    // that belongs to this row is the one after this row's own node id.
+    const pass = passNumberOf(row.memberId.slice(row.loopNodeId.length));
+    if (
+      owner &&
+      owner.instanceId === row.instanceId &&
+      owner.loopNodeId === row.loopNodeId &&
+      owner.pass === pass
+    ) {
+      continue;
+    }
+    return { blockName: row.name, pass };
+  }
+  return null;
 }
 
 /** The sentence every door that would move or destroy the branch shares. */
@@ -979,11 +1075,13 @@ export type LandOutcome =
 export async function landRun(
   runId: string,
   strategy: LandStrategy = getSettings().landStrategy,
+  /** Who is asking. See `LandAsker`; `null` is the operator's own button. */
+  asker: LandAsker | null = null,
 ): Promise<LandOutcome> {
   const run = getRun(runId);
   if (!run) return { ok: false, reason: "No such run." };
 
-  const state = await landState(runId);
+  const state = await landState(runId, asker);
   if (!state) return { ok: false, reason: "This run has no branch to land." };
   if (state.blocked) return { ok: false, reason: state.blocked };
 
@@ -1357,7 +1455,16 @@ const resolving = ((globalThis as unknown as { __ufResolving?: Set<string> })
  * survived and then makes the commit itself. An agent that reports success
  * having left `<<<<<<<` in a file is the exact failure this ordering prevents.
  */
-export async function resolveConflicts(runId: string): Promise<LandOutcome> {
+export async function resolveConflicts(
+  runId: string,
+  /**
+   * Who is asking. See `LandAsker`. This is the door that spends money, so the
+   * owning pass's merge block — which may have been queued with
+   * `mergeAutoResolve` set, and that tick *is* the authorisation — pays for its
+   * own conflict; everyone else is still refused.
+   */
+  asker: LandAsker | null = null,
+): Promise<LandOutcome> {
   // Checked and taken in one turn — `createRun`'s folder-claim property — so
   // two callers arriving together cannot both get past it.
   if (resolving.has(runId)) {
@@ -1365,21 +1472,24 @@ export async function resolveConflicts(runId: string): Promise<LandOutcome> {
   }
   resolving.add(runId);
   try {
-    return await startResolution(runId);
+    return await startResolution(runId, asker);
   } finally {
     resolving.delete(runId);
   }
 }
 
 /** The body of `resolveConflicts`, bracketed by its claim. */
-async function startResolution(runId: string): Promise<LandOutcome> {
+async function startResolution(
+  runId: string,
+  asker: LandAsker | null,
+): Promise<LandOutcome> {
   const run = getRun(runId);
   if (!run) return { ok: false, reason: "No such run." };
   if (assistRunning(runId, "resolve")) {
     return { ok: false, reason: "A resolution for this run is already running." };
   }
 
-  const state = await landState(runId);
+  const state = await landState(runId, asker);
   if (!state) return { ok: false, reason: "This run has no branch." };
   if (!state.branchExists || !state.target) {
     return { ok: false, reason: state.blocked ?? "There is nothing to resolve." };
@@ -1400,9 +1510,11 @@ async function startResolution(runId: string): Promise<LandOutcome> {
       reason: `Run ${short(sibling.runId)} is ${sibling.status} on this same branch, so a resolution paid for now would be resolving against a moving branch.`,
     };
   }
-  // And the run that is not there yet — a loop's next pass. Same sentence, and
-  // it matters most here of the four: this door is the one that spends money.
-  const repeating = loopStillRepeating(state.chain);
+  // And the pass that still owns this branch. Same sentence, and it matters
+  // most here of the four: this door is the one that spends money — which cuts
+  // both ways, because a merge block queued with `mergeAutoResolve` has been
+  // authorised to pay for its own conflict and used to be refused the right to.
+  const repeating = loopStillRepeating(state.chain, asker);
   if (repeating) {
     return {
       ok: false,
@@ -2040,7 +2152,9 @@ export async function deleteBranch(runId: string): Promise<LandOutcome> {
       reason: `Run ${short(heir.runId)} is ${heir.status} and set to carry this branch on. Deleting it now would take its starting point away.`,
     };
   }
-  const repeating = loopStillRepeating(state.chain);
+  // Always a person: nothing automatic in this app deletes a branch, and a
+  // pass's merge block lands one rather than removing it.
+  const repeating = loopStillRepeating(state.chain, null);
   if (repeating) {
     return {
       ok: false,
@@ -2250,7 +2364,9 @@ export async function purgeBranch(
     branchExists: exists.ok,
     confirmBranch,
     chain,
-    loopBlock: loopStillRepeating(chain),
+    // Always a person, for `deleteBranch`'s reason: purging is a button and
+    // nothing else reaches it.
+    loopBlock: loopStillRepeating(chain, null),
   });
   if (refusal) return { ok: false, reason: refusal };
 

@@ -1219,6 +1219,31 @@ is `docs/agent/testing.md`; interface defects and their classes are
   the inspector, five empty states, n=1, one link in. A binary conflict reads
   `contents`, as `parseMergeTree` takes the last record.
 
+- **A live loop pass's own merge block may land the pass's branches; nobody
+  else may.** 2026-09-21, `src/lib/loopMergeOwnership.test.ts`, 11 assertions
+  over a real git repository and a real merge queue. Before the change, a pass
+  driven through `advanceInstances` onto a branch carrying a commit reported
+  `Landed 0 of 1 branch(es). uf/… — Pass 1 of the workflow block “Chip away” is
+  still running on this branch and lands it at its own merge block … Stop that
+  run of the workflow first.` — verbatim the sentence the Dockrac install
+  produced on ten branches. After it, the commit is in the operator's `main`,
+  `runs.landed_at`/`landed_into` are written and `blocksOf` reports
+  `branchesLanded: 1`. `loopStillRepeating` now takes the asker, resolved from
+  `workflow_instance_blocks.merge_batch_id` back to the block that queued the
+  batch, and exempts the owning pass alone: a later pass of the same loop, a
+  merge block of another instance, and a batch nothing queued are each still
+  refused with the unchanged sentence, as are a person's Land, Delete, Purge
+  and Resolve. Caveat: the exemption is keyed on (instance, loop node, pass),
+  so a section that itself holds a loop leaves the *outer* hold standing over
+  an inner pass's merge — conservative, untested, and not reachable through the
+  editor today.
+
+- **A pass that genuinely cannot land still fails with the reason it has.**
+  Same file and date: the same fixture with an untracked file in the operator's
+  checkout halts the repository on `The checkout has uncommitted changes`, the
+  merge block settles `failed`, and `blocksOf` reports `branchesFailed: 1`.
+  This run changed who may land, not what a failure to land means.
+
 ### Git and review
 
 - **Diff and land parsers, `npm test` 24 assertions:** NUL-separated numstat
@@ -3493,13 +3518,13 @@ measurement under *Verified* and cut the item down to what is still open.
   check that pass 2's branches are cut from a commit that carries pass 1's
   work.
 
-- **No pass has landed a branch, because nothing can.** A pass's own merge
-  member is refused by `loopStillRepeating` — filed as a task, and recorded
-  above — so the landing clause has been seen at *landed nothing* and at
-  *landed 0 of 3 branches* but never at a figure where anything went onto the
-  target, and no loop has taken a second pass. Settle once that is fixed: run
-  the same emitting fixture and read pass 2 for members that start from what
-  pass 1 landed.
+- **No pass has landed a branch against a built server.** The refusal that made
+  it impossible is gone and a pass landing its own branch is now driven under
+  `npm test` — `loopMergeOwnership.test.ts`, recorded above — but by hand the
+  landing clause has still only been seen at *landed nothing* and at *landed 0
+  of 3 branches*, and no loop has taken a second pass in a browser. Settle: run
+  the same emitting fixture against a built server and read pass 2 for members
+  that start from what pass 1 landed.
 
 - **No loop has actually stopped on a board threshold.** The figures the
   decision reads were driven by hand against a built server and are recorded
