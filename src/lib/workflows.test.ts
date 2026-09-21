@@ -3,6 +3,12 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import {
+  passMemberId,
+  passMemberOf,
+  passNumberOf,
+  passPrefix,
+} from "./passIds";
+import {
   addBlockSpend,
   blockSettlement,
   blockSpendReading,
@@ -18,12 +24,9 @@ import {
   normalizeWorkflowInput,
   planEmission,
   groupPasses,
-  passMemberId,
-  passNumberOf,
   planInstanceStep,
   planNode,
   planLoopPass,
-  planPass,
   planWorkflowProposal,
   summarizeProposedGraph,
   type BlockStatus,
@@ -36,6 +39,8 @@ import {
   type LoopDecision,
   type LoopPass,
   type LoopPassInput,
+  type LoopPassMember,
+  type LoopRunState,
   type MemberSpendRow,
   type WorkflowEdge,
   type WorkflowGraph,
@@ -3571,9 +3576,7 @@ describe("planInstanceStep — the link that says what a loop repeats", () => {
 
   it("releases what is behind the loop off the loop's own link", () => {
     // The other half of "the loop block is the way out": Z waits for the loop
-    // and not for the last member, which is a run it has never heard of. The
-    // loop's own ledger row carries the passes it took, and the last of them is
-    // the run the successor is put behind.
+    // and not for a member, which is a run it has never heard of.
     const step = stepOf(
       {
         l: decided("emitted", [
@@ -3588,9 +3591,53 @@ describe("planInstanceStep — the link that says what a loop repeats", () => {
       step.create.map((c) => c.nodeId),
       ["z"],
     );
-    assert.deepEqual(step.create[0].dependsOn, [
-      { runId: "r-pass-2", edge: "on-success", continueBranch: false },
-    ]);
+    // **No run at all**, exactly as a successor of a merge block gets. Every
+    // pass landed its own work through the section's own exit, so by the time
+    // the loop hands on there is no branch of its own left and nothing for Z to
+    // be put behind: it is an ordinary queued run, started after the landing.
+    // Handed the last pass's run instead, Z would carry on a ref that pass had
+    // already landed and may since have deleted.
+    assert.deepEqual(step.create[0].dependsOn, []);
+  });
+
+  it("holds what is behind it back while a pass is still running", () => {
+    // `looping` is pending rather than settled, and that is what stops a
+    // successor being created between two passes: the block can still commit a
+    // whole further pass to the folders behind it.
+    const step = stepOf(
+      { l: decided("looping"), z: decided("waiting") },
+      DRAWN,
+    );
+    assert.deepEqual(step.create, []);
+    assert.deepEqual(step.block, []);
+  });
+
+  it("starts an on-finish successor after a loop that stopped on a bad pass", () => {
+    // "Clean up after it however it went" and "only once every pass landed"
+    // are both things a person writes, and the condition on the edge decides —
+    // `edgeVerdict`'s own reading of a merge block one kind along.
+    const cleanup: WorkflowGraph = {
+      ...DRAWN,
+      edges: [
+        ...DRAWN.edges.filter((e) => e.to !== "z"),
+        edge("l", "z", { edge: "on-finish" }),
+      ],
+    };
+    const step = stepOf(
+      { l: decided("failed"), z: decided("waiting") },
+      cleanup,
+    );
+    assert.deepEqual(
+      step.create.map((c) => c.nodeId),
+      ["z"],
+    );
+    assert.deepEqual(step.create[0].dependsOn, []);
+
+    // And `on-success` is not satisfied by it, which is the only reading under
+    // which "after the loop succeeded" means what it says.
+    const strict = stepOf({ l: decided("failed"), z: decided("waiting") }, DRAWN);
+    assert.deepEqual(strict.create, []);
+    assert.match(strict.block[0].reason, /did not finish what it repeats/);
   });
 });
 
@@ -3905,23 +3952,63 @@ describe("bootBlockPlan — which waiting blocks a restart closes out", () => {
  * shape a finished-looking branch with the last piece of work missing.
  */
 
-/** One pass, stated as the status its single run ended in. */
+/** One run member of a pass, stated as the status its run ended in. */
+function runMember(
+  nodeId: string,
+  status: RunStatus,
+  opts: {
+    done?: boolean;
+    iterations?: number;
+    name?: string;
+    pass?: number;
+  } = {},
+): LoopPassMember {
+  return {
+    memberId: passMemberId("loop", opts.pass ?? 1, nodeId),
+    nodeId,
+    name: opts.name ?? nodeId,
+    kind: "run",
+    run: {
+      id: `r-${opts.pass ?? 1}-${nodeId}`,
+      status,
+      iterations: opts.iterations ?? 1,
+      reportedDone: opts.done ?? false,
+    },
+    block: null,
+    emitted: [],
+  };
+}
+
+/** One member of a pass that is a ledger row: an orchestrator or a merge. */
+function blockMember(
+  nodeId: string,
+  kind: "orchestrator" | "merge",
+  status: BlockStatus,
+  opts: {
+    error?: string;
+    emitted?: LoopRunState[];
+    name?: string;
+    pass?: number;
+  } = {},
+): LoopPassMember {
+  return {
+    memberId: passMemberId("loop", opts.pass ?? 1, nodeId),
+    nodeId,
+    name: opts.name ?? nodeId,
+    kind,
+    run: null,
+    block: { status, error: opts.error ?? null },
+    emitted: opts.emitted ?? [],
+  };
+}
+
+/** One pass, stated as the status its single run member ended in. */
 function pass(
   n: number,
   status: RunStatus,
   opts: { done?: boolean; iterations?: number } = {},
 ): LoopPass {
-  return {
-    pass: n,
-    runs: [
-      {
-        id: `r-${n}`,
-        status,
-        iterations: opts.iterations ?? 1,
-        reportedDone: opts.done ?? false,
-      },
-    ],
-  };
+  return { pass: n, members: [runMember("body", status, { ...opts, pass: n })] };
 }
 
 function loopOf(
@@ -4062,18 +4149,18 @@ describe("planLoopPass — whether a loop takes another pass", () => {
     );
   });
 
-  it("stops on a pass that produced no runs at all", () => {
-    // The hot loop. A pass whose `createRun` threw, or whose run row has been
-    // deleted, has nothing to carry on from — and another pass would be created
-    // the same way and fail the same way, for ever, one billed attempt at a
-    // time.
-    const d = loopOf([{ pass: 1, runs: [] }]);
+  it("stops on a pass that produced no members at all", () => {
+    // The hot loop. A pass whose rows have since been deleted, or a loop from
+    // before a section was required, has nothing to carry on from — and another
+    // pass would be created the same way and fail the same way, for ever, one
+    // billed attempt at a time.
+    const d = loopOf([{ pass: 1, members: [] }]);
     assert.equal(d.kind === "stop" && d.code, "empty");
-    assert.match(d.kind === "stop" ? d.reason : "", /started no run/);
+    assert.match(d.kind === "stop" ? d.reason : "", /started nothing/);
   });
 
   it("reads the empty pass before the caps, so the sentence names the cause", () => {
-    const d = loopOf([{ pass: 1, runs: [] }], {
+    const d = loopOf([{ pass: 1, members: [] }], {
       maxPasses: 1,
       maxCostUSD: 1,
       spentGuardUSD: 99,
@@ -4152,7 +4239,7 @@ describe("planLoopPass — the board condition", () => {
     // to be clear at that moment does not make the failure a completion.
     const broken = loopOf([pass(1, "failed")], boardOf(0));
     assert.equal(broken.kind === "stop" && broken.code, "failed");
-    const empty = loopOf([{ pass: 1, runs: [] }], boardOf(0));
+    const empty = loopOf([{ pass: 1, members: [] }], boardOf(0));
     assert.equal(empty.kind === "stop" && empty.code, "empty");
   });
 
@@ -4322,10 +4409,11 @@ describe("planInstanceStep — a loop block among the others", () => {
     assert.deepEqual(step.block, []);
   });
 
-  it("creates the block behind it against the last pass, carrying the branch", () => {
-    // The last pass and no other: the passes are a chain, so waiting for it is
-    // waiting for all of them, and it is the only run a successor can continue
-    // without becoming a second run on one predecessor.
+  it("creates the block behind it after the last pass, pushing no run", () => {
+    // Every pass landed its own work through the section's own exit, so by the
+    // time the loop hands on there is no branch of its own left and no run to
+    // wait for: a successor of a loop is a successor of a *landing*, exactly as
+    // a successor of a merge block is.
     const step = stepOf(
       {
         chip: decided("emitted", [
@@ -4335,15 +4423,15 @@ describe("planInstanceStep — a loop block among the others", () => {
       },
       LOOP,
     );
-    assert.deepEqual(step.create, [
-      {
-        nodeId: "review",
-        dependsOn: [{ runId: "r-2", edge: "on-success", continueBranch: true }],
-      },
-    ]);
+    assert.deepEqual(step.create, [{ nodeId: "review", dependsOn: [] }]);
   });
 
-  it("blocks what is behind a loop whose last pass did not qualify", () => {
+  it("does not read the last pass's run at all", () => {
+    // The defect this replaced: handed the last pass's run, a successor would
+    // carry on a ref that pass had already landed and may since have deleted —
+    // and which member of a section that fans out was "the last" was a question
+    // with no answer. A pass whose runs all failed is a pass the loop already
+    // stopped on, and `settleLoop` is what wrote that onto the block row.
     const step = stepOf(
       {
         chip: decided("emitted", [
@@ -4353,13 +4441,16 @@ describe("planInstanceStep — a loop block among the others", () => {
       },
       LOOP,
     );
-    assert.deepEqual(step.create, []);
-    assert.match(step.block[0].reason, /whose last pass ended failed/);
+    assert.deepEqual(step.create, [{ nodeId: "review", dependsOn: [] }]);
   });
 
-  it("blocks what is behind a loop that took no passes", () => {
-    const step = stepOf({ chip: decided("emitted", []) }, LOOP);
-    assert.match(step.block[0].reason, /took no passes/);
+  it("blocks what is behind a loop that stopped on a pass that failed", () => {
+    // The block row is the only thing left to read, which is why `settleLoop`
+    // writes `failed` rather than `emitted` for one of those. See
+    // `loopStopStatus`.
+    const step = stepOf({ chip: decided("failed", []) }, LOOP);
+    assert.deepEqual(step.create, []);
+    assert.match(step.block[0].reason, /did not finish what it repeats/);
   });
 
   it("never asks for a first pass twice", () => {
@@ -4398,244 +4489,117 @@ describe("planInstanceStep — a loop block among the others", () => {
 });
 
 /* ------------------------------------------------------------------ */
-/* One pass of a loop, and the passes read back out of the rows        */
+/* A pass's member ids, and the passes read back out of them           */
 /* ------------------------------------------------------------------ */
 
 /**
- * What one pass is made of, and how a body's rows group back into passes.
+ * The format a pass names its rows in, and the grouping read back out of it.
  *
- * `planLoopPass` above decides whether to spend the money; these two decide
- * what is bought and what the next decision is read off, and both fail
- * silently. A member left off the chain is a second run continuing one
- * predecessor, which `admitDependencies` refuses mid-pass with nobody to show
- * it to. A chain wired backwards runs the section in reverse and looks exactly
- * like a section that ran. And the grouping is what every exit condition is
- * read against: three passes of two read as six passes of one trips the cap
- * four passes early and reports it as the loop running out, while six read as
- * one never trips it at all.
- *
- * A body-less loop is in here too, in every case, because "empty means what a
- * loop has always meant" is the compatibility rule of the whole feature and it
- * is a claim about these two functions before it is a claim about anything else.
+ * Earned twice over. The string is written in one place and parsed in three —
+ * `loopPasses` groups on it, `land.ts` names the pass holding a branch from it,
+ * and the instance DTO shows a pass number off it — so a format and a parser
+ * that drifted apart is a loop reporting one pass of six where there were three
+ * passes of two, which trips the pass cap four passes early and reports it as
+ * running out. And the grouping is what `planLoopPass` reads its whole decision
+ * off: six passes read as one never trips the cap at all.
  */
-
-const LOOP = { id: "L", name: "Chip away" };
-const BODY = [
-  { id: "plan", name: "Plan it" },
-  { id: "do", name: "Do it" },
-];
-
-/** What the first pass of a loop released by one predecessor carries. */
-const RELEASED = [
-  { runId: "r-before", edge: "on-success" as const, continueBranch: false },
-];
-
-describe("planPass — the runs of one pass", () => {
-  it("plans one run for a loop with no body, exactly as it always did", () => {
-    const members = planPass({ loop: LOOP, body: [], pass: 1, carry: RELEASED });
-    assert.deepEqual(members, [
-      {
-        nodeId: "L",
-        memberId: "L#pass-1",
-        memberName: "Chip away — pass 1",
-        dependsOn: RELEASED,
-      },
-    ]);
+describe("passMemberId", () => {
+  it("round-trips the loop, the pass and the block", () => {
+    const id = passMemberId("loop-1", 3, "body-2");
+    assert.deepEqual(passMemberOf(id), {
+      loopNodeId: "loop-1",
+      pass: 3,
+      bodyNodeId: "body-2",
+    });
+    assert.equal(passNumberOf(id), 3);
   });
 
-  it("plans one run per body block, in the order it was given", () => {
-    const members = planPass({ loop: LOOP, body: BODY, pass: 1, carry: [] });
-    assert.deepEqual(
-      members.map((m) => [m.nodeId, m.memberId, m.memberName]),
-      [
-        ["plan", "L#pass-1#plan", "Plan it — pass 1"],
-        ["do", "L#pass-1#do", "Do it — pass 1"],
-      ],
-    );
+  it("puts every row a loop causes under one prefix", () => {
+    // The prefix is the whole of "is this row ours" — for a member, and for a
+    // run an orchestrator member decided on, which `createEmitted` names under
+    // the member rather than under the loop. `loopSpend` sums on it, so a run
+    // outside it is money a pass spent and its cap cannot see.
+    const member = passMemberId("loop-1", 2, "body-2");
+    assert.ok(member.startsWith(passPrefix("loop-1")));
+    assert.ok(`${member}#spec-7`.startsWith(passPrefix("loop-1")));
+    assert.equal(passNumberOf(`${member}#spec-7`), 2);
   });
 
-  it("chains the members of a pass onto one branch", () => {
-    const members = planPass({ loop: LOOP, body: BODY, pass: 2, carry: RELEASED });
-    // The first member carries whatever the pass was given — for pass 2 that is
-    // the last run of pass 1 — and every member after it carries the one before.
-    assert.deepEqual(members[0].dependsOn, RELEASED);
-    assert.deepEqual(members[1].dependsOn, [
-      { member: 0, edge: "on-success", continueBranch: true },
-    ]);
+  it("reads a loop's own id back off a member from before sections", () => {
+    // An instance carries a copy of the graph it was started from, so a loop
+    // that has been repeating since it held a task of its own is still read
+    // back — and its rows are `<loop>#pass-N`, naming no block. Null rather
+    // than a guess, and it reads as the loop's own block, which is what it was.
+    assert.deepEqual(passMemberOf("loop-1#pass-4"), {
+      loopNodeId: "loop-1",
+      pass: 4,
+      bodyNodeId: null,
+    });
   });
 
-  it("names a member by an index rather than a run id, because it has none yet", () => {
-    // The whole pass is created in one synchronous turn, so the run a member
-    // depends on does not exist when the pass is planned. Stating the link as a
-    // position is what lets the plan be pure and still be wired correctly.
-    const members = planPass({ loop: LOOP, body: BODY, pass: 1, carry: [] });
-    assert.deepEqual(members[0].dependsOn, []);
-    assert.ok(!("runId" in members[1].dependsOn[0]));
-  });
-
-  it("unrolls a two-block body over three passes as one chain", () => {
-    // The whole feature in one case. Each pass is planned against the last run
-    // of the pass before it, which is what `createPass` does with the ids it
-    // has just minted — so the six runs are one branch with one owner, and
-    // `loopVerdict` releasing on the last of them releases on all six.
-    const ids: string[] = [];
-    const links: unknown[][] = [];
-    let carry: Parameters<typeof planPass>[0]["carry"] = [];
-    for (const pass of [1, 2, 3]) {
-      const members = planPass({ loop: LOOP, body: BODY, pass, carry });
-      const minted = members.map((m) => `run-${m.memberId}`);
-      ids.push(...members.map((m) => m.memberId));
-      links.push(
-        members.map((m, index) =>
-          m.dependsOn.map((link) =>
-            "runId" in link
-              ? [link.runId, link.edge, link.continueBranch]
-              : [minted[link.member], link.edge, link.continueBranch],
-          ),
-        ).flat(),
-      );
-      carry = [
-        {
-          runId: minted[minted.length - 1],
-          edge: "on-success",
-          continueBranch: true,
-        },
-      ];
-    }
-
-    assert.deepEqual(ids, [
-      "L#pass-1#plan",
-      "L#pass-1#do",
-      "L#pass-2#plan",
-      "L#pass-2#do",
-      "L#pass-3#plan",
-      "L#pass-3#do",
-    ]);
-    // Pass 1 starts from nothing; every later link continues the branch, and
-    // every one of them is `on-success` — a pass that did not complete has
-    // already stopped the loop, so a race can only be refused at admission.
-    assert.deepEqual(links[0], [
-      ["run-L#pass-1#plan", "on-success", true],
-    ]);
-    assert.deepEqual(links[1], [
-      ["run-L#pass-1#do", "on-success", true],
-      ["run-L#pass-2#plan", "on-success", true],
-    ]);
-    assert.deepEqual(links[2], [
-      ["run-L#pass-2#do", "on-success", true],
-      ["run-L#pass-3#plan", "on-success", true],
-    ]);
+  it("says a plain node id carries no pass", () => {
+    // What tells a graph's own block from a pass's member, at every reader.
+    assert.equal(passMemberOf("body-2"), null);
+    assert.equal(passNumberOf("body-2"), null);
   });
 });
 
-describe("passMemberId and passNumberOf — one spelling, read back", () => {
-  it("keeps the name a body-less pass has always had", () => {
-    // Every row already in a database says this, and `bootBlocks.test.ts`
-    // builds one by hand.
-    assert.equal(passMemberId("L", 1, null), "L#pass-1");
-    assert.equal(passNumberOf("L#pass-1"), 1);
-  });
-
-  it("names the member when there is one, and reads the pass back out", () => {
-    assert.equal(passMemberId("L", 12, "do"), "L#pass-12#do");
-    assert.equal(passNumberOf("L#pass-12#do"), 12);
-  });
-
-  it("answers null for a member id that carries no pass", () => {
-    // An orchestrator block's emitted run, which shares the column.
-    assert.equal(passNumberOf("some-node"), null);
-  });
-});
-
-describe("groupPasses — the rows of a loop read back as passes", () => {
-  const run = (id: string) => ({
-    id,
-    status: "completed" as const,
-    iterations: 1,
-    reportedDone: false,
-  });
-
-  it("reads a body-less loop as one run per pass", () => {
+describe("groupPasses", () => {
+  it("groups a pass's several members together", () => {
+    // The whole point of a section: one pass is a fan-out and a merge, not one
+    // run. Read as three passes it would trip a cap of 2 on its first.
+    const grouped = groupPasses([
+      runMember("a", "completed"),
+      runMember("b", "completed"),
+      blockMember("m", "merge", "emitted"),
+    ]);
+    assert.equal(grouped.length, 1);
     assert.deepEqual(
-      groupPasses([
-        { memberId: "L#pass-1", run: run("a") },
-        { memberId: "L#pass-2", run: run("b") },
-      ]),
+      grouped[0].members.map((m) => m.nodeId),
+      ["a", "b", "m"],
+    );
+  });
+
+  it("splits on the pass number the ids carry, not on a count", () => {
+    const grouped = groupPasses([
+      runMember("a", "completed", { pass: 1 }),
+      runMember("m", "completed", { pass: 1 }),
+      runMember("a", "running", { pass: 2 }),
+    ]);
+    assert.deepEqual(
+      grouped.map((p) => [p.pass, p.members.length]),
       [
-        { pass: 1, runs: [run("a")] },
-        { pass: 2, runs: [run("b")] },
+        [1, 2],
+        [2, 1],
       ],
     );
   });
 
-  it("groups a two-block body into passes rather than counting rows", () => {
-    // Six rows, three passes. Counted as rows this loop would look four passes
-    // further through its cap than it is.
-    const grouped = groupPasses(
-      [1, 2, 3].flatMap((pass) => [
-        { memberId: `L#pass-${pass}#plan`, run: run(`plan-${pass}`) },
-        { memberId: `L#pass-${pass}#do`, run: run(`do-${pass}`) },
-      ]),
-    );
-    assert.equal(grouped.length, 3);
+  it("keeps a pass whose rows are gone as an empty slot", () => {
+    // Pass 2's members were deleted. The number comes off the ids that are
+    // left, so pass 3 is still pass 3 — where counting would call it pass 2 and
+    // the cap would be read one pass short for the rest of the loop.
+    const grouped = groupPasses([
+      runMember("a", "completed", { pass: 1 }),
+      runMember("a", "running", { pass: 3 }),
+    ]);
     assert.deepEqual(
-      grouped.map((p) => [p.pass, p.runs.map((r) => r.id)]),
-      [
-        [1, ["plan-1", "do-1"]],
-        [2, ["plan-2", "do-2"]],
-        [3, ["plan-3", "do-3"]],
-      ],
+      grouped.map((p) => p.pass),
+      [1, 3],
     );
   });
 
-  it("keeps the last run of a pass last, because the ending is read off it", () => {
+  it("gives a member with no pass in its id a pass of its own", () => {
+    // The safe direction: an extra entry can only stop a loop early, where a
+    // member folded into the pass beside it changes which rows every exit
+    // condition is read off.
     const grouped = groupPasses([
-      { memberId: "L#pass-1#plan", run: run("plan-1") },
-      { memberId: "L#pass-1#do", run: run("do-1") },
-    ]);
-    assert.equal(grouped.at(-1)?.runs.at(-1)?.id, "do-1");
-  });
-
-  it("leaves a member whose run has gone as an empty slot, not a missing pass", () => {
-    // A deleted run must not shorten every pass after it by one: the member row
-    // still says which pass it belongs to, and that is what the grouping reads.
-    const grouped = groupPasses([
-      { memberId: "L#pass-1#plan", run: null },
-      { memberId: "L#pass-1#do", run: run("do-1") },
-      { memberId: "L#pass-2#plan", run: run("plan-2") },
-      { memberId: "L#pass-2#do", run: null },
+      { ...runMember("a", "completed"), memberId: "odd-one" },
+      runMember("b", "completed", { pass: 1 }),
     ]);
     assert.deepEqual(
-      grouped.map((p) => [p.pass, p.runs.map((r) => r.id)]),
-      [
-        [1, ["do-1"]],
-        [2, ["plan-2"]],
-      ],
-    );
-  });
-
-  it("keeps a pass whose every run has gone, which is what stops the loop", () => {
-    // `planLoopPass` ends a loop whose last pass started no run at all, because
-    // the next would be created the same way and fail the same way.
-    const grouped = groupPasses([
-      { memberId: "L#pass-1#plan", run: run("plan-1") },
-      { memberId: "L#pass-2#plan", run: null },
-      { memberId: "L#pass-2#do", run: null },
-    ]);
-    assert.deepEqual(grouped.at(-1), { pass: 2, runs: [] });
-  });
-
-  it("gives a member id with no pass number a pass of its own", () => {
-    // Over-counting can only stop a loop early; folding two passes into one
-    // would let it run past the cap the operator set.
-    const grouped = groupPasses([
-      { memberId: "stray", run: run("a") },
-      { memberId: "L#pass-1#plan", run: run("b") },
-    ]);
-    assert.equal(grouped.length, 2);
-    assert.deepEqual(
-      grouped.map((p) => p.runs.map((r) => r.id)),
-      [["a"], ["b"]],
+      grouped.map((p) => p.members.map((m) => m.memberId)),
+      [["odd-one"], [passMemberId("loop", 1, "b")]],
     );
   });
 });

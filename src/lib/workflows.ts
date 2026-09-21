@@ -4771,24 +4771,6 @@ function advanceLoop(
   // workflow's: a section edited between two passes would otherwise change what
   // this loop repeats half way through.
   const section = loopSection(instance.graph, node);
-  if (section.nodes.length === 0) {
-    // A loop that repeats nothing. Not reachable from a graph saved today —
-    // `resolveSections` refuses a loop with no `repeats` link — but an instance
-    // carries a copy of the graph it was started from, and one saved when a
-    // loop held a task of its own and repeated *that* is read back from it.
-    // There is no honest way to carry such a loop on: the mode it needs is
-    // gone, and inventing a pass here would bill an agent for work the current
-    // rules say this block does not do.
-    settleLoop(
-      instanceId,
-      nodeId,
-      "failed",
-      "This block repeats no section. It was saved when a loop held a task of " +
-        "its own; a loop now frames the blocks it repeats, so start this " +
-        "workflow again from its saved graph.",
-    );
-    return;
-  }
 
   // Read before the decision and before any pass, including the first. A
   // condition this app cannot count for ends the loop `failed` rather than
@@ -4828,6 +4810,31 @@ function advanceLoop(
     }
 
     if (decision.kind === "pass") {
+      // A loop that repeats nothing cannot take another pass. Not reachable
+      // from a graph saved today — `resolveSections` refuses a loop with no
+      // `repeats` link — but an instance carries a copy of the graph it was
+      // started from, and one saved when a loop held a task of its own and
+      // repeated *that* is read back from it. There is no honest way to carry
+      // such a loop on: the mode it needs is gone, and inventing a pass here
+      // would bill an agent for work the current rules say this block does not
+      // do.
+      //
+      // Asked **here** rather than on the way in, which is the difference
+      // between closing out a legacy loop and killing one mid-pass: a pass of
+      // it that was still running when the section requirement arrived is a
+      // live agent in somebody's folder, and it is the decision above — not the
+      // shape of the graph — that establishes there is nothing left in flight.
+      if (section.nodes.length === 0) {
+        settleLoop(
+          instanceId,
+          nodeId,
+          "failed",
+          "This block repeats no section. It was saved when a loop held a " +
+            "task of its own; a loop now frames the blocks it repeats, so " +
+            "start this workflow again from its saved graph.",
+        );
+        return;
+      }
       // Every member of the pass, `waiting`, before anything is released. The
       // shape `instantiate` gives a whole graph, at the scale of one pass, and
       // it is what makes "the pass has not finished unfolding" a fact on the
