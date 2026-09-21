@@ -215,6 +215,22 @@ export default function WorkflowPage() {
     };
   }, []);
 
+  /**
+   * Which loop repeats each block, by the loop's name.
+   *
+   * Only for the sentence on the row: whether a section is *legal* is
+   * `graphRefusal`'s and was answered before this graph was saved, so this
+   * walk asks nothing and refuses nothing. An id naming no block is skipped
+   * rather than printed, because a saved graph cannot hold one.
+   */
+  const repeatedBy = useMemo(() => {
+    const owner = new Map<string, string>();
+    for (const n of workflow?.nodes ?? []) {
+      for (const memberId of n.bodyNodeIds) owner.set(memberId, n.name);
+    }
+    return owner;
+  }, [workflow]);
+
   const waitsFor = useMemo(() => {
     const map = new Map<
       string,
@@ -515,12 +531,22 @@ export default function WorkflowPage() {
                         </div>
                       )}
                       {n.kind === "loop" && (
-                        // And again: a repeating block is one run per pass, so
-                        // the caps are the number of runs the operator agrees
-                        // to when they press Run.
+                        // And again: the caps are the number of runs the
+                        // operator agrees to when they press Run. With a
+                        // section that is passes × its size, which is the
+                        // figure `BlockStatement` states in the editor — a
+                        // loop of 4 passes over 2 blocks is 8 runs, and "one
+                        // run each" would understate it by the size of the
+                        // section every time.
                         <div className="mt-0.5 text-warn">
-                          Repeats until done — up to {n.maxPasses} pass(es), one
-                          run each
+                          Repeats until done — up to {n.maxPasses} pass(es),{" "}
+                          {n.bodyNodeIds.length === 0
+                            ? "one run each"
+                            : `${n.bodyNodeIds.length} runs each, so up to ${
+                                n.maxPasses === null
+                                  ? "?"
+                                  : n.maxPasses * n.bodyNodeIds.length
+                              } runs`}
                           {n.maxLoopCostUSD !== null &&
                             `, or ${fmtUSD(n.maxLoopCostUSD)} across them`}
                           {/* The fifth ending belongs here for the same reason
@@ -563,7 +589,17 @@ export default function WorkflowPage() {
                       labelPlacement="above"
                       className="align-top text-ink-muted"
                     >
-                      {waits.length === 0 ? (
+                      {repeatedBy.has(n.id) ? (
+                        // Not "starts immediately", which is what an empty
+                        // `waitsFor` used to mean and is now false for a block
+                        // inside a section: instantiation deliberately creates
+                        // none of them, because the loop creates one per pass
+                        // instead. A block the graph never starts reading as
+                        // one that starts first is the worst way round.
+                        <span className="text-warn">
+                          nothing — repeated by {repeatedBy.get(n.id)}
+                        </span>
+                      ) : waits.length === 0 ? (
                         "nothing — starts immediately"
                       ) : (
                         <ul className="m-0 list-none p-0">
