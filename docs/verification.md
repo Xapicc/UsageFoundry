@@ -812,6 +812,24 @@ is `docs/agent/testing.md`; interface defects and their classes are
   refusals as `normalizeWorkflowInput`'s sentence and a valid graph as
   `{"ok":true}`; all four workflow pages answered 200.
 
+- **The link that says what a loop repeats, 2026-09-21** (production standalone
+  build, scratch `DATA_DIR`, Chromium 1280×1000): a four-block graph POSTed with
+  a `repeats` link from the loop to the first member saved 200 and came back
+  with `bodyNodeIds` derived from it; the edit page drew the region labelled
+  *Repeated by Repeat it · 2 blocks in order*, the member cards marked *FIRST OF
+  2* and the panel listed the section as *first* / *last — its DONE ends the
+  loop*; the intra-section link's panel stated the branch rule with a Remove
+  button and no pickers; the containment link's panel stated *Nothing waits for
+  this link*. The same graph POSTed with `bodyNodeIds` and **no** link rendered
+  identically — the link is materialised on the way in — and leaving the
+  untouched page raised no unsaved-work dialog. Pressing **Repeat** and then a
+  block redrew the section live, at 2 links and no refusal. Caveat: driven
+  against a `CLAUDE_BIN` that cannot spawn, so nothing here ran a pass; what a
+  pass *does* with the section is `planPass`' own tests. The duplicate-link
+  defect this found — the gesture appending beside an ordinary link the loop
+  already had to that block, which `normalizeWorkflowInput` refuses as "set to
+  start after … twice" — was fixed and re-measured green in the same way.
+
 - **A loop's board stop condition, 2026-09-21** (production standalone build,
   scratch `DATA_DIR`, Chromium 1280×1600): `/api/workflows/validate` returned
   `{"ok":true}` for `["open"]`/0 and refused `["done"]` and `atMost: -1` as
@@ -3234,6 +3252,15 @@ measurement under *Verified* and cut the item down to what is still open.
   has not been seen. Settle: give the stub a `git commit` per cycle, run the
   same two-block section, and read the log on the branch `/api/branches`
   names.
+
+- **No instance has been started from a section stated as a `repeats` link.**
+  The derivation is unit-tested and `loopSection.test.ts` drives instantiation
+  from `bodyNodeIds`, which is what the link resolves to before `graphRefusal`
+  runs — so the two forms are one code path from that point on, and a test
+  asserts the same graph stated both ways normalizes identically. What has not
+  been seen is a press of Run on a graph drawn the new way. Settle: draw a
+  two-block section in the editor, save, press Run, and read the instance page
+  for two members per pass.
 
 - **No real restart has been taken over a live loop block**; the
   `reconcileBlocksOnBoot` fix is unit-tested only. Settle: park a pass inside

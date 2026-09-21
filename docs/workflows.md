@@ -265,24 +265,44 @@ be read before the first pass as well as between them.
 
 A loop block repeats **one task** by default: its own, one run per pass. It can
 instead repeat a **section** — several blocks in order, the whole section again
-on every pass. Name the blocks to repeat on the loop and it starts no run of
-its own; each pass creates one run per named block, in the order the section's
-own links give.
+on every pass. Give it a section and it starts no run of its own; each pass
+creates one run per block in the section, in the order the section's own links
+give.
 
-**Marking one.** Select the loop and switch on the blocks it repeats under
-*What it repeats*, or press **Repeat** on the loop's own card and then the
-blocks — dragging from the handle onto one, or pressing the handle and then the
-block, exactly as **Link** works. A block already in the section comes back out
-the same way. The section is drawn on the canvas as a tinted area round its
-members, labelled with the loop that owns it, and each marked block says which
-run of a pass it will be. Nothing here decides whether the section is *legal*:
-the sentence under the canvas is the server's answer and it names the block at
-fault.
+**What you link is what repeats.** Link the loop block to the first block of
+the section with a **repeats** link, chain the section along with ordinary
+links, and link whatever comes after the loop from the loop block itself. That
+is the whole mechanism: the section is the block the *repeats* link points at
+and everything linked after it, ending where the chain ends. There is nothing
+else to tick and no second list to keep in step.
 
 "Plan the next slice, do it, write down what changed" is three different jobs
 and three different prompts, and a single block asked to do all three every
 pass is one agent losing the plan in its own context. As a section it is three
 agents with three tasks, and the whole section happens again next pass.
+
+**Drawing it.** Press **Repeat** on the loop's own card and then the block each
+pass should start at — dragging from the handle onto it, or pressing the handle
+and then the block, exactly as **Link** works. Pressing the same block again
+takes the link away. Then use **Link** to join that block to the next one along,
+and so on. The *repeats* link is drawn dashed in the loop's own colour, because
+it is containment rather than a dependency: nothing waits for the block it
+points at.
+
+The section is drawn as a tinted area round its members, labelled with the loop
+that owns it, and each member is marked with where it sits — *first of 3*, *2 of
+3*, *last of 3* — so "which of these runs first" and "whose `DONE` ends the
+loop" are answerable by looking. The loop's own panel reads the section back in
+pass order; it is a statement, not a control, because the canvas is where it is
+said. Nothing on the page decides whether the section is *legal*: the sentence
+under the canvas is the server's answer and it names the block at fault.
+
+**A *repeats* link is never a dependency.** It is offered only on a link whose
+source is a loop block, and a loop has at most one — two is refused, naming both
+targets. Nothing is ever waiting for the block it names, because that block is
+created once per pass by the loop itself. Reading it as a dependency would be
+the backwards edge this whole design avoids: the loop would wait for a run only
+the loop can start, for ever.
 
 **The section must be a chain.** Each block in it links to at most one other
 block in it, and every block in the section is on that one line. That is not a
@@ -293,10 +313,20 @@ predecessor is two runs writing to one branch, which this tool refuses
 everywhere else too. A section that forks is refused when you save the graph,
 naming the block that forks it.
 
-**The loop block is the only way in and out.** A block outside the section
-cannot link to a block inside it, in either direction: link it to the loop
-instead. Otherwise "when does this block start" has two answers — once, or once
-per pass — and only one of them is what anybody meant.
+**Every link inside a section says one thing**: *only if it completes*, carrying
+the branch. One pass is one branch, handed from each block to the next, so there
+is no choice to make — the panel for such a link states it rather than asking,
+and a link drawn between two blocks of a section is drawn that way. A link that
+says otherwise is refused when you save, naming the two blocks; remove it and
+draw it again to bring it into line. This used to be a pair of controls that
+were quietly overruled when the workflow ran.
+
+**The *repeats* link is the only way in, and the loop block is the way out.** A
+block outside the section cannot link to a block inside it: link it to the loop
+instead, and the loop hands on to it after the last pass. A block inside the
+section cannot link back to the loop either. Otherwise "when does this block
+start" has two answers — once, or once per pass — and only one of them is what
+anybody meant.
 
 **Only fixed work goes in a section**, so a section holds run blocks and nothing
 else. An orchestrator block inside one would start unapproved runs once per pass
@@ -306,10 +336,10 @@ another. All three are refused by name when you save, and every block of a
 section needs guards that isolate — the loop's own rule, for the loop's own
 reason.
 
-**The last block of the section is the one whose `DONE` ends the loop.** It is
-the agent that finishes a pass, so it is the one in a position to say the work
-is finished; the blocks in front of it hand on to it and say nothing about
-whether to repeat. The other four stop conditions are unchanged, and a pass that
+**The last block of the section is the one whose `DONE` ends the loop** — the
+one marked *last* on the canvas. It is the agent that finishes a pass, so it is
+the one in a position to say the work is finished; the blocks in front of it
+hand on to it and say nothing about whether to repeat. The other four stop conditions are unchanged, and a pass that
 did not complete stops the loop wherever in the section it stopped.
 
 **Count the runs before you press Run.** A section multiplies: passes × blocks
@@ -323,6 +353,12 @@ A block set to start after a loop still starts after its **last** pass — which
 is now the last block of the last pass — and carries on that one branch. The
 count shown on the block is **passes**, not runs: a three-pass loop over a
 two-block section says three.
+
+A workflow saved before *repeats* links existed, or built through the API, may
+state its section as a list of blocks on the loop instead. That keeps working
+exactly as it did, and opening it in the editor draws the link it implies. A
+graph that states it **both** ways and disagrees is refused by name rather than
+resolved in favour of one.
 
 ## Limits for the whole workflow
 
