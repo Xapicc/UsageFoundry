@@ -183,7 +183,7 @@ dependencies form a loop is never released and never terminated: it sits
 and every rule written against it — folder claims, releasing, landing, *Stop
 all* — applies to a pass with nothing new bolted on.
 
-**It stops on four things, and the first is what the agent said.**
+**It stops on five things, and the first is what the agent said.**
 
 | It stops when | Because |
 |---|---|
@@ -191,10 +191,39 @@ all* — applies to a pass with nothing new bolted on.
 | A pass did not complete | A loop is not a retry mechanism. Connection blips and provider refusals are already retried and waited out *inside* one run, so a fault that got past those is one the next pass would meet too |
 | The pass cap is reached | The number you agreed to when you saved the graph |
 | The spending limit across passes is reached | Optional; blank means the pass cap is the only bound |
+| A project's task board has fallen to a number | Optional. Repeat until this project has at most N open tasks left — the ending for "work the backlog", which none of the four above can state |
 
 A pass that somehow started no run at all stops it too, with a reason — because
 the next one would be created the same way and fail the same way, one billed
 attempt at a time.
+
+**Repeat until a project's board is clear.** "Work through this backlog" is a
+real instruction and none of the four conditions above can end it: `DONE` is one
+agent's opinion of one pass, and the two caps are the loop running out rather
+than finishing. So a loop may name a **project** — a workspace and a folder on
+the [task board](taskboard.md) — a set of task states, and a number: it repeats
+until that project has at most that many tasks left in those states. Zero is the
+usual number and means "until the board is clear".
+
+It counts **open** tasks by default, and can be told to count claimed ones too.
+Counting claimed is offered because a task another run is holding is genuinely
+not done, but it is not the default and the reason matters: a claim on this
+board is a record of which run took a task, never a lease, and nothing expires
+one. A single task left claimed by a run that died therefore holds the loop open
+for every pass it is allowed, one billed run at a time, until the pass cap
+catches it. Closed states cannot be counted at all — `done` and `dropped` only
+ever grow, so "at most N" against one is true the first time it is asked and the
+loop would stop before it started. A graph that asks for one is refused at save
+with that sentence.
+
+**The count is taken before every pass, including the first.** A loop pointed at
+a project that is already clear starts no run at all, which is most of what the
+condition is worth having for — the two caps can only ever be read after a pass
+has settled, so without it the cheapest way to discover there was no work was to
+pay for a whole run. If the project cannot be counted — a workspace that is not
+mounted right now, a folder that has gone — the loop ends and says so, rather
+than reading the failure as an empty backlog; zero is the one answer that stops
+it, and a project this app cannot find is not a finished one.
 
 There is deliberately **no shell predicate** — no "repeat until `npm test`
 exits 0". Running one would be a fifth kind of child process in a tool that has
@@ -224,9 +253,11 @@ refused by name: the run that will commit to it next has not been created yet,
 so nothing else would notice.
 
 The next pass is created only once the previous one has settled, which means
-that between two passes there is briefly nothing running. That is intended: the
-exit conditions are facts about the pass that just ended, and a pass created
-before them would have to be withdrawn.
+that between two passes there is briefly nothing running. That is intended: four
+of the five exit conditions are facts about the pass that just ended, and a pass
+created before them would have to be withdrawn. The board condition is the
+exception — it is a fact about the board at that moment, which is what lets it
+be read before the first pass as well as between them.
 
 ## Limits for the whole workflow
 
