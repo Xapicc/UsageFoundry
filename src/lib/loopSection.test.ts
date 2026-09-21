@@ -818,3 +818,48 @@ describe("stopping an instance mid-pass", () => {
     assert.notEqual(loopBlock(instanceId).status, "looping");
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* The block behind a loop                                             */
+/* ------------------------------------------------------------------ */
+
+describe("a successor of a loop", () => {
+  it("is created after the last pass landed, waiting for no run", async () => {
+    // A successor of a loop is a successor of a *landing*, exactly as a
+    // successor of a merge block is: every pass put its own work on the target
+    // through the section's own exit, so there is no branch of its own left and
+    // no run to be put behind. Handed the last pass's run it would carry on a
+    // ref that pass had already landed and may since have deleted — and with a
+    // section that forks there is no last run to hand it.
+    const instanceId = scene({
+      nodes: [...FAN_OUT.nodes, node("after")],
+      edges: [...FAN_OUT.edges, { from: "L", to: "after", edge: "on-success" }],
+      body: FAN_OUT.body,
+      maxPasses: 2,
+      ownBlocks: [{ id: "after", kind: "run" }],
+    });
+
+    // Nothing behind the loop while it is still repeating: `looping` is pending
+    // rather than settled, because the block can still commit a whole further
+    // pass to the folders behind it.
+    workflows.advanceInstances();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(
+      membersOf(instanceId).some((m) => m.memberId === "after"),
+      false,
+      "the successor started between two passes",
+    );
+
+    await drive(instanceId);
+    assert.equal(loopBlock(instanceId).status, "emitted");
+    assert.equal(
+      blockRow(instanceId, passMemberId("L", 2, "m")).status,
+      "emitted",
+      "the last pass landed",
+    );
+
+    const successor = membersOf(instanceId).find((m) => m.memberId === "after");
+    assert.ok(successor, "the successor was never created");
+    assert.deepEqual(depsOf(successor.runId), []);
+  });
+});

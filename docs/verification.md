@@ -824,7 +824,7 @@ is `docs/agent/testing.md`; interface defects and their classes are
 - **A pass as a section, 2026-09-21, `npm test` and `npm run typecheck` from
   the repo root:** 2964 assertions green, typecheck clean. What was measured is
   the pass runtime driven through the real creation path against a real git
-  repository and a real SQLite database — `loopSection.test.ts`, 14 cases: two
+  repository and a real SQLite database — `loopSection.test.ts`, 15 cases: two
   passes of a section that fans out to two members and merges produced exactly
   six run members and two merge members with the pass in every id, every
   dependency row carried `continue_branch = 0`, pass 2's entry was created with
@@ -835,7 +835,9 @@ is `docs/agent/testing.md`; interface defects and their classes are
   1, and only the section's entry reporting it did not. An orchestrator member
   driven through `emitBlockRuns`/`settleBlock` put both its runs under the
   member's own id prefix, held the pass open while they were queued, and its
-  $0.25 turn plus their $2.00 each tripped a $3.00 loop cap reporting 4.25.
+  $0.25 turn plus their $2.00 each tripped a $3.00 loop cap reporting 4.25. A
+  block behind the loop was not created between two passes and, once the last
+  pass's merge had settled, was created with an empty dependency list.
   Caveat: **nothing spawned and nothing merged.** `CLAUDE_BIN` names a file that
   does not exist, members are held at `queued` by a concurrency cap of 1, and
   every merge resolved to "nothing to land" because each branch sits at its own
