@@ -4,6 +4,8 @@ import {
   NODE_H,
   NODE_W,
   autoLayout,
+  bodyOrder,
+  bodyRegions,
   draftSignature,
   draftToGraph,
   freeSpot,
@@ -412,6 +414,32 @@ test("every value a block's kind carries moves the signature", () => {
       base: { kind: "loop", maxPasses: "3", stopWhenTasksMountId: "work" },
       edit: { stopWhenTasksAtMost: "4" },
     },
+    // The section a loop repeats, which is the whole of "repeat a section" and
+    // is assembled one block at a time with nothing else on the page changing.
+    // Without it a body put together and not saved leaves with no dialog at all.
+    {
+      what: "bodyNodeIds",
+      base: { kind: "loop", maxPasses: "3" },
+      edit: { bodyNodeIds: ["b"] },
+    },
+    {
+      what: "a block added to the body",
+      base: { kind: "loop", maxPasses: "3", bodyNodeIds: ["b"] },
+      edit: { bodyNodeIds: ["b", "c"] },
+    },
+    {
+      what: "a block taken out of the body",
+      base: { kind: "loop", maxPasses: "3", bodyNodeIds: ["b", "c"] },
+      edit: { bodyNodeIds: ["b"] },
+    },
+    // The order on the wire is the order the operator marked them in. It is not
+    // what decides a pass — the body's own edges are — but it is a change a save
+    // would keep, so leaving over it must still ask.
+    {
+      what: "the order of the body",
+      base: { kind: "loop", maxPasses: "3", bodyNodeIds: ["b", "c"] },
+      edit: { bodyNodeIds: ["c", "b"] },
+    },
   ];
   for (const { what, base, edit } of carried) {
     assert.notEqual(
@@ -433,6 +461,9 @@ test("a value the block's kind does not carry is not unsaved work", () => {
     // switched. It is not merely dropped by a save — it is *refused* by one,
     // so prompting about it would offer to save a graph that cannot be saved.
     { stopWhenTasksMountId: "work", stopWhenTasksAtMost: "3" },
+    // And a section, one field along and for the same reason: a run block that
+    // names blocks to repeat is refused by name.
+    { bodyNodeIds: ["b"] },
   ];
   for (const edit of dropped) {
     assert.equal(
@@ -472,5 +503,133 @@ test("whitespace either side of the name is not work", () => {
   assert.equal(
     signature([block("a")], [], {}, "  Nightly maintenance "),
     signature([block("a")]),
+  );
+});
+
+/* ------------------------------------------------------------------ */
+/* The section a loop repeats                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Two silent failures, and they are the ones the operator approves against.
+ *
+ * The order is what the inspector numbers the section in and what
+ * `BlockStatement` reads out, and it has to be the order a pass will actually
+ * create the runs in — `loopBody`'s, which is the body's own edges. An order
+ * read off the list instead looks exactly like a section that ran and runs it
+ * backwards. And a body being assembled is disjoint, forked or cyclic for as
+ * long as it takes to assemble, so an order that only terminates on a chain is
+ * a frozen tab while somebody is drawing one.
+ *
+ * The region is the other: it has no stored coordinate by design, so if it is
+ * not derived correctly from the layout there is nothing to fall back on.
+ */
+
+const loop = (id: string, bodyNodeIds: string[]) =>
+  block(id, { kind: "loop", maxPasses: "3", bodyNodeIds });
+
+test("a body is ordered by its own edges, not by the order it was marked in", () => {
+  const blocks = [loop("l", ["c", "a", "b"]), block("a"), block("b"), block("c")];
+  const links = [link("a", "b"), link("b", "c")];
+  assert.deepEqual(bodyOrder(["c", "a", "b"], blocks, links), ["a", "b", "c"]);
+});
+
+test("a body ignores the edges that reach it from outside", () => {
+  // The loop block is the only door in and out, so its own edges to the first
+  // and last member say nothing about the order within the section.
+  const blocks = [loop("l", ["a", "b"]), block("a"), block("b"), block("z")];
+  const links = [link("l", "a"), link("a", "b"), link("b", "l"), link("z", "b")];
+  assert.deepEqual(bodyOrder(["a", "b"], blocks, links), ["a", "b"]);
+});
+
+test("a body that is not a chain yet still gets an order, and terminates", () => {
+  const blocks = [loop("l", ["a", "b", "c"]), block("a"), block("b"), block("c")];
+  // A cycle among the members is legal to *draw* — the server refuses it and
+  // can only answer about a graph it has been sent — so this must return rather
+  // than spin, and return the same thing twice. Which order a cycle gets is not
+  // a promise: it is whatever the bounded relaxation reached, and the sentence
+  // the operator reads is the refusal under the canvas, not this.
+  const cyclic = [link("a", "b"), link("b", "a")];
+  const once = bodyOrder(["a", "b", "c"], blocks, cyclic);
+  assert.deepEqual([...once].sort(), ["a", "b", "c"], "every member, once");
+  assert.deepEqual(bodyOrder(["a", "b", "c"], blocks, cyclic), once);
+
+  // A fork, which is the ordinary state of a section half assembled: it is
+  // ranked as far as the edges reach and the marking order breaks the tie.
+  assert.deepEqual(
+    bodyOrder(["c", "b", "a"], blocks, [link("a", "b"), link("a", "c")]),
+    ["a", "c", "b"],
+  );
+  // Nothing linked at all: every member ranks 0, so the tie-break is the whole
+  // answer and it is the order the operator marked them in.
+  assert.deepEqual(bodyOrder(["c", "b"], blocks, []), ["c", "b"]);
+});
+
+test("a body drops what it names twice and what it names at all", () => {
+  const blocks = [loop("l", []), block("a")];
+  assert.deepEqual(bodyOrder(["a", "a"], blocks, []), ["a"]);
+  assert.deepEqual(
+    bodyOrder(["a", "gone"], blocks, []),
+    ["a"],
+    "an id naming no block cannot be drawn or numbered; the server refuses it by name",
+  );
+});
+
+test("a region encloses its members and belongs to the loop", () => {
+  const blocks = [loop("l", ["a", "b"]), block("a"), block("b"), block("z")];
+  const links = [link("a", "b")];
+  const at = new Map([
+    ["l", { x: 100, y: 400 }],
+    ["a", { x: 500, y: 400 }],
+    ["b", { x: 900, y: 600 }],
+    ["z", { x: 100, y: 900 }],
+  ]);
+  const [region, ...rest] = bodyRegions(blocks, links, at);
+  assert.equal(rest.length, 0, "one region per loop that repeats a section");
+  assert.equal(region.loopId, "l");
+  assert.deepEqual(region.memberIds, ["a", "b"]);
+  // Every member's box is inside it, and the loop's own box is not.
+  assert.ok(region.x < 500 && region.y < 400);
+  assert.ok(region.x + region.width > 900 + NODE_W);
+  assert.ok(region.y + region.height > 600 + NODE_H);
+  assert.ok(region.x > 100 + NODE_W, "the loop block itself is outside");
+});
+
+test("a region against the top left corner stays on the surface", () => {
+  // A member can be dragged to the origin, and a region that started above or
+  // left of it would be drawn off the sheet — which scrolls from 0, so what is
+  // lost is the region rather than the scrollbar.
+  const blocks = [loop("l", ["a"]), block("a")];
+  const [region] = bodyRegions(blocks, [], new Map([["a", { x: 0, y: 0 }]]));
+  assert.equal(region.x, 0);
+  assert.equal(region.y, 0);
+  assert.ok(region.width > NODE_W && region.height > NODE_H);
+});
+
+test("a region fits inside the surface its members size", () => {
+  // `layoutBounds` sizes the sheet from the boxes alone, so a region wider than
+  // `CANVAS_PAD` past the furthest one would have its own edge clipped.
+  const blocks = [loop("l", ["a", "b"]), block("a"), block("b")];
+  const at = new Map([
+    ["a", { x: 24, y: 24 }],
+    ["b", { x: 400, y: 300 }],
+  ]);
+  const bounds = layoutBounds(at);
+  const [region] = bodyRegions(blocks, [], at);
+  assert.ok(region.x + region.width <= bounds.width);
+  assert.ok(region.y + region.height <= bounds.height);
+});
+
+test("a loop with no section is not a region, and neither is another kind", () => {
+  const at = new Map([
+    ["l", { x: 0, y: 0 }],
+    ["a", { x: 400, y: 0 }],
+  ]);
+  assert.deepEqual(bodyRegions([loop("l", []), block("a")], [], at), []);
+  // A body on a block that is not a loop is refused by the server rather than
+  // drawn: a region round it would say the graph was savable.
+  assert.deepEqual(
+    bodyRegions([block("l", { bodyNodeIds: ["a"] }), block("a")], [], at),
+    [],
   );
 });
