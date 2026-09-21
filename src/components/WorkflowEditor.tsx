@@ -1915,30 +1915,55 @@ function BlockPanel({
                 </div>
               </ListRow>
 
-              {/* Any one of them ends the loop, and the first row says so —
-                  every row after it is another way for the same loop to stop,
-                  never a second condition it also has to meet. */}
+              {/* Not a `ListRow`: a threshold is three controls and a word,
+                  not a label and a value, and in a row's shrink-to-fit control
+                  column the three squeeze each other — measured at 1280, the
+                  number field came out at 40px of its 96 and clipped its own
+                  digits. A full-width row inside the same box lets the priority
+                  picker take the slack instead. `GroupLabel`'s note says the
+                  contents of a group are not always rows. */}
               {thresholds.map((threshold, i) => (
-                <ListRow
+                <div
                   key={i}
-                  label={i === 0 ? "Stop at" : "or at"}
-                  htmlFor={`${block.id}-boardatmost-${i}`}
+                  className="flex min-h-[var(--control-h-lg)] max-md:min-h-11 flex-wrap items-center gap-2 px-3.5 py-2.5"
                 >
-                  <div className="flex items-center gap-2">
-                    <div className={ROW_CONTROL_NARROW}>
-                      <Input
-                        id={`${block.id}-boardatmost-${i}`}
-                        type="number"
-                        min={0}
-                        className="tabular-nums"
-                        value={threshold.atMost}
-                        onChange={(e) =>
-                          patchThreshold(i, { atMost: e.target.value })
-                        }
-                      />
-                    </div>
+                  {/* Any one of them ends the loop, and the words say so: every
+                      row after the first is another way for the same loop to
+                      stop, never a second condition it also has to meet. */}
+                  <label
+                    htmlFor={`${block.id}-boardatmost-${i}`}
+                    // One width for both words, or the rows break in different
+                    // places: “or at” leaves room the wider “Stop at” does not,
+                    // so on a phone one row wrapped before its picker and the
+                    // next after it. It also lines the numbers up, which is the
+                    // whole of what a column of them is for.
+                    className="mb-0 block w-14 shrink-0 text-sm font-normal text-ink"
+                  >
+                    {i === 0 ? "Stop at" : "or at"}
+                  </label>
+                  <div className="w-20 shrink-0">
+                    <Input
+                      id={`${block.id}-boardatmost-${i}`}
+                      type="number"
+                      min={0}
+                      className="tabular-nums"
+                      value={threshold.atMost}
+                      onChange={(e) =>
+                        patchThreshold(i, { atMost: e.target.value })
+                      }
+                    />
+                  </div>
+                  {/* `max-md:min-w-40` is what sends this to a line of its own
+                      on a phone, by `ListRow`'s mechanism: flex line breaking
+                      clamps an item's hypothetical size by its min-width, so a
+                      select that cannot have 160px wraps and the label and the
+                      number stay where they are. Measured at 390 without it,
+                      the select got 76px and drew “Any pr” — a control that
+                      clips the word it exists to state. Above the breakpoint
+                      the floor never binds and nothing moves. */}
+                  <div className="min-w-0 flex-1 max-md:min-w-40">
                     <Select
-                      aria-label="Which priority this number counts"
+                      aria-label="Which tasks this number counts"
                       value={threshold.priority}
                       onChange={(e) =>
                         patchThreshold(i, { priority: e.target.value })
@@ -1951,8 +1976,8 @@ function BlockPanel({
                             value={value}
                             // A priority already spoken for is disabled rather
                             // than merged: two numbers for one priority is an
-                            // "or" where the larger silently decides, which is
-                            // a line the operator wrote that never fires.
+                            // "or" in which the larger silently decides, which
+                            // is a line the operator wrote that never fires.
                             disabled={
                               value !== threshold.priority &&
                               thresholds.some((t) => t.priority === value)
@@ -1963,7 +1988,9 @@ function BlockPanel({
                         ),
                       )}
                     </Select>
-                    {thresholds.length > 1 && (
+                  </div>
+                  {thresholds.length > 1 && (
+                    <div className="shrink-0">
                       <Button
                         variant="ghost"
                         size="compact"
@@ -1971,14 +1998,14 @@ function BlockPanel({
                       >
                         Remove
                       </Button>
-                    )}
-                  </div>
-                </ListRow>
+                    </div>
+                  )}
+                </div>
               ))}
 
               {thresholds.length < MAX_LOOP_BOARD_THRESHOLDS &&
                 unusedPriority !== null && (
-                  <ListRow label="">
+                  <div className="flex min-h-[var(--control-h-lg)] max-md:min-h-11 items-center px-3.5 py-2.5">
                     <Button
                       variant="ghost"
                       size="compact"
@@ -1986,8 +2013,9 @@ function BlockPanel({
                     >
                       Add a number
                     </Button>
-                  </ListRow>
+                  </div>
                 )}
+
             </>
           )}
         </ListGroup>

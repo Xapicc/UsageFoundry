@@ -193,7 +193,7 @@ runs rather than one, and the last of them is what the next pass depends on.
 | A pass did not complete | A loop is not a retry mechanism. Connection blips and provider refusals are already retried and waited out *inside* one run, so a fault that got past those is one the next pass would meet too |
 | The pass cap is reached | The number you agreed to when you saved the graph |
 | The spending limit across passes is reached | Optional; blank means the pass cap is the only bound |
-| A project's task board has fallen to a number | Optional. Repeat until this project has at most N open tasks left — the ending for "work the backlog", which none of the four above can state |
+| A project's task board has fallen to one of its numbers | Optional. Repeat until this project has at most N open tasks left, or at most N of one priority — the ending for "work the backlog", which none of the four above can state. Several numbers are an **or**: the first one met stops it |
 
 A pass that somehow started no run at all stops it too, with a reason — because
 the next one would be created the same way and fail the same way, one billed
@@ -202,10 +202,39 @@ attempt at a time.
 **Repeat until a project's board is clear.** "Work through this backlog" is a
 real instruction and none of the four conditions above can end it: `DONE` is one
 agent's opinion of one pass, and the two caps are the loop running out rather
-than finishing. So a loop may name a **project** — a workspace and a folder on
-the [task board](taskboard.md) — a set of task states, and a number: it repeats
-until that project has at most that many tasks left in those states. Zero is the
-usual number and means "until the board is clear".
+than finishing. So a loop may name a **project** on the [task board](taskboard.md),
+a set of task states, and one or more numbers: it repeats until that project has
+at most that many tasks left in those states. Zero is the usual number and means
+"until the board is clear".
+
+The project is **one choice, not two.** It is picked from the same list the
+board's own project filter offers and wears the same name there — a workspace
+and a folder in it are a pair, because two workspaces may hold the same relative
+path and a name built from the path alone would be two projects under one
+heading. Beside the picker is what that project holds *today*, counted the way
+the loop will count it, so a number typed into the rows below is typed against
+something real rather than against a memory of last week.
+
+A project is **one folder**, which is how the board groups one: tasks filed
+against `…/terraServe` and against `…/terraServe/docs` are two projects on that
+page. A switch widens the count to the folder and everything under it, and it is
+off by default — a loop that quietly merged them would be working a backlog
+nobody was shown.
+
+**Up to five numbers, and any one of them ends the loop.** "Under 10 tasks left
+for this project, or under 5 normal-priority ones" is one condition with two
+numbers in it, and the loop stops the first time either comes true. That is an
+*or* rather than an *and* on purpose: a loop is billing a whole run per pass, so
+the condition that ends it earlier is the safe one — an all-of reading would keep
+a loop going on a board nobody thought was full. Each number may name a priority
+or count the project whole, no priority twice, and the stop reason names the one
+that was met with its priority and both figures — "at most 5 normal-priority open
+task(s) left. It has 4." A loop that only said "the board is clear enough" would
+be unreadable the next day.
+
+A loop saved before there was more than one number still reads exactly as it
+did: its single figure is one number over the project whole, and nothing about
+it changes.
 
 It counts **open** tasks by default, and can be told to count claimed ones too.
 Counting claimed is offered because a task another run is holding is genuinely

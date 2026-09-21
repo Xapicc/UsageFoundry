@@ -916,6 +916,32 @@ is `docs/agent/testing.md`; interface defects and their classes are
   returned to 2898 passing. Caveat: this says the tests bite, not that the
   feature works against a live agent — see below.
 
+- **A loop's board condition, thresholds and all, was driven by hand against a
+  built standalone server, 2026-09-21.** A scratch `DATA_DIR` and workspace
+  holding `terraServe`, `terraServe/docs` and `terraServeWeb`, seven tasks
+  filed through `/api/tasks`. `/api/workflows/validate` answered
+  `{"total":5,"byPriority":{"urgent":1,"high":1,"normal":2,"low":1}}` for the
+  folder alone and `total 6, normal 3` with `includeSubfolders` on — the
+  `docs` task and not the `terraServeWeb` one, which is the separator in the
+  prefix doing its job. `?priority=urgent` answered 1 and `?priority=bogus`
+  answered 400. A workflow POSTed in the pre-thresholds shape (`atMost: 4`, no
+  `thresholds`, no `includeSubfolders`) came back stored as
+  `includeSubfolders: false` and one `{"priority":"any","atMost":4}`, and one
+  with no condition came back `null`. Caveat: no agent ran — `CLAUDE_BIN`
+  pointed at a file that does not exist, so nothing here exercises a pass
+  actually stopping, only the figures the decision is made from.
+
+- **The threshold rows were measured in the browser at both widths,
+  2026-09-21.** At 1280 each threshold is one line — label, number, priority,
+  Remove — with the number field at its full 80px. At 390 the row wraps after
+  the number and the picker takes a line with Remove, both rows breaking in the
+  same place and both numbers at one x (112). The select's chosen option was
+  measured against its own content box at both widths and fits in all four
+  readings; before the `max-md:min-w-40` floor it had 76px for a 110px "Any
+  priority" and drew "Any pr". `document.scrollWidth` equalled `clientWidth` at
+  both. Caveat: measured in the default skin only — `npm run smoke-pages`
+  covers the ascii one for load, not for this row.
+
 ### Concurrency and ownership
 
 - **Folder collision, `npm test` 8 cases:** self, parent/child both ways, a
@@ -3261,6 +3287,15 @@ measurement under *Verified* and cut the item down to what is still open.
   been seen is a press of Run on a graph drawn the new way. Settle: draw a
   two-block section in the editor, save, press Run, and read the instance page
   for two members per pass.
+
+- **No loop has actually stopped on a board threshold.** The figures the
+  decision reads were driven by hand against a built server and are recorded
+  above, and `planLoopPass`'s any-of reading is unit-tested, but the two have
+  never met: nothing has watched a pass finish, the count fall past a number
+  and the block end with `tasks` and that threshold's sentence on it. Settle:
+  point a loop at a scratch project holding two tasks with a stub `CLAUDE_BIN`
+  that closes one per cycle, set one threshold at 1, press Run, and read the
+  block's stop reason for the priority and both figures.
 
 - **No real restart has been taken over a live loop block**; the
   `reconcileBlocksOnBoot` fix is unit-tested only. Settle: park a pass inside
