@@ -322,6 +322,12 @@ looks like.
 jobs and four different prompts, and a single block asked to do all four every
 pass is one agent losing the plan in its own context.
 
+That is also why there is no task to write on the frame: every run of a pass is
+a member's and each member carries its own, so there is nothing left for the
+frame itself to say. A task sent on a loop anyway is refused by the field's name
+when you save, along with the workspace, folder, template, agent and standing
+instructions — the same list as above, for the same reason.
+
 **Drawing it: a loop is a frame, and you make one by framing blocks.** There is
 no Loop in the palette, because a loop with nothing inside it is a graph that
 cannot be saved — making one *is* framing something. Click a block, shift-click
@@ -546,7 +552,9 @@ run says so rather than reading as approval.
 
 A workflow that can be saved but never started fails weeks away from the form
 that caused it, so both moments check the same things: a name, at least one
-block, a task on every block, a template that exists, a workspace that is
+block, a task on every block that runs one — every block but a merge block and a
+loop that repeats a section, neither of which is sent one — a template that
+exists, a workspace that is
 mounted and a folder that resolves inside it, a condition on every link, no
 block waiting for itself, no loop, no branch hand-over between blocks whose
 guards do not isolate — nor one touching an orchestrator or merge block, neither

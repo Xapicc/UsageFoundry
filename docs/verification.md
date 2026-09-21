@@ -1080,6 +1080,43 @@ is `docs/agent/testing.md`; interface defects and their classes are
   itself is what was being measured and it is correct; the figure in its landing
   clause is the product defect showing through.
 
+- **A loop that repeats a section saves with no task of its own, and three
+  doors say so, 2026-09-21.** `normalizeWorkflowInput` accepted a two-block
+  graph whose loop carries a `repeats` link and `task: ""`. The same input
+  against a build of the parent commit was refused with *“Repeat
+  Orchestrator Loop” has no task to repeat. A loop with nothing to do is a
+  billed run per pass that spends a work cycle finding that out.* — the
+  operator's own report. A section-less loop with no task was refused by both
+  builds, character for character the same sentence.
+
+- **The three doors a section loop's task is drawn at were read against the
+  built standalone server, 2026-09-21.** A graph carrying a section *and* a
+  leftover task was accepted with the task stored verbatim, seeded into a
+  scratch `DATA_DIR` and read back: `/workflows/<id>` drew *Its own task is
+  not read while it repeats a section* on the loop's row and the ordinary task
+  text on a section-less loop beside it; the editor's own panel, with the loop
+  selected, gave the Task row the hint *Not read while this block repeats a
+  section — each block in it has its own task* and a `BlockStatement` reading
+  *Repeats 2 blocks each pass, in this order: Plan the slice, then Do it …* with
+  no mention of the loop's own task, workspace or guards. `npm run smoke-pages`
+  was 92/92 against the standalone bundle. Caveat: no agent ran and no instance
+  was started — `CLAUDE_BIN` pointed at `/bin/false` — so this says what the
+  three pages state about a saved graph, not what a pass does. The instance page
+  was read by grep rather than rendered: it draws no block task at all, so there
+  was nothing there to correct.
+
+- **On the two entries above: the door they measured is not the door this tree
+  has.** They are kept because a measurement is never amended in place, and they
+  are true of the build they were taken against — one in which a loop's own task
+  was optional and a leftover one was kept and labelled at three doors. A loop is
+  now a frame that is told nothing: `normalizeNode` refuses the task **by name**
+  with the workspace, folder, template, agent and prompt override, so there is no
+  loop task to store, no Task row in the inspector to hint beside, and none on
+  `/workflows/[id]`'s loop row. What still holds from them is the half that
+  became the rule — a loop that repeats a section is saved with no task of its
+  own — and the frame entries higher up this section are the current readings of
+  every surface those two name.
+
 ### Concurrency and ownership
 
 - **Folder collision, `npm test` 8 cases:** self, parent/child both ways, a

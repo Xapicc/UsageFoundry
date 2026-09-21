@@ -986,6 +986,14 @@ function normalizeNode(
     // front of it left on a branch, and where each branch belongs was recorded
     // when its run cut it — so there is no task here for a person to write and
     // an empty one is the right answer rather than a missing one.
+    //
+    // A loop is not asked either, and it is the one kind that arrives here with
+    // the question already settled twice over: a task it carried was refused by
+    // name above, and a task it did not carry was never owed, because every run
+    // of a pass is a *member's* and each member carries its own. Requiring one
+    // here is what made the single block whose text is sent to no agent the
+    // single block that could not be saved without writing some, and the only
+    // way past that refusal was words nothing would read.
     const task = startsNoRun ? "" : String(n.task ?? "").trim();
     if (!startsNoRun && !task) {
       return {
@@ -1798,8 +1806,44 @@ function graphRefusal(
     );
   }
 
+  const taskless = emptyLoopTaskRefusal(nodes);
+  if (taskless) return taskless;
+
   // Last, so the chain test inside it may assume an acyclic body.
   return loopBodyRefusal(nodes, edges, byId, known);
+}
+
+/**
+ * Why a loop that frames nothing has nothing to do, or null.
+ *
+ * `normalizeNode` refuses an empty task on a `run` and an `orchestrator` block
+ * and deliberately does not on a `loop`, because whether a loop's own task would
+ * ever be read is a fact about the whole graph: a loop with a section runs its
+ * *members*, each of which carries its own task, and the frame's own text is
+ * sent to no agent. The section is derived from the `repeats` link in
+ * `resolveSections`, after every node has been normalized, so `normalizeNode`
+ * could only have asked it of one block at a time — which made the one block
+ * whose text is never read the one block forced to carry some.
+ *
+ * **Belt and braces as the file now stands, and that is worth knowing before
+ * editing it.** `resolveSections` refuses a loop with no `repeats` link, so
+ * every loop reaching here has a section and this answers null; and a task that
+ * arrived is refused by name against `LOOP_IS_TOLD_NOTHING`, so the field is
+ * empty whatever was sent. It is the answer for a loop that frames nothing, and
+ * the day such a loop can be saved again is the day it fires — rather than the
+ * day a body-less loop reaches a pass with nothing to run.
+ */
+function emptyLoopTaskRefusal(nodes: readonly WorkflowNode[]): string | null {
+  for (const node of nodes) {
+    if (node.kind !== "loop") continue;
+    if (bodyOf(node).length > 0) continue;
+    if (node.task) continue;
+    return (
+      `“${node.name}” has no task to repeat. A loop with nothing to do is a ` +
+      "billed run per pass that spends a work cycle finding that out."
+    );
+  }
+  return null;
 }
 
 
