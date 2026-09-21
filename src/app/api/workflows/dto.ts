@@ -12,6 +12,7 @@ import {
   lastRunAt,
   liveBlocksOf,
   liveRunsOf,
+  passNumberOf,
   runStateOf,
   type Workflow,
   type WorkflowInstance,
@@ -102,6 +103,11 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
       ? [n.emittedBy]
       : (waits.get(n.nodeId) ?? []),
     emittedBy: n.emittedBy,
+    // Read here rather than on the page, because the member id's format is
+    // `passMemberId`'s and a second parser of it is how a three-pass loop over
+    // a two-block section comes to be drawn as six passes. `passNumberOf` is
+    // the one reader, and it lives beside the writer.
+    passNumber: passNumberOf(n.nodeId),
   }));
 
   const blocks: WorkflowInstanceBlockDTO[] = instance.blocks.map((b) => ({

@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -12,6 +13,7 @@ import type { WorkflowNodeKind } from "@/lib/apiTypes";
 import {
   NODE_H,
   NODE_W,
+  bodyRegions,
   edgeGeometry,
   freeSpot,
   layoutBounds,
@@ -36,14 +38,23 @@ import { Empty } from "@/components/ui/Card";
  * link, remove a block — because a canvas that needs a mouse excludes an
  * operator, and this one starts billed agents.
  *
- * Each of the four has both routes:
+ * Each of the five has both routes:
  *   add     — drag a block off the palette, or press Enter on it
  *   link    — drag from a block's Link handle onto another, or take the handle
  *             and then the target in two presses, by pointer or by Enter
+ *   repeat  — the same two gestures on a loop's Repeat handle, which puts the
+ *             block it reaches into that loop's section or takes it back out
  *   unlink  — Delete or Backspace on the link's own control or on the canvas
  *             while it is selected, or Remove in the inspector beside it
  *   remove  — Delete or Backspace on the block's name or on the canvas while it
  *             is selected, or Remove in the inspector
+ *
+ * Repeat is the link tool's own gestures over a second relation, down to
+ * `resolveLinkRelease` deciding both releases: a handle that arms itself at the
+ * press, a drag that reaches another block, and a click-in-place that arms or
+ * disarms. The one thing it does differently is that reaching a block already
+ * in the section takes it out again, because a section has no equivalent of the
+ * link chip to press Delete on.
  *
  * Delete is the *only* destructive gesture here and there is deliberately no
  * undo: this app has no undo model, and a ⌘Z that put a block back but not the
@@ -181,6 +192,7 @@ export function WorkflowCanvas({
   onConnect,
   onRemoveLink,
   onRemoveBlock,
+  onToggleBody,
 }: {
   blocks: readonly BlockDraft[];
   links: readonly LinkDraft[];
@@ -194,6 +206,8 @@ export function WorkflowCanvas({
   onConnect: (from: string, to: string) => void;
   onRemoveLink: (from: string, to: string) => void;
   onRemoveBlock: (id: string) => void;
+  /** Put `memberId` into `loopId`'s section, or take it back out. */
+  onToggleBody: (loopId: string, memberId: string) => void;
 }) {
   const sheetRef = useRef<HTMLDivElement>(null);
   const handledByPointer = useRef(false);
@@ -206,9 +220,13 @@ export function WorkflowCanvas({
    * here**, which completes the link the *other* block armed.
    */
   const armedBeforePress = useRef<string | null>(null);
+  /** The same, for the Repeat handle. See `startRepeat`. */
+  const repeatArmedBeforePress = useRef<string | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [place, setPlace] = useState<PlaceState | null>(null);
   const [linkFrom, setLinkFrom] = useState<string | null>(null);
+  /** The loop whose section is being assembled, armed exactly like `linkFrom`. */
+  const [repeatFrom, setRepeatFrom] = useState<string | null>(null);
   const [pointerAt, setPointerAt] = useState<Point | null>(null);
 
   const bounds = layoutBounds(positions);
@@ -219,6 +237,31 @@ export function WorkflowCanvas({
   const linkOrigin = linkFrom === null ? undefined : positions.get(linkFrom);
   const linking = linkSource !== undefined && linkOrigin !== undefined;
 
+  const repeatSource = blocks.find((b) => b.id === repeatFrom);
+  const repeatOrigin =
+    repeatFrom === null ? undefined : positions.get(repeatFrom);
+  const repeating = repeatSource !== undefined && repeatOrigin !== undefined;
+
+  /**
+   * The area drawn round each loop's section, derived rather than stored.
+   *
+   * Memoised because it walks the graph once per loop and a drag re-renders
+   * this component on every pointer move — and the derivation is what has to
+   * keep up with the hand, since the region tracks the box being dragged.
+   */
+  const regions = useMemo(
+    () => bodyRegions(blocks, links, positions),
+    [blocks, links, positions],
+  );
+  /** Which loop repeats a block, so a card can say so and a press can undo it. */
+  const repeatedBy = useMemo(() => {
+    const owner = new Map<string, string>();
+    for (const region of regions) {
+      for (const id of region.memberIds) owner.set(id, region.loopId);
+    }
+    return owner;
+  }, [regions]);
+
   // A block that has gone takes the half-drawn link with it, or the next choice
   // lands an edge on something that is no longer there.
   useEffect(() => {
@@ -226,6 +269,18 @@ export function WorkflowCanvas({
       setLinkFrom(null);
     }
   }, [blocks, linkFrom]);
+
+  // The same for a section being assembled, and one case more: a loop whose
+  // kind was switched in the inspector is still on the canvas but no longer has
+  // a section, so a press on the next block would name a body nothing reads.
+  useEffect(() => {
+    if (
+      repeatFrom !== null &&
+      !blocks.some((b) => b.id === repeatFrom && b.kind === "loop")
+    ) {
+      setRepeatFrom(null);
+    }
+  }, [blocks, repeatFrom]);
 
   const pointIn = useCallback((clientX: number, clientY: number): Point => {
     const rect = sheetRef.current?.getBoundingClientRect();
@@ -308,7 +363,7 @@ export function WorkflowCanvas({
     // the target: the name is a button because the keyboard needs one, not
     // because it is the only place worth aiming at.
     if (moved) return;
-    if (chooseTarget(id)) return;
+    if (claimArmed(id)) return;
     onSelect({ kind: "block", id });
   }
 
@@ -391,6 +446,10 @@ export function WorkflowCanvas({
     // target instead of completing it.
     armedBeforePress.current = linkFrom;
     setLinkFrom(id);
+    // One tool at a time. Both relations are "press a handle, then a block",
+    // so two armed at once would make the next press on a card ambiguous —
+    // and the press that resolved it would be the one nobody expected.
+    setRepeatFrom(null);
     setPointerAt(null);
   }
 
@@ -432,6 +491,7 @@ export function WorkflowCanvas({
 
   /** The keyboard's and assistive technology's route through the handle. */
   function toggleLink(id: string) {
+    setRepeatFrom(null);
     if (linkFrom === null) setLinkFrom(id);
     else if (linkFrom === id) setLinkFrom(null);
     else chooseTarget(id);
@@ -442,6 +502,82 @@ export function WorkflowCanvas({
     onConnect(linkFrom, id);
     setLinkFrom(null);
     return true;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Repeating a section                                              */
+  /* ---------------------------------------------------------------- */
+
+  function startRepeat(event: ReactPointerEvent<HTMLButtonElement>, id: string) {
+    event.stopPropagation();
+    handledByPointer.current = false;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    repeatArmedBeforePress.current = repeatFrom;
+    setRepeatFrom(id);
+    setLinkFrom(null);
+    setPointerAt(null);
+  }
+
+  function moveRepeat(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (repeatFrom === null) return;
+    setPointerAt(pointIn(event.clientX, event.clientY));
+  }
+
+  function cancelRepeat() {
+    repeatArmedBeforePress.current = null;
+    setPointerAt(null);
+  }
+
+  function endRepeat(event: ReactPointerEvent<HTMLButtonElement>, id: string) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setPointerAt(null);
+    handledByPointer.current = true;
+    const armedBefore = repeatArmedBeforePress.current;
+    repeatArmedBeforePress.current = null;
+    const releasedOver = blockAt(pointIn(event.clientX, event.clientY));
+    // `resolveLinkRelease` and not a second copy of its three branches: the
+    // gesture is the same one over a different relation, and the bug it was
+    // written for — the press overwriting the source the release still needed
+    // — is reachable through this handle in exactly the same way.
+    const gesture = resolveLinkRelease(id, armedBefore, releasedOver);
+    if (gesture.kind === "connect") {
+      // The loop stays armed. A section is several blocks, and disarming after
+      // each one would make assembling a body of four into four gestures with
+      // three trips back to the handle.
+      setRepeatFrom(gesture.from);
+      onToggleBody(gesture.from, gesture.to);
+      return;
+    }
+    setRepeatFrom(gesture.kind === "arm" ? gesture.from : null);
+  }
+
+  /** The keyboard's and assistive technology's route through that handle. */
+  function toggleRepeat(id: string) {
+    setLinkFrom(null);
+    if (repeatFrom === null) setRepeatFrom(id);
+    else if (repeatFrom === id) setRepeatFrom(null);
+    else chooseMember(id);
+  }
+
+  /**
+   * A press on a block while a loop's section is armed.
+   *
+   * A toggle rather than an add, because a member has no control of its own to
+   * press Delete on the way a link has its chip — so the gesture that put a
+   * block in is the one that takes it out, and the handle says which it will
+   * do before it is pressed.
+   */
+  function chooseMember(id: string): boolean {
+    if (repeatFrom === null || repeatFrom === id) return false;
+    onToggleBody(repeatFrom, id);
+    return true;
+  }
+
+  /** Whichever tool is armed has first claim on a press on a block. */
+  function claimArmed(id: string): boolean {
+    return chooseTarget(id) || chooseMember(id);
   }
 
   function claimedByPointer(): boolean {
@@ -469,8 +605,9 @@ export function WorkflowCanvas({
    * is a worse outcome than the one this key is for.
    */
   function surfaceKeys(event: ReactKeyboardEvent<HTMLDivElement>) {
-    if (event.key === "Escape" && linkFrom !== null) {
+    if (event.key === "Escape" && (linkFrom !== null || repeatFrom !== null)) {
       setLinkFrom(null);
+      setRepeatFrom(null);
       event.stopPropagation();
       return;
     }
@@ -601,13 +738,25 @@ export function WorkflowCanvas({
         </div>
       )}
 
+      {repeating && (
+        <div className="border-b border-line bg-inset px-3 py-1.5 text-xs text-ink-muted">
+          Choosing what{" "}
+          <strong className="font-semibold text-ink">
+            {label(repeatSource)}
+          </strong>{" "}
+          repeats — choose a block to put it in or take it out. Escape stops.
+        </div>
+      )}
+
       {/* The mode is a fact about the whole surface and a screen reader has no
           other way to learn it: the strip above is nowhere near the handle that
           was just pressed. */}
       <p className="sr-only" role="status" aria-live="polite">
         {linking
           ? `Linking from ${label(linkSource)}. Choose the block that starts after it, or press Escape.`
-          : ""}
+          : repeating
+            ? `Choosing what ${label(repeatSource)} repeats. Choose a block to put it in the section or take it out, or press Escape.`
+            : ""}
       </p>
 
       {/* `tabIndex={-1}` is what makes the Delete above reachable at all. A
@@ -644,6 +793,7 @@ export function WorkflowCanvas({
             if (event.target === event.currentTarget) {
               onSelect(null);
               setLinkFrom(null);
+              setRepeatFrom(null);
             }
           }}
         >
@@ -655,6 +805,44 @@ export function WorkflowCanvas({
               </Empty>
             </div>
           )}
+
+          {/* Under the edges and the cards, and inert: a press has to reach
+              the surface beneath it, which is what clears the selection, and
+              a region that swallowed one would make the area round a section
+              the one part of the canvas a click does nothing on.
+
+              `aria-hidden` because it states nothing a screen reader cannot
+              already reach: which loop repeats a block is in that block's own
+              name button, and the section in order is in the inspector. A
+              landmark here would be a third place saying it. */}
+          {regions.map((region) => {
+            const owner = blocks.find((b) => b.id === region.loopId);
+            return (
+              <div
+                key={region.loopId}
+                aria-hidden
+                style={{
+                  left: region.x,
+                  top: region.y,
+                  width: region.width,
+                  height: region.height,
+                }}
+                // The loop card's own `border-warn-line`, so the area reads as
+                // belonging to the block that owns it rather than as a second
+                // thing on the canvas. Dashed and at 5% fill because it is
+                // behind the cards: a solid edge at a card's own weight would
+                // read as a box somebody could select.
+                className={`pointer-events-none absolute rounded-xl border border-dashed
+                  border-warn-line bg-warn/5 ${
+                    repeatFrom === region.loopId ? "ring-[3px] ring-ring" : ""
+                  }`}
+              >
+                <span className="absolute left-2.5 top-1 truncate text-2xs font-semibold text-warn">
+                  Repeated by {label(owner)}
+                </span>
+              </div>
+            );
+          })}
 
           <svg
             className="pointer-events-none absolute left-0 top-0"
@@ -691,6 +879,21 @@ export function WorkflowCanvas({
                 strokeWidth={1.25}
                 strokeDasharray="5 4"
                 className="stroke-accent"
+              />
+            )}
+
+            {/* From the middle of the loop rather than its right edge, which is
+                where a link leaves: a section is not a thing that runs after
+                the loop, and a line leaving the same point as an edge would
+                say it was. */}
+            {repeating && pointerAt && (
+              <path
+                d={`M ${repeatOrigin.x + NODE_W / 2} ${repeatOrigin.y + NODE_H / 2} L ${pointerAt.x} ${pointerAt.y}`}
+                fill="none"
+                strokeWidth={1.25}
+                strokeDasharray="2 5"
+                strokeLinecap="round"
+                className="stroke-warn"
               />
             )}
           </svg>
@@ -741,6 +944,9 @@ export function WorkflowCanvas({
             const selected =
               selection?.kind === "block" && selection.id === block.id;
             const armed = linkFrom === block.id;
+            const owner = blocks.find(
+              (b) => b.id === repeatedBy.get(block.id),
+            );
             return (
               <div
                 key={block.id}
@@ -760,12 +966,20 @@ export function WorkflowCanvas({
                   <button
                     type="button"
                     onClick={() => {
-                      if (chooseTarget(block.id)) return;
+                      if (claimArmed(block.id)) return;
                       onSelect({ kind: "block", id: block.id });
                     }}
                     onKeyDown={(event) => blockKeys(event, block.id)}
                     aria-label={`${label(block)} — ${KIND_LABEL[block.kind]}${
+                      owner ? `. Repeated by ${label(owner)}` : ""
+                    }${
                       linking && !armed ? ". Starts after " + label(linkSource) : ""
+                    }${
+                      repeating && repeatFrom !== block.id
+                        ? owner?.id === repeatFrom
+                          ? ". Take out of " + label(repeatSource)
+                          : ". Repeat inside " + label(repeatSource)
+                        : ""
                     }. Delete removes this block.`}
                     className="ui-transition -mx-1 mb-1 cursor-pointer rounded-sm border
                       border-transparent bg-transparent px-1 py-0.5 text-left text-sm
@@ -795,6 +1009,48 @@ export function WorkflowCanvas({
                         {block.mergeStrategy}
                         {block.mergeAutoResolve ? " · AI resolve" : ""}
                       </Badge>
+                    ) : block.kind === "loop" ? (
+                      /* In the badge slot rather than beside the Link handle:
+                         the card is a fixed NODE_W, and three controls in one
+                         row put the third past the edge at every name length.
+                         What the slot held for a loop was nothing. */
+                      <button
+                        type="button"
+                        onPointerDown={(event) => startRepeat(event, block.id)}
+                        onPointerMove={moveRepeat}
+                        onPointerUp={(event) => endRepeat(event, block.id)}
+                        onPointerCancel={cancelRepeat}
+                        onClick={() => {
+                          if (claimedByPointer()) return;
+                          toggleRepeat(block.id);
+                        }}
+                        aria-pressed={repeatFrom === block.id}
+                        aria-label={
+                          repeatFrom === block.id
+                            ? `Stop choosing what ${label(block)} repeats`
+                            : `Choose what ${label(block)} repeats`
+                        }
+                        // The Link handle's recipe exactly, down to the
+                        // stretched `::after` on the label — see the comment
+                        // on that button for why the target cannot sit on this
+                        // element and why the box stays at --control-h.
+                        className={`uf-button ${
+                          repeatFrom === block.id ? "uf-button-primary" : ""
+                        } ui-transition inline-flex min-h-[var(--control-h)] cursor-pointer
+                          max-md:relative touch-none items-center rounded-sm border px-2 py-1
+                          text-2xs font-semibold ${
+                            repeatFrom === block.id
+                              ? "border-warn-line bg-warn/10 text-ink"
+                              : "border-line bg-bezel text-ink-muted shadow-e1 hover:bg-bezel-hover hover:text-ink"
+                          }`}
+                      >
+                        <span
+                          className="max-md:after:absolute max-md:after:-inset-y-[6px]
+                            max-md:after:-inset-x-[3px] max-md:after:content-['']"
+                        >
+                          {repeatFrom === block.id ? "Done" : "Repeat"}
+                        </span>
+                      </button>
                     ) : (
                       <span />
                     )}
@@ -903,6 +1159,7 @@ export function WorkflowCanvas({
           const selected =
             selection?.kind === "block" && selection.id === block.id;
           const armed = linkFrom === block.id;
+          const owner = blocks.find((b) => b.id === repeatedBy.get(block.id));
           const incoming = links.filter((link) => link.to === block.id);
           return (
             <li
@@ -914,10 +1171,17 @@ export function WorkflowCanvas({
                   type="button"
                   aria-pressed={selected}
                   onClick={() => {
-                    if (!chooseTarget(block.id)) {
+                    if (!claimArmed(block.id)) {
                       onSelect({ kind: "block", id: block.id });
                     }
                   }}
+                  aria-label={
+                    repeating && repeatFrom !== block.id
+                      ? owner?.id === repeatFrom
+                        ? `Take ${label(block)} out of ${label(repeatSource)}`
+                        : `Repeat ${label(block)} inside ${label(repeatSource)}`
+                      : undefined
+                  }
                   className={`ui-transition min-h-11 min-w-32 flex-1 cursor-pointer rounded-md px-2 py-1.5 text-left ${
                     selected ? "bg-accent-dim" : "hover:bg-inset"
                   }`}
@@ -927,6 +1191,15 @@ export function WorkflowCanvas({
                   </span>
                   <span className="mt-0.5 block text-xs text-ink-faint">
                     {KIND_LABEL[block.kind]}
+                    {owner && (
+                      /* The region's sentence at a width the region is not
+                         drawn at. Same words, so a reader who has seen one
+                         surface recognises the other. */
+                      <span className="text-warn">
+                        {" "}
+                        · repeated by {label(owner)}
+                      </span>
+                    )}
                   </span>
                   {block.kind !== "merge" && block.mountId ? (
                     /* `truncate` for the card's reason: a folder is the one
@@ -955,6 +1228,27 @@ export function WorkflowCanvas({
                 >
                   {linkFrom !== null && !armed ? "Link here" : "Link"}
                 </button>
+                {block.kind === "loop" && (
+                  // No pointer sequence on this one: there is nothing at this
+                  // width to drag onto, so it is the two-press route only —
+                  // which is the route the keyboard takes above the breakpoint
+                  // too, through the same `toggleRepeat`.
+                  <button
+                    type="button"
+                    onClick={() => toggleRepeat(block.id)}
+                    aria-pressed={repeatFrom === block.id}
+                    className={`uf-button ${
+                      repeatFrom === block.id ? "uf-button-primary" : ""
+                    } ui-transition min-h-11 shrink-0 cursor-pointer rounded-md border px-3
+                      text-xs ${
+                        repeatFrom === block.id
+                          ? "border-warn-line bg-warn/10 text-warn"
+                          : "border-line text-ink-muted hover:bg-inset"
+                      }`}
+                  >
+                    {repeatFrom === block.id ? "Done" : "Repeat"}
+                  </button>
+                )}
               </div>
               {incoming.length > 0 && (
                 <ul className="mt-1 flex flex-wrap gap-1.5 pl-2">
@@ -1016,6 +1310,11 @@ export function WorkflowCanvas({
         <span className="max-md:hidden">
           Delete removes what is selected — there is no undo
         </span>
+        {/* Only where there is one: on a graph with no loop this names a
+            control nothing on the canvas has. */}
+        {blocks.some((b) => b.kind === "loop") && (
+          <span>Repeat on a loop chooses the blocks it repeats</span>
+        )}
         <span className="md:hidden">
           Remove is in the panel below — there is no undo
         </span>

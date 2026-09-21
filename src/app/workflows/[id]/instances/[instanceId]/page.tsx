@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { WorkflowInstanceDTO } from "@/lib/apiTypes";
@@ -13,7 +13,9 @@ import {
   fmtDateTime,
   fmtPct,
   fmtUSD,
+  groupPasses,
   pollFailureMessage,
+  type PassGroup,
 } from "@/lib/format";
 import { Markdown } from "@/components/Markdown";
 import { Meter } from "@/components/Meter";
@@ -98,6 +100,24 @@ const BLOCK_TONE: Record<BlockStatus, BadgeTone> = {
 
 type BlockDTO = WorkflowInstanceDTO["blocks"][number];
 type NodeDTO = WorkflowInstanceDTO["nodes"][number];
+
+/**
+ * What one pass spent, as the clause beside its run count.
+ *
+ * Empty where **nothing** in the pass reported a cost, rather than `$0.00`: a
+ * null `spentUSD` is a provider that reports no cost, which the rows under it
+ * already draw as a dash, and a zero here would be a figure nobody measured.
+ * A pass where some runs reported and others did not is summed from the ones
+ * that did — the same partial reading the workflow's own meter takes, and the
+ * count beside it says how many runs the figure is over.
+ */
+function passSpend(runs: readonly NodeDTO[]): string {
+  const reported = runs
+    .map((n) => n.run?.spentUSD)
+    .filter((usd): usd is number => usd !== null && usd !== undefined);
+  if (reported.length === 0) return "";
+  return ` · ${fmtUSD(reported.reduce((total, usd) => total + usd, 0))}`;
+}
 
 /** Where the run is working. Absolute when its mount has since been removed. */
 function folderLabel(run: NonNullable<NodeDTO["run"]>): string {
@@ -387,14 +407,47 @@ export default function WorkflowInstancePage() {
    * Emitted runs keep their `position` order, which is the order the block
    * emitted them in.
    */
-  const { savedRuns, emittedRuns } = useMemo(() => {
+  /**
+   * The three tables, split once.
+   *
+   * A repeating block's runs stay in `emittedRuns` — where they have always
+   * been, one row per pass — unless one of its passes turned out to be more
+   * than one run. Only then are they lifted into a section of their own and
+   * grouped, which is `groupPasses`' null: a loop that repeats its own task,
+   * and a section of one, are one run per pass and the flat table already
+   * says so.
+   */
+  const { savedRuns, emittedRuns, passSections } = useMemo(() => {
     const savedRuns: NodeDTO[] = [];
     const emittedRuns: NodeDTO[] = [];
+    const byLoop = new Map<string, NodeDTO[]>();
+    const loops = new Set(
+      (instance?.blocks ?? [])
+        .filter((b) => b.kind === "loop")
+        .map((b) => b.nodeId),
+    );
     for (const n of instance?.nodes ?? []) {
-      if (n.emittedBy) emittedRuns.push(n);
-      else savedRuns.push(n);
+      if (!n.emittedBy) {
+        savedRuns.push(n);
+      } else if (loops.has(n.emittedBy)) {
+        byLoop.set(n.emittedBy, [...(byLoop.get(n.emittedBy) ?? []), n]);
+      } else {
+        emittedRuns.push(n);
+      }
     }
-    return { savedRuns, emittedRuns };
+    const passSections: Array<{
+      nodeId: string;
+      groups: PassGroup<NodeDTO>[];
+    }> = [];
+    for (const [nodeId, rows] of byLoop) {
+      const groups = groupPasses(rows);
+      if (groups === null) emittedRuns.push(...rows);
+      else passSections.push({ nodeId, groups });
+    }
+    // Back into the order the graph declared, because the split above walked
+    // the loops in whatever order their first run appeared.
+    emittedRuns.sort((a, b) => a.position - b.position);
+    return { savedRuns, emittedRuns, passSections };
   }, [instance]);
 
   if (!loaded) {
@@ -458,10 +511,10 @@ export default function WorkflowInstancePage() {
     ...(instance.blocks.some((b) => b.kind === "loop")
       ? [
           <Hint key="loop">
-            A repeating block starts one run per pass, each carrying on the
-            previous pass&rsquo;s branch — it stops when the agent reports the
-            work complete, a pass does not complete, or one of its caps is
-            reached
+            A repeating block starts a run per pass, or one per block of the
+            section it repeats, each carrying on the previous run&rsquo;s
+            branch — it stops when the last run of a pass reports the work
+            complete, a pass does not complete, or one of its caps is reached
           </Hint>,
         ]
       : []),
@@ -786,6 +839,61 @@ export default function WorkflowInstancePage() {
           </TableWrap>
         )}
       </Card>
+
+      {/* One card per repeating block whose passes are sections. The block's
+          own row in the table above still reads in passes — see
+          `blockSummary` — and this is where those passes are opened up into
+          the runs each one took. */}
+      {passSections.map((section) => (
+        <Fragment key={section.nodeId}>
+          <CardTitle className="mt-8">
+            Passes of {nodeName.get(section.nodeId) ?? section.nodeId}
+          </CardTitle>
+          <Card>
+            <TableWrap>
+              <Table stack>
+                <caption className="sr-only">
+                  Each pass of{" "}
+                  {nodeName.get(section.nodeId) ?? section.nodeId}, and the runs
+                  it took
+                </caption>
+                <RunTableHead />
+                {section.groups.map((group, index) => (
+                  <Fragment key={group.pass ?? `ungrouped-${index}`}>
+                    <TBody>
+                      <Tr>
+                        {/* No `label`, which is what `Td` reads as "this cell
+                            is the headline the record is identified by" — and
+                            once the table stacks that is exactly what it is:
+                            the line the runs under it belong to. */}
+                        <Td
+                          colSpan={5}
+                          className="bg-inset font-medium text-ink max-md:border-b-0"
+                        >
+                          {group.pass === null
+                            ? "Not part of a pass"
+                            : `Pass ${group.pass}`}
+                          <span className="ml-2 font-normal text-ink-muted">
+                            {group.runs.length} run
+                            {group.runs.length === 1 ? "" : "s"}
+                            {passSpend(group.runs)}
+                          </span>
+                        </Td>
+                      </Tr>
+                    </TBody>
+                    <RunRows nodes={group.runs} nodeName={nodeName} />
+                  </Fragment>
+                ))}
+              </Table>
+            </TableWrap>
+            <Hint>
+              Each pass runs its blocks in the section&rsquo;s own order, one
+              after the other on one branch — the next pass carries on where
+              this one left off
+            </Hint>
+          </Card>
+        </Fragment>
+      ))}
 
       {/* Only when there are any: a graph with no orchestrator block never
           reaches this, and an empty section under that heading would suggest

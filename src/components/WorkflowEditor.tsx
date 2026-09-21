@@ -21,6 +21,7 @@ import {
   MAX_WORKFLOW_NODES,
 } from "@/lib/apiTypes";
 import {
+  bodyOrder,
   draftSignature,
   draftToGraph,
   linkKey,
@@ -501,7 +502,19 @@ export function WorkflowEditor({
   }, []);
 
   const removeBlock = useCallback((id: string) => {
-    setBlocks((prev) => prev.filter((b) => b.id !== id));
+    setBlocks((prev) =>
+      prev
+        .filter((b) => b.id !== id)
+        // A section naming a block that has gone is refused by name at Save,
+        // for the same reason a link to one is — so it goes with the block
+        // rather than waiting to be discovered. The map is unconditional
+        // because `bodyNodeIds` is `[]` on every kind that does not carry one.
+        .map((b) =>
+          b.bodyNodeIds.includes(id)
+            ? { ...b, bodyNodeIds: b.bodyNodeIds.filter((m) => m !== id) }
+            : b,
+        ),
+    );
     // A link to a block that has gone is a link to nothing, and the server
     // refuses one — so it goes with the block rather than waiting to be
     // discovered at Save.
@@ -518,6 +531,31 @@ export function WorkflowEditor({
 
   const moveBlock = useCallback((id: string, at: Point) => {
     setDragged((prev) => ({ ...prev, [id]: at }));
+  }, []);
+
+  /**
+   * Put a block into a loop's section, or take it back out.
+   *
+   * The only writer, so the canvas's handle and the inspector's list cannot
+   * disagree about what marking one means. It decides nothing else: whether the
+   * block may be repeated, whether the section is a chain and whether two loops
+   * are fighting over it are all `graphRefusal`'s, answered by the validate
+   * route while the graph is being drawn, and a second opinion here would be a
+   * rule to keep in step with no way to notice it had drifted.
+   */
+  const toggleBody = useCallback((loopId: string, memberId: string) => {
+    setBlocks((prev) =>
+      prev.map((b) =>
+        b.id !== loopId
+          ? b
+          : {
+              ...b,
+              bodyNodeIds: b.bodyNodeIds.includes(memberId)
+                ? b.bodyNodeIds.filter((m) => m !== memberId)
+                : [...b.bodyNodeIds, memberId],
+            },
+      ),
+    );
   }, []);
 
   const connect = useCallback((from: string, to: string) => {
@@ -813,6 +851,7 @@ export function WorkflowEditor({
             onConnect={connect}
             onRemoveLink={removeLink}
             onRemoveBlock={removeBlock}
+            onToggleBody={toggleBody}
           />
 
           {/* The server's own sentence, asked while the graph is being drawn.
@@ -873,6 +912,8 @@ export function WorkflowEditor({
             {selectedBlock && loaded && (
               <BlockPanel
                 block={selectedBlock}
+                blocks={blocks}
+                links={links}
                 templates={templates}
                 templateName={templateName}
                 agents={agents}
@@ -882,6 +923,9 @@ export function WorkflowEditor({
                 foldersFor={foldersFor}
                 onChange={(patch) => updateBlock(selectedBlock.id, patch)}
                 onRemove={() => removeBlock(selectedBlock.id)}
+                onToggleBody={(memberId) =>
+                  toggleBody(selectedBlock.id, memberId)
+                }
               />
             )}
 
@@ -1048,13 +1092,33 @@ export function WorkflowEditor({
  * a block that was configured that way. The tone is on the number itself, where
  * it belongs.
  */
+/**
+ * What a block is called wherever this file names one.
+ *
+ * `WorkflowCanvas` has its own copy for the same job; they are not shared
+ * because that one also answers for a block that has *gone*, which cannot
+ * happen to anything this file holds a draft of.
+ */
+function blockLabel(block: BlockDraft): string {
+  return block.name.trim() || block.id;
+}
+
 function BlockStatement({
   block,
+  body,
   guards,
   where,
   asAgent,
 }: {
   block: BlockDraft;
+  /**
+   * The blocks a loop repeats, in the order a pass will create them, or empty.
+   *
+   * Ordered by the caller through `bodyOrder`, which is the client's reading of
+   * `loopBody` — so the order read out here is the order the runs happen in
+   * rather than the order somebody happened to mark them in.
+   */
+  body: readonly BlockDraft[];
   guards: ReactNode;
   where: ReactNode;
   /**
@@ -1147,28 +1211,84 @@ function BlockStatement({
           left
         </>
       );
+    const passCap =
+      Number.isInteger(passes) && passes > 0 ? (
+        <strong className="font-semibold text-warn">
+          {passes} pass{passes === 1 ? "" : "es"}
+        </strong>
+      ) : (
+        <strong className="font-semibold text-danger">
+          an unstated number of passes
+        </strong>
+      );
+    const spentBetween = capped ? (
+      <>
+        , or once they have spent{" "}
+        <strong className="font-semibold text-warn">{fmtUSD(spend)}</strong>{" "}
+        between them
+      </>
+    ) : null;
+    // Where the loop's own DONE comes from. With a section it is the *last*
+    // member's, because that is the run `planLoopPass` reads `reportedDone` off
+    // — and naming the wrong block is how somebody asks the wrong agent for it.
+    const reporter =
+      body.length === 0 ? (
+        "the agent"
+      ) : (
+        <strong className="font-semibold text-ink">
+          {blockLabel(body[body.length - 1])}
+        </strong>
+      );
+
+    if (body.length > 0) {
+      // Not "Repeats in {where} … under {guards}": with a section, the loop's
+      // own workspace, template, task and agent are read by nothing. Every run
+      // a pass creates is the member's own, so the sentence names the members
+      // and says the guards are theirs rather than claiming a set the members
+      // do not use.
+      const worst =
+        Number.isInteger(passes) && passes > 0 ? passes * body.length : null;
+      return (
+        <p className="mb-3.5 text-sm leading-normal text-ink-muted">
+          Repeats{" "}
+          <strong className="font-semibold text-ink">
+            {body.length} block{body.length === 1 ? "" : "s"}
+          </strong>{" "}
+          each pass, in this order:{" "}
+          {body.map((member, index) => (
+            <span key={member.id}>
+              {index > 0 && ", then "}
+              <strong className="font-semibold text-ink">
+                {blockLabel(member)}
+              </strong>
+            </span>
+          ))}
+          . Each is a whole run in its own workspace, under its own guards, with
+          no approval. At most {passCap}, so{" "}
+          {worst === null ? (
+            <strong className="font-semibold text-danger">
+              an unstated number of runs
+            </strong>
+          ) : (
+            <strong className="font-semibold text-warn">
+              up to {worst} run{worst === 1 ? "" : "s"}
+            </strong>
+          )}
+          . It stops when {reporter} reports the work complete, when a pass does
+          not complete, after the pass cap{spentBetween}
+          {board}.
+        </p>
+      );
+    }
+
     return (
       <p className="mb-3.5 text-sm leading-normal text-ink-muted">
         Repeats in {where}, each pass a whole run under {guards}
-        {asAgent ? <>, as {asAgent}</> : null}. It stops when the agent reports
+        {asAgent ? <>, as {asAgent}</> : null}. It stops when {reporter} reports
         the work complete, when a pass does not complete,{" "}
         {capped ? "after " : "or after "}
-        {Number.isInteger(passes) && passes > 0 ? (
-          <strong className="font-semibold text-warn">
-            {passes} pass{passes === 1 ? "" : "es"}
-          </strong>
-        ) : (
-          <strong className="font-semibold text-danger">
-            an unstated number of passes
-          </strong>
-        )}
-        {capped && (
-          <>
-            , or once they have spent{" "}
-            <strong className="font-semibold text-warn">{fmtUSD(spend)}</strong>{" "}
-            between them
-          </>
-        )}
+        {passCap}
+        {spentBetween}
         {board}.
       </p>
     );
@@ -1184,6 +1304,8 @@ function BlockStatement({
 
 function BlockPanel({
   block,
+  blocks,
+  links,
   templates,
   templateName,
   agents,
@@ -1193,8 +1315,13 @@ function BlockPanel({
   foldersFor,
   onChange,
   onRemove,
+  onToggleBody,
 }: {
   block: BlockDraft;
+  /** The whole graph: a loop's section is chosen out of it, in its order. */
+  blocks: readonly BlockDraft[];
+  /** Its edges, which are what put the chosen blocks in the order a pass runs. */
+  links: readonly LinkDraft[];
   templates: RunTemplateDTO[];
   templateName: (id: string) => string | null;
   agents: AgentDTO[];
@@ -1209,6 +1336,8 @@ function BlockPanel({
   foldersFor: (mountId: string) => WorkspaceFolderDTO[];
   onChange: (patch: Partial<BlockDraft>) => void;
   onRemove: () => void;
+  /** Put a block into this loop's section, or take it back out. */
+  onToggleBody: (memberId: string) => void;
 }) {
   const mount = mounts.find((m) => m.id === block.mountId);
   const folders = foldersFor(block.mountId);
@@ -1230,6 +1359,20 @@ function BlockPanel({
   // whichever repository each branch came from; and no task, because what it
   // lands is whatever the blocks in front of it left behind.
   const merge = block.kind === "merge";
+
+  // The section in the order a pass will create it, which is the order the
+  // statement reads out and the list below numbers. Empty on every kind but a
+  // loop, and on a loop that repeats its own task — which is every loop saved
+  // before a section could be chosen.
+  const bodyIds = bodyOrder(block.bodyNodeIds, blocks, links);
+  const body = bodyIds
+    .map((id) => blocks.find((b) => b.id === id))
+    .filter((b): b is BlockDraft => b !== undefined);
+  // Every other block, in the graph's own declaration order. Not filtered by
+  // kind: `graphRefusal` refuses a merge, an orchestrator and a second loop by
+  // name and for three different reasons, and a picker that hid them would
+  // leave somebody looking for a block that is on the canvas in front of them.
+  const others = blocks.filter((b) => b.id !== block.id);
 
   const guards: ReactNode = missingTemplate ? (
     <strong className="font-semibold text-danger">
@@ -1281,6 +1424,7 @@ function BlockPanel({
     <>
       <BlockStatement
         block={block}
+        body={body}
         guards={guards}
         where={where}
         asAgent={asAgent}
@@ -1354,7 +1498,56 @@ function BlockPanel({
       {loop && (
         <ListGroup
           className="mb-4"
-          label="What it does"
+          label="What it repeats"
+          footnote={
+            // The sentence above already states the section, its order and the
+            // worst-case run count, so this says the one thing the rows cannot:
+            // what the list means when nothing in it is marked.
+            body.length === 0
+              ? "Mark nothing and every pass repeats this block's own task"
+              : "The order is the section's own links, not the order you marked them in"
+          }
+        >
+          {others.length === 0 ? (
+            <ListRow label="Nothing to repeat">
+              <span className="text-sm text-ink-faint">
+                This workflow has one block
+              </span>
+            </ListRow>
+          ) : (
+            others.map((other) => {
+              const at = bodyIds.indexOf(other.id);
+              return (
+                <ListRow
+                  key={other.id}
+                  label={blockLabel(other)}
+                  htmlFor={`${block.id}-body-${other.id}`}
+                  description={
+                    at === -1
+                      ? KIND_LABEL[other.kind]
+                      : `${KIND_LABEL[other.kind]} · run ${at + 1} of each pass`
+                  }
+                >
+                  {/* A switch per block rather than a reorderable list: what
+                      order the section runs in is the section's own links, so
+                      a control that let it be dragged into a different one
+                      would be a second answer the server never reads. */}
+                  <Switch
+                    id={`${block.id}-body-${other.id}`}
+                    checked={at !== -1}
+                    onChange={() => onToggleBody(other.id)}
+                  />
+                </ListRow>
+              );
+            })
+          )}
+        </ListGroup>
+      )}
+
+      {loop && (
+        <ListGroup
+          className="mb-4"
+          label="How often"
           footnote={
             <span className="text-warn">
               Each pass is a whole run, with its own work cycles and its own
@@ -1576,7 +1769,10 @@ function BlockPanel({
               the whole of this one. It is the bare label rather than an empty
               `ListGroup`, which would draw a rounded box with a hairline round
               nothing above the two fields. */}
-          {!orchestrator && !loop && <GroupLabel>What it does</GroupLabel>}
+          {/* A loop's two groups above are named for its section and its caps,
+              so unlike an orchestrator it still owes the task below a heading
+              of its own. */}
+          {!orchestrator && <GroupLabel>What it does</GroupLabel>}
 
           <Field
             label={
@@ -1586,10 +1782,17 @@ function BlockPanel({
             // How the loop *ends*, and it belongs on the field that decides it:
             // `reported_done` is set by the agent printing DONE on a line of its
             // own, so a task that never asks for it can only stop on a cap.
+            //
+            // A loop repeating a *section* reads none of this: every run of a
+            // pass is a member's own, so the field is still here — the section
+            // can be cleared again — and the hint says what it is worth now
+            // rather than a sentence about passes that is no longer true.
             hint={
-              loop
-                ? "Every pass gets this same text — ask for DONE when the work is complete, which is what ends the loop"
-                : undefined
+              loop && body.length > 0
+                ? "Not read while this block repeats a section — each block in it has its own task"
+                : loop
+                  ? "Every pass gets this same text — ask for DONE when the work is complete, which is what ends the loop"
+                  : undefined
             }
           >
             <Textarea

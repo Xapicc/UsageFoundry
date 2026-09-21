@@ -6,6 +6,7 @@ import {
   fmtCycleInFlight,
   fmtCycles,
   fmtTokens,
+  groupPasses,
   guardBadge,
   pollFailureMessage,
 } from "./format";
@@ -237,4 +238,81 @@ test("a negative token figure is scaled and signed like a positive one", () => {
   assert.equal(fmtTokens(-5), "−5");
   assert.equal(fmtTokens(0), "0");
   assert.equal(fmtTokens(81_822), "81.8k");
+});
+
+/**
+ * A pass drawn as the wrong number of passes.
+ *
+ * The instance page reads spend and status off these groups, so a run folded
+ * into the pass beside it is listed under work it was not part of — and the
+ * failure is silent, because every run is still on the page and the totals
+ * still add up. The grouping is also what decides whether a loop's runs are
+ * lifted out of the flat table at all, and getting *that* wrong changes how a
+ * graph with no section is drawn, which is the one thing this change may not
+ * do.
+ */
+
+const row = (passNumber: number | null, id: string) => ({ passNumber, id });
+
+test("a pass of several runs is one group, in creation order", () => {
+  const groups = groupPasses([
+    row(1, "build"),
+    row(1, "test"),
+    row(2, "build"),
+    row(2, "test"),
+  ]);
+  assert.ok(groups, "two runs in a pass must not stay in the flat table");
+  assert.deepEqual(
+    groups.map((g) => [g.pass, g.runs.map((r) => r.id)]),
+    [
+      [1, ["build", "test"]],
+      [2, ["build", "test"]],
+    ],
+  );
+});
+
+test("one run per pass is not grouped at all", () => {
+  // What a loop repeating its own task has always looked like, and what a
+  // section of one honestly looks like too. Null is what keeps the flat table.
+  assert.equal(groupPasses([row(1, "a"), row(2, "a"), row(3, "a")]), null);
+  assert.equal(groupPasses([]), null);
+  assert.equal(groupPasses([row(1, "a")]), null);
+});
+
+test("a run carrying no pass number is a group of its own", () => {
+  // `groupPasses` on the server takes the same direction for the same reason:
+  // folding an unnumbered member into the pass beside it puts a run under a
+  // heading it does not belong to, and the operator reads spend off that
+  // heading.
+  const groups = groupPasses([
+    row(1, "a"),
+    row(1, "b"),
+    row(null, "loose"),
+    row(2, "c"),
+  ]);
+  assert.ok(groups);
+  assert.deepEqual(
+    groups.map((g) => [g.pass, g.runs.map((r) => r.id)]),
+    [
+      [1, ["a", "b"]],
+      [null, ["loose"]],
+      [2, ["c"]],
+    ],
+  );
+});
+
+test("a pass that comes round again is not merged with the earlier one", () => {
+  // Grouped on a run of equal keys rather than into a map, so rows that are
+  // somehow out of creation order stay where they are instead of being pulled
+  // backwards into a pass that had already finished.
+  const groups = groupPasses([row(1, "a"), row(2, "b"), row(1, "c"), row(1, "d")]);
+  assert.ok(groups);
+  assert.deepEqual(
+    groups.map((g) => [g.pass, g.runs.length]),
+    [
+      [1, 1],
+      [2, 1],
+      [1, 2],
+    ],
+  );
 });

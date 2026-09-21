@@ -521,6 +521,50 @@ export const WORKFLOW_LIMIT_TIMING_NOTE =
   "reaches one of those boundaries, so the total can overshoot by up to one work " +
   "cycle per block running at the time, and blocks running at once multiply that";
 
+/** One pass of a repeating block, with the runs it created. */
+export interface PassGroup<T> {
+  /** The pass number off the member ids, or null where they carried none. */
+  pass: number | null;
+  runs: T[];
+}
+
+/**
+ * A repeating block's runs, grouped into the passes they belong to.
+ *
+ * **`rows` must already be in creation order**, which is `position` on the
+ * wire: that is the order `planPass` created the section in, so it is the order
+ * each pass's runs are listed in and there is no second sort that could
+ * disagree with the body's own links.
+ *
+ * Grouped on a key rather than on the number, which is `groupPasses`' reading
+ * on the server and the same safe direction: a member id carrying no pass at
+ * all becomes a group of its own instead of being folded into the group beside
+ * it. Here the cost of the wrong choice is only what is drawn, but a row folded
+ * into the wrong pass is a run listed under work it was not part of, and the
+ * operator reads spend off these groups.
+ *
+ * Returns null when every pass has exactly one run, which is what a loop that
+ * repeats its own task always looks like — and what a section of one looks like
+ * too, honestly, since one run per pass is what the flat table already says.
+ * The caller draws the flat table for that, unchanged.
+ */
+export function groupPasses<T extends { passNumber: number | null }>(
+  rows: readonly T[],
+): PassGroup<T>[] | null {
+  const groups: Array<PassGroup<T> & { key: string }> = [];
+  for (const row of rows) {
+    const key =
+      row.passNumber === null ? `row:${groups.length}` : `pass:${row.passNumber}`;
+    const current = groups.at(-1);
+    if (!current || current.key !== key) {
+      groups.push({ key, pass: row.passNumber, runs: [] });
+    }
+    groups.at(-1)!.runs.push(row);
+  }
+  if (groups.every((group) => group.runs.length <= 1)) return null;
+  return groups.map(({ pass, runs }) => ({ pass, runs }));
+}
+
 /**
  * The two answers a drawn link may carry, and the unanswered state beside them.
  *

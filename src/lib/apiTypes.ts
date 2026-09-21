@@ -2066,6 +2066,18 @@ export interface WorkflowInstanceNodeDTO {
    * block invariant — so the page lists them apart from the graph's own.
    */
   emittedBy: string | null;
+  /**
+   * Which pass of a repeating block this run belongs to, or null.
+   *
+   * Read off the member id by `passNumberOf`, the one reader of the format
+   * `passMemberId` writes — never re-derived from a count, because a member
+   * whose run row has been deleted is then an empty place in its pass rather
+   * than a pass that shortens every one after it.
+   *
+   * Null on a run of the saved graph and on anything an orchestrator block
+   * started, which is the same "this is not part of a pass" either way.
+   */
+  passNumber: number | null;
 }
 
 /**
