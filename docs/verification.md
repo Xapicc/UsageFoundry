@@ -1056,6 +1056,30 @@ is `docs/agent/testing.md`; interface defects and their classes are
   off the pane for any section wider than it, now moved beside the name. Caveat:
   the stub commits nothing, so the landing is the nothing-landed reading.
 
+- **A section at 390px, drawn and run, 2026-09-21:** the same chain through the
+  narrow list, where the canvas is rows rather than a sheet and there is no
+  modifier to hold. Tapping `plan` and pressing Repeat framed it — the rows then
+  read *repeated by block-1, starts a pass* / *2 of 4* / *3 of 4* / *lands the
+  pass* — and the row's own two-press **Put in** took `spare` in. Saved clean,
+  the graph read `block-1:loop[plan,work,spare,land]`, and Run drew all four
+  members under Pass 1 at $1.50. `scrollWidth === clientWidth` throughout and no
+  console error.
+
+- **An orchestrator member that actually emits, 2026-09-21:** a section of
+  `triage (run) → decide (orchestrator, fan-out 3) → land (merge)`, with a stub
+  `CLAUDE_BIN` that reads its own `--mcp-config`, calls `initialize` and then
+  `tools/call` for `emit_runs` with two specs. The instance page drew Pass 1 as
+  `triage — pass 1` completed $0.25, `decide — pass 1` *decided · started 2
+  run(s)*, **`First slice` and `Second slice` beneath it**, each *started by
+  decide — pass 1* at $0.25, then `land — pass 1`. The heading read *Pass 1 · 3
+  blocks · $0.75* — the three runs, with the deciding turn on its own row and
+  not in the sum, which is what `passRuns` is written to do. No console error.
+  **This is what found the landing defect filed as a task:** the heading's
+  clause read *landed 0 of 3 branches — the next pass did not see the rest*,
+  because `loopStillRepeating` refuses a pass's own merge member. The pass group
+  itself is what was being measured and it is correct; the figure in its landing
+  clause is the product defect showing through.
+
 ### Concurrency and ownership
 
 - **Folder collision, `npm test` 8 cases:** self, parent/child both ways, a
@@ -3410,22 +3434,13 @@ measurement under *Verified* and cut the item down to what is still open.
   check that pass 2's branches are cut from a commit that carries pass 1's
   work.
 
-- **No section has been drawn on a phone-width viewport and run.** The gestures
-  have been driven end to end above at 1600px; below the breakpoint the canvas
-  is a list rather than a sheet, Repeat frames the tapped block with no modifier
-  to hold, and Put in is the two-press route only. That path renders clean at
-  390px — no console error, no sideways scroll — but no graph has been built
-  through it. Settle: at 390px tap a block, press Repeat, put a second in from
-  the row's own Put in, save, and press Run.
-
-- **No orchestrator member has emitted a run on a real instance.** The stub the
-  passes above ran under fails an orchestrator turn, so a member's emitted runs
-  drawn beneath it — the reading `passesOf` takes off `emittedBy` — has only its
-  unit tests. The landing clause has been seen for a pass that landed nothing;
-  the two figured readings have not. Settle: run a framed section whose
-  orchestrator member has a stub that answers `emit_runs` and whose run blocks
-  commit something, and read one pass for the emitted rows under their member
-  and for *landed N branches* on the heading.
+- **No pass has landed a branch, because nothing can.** A pass's own merge
+  member is refused by `loopStillRepeating` — filed as a task, and recorded
+  above — so the landing clause has been seen at *landed nothing* and at
+  *landed 0 of 3 branches* but never at a figure where anything went onto the
+  target, and no loop has taken a second pass. Settle once that is fixed: run
+  the same emitting fixture and read pass 2 for members that start from what
+  pass 1 landed.
 
 - **No loop has actually stopped on a board threshold.** The figures the
   decision reads were driven by hand against a built server and are recorded
