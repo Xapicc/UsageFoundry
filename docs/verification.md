@@ -1001,6 +1001,48 @@ is `docs/agent/testing.md`; interface defects and their classes are
   equal to its directory name, so this does not exercise a mount whose
   configured label differs from its path.
 
+- **A loop drawn as a frame, real build, stub CLI, 2026-09-21:** a workflow
+  whose loop frames `triage → decide → land`, seeded through `/api/workflows`
+  and opened in the built standalone bundle at 2400px and 390px. The frame is
+  drawn round the three members with no card of its own, its strip reads
+  *3 blocks in order · at most 3 passes · stops on $12 across them*, the
+  members are marked *starts a pass* / *2 of 3* / *lands the pass · merge*, and
+  no containment arrow is drawn. The inspector on the loop holds only the name,
+  the stated kind, the read-only section, the two caps and the board condition
+  — no task, workspace, template, agent or prompt-override control — and
+  `BlockStatement` reads *up to 12 runs — a deciding member's fan-out is spent
+  again on every pass*, which is 3 × (1 run + 3 fan-out). No console error at
+  either width, `scrollWidth === clientWidth`, and no box wider than a
+  non-scrolling parent. Caveat: one section shape, and the 12 is checked against
+  the arithmetic rather than against a run that actually created 12 runs.
+
+- **The Repeat gesture end to end, real build, 2026-09-21:** in a graph with no
+  loop at all, Repeat is disabled with nothing marked and enabled after one
+  click on a card; pressing it draws a frame round the marked block and
+  everything linked after it, and opens the inspector on the new loop's Name.
+  **Put in** then armed and took `spare` into the frame — linked beside the
+  section so the merge block still lands it, badge *3 of 4*, strip *4 blocks in
+  order* — and a second press on the same card spliced it back out, returning
+  the graph to 3 blocks and 3 links. A link drawn from outside onto a member was
+  refused at the release with *"work is repeated by block-1, so nothing outside
+  can start it. Link to block-1 instead — that runs before the whole loop."*
+  Save reached the server and was refused only by the un-named loop
+  (*"Block 5 needs a name"*), which is the refusal any freshly added block gets.
+  Caveat: driven by clicks rather than by pointer drags, so the drag route
+  through `resolveLinkRelease` is exercised only by its unit tests.
+
+- **A pass drawn as its members, real build, stub CLI that completes a cycle,
+  2026-09-21:** one press of Run on the framed workflow above, with a stub
+  `CLAUDE_BIN` that prints an init event, a `DONE` reply and a cost. Pass 1 drew
+  all three members under one heading — `triage — pass 1` completed at $0.42,
+  `decide — pass 1` failed, `land — pass 1` blocked — in section order, with the
+  pass's own figure *3 blocks · $0.42*. Before the `emittedBy` fix the member
+  run was folded under the loop and drawn nowhere; that is what
+  `format.test.ts`'s decider case now holds. Caveat: the orchestrator member
+  failed under the stub, so an orchestrator member's emitted runs drawn beneath
+  it, and a pass's landing clause, are covered by unit tests and not by this
+  measurement.
+
 ### Concurrency and ownership
 
 - **Folder collision, `npm test` 8 cases:** self, parent/child both ways, a
@@ -3355,14 +3397,25 @@ measurement under *Verified* and cut the item down to what is still open.
   check that pass 2's branches are cut from a commit that carries pass 1's
   work.
 
-- **No instance has been started from a section stated as a `repeats` link.**
-  The derivation is unit-tested and `loopSection.test.ts` drives instantiation
-  from `bodyNodeIds`, which is what the link resolves to before `graphRefusal`
-  runs — so the two forms are one code path from that point on, and a test
-  asserts the same graph stated both ways normalizes identically. What has not
-  been seen is a press of Run on a graph drawn the new way. Settle: draw a
-  two-block section in the editor, save, press Run, and read the instance page
-  for two members per pass.
+- **No instance has been started from a section drawn in the editor.** One has
+  now been started from a section stated as a `repeats` link — recorded above,
+  seeded through `/api/workflows` and read back off the instance page as three
+  members under Pass 1 — so what is left open is only the half in the browser:
+  that the frame a person draws saves a graph a press of Run then instantiates
+  the same way. Settle: draw a two-block section in the editor with the Repeat
+  and Put in gestures, save, press Run, and read the instance page for two
+  members under Pass 1.
+
+- **No pointer drag has been taken through the frame's Put in handle, and no
+  orchestrator member has emitted a run on a real instance.** Both gestures were
+  driven by clicks rather than drags, which is the two-press branch of
+  `resolveLinkRelease` and not the captured-drag one; and the stub the pass ran
+  under fails an orchestrator turn, so a member's emitted runs drawn beneath it
+  and a pass's landing clause have only their unit tests. Settle: drag from the
+  frame's handle onto a card and check the frame grows; then run a framed
+  section whose orchestrator member has a stub that answers `emit_runs`, and
+  read one pass for the emitted rows under their member and a landing clause on
+  the heading.
 
 - **No loop has actually stopped on a board threshold.** The figures the
   decision reads were driven by hand against a built server and are recorded
