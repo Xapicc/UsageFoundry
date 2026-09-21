@@ -1068,7 +1068,15 @@ export function WorkflowCanvas({
                     <span className="line-clamp-2">
                       {block.kind === "merge"
                         ? "Puts each branch onto the target its run recorded."
-                        : block.task.trim() || "No task yet"}
+                        : /* A loop with a section has no task of its own to
+                             show, and an empty one here is the ordinary state
+                             rather than the unfinished one — every run of a
+                             pass is a member's. Without this the card said "No
+                             task yet" about a block that needs none, which is
+                             the same false complaint the save used to make. */
+                          repeatsFirst.has(block.id)
+                          ? "Repeats its section — each block in it has its own task"
+                          : block.task.trim() || "No task yet"}
                     </span>
                   </div>
 

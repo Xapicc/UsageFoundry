@@ -960,6 +960,26 @@ is `docs/agent/testing.md`; interface defects and their classes are
   equal to its directory name, so this does not exercise a mount whose
   configured label differs from its path.
 
+- **A loop that repeats a section saves with no task of its own, and three
+  doors say so, 2026-09-21.** `normalizeWorkflowInput` accepted a two-block
+  graph whose loop carries a `repeats` link and `task: ""` — refused before
+  this change with *"Repeat Orchestrator Loop" has no task to repeat* — and
+  still refused the same loop with the link removed, with that sentence
+  unchanged. A graph carrying a section *and* a leftover task was accepted with
+  the task stored verbatim, seeded into a scratch `DATA_DIR` and read back
+  against the built standalone server: `/workflows/<id>` drew *Its own task is
+  not read while it repeats a section* on the loop's row and the ordinary task
+  text on a section-less loop beside it; the editor's own panel, with the loop
+  selected, gave the Task row the hint *Not read while this block repeats a
+  section — each block in it has its own task* and a `BlockStatement` reading
+  *Repeats 2 blocks each pass, in this order: Plan the slice, then Do it …* with
+  no mention of the loop's own task, workspace or guards. `npm run smoke-pages`
+  was 92/92 against the standalone bundle. Caveat: no agent ran and no instance
+  was started — `CLAUDE_BIN` pointed at `/bin/false` — so this says what the
+  three pages state about a saved graph, not what a pass does. The instance page
+  was read by grep rather than rendered: it draws no block task at all, so there
+  was nothing there to correct.
+
 ### Concurrency and ownership
 
 - **Folder collision, `npm test` 8 cases:** self, parent/child both ways, a

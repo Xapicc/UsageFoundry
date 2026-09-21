@@ -1458,6 +1458,37 @@ describe("normalizeWorkflowInput — the link that makes a section", () => {
     );
   });
 
+  it("lets a loop that repeats a section carry no task of its own", () => {
+    // The block whose task is never read was the one block forced to have one.
+    // Membership is derived from the `repeats` link, which is a fact about the
+    // whole graph and settled after every node is normalized — so a refusal in
+    // `normalizeNode` could only ask the operator for text nothing will send to
+    // an agent. Each member carries its own task; the loop needs none.
+    const v = value(
+      graph([repeater("l", { task: "" }), node("a")], [repeats("l", "a")]),
+    );
+    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a"]);
+    assert.equal(v.graph.nodes[0].task, "");
+  });
+
+  it("still refuses a loop with no section and no task", () => {
+    // The sentence is still the true one there: a loop with no section is the
+    // block that gets run, once per pass.
+    assert.match(error(graph([repeater("l", { task: "" })])), /has no task to repeat/);
+  });
+
+  it("keeps a section loop's leftover task rather than clearing it", () => {
+    // The text is the operator's, and a graph saved before the section existed
+    // may carry both. Nothing reads it; the editor says so beside the field.
+    const v = value(
+      graph(
+        [repeater("l", { task: "Left over" }), node("a")],
+        [repeats("l", "a")],
+      ),
+    );
+    assert.equal(v.graph.nodes[0].task, "Left over");
+  });
+
   it("reads a saved graph's list exactly as it always has", () => {
     // The compatibility rule, and the strongest form of it: the same section
     // stated the old way and the new way has to normalize to the same thing.

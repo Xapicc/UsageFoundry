@@ -298,6 +298,13 @@ on every pass. Give it a section and it starts no run of its own; each pass
 creates one run per block in the section, in the order the section's own links
 give.
 
+**A loop with a section needs no task of its own**, and leaving it empty is the
+ordinary state rather than an unfinished one: every run of a pass is a member's,
+and each member carries its own. A loop with *no* section still needs one — it
+is the block that gets run. Text left in the field on a loop that has since been
+given a section is kept and never sent to an agent; the editor says so beside
+it, and so does the workflow's own page.
+
 **What you link is what repeats.** Link the loop block to the first block of
 the section with a **repeats** link, chain the section along with ordinary
 links, and link whatever comes after the loop from the loop block itself. That
@@ -517,7 +524,9 @@ run says so rather than reading as approval.
 
 A workflow that can be saved but never started fails weeks away from the form
 that caused it, so both moments check the same things: a name, at least one
-block, a task on every block, a template that exists, a workspace that is
+block, a task on every block that runs one — every block but a merge block and a
+loop that repeats a section, neither of which is sent one — a template that
+exists, a workspace that is
 mounted and a folder that resolves inside it, a condition on every link, no
 block waiting for itself, no loop, no branch hand-over between blocks whose
 guards do not isolate — nor one touching an orchestrator or merge block, neither

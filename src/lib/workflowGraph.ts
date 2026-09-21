@@ -918,16 +918,22 @@ function normalizeNode(
     // front of it left on a branch, and where each branch belongs was recorded
     // when its run cut it — so there is no task here for a person to write and
     // an empty one is the right answer rather than a missing one.
+    //
+    // A loop is asked here too and answered in the graph phase, because whether
+    // its own task is ever read depends on whether it repeats a *section* — and
+    // that is derived from the `repeats` link in `resolveSections`, a fact about
+    // the whole graph that is not known until every node has been normalized.
+    // Refusing here would force the one block whose task is never sent to an
+    // agent to carry text; `emptyLoopTaskRefusal` asks the same question once
+    // the answer exists.
     const task = kind === "merge" ? "" : String(n.task ?? "").trim();
-    if (kind !== "merge" && !task) {
+    if (kind !== "merge" && kind !== "loop" && !task) {
       return {
         ok: false,
         error:
           kind === "orchestrator"
             ? `“${nodeName}” has nothing to decide. An orchestrator block with no brief is a billed turn that starts whatever it feels like.`
-            : kind === "loop"
-              ? `“${nodeName}” has no task to repeat. A loop with nothing to do is a billed run per pass that spends a work cycle finding that out.`
-              : `“${nodeName}” has no task. A block with nothing to do is a run that spends a work cycle finding that out.`,
+            : `“${nodeName}” has no task. A block with nothing to do is a run that spends a work cycle finding that out.`,
       };
     }
 
@@ -1685,8 +1691,40 @@ function graphRefusal(
     );
   }
 
+  const taskless = emptyLoopTaskRefusal(nodes);
+  if (taskless) return taskless;
+
   // Last, so the chain test inside it may assume an acyclic body.
   return loopBodyRefusal(nodes, edges, byId, known);
+}
+
+/**
+ * Why a loop that repeats nothing but itself has nothing to do, or null.
+ *
+ * `normalizeNode` refuses an empty task on a `run` and an `orchestrator` block
+ * and cannot refuse one here, because whether a loop's own task is ever read is
+ * a fact about the whole graph: a loop with a section runs its *members*, each
+ * of which carries its own task, and the loop's is sent to no agent. The
+ * section is derived from the `repeats` link in `resolveSections`, after every
+ * node has been normalized — so this is the first point at which the question
+ * has an answer, and asking it earlier made the one block whose task is never
+ * read the one block forced to have one.
+ *
+ * A loop with a section *and* a leftover task is accepted and the task is left
+ * where it is. It is the operator's text, and a graph saved before sections
+ * existed may carry both; the editor says beside the field that it is not read.
+ */
+function emptyLoopTaskRefusal(nodes: readonly WorkflowNode[]): string | null {
+  for (const node of nodes) {
+    if (node.kind !== "loop") continue;
+    if (bodyOf(node).length > 0) continue;
+    if (node.task) continue;
+    return (
+      `“${node.name}” has no task to repeat. A loop with nothing to do is a ` +
+      "billed run per pass that spends a work cycle finding that out."
+    );
+  }
+  return null;
 }
 
 
