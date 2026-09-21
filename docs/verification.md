@@ -803,6 +803,24 @@ is `docs/agent/testing.md`; interface defects and their classes are
 
 ### Workflows and schedules
 
+- **A loop as a region, 2026-09-21** (production standalone build from this
+  branch, scratch `DATA_DIR`, one-repo vault, Chromium): a graph whose section
+  holds a run block, an orchestrator block capped at 2 and a merge block at its
+  exit POSTed 200 and came back with `bodyNodeIds` `["a","d","m"]` and every
+  field on the loop empty — `task` `""`, `templateId`, `agentId` and
+  `promptOverride` null, `mountId` and `folder` `""`. A loop sent a task was
+  refused 400 with the field named: "frames the blocks it repeats and starts no
+  run of its own, so there is no task for it to do." A section ending at a run
+  block was refused 400 naming the block and the block to add. The edit page for
+  the saved workflow loaded with no console error, Save was enabled, pressing it
+  navigated to the detail page, and re-reading the workflow gave the same
+  `bodyNodeIds` — so the editor still round-trips a legal graph with the loop's
+  own task, workspace, template and agent controls still on screen and their
+  values dropped before the wire. Caveat: `CLAUDE_BIN` could not spawn, so
+  nothing here ran a pass, and the runtime still carries the previous
+  one-branch-all-the-passes contract — what a pass does with a section that
+  forks or that ends in a merge block is not covered by any of this.
+
 - **Workflows end to end, live dev server, stub CLI:** save refuses each bad
   graph by name; a four-block graph ran its roots in parallel and continued a
   branch; a failed root left its `on-success` dependent `blocked` while the

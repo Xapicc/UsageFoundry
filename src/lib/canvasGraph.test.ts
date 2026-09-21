@@ -20,6 +20,7 @@ import {
   type WorkflowDraftBody,
 } from "./canvasGraph";
 import type { WorkflowEdgeDTO, WorkflowNodeDTO } from "./apiTypes";
+import { normalizeWorkflowInput } from "./workflowGraph";
 
 /**
  * Three decisions on the canvas fail silently, and each one is here.
@@ -761,4 +762,67 @@ test("a graph that already carries the link is not given a second one", () => {
     { from: "l", to: "a", edge: "repeats", continueBranch: false },
   ] as WorkflowEdgeDTO[]);
   assert.equal(links.filter((l) => l.edge === "repeats").length, 1);
+});
+
+/* ------------------------------------------------------------------ */
+/* What the editor sends is what the server accepts                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The one assertion that spans both halves of a save.
+ *
+ * `draftToGraph` and `normalizeWorkflowInput` are written apart and reviewed
+ * apart, and the failure when they drift is the worst one this surface has: a
+ * graph the operator drew, that the canvas draws back correctly, that no door
+ * will accept — with the refusal naming a field the panel is no longer showing
+ * them. A loop is where they drift, because it is the kind whose fields the
+ * server refuses **by name** rather than coercing away: a draft switched from
+ * run to loop still holds the task, workspace, template and agent it had, the
+ * controls for them are still on screen, and only `draftToGraph` dropping them
+ * keeps the graph savable.
+ */
+test("a drawn section survives the editor's own serialisation", () => {
+  const blocks = [
+    // Every field a loop is refused for, left on the draft as a switch of kind
+    // leaves them. None of them may reach the wire.
+    block("l", {
+      kind: "loop",
+      maxPasses: "3",
+      task: "left over from when this was a run block",
+      templateId: "tpl-1",
+      agentId: "agent-1",
+      folder: "sub/dir",
+      promptOverride: "be brief",
+    }),
+    block("a"),
+    block("m", { kind: "merge" }),
+  ];
+  const links = [
+    link("l", "a", { edge: "repeats" }),
+    link("a", "m", { edge: "on-success" }),
+  ];
+  const wire = draftToGraph({ blocks, links });
+
+  const loop = wire.nodes[0];
+  assert.equal(loop.task, "");
+  assert.equal(loop.templateId, null);
+  assert.equal(loop.agentId, null);
+  assert.equal(loop.mountId, "");
+  assert.equal(loop.folder, "");
+  assert.equal(loop.promptOverride, null);
+  // The two it does keep, so the drop above is by kind and not by accident.
+  assert.equal(loop.maxPasses, 3);
+  assert.deepEqual(loop.bodyNodeIds, ["a", "m"]);
+
+  const saved = normalizeWorkflowInput(
+    { name: "Nightly maintenance", graph: wire },
+    {
+      templates: new Map([["tpl-1", { name: "Isolated", isolate: true }]]),
+      mountIds: ["main"],
+      defaultIsolate: true,
+      agents: new Map([["agent-1", { name: "Reviewer", usable: true }]]),
+    },
+  );
+  assert.ok(saved.ok, saved.ok ? "" : saved.error);
+  assert.deepEqual(saved.value.graph.nodes[0].bodyNodeIds, ["a", "m"]);
 });

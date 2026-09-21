@@ -1262,6 +1262,25 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
     assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "d", "b", "m"]);
   });
 
+  it("exempts a merge member from that test on a machine with no default", () => {
+    // Separate from the orchestrator's case because it is only *observable*
+    // where the untemplated guard set does not isolate: a merge block names no
+    // template, `isolatedTemplate(null)` asks `defaultIsolate`, and `KNOWN`
+    // says yes — so on that machine the exemption and the test agree and the
+    // case proves nothing. Here they disagree, and without the exemption the
+    // block a section has to end at would be the thing refusing it.
+    const flat = { ...KNOWN, defaultIsolate: false };
+    const res = normalizeWorkflowInput(
+      graph(
+        [repeater("l"), node("a"), merger("m")],
+        [repeats("l", "a"), edge("a", "m")],
+      ),
+      flat,
+    );
+    assert.ok(res.ok, res.ok ? "" : res.error);
+    assert.deepEqual(res.value.graph.nodes[0].bodyNodeIds, ["a", "m"]);
+  });
+
   it("refuses a link into a section from outside it", () => {
     assert.match(
       error(

@@ -84,8 +84,8 @@ import { Sheet } from "@/components/ui/Sheet";
  *
  * **Nothing here decides what a workflow may be.** A cycle, a template that has
  * been deleted, a workspace that is not mounted, a folder that cannot be
- * resolved, a block with no task, a loop block whose guards give it no checkout
- * of its own to carry between passes: every one of those is
+ * resolved, a block with no task, a section that does not end at a merge block
+ * and so lands no pass: every one of those is
  * `normalizeWorkflowInput`'s answer, asked over `/api/workflows/validate` while
  * the graph is being drawn and shown in its own words. A second copy of those
  * rules here would be a second set to keep in step, and the day one of them
