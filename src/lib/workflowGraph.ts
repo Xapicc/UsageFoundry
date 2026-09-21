@@ -1635,9 +1635,13 @@ function loopBodyRefusal(
     // deciding turn and every run it is allowed to emit. A merge block is
     // neither: it creates no run and spawns no agent of its own.
     //
-    // `maxPasses` is never null on a loop by the time this runs — `normalizeNode`
-    // refuses one without it — but the fallback keeps the sentence from saying
-    // "null time(s)" if that order ever changes.
+    // Neither `maxPasses` on a loop nor `fanOut` on an orchestrator is null by
+    // the time this runs — `normalizeNode` refuses a node without either, and
+    // it has already run on every node here. The fallbacks exist so the
+    // sentence cannot say "null time(s)" if that order ever changes, and both
+    // fall the same way on purpose: *under*-count, so a ceiling reached only
+    // through a broken invariant is a graph let through rather than an
+    // operator refused over a number this file invented.
     const membership = [...members].map((id) => byId.get(id)!);
     const perPass = membership.reduce(
       (total, m) =>
