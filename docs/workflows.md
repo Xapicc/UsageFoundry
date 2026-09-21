@@ -161,36 +161,46 @@ end of a branch hand-over. And it needs at least one block in front of it that
 runs something whose guards isolate — both refused when you save the graph, not
 discovered an hour in.
 
-## A block that repeats itself
+## A region that repeats
 
 Some work does not fit in one run. "Work through the failing tests until they
 pass" is a real task and an agent given one work cycle for it stops half way,
-`completed`, with the job undone. A **loop block** is the fourth kind: it holds
-one task and runs it again and again, one whole run per **pass**, each pass
-carrying on the branch the last one built.
+`completed`, with the job undone. A **loop block** is the fourth kind, and it is
+not a block that does work: it is a **frame round a section of the workflow that
+repeats**. Draw a *repeats* link from it to the first block of that section and
+every block in the section runs again on every **pass**.
 
 > A pass is not a work cycle. A work cycle is one invocation of Claude Code
-> inside a run; a pass is a whole run, with its own work cycles, its own guards
-> and its own spend. The interface never uses one word for the other, and
-> neither should you when reading a bill.
+> inside a run; a pass is a whole section, each block of it a run with its own
+> work cycles, its own guards and its own spend. The interface never uses one
+> word for the other, and neither should you when reading a bill.
+
+**A loop is told nothing.** It holds no task, no workspace, no folder, no
+template, no agent and no standing instructions — a merge block holds none of
+those either, and for the same reason: neither of them starts a run. Send one
+anyway and the graph is refused by the field's name, rather than saved with the
+choice quietly dropped. What a loop does hold is the pass cap, the optional
+spending limit across passes, and the optional board condition; each of those
+bounds the *repetition* rather than describing a run.
+
+A loop with nothing linked to it is refused too. There is no such thing as a
+loop that repeats its own work, because it has none.
 
 **It unrolls; it does not loop.** The obvious implementation is an edge pointing
 backwards — pass 2 depends on the loop block, which depends on pass 1 — and that
 edge is refused by this tool at admission, deliberately. A run whose
 dependencies form a loop is never released and never terminated: it sits
-`waiting` for ever, holding a prompt you believe is queued. So each pass is a
-*fresh run* that depends on the previous pass's, the run graph stays acyclic,
-and every rule written against it — folder claims, releasing, landing, *Stop
-all* — applies to a pass with nothing new bolted on. A loop that repeats a
-whole section, below, changes nothing about this: a pass is then several fresh
-runs rather than one, and the last of them is what the next pass depends on.
+`waiting` for ever, holding a prompt you believe is queued. So every pass is a
+set of *fresh runs*, the run graph stays acyclic, and every rule written against
+it — folder claims, releasing, landing, *Stop all* — applies to a pass with
+nothing new bolted on.
 
 **It stops on five things, and the first is what the agent said.**
 
 | It stops when | Because |
 |---|---|
-| The last pass's agent replied `DONE` | The work is finished, which is the ending you want. Read from what the agent actually said, never from the run's status — `completed` is also what a run that merely used up its work-cycle limit is written as, and that limit defaults to 1, so a loop keyed on the status would stop after every first pass |
-| A pass did not complete | A loop is not a retry mechanism. Connection blips and provider refusals are already retried and waited out *inside* one run, so a fault that got past those is one the next pass would meet too |
+| The last block of the last pass replied `DONE` | The work is finished, which is the ending you want. Read from what the agent actually said, never from the run's status — `completed` is also what a run that merely used up its work-cycle limit is written as, and that limit defaults to 1, so a loop keyed on the status would stop after every first pass |
+| A run in the pass did not complete | A loop is not a retry mechanism. Connection blips and provider refusals are already retried and waited out *inside* one run, so a fault that got past those is one the next pass would meet too |
 | The pass cap is reached | The number you agreed to when you saved the graph |
 | The spending limit across passes is reached | Optional; blank means the pass cap is the only bound |
 | A project's task board has fallen to one of its numbers | Optional. Repeat until this project has at most N open tasks left, or at most N of one priority — the ending for "work the backlog", which none of the four above can state. Several numbers are an **or**: the first one met stops it |
@@ -267,21 +277,25 @@ limit or a time limit: a loop decides for itself whether to start another billed
 run, and without a number that only goes up there is nothing that has to end. A
 graph with a loop block and no cap cannot be saved.
 
-**Neither cap is a guard.** Every pass takes its budget, permission mode,
-work-cycle limit and isolation from the block's template — or from the
-untemplated guard set in Settings — exactly as every other kind of block does.
-The two numbers on a loop bound how many times it *repeats*; they can only ever
-end it earlier, they can never raise what a pass may spend, and the
-workflow-wide limits below still apply on top of them.
+**Neither cap is a guard.** Every block of every pass takes its budget,
+permission mode, work-cycle limit and isolation from its own template — or from
+the untemplated guard set in Settings — exactly as every other kind of block
+does. The loop names no template, because it starts nothing. The two numbers on
+it bound how many times the section *repeats*; they can only ever end it
+earlier, they can never raise what a pass may spend, and the workflow-wide
+limits below still apply on top of them.
 
-**One branch, all the passes.** Pass 2 carries on pass 1's branch through the
-same mechanism a *carry on its branch* link uses, so the whole loop is one chain
-on one ref: one *Land* button, owned by the last pass, and one row in the
-branches table. A block set to start after a loop starts after its **last** pass
-and can carry that branch on. While a loop is still repeating, landing,
-deleting or purging its branch — and paying for a conflict resolution on it — is
-refused by name: the run that will commit to it next has not been created yet,
-so nothing else would notice.
+**Each pass lands its own work.** The section ends in a merge block, that block
+lands what the pass produced, and the next pass starts from the landed branch.
+There is no ref handed from one pass to the next and no *Land* button waiting at
+the end of the loop: by the time a loop hands on, everything it did is already
+on the target.
+
+That is why the exit has to be a merge block rather than merely being allowed to
+be one. A section that does not land leaves the next pass working from a branch
+that cannot see what the last pass did — nothing fails, nothing is refused at
+run time, and the agent simply starts again on work it already did, one billed
+pass at a time until the cap catches it.
 
 The next pass is created only once the previous one has settled, which means
 that between two passes there is briefly nothing running. That is intended: four
@@ -290,25 +304,18 @@ created before them would have to be withdrawn. The board condition is the
 exception — it is a fact about the board at that moment, which is what lets it
 be read before the first pass as well as between them.
 
-## Repeating a section rather than one task
+## What a section may be
 
-A loop block repeats **one task** by default: its own, one run per pass. It can
-instead repeat a **section** — several blocks in order, the whole section again
-on every pass. Give it a section and it starts no run of its own; each pass
-creates one run per block in the section, in the order the section's own links
-give.
-
-**What you link is what repeats.** Link the loop block to the first block of
-the section with a **repeats** link, chain the section along with ordinary
+**What you link is what repeats.** Link the loop block to the first block of the
+section with a **repeats** link, join the section's own blocks with ordinary
 links, and link whatever comes after the loop from the loop block itself. That
 is the whole mechanism: the section is the block the *repeats* link points at
-and everything linked after it, ending where the chain ends. There is nothing
-else to tick and no second list to keep in step.
+and everything reachable from it. There is nothing else to tick and no second
+list to keep in step.
 
-"Plan the next slice, do it, write down what changed" is three different jobs
-and three different prompts, and a single block asked to do all three every
-pass is one agent losing the plan in its own context. As a section it is three
-agents with three tasks, and the whole section happens again next pass.
+"Plan the next slice, do it, write down what changed, land it" is four different
+jobs and four different prompts, and a single block asked to do all four every
+pass is one agent losing the plan in its own context.
 
 **Drawing it.** Press **Repeat** on the loop's own card and then the block each
 pass should start at — dragging from the handle onto it, or pressing the handle
@@ -333,61 +340,51 @@ created once per pass by the loop itself. Reading it as a dependency would be
 the backwards edge this whole design avoids: the loop would wait for a run only
 the loop can start, for ever.
 
-**The section must be a chain.** Each block in it links to at most one other
-block in it, and every block in the section is on that one line. That is not a
-limitation waiting to be lifted — it is what "one branch, all the passes" means.
-The blocks of a pass hand the branch along to each other exactly as two blocks
-joined by a *carry on its branch* link do, and two blocks carrying on one
-predecessor is two runs writing to one branch, which this tool refuses
-everywhere else too. A section that forks is refused when you save the graph,
-naming the block that forks it.
+**One way in and one way out.** The way in is the *repeats* link. The way out is
+the single block the section ends at, and it must be a merge block. Between
+those two ends the shape is free: the section may fork, and two branches that
+fork may meet again at the merge that lands them both.
 
-**Every link inside a section says one thing**: *only if it completes*, carrying
-the branch. One pass is one branch, handed from each block to the next, so there
-is no choice to make — the panel for such a link states it rather than asking,
-and a link drawn between two blocks of a section is drawn that way. A link that
-says otherwise is refused when you save, naming the two blocks; remove it and
-draw it again to bring it into line. This used to be a pair of controls that
-were quietly overruled when the workflow ran.
+Three things are refused, each naming the block to fix:
 
-**The *repeats* link is the only way in, and the loop block is the way out.** A
-block outside the section cannot link to a block inside it: link it to the loop
-instead, and the loop hands on to it after the last pass. A block inside the
-section cannot link back to the loop either. Otherwise "when does this block
-start" has two answers — once, or once per pass — and only one of them is what
-anybody meant.
+- A section that **ends in more than one place**. The second ending is a block
+  whose work nothing lands, which is the same defect as a member with no path to
+  the exit — link it on towards the block that lands.
+- A section whose **last block is not a merge block**. Add one at the end and
+  link the last block to it.
+- A **link across the boundary**. A block outside the section cannot link to a
+  block inside it: link it to the loop instead, and the loop hands on to it after
+  the last pass. Otherwise "when does this block start" has two answers — once,
+  or once per pass — and only one of them is what anybody meant.
 
-**Only fixed work goes in a section**, so a section holds run blocks and nothing
-else. An orchestrator block inside one would start unapproved runs once per pass
-and spend its fan-out cap again on each. A merge block would land a branch the
-loop is still writing to. A loop inside a loop multiplies one pass cap by
-another. All three are refused by name when you save, and every block of a
-section needs guards that isolate — the loop's own rule, for the loop's own
-reason.
+**A section holds run blocks, orchestrator blocks and merge blocks.** A loop
+inside a loop is the one kind left out, and it is refused by name: one pass cap
+multiplying another is a number nobody can work out from the two they typed.
+Repeat one section, not a section that repeats.
 
-**The last block of the section is the one whose `DONE` ends the loop** — the
-one marked *last* on the canvas. It is the agent that finishes a pass, so it is
-the one in a position to say the work is finished; the blocks in front of it
-hand on to it and say nothing about whether to repeat. The other four stop conditions are unchanged, and a pass that
-did not complete stops the loop wherever in the section it stopped.
+Every block of a section that works in a checkout needs guards that isolate,
+because it has to leave a branch for the section's merge block to land. An
+orchestrator block spends nothing on disk and a merge block has no guards at
+all, so neither is asked.
 
-**Count the runs before you press Run.** A section multiplies: passes × blocks
-in the section is how many runs one press can start, so 10 passes over a
-3-block section is 30 runs and 20 over 4 is 80. A loop whose worst case is more
-than **60 runs** is refused when you save it, with both numbers in the sentence.
-The spending limit across passes is the other bound and is worth setting here
-more than anywhere else in this tool.
+**Count the runs before you press Run.** A section multiplies, and an
+orchestrator block in one multiplies twice over — its fan-out cap is what it may
+start *each time it is reached*, and a section reaches it once a pass. So one
+pass is:
 
-A block set to start after a loop still starts after its **last** pass — which
-is now the last block of the last pass — and carries on that one branch. The
-count shown on the block is **passes**, not runs: a three-pass loop over a
-two-block section says three.
+> one run for each run block, **plus** for each orchestrator block the deciding
+> turn and every run its fan-out cap allows.
 
-A workflow saved before *repeats* links existed, or built through the API, may
-state its section as a list of blocks on the loop instead. That keeps working
-exactly as it did, and opening it in the editor draws the link it implies. A
-graph that states it **both** ways and disagrees is refused by name rather than
-resolved in favour of one.
+A merge block is neither: it lands branches and starts no run. Three run blocks
+and a merge over 10 passes is 30 runs; swap one of those for an orchestrator
+capped at 5 and the same 10 passes is 70. A loop whose worst case is more than
+**60 runs** is refused when you save it, with the arithmetic spelled out and
+every factor named. The spending limit across passes is the other bound and is
+worth setting here more than anywhere else in this tool.
+
+A block set to start after a loop starts after its **last** pass, from whatever
+that pass landed. The count shown on the block is **passes**, not runs: a
+three-pass loop over a two-block section says three.
 
 ## Limits for the whole workflow
 
