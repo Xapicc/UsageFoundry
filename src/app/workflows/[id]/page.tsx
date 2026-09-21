@@ -523,6 +523,19 @@ export default function WorkflowPage() {
                           run each
                           {n.maxLoopCostUSD !== null &&
                             `, or ${fmtUSD(n.maxLoopCostUSD)} across them`}
+                          {/* The fifth ending belongs here for the same reason
+                              the caps do: this line is what a run in flight is
+                              read against, and a loop that stops on a board
+                              while the line names only the caps reads as one
+                              that stopped early. */}
+                          {n.stopWhenTasks !== null &&
+                            `, or once ${n.stopWhenTasks.mountId}${
+                              n.stopWhenTasks.folder
+                                ? ` / ${n.stopWhenTasks.folder}`
+                                : ""
+                            } has at most ${n.stopWhenTasks.atMost} ${n.stopWhenTasks.statuses.join(
+                              " or ",
+                            )} task(s) left`}
                         </div>
                       )}
                       {n.kind !== "merge" && (

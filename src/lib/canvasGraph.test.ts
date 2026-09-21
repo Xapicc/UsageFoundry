@@ -52,6 +52,10 @@ function block(id: string, over: Partial<BlockDraft> = {}): BlockDraft {
     mergeAutoResolve: false,
     maxPasses: "",
     maxLoopCostUSD: "",
+    stopWhenTasksMountId: "",
+    stopWhenTasksFolder: "",
+    stopWhenTasksStatuses: "open",
+    stopWhenTasksAtMost: "0",
     ...over,
   };
 }
@@ -385,6 +389,28 @@ test("every value a block's kind carries moves the signature", () => {
       base: { kind: "loop", maxPasses: "3" },
       edit: { maxLoopCostUSD: "5" },
     },
+    {
+      what: "stopWhenTasksMountId",
+      base: { kind: "loop", maxPasses: "3" },
+      edit: { stopWhenTasksMountId: "work" },
+    },
+    // The three behind the mount, each on a base that has the condition on —
+    // with it off they are carried by nothing, which is the case below.
+    {
+      what: "stopWhenTasksFolder",
+      base: { kind: "loop", maxPasses: "3", stopWhenTasksMountId: "work" },
+      edit: { stopWhenTasksFolder: "backlog" },
+    },
+    {
+      what: "stopWhenTasksStatuses",
+      base: { kind: "loop", maxPasses: "3", stopWhenTasksMountId: "work" },
+      edit: { stopWhenTasksStatuses: "open,claimed" },
+    },
+    {
+      what: "stopWhenTasksAtMost",
+      base: { kind: "loop", maxPasses: "3", stopWhenTasksMountId: "work" },
+      edit: { stopWhenTasksAtMost: "4" },
+    },
   ];
   for (const { what, base, edit } of carried) {
     assert.notEqual(
@@ -402,6 +428,10 @@ test("a value the block's kind does not carry is not unsaved work", () => {
     { mergeAutoResolve: true },
     { maxPasses: "7" },
     { maxLoopCostUSD: "12" },
+    // A board condition a run block still holds from before its kind was
+    // switched. It is not merely dropped by a save — it is *refused* by one,
+    // so prompting about it would offer to save a graph that cannot be saved.
+    { stopWhenTasksMountId: "work", stopWhenTasksAtMost: "3" },
   ];
   for (const edit of dropped) {
     assert.equal(

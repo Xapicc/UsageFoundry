@@ -166,6 +166,19 @@ const DEFAULT_FAN_OUT = "3";
 const DEFAULT_MAX_PASSES = "3";
 
 /**
+ * What a board condition counts before anybody picks, and what it stops at.
+ *
+ * `open` alone rather than both states, and the row says why: a claim on this
+ * board is a record of which run holds a task and never a lease — there is no
+ * clock on it — so one task left claimed by a run that died holds the loop open
+ * for every pass it is allowed, a billed run at a time. Counting `claimed` is
+ * offered because a backlog being worked by another run is genuinely not clear;
+ * it is not the default because the failure is expensive and silent.
+ */
+const DEFAULT_STOP_STATUSES = "open";
+const DEFAULT_STOP_AT_MOST = "0";
+
+/**
  * How a merge block lands, before anyone picks.
  *
  * `merge` rather than `settings.landStrategy`: what the graph records has to be
@@ -206,6 +219,10 @@ function emptyBlock(id: string, mountId: string, kind: WorkflowNodeKind): BlockD
     mergeAutoResolve: false,
     maxPasses: DEFAULT_MAX_PASSES,
     maxLoopCostUSD: "",
+    stopWhenTasksMountId: "",
+    stopWhenTasksFolder: "",
+    stopWhenTasksStatuses: DEFAULT_STOP_STATUSES,
+    stopWhenTasksAtMost: DEFAULT_STOP_AT_MOST,
   };
 }
 
@@ -227,6 +244,15 @@ function toBlocks(workflow: WorkflowDTO): BlockDraft[] {
     // Null is "no cap", and a number field says that with "" — never a 0, which
     // `normalizeWorkflowInput` reads as off but a reader would take for a limit.
     maxLoopCostUSD: n.maxLoopCostUSD?.toString() ?? "",
+    // Null is the condition off, which is every graph saved before the field
+    // existed. The other three keep their defaults behind it, so turning it on
+    // by picking a workspace lands on the safe pair rather than on blanks.
+    stopWhenTasksMountId: n.stopWhenTasks?.mountId ?? "",
+    stopWhenTasksFolder: n.stopWhenTasks?.folder ?? "",
+    stopWhenTasksStatuses:
+      n.stopWhenTasks?.statuses.join(",") ?? DEFAULT_STOP_STATUSES,
+    stopWhenTasksAtMost:
+      n.stopWhenTasks?.atMost.toString() ?? DEFAULT_STOP_AT_MOST,
   }));
 }
 
@@ -847,7 +873,7 @@ export function WorkflowEditor({
                 agentsLoaded={agentsLoaded}
                 ambientLine={ambientLine}
                 mounts={mounts}
-                folders={foldersFor(selectedBlock.mountId)}
+                foldersFor={foldersFor}
                 onChange={(patch) => updateBlock(selectedBlock.id, patch)}
                 onRemove={() => removeBlock(selectedBlock.id)}
               />
@@ -1087,6 +1113,34 @@ function BlockStatement({
     // permanent alarm on the ordinary loop, whose pass cap already ends it.
     const capped =
       block.maxLoopCostUSD !== "" && Number.isFinite(spend) && spend > 0;
+    // The board condition is the one ending that is a fact about something
+    // outside this graph, and it is also the one that can stop the loop before
+    // it starts — so the sentence a press of Run is approved against has to
+    // carry it rather than leave the operator to read it off three controls.
+    const atMost = Number(block.stopWhenTasksAtMost);
+    const board =
+      block.stopWhenTasksMountId === "" ? null : (
+        <>
+          , or once{" "}
+          <strong className="mono break-words font-semibold text-ink">
+            {block.stopWhenTasksMountId}
+            {block.stopWhenTasksFolder ? ` / ${block.stopWhenTasksFolder}` : ""}
+          </strong>{" "}
+          has{" "}
+          {Number.isInteger(atMost) && atMost >= 0 ? (
+            <strong className="font-semibold text-ink">
+              at most {atMost}{" "}
+              {block.stopWhenTasksStatuses.split(",").join(" or ")} task
+              {atMost === 1 ? "" : "s"}
+            </strong>
+          ) : (
+            <strong className="font-semibold text-danger">
+              an unstated number of tasks
+            </strong>
+          )}{" "}
+          left
+        </>
+      );
     return (
       <p className="mb-3.5 text-sm leading-normal text-ink-muted">
         Repeats in {where}, each pass a whole run under {guards}
@@ -1109,7 +1163,7 @@ function BlockStatement({
             between them
           </>
         )}
-        .
+        {board}.
       </p>
     );
   }
@@ -1130,7 +1184,7 @@ function BlockPanel({
   agentsLoaded,
   ambientLine,
   mounts,
-  folders,
+  foldersFor,
   onChange,
   onRemove,
 }: {
@@ -1141,11 +1195,21 @@ function BlockPanel({
   agentsLoaded: boolean;
   ambientLine: string | null;
   mounts: WorkspaceMountDTO[];
-  folders: WorkspaceFolderDTO[];
+  /**
+   * The folders of one workspace. A function rather than a list, because a loop
+   * block names two workspaces: the one it runs in and the one whose board it
+   * counts, and those are not required to be the same.
+   */
+  foldersFor: (mountId: string) => WorkspaceFolderDTO[];
   onChange: (patch: Partial<BlockDraft>) => void;
   onRemove: () => void;
 }) {
   const mount = mounts.find((m) => m.id === block.mountId);
+  const folders = foldersFor(block.mountId);
+  const boardMount = mounts.find((m) => m.id === block.stopWhenTasksMountId);
+  const boardFolders = foldersFor(block.stopWhenTasksMountId);
+  /** Whether the board condition is on, which is the mount picker's answer. */
+  const board = block.stopWhenTasksMountId !== "";
   const missingTemplate =
     block.templateId !== "" && templateName(block.templateId) === null;
   const agent = agents.find((a) => a.id === block.agentId) ?? null;
@@ -1327,6 +1391,115 @@ function BlockPanel({
               />
             </div>
           </ListRow>
+
+          {/* The fifth ending, and the only one that is a fact about something
+              outside this graph. Off unless a workspace is picked, so a saved
+              graph that says nothing here keeps the four it already had. */}
+          <ListRow
+            label="Stop when a project's board is clear"
+            htmlFor={`${block.id}-boardmount`}
+            description="Counted before every pass, including the first — a backlog already clear starts no run"
+          >
+            <div className={ROW_CONTROL}>
+              <Select
+                id={`${block.id}-boardmount`}
+                value={block.stopWhenTasksMountId}
+                // The folder belongs to the workspace, so it cannot survive the
+                // workspace changing under it — the block's own pair above
+                // takes the same treatment.
+                onChange={(e) =>
+                  onChange({
+                    stopWhenTasksMountId: e.target.value,
+                    stopWhenTasksFolder: "",
+                  })
+                }
+              >
+                <option value="">Off — the caps are the only ending</option>
+                {mounts.map((m) => (
+                  <option key={m.id} value={m.id} disabled={!m.available}>
+                    {m.label}
+                    {m.available ? "" : "  (not mounted)"}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </ListRow>
+
+          {board && (
+            <>
+              <ListRow
+                label="Project"
+                htmlFor={`${block.id}-boardfolder`}
+                description={
+                  block.stopWhenTasksFolder === ""
+                    ? "Tasks filed against the workspace root itself, not everything under it"
+                    : undefined
+                }
+              >
+                <div className={ROW_CONTROL}>
+                  <Select
+                    id={`${block.id}-boardfolder`}
+                    value={block.stopWhenTasksFolder}
+                    onChange={(e) =>
+                      onChange({ stopWhenTasksFolder: e.target.value })
+                    }
+                  >
+                    <option value="">
+                      {boardMount?.label ?? block.stopWhenTasksMountId} — the
+                      workspace root
+                    </option>
+                    {boardFolders.map((f) => (
+                      <option key={f.path} value={f.path}>
+                        {f.path}
+                        {f.isGitRepo ? "  (git)" : ""}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              </ListRow>
+
+              {/* The rule about `claimed` rides the row rather than the
+                  group's footnote, because it is a fact about what is in this
+                  picker and only a row's description is wired to the control. */}
+              <ListRow
+                label="Which tasks count"
+                htmlFor={`${block.id}-boardstatuses`}
+                description={
+                  block.stopWhenTasksStatuses === "open"
+                    ? "A claim is a record of which run holds a task, never a lease"
+                    : "A claim has no clock on it, so one task left claimed by a run that died holds this loop open for every pass it is allowed"
+                }
+              >
+                <div className={ROW_CONTROL}>
+                  <Select
+                    id={`${block.id}-boardstatuses`}
+                    value={block.stopWhenTasksStatuses}
+                    onChange={(e) =>
+                      onChange({ stopWhenTasksStatuses: e.target.value })
+                    }
+                  >
+                    <option value="open">Open</option>
+                    <option value="open,claimed">Open and claimed</option>
+                  </Select>
+                </div>
+              </ListRow>
+
+              <ListRow label="At most" htmlFor={`${block.id}-boardatmost`}>
+                <div className={ROW_CONTROL_NARROW}>
+                  <Input
+                    id={`${block.id}-boardatmost`}
+                    type="number"
+                    min={0}
+                    className="tabular-nums"
+                    value={block.stopWhenTasksAtMost}
+                    onChange={(e) =>
+                      onChange({ stopWhenTasksAtMost: e.target.value })
+                    }
+                  />
+                </div>
+              </ListRow>
+            </>
+          )}
         </ListGroup>
       )}
 
