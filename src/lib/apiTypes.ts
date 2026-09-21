@@ -1865,8 +1865,13 @@ export interface WorkflowNodeDTO {
    */
   stopWhenTasks: LoopBoardConditionDTO | null;
   /**
-   * The blocks a loop repeats instead of its own task, in no particular order.
+   * The blocks a loop repeats instead of its own task, in pass order.
    * Empty on every other kind, and empty on a loop that repeats itself.
+   *
+   * **Derived from the loop's `repeats` link**, when it has one, and taken as
+   * sent when it has not — which is every graph saved before that link existed
+   * and every graph built through the API. A graph that states both and
+   * disagrees is refused by name rather than resolved in favour of one.
    *
    * **Empty is what a loop meant before this field existed**, and that reading
    * is the compatibility rule of the whole feature: a graph saved without it
@@ -1906,12 +1911,25 @@ export interface LoopBoardConditionDTO {
 }
 
 export interface WorkflowEdgeDTO {
-  /** The block that must settle first. */
+  /** The block that must settle first — or, on a `repeats` link, the loop. */
   from: string;
-  /** The block that starts once it has. */
+  /** The block that starts once it has — or the section's first block. */
   to: string;
-  edge: "on-success" | "on-finish";
-  /** Whether `to` carries on `from`'s branch instead of cutting its own. */
+  /**
+   * What the arrow means. Two of the three are dependencies; `repeats` is not.
+   *
+   * `repeats` may only leave a loop block, and there is at most one of them per
+   * loop. It states **containment**: `to` is the first block of the section the
+   * loop repeats, and the section is `to` plus everything linked after it. It
+   * is never a run dependency — the run it names is created once per pass by
+   * the loop, so anything waiting on it would wait for ever — and it is what
+   * `bodyNodeIds` is derived from.
+   */
+  edge: "on-success" | "on-finish" | "repeats";
+  /**
+   * Whether `to` carries on `from`'s branch instead of cutting its own. Always
+   * false on a `repeats` link, which starts no run and hands over no branch.
+   */
   continueBranch: boolean;
 }
 

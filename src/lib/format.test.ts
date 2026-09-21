@@ -206,7 +206,12 @@ test("only a template that is genuinely absent is called deleted", () => {
 
 test("both edge maps offer the unanswered state as a real option", () => {
   for (const map of [EDGE_OPTION_LABEL, EDGE_CHIP_LABEL]) {
-    assert.deepEqual(Object.keys(map), ["", "on-success", "on-finish"]);
+    assert.deepEqual(Object.keys(map), [
+      "",
+      "on-success",
+      "on-finish",
+      "repeats",
+    ]);
     for (const [edge, label] of Object.entries(map)) {
       assert.ok(label.trim().length > 0, `\`${edge}\` renders as nothing`);
     }
@@ -221,6 +226,19 @@ test("the unanswered state reads as unanswered rather than as a condition", () =
   assert.notEqual(EDGE_OPTION_LABEL[""], EDGE_OPTION_LABEL["on-finish"]);
   assert.notEqual(EDGE_CHIP_LABEL[""], EDGE_CHIP_LABEL["on-success"]);
   assert.notEqual(EDGE_CHIP_LABEL[""], EDGE_CHIP_LABEL["on-finish"]);
+});
+
+test("containment does not read as a third way of waiting", () => {
+  // `repeats` is the one value here that is not a condition on starting: the
+  // block it names is created once per pass by the loop and nothing ever waits
+  // for it. Worded as a condition it would be read as one, and the arrow on the
+  // canvas would be understood backwards.
+  for (const map of [EDGE_OPTION_LABEL, EDGE_CHIP_LABEL]) {
+    assert.match(map.repeats, /repeat/i);
+    assert.notEqual(map.repeats, map["on-success"]);
+    assert.notEqual(map.repeats, map["on-finish"]);
+    assert.notEqual(map.repeats, map[""]);
+  }
 });
 
 /**

@@ -239,6 +239,9 @@ export default function WorkflowPage() {
     if (!workflow) return map;
     const names = new Map(workflow.nodes.map((n) => [n.id, n.name]));
     for (const e of workflow.edges) {
+      // Dependencies only: a `repeats` link says which loop contains a block,
+      // and a block inside a section waits for nothing — its pass creates it.
+      if (e.edge === "repeats") continue;
       const list = map.get(e.to) ?? [];
       list.push({
         from: e.from,

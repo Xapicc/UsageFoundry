@@ -2447,7 +2447,9 @@ function workflowReport() {
             folder: n.kind === "merge" ? null : n.folder,
             fanOut: n.fanOut,
             after: w.graph.edges
-              .filter((e) => e.to === n.id)
+              // A `repeats` link is containment, not a wait: the loop it names
+              // creates this block once per pass.
+              .filter((e) => e.to === n.id && e.edge !== "repeats")
               .map((e) => `${e.from} (${e.edge})`),
           })),
         };

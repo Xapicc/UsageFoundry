@@ -215,6 +215,13 @@ export interface WorkflowNode {
    * The blocks this loop repeats instead of its own task. Empty on every other
    * kind, and empty on a loop that repeats itself.
    *
+   * **Derived from the loop's `repeats` link when it has one**, by
+   * `resolveSections`, and taken as sent when it has not — which is every graph
+   * saved before the link existed and every graph built through the API. A
+   * graph that states both and disagrees is refused by name. What is stored is
+   * this list either way, so every rule below and every runtime reader is
+   * written against one field and not two.
+   *
    * **Empty is what a loop meant before this field existed.** Every graph saved
    * without it repeats the block's own task, one run per pass, and behaves
    * identically — the same reading `kind` gets when it is absent, and the same
@@ -246,13 +253,66 @@ export type LoopBoardCondition = LoopBoardConditionDTO;
 const COUNTABLE_TASK_STATUSES: readonly TaskStatusDTO[] = ["open", "claimed"];
 const GROWING_TASK_STATUSES: readonly TaskStatusDTO[] = ["done", "dropped"];
 
-/** "Start `to` after `from` has settled." */
+/**
+ * The one condition on a link that is not a dependency: containment.
+ *
+ * A link out of a loop block carrying this states *what the loop repeats* — its
+ * target is the first block of the section, and the section is that target plus
+ * everything linked after it. It is **never** a run dependency: read as one it
+ * would be the back edge the whole repeated-section design exists to avoid,
+ * because the run it names is created once per pass by the loop itself and
+ * nothing outside a pass ever waits for it. `planInstanceStep` drops it by name
+ * for that reason, and a test holds the drop in place.
+ *
+ * A separate value of the same field rather than a flag beside it, because the
+ * operator answers one question about a link — what does this arrow mean —
+ * and two controls for one answer is how the mechanism this replaced ended up
+ * with a silent override on one side and an inert link on the other.
+ */
+export const REPEATS_EDGE = "repeats";
+
+/**
+ * Every answer a link may carry: the two dependency conditions and containment.
+ *
+ * Deliberately *not* added to `DEPENDENCY_EDGES`, which is what a `runs` row
+ * stores and what `admitDependencies` reads. Widening that would put "repeats"
+ * on a live dependency, which is the one thing it may never be.
+ */
+export const WORKFLOW_EDGE_CONDITIONS = [
+  ...DEPENDENCY_EDGES,
+  REPEATS_EDGE,
+] as const;
+export type WorkflowEdgeCondition = DependencyEdge | typeof REPEATS_EDGE;
+
+/**
+ * "Start `to` after `from` has settled" — or, for `repeats`, "`from` repeats
+ * `to` and everything linked after it".
+ */
 export interface WorkflowEdge {
   from: string;
   to: string;
-  edge: DependencyEdge;
+  edge: WorkflowEdgeCondition;
   /** Whether `to` carries on `from`'s branch instead of cutting a new one. */
   continueBranch: boolean;
+}
+
+/** A link that really is "start `to` after `from`", narrowed for the readers. */
+export interface WorkflowDependencyEdge extends WorkflowEdge {
+  edge: DependencyEdge;
+}
+
+/**
+ * Whether this link states a dependency rather than what a loop contains.
+ *
+ * A type guard rather than a predicate, so that every reader which turns an
+ * edge into a `run_deps` row has to filter through it first — `edge` on a
+ * `WorkflowEdge` is not a value `createRun` may store, and the compiler is what
+ * makes that unmissable rather than a comment somebody has to find.
+ */
+export function isDependencyEdge(
+  edge: WorkflowEdge,
+): edge is WorkflowDependencyEdge {
+  return edge.edge !== REPEATS_EDGE;
 }
 
 export interface WorkflowGraph {
@@ -459,12 +519,40 @@ export function normalizeWorkflowInput(
     // `on-finish` starts a run on top of a dependency that crashed, and a silent
     // default is wrong half the time in both directions.
     const edge = String(e.edge ?? "");
-    if (!(DEPENDENCY_EDGES as readonly string[]).includes(edge)) {
+    if (!(WORKFLOW_EDGE_CONDITIONS as readonly string[]).includes(edge)) {
       return {
         ok: false,
         error:
           `“${target.name}” needs a condition for starting after “${source.name}”: ` +
-          `${DEPENDENCY_EDGES.join(" or ")}.`,
+          `${DEPENDENCY_EDGES.join(" or ")}${
+            source.kind === "loop" ? `, or ${REPEATS_EDGE}` : ""
+          }.`,
+      };
+    }
+    // Offered only where it means something. Every other block starts one run
+    // and has no passes to repeat anything in, so a `repeats` link out of one
+    // would be a containment nothing could ever act on — accepted and inert,
+    // which is exactly the defect this condition was added to remove.
+    if (edge === REPEATS_EDGE && source.kind !== "loop") {
+      return {
+        ok: false,
+        error:
+          `“${source.name}” does not repeat anything, so it has no section for ` +
+          `“${target.name}” to be the start of. Only a repeating block has a ` +
+          "“repeats” link.",
+      };
+    }
+    // Refused rather than ignored, this file's standing treatment of a field
+    // that would otherwise be read by nothing: a `repeats` link hands over no
+    // branch, because it starts no run. What a pass does with the branch is
+    // `planPass`', and it is stated on the section's own links.
+    if (edge === REPEATS_EDGE && e.continueBranch === true) {
+      return {
+        ok: false,
+        error:
+          `“${source.name}” repeats “${target.name}” rather than handing it a ` +
+          "branch: a “repeats” link says what is inside the loop, not what " +
+          "starts after it.",
       };
     }
 
@@ -530,8 +618,13 @@ export function normalizeWorkflowInput(
       }
     }
 
-    edges.push({ from, to, edge: edge as DependencyEdge, continueBranch });
+    edges.push({ from, to, edge: edge as WorkflowEdgeCondition, continueBranch });
   }
+
+  // Before `graphRefusal`, because every rule it holds about a section reads
+  // `bodyNodeIds` and this is what puts the drawn answer there.
+  const sections = resolveSections(nodes, edges, byId);
+  if (!sections.ok) return sections;
 
   const refusal = graphRefusal(nodes, edges, byId, known);
   if (refusal) return { ok: false, error: refusal };
@@ -1072,12 +1165,128 @@ function bodyOf(loop: WorkflowNode): readonly string[] {
 }
 
 /**
+ * What a loop's `repeats` link makes a section of: its target, and everything
+ * linked after that target along ordinary links.
+ *
+ * The walk skips `repeats` links, so a second loop drawn *inside* a section
+ * contributes its own members to its own section and not to this one — the
+ * nesting is then refused by name in `loopBodyRefusal` rather than silently
+ * flattened into one body.
+ *
+ * The loop itself is never a member, however the links run. A member linked
+ * back to its own loop is a mistake with its own sentence in
+ * `loopBodyRefusal`'s boundary rule, and swallowing the loop into its own body
+ * here would answer it with a different one.
+ *
+ * Bounded by the node count rather than run to a fixed point, for
+ * `longestPathRank`'s reason one file over: the operator can draw a cycle, this
+ * runs before the cycle check, and a walk that did not terminate would hang the
+ * request rather than refuse the graph.
+ */
+function sectionFrom(
+  loopId: string,
+  firstId: string,
+  edges: readonly WorkflowEdge[],
+): string[] {
+  const members: string[] = [];
+  const seen = new Set<string>([loopId]);
+  const queue = [firstId];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    members.push(id);
+    for (const e of edges) {
+      if (e.from !== id || e.edge === REPEATS_EDGE) continue;
+      queue.push(e.to);
+    }
+  }
+  return members;
+}
+
+/**
+ * Put what each loop's `repeats` link says on the loop, and refuse a graph that
+ * says it twice.
+ *
+ * **The section is derived from a link and never kept as a second list.** What
+ * the operator draws is the whole statement: the `repeats` link says where the
+ * section starts, the section's own links say what is in it and in what order.
+ * `bodyNodeIds` stays exactly what it was — the field every rule, every runtime
+ * reader and every saved graph is already written against — so this is a change
+ * to the door and not to the machinery behind it.
+ *
+ * **Both directions stay open.** A graph that arrives with `bodyNodeIds` and no
+ * `repeats` link keeps today's reading untouched, which is every workflow saved
+ * before this and every graph built through the API. A graph that carries both
+ * and disagrees is refused by *name* rather than resolved in favour of one: a
+ * caller who sent both meant something by each, and dropping half of it in
+ * silence is what this app's doors exist to stop. The editor sends both and
+ * derives the list from the link, so it cannot produce the disagreement.
+ */
+function resolveSections(
+  nodes: readonly WorkflowNode[],
+  edges: readonly WorkflowEdge[],
+  byId: ReadonlyMap<string, WorkflowNode>,
+): { ok: true } | { ok: false; error: string } {
+  const named = (id: string) => byId.get(id)?.name ?? id;
+
+  for (const loop of nodes) {
+    if (loop.kind !== "loop") continue;
+    const doors = edges.filter(
+      (e) => e.from === loop.id && e.edge === REPEATS_EDGE,
+    );
+    if (doors.length > 1) {
+      // Both targets named, because the operator has to choose between them and
+      // a refusal that says only "two" leaves them hunting for the second.
+      return {
+        ok: false,
+        error:
+          `“${loop.name}” is linked to two sections — “${named(doors[0].to)}” ` +
+          `and “${named(doors[1].to)}”. A loop repeats one section, so it has ` +
+          "one “repeats” link: the one to the block its pass starts at.",
+      };
+    }
+    if (doors.length === 0) continue;
+
+    const derived = sectionFrom(loop.id, doors[0].to, edges);
+    const declared = bodyOf(loop);
+    if (declared.length > 0) {
+      const same =
+        declared.length === derived.length &&
+        new Set(derived).size === derived.length &&
+        declared.every((id) => derived.includes(id));
+      if (!same) {
+        const list = (ids: readonly string[]) =>
+          ids.length === 0
+            ? "nothing"
+            : ids.map((id) => `“${named(id)}”`).join(", ");
+        return {
+          ok: false,
+          error:
+            `“${loop.name}” says twice what it repeats, and the two disagree. ` +
+            `Its “repeats” link makes a section of ${list(derived)}; the list ` +
+            `it carries names ${list(declared)}. Send one of them.`,
+        };
+      }
+    }
+    loop.bodyNodeIds = derived;
+  }
+
+  return { ok: true };
+}
+
+/**
  * Why a loop's body could not be repeated, or null when every body can be.
  *
- * Six refusals, and each one stands in front of a failure that is silent or
- * arrives mid-instance. A body is a *section* of the graph repeated whole, so
- * the questions are about the graph rather than about a block, which is why
- * none of this is in `normalizeNode`.
+ * Each one stands in front of a failure that is silent or arrives mid-instance.
+ * A body is a *section* of the graph repeated whole, so the questions are about
+ * the graph rather than about a block, which is why none of this is in
+ * `normalizeNode`.
+ *
+ * Every sentence here names the link to draw rather than only the one that is
+ * wrong. Membership is stated by a `repeats` link and an order by the section's
+ * own links, so "this is not allowed" is only half an answer: the other half is
+ * which of the two kinds of link the operator meant.
  *
  * Read after the cycle and ordering checks above, so the chain test below may
  * assume the body is acyclic — a body that is not is refused there, by the same
@@ -1101,20 +1310,22 @@ function loopBodyRefusal(
       if (!member) {
         return (
           `“${loop.name}” repeats a block that is not in this workflow: ` +
-          `${memberId || "(blank)"}.`
+          `${memberId || "(blank)"}. A section is the block its “repeats” ` +
+          "link points at and everything linked after it."
         );
       }
       if (member.id === loop.id) {
         return (
-          `“${loop.name}” is inside its own body, so each pass would create ` +
-          "the loop again rather than the work it repeats."
+          `“${loop.name}” is inside the section it repeats, so each pass would ` +
+          "create the loop again rather than the work it repeats. Link " +
+          `“${loop.name}” to the first block of the section instead.`
         );
       }
       const claimed = owner.get(memberId);
       if (claimed) {
         return claimed.id === loop.id
-          ? `“${loop.name}” repeats “${member.name}” twice in one pass. A block can only be in a body once.`
-          : `“${member.name}” is in the body of both “${claimed.name}” and “${loop.name}”. A block can only be repeated by one loop.`;
+          ? `“${loop.name}” repeats “${member.name}” twice in one pass. A block can only be in a section once.`
+          : `“${member.name}” is in the section repeated by both “${claimed.name}” and “${loop.name}”. A block can only be repeated by one loop.`;
       }
       owner.set(memberId, loop);
 
@@ -1147,20 +1358,37 @@ function loopBodyRefusal(
   for (const loop of loops) {
     const members = new Set(bodyOf(loop));
 
-    // The loop block is the only door in and out. Anything else makes "when is
-    // this block released" a question with two answers: the block behind a body
-    // member would be waiting on a run that is created again on every pass, and
-    // the block in front of one would release a member the loop also creates.
+    // The `repeats` link is the only door in, and the loop block is the only
+    // door out. Anything else makes "when is this block released" a question
+    // with two answers: the block behind a member would be waiting on a run
+    // that is created again on every pass, and the block in front of one would
+    // release a member the loop also creates.
+    //
+    // Three sentences rather than one, because there are three mistakes here
+    // and only one of them is "you linked the wrong block". Each says what to
+    // draw instead: a refusal that only names what is wrong leaves the operator
+    // to guess which of the two link kinds they wanted.
     for (const e of edges) {
       const inFrom = members.has(e.from);
       const inTo = members.has(e.to);
       if (inFrom === inTo) continue;
       const outside = inFrom ? e.to : e.from;
-      if (outside === loop.id) continue;
+      const inside = byId.get(inFrom ? e.from : e.to)!;
+      if (outside === loop.id) {
+        if (e.edge === REPEATS_EDGE) continue;
+        return inFrom
+          ? `“${inside.name}” is inside the section “${loop.name}” repeats and ` +
+              `is linked back to “${loop.name}”. What runs after the loop is ` +
+              "linked from the loop block, not from inside the section."
+          : `“${loop.name}” is linked to “${inside.name}”, which is already ` +
+              `inside the section it repeats. A loop has one way in: the ` +
+              "“repeats” link to the block its pass starts at.";
+      }
       return (
-        `“${byId.get(outside)!.name}” is linked to “${byId.get(inFrom ? e.from : e.to)!.name}”, ` +
-        `which is inside “${loop.name}”. Link it to “${loop.name}” instead — ` +
-        "the loop block is the only way in and out of what it repeats."
+        `“${byId.get(outside)!.name}” is linked to “${inside.name}”, ` +
+        `which is inside the section “${loop.name}” repeats. Link it to ` +
+        `“${loop.name}” instead — the “repeats” link is the only way in, and ` +
+        "the loop block is what hands on to whatever comes after."
       );
     }
 
@@ -1193,8 +1421,31 @@ function loopBodyRefusal(
       return (
         `The ${members.size} blocks “${loop.name}” repeats are not in one ` +
         "order. A repeated section is a chain, because every pass is one " +
-        "branch handed from each block to the next."
+        "branch handed from each block to the next: link each block of the " +
+        "section to the next one along."
       );
+    }
+
+    // What a link inside a section may say, stated rather than overridden.
+    //
+    // `planPass` creates every member of a pass `on-success` and carrying the
+    // branch, because the section is a chain precisely so that "one branch, all
+    // the passes" holds — the last member's tip is what the next pass continues.
+    // It used to do that to whatever the operator had drawn, which made the two
+    // controls on an intra-section link read as choices and behave as decoration.
+    // Refused here instead, after the chain rules above so that a section which
+    // is not a chain yet is answered by the sentence about *that* first.
+    for (const e of within) {
+      if (e.edge === "on-success" && e.continueBranch) continue;
+      const pair = `“${byId.get(e.from)!.name}” and “${byId.get(e.to)!.name}”`;
+      return e.edge === "on-success"
+        ? `The link between ${pair} inside “${loop.name}” does not carry the ` +
+            "branch. One pass is one branch, handed from each block of a " +
+            "section to the next, so every link inside one carries it."
+        : `The link between ${pair} inside “${loop.name}” starts “${byId.get(e.to)!.name}” ` +
+            "once the block before it finishes either way. A pass that did not " +
+            "complete has already stopped the loop, so every link inside a " +
+            "section is “only if it completes”.";
     }
 
     // What one press of Run would put on the machine over the life of this
@@ -1294,7 +1545,12 @@ function graphRefusal(
 
   // The same loop detector the run graph uses, given the node ids in place of
   // run ids — so "what counts as a cycle" has one definition and one test.
-  const links: DependencyLink[] = edges.map((e) => ({
+  // A `repeats` link is not a wait, so it is not an arrow this detector may
+  // follow: the block it names is created once per pass by the loop and never
+  // waits for it. Left in, a section whose last block was linked back to its
+  // loop would be reported as "these blocks wait for each other" rather than by
+  // the boundary rule below, which says which link to draw instead.
+  const links: DependencyLink[] = edges.filter(isDependencyEdge).map((e) => ({
     runId: e.to,
     dependsOn: e.from,
     edge: e.edge,
@@ -1311,7 +1567,16 @@ function graphRefusal(
   // cycle check above is the only thing that can make it not be. A graph that
   // reached here with an unplaceable node would be instantiated into runs that
   // sit `waiting` for ever.
-  const { unplaced } = topologicalOrder({ nodes, edges });
+  //
+  // Over the dependencies alone, for the reason above it: a `repeats` link is
+  // not a wait, and `instantiate` skips every block a loop repeats anyway. Left
+  // in, a section whose last block was linked back to its loop would be
+  // reported here rather than by the boundary rule, which names the link to
+  // draw instead of the three blocks it is between.
+  const { unplaced } = topologicalOrder({
+    nodes,
+    edges: edges.filter(isDependencyEdge),
+  });
   if (unplaced.length > 0) {
     return (
       "These blocks could never start, because what they wait for can never " +

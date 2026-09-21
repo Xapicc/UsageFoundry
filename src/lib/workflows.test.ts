@@ -13,6 +13,7 @@ import {
   emittedFolderRefusal,
   haltPlan,
   instanceStatus,
+  loopBody,
   mergeBlockOutcome,
   normalizeWorkflowInput,
   planEmission,
@@ -1055,10 +1056,10 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
     );
   });
 
-  it("refuses a loop inside its own body", () => {
+  it("refuses a loop inside the section it repeats", () => {
     assert.match(
       error(graph([repeater("l", { bodyNodeIds: ["l"] })])),
-      /inside its own body/,
+      /inside the section it repeats/,
     );
   });
 
@@ -1070,7 +1071,10 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
         node("a"),
       ]),
     );
-    assert.match(refusal, /“A” is in the body of both “L” and “M”/);
+    assert.match(
+      refusal,
+      /“A” is in the section repeated by both “L” and “M”/,
+    );
   });
 
   it("refuses the same block named twice in one body", () => {
@@ -1132,27 +1136,39 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
         [edge("z", "a")],
       ),
     );
-    assert.match(into, /the loop block is the only way in and out/);
+    assert.match(into, /the “repeats” link is the only way in/);
     const outOf = error(
       graph(
         [repeater("l", { bodyNodeIds: ["a"] }), node("a"), node("z")],
         [edge("a", "z")],
       ),
     );
-    assert.match(outOf, /the loop block is the only way in and out/);
+    assert.match(outOf, /the “repeats” link is the only way in/);
   });
 
-  it("allows the loop block's own edges to and from its members", () => {
-    // Containment as a canvas would draw it. `bodyNodeIds` is what states the
-    // relationship; the edge is inert, and reading it as a dependency is
-    // exactly the back edge nothing would ever wake.
-    const v = value(
-      graph(
-        [repeater("l", { bodyNodeIds: ["a"] }), node("a")],
-        [edge("l", "a")],
+  it("refuses the loop's own ordinary edges to and from its members", () => {
+    // Both used to be accepted and inert, which is the defect the `repeats`
+    // condition replaced: an operator who drew the arrow they could see was
+    // told nothing, and the section came from a switch somewhere else. Each
+    // names the link to draw instead.
+    assert.match(
+      error(
+        graph(
+          [repeater("l", { bodyNodeIds: ["a"] }), node("a")],
+          [edge("l", "a")],
+        ),
       ),
+      /A loop has one way in: the “repeats” link/,
     );
-    assert.equal(v.graph.edges.length, 1);
+    assert.match(
+      error(
+        graph(
+          [repeater("l", { bodyNodeIds: ["a"] }), node("a")],
+          [edge("a", "l")],
+        ),
+      ),
+      /linked from the loop block, not from inside the section/,
+    );
   });
 
   it("refuses a body that branches, because a pass is one branch", () => {
@@ -1236,6 +1252,233 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
       ),
     );
     assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "b", "c"]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Loop blocks: the link that says what a loop repeats                 */
+/* ------------------------------------------------------------------ */
+
+/** The link that states containment, as a graph carries it. */
+function repeats(from: string, to: string) {
+  return edge(from, to, { edge: "repeats" });
+}
+
+/** A link of the one kind a section's own links may be. */
+function inside(from: string, to: string) {
+  return edge(from, to, { edge: "on-success", continueBranch: true });
+}
+
+/**
+ * What an operator *draws* is what a loop repeats, and every way of getting
+ * that wrong is silent or expensive.
+ *
+ * The derivation is the whole mechanism: read short it drops a block out of
+ * every pass, read long it puts one in that nobody meant to repeat — and
+ * either way the graph saves, the region draws, and the sentence a press of Run
+ * is approved against states the wrong section. A `repeats` link taken for a
+ * dependency is worse still: `releasableRuns` would leave the loop waiting for
+ * a run only the loop creates, and the instance would never finish with nothing
+ * on the page to say why.
+ *
+ * The compatibility half is the other silent one. Every workflow saved before
+ * this link existed carries the list alone, and a reading that needed the link
+ * would quietly stop repeating anything.
+ */
+describe("normalizeWorkflowInput — the link that makes a section", () => {
+  it("derives the section from the link and everything after it", () => {
+    const v = value(
+      graph(
+        [repeater("l"), node("a"), node("b"), node("c")],
+        [repeats("l", "a"), inside("a", "b"), inside("b", "c")],
+      ),
+    );
+    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "b", "c"]);
+    // And the link survives the round trip: the editor redraws the graph from
+    // it, so dropping it here would lose the section on the next save.
+    assert.equal(
+      v.graph.edges.filter((e) => e.edge === "repeats").length,
+      1,
+    );
+  });
+
+  it("leaves a loop with no link repeating its own task", () => {
+    const v = value(
+      graph([repeater("l"), node("a")], [edge("l", "a")]),
+    );
+    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, []);
+  });
+
+  it("refuses two “repeats” links out of one loop, naming both targets", () => {
+    // Both named, because the operator has to choose between them and a
+    // refusal that says only "two" leaves them hunting for the second.
+    const refusal = error(
+      graph(
+        [repeater("l"), node("a"), node("b")],
+        [repeats("l", "a"), repeats("l", "b")],
+      ),
+    );
+    assert.match(refusal, /“A” and “B”/);
+    assert.match(refusal, /A loop repeats one section/);
+  });
+
+  it("refuses a “repeats” link out of a block that has no passes", () => {
+    for (const make of [node, decider, merger]) {
+      assert.match(
+        error(graph([make("x"), node("a")], [repeats("x", "a")])),
+        /Only a repeating block has a “repeats” link/,
+      );
+    }
+  });
+
+  it("refuses a “repeats” link set to hand over a branch", () => {
+    assert.match(
+      error(
+        graph(
+          [repeater("l"), node("a")],
+          [edge("l", "a", { edge: "repeats", continueBranch: true })],
+        ),
+      ),
+      /says what is inside the loop, not what starts after it/,
+    );
+  });
+
+  it("refuses a link and a list that disagree, naming both sections", () => {
+    // Resolved in favour of neither. A caller that sent both meant something by
+    // each, and dropping half of it in silence is what this door exists to
+    // stop — the operator would get a workflow repeating a section they can see
+    // they did not ask for.
+    const refusal = error(
+      graph(
+        [repeater("l", { bodyNodeIds: ["a", "b"] }), node("a"), node("b")],
+        [repeats("l", "a")],
+      ),
+    );
+    assert.match(refusal, /says twice what it repeats, and the two disagree/);
+    assert.match(refusal, /makes a section of “A”/);
+    assert.match(refusal, /names “A”, “B”/);
+  });
+
+  it("accepts a link and a list that agree", () => {
+    const v = value(
+      graph(
+        [repeater("l", { bodyNodeIds: ["b", "a"] }), node("a"), node("b")],
+        [repeats("l", "a"), inside("a", "b")],
+      ),
+    );
+    // Stored in the order a pass creates them, whichever order the list was in.
+    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "b"]);
+  });
+
+  it("refuses a link inside a section that does not carry the branch", () => {
+    // The silent override, said out loud. `planPass` used to create every
+    // member of a pass on-success and carrying the branch whatever the operator
+    // had drawn, which made both controls on an intra-section link decoration.
+    assert.match(
+      error(
+        graph(
+          [repeater("l"), node("a"), node("b")],
+          [repeats("l", "a"), edge("a", "b")],
+        ),
+      ),
+      /does not carry the branch/,
+    );
+  });
+
+  it("refuses a link inside a section that starts either way", () => {
+    assert.match(
+      error(
+        graph(
+          [repeater("l"), node("a"), node("b")],
+          [
+            repeats("l", "a"),
+            edge("a", "b", { edge: "on-finish", continueBranch: true }),
+          ],
+        ),
+      ),
+      /every link inside a section is “only if it completes”/,
+    );
+  });
+
+  it("names the chain before the condition on a section that is not one yet", () => {
+    // Order between two refusals, and it is the useful one: a section still
+    // being assembled has links with no branch on them *and* is not a chain,
+    // and "these are not in one order" is the sentence that gets the operator
+    // to the next step.
+    assert.match(
+      error(
+        graph(
+          [repeater("l"), node("a"), node("b"), node("c")],
+          [repeats("l", "a"), edge("a", "b"), edge("a", "c")],
+        ),
+      ),
+      /hands its branch to 2 blocks/,
+    );
+  });
+
+  it("refuses a member linked back to its own loop", () => {
+    // The back edge, drawn. Named by the boundary rule rather than reported as
+    // a cycle, because "these blocks wait for each other" is true of nothing
+    // here — a `repeats` link is not a wait.
+    assert.match(
+      error(
+        graph(
+          [repeater("l"), node("a")],
+          [repeats("l", "a"), edge("a", "l")],
+        ),
+      ),
+      /linked from the loop block, not from inside the section/,
+    );
+  });
+
+  it("lets the loop hand on to what comes after the section", () => {
+    const v = value(
+      graph(
+        [repeater("l"), node("a"), node("b"), node("z")],
+        [repeats("l", "a"), inside("a", "b"), edge("l", "z")],
+      ),
+    );
+    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "b"]);
+  });
+
+  it("refuses a nested loop by name rather than flattening it", () => {
+    // The walk does not follow a `repeats` link, so an inner loop's members
+    // stay its own — which leaves the inner loop itself a member of the outer
+    // section, and that is the thing with a sentence written for it.
+    assert.match(
+      error(
+        graph(
+          [repeater("l"), node("a"), repeater("k"), node("z")],
+          [repeats("l", "a"), inside("a", "k"), repeats("k", "z")],
+        ),
+      ),
+      /multiplies one pass cap by another/,
+    );
+  });
+
+  it("reads a saved graph's list exactly as it always has", () => {
+    // The compatibility rule, and the strongest form of it: the same section
+    // stated the old way and the new way has to normalize to the same thing.
+    const asList = value(
+      graph(
+        [repeater("l", { bodyNodeIds: ["a", "b"] }), node("a"), node("b")],
+        [inside("a", "b")],
+      ),
+    );
+    const asLinks = value(
+      graph(
+        [repeater("l"), node("a"), node("b")],
+        [repeats("l", "a"), inside("a", "b")],
+      ),
+    );
+    assert.deepEqual(
+      asList.graph.nodes[0].bodyNodeIds,
+      asLinks.graph.nodes[0].bodyNodeIds,
+    );
+    assert.deepEqual(
+      loopBody(asList.graph, asList.graph.nodes[0]).map((n) => n.id),
+      loopBody(asLinks.graph, asLinks.graph.nodes[0]).map((n) => n.id),
+    );
   });
 });
 
@@ -2935,6 +3178,97 @@ describe("planInstanceStep — what an instance may do next", () => {
     );
     assert.deepEqual(dead.spawn, []);
     assert.match(dead.block[0].reason, /“Build”, which ended failed/);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* A “repeats” link is never a dependency                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The one reading that would undo the whole design, held here rather than left
+ * to a comment.
+ *
+ * A `repeats` link points from a loop to a block the loop itself creates, once
+ * per pass. Read as a dependency it is a back edge: `planInstanceStep` would
+ * hold the loop `waiting` for a run only the loop can make, `releasableRuns`
+ * would reach a fixed point with it still waiting, and the instance would never
+ * finish — with nothing on the page saying why. Nothing typechecks that away,
+ * because the field it sits in is the same field a dependency uses.
+ *
+ * And the same graph stated the old way — a list on the loop and no link —
+ * has to plan identically, which is what makes every workflow saved before this
+ * go on doing exactly what it did.
+ */
+describe("planInstanceStep — the link that says what a loop repeats", () => {
+  const loopNode = (bodyNodeIds: string[]) =>
+    graphNode("l", "Nightly", { kind: "loop", maxPasses: 3, bodyNodeIds });
+
+  /** The section drawn: a “repeats” link in, a chain along, a link out. */
+  const DRAWN: WorkflowGraph = {
+    nodes: [
+      loopNode(["a", "b"]),
+      graphNode("a", "A"),
+      graphNode("b", "B"),
+      graphNode("z", "Z"),
+    ],
+    edges: [
+      edge("l", "a", { edge: "repeats" }),
+      edge("a", "b", { edge: "on-success", continueBranch: true }),
+      edge("l", "z", { edge: "on-success" }),
+    ],
+  };
+
+  it("starts the loop with nothing in front of it, link and all", () => {
+    const step = stepOf(
+      { l: decided("waiting"), z: decided("waiting") },
+      DRAWN,
+    );
+    assert.deepEqual(
+      step.loop.map((l) => l.nodeId),
+      ["l"],
+      "the loop waits for nothing: the link out of it is not one",
+    );
+    assert.deepEqual(
+      step.loop[0].dependsOn,
+      [],
+      "and the section is not a run it depends on",
+    );
+    assert.deepEqual(step.create, [], "a member is never created here");
+    assert.deepEqual(step.block, [], "and never blocked either");
+  });
+
+  it("plans a section stated as a list exactly as one stated as a link", () => {
+    const asList: WorkflowGraph = {
+      nodes: DRAWN.nodes,
+      edges: DRAWN.edges.filter((e) => e.edge !== "repeats"),
+    };
+    const state = { l: decided("waiting"), z: decided("waiting") };
+    assert.deepEqual(stepOf(state, DRAWN), stepOf(state, asList));
+  });
+
+  it("releases what is behind the loop off the loop's own link", () => {
+    // The other half of "the loop block is the way out": Z waits for the loop
+    // and not for the last member, which is a run it has never heard of. The
+    // loop's own ledger row carries the passes it took, and the last of them is
+    // the run the successor is put behind.
+    const step = stepOf(
+      {
+        l: decided("emitted", [
+          ["r-pass-1", "completed"],
+          ["r-pass-2", "completed"],
+        ]),
+        z: decided("waiting"),
+      },
+      DRAWN,
+    );
+    assert.deepEqual(
+      step.create.map((c) => c.nodeId),
+      ["z"],
+    );
+    assert.deepEqual(step.create[0].dependsOn, [
+      { runId: "r-pass-2", edge: "on-success", continueBranch: false },
+    ]);
   });
 });
 

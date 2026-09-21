@@ -179,11 +179,17 @@ import {
 /* ------------------------------------------------------------------ */
 
 export {
+  REPEATS_EDGE,
+  WORKFLOW_EDGE_CONDITIONS,
   currentKnowledge,
   folderRefusal,
+  isDependencyEdge,
+  loopBody,
   normalizeWorkflowInput,
   type TemplateFacts,
+  type WorkflowEdgeCondition,
   type Workflow,
+  type WorkflowDependencyEdge,
   type WorkflowEdge,
   type WorkflowGraph,
   type WorkflowInput,
@@ -194,12 +200,15 @@ export {
 
 import {
   NODE_ID,
+  REPEATS_EDGE,
   currentKnowledge,
   folderRefusal,
+  isDependencyEdge,
   loopBody,
   loopBodyOwners,
   normalizeWorkflowInput,
   type TemplateFacts,
+  type WorkflowDependencyEdge,
   type Workflow,
   type LoopBoardCondition,
   type WorkflowEdge,
@@ -338,8 +347,10 @@ export function summarizeProposedGraph(
           }`,
     fanOut: node.fanOut,
     mergeAutoResolve: node.mergeAutoResolve,
+    // Dependencies only. A `repeats` link names the loop that *contains* this
+    // block, which is not something it waits for — one pass creates it.
     after: graph.edges
-      .filter((e) => e.to === node.id)
+      .filter((e) => e.to === node.id && isDependencyEdge(e))
       .map((e) => names.get(e.from) ?? e.from),
   }));
 }
@@ -1428,14 +1439,18 @@ export function planInstanceStep(
   // rather than blocked, because `blocked` is a sentence about work that will
   // not happen and this work happens on every pass.
   const inABody = loopBodyOwners(graph);
-  const incoming = new Map<string, WorkflowEdge[]>();
+  const incoming = new Map<string, WorkflowDependencyEdge[]>();
   for (const e of graph.edges) {
     if (!byId.has(e.from) || !byId.has(e.to)) continue;
-    // An edge between a loop and a block of its own body states containment,
-    // which `bodyNodeIds` already states — read as a dependency it would be the
-    // back edge this whole design is built to avoid, and `releasableRuns` would
-    // leave the loop `waiting` for a run that is only ever created by the loop.
-    // Every *other* edge across a body boundary was refused at save.
+    // A `repeats` link states containment and is **never** a dependency. Read
+    // as one it is the back edge this whole design is built to avoid:
+    // `releasableRuns` would leave the loop `waiting` for a run that is only
+    // ever created by the loop, and the instance would never finish. Dropped by
+    // its own condition rather than left to the membership test below, because
+    // that is the fact the drop rests on and a test holds it here.
+    if (!isDependencyEdge(e)) continue;
+    // The same for every other edge touching a body member, which after the
+    // boundary rule is only the loop's own link to whatever runs after it.
     if (inABody.has(e.from) || inABody.has(e.to)) continue;
     const list = incoming.get(e.to);
     if (list) list.push(e);
@@ -1528,7 +1543,7 @@ export function planInstanceStep(
 function edgeVerdict(
   from: WorkflowNode,
   state: InstanceNodeState,
-  edge: WorkflowEdge,
+  edge: WorkflowDependencyEdge,
   dependsOn: InstanceCreation["dependsOn"],
 ): EdgeVerdict {
   if (from.kind === "merge") {
@@ -1660,7 +1675,7 @@ function edgeVerdict(
 function loopVerdict(
   from: WorkflowNode,
   state: InstanceNodeState,
-  edge: WorkflowEdge,
+  edge: WorkflowDependencyEdge,
   dependsOn: InstanceCreation["dependsOn"],
 ): EdgeVerdict {
   const block = state.block;
@@ -2955,10 +2970,19 @@ export function startWorkflow(
     }
   }
 
-  const { order } = topologicalOrder(graph);
+  // The dependencies alone decide the creation order: a `repeats` link names a
+  // block this pass never creates, and every reader below is already filtered
+  // to the same set. `graphRefusal` has established the order is total.
+  const { order } = topologicalOrder({
+    nodes: graph.nodes,
+    edges: graph.edges.filter(isDependencyEdge),
+  });
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
-  const incoming = new Map<string, WorkflowEdge[]>();
+  const incoming = new Map<string, WorkflowDependencyEdge[]>();
   for (const e of graph.edges) {
+    // Containment, not a dependency — and the one edge here whose `edge` is not
+    // a value `createRun` may store on a `run_deps` row.
+    if (!isDependencyEdge(e)) continue;
     const list = incoming.get(e.to);
     if (list) list.push(e);
     else incoming.set(e.to, [e]);
@@ -3125,6 +3149,9 @@ function deferredNodes(graph: WorkflowGraph): Set<string> {
   const out = new Map<string, string[]>();
   for (const e of graph.edges) {
     if (!byId.has(e.from) || !byId.has(e.to)) continue;
+    // A loop's section is never created by this pass at all, so the link that
+    // says what is in it cannot defer anything.
+    if (!isDependencyEdge(e)) continue;
     const list = out.get(e.from);
     if (list) list.push(e.to);
     else out.set(e.from, [e.to]);
@@ -4001,11 +4028,13 @@ export function reviveBlockedBlocks(roots: readonly string[]): number {
       .map((b) => b.nodeId);
     if (candidates.length === 0) continue;
 
-    const links = instance.graph.edges.map((e) => ({
-      runId: e.to,
-      dependsOn: e.from,
-      edge: e.edge,
-    }));
+    const links = instance.graph.edges
+      .filter(isDependencyEdge)
+      .map((e) => ({
+        runId: e.to,
+        dependsOn: e.from,
+        edge: e.edge as DependencyEdge,
+      }));
     for (const nodeId of revivableDependents(nodes, candidates, links)) {
       // Guarded on `blocked` for `upsertBlock`'s reason: a row that settled
       // between the read and the write keeps its own answer.

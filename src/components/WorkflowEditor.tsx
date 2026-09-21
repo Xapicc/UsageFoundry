@@ -21,11 +21,12 @@ import {
   MAX_WORKFLOW_NODES,
 } from "@/lib/apiTypes";
 import {
-  bodyOrder,
   draftSignature,
   draftToGraph,
   linkKey,
+  linksOfGraph,
   resolveLayout,
+  sectionOf,
   type BlockDraft,
   type LinkDraft,
   type Point,
@@ -224,8 +225,6 @@ function emptyBlock(id: string, mountId: string, kind: WorkflowNodeKind): BlockD
     stopWhenTasksFolder: "",
     stopWhenTasksStatuses: DEFAULT_STOP_STATUSES,
     stopWhenTasksAtMost: DEFAULT_STOP_AT_MOST,
-    // A new loop repeats its own task, which is what a loop has always been.
-    bodyNodeIds: [],
   };
 }
 
@@ -256,20 +255,17 @@ function toBlocks(workflow: WorkflowDTO): BlockDraft[] {
       n.stopWhenTasks?.statuses.join(",") ?? DEFAULT_STOP_STATUSES,
     stopWhenTasksAtMost:
       n.stopWhenTasks?.atMost.toString() ?? DEFAULT_STOP_AT_MOST,
-    // Read back and sent again untouched. No control on this panel edits it
-    // yet, so the only thing that matters here is that Save does not clear a
-    // body a graph already carries — see `BlockDraft.bodyNodeIds`.
-    bodyNodeIds: n.bodyNodeIds ?? [],
   }));
 }
 
+/**
+ * The links, with a “repeats” link put back where a saved graph only implies
+ * one. See `linksOfGraph`: this surface derives what a loop repeats from the
+ * links alone, so a workflow that states it as a list has to arrive carrying
+ * the arrow that says the same thing.
+ */
 function toLinks(workflow: WorkflowDTO): LinkDraft[] {
-  return workflow.edges.map((e) => ({
-    from: e.from,
-    to: e.to,
-    edge: e.edge,
-    continueBranch: e.continueBranch,
-  }));
+  return linksOfGraph(workflow.nodes, workflow.edges);
 }
 
 /* ------------------------------------------------------------------ */
@@ -380,6 +376,26 @@ export function WorkflowEditor({
     () => resolveLayout(blocks, links, dragged),
     [blocks, links, dragged],
   );
+
+  /**
+   * Which loop repeats each block, by that loop's name.
+   *
+   * One derivation for both panels, so the sentence a block's statement reads
+   * out and the sentence a link's panel states cannot disagree about what is
+   * inside a section. Membership of the link's *source* is what decides whether
+   * a link is inside one: the section is everything linked after its first
+   * block, so a link out of a member always lands inside it too.
+   */
+  const sections = useMemo(() => {
+    const owner = new Map<string, string>();
+    for (const block of blocks) {
+      if (block.kind !== "loop") continue;
+      for (const id of sectionOf(block.id, blocks, links)) {
+        if (!owner.has(id)) owner.set(id, blockLabel(block));
+      }
+    }
+    return owner;
+  }, [blocks, links]);
 
   /* ---------------------------------------------------------------- */
   /* What the install offers                                           */
@@ -502,22 +518,12 @@ export function WorkflowEditor({
   }, []);
 
   const removeBlock = useCallback((id: string) => {
-    setBlocks((prev) =>
-      prev
-        .filter((b) => b.id !== id)
-        // A section naming a block that has gone is refused by name at Save,
-        // for the same reason a link to one is — so it goes with the block
-        // rather than waiting to be discovered. The map is unconditional
-        // because `bodyNodeIds` is `[]` on every kind that does not carry one.
-        .map((b) =>
-          b.bodyNodeIds.includes(id)
-            ? { ...b, bodyNodeIds: b.bodyNodeIds.filter((m) => m !== id) }
-            : b,
-        ),
-    );
+    setBlocks((prev) => prev.filter((b) => b.id !== id));
     // A link to a block that has gone is a link to nothing, and the server
     // refuses one — so it goes with the block rather than waiting to be
-    // discovered at Save.
+    // discovered at Save. That is also what takes the block out of any section
+    // it was in, now that membership is the links and nothing else: a “repeats”
+    // link to it goes with it, and so does the chain link that reached it.
     setLinks((prev) => prev.filter((l) => l.from !== id && l.to !== id));
     setDragged((prev) => {
       const next = { ...prev };
@@ -534,40 +540,76 @@ export function WorkflowEditor({
   }, []);
 
   /**
-   * Put a block into a loop's section, or take it back out.
+   * Point a loop's “repeats” link at a block, or take the one already pointing
+   * there away.
    *
-   * The only writer, so the canvas's handle and the inspector's list cannot
-   * disagree about what marking one means. It decides nothing else: whether the
-   * block may be repeated, whether the section is a chain and whether two loops
-   * are fighting over it are all `graphRefusal`'s, answered by the validate
-   * route while the graph is being drawn, and a second opinion here would be a
-   * rule to keep in step with no way to notice it had drifted.
+   * The whole of what this surface writes about a section, and a write to the
+   * *links*: membership and order are read back out of them by `sectionOf`, so
+   * there is no list here to keep in step with the picture. At most one per
+   * loop, by replacing rather than appending — two is a refusal the server
+   * writes, and it is not one this gesture has any way to mean.
+   *
+   * It decides nothing else: whether the block may be repeated, whether the
+   * section is a chain and whether two loops are fighting over it are all
+   * `graphRefusal`'s, answered by the validate route while the graph is being
+   * drawn, and a second opinion here would be a rule to keep in step with no
+   * way to notice it had drifted.
    */
-  const toggleBody = useCallback((loopId: string, memberId: string) => {
-    setBlocks((prev) =>
-      prev.map((b) =>
-        b.id !== loopId
-          ? b
-          : {
-              ...b,
-              bodyNodeIds: b.bodyNodeIds.includes(memberId)
-                ? b.bodyNodeIds.filter((m) => m !== memberId)
-                : [...b.bodyNodeIds, memberId],
-            },
-      ),
-    );
-  }, []);
+  const repeatFrom = useCallback(
+    (loopId: string, firstId: string) => {
+      const already = links.some(
+        (l) => l.from === loopId && l.to === firstId && l.edge === "repeats",
+      );
+      setLinks((prev) => {
+        const rest = prev.filter(
+          (l) => !(l.from === loopId && l.edge === "repeats"),
+        );
+        return already
+          ? rest
+          : [
+              ...rest,
+              {
+                from: loopId,
+                to: firstId,
+                edge: "repeats",
+                continueBranch: false,
+              },
+            ];
+      });
+      // The link that was just drawn, so the panel states what it means — and
+      // nothing at all when the press removed one, because a selection pointing
+      // at a link that has gone is an empty panel with a Remove button on it.
+      setSelection(already ? null : { kind: "link", from: loopId, to: firstId });
+    },
+    [links],
+  );
 
-  const connect = useCallback((from: string, to: string) => {
-    setLinks((prev) =>
-      prev.some((l) => l.from === from && l.to === to)
-        ? prev
-        : // Drawn with no condition, and it stays that way until the operator
-          // answers: see `EDGE_OPTION_LABEL`.
-          [...prev, { from, to, edge: "", continueBranch: false }],
-    );
-    setSelection({ kind: "link", from, to });
-  }, []);
+  const connect = useCallback(
+    (from: string, to: string) => {
+      // A link drawn out of a block some loop already repeats extends that
+      // section, and inside a section there is exactly one legal answer: one
+      // pass is one branch, handed from each block to the next. So it is drawn
+      // carrying that answer rather than unanswered, and the panel *states* it
+      // instead of asking — which is what stops the two controls being choices
+      // that something downstream then overrules. Everywhere else neither
+      // condition is safe to assume: see `EDGE_OPTION_LABEL`.
+      const inSection = blocks.some(
+        (b) => b.kind === "loop" && sectionOf(b.id, blocks, links).includes(from),
+      );
+      setLinks((prev) =>
+        prev.some((l) => l.from === from && l.to === to)
+          ? prev
+          : [
+              ...prev,
+              inSection
+                ? { from, to, edge: "on-success" as const, continueBranch: true }
+                : { from, to, edge: "" as const, continueBranch: false },
+            ],
+      );
+      setSelection({ kind: "link", from, to });
+    },
+    [blocks, links],
+  );
 
   const updateLink = useCallback(
     (from: string, to: string, patch: Partial<LinkDraft>) => {
@@ -851,7 +893,7 @@ export function WorkflowEditor({
             onConnect={connect}
             onRemoveLink={removeLink}
             onRemoveBlock={removeBlock}
-            onToggleBody={toggleBody}
+            onRepeat={repeatFrom}
           />
 
           {/* The server's own sentence, asked while the graph is being drawn.
@@ -923,9 +965,6 @@ export function WorkflowEditor({
                 foldersFor={foldersFor}
                 onChange={(patch) => updateBlock(selectedBlock.id, patch)}
                 onRemove={() => removeBlock(selectedBlock.id)}
-                onToggleBody={(memberId) =>
-                  toggleBody(selectedBlock.id, memberId)
-                }
               />
             )}
 
@@ -934,6 +973,10 @@ export function WorkflowEditor({
                 link={selectedLink}
                 fromName={nameOf(selectedLink.from)}
                 toName={nameOf(selectedLink.to)}
+                fromIsLoop={
+                  blocks.find((b) => b.id === selectedLink.from)?.kind === "loop"
+                }
+                insideSection={sections.get(selectedLink.from)}
                 onChange={(patch) =>
                   updateLink(selectedLink.from, selectedLink.to, patch)
                 }
@@ -1315,12 +1358,11 @@ function BlockPanel({
   foldersFor,
   onChange,
   onRemove,
-  onToggleBody,
 }: {
   block: BlockDraft;
-  /** The whole graph: a loop's section is chosen out of it, in its order. */
+  /** The whole graph: a loop's section is read out of it, in its order. */
   blocks: readonly BlockDraft[];
-  /** Its edges, which are what put the chosen blocks in the order a pass runs. */
+  /** Its links, which are what say what a loop repeats and in what order. */
   links: readonly LinkDraft[];
   templates: RunTemplateDTO[];
   templateName: (id: string) => string | null;
@@ -1336,8 +1378,6 @@ function BlockPanel({
   foldersFor: (mountId: string) => WorkspaceFolderDTO[];
   onChange: (patch: Partial<BlockDraft>) => void;
   onRemove: () => void;
-  /** Put a block into this loop's section, or take it back out. */
-  onToggleBody: (memberId: string) => void;
 }) {
   const mount = mounts.find((m) => m.id === block.mountId);
   const folders = foldersFor(block.mountId);
@@ -1361,18 +1401,12 @@ function BlockPanel({
   const merge = block.kind === "merge";
 
   // The section in the order a pass will create it, which is the order the
-  // statement reads out and the list below numbers. Empty on every kind but a
-  // loop, and on a loop that repeats its own task — which is every loop saved
-  // before a section could be chosen.
-  const bodyIds = bodyOrder(block.bodyNodeIds, blocks, links);
-  const body = bodyIds
+  // statement reads out and the rows below number. Empty on every kind but a
+  // loop, and on a loop with no “repeats” link — which is every loop saved
+  // before a section could be drawn, and every loop that repeats its own task.
+  const body = sectionOf(block.id, blocks, links)
     .map((id) => blocks.find((b) => b.id === id))
     .filter((b): b is BlockDraft => b !== undefined);
-  // Every other block, in the graph's own declaration order. Not filtered by
-  // kind: `graphRefusal` refuses a merge, an orchestrator and a second loop by
-  // name and for three different reasons, and a picker that hid them would
-  // leave somebody looking for a block that is on the canvas in front of them.
-  const others = blocks.filter((b) => b.id !== block.id);
 
   const guards: ReactNode = missingTemplate ? (
     <strong className="font-semibold text-danger">
@@ -1496,50 +1530,42 @@ function BlockPanel({
       )}
 
       {loop && (
+        /* Read-only, and that is the change this group exists to record: what a
+           loop repeats is said once, on the canvas, by the “repeats” link and
+           the links after it. A control here would be a second way to set one
+           fact — which is what this group was, beside an order it could not
+           set and did not show. */
         <ListGroup
           className="mb-4"
           label="What it repeats"
           footnote={
-            // The sentence above already states the section, its order and the
-            // worst-case run count, so this says the one thing the rows cannot:
-            // what the list means when nothing in it is marked.
             body.length === 0
-              ? "Mark nothing and every pass repeats this block's own task"
-              : "The order is the section's own links, not the order you marked them in"
+              ? "Draw a “repeats” link from this block to the one each pass starts at"
+              : "Chain the section along with ordinary links; what comes after the loop is linked from this block"
           }
         >
-          {others.length === 0 ? (
-            <ListRow label="Nothing to repeat">
+          {body.length === 0 ? (
+            <ListRow label="Its own task">
               <span className="text-sm text-ink-faint">
-                This workflow has one block
+                Every pass is one run of this block
               </span>
             </ListRow>
           ) : (
-            others.map((other) => {
-              const at = bodyIds.indexOf(other.id);
-              return (
-                <ListRow
-                  key={other.id}
-                  label={blockLabel(other)}
-                  htmlFor={`${block.id}-body-${other.id}`}
-                  description={
-                    at === -1
-                      ? KIND_LABEL[other.kind]
-                      : `${KIND_LABEL[other.kind]} · run ${at + 1} of each pass`
-                  }
-                >
-                  {/* A switch per block rather than a reorderable list: what
-                      order the section runs in is the section's own links, so
-                      a control that let it be dragged into a different one
-                      would be a second answer the server never reads. */}
-                  <Switch
-                    id={`${block.id}-body-${other.id}`}
-                    checked={at !== -1}
-                    onChange={() => onToggleBody(other.id)}
-                  />
-                </ListRow>
-              );
-            })
+            body.map((member, index) => (
+              <ListRow
+                key={member.id}
+                label={blockLabel(member)}
+                description={`${KIND_LABEL[member.kind]} · run ${index + 1} of each pass`}
+              >
+                <span className="text-sm text-ink-faint">
+                  {index === body.length - 1
+                    ? "last — its DONE ends the loop"
+                    : index === 0
+                      ? "first"
+                      : ""}
+                </span>
+              </ListRow>
+            ))
           )}
         </ListGroup>
       )}
@@ -2037,16 +2063,70 @@ function LinkPanel({
   link,
   fromName,
   toName,
+  fromIsLoop,
+  insideSection,
   onChange,
   onRemove,
 }: {
   link: LinkDraft;
   fromName: string;
   toName: string;
+  /** Whether a “repeats” link may leave this source at all. */
+  fromIsLoop: boolean;
+  /** The loop that repeats both ends of this link, or undefined. */
+  insideSection: string | undefined;
   onChange: (patch: Partial<LinkDraft>) => void;
   onRemove: () => void;
 }) {
   const id = linkKey(link).replace(/[^A-Za-z0-9_-]/g, "-");
+
+  if (link.edge === "repeats") {
+    return (
+      <>
+        <p className="mb-3.5 text-sm leading-normal text-ink-muted">
+          <strong className="font-semibold text-ink">{fromName}</strong> repeats{" "}
+          <strong className="font-semibold text-ink">{toName}</strong> and
+          everything linked after it, once per pass.{" "}
+          <span className="text-warn">
+            Nothing waits for this link — it says what is inside the loop, not
+            what starts after it.
+          </span>
+        </p>
+        <RemoveLinkRow onRemove={onRemove} />
+      </>
+    );
+  }
+
+  // Inside a section every link says the same thing, and there is nothing here
+  // to choose. `planPass` creates each member of a pass on the one before it,
+  // completing and on its branch, because the section is a chain precisely so
+  // that one pass is one branch — the two controls below would be choices
+  // something downstream overrules, which is what this panel used to offer.
+  // Drawn conforming by `connect`; a link that says otherwise is refused at
+  // Save, and remove-and-redraw is what brings it into line.
+  if (insideSection !== undefined) {
+    const conforms = link.edge === "on-success" && link.continueBranch;
+    return (
+      <>
+        <p className="mb-3.5 text-sm leading-normal text-ink-muted">
+          <strong className="font-semibold text-ink">{toName}</strong> carries on
+          from <strong className="font-semibold text-ink">{fromName}</strong>{" "}
+          inside the section{" "}
+          <strong className="font-semibold text-ink">{insideSection}</strong>{" "}
+          repeats: one pass is one branch, handed from each block to the next.
+          {!conforms && (
+            <span className="text-warn">
+              {" "}
+              This one says otherwise, so the graph is refused. Remove it and
+              draw it again.
+            </span>
+          )}
+        </p>
+        <RemoveLinkRow onRemove={onRemove} />
+      </>
+    );
+  }
+
   return (
     <>
       <p className="mb-3.5 text-sm leading-normal text-ink-muted">
@@ -2087,13 +2167,16 @@ function LinkPanel({
             >
               {/* Declaration order, which puts the unanswered state first —
                   the same walk the kind picker above takes over `KIND_LABEL`. */}
-              {(
-                Object.keys(EDGE_OPTION_LABEL) as Array<LinkDraft["edge"]>
-              ).map((edge) => (
-                <option key={edge} value={edge}>
-                  {EDGE_OPTION_LABEL[edge]}
-                </option>
-              ))}
+              {(Object.keys(EDGE_OPTION_LABEL) as Array<LinkDraft["edge"]>)
+                // Containment is offered only where it means something: every
+                // other kind of block starts one run and has no passes to
+                // repeat anything in, and the server refuses it by name.
+                .filter((edge) => edge !== "repeats" || fromIsLoop)
+                .map((edge) => (
+                  <option key={edge} value={edge}>
+                    {EDGE_OPTION_LABEL[edge]}
+                  </option>
+                ))}
             </Select>
           </div>
         </ListRow>
@@ -2107,12 +2190,19 @@ function LinkPanel({
         </ListRow>
       </ListGroup>
 
-      <ButtonRow className="mt-4 border-t border-line pt-3.5">
-        <Button variant="ghost" size="compact" onClick={onRemove}>
-          Remove link
-        </Button>
-        <span className="max-md:hidden text-xs text-ink-faint">or press Delete</span>
-      </ButtonRow>
+      <RemoveLinkRow onRemove={onRemove} />
     </>
+  );
+}
+
+/** The one control every link panel carries, however much else it states. */
+function RemoveLinkRow({ onRemove }: { onRemove: () => void }) {
+  return (
+    <ButtonRow className="mt-4 border-t border-line pt-3.5">
+      <Button variant="ghost" size="compact" onClick={onRemove}>
+        Remove link
+      </Button>
+      <span className="max-md:hidden text-xs text-ink-faint">or press Delete</span>
+    </ButtonRow>
   );
 }

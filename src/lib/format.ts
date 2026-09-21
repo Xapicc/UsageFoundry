@@ -576,23 +576,38 @@ export function groupPasses<T extends { passNumber: number | null }>(
  * is wrong half the time in both directions. A form-hygiene pass that removes
  * the empty option pre-selects a condition nobody chose, and the graph saves.
  *
+ * **`repeats` is not a fourth way of waiting.** It is offered only on a link
+ * whose source is a loop block, and it states what that loop *contains*: the
+ * target is the first block of the repeated section. Both maps word it as a
+ * relationship rather than as a condition, because a reader who takes it for
+ * one has understood the arrow backwards — nothing ever waits for the block it
+ * names.
+ *
  * Two maps because the picker and the chip are read in different places — a
  * `<select>` option is read once, deliberately, and the chip on the canvas is
  * read at a glance beside forty others — and one file because three files held
  * four phrasings of the same two conditions, which is how a reader ends up
  * believing an edge means two different things on two screens.
  */
-export const EDGE_OPTION_LABEL: Record<"" | "on-success" | "on-finish", string> = {
+export const EDGE_OPTION_LABEL: Record<
+  "" | "on-success" | "on-finish" | "repeats",
+  string
+> = {
   "": "Choose a condition",
   "on-success": "Only if it completes",
   "on-finish": "Once it finishes, either way",
+  repeats: "Repeats it, and the section after it",
 };
 
-/** The same three, as the canvas chip and every parenthetical say them. */
-export const EDGE_CHIP_LABEL: Record<"" | "on-success" | "on-finish", string> = {
+/** The same four, as the canvas chip and every parenthetical say them. */
+export const EDGE_CHIP_LABEL: Record<
+  "" | "on-success" | "on-finish" | "repeats",
+  string
+> = {
   "": "needs a condition",
   "on-success": "if it completes",
   "on-finish": "either way",
+  repeats: "repeats from here",
 };
 
 /**

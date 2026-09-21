@@ -10,13 +10,16 @@ import {
   draftToGraph,
   freeSpot,
   layoutBounds,
+  linksOfGraph,
   resolveLayout,
   resolveLinkRelease,
+  sectionOf,
   type BlockDraft,
   type CanvasDraft,
   type LinkDraft,
   type WorkflowDraftBody,
 } from "./canvasGraph";
+import type { WorkflowEdgeDTO, WorkflowNodeDTO } from "./apiTypes";
 
 /**
  * Three decisions on the canvas fail silently, and each one is here.
@@ -58,7 +61,6 @@ function block(id: string, over: Partial<BlockDraft> = {}): BlockDraft {
     stopWhenTasksFolder: "",
     stopWhenTasksStatuses: "open",
     stopWhenTasksAtMost: "0",
-    bodyNodeIds: [],
     ...over,
   };
 }
@@ -414,32 +416,6 @@ test("every value a block's kind carries moves the signature", () => {
       base: { kind: "loop", maxPasses: "3", stopWhenTasksMountId: "work" },
       edit: { stopWhenTasksAtMost: "4" },
     },
-    // The section a loop repeats, which is the whole of "repeat a section" and
-    // is assembled one block at a time with nothing else on the page changing.
-    // Without it a body put together and not saved leaves with no dialog at all.
-    {
-      what: "bodyNodeIds",
-      base: { kind: "loop", maxPasses: "3" },
-      edit: { bodyNodeIds: ["b"] },
-    },
-    {
-      what: "a block added to the body",
-      base: { kind: "loop", maxPasses: "3", bodyNodeIds: ["b"] },
-      edit: { bodyNodeIds: ["b", "c"] },
-    },
-    {
-      what: "a block taken out of the body",
-      base: { kind: "loop", maxPasses: "3", bodyNodeIds: ["b", "c"] },
-      edit: { bodyNodeIds: ["b"] },
-    },
-    // The order on the wire is the order the operator marked them in. It is not
-    // what decides a pass — the body's own edges are — but it is a change a save
-    // would keep, so leaving over it must still ask.
-    {
-      what: "the order of the body",
-      base: { kind: "loop", maxPasses: "3", bodyNodeIds: ["b", "c"] },
-      edit: { bodyNodeIds: ["c", "b"] },
-    },
   ];
   for (const { what, base, edit } of carried) {
     assert.notEqual(
@@ -448,6 +424,39 @@ test("every value a block's kind carries moves the signature", () => {
       `a change to ${what} would be discarded without a prompt`,
     );
   }
+});
+
+/**
+ * The section a loop repeats is drawn rather than typed, so every change to it
+ * is a change to the *links* — and the dirty check has to see each one, or a
+ * section assembled and not saved leaves the page with no dialog at all.
+ *
+ * Four separate cases because they move the signature by two different routes:
+ * the link itself is on the wire, and `bodyNodeIds` is derived from it. A
+ * reading that dropped either would still pass one of them.
+ */
+test("every change to a drawn section moves the signature", () => {
+  const blocks = [
+    block("l", { kind: "loop", maxPasses: "3" }),
+    block("b"),
+    block("c"),
+  ];
+  const repeats = link("l", "b", { edge: "repeats" });
+  const chain = link("b", "c", { edge: "on-success", continueBranch: true });
+  const bare = signature(blocks);
+  const started = signature(blocks, [repeats]);
+  const chained = signature(blocks, [repeats, chain]);
+
+  assert.notEqual(started, bare, "the “repeats” link is the section");
+  assert.notEqual(chained, started, "a block chained on joins the section");
+  assert.notEqual(
+    signature(blocks, [link("l", "c", { edge: "repeats" })]),
+    started,
+    "the section starting somewhere else is a different section",
+  );
+  // The derived list goes over the wire beside the links, so a save keeps it.
+  const wire = draftToGraph({ blocks, links: [repeats, chain] });
+  assert.deepEqual(wire.nodes[0].bodyNodeIds, ["b", "c"]);
 });
 
 test("a value the block's kind does not carry is not unsaved work", () => {
@@ -461,9 +470,6 @@ test("a value the block's kind does not carry is not unsaved work", () => {
     // switched. It is not merely dropped by a save — it is *refused* by one,
     // so prompting about it would offer to save a graph that cannot be saved.
     { stopWhenTasksMountId: "work", stopWhenTasksAtMost: "3" },
-    // And a section, one field along and for the same reason: a run block that
-    // names blocks to repeat is refused by name.
-    { bodyNodeIds: ["b"] },
   ];
   for (const edit of dropped) {
     assert.equal(
@@ -525,25 +531,32 @@ test("whitespace either side of the name is not work", () => {
  * not derived correctly from the layout there is nothing to fall back on.
  */
 
-const loop = (id: string, bodyNodeIds: string[]) =>
-  block(id, { kind: "loop", maxPasses: "3", bodyNodeIds });
+const loop = (id: string) => block(id, { kind: "loop", maxPasses: "3" });
 
-test("a body is ordered by its own edges, not by the order it was marked in", () => {
-  const blocks = [loop("l", ["c", "a", "b"]), block("a"), block("b"), block("c")];
+/** The link that states containment: `loopId` repeats `firstId` and on. */
+const repeats = (loopId: string, firstId: string) =>
+  link(loopId, firstId, { edge: "repeats" });
+
+/** A link of the one kind a section's own links may be. */
+const chain = (from: string, to: string) =>
+  link(from, to, { edge: "on-success", continueBranch: true });
+
+test("a body is ordered by its own edges, not by the order it was walked in", () => {
+  const blocks = [loop("l"), block("a"), block("b"), block("c")];
   const links = [link("a", "b"), link("b", "c")];
   assert.deepEqual(bodyOrder(["c", "a", "b"], blocks, links), ["a", "b", "c"]);
 });
 
 test("a body ignores the edges that reach it from outside", () => {
-  // The loop block is the only door in and out, so its own edges to the first
-  // and last member say nothing about the order within the section.
-  const blocks = [loop("l", ["a", "b"]), block("a"), block("b"), block("z")];
+  // The “repeats” link is the only way in and the loop block is the way out, so
+  // neither says anything about the order within the section.
+  const blocks = [loop("l"), block("a"), block("b"), block("z")];
   const links = [link("l", "a"), link("a", "b"), link("b", "l"), link("z", "b")];
   assert.deepEqual(bodyOrder(["a", "b"], blocks, links), ["a", "b"]);
 });
 
 test("a body that is not a chain yet still gets an order, and terminates", () => {
-  const blocks = [loop("l", ["a", "b", "c"]), block("a"), block("b"), block("c")];
+  const blocks = [loop("l"), block("a"), block("b"), block("c")];
   // A cycle among the members is legal to *draw* — the server refuses it and
   // can only answer about a graph it has been sent — so this must return rather
   // than spin, and return the same thing twice. Which order a cycle gets is not
@@ -555,18 +568,18 @@ test("a body that is not a chain yet still gets an order, and terminates", () =>
   assert.deepEqual(bodyOrder(["a", "b", "c"], blocks, cyclic), once);
 
   // A fork, which is the ordinary state of a section half assembled: it is
-  // ranked as far as the edges reach and the marking order breaks the tie.
+  // ranked as far as the edges reach and declaration order breaks the tie.
   assert.deepEqual(
     bodyOrder(["c", "b", "a"], blocks, [link("a", "b"), link("a", "c")]),
     ["a", "c", "b"],
   );
   // Nothing linked at all: every member ranks 0, so the tie-break is the whole
-  // answer and it is the order the operator marked them in.
+  // answer and it is the order the walk reached them in.
   assert.deepEqual(bodyOrder(["c", "b"], blocks, []), ["c", "b"]);
 });
 
 test("a body drops what it names twice and what it names at all", () => {
-  const blocks = [loop("l", []), block("a")];
+  const blocks = [loop("l"), block("a")];
   assert.deepEqual(bodyOrder(["a", "a"], blocks, []), ["a"]);
   assert.deepEqual(
     bodyOrder(["a", "gone"], blocks, []),
@@ -576,8 +589,8 @@ test("a body drops what it names twice and what it names at all", () => {
 });
 
 test("a region encloses its members and belongs to the loop", () => {
-  const blocks = [loop("l", ["a", "b"]), block("a"), block("b"), block("z")];
-  const links = [link("a", "b")];
+  const blocks = [loop("l"), block("a"), block("b"), block("z")];
+  const links = [repeats("l", "a"), chain("a", "b")];
   const at = new Map([
     ["l", { x: 100, y: 400 }],
     ["a", { x: 500, y: 400 }],
@@ -599,8 +612,12 @@ test("a region against the top left corner stays on the surface", () => {
   // A member can be dragged to the origin, and a region that started above or
   // left of it would be drawn off the sheet — which scrolls from 0, so what is
   // lost is the region rather than the scrollbar.
-  const blocks = [loop("l", ["a"]), block("a")];
-  const [region] = bodyRegions(blocks, [], new Map([["a", { x: 0, y: 0 }]]));
+  const blocks = [loop("l"), block("a")];
+  const [region] = bodyRegions(
+    blocks,
+    [repeats("l", "a")],
+    new Map([["a", { x: 0, y: 0 }]]),
+  );
   assert.equal(region.x, 0);
   assert.equal(region.y, 0);
   assert.ok(region.width > NODE_W && region.height > NODE_H);
@@ -609,27 +626,120 @@ test("a region against the top left corner stays on the surface", () => {
 test("a region fits inside the surface its members size", () => {
   // `layoutBounds` sizes the sheet from the boxes alone, so a region wider than
   // `CANVAS_PAD` past the furthest one would have its own edge clipped.
-  const blocks = [loop("l", ["a", "b"]), block("a"), block("b")];
+  const blocks = [loop("l"), block("a"), block("b")];
   const at = new Map([
     ["a", { x: 24, y: 24 }],
     ["b", { x: 400, y: 300 }],
   ]);
   const bounds = layoutBounds(at);
-  const [region] = bodyRegions(blocks, [], at);
+  const [region] = bodyRegions(
+    blocks,
+    [repeats("l", "a"), chain("a", "b")],
+    at,
+  );
   assert.ok(region.x + region.width <= bounds.width);
   assert.ok(region.y + region.height <= bounds.height);
 });
 
-test("a loop with no section is not a region, and neither is another kind", () => {
+test("a loop with no “repeats” link is not a region, and neither is another kind", () => {
   const at = new Map([
     ["l", { x: 0, y: 0 }],
     ["a", { x: 400, y: 0 }],
   ]);
-  assert.deepEqual(bodyRegions([loop("l", []), block("a")], [], at), []);
-  // A body on a block that is not a loop is refused by the server rather than
-  // drawn: a region round it would say the graph was savable.
+  assert.deepEqual(bodyRegions([loop("l"), block("a")], [], at), []);
+  // A “repeats” link out of a block that is not a loop is refused by the server
+  // rather than drawn: a region round it would say the graph was savable.
   assert.deepEqual(
-    bodyRegions([block("l", { bodyNodeIds: ["a"] }), block("a")], [], at),
+    bodyRegions([block("l"), block("a")], [repeats("l", "a")], at),
     [],
   );
+});
+
+/* ------------------------------------------------------------------ */
+/* What the links say a loop repeats                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The client's half of the one mechanism, and it has to agree with
+ * `resolveSections` exactly: this is the section the canvas draws, the
+ * inspector reads out, and `draftToGraph` sends as `bodyNodeIds` beside the
+ * links it was derived from. A reading that differs from the server's saves a
+ * graph stating one thing and showing another — and the operator approves the
+ * showing.
+ */
+test("a section is the “repeats” link's target and everything after it", () => {
+  const blocks = [loop("l"), block("a"), block("b"), block("c")];
+  const links = [repeats("l", "a"), chain("a", "b"), chain("b", "c")];
+  assert.deepEqual(sectionOf("l", blocks, links), ["a", "b", "c"]);
+});
+
+test("a loop with no “repeats” link repeats its own task", () => {
+  const blocks = [loop("l"), block("a")];
+  assert.deepEqual(sectionOf("l", blocks, [chain("l", "a")]), []);
+});
+
+test("a section stops at the loop and at another loop's own link", () => {
+  // Two facts one walk has to get right. A member linked back to its loop is a
+  // mistake the server names; swallowing the loop into its own section here
+  // would draw a region round it instead. And a second loop drawn inside a
+  // section contributes its own members to its own section, not to this one —
+  // the nesting is then refused by name rather than silently flattened.
+  const blocks = [loop("l"), block("a"), loop("k"), block("z")];
+  const links = [
+    repeats("l", "a"),
+    chain("a", "k"),
+    link("k", "l"),
+    repeats("k", "z"),
+  ];
+  assert.deepEqual(sectionOf("l", blocks, links), ["a", "k"]);
+  assert.deepEqual(sectionOf("k", blocks, links), ["z"]);
+});
+
+test("a section being drawn round a cycle terminates", () => {
+  // A cycle is legal to *draw*: the server refuses it and can only answer about
+  // a graph it has been sent, so this runs between the second click and the
+  // answer. An unbounded walk there is a frozen tab.
+  const blocks = [loop("l"), block("a"), block("b")];
+  const links = [repeats("l", "a"), chain("a", "b"), chain("b", "a")];
+  assert.deepEqual([...sectionOf("l", blocks, links)].sort(), ["a", "b"]);
+});
+
+test("a saved graph's section arrives as a link even when it was a list", () => {
+  // The compatibility rule at the door of the editor. Every workflow saved
+  // before the link existed carries the list and no link, and this surface
+  // derives membership from the links alone — so opened and saved again it
+  // would lose the section in silence.
+  const nodes = [
+    { id: "l", kind: "loop", bodyNodeIds: ["b", "a"] },
+    { id: "a", kind: "run", bodyNodeIds: [] },
+    { id: "b", kind: "run", bodyNodeIds: [] },
+  ] as unknown as WorkflowNodeDTO[];
+  const edges = [
+    { from: "a", to: "b", edge: "on-success", continueBranch: true },
+  ] as WorkflowEdgeDTO[];
+
+  const links = linksOfGraph(nodes, edges);
+  const door = links.filter((l) => l.edge === "repeats");
+  assert.equal(door.length, 1, "one link, whatever order the list was in");
+  assert.deepEqual(
+    { from: door[0].from, to: door[0].to, continueBranch: door[0].continueBranch },
+    { from: "l", to: "a", continueBranch: false },
+    "it starts at the block nothing inside the section links to",
+  );
+  assert.deepEqual(
+    sectionOf("l", [{ id: "l" }, { id: "a" }, { id: "b" }], links),
+    ["a", "b"],
+    "and the derived section is the list it was built from",
+  );
+});
+
+test("a graph that already carries the link is not given a second one", () => {
+  const nodes = [
+    { id: "l", kind: "loop", bodyNodeIds: ["a"] },
+    { id: "a", kind: "run", bodyNodeIds: [] },
+  ] as unknown as WorkflowNodeDTO[];
+  const links = linksOfGraph(nodes, [
+    { from: "l", to: "a", edge: "repeats", continueBranch: false },
+  ] as WorkflowEdgeDTO[]);
+  assert.equal(links.filter((l) => l.edge === "repeats").length, 1);
 });

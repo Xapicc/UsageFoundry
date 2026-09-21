@@ -85,6 +85,9 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
   // ran.
   const waits = new Map<string, string[]>();
   for (const edge of instance.graph.edges) {
+    // A `repeats` link names the loop a block is *inside*, which is not
+    // something it waits for: the loop creates it, once per pass.
+    if (edge.edge === "repeats") continue;
     const list = waits.get(edge.to);
     if (list) list.push(edge.from);
     else waits.set(edge.to, [edge.from]);
