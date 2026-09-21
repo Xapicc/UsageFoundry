@@ -962,12 +962,17 @@ is `docs/agent/testing.md`; interface defects and their classes are
 
 - **A loop that repeats a section saves with no task of its own, and three
   doors say so, 2026-09-21.** `normalizeWorkflowInput` accepted a two-block
-  graph whose loop carries a `repeats` link and `task: ""` — refused before
-  this change with *"Repeat Orchestrator Loop" has no task to repeat* — and
-  still refused the same loop with the link removed, with that sentence
-  unchanged. A graph carrying a section *and* a leftover task was accepted with
-  the task stored verbatim, seeded into a scratch `DATA_DIR` and read back
-  against the built standalone server: `/workflows/<id>` drew *Its own task is
+  graph whose loop carries a `repeats` link and `task: ""`. The same input
+  against a build of the parent commit was refused with *“Repeat
+  Orchestrator Loop” has no task to repeat. A loop with nothing to do is a
+  billed run per pass that spends a work cycle finding that out.* — the
+  operator's own report. A section-less loop with no task was refused by both
+  builds, character for character the same sentence.
+
+- **The three doors a section loop's task is drawn at were read against the
+  built standalone server, 2026-09-21.** A graph carrying a section *and* a
+  leftover task was accepted with the task stored verbatim, seeded into a
+  scratch `DATA_DIR` and read back: `/workflows/<id>` drew *Its own task is
   not read while it repeats a section* on the loop's row and the ordinary task
   text on a section-less loop beside it; the editor's own panel, with the loop
   selected, gave the Task row the hint *Not read while this block repeats a
