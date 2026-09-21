@@ -732,3 +732,83 @@ describe("an orchestrator member of a pass", () => {
     assert.match(block.error ?? "", /did not finish/);
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* Stopping a workflow while a pass is live                            */
+/* ------------------------------------------------------------------ */
+
+describe("stopping an instance mid-pass", () => {
+  it("brings down every member of the pass, of all three kinds", async () => {
+    // A pass used to be a chain of runs, so a halt that reached the runs
+    // reached the pass. It is now a section: its orchestrator and merge members
+    // are ledger rows and its unopened members are `waiting` rows, and any one
+    // of them left behind is a workflow that can never be started again —
+    // `liveBlocksOf` counts it for ever and the second press is refused.
+    const instanceId = scene({ ...FAN_OUT, maxPasses: 3 });
+    workflows.advanceInstances();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const pass1 = ["a", "b", "c", "m"].map((id) => passMemberId("L", 1, id));
+    assert.deepEqual(
+      workflows
+        .blocksOf(instanceId)
+        .filter((b) => pass1.includes(b.nodeId))
+        .map((b) => b.nodeId),
+      pass1.slice(1),
+      "the pass opened a row for every member it had not yet created",
+    );
+
+    const halt = workflows.stopInstance(instanceId, { kind: "operator" });
+    assert.ok(halt.ok, halt.ok ? "" : halt.reason);
+
+    for (const block of workflows.blocksOf(instanceId)) {
+      assert.equal(
+        ["waiting", "thinking", "looping"].includes(block.status),
+        false,
+        `${block.nodeId} was left live by the halt`,
+      );
+    }
+    // What the second press of Run reads. A member left `waiting` here is a
+    // workflow that can never be started again.
+    assert.equal(workflows.liveBlocksOf(`wf-${instanceId}`), 0);
+    for (const member of membersOf(instanceId)) {
+      const run = dbMod
+        .db()
+        .prepare("SELECT status FROM runs WHERE id=?")
+        .get(member.runId) as { status: string };
+      assert.equal(
+        ["queued", "running", "waiting", "paused"].includes(run.status),
+        false,
+        `${member.memberId} was left live by the halt`,
+      );
+    }
+  });
+
+  it("reaches the runs an orchestrator member decided on", async () => {
+    // They are not members — a model chose them — but they are runs this pass
+    // caused, and the halt's promise is that nothing it started is still
+    // working when it reports that it stopped.
+    const instanceId = scene({ ...DECIDER, maxPasses: 3 });
+    workflows.advanceInstances();
+    decide(instanceId, passMemberId("L", 1, "o"), twoRuns, 0);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const emitted = membersOf(instanceId);
+    assert.equal(emitted.length, 2, "the turn's runs exist to be stopped");
+
+    const halt = workflows.stopInstance(instanceId, { kind: "operator" });
+    assert.ok(halt.ok, halt.ok ? "" : halt.reason);
+    for (const member of emitted) {
+      const run = dbMod
+        .db()
+        .prepare("SELECT status FROM runs WHERE id=?")
+        .get(member.runId) as { status: string };
+      assert.equal(
+        ["queued", "running", "waiting", "paused"].includes(run.status),
+        false,
+        `${member.memberId} was left live by the halt`,
+      );
+    }
+    assert.notEqual(loopBlock(instanceId).status, "looping");
+  });
+});

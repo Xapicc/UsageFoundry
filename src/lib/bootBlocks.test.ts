@@ -125,7 +125,12 @@ const LOOP_GRAPH = JSON.stringify({
     },
     { id: "B", name: "Land it", kind: "merge" },
   ],
-  edges: [{ from: "L", to: "B", edge: "on-success", continueBranch: true }],
+  // No branch is carried out of a loop: each pass lands its own work through
+  // the section's own exit, so the block behind one starts after a landing
+  // rather than after a run. `normalizeWorkflowInput` refuses the other
+  // spelling by name, and this blob is inserted rather than saved — so it
+  // says what a saved one would say.
+  edges: [{ from: "L", to: "B", edge: "on-success", continueBranch: false }],
 });
 
 /**
@@ -182,15 +187,22 @@ function scene(
  * The same instance one block kind over: a loop mid-pass, and a merge block
  * behind it that only the loop's own verdict can release.
  *
- * The pass is an ordinary member with `emitted_by` set to the loop, which is
- * what `bootBlockPlan` sees and what `loopPasses` reads — so the run this boot
- * keeps and the pass the block is on are the same row, as they are in
- * `createPass`.
+ * The pass's members are ordinary rows with `emitted_by` set to the loop, which
+ * is what `bootBlockPlan` sees and what `loopPasses` reads — so the run this
+ * boot keeps and the pass the block is on are the same row, as they are in
+ * `stepPass`.
+ *
+ * `members` says what else the pass had opened when the container died. A pass
+ * is a *section* now, so its other members are `waiting` ledger rows of their
+ * own, and the question this file asks of each of them — does a boot close it
+ * out or leave it to the instance that survived — is the question a chain of
+ * runs never had to answer.
  */
 function loopScene(
   name: string,
   run: { status: string; pausedAt?: number | null },
   instanceStatus = "started",
+  members: Array<{ id: string; kind: string }> = [],
 ): { instanceId: string; runId: string } {
   const now = Date.now();
   const instanceId = `inst-${name}`;
@@ -229,6 +241,18 @@ function loopScene(
     "INSERT INTO workflow_instance_blocks (instance_id, node_id, node_name, position, kind, status)" +
       " VALUES (?, 'B', 'Land it', 1, 'merge', 'waiting')",
   ).run(instanceId);
+  for (const [index, member] of members.entries()) {
+    db.prepare(
+      "INSERT INTO workflow_instance_blocks (instance_id, node_id, node_name, position, kind, status)" +
+        " VALUES (?, ?, ?, ?, ?, 'waiting')",
+    ).run(
+      instanceId,
+      `L#pass-1#${member.id}`,
+      `${member.id} — pass 1`,
+      index + 2,
+      member.kind,
+    );
+  }
 
   return { instanceId, runId };
 }
@@ -429,5 +453,43 @@ describe("a looping block with nothing left of its workflow", () => {
     const loop = blockOf(instanceId, "L");
     assert.equal(loop.status, "failed");
     assert.match(loop.error ?? "", /closed out by the same restart/);
+  });
+
+  it("leaves a whole pass alone when one of its members survived", () => {
+    // `reconcileOnBoot`'s rule for a `waiting` run, one level up and over a
+    // pass of several members: a pass is spared as a unit or not at all. Half a
+    // pass closed out is a merge block written off while the run it was going
+    // to land is still working — and the loop then stops because its pass did
+    // not land everything, having landed nothing for want of a block the boot
+    // removed.
+    const { instanceId } = loopScene("live-section", { status: "paused" }, "started", [
+      { id: "b", kind: "run" },
+      { id: "m", kind: "merge" },
+    ]);
+    workflows.reconcileBlocksOnBoot();
+    assert.equal(blockOf(instanceId, "L").status, "looping");
+    for (const id of ["L#pass-1#b", "L#pass-1#m"]) {
+      assert.equal(blockOf(instanceId, id).status, "waiting", id);
+    }
+  });
+
+  it("closes out a whole pass when nothing of it survived", () => {
+    // The other half. A member left `waiting` under a loop nothing will ever
+    // advance again is what `liveBlocksOf` counts for ever, and the second
+    // press of Run is refused on it.
+    const { instanceId } = loopScene(
+      "dead-section",
+      { status: "failed" },
+      "started",
+      [
+        { id: "b", kind: "run" },
+        { id: "m", kind: "merge" },
+      ],
+    );
+    workflows.reconcileBlocksOnBoot();
+    assert.equal(blockOf(instanceId, "L").status, "failed");
+    for (const id of ["L#pass-1#b", "L#pass-1#m"]) {
+      assert.equal(blockOf(instanceId, id).status, "blocked", id);
+    }
   });
 });

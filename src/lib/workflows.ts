@@ -2901,6 +2901,12 @@ export function liveRunsOf(
  * point the same blocks at the same folders and put two deciding turns on one
  * repository, which is the collision `liveRunsOf` exists to refuse one step
  * earlier than it can see.
+ *
+ * A pass's members are rows in this table too, which is what makes a loop that
+ * is between two passes — no child in flight, no live run anywhere — still a
+ * workflow that is going: `looping` is in the list, and the next pass it is
+ * about to create is exactly the "started nothing yet and about to start
+ * several" case one kind along.
  */
 export function liveBlocksOf(workflowId: string): number {
   const row = db()
@@ -2908,9 +2914,10 @@ export function liveBlocksOf(workflowId: string): number {
       `SELECT COUNT(*) AS n
          FROM workflow_instance_blocks b
          JOIN workflow_instances i ON i.id = b.instance_id
-        WHERE i.workflow_id = ? AND b.status IN ('waiting','thinking','looping')`,
+        WHERE i.workflow_id = ?
+          AND b.status IN (${LIVE_BLOCK_STATUSES.map(() => "?").join(",")})`,
     )
-    .get(workflowId) as { n: number };
+    .get(workflowId, ...LIVE_BLOCK_STATUSES) as { n: number };
   return row.n;
 }
 

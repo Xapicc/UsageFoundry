@@ -615,7 +615,8 @@ export function normalizeWorkflowInput(
               : node.kind === "loop"
                 ? `“${node.name}” frames the blocks it repeats and each pass ` +
                   "lands its own work, so it holds no branch to hand over or " +
-                  "carry on."
+                  "carry on — the last one it had was landed, and may since " +
+                  "have been deleted. Start after it without carrying a branch."
                 : `“${node.name}” lands other blocks' branches rather than ` +
                   "working in a checkout of its own, so it has no branch to " +
                   "hand over or carry on.",
