@@ -57,7 +57,10 @@ before(async () => {
   process.env.CLAUDE_BIN = path.join(root, "no-such-claude");
   // Real directories, because `resolveTaskFolder` resolves against the
   // filesystem and a path that is not there is refused rather than counted.
-  for (const folder of ["backlog", "elsewhere"]) {
+  // `backlogWeb` is the subtree trap's other half: its canonical path is
+  // `backlog`'s with three more characters on it, so a prefix match written
+  // without the separator counts its tasks as `backlog`'s.
+  for (const folder of ["backlog", "backlog/docs", "backlogWeb", "elsewhere"]) {
     fs.mkdirSync(path.join(root, MOUNT_DIR, folder), { recursive: true });
   }
 
@@ -96,13 +99,17 @@ let seq = 0;
  * fixture that skipped it would store `backlog`, which is exactly the spelling
  * the defect compares against — the test would pass on the broken reader.
  */
-function fileTask(folder: string): string {
+function fileTask(
+  folder: string,
+  priority: import("./apiTypes").TaskPriorityDTO = "normal",
+): string {
   const input = tasks.normalizeTaskInput(
     {
       title: `Task ${(seq += 1)}`,
       body: "Something for a loop to work through.",
       mountId,
       folder,
+      priority,
     },
     { origin: "operator", createdByRunId: null },
   );
@@ -133,7 +140,7 @@ function loopNode(
               mountId,
               folder: "backlog",
               statuses: ["open"],
-              atMost: 0,
+              thresholds: [{ priority: "any", atMost: 0 }],
               ...condition,
             },
           },
@@ -154,12 +161,19 @@ function loopNode(
   return value.value.graph.nodes[0];
 }
 
+function counts(
+  condition: Partial<import("./workflowGraph").LoopBoardCondition> | null,
+): import("./workflows").LoopBoardCounts | null {
+  const reading = workflows.loopBoardCount(loopNode(condition));
+  if (!reading.ok) throw new Error(reading.error);
+  return reading.counts;
+}
+
+/** The project's whole count, which is what an `any` threshold reads. */
 function count(
   condition: Partial<import("./workflowGraph").LoopBoardCondition> | null,
 ): number | null {
-  const reading = workflows.loopBoardCount(loopNode(condition));
-  if (!reading.ok) throw new Error(reading.error);
-  return reading.count;
+  return counts(condition)?.total ?? null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -227,7 +241,86 @@ describe("loopBoardCount — counting a project's board from a node", () => {
 
   it("reads null, and touches the board at all, only for a loop that set one", () => {
     const reading = workflows.loopBoardCount(loopNode(null));
-    assert.equal(reading.ok && reading.count, null);
+    assert.equal(reading.ok && reading.counts, null);
+  });
+
+  it("counts each priority beside the total, and all four of them", () => {
+    // Every priority rather than the ones the thresholds name, so the reading
+    // and `planLoopPass` cannot go out of step: a threshold with no figure
+    // could only be skipped, and a skipped threshold is a loop that runs on
+    // past the ending somebody wrote.
+    const before = counts({})!;
+    fileTask("backlog", "urgent");
+    fileTask("backlog", "normal");
+    fileTask("backlog", "normal");
+
+    const after = counts({})!;
+    assert.equal(after.total, before.total + 3);
+    assert.equal(after.byPriority.urgent, before.byPriority.urgent + 1);
+    assert.equal(after.byPriority.normal, before.byPriority.normal + 2);
+    assert.equal(after.byPriority.high, before.byPriority.high);
+    assert.equal(after.byPriority.low, before.byPriority.low);
+  });
+
+  it("counts a subfolder's tasks only when asked to", () => {
+    const exact = count({}) ?? 0;
+    const subtree = count({ includeSubfolders: true }) ?? 0;
+    fileTask("backlog/docs");
+
+    // The board groups a project by its own folder, and that is the default
+    // here: `backlog` and `backlog/docs` are two backlogs on that page.
+    assert.equal(count({}), exact);
+    assert.equal(count({ includeSubfolders: true }), subtree + 1);
+  });
+
+  it("does not count a sibling whose name merely starts the same way", () => {
+    // The whole of why the prefix carries the separator. `backlogWeb`'s
+    // canonical path is `backlog`'s with three characters on the end, so
+    // `LIKE '…/backlog%'` counts its tasks — silently, and in the direction
+    // that keeps a loop running, because a project counted too full never
+    // reaches the number it was told to stop at.
+    const subtree = count({ includeSubfolders: true }) ?? 0;
+    fileTask("backlogWeb");
+    assert.equal(count({ includeSubfolders: true }), subtree);
+    // And it is still its own project, which is what says the row was written.
+    assert.equal(
+      count({ folder: "backlogWeb", includeSubfolders: true }),
+      1,
+    );
+  });
+
+  it("counts the mount root's subtree as the whole workspace", () => {
+    // `""` is a folder and not an absence, so the widened match is anchored on
+    // the mount's own path — every task in every project under it.
+    const root = count({ folder: "", includeSubfolders: true }) ?? 0;
+    fileTask("elsewhere");
+    assert.equal(count({ folder: "", includeSubfolders: true }), root + 1);
+  });
+
+  it("counts a condition saved as one number exactly as it always did", () => {
+    // Nothing re-normalises a stored graph, so the single-number shape reaches
+    // this reader intact. It must count the same project it counted before —
+    // one folder, its own tasks only.
+    const legacy = {
+      id: "a",
+      name: "Chip away at it",
+      kind: "loop" as const,
+      mountId,
+      folder: "backlog",
+      task: "work",
+      maxPasses: 3,
+      stopWhenTasks: {
+        mountId,
+        folder: "backlog",
+        statuses: ["open"],
+        atMost: 0,
+      },
+    } as unknown as import("./workflowGraph").WorkflowNode;
+
+    const exact = count({}) ?? 0;
+    const reading = workflows.loopBoardCount(legacy);
+    assert.equal(reading.ok, true, reading.ok ? "" : reading.error);
+    assert.equal(reading.ok && reading.counts?.total, exact);
   });
 
   it("refuses a folder it cannot resolve rather than calling it clear", () => {

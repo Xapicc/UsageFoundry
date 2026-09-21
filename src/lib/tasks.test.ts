@@ -514,6 +514,29 @@ test("a board request read off a query string", () => {
   assert.equal(blank.folder, null);
   assert.equal(blank.status, null);
   assert.equal(blank.origin, null);
+  assert.equal(blank.priority, null);
+
+  // Narrowed at the route, as `status` and `origin` are: an unknown word is a
+  // 400 there rather than a filter dropped here, because a parameter deciding
+  // which rows exist must not widen in silence.
+  assert.equal(normalizeTaskListQuery({ priority: "urgent" }).priority, "urgent");
+
+  // Off unless it is exactly `true`: a stored condition written before the
+  // field existed carries `undefined`, and the exact folder match is what it
+  // meant — a widened count is a backlog nobody was shown.
+  for (const raw of [undefined, null, 0, "", "true"]) {
+    assert.equal(
+      normalizeTaskListQuery({
+        includeSubfolders: raw as unknown as boolean,
+      }).includeSubfolders,
+      false,
+      String(raw),
+    );
+  }
+  assert.equal(
+    normalizeTaskListQuery({ includeSubfolders: true }).includeSubfolders,
+    true,
+  );
 });
 
 test("an offset past the end lands on the last row rather than on nothing", () => {

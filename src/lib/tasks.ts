@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { db } from "./db";
 import { describeFolder, resolveWorkspaceFolder } from "./orchestrator";
 import type {
@@ -906,10 +907,21 @@ export interface TaskListQuery {
   status?: TaskStatus | null;
   /** One origin, or null for every origin. Narrowed by the caller. */
   origin?: TaskOrigin | null;
+  /** One priority, or null for every priority. Narrowed by the caller. */
+  priority?: TaskPriority | null;
   /** A mount id, matched exactly against the column. */
   mountId?: string | null;
   /** A canonical absolute folder, matched exactly against the column. */
   folder?: string | null;
+  /**
+   * Whether `folder` also matches everything filed under it.
+   *
+   * Off by default, which is how the board itself groups a project: a task on
+   * `…/terraServe/docs` is not a task on `…/terraServe`. Anything but `true`
+   * reads as off, so a caller that says nothing gets the exact match it always
+   * got.
+   */
+  includeSubfolders?: boolean;
 }
 
 /** A board request in the terms the query below is written in. */
@@ -918,8 +930,10 @@ export interface TaskListFilters {
   limit: number;
   status: TaskStatus | null;
   origin: TaskOrigin | null;
+  priority: TaskPriority | null;
   mountId: string | null;
   folder: string | null;
+  includeSubfolders: boolean;
 }
 
 export interface TaskListPage {
@@ -942,10 +956,10 @@ export interface TaskListPage {
  * unreadable is the ordinary page rather than the smallest legal one, because a
  * one-row board is a far worse answer to a typo.
  *
- * `status` and `origin` arrive already narrowed — the route refuses an unknown
- * one with a 400 rather than dropping it, on `/api/runs`' rule that a parameter
- * deciding *which rows exist* must not silently widen. `mountId` and `folder`
- * are matched exactly against the stored columns and are deliberately **not**
+ * `status`, `origin` and `priority` arrive already narrowed — the route refuses
+ * an unknown one with a 400 rather than dropping it, on `/api/runs`' rule that a
+ * parameter deciding *which rows exist* must not silently widen. `mountId` and
+ * `folder` are matched against the stored columns and are deliberately **not**
  * re-resolved here: the folder a caller filters on is the canonical path the
  * board already handed it, and a second resolution on a read path would make
  * listing a board fail when a mount is briefly absent.
@@ -968,8 +982,13 @@ export function normalizeTaskListQuery(query: TaskListQuery = {}): TaskListFilte
     limit,
     status: query.status ?? null,
     origin: query.origin ?? null,
+    priority: query.priority ?? null,
     mountId: mountId || null,
     folder: folder || null,
+    // `=== true` rather than truthiness: a stored condition written before the
+    // field existed carries `undefined` here, and the exact match is what it
+    // meant.
+    includeSubfolders: query.includeSubfolders === true,
   };
 }
 
@@ -1049,6 +1068,19 @@ export function getTask(id: string): Task | null {
 }
 
 /**
+ * A stored folder as the literal half of a `LIKE`.
+ *
+ * `likeNeedle` in `orchestrator.ts` escapes the same three characters for the
+ * same reason, and this one differs only in being anchored: it is a prefix, so
+ * it is not wrapped in `%` on the left. Both `%` and `_` are ordinary
+ * characters in a directory name, and unescaped a project called `a_b` would
+ * count `axb`'s tasks as its own.
+ */
+function likePrefix(folder: string): string {
+  return folder.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+/**
  * One page of the board.
  *
  * The order is the board's: priority first, then the most recently moved. It is
@@ -1057,6 +1089,13 @@ export function getTask(id: string): Task | null {
  * word would supply a lexical order that is not this one, which is worse than
  * no index at all. `id` breaks the final tie so two tasks written in the same
  * millisecond cannot swap places between two reads of the same page.
+ *
+ * **The subtree match carries the separator, and that is the whole of it.**
+ * `folder LIKE '/workspace/UsageFoundry%'` also matches
+ * `/workspace/UsageFoundryWeb`, which is a different project with a different
+ * backlog — and the failure is silent in the direction that keeps a loop
+ * running, since a project counted too full never reaches the number it was
+ * told to stop at.
  */
 export function listTasks(query: TaskListQuery = {}): TaskListPage {
   const filters = normalizeTaskListQuery(query);
@@ -1071,13 +1110,22 @@ export function listTasks(query: TaskListQuery = {}): TaskListPage {
     where.push("origin = ?");
     args.push(filters.origin);
   }
+  if (filters.priority) {
+    where.push("priority = ?");
+    args.push(filters.priority);
+  }
   if (filters.mountId) {
     where.push("mount_id = ?");
     args.push(filters.mountId);
   }
   if (filters.folder) {
-    where.push("folder = ?");
-    args.push(filters.folder);
+    if (filters.includeSubfolders) {
+      where.push("(folder = ? OR folder LIKE ? ESCAPE '\\')");
+      args.push(filters.folder, `${likePrefix(filters.folder + path.sep)}%`);
+    } else {
+      where.push("folder = ?");
+      args.push(filters.folder);
+    }
   }
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
 

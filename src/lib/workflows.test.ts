@@ -32,6 +32,7 @@ import {
   type HaltCause,
   type HaltMember,
   type InstanceNodeState,
+  type LoopBoardCounts,
   type LoopDecision,
   type LoopPass,
   type LoopPassInput,
@@ -42,9 +43,10 @@ import {
   type WorkflowKnowledge,
   type WorkflowNode,
 } from "./workflows";
+import type { LoopBoardCondition } from "./workflowGraph";
 import { topologicalOrder, type RunStatus } from "./orchestrator";
 import { readTaskLinks } from "./tasks";
-import type { RunProviderDTO } from "./apiTypes";
+import type { RunProviderDTO, TaskPriorityDTO } from "./apiTypes";
 import type { TurnResult } from "./chat";
 import type { RunGuards } from "./settings";
 import type { RunTemplate } from "./templates";
@@ -1488,7 +1490,13 @@ describe("normalizeWorkflowInput — the link that makes a section", () => {
 
 /** The condition as a saved graph carries it, so a case varies one field. */
 function board(over: Record<string, unknown> = {}) {
-  return { mountId: "work", folder: "repo", statuses: ["open"], atMost: 0, ...over };
+  return {
+    mountId: "work",
+    folder: "repo",
+    statuses: ["open"],
+    thresholds: [{ priority: "any", atMost: 0 }],
+    ...over,
+  };
 }
 
 describe("normalizeWorkflowInput — a loop's board condition", () => {
@@ -1497,8 +1505,9 @@ describe("normalizeWorkflowInput — a loop's board condition", () => {
     assert.deepEqual(v.graph.nodes[0].stopWhenTasks, {
       mountId: "work",
       folder: "repo",
+      includeSubfolders: false,
       statuses: ["open"],
-      atMost: 0,
+      thresholds: [{ priority: "any", atMost: 0 }],
     });
   });
 
@@ -1580,7 +1589,13 @@ describe("normalizeWorkflowInput — a loop's board condition", () => {
   it("refuses a fractional, negative or unreadable number to stop at", () => {
     for (const atMost of [1.5, -1, null, undefined, "", "many", Number.NaN]) {
       assert.match(
-        error(graph([repeater("a", { stopWhenTasks: board({ atMost }) })])),
+        error(
+          graph([
+            repeater("a", {
+              stopWhenTasks: board({ thresholds: [{ priority: "any", atMost }] }),
+            }),
+          ]),
+        ),
         /whole number of tasks to stop at/,
         String(atMost),
       );
@@ -1588,8 +1603,166 @@ describe("normalizeWorkflowInput — a loop's board condition", () => {
   });
 
   it("keeps zero, which is the whole point of the condition", () => {
-    const v = value(graph([repeater("a", { stopWhenTasks: board({ atMost: 0 }) })]));
-    assert.equal(v.graph.nodes[0].stopWhenTasks?.atMost, 0);
+    const v = value(
+      graph([
+        repeater("a", {
+          stopWhenTasks: board({ thresholds: [{ priority: "any", atMost: 0 }] }),
+        }),
+      ]),
+    );
+    assert.deepEqual(v.graph.nodes[0].stopWhenTasks?.thresholds, [
+      { priority: "any", atMost: 0 },
+    ]);
+  });
+
+  it("reads a condition saved as one number as one “any” threshold", () => {
+    // The compatibility rule of the whole change, asked at the door a saved
+    // workflow comes back through: every re-save and every validate keystroke
+    // hands the stored blob back to this function, and a graph written before
+    // thresholds existed has to come out meaning what it meant.
+    const v = value(
+      graph([
+        repeater("a", {
+          stopWhenTasks: {
+            mountId: "work",
+            folder: "repo",
+            statuses: ["open"],
+            atMost: 7,
+          },
+        }),
+      ]),
+    );
+    assert.deepEqual(v.graph.nodes[0].stopWhenTasks, {
+      mountId: "work",
+      folder: "repo",
+      includeSubfolders: false,
+      statuses: ["open"],
+      thresholds: [{ priority: "any", atMost: 7 }],
+    });
+  });
+
+  it("refuses a condition that names no number at all", () => {
+    // Not read as "stop at zero": zero is the strictest legal setting, so the
+    // coercion would be this app choosing "until the board is clear" for
+    // somebody who cleared the field.
+    for (const thresholds of [[], null, undefined]) {
+      assert.match(
+        error(graph([repeater("a", { stopWhenTasks: board({ thresholds }) })])),
+        /names no number to stop at/,
+        String(thresholds),
+      );
+    }
+  });
+
+  it("refuses a priority the board does not have", () => {
+    assert.match(
+      error(
+        graph([
+          repeater("a", {
+            stopWhenTasks: board({
+              thresholds: [{ priority: "blocker", atMost: 1 }],
+            }),
+          }),
+        ]),
+      ),
+      /a priority the board does not have: blocker/,
+    );
+  });
+
+  it("refuses one priority named twice", () => {
+    // The quiet one: the condition still works, and the lower of the two
+    // numbers is a line the operator wrote that can never fire.
+    assert.match(
+      error(
+        graph([
+          repeater("a", {
+            stopWhenTasks: board({
+              thresholds: [
+                { priority: "normal", atMost: 5 },
+                { priority: "normal", atMost: 2 },
+              ],
+            }),
+          }),
+        ]),
+      ),
+      /names normal twice/,
+    );
+  });
+
+  it("refuses more numbers than a condition may carry", () => {
+    assert.match(
+      error(
+        graph([
+          repeater("a", {
+            stopWhenTasks: board({
+              thresholds: [
+                { priority: "any", atMost: 1 },
+                { priority: "urgent", atMost: 1 },
+                { priority: "high", atMost: 1 },
+                { priority: "normal", atMost: 1 },
+                { priority: "low", atMost: 1 },
+                { priority: "any", atMost: 2 },
+              ],
+            }),
+          }),
+        ]),
+      ),
+      /may stop on at most 5 numbers/,
+    );
+  });
+
+  it("keeps several thresholds, in the order they were written", () => {
+    const v = value(
+      graph([
+        repeater("a", {
+          stopWhenTasks: board({
+            thresholds: [
+              { priority: "any", atMost: 10 },
+              { priority: "normal", atMost: 5 },
+            ],
+          }),
+        }),
+      ]),
+    );
+    assert.deepEqual(v.graph.nodes[0].stopWhenTasks?.thresholds, [
+      { priority: "any", atMost: 10 },
+      { priority: "normal", atMost: 5 },
+    ]);
+  });
+
+  it("reads a threshold with no priority on it as the project whole", () => {
+    const v = value(
+      graph([
+        repeater("a", { stopWhenTasks: board({ thresholds: [{ atMost: 3 }] }) }),
+      ]),
+    );
+    assert.deepEqual(v.graph.nodes[0].stopWhenTasks?.thresholds, [
+      { priority: "any", atMost: 3 },
+    ]);
+  });
+
+  it("reads anything but true as not counting subfolders", () => {
+    // The board's own grouping is one folder to one project, and a condition
+    // saved before this field existed says nothing here. Widening it in silence
+    // would count a backlog the operator was never shown.
+    for (const raw of [undefined, null, "", 0, "true"]) {
+      const v = value(
+        graph([
+          repeater("a", { stopWhenTasks: board({ includeSubfolders: raw }) }),
+        ]),
+      );
+      assert.equal(
+        v.graph.nodes[0].stopWhenTasks?.includeSubfolders,
+        false,
+        String(raw),
+      );
+    }
+    const on = value(
+      graph([
+        repeater("a", { stopWhenTasks: board({ includeSubfolders: true }) }),
+      ]),
+    );
+    assert.equal(on.graph.nodes[0].stopWhenTasks?.includeSubfolders, true);
   });
 
   it("keeps the mount root as a folder rather than as an absence", () => {
@@ -3615,7 +3788,7 @@ function loopOf(
     // Null together, which is the condition switched off — every case below
     // this line is the loop as it behaved before the board could end one.
     stopWhenTasks: null,
-    boardCount: null,
+    boardCounts: null,
     ...extra,
   });
 }
@@ -3760,16 +3933,33 @@ describe("planLoopPass — whether a loop takes another pass", () => {
   });
 });
 
+/** A reading, as `loopBoardCount` answers one: a total and all four priorities. */
+function counts(
+  total: number,
+  byPriority: Partial<Record<TaskPriorityDTO, number>> = {},
+): LoopBoardCounts {
+  return {
+    total,
+    byPriority: { urgent: 0, high: 0, normal: 0, low: 0, ...byPriority },
+  };
+}
+
 /** A board condition and a reading of it, as `advanceLoop` supplies the pair. */
-function boardOf(count: number, atMost = 0): Partial<LoopPassInput> {
+function boardOf(
+  count: number,
+  atMost = 0,
+  over: Partial<LoopBoardCondition> = {},
+): Partial<LoopPassInput> {
   return {
     stopWhenTasks: {
       mountId: "work",
       folder: "backlog",
+      includeSubfolders: false,
       statuses: ["open"],
-      atMost,
+      thresholds: [{ priority: "any", atMost }],
+      ...over,
     },
-    boardCount: count,
+    boardCounts: counts(count),
   };
 }
 
@@ -3837,16 +4027,110 @@ describe("planLoopPass — the board condition", () => {
     // The reading is null together with the condition, so a count that would
     // otherwise be met cannot reach the test — which is what makes every saved
     // graph above this line behave exactly as it did.
-    assert.deepEqual(loopOf([], { boardCount: 0 }), { kind: "pass", pass: 1 });
-    assert.deepEqual(loopOf([pass(1, "completed")], { boardCount: 0 }), {
+    assert.deepEqual(loopOf([], { boardCounts: counts(0) }), {
+      kind: "pass",
+      pass: 1,
+    });
+    assert.deepEqual(loopOf([pass(1, "completed")], { boardCounts: counts(0) }), {
       kind: "pass",
       pass: 2,
     });
     const capped = loopOf([pass(1, "completed")], {
-      boardCount: 0,
+      boardCounts: counts(0),
       maxPasses: 1,
     });
     assert.equal(capped.kind === "stop" && capped.code, "passes");
+  });
+
+  it("stops on any one of its thresholds, not on all of them", () => {
+    // The operator's own "or", and the safe direction: a loop still billing a
+    // whole run per pass has to be endable by the first line that comes true.
+    // An all-of reading holds this one open on a board nobody called full.
+    const d = loopOf([pass(1, "completed")], {
+      ...boardOf(40, 10, {
+        thresholds: [
+          { priority: "any", atMost: 10 },
+          { priority: "normal", atMost: 5 },
+        ],
+      }),
+      boardCounts: counts(40, { normal: 4 }),
+    });
+    assert.equal(d.kind === "stop" && d.code, "tasks");
+    // The one that was met, with its priority and both numbers on it: five
+    // lines in and "the board is clear enough" is unreadable a day later.
+    const reason = d.kind === "stop" ? d.reason : "";
+    assert.match(reason, /at most 5 normal-priority open task\(s\) left/);
+    assert.match(reason, /It has 4\./);
+  });
+
+  it("carries on while every threshold is above its number", () => {
+    assert.deepEqual(
+      loopOf([pass(1, "completed")], {
+        ...boardOf(40, 10, {
+          thresholds: [
+            { priority: "any", atMost: 10 },
+            { priority: "normal", atMost: 5 },
+          ],
+        }),
+        boardCounts: counts(40, { normal: 6 }),
+      }),
+      { kind: "pass", pass: 2 },
+    );
+  });
+
+  it("reads a priority threshold against that priority's count alone", () => {
+    // The whole of what a priority threshold is: a project with forty tasks on
+    // it stops a loop whose line is about the three urgent ones.
+    const d = loopOf([pass(1, "completed")], {
+      ...boardOf(40, 0, {
+        thresholds: [{ priority: "urgent", atMost: 3 }],
+      }),
+      boardCounts: counts(40, { urgent: 3, normal: 37 }),
+    });
+    assert.equal(d.kind === "stop" && d.code, "tasks");
+    assert.match(d.kind === "stop" ? d.reason : "", /at most 3 urgent-priority/);
+  });
+
+  it("reads a condition saved as one number as one “any” threshold", () => {
+    // No saved workflow may change meaning. Nothing re-normalises a stored
+    // graph — `rowToWorkflow` and `rowToInstance` both hand back the blob as it
+    // was written — so the single-number shape reaches this function intact,
+    // and `thresholds` is not merely empty on it but absent.
+    const legacy = {
+      mountId: "work",
+      folder: "backlog",
+      statuses: ["open"],
+      atMost: 5,
+    } as unknown as LoopBoardCondition;
+
+    const met = loopOf([pass(1, "completed")], {
+      stopWhenTasks: legacy,
+      boardCounts: counts(5),
+    });
+    assert.equal(met.kind === "stop" && met.code, "tasks");
+    assert.match(
+      met.kind === "stop" ? met.reason : "",
+      /at most 5 open task\(s\) left/,
+    );
+
+    assert.deepEqual(
+      loopOf([pass(1, "completed")], {
+        stopWhenTasks: legacy,
+        boardCounts: counts(6),
+      }),
+      { kind: "pass", pass: 2 },
+    );
+  });
+
+  it("says when the project it counted was the folder and everything under it", () => {
+    // Two counts can wear one project's name, and the sentence has to say which
+    // of them ended the loop — a backlog counted with its subfolders is a wider
+    // one than the board draws under that heading.
+    const d = loopOf([], boardOf(0, 0, { includeSubfolders: true }));
+    assert.match(
+      d.kind === "stop" ? d.reason : "",
+      /work \/ backlog and everything under it/,
+    );
   });
 
   it("carries on when the condition is set and the count could not be read", () => {
@@ -3854,7 +4138,7 @@ describe("planLoopPass — the board condition", () => {
     // count beside a condition never reaches here from that caller. It must
     // still not read as a clear board, which is the one answer that stops it.
     assert.deepEqual(
-      loopOf([], { ...boardOf(0), boardCount: null }),
+      loopOf([], { ...boardOf(0), boardCounts: null }),
       { kind: "pass", pass: 1 },
     );
   });

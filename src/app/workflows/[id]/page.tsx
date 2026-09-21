@@ -9,9 +9,11 @@ import type {
   WorkflowDTO,
   WorkflowInstanceDTO,
 } from "@/lib/apiTypes";
+import { boardThresholds } from "@/lib/apiTypes";
 import type { BadgeTone } from "@/lib/format";
 import {
   EDGE_CHIP_LABEL,
+  fmtBoardThresholds,
   fmtDateTime,
   fmtPct,
   fmtUSD,
@@ -562,9 +564,14 @@ export default function WorkflowPage() {
                               n.stopWhenTasks.folder
                                 ? ` / ${n.stopWhenTasks.folder}`
                                 : ""
-                            } has at most ${n.stopWhenTasks.atMost} ${n.stopWhenTasks.statuses.join(
-                              " or ",
-                            )} task(s) left`}
+                            }${
+                              n.stopWhenTasks.includeSubfolders
+                                ? " and everything under it"
+                                : ""
+                            } has ${fmtBoardThresholds(
+                              n.stopWhenTasks.statuses,
+                              boardThresholds(n.stopWhenTasks),
+                            )}`}
                         </div>
                       )}
                       {n.kind !== "merge" && (

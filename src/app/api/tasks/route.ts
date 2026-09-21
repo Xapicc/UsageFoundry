@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import {
   createTask,
   isTaskOrigin,
+  isTaskPriority,
   isTaskStatus,
   listTasks,
   normalizeTaskInput,
@@ -34,14 +35,14 @@ export const dynamic = "force-dynamic";
 
 /**
  * One page of the board: `?offset=`, `?limit=`, `?status=`, `?origin=`,
- * `?mountId=`, `?folder=`.
+ * `?priority=`, `?mountId=`, `?folder=`.
  *
  * The narrowing happens in the query rather than in a reader over an
- * already-capped page, and an unknown `status` or `origin` is a **400** rather
- * than a dropped filter — `/api/runs`' rule, and both of these decide *which
- * rows exist*. Quietly answering "every task" to "show me the claimed ones" is
- * a board that looks like an answer, which on a backlog reads as an absence of
- * work rather than as a failed filter.
+ * already-capped page, and an unknown `status`, `origin` or `priority` is a
+ * **400** rather than a dropped filter — `/api/runs`' rule, and every one of
+ * them decides *which rows exist*. Quietly answering "every task" to "show me
+ * the claimed ones" is a board that looks like an answer, which on a backlog
+ * reads as an absence of work rather than as a failed filter.
  *
  * `mountId` and `folder` are matched against the stored columns exactly as they
  * are held, so the value to filter on is the `folder` this route already handed
@@ -75,11 +76,22 @@ export async function GET(req: Request) {
     );
   }
 
+  const askedPriority = params.get("priority");
+  const priority =
+    askedPriority && isTaskPriority(askedPriority) ? askedPriority : null;
+  if (askedPriority && priority === null) {
+    return NextResponse.json(
+      { error: `Unknown task priority: ${askedPriority}` },
+      { status: 400 },
+    );
+  }
+
   const page = listTasks({
     offset: Number(params.get("offset") ?? 0),
     limit: Number(params.get("limit") ?? 0),
     status,
     origin,
+    priority,
     mountId: params.get("mountId"),
     folder: params.get("folder"),
   });

@@ -2,6 +2,7 @@
 
 import type {
   AgentOriginDTO,
+  LoopBoardThresholdDTO,
   RunDependencyDTO,
   RunDTO,
   TaskCommentAuthorDTO,
@@ -381,6 +382,35 @@ export function fmtTaskRefPlace(
     mountLabel: ref.mountLabel,
     relPath: ref.relPath,
   });
+}
+
+/**
+ * What a loop's board condition stops on, as both surfaces that state it say it.
+ *
+ * `fmtTaskPlace`'s reason one table over: the editor's `BlockStatement` and a
+ * live instance's block line both spell this condition out, and two surfaces
+ * drawing one ending must not be able to disagree about what it is. Takes the
+ * two lists rather than the condition, because the editor is holding a draft
+ * whose numbers are still strings and the page is holding a stored condition
+ * that may still be written in the single-number shape — each caller reads its
+ * own thresholds out, through `boardThresholds` where that is what it has.
+ *
+ * The thresholds are an "or" and the word says so. "At most" distributes over
+ * them, so two read as "at most 10, or 5 normal-priority, open task(s) left"
+ * rather than as the same clause twice.
+ */
+export function fmtBoardThresholds(
+  statuses: readonly TaskStatusDTO[],
+  thresholds: readonly LoopBoardThresholdDTO[],
+): string {
+  const numbers = thresholds
+    .map((t) =>
+      t.priority === "any"
+        ? `${t.atMost}`
+        : `${t.atMost} ${t.priority}-priority`,
+    )
+    .join(", or ");
+  return `at most ${numbers} ${statuses.join(" or ")} task(s) left`;
 }
 
 export function fmtDuration(ms: number): string {

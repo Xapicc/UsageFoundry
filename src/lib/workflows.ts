@@ -72,6 +72,7 @@ import {
   type RegistryAgent,
 } from "./agents";
 import {
+  TASK_PRIORITIES,
   currentTaskKnowledge,
   listTasks,
   readTaskLinks,
@@ -94,10 +95,17 @@ import {
   MAX_LOOP_PASSES,
   MAX_WORKFLOW_NAME,
   MAX_WORKFLOW_NODES,
+  boardThresholds,
   providerReportsSpend,
+  type LoopBoardCountsDTO,
+  type LoopBoardReadingDTO,
   type RunProviderDTO,
+  type TaskPriorityDTO,
   type WorkflowNodeKind,
 } from "./apiTypes";
+
+/** What a project's board holds, in the terms a threshold names. See the DTO. */
+export type LoopBoardCounts = LoopBoardCountsDTO;
 
 /**
  * A saved, re-runnable graph of run blocks.
@@ -206,11 +214,13 @@ import {
   isDependencyEdge,
   loopBody,
   loopBodyOwners,
+  normalizeBoardCondition,
   normalizeWorkflowInput,
   type TemplateFacts,
   type WorkflowDependencyEdge,
   type Workflow,
   type LoopBoardCondition,
+  type LoopBoardThreshold,
   type WorkflowEdge,
   type WorkflowGraph,
   type WorkflowInput,
@@ -970,15 +980,15 @@ export interface LoopPassInput {
   /**
    * The board condition this loop was saved with, or null when it set none.
    *
-   * Null together with `boardCount` below — the pair `maxCostUSD` and
+   * Null together with `boardCounts` below — the pair `maxCostUSD` and
    * `spentGuardUSD` already are, one field apart: the condition says what to
    * compare and the reading says what was found, and either one missing is the
    * test switched off rather than a comparison against nothing.
    */
   stopWhenTasks: LoopBoardCondition | null;
   /**
-   * How many tasks the board holds for that project right now, or null when
-   * there is no condition to read one for.
+   * What the board holds for that project right now, or null when there is no
+   * condition to read one for.
    *
    * An input for `spentGuardUSD`'s reason: this function is the decision and
    * the reader is the caller's, so the whole of it stays pure and the one thing
@@ -986,7 +996,7 @@ export interface LoopPassInput {
    * board unresolved, which matches nothing for ever — is tested where it
    * happens rather than here.
    */
-  boardCount: number | null;
+  boardCounts: LoopBoardCounts | null;
 }
 
 /** Why a loop stopped, in a word the caller can branch on. */
@@ -1059,9 +1069,24 @@ export type LoopDecision =
  * mount root reads as the workspace alone, which is what it is.
  */
 function boardProject(condition: LoopBoardCondition): string {
-  return condition.folder
+  const place = condition.folder
     ? `${condition.mountId} / ${condition.folder}`
     : condition.mountId;
+  // Said out loud rather than left to the graph, because it is the difference
+  // between two counts of the same name: a project that counts its subfolders
+  // is a wider backlog than the one the board draws under that heading.
+  return condition.includeSubfolders ? `${place} and everything under it` : place;
+}
+
+/**
+ * How a threshold's priority reads in the sentence that names it.
+ *
+ * `"any"` says nothing, which is the sentence the condition had before it could
+ * name a priority at all — "at most 5 open task(s)" rather than "at most 5
+ * any-priority open task(s)".
+ */
+function thresholdPriorityWord(priority: LoopBoardThreshold["priority"]): string {
+  return priority === "any" ? "" : `${priority}-priority `;
 }
 
 export function planLoopPass(input: LoopPassInput): LoopDecision {
@@ -1106,15 +1131,32 @@ export function planLoopPass(input: LoopPassInput): LoopDecision {
   }
 
   const board = input.stopWhenTasks;
-  if (board && input.boardCount !== null && input.boardCount <= board.atMost) {
-    return {
-      kind: "stop",
-      code: "tasks",
-      reason:
-        `“${input.blockName}” was set to repeat until ${boardProject(board)} ` +
-        `had at most ${board.atMost} ${board.statuses.join(" or ")} task(s) ` +
-        `left. It has ${input.boardCount}.`,
-    };
+  const counts = input.boardCounts;
+  if (board && counts) {
+    // **Any of them**, and the first one met is the one the sentence names.
+    // That is the operator's own "or", and it is the safe direction: a
+    // condition that stops earlier ends a loop that is still billing a whole
+    // run per pass, where an all-of reading would keep one going on a board
+    // nobody thought was full.
+    for (const threshold of boardThresholds(board)) {
+      const left =
+        threshold.priority === "any"
+          ? counts.total
+          : counts.byPriority[threshold.priority];
+      if (left > threshold.atMost) continue;
+      return {
+        kind: "stop",
+        code: "tasks",
+        // Both numbers and the priority, because "the board is clear enough" is
+        // unreadable a day later: the operator has to be able to tell which of
+        // up to five lines they wrote is the one that ended the loop.
+        reason:
+          `“${input.blockName}” was set to repeat until ${boardProject(board)} ` +
+          `had at most ${threshold.atMost} ` +
+          `${thresholdPriorityWord(threshold.priority)}` +
+          `${board.statuses.join(" or ")} task(s) left. It has ${left}.`,
+      };
+    }
   }
 
   if (input.passes.length >= input.maxPasses) {
@@ -2304,7 +2346,7 @@ function loopSpend(instanceId: string, nodeId: string): number {
 
 /** A board condition read, or why this app could not read one. */
 export type LoopBoardReading =
-  | { ok: true; count: number | null }
+  | { ok: true; counts: LoopBoardCounts | null }
   | { ok: false; error: string };
 
 /**
@@ -2319,24 +2361,37 @@ export type LoopBoardReading =
  * would compare `repos/app` against `/workspace/repos/app`, count zero for ever,
  * and stop every loop on its first check with no error anywhere.
  *
+ * `includeSubfolders` widens that exact match to a prefix, and the prefix
+ * carries the separator — see `listTasks`, where the reason is written out.
+ * Without it `…/UsageFoundryWeb` is counted for `…/UsageFoundry`.
+ *
  * `total` once per named status rather than a page, and summed: the count is the
  * whole answer and the rows are never read, so a project with a thousand open
- * tasks costs two `COUNT(*)`s. The statuses are a closed pair that cannot
- * overlap, so summing them cannot double-count a row.
+ * tasks still costs `COUNT(*)`s alone. The statuses are a closed pair that
+ * cannot overlap, so summing them cannot double-count a row. **Every priority is
+ * counted, not the ones the thresholds name**: the alternative is a reading that
+ * can be missing a figure the decision needs, and a decision that can only skip
+ * a threshold it has no number for is a loop that runs on past its own ending.
  *
  * A folder that will not resolve is an **error rather than a zero**, which is
  * the same choice `advanceLoop` already makes about a block that has left the
  * graph: zero is "the backlog is clear", the one answer that ends the loop, and
  * an absent mount is not a finished project.
  *
- * Exported for `loopBoardCount.test.ts` and for nothing else, on `land.ts`'s
+ * Exported for `loopBoardCount.test.ts` and for the validate route, on `land.ts`'s
  * grounds: the resolution above is the whole defect, it is invisible in a type
  * and it is two `advanceLoops` and a spawned run away from any door.
  */
 export function loopBoardCount(node: WorkflowNode): LoopBoardReading {
   const condition = node.stopWhenTasks;
-  if (!condition) return { ok: true, count: null };
+  if (!condition) return { ok: true, counts: null };
+  return countBoardCondition(condition);
+}
 
+/** The same reading off a condition alone, for a draft that has no node yet. */
+export function countBoardCondition(
+  condition: LoopBoardCondition,
+): LoopBoardReading {
   // `"."` rather than `""` for the mount root: `resolveTaskFolder` refuses a
   // mount with no folder beside it, and the root is a folder — it is the path a
   // run working there files its own tasks against. Going round that resolver to
@@ -2345,18 +2400,71 @@ export function loopBoardCount(node: WorkflowNode): LoopBoardReading {
   const resolved = resolveTaskFolder(condition.mountId, condition.folder || ".");
   if (!resolved.ok) return { ok: false, error: resolved.error };
 
-  let count = 0;
+  const where = {
+    mountId: resolved.mountId,
+    folder: resolved.folder,
+    includeSubfolders: condition.includeSubfolders,
+    // The count is the whole answer; the smallest page keeps the rows this
+    // never reads off the wire.
+    limit: 1,
+  };
+
+  let total = 0;
+  const byPriority: Record<TaskPriorityDTO, number> = {
+    urgent: 0,
+    high: 0,
+    normal: 0,
+    low: 0,
+  };
   for (const status of condition.statuses) {
-    count += listTasks({
-      status,
-      mountId: resolved.mountId,
-      folder: resolved.folder,
-      // The count is the whole answer; the smallest page keeps the rows this
-      // never reads off the wire.
-      limit: 1,
-    }).total;
+    total += listTasks({ ...where, status }).total;
+    for (const priority of TASK_PRIORITIES) {
+      byPriority[priority] += listTasks({ ...where, status, priority }).total;
+    }
   }
-  return { ok: true, count };
+  return { ok: true, counts: { total, byPriority } };
+}
+
+/**
+ * What each loop's board condition counts today, for the editor's picker.
+ *
+ * Read off the wire graph **a node at a time**, deliberately not through
+ * `normalizeWorkflowInput`: a graph being drawn is invalid for most of the time
+ * somebody is drawing one — a block with no task yet, a link not drawn — and a
+ * figure that blanked until every *other* block was finished would be an absence
+ * exactly where the number is the point. Each condition still goes through the
+ * one normaliser that decides what a condition may be, so nothing here is a
+ * second opinion about that.
+ */
+export function boardReadings(
+  body: Record<string, unknown>,
+  known: WorkflowKnowledge,
+): LoopBoardReadingDTO[] {
+  const graph = (body.graph ?? {}) as { nodes?: unknown };
+  const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+  const readings: LoopBoardReadingDTO[] = [];
+
+  for (const raw of nodes) {
+    const node = (raw ?? {}) as Record<string, unknown>;
+    if (node.kind !== "loop" || !node.stopWhenTasks) continue;
+    const nodeId = String(node.id ?? "");
+    const name = String(node.name ?? "").trim() || "This block";
+
+    const condition = normalizeBoardCondition(node.stopWhenTasks, name, known);
+    if (!condition.ok) {
+      readings.push({ nodeId, counts: null, error: condition.error });
+      continue;
+    }
+    if (!condition.value) continue;
+
+    const reading = countBoardCondition(condition.value);
+    readings.push(
+      reading.ok
+        ? { nodeId, counts: reading.counts, error: null }
+        : { nodeId, counts: null, error: reading.error },
+    );
+  }
+  return readings;
 }
 
 /**
@@ -4526,7 +4634,7 @@ function advanceLoop(
     maxCostUSD: node.maxLoopCostUSD,
     spentGuardUSD: loopSpend(instanceId, nodeId),
     stopWhenTasks: node.stopWhenTasks,
-    boardCount: board.count,
+    boardCounts: board.counts,
   });
 
   if (decision.kind === "wait") return;

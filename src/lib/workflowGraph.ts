@@ -21,11 +21,15 @@ import { listTemplates } from "./templates";
 import { WORKSPACE_MOUNTS } from "./config";
 import {
   MAX_FAN_OUT,
+  MAX_LOOP_BOARD_THRESHOLDS,
   MAX_LOOP_PASSES,
   MAX_LOOP_RUNS,
   MAX_WORKFLOW_NAME,
   MAX_WORKFLOW_NODES,
+  boardThresholds,
   type LoopBoardConditionDTO,
+  type LoopBoardThresholdDTO,
+  type TaskPriorityDTO,
   type TaskStatusDTO,
   type WorkflowNodeKind,
 } from "./apiTypes";
@@ -238,8 +242,28 @@ export interface WorkflowNode {
   bodyNodeIds: string[];
 }
 
-/** Which tasks a loop counts, and the number it stops at. See the DTO. */
+/** Which tasks a loop counts, and the numbers it stops at. See the DTO. */
 export type LoopBoardCondition = LoopBoardConditionDTO;
+
+/** One of that condition's numbers, and what it counts. See the DTO. */
+export type LoopBoardThreshold = LoopBoardThresholdDTO;
+
+/**
+ * What a threshold may count: each priority, and the whole project.
+ *
+ * Its own list rather than a read of `TASK_PRIORITIES` in `tasks.ts`, for
+ * `COUNTABLE_TASK_STATUSES` below's reason one field along — this module reads
+ * no database and must not pull the board's storage in to validate a word off
+ * the wire. `"any"` is first because it is the default and the one the old
+ * single-number shape reads as.
+ */
+const THRESHOLD_PRIORITIES: readonly (TaskPriorityDTO | "any")[] = [
+  "any",
+  "urgent",
+  "high",
+  "normal",
+  "low",
+];
 
 /**
  * The task states a loop may count, and the two it may not.
@@ -649,7 +673,7 @@ function boardConditionIsOff(raw: unknown): boolean {
   return raw === null || raw === undefined || String(raw) === "";
 }
 
-type BoardConditionNormalization =
+export type BoardConditionNormalization =
   | { ok: true; value: LoopBoardCondition | null }
   | { ok: false; error: string };
 
@@ -659,11 +683,19 @@ type BoardConditionNormalization =
  * Every refusal names the block, the neighbours' rule, and every one of them is
  * a thing the operator can change. The silent failures this stands in front of
  * are the reason it refuses rather than coerces: a terminal status, an empty
- * status list and a negative `atMost` each produce a condition that is already
- * met the first time it is asked, which is a loop that never starts a run and
- * says nothing about why.
+ * status list and a negative number to stop at each produce a condition that is
+ * already met the first time it is asked, which is a loop that never starts a
+ * run and says nothing about why. A duplicate priority is the same failure one
+ * step quieter — the condition still works, and one of the two lines the
+ * operator wrote can never fire.
+ *
+ * Exported for the validate route, which reads a loop's condition on its own so
+ * the editor can show what it counts today while the rest of the graph is still
+ * half-drawn. Nothing else may call it: `normalizeWorkflowInput` is the
+ * authority on what a whole graph may be, and a second door into one of its
+ * refusals is a rule with two places to change.
  */
-function normalizeBoardCondition(
+export function normalizeBoardCondition(
   raw: unknown,
   nodeName: string,
   known: WorkflowKnowledge,
@@ -730,22 +762,82 @@ function normalizeBoardCondition(
     };
   }
 
-  // Missing and blank are refused rather than coerced, which is the one place
-  // this field parts company with the spending cap above: `Number(null)` and
-  // `Number("")` are both 0, and 0 here is the *strictest* legal setting —
-  // "until the board is clear" — so the usual "blank means off" reading would
-  // turn a cleared field into a condition nobody chose.
-  const atMost =
-    o.atMost === null || o.atMost === undefined || String(o.atMost).trim() === ""
-      ? Number.NaN
-      : Number(o.atMost);
-  if (!Number.isInteger(atMost) || atMost < 0) {
+  // Read through `boardThresholds` rather than off `o.thresholds`, so the one
+  // place that knows the single-number shape is the one every other reader
+  // uses. A graph saved before thresholds existed arrives here on every
+  // re-save and every validate keystroke, and must come back out meaning what
+  // it meant: one threshold over the project whole.
+  // Typed back to `unknown`, because what `boardThresholds` was handed is wire
+  // data wearing the DTO's type: every field below still has to be read as if
+  // somebody had typed it, which is what this function is for.
+  const rawThresholds: readonly unknown[] = boardThresholds(
+    o as unknown as LoopBoardCondition,
+  );
+  if (rawThresholds.length === 0) {
     return {
       ok: false,
       error:
-        `“${nodeName}” needs a whole number of tasks to stop at, and not a ` +
-        "negative one. Zero is “until the board is clear”.",
+        `“${nodeName}” counts tasks to decide when to stop, but names no ` +
+        "number to stop at.",
     };
+  }
+  if (rawThresholds.length > MAX_LOOP_BOARD_THRESHOLDS) {
+    return {
+      ok: false,
+      error:
+        `“${nodeName}” may stop on at most ${MAX_LOOP_BOARD_THRESHOLDS} ` +
+        `numbers; it names ${rawThresholds.length}.`,
+    };
+  }
+
+  const thresholds: LoopBoardThreshold[] = [];
+  for (const entry of rawThresholds) {
+    const raw = (entry ?? {}) as Record<string, unknown>;
+    // Missing is `any` rather than a refusal: that is what the single-number
+    // shape meant, and it is the only reading a threshold with no priority on
+    // it could have.
+    const priority = String(raw.priority ?? "any").trim() || "any";
+    if (!THRESHOLD_PRIORITIES.includes(priority as TaskPriorityDTO)) {
+      return {
+        ok: false,
+        error:
+          `“${nodeName}” stops on a priority the board does not have: ` +
+          `${priority}.`,
+      };
+    }
+    // Refused rather than merged or last-one-wins. Two numbers for one
+    // priority is an "or" between them, so the larger silently decides and the
+    // other is a line the operator wrote that never fires.
+    if (thresholds.some((t) => t.priority === priority)) {
+      return {
+        ok: false,
+        error:
+          `“${nodeName}” names ${priority} twice. The numbers are an “or”, so ` +
+          "the lower one would never be reached.",
+      };
+    }
+
+    // Missing and blank are refused rather than coerced, which is the one place
+    // this field parts company with the spending cap above: `Number(null)` and
+    // `Number("")` are both 0, and 0 here is the *strictest* legal setting —
+    // "until there are none left" — so the usual "blank means off" reading would
+    // turn a cleared field into a condition nobody chose.
+    const atMost =
+      raw.atMost === null ||
+      raw.atMost === undefined ||
+      String(raw.atMost).trim() === ""
+        ? Number.NaN
+        : Number(raw.atMost);
+    if (!Number.isInteger(atMost) || atMost < 0) {
+      return {
+        ok: false,
+        error:
+          `“${nodeName}” needs a whole number of tasks to stop at, and not a ` +
+          "negative one. Zero is “until there are none left”.",
+      };
+    }
+
+    thresholds.push({ priority: priority as TaskPriorityDTO | "any", atMost });
   }
 
   return {
@@ -753,7 +845,16 @@ function normalizeBoardCondition(
     // The folder is kept as given, mount root and all, for the reason a node's
     // own folder is: `""` is the mount root and a real selection rather than a
     // missing one. The reader canonicalises it before it counts.
-    value: { mountId, folder: String(o.folder ?? ""), statuses, atMost },
+    value: {
+      mountId,
+      folder: String(o.folder ?? ""),
+      // `=== true` rather than truthiness, so a condition saved before this
+      // field existed reads as the board's own grouping — one folder is one
+      // project — instead of picking up a wider count nobody asked for.
+      includeSubfolders: o.includeSubfolders === true,
+      statuses,
+      thresholds,
+    },
   };
 }
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  boardReadings,
   currentKnowledge,
   folderRefusal,
   normalizeWorkflowInput,
@@ -32,15 +33,27 @@ export const dynamic = "force-dynamic";
  * request — a 400 here would be indistinguishable to the caller from the route
  * being unreachable, and the editor says something different in those two cases:
  * this is advisory, and Save is still the thing that decides.
+ *
+ * It also answers what each loop's board condition counts **today**, beside the
+ * verdict rather than behind it: the operator picking a project and typing a
+ * number has to be able to see what the number is compared against, and a graph
+ * being drawn is refused for most of the time it is being drawn — so a figure
+ * gated on the verdict would be missing exactly when it is wanted. It is the one
+ * thing this route reads rather than decides, and it reads it through the same
+ * function `advanceLoop` reads it through.
  */
 export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const known = currentKnowledge();
+  const boards = boardReadings(body, known);
 
-  const parsed = normalizeWorkflowInput(body, currentKnowledge());
-  if (!parsed.ok) return NextResponse.json({ ok: false, error: parsed.error });
+  const parsed = normalizeWorkflowInput(body, known);
+  if (!parsed.ok) {
+    return NextResponse.json({ ok: false, error: parsed.error, boards });
+  }
 
   const missing = folderRefusal(parsed.value.graph);
-  if (missing) return NextResponse.json({ ok: false, error: missing });
+  if (missing) return NextResponse.json({ ok: false, error: missing, boards });
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, boards });
 }

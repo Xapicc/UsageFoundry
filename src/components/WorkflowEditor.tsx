@@ -6,9 +6,12 @@ import { useRouter } from "next/navigation";
 import type {
   AgentDTO,
   AmbientAgentDTO,
+  LoopBoardReadingDTO,
   MergeStrategyDTO,
   RunTemplateDTO,
   SettingsDTO,
+  TaskPriorityDTO,
+  TaskStatusDTO,
   WorkflowDTO,
   WorkflowNodeKind,
   WorkspaceFolderDTO,
@@ -16,9 +19,11 @@ import type {
 } from "@/lib/apiTypes";
 import {
   MAX_FAN_OUT,
+  MAX_LOOP_BOARD_THRESHOLDS,
   MAX_LOOP_PASSES,
   MAX_WORKFLOW_NAME,
   MAX_WORKFLOW_NODES,
+  boardThresholds,
 } from "@/lib/apiTypes";
 import {
   draftSignature,
@@ -30,6 +35,7 @@ import {
   type BlockDraft,
   type LinkDraft,
   type Point,
+  type ThresholdDraft,
   type WorkflowDraftBody,
 } from "@/lib/canvasGraph";
 import { exitHref, leaving, registerLeaveGuard } from "@/lib/unsavedWork";
@@ -37,6 +43,7 @@ import {
   EDGE_OPTION_LABEL,
   WORKFLOW_LIMIT_TIMING_NOTE,
   describeAmbientAgents,
+  fmtBoardThresholds,
   fmtUSD,
   pctField,
   pctSubmit,
@@ -178,7 +185,66 @@ const DEFAULT_MAX_PASSES = "3";
  * it is not the default because the failure is expensive and silent.
  */
 const DEFAULT_STOP_STATUSES = "open";
-const DEFAULT_STOP_AT_MOST = "0";
+
+/**
+ * The one threshold a condition starts with: the project whole, until empty.
+ *
+ * `any` rather than a priority, because that is the question the condition
+ * could ask before it could ask any other and the one an operator reaching for
+ * "work this backlog" means. A function rather than a constant: each block's
+ * list is edited in place, and a shared array would be one list behind every
+ * loop in the graph.
+ */
+function defaultThresholds(): ThresholdDraft[] {
+  return [{ priority: "any", atMost: "0" }];
+}
+
+/** Each priority as the threshold picker names it, most urgent first. */
+const THRESHOLD_PRIORITY_LABEL: Record<string, string> = {
+  any: "Any priority",
+  urgent: "Urgent",
+  high: "High",
+  normal: "Normal",
+  low: "Low",
+};
+
+/** The project picker's "off" value. Cannot collide — see `projectKey`. */
+const NO_PROJECT = "";
+
+/**
+ * One project, as a `<select>` value.
+ *
+ * The board's own filter encodes a project exactly this way, and the pairing
+ * rule is its: two mounts may hold the same relative path, so a key on the path
+ * alone would name two projects with one word. JSON rather than a joined
+ * string, for `placeKey`'s reason in `src/app/tasks/page.tsx` — a separator has
+ * to be a character neither half can contain, a mount id is operator-supplied
+ * config, and there is no such character to pick. Every real key begins `["`,
+ * so `""` above cannot be one.
+ */
+function projectKey(mountId: string, folder: string): string {
+  return JSON.stringify([mountId, folder]);
+}
+
+/** A project key back as the pair the wire holds. `""` is the condition off. */
+function projectPair(key: string): { mountId: string; folder: string } {
+  if (key === NO_PROJECT) return { mountId: "", folder: "" };
+  const [mountId, folder] = JSON.parse(key) as [string, string];
+  return { mountId, folder };
+}
+
+/**
+ * A project as both this picker and the board name it.
+ *
+ * `fmtTaskPlace`'s own rule, and deliberately the same words: an operator who
+ * filters the board to a project and then points a loop at it must be reading
+ * one name, not two spellings of one. A task on a mount root has no relative
+ * path and the mount's own name stands alone, which is what that function does
+ * with an empty `relPath`.
+ */
+function projectLabel(mountLabel: string, folder: string): string {
+  return folder ? `${mountLabel} / ${folder}` : mountLabel;
+}
 
 /**
  * How a merge block lands, before anyone picks.
@@ -223,8 +289,9 @@ function emptyBlock(id: string, mountId: string, kind: WorkflowNodeKind): BlockD
     maxLoopCostUSD: "",
     stopWhenTasksMountId: "",
     stopWhenTasksFolder: "",
+    stopWhenTasksIncludeSubfolders: false,
     stopWhenTasksStatuses: DEFAULT_STOP_STATUSES,
-    stopWhenTasksAtMost: DEFAULT_STOP_AT_MOST,
+    stopWhenTasksThresholds: defaultThresholds(),
   };
 }
 
@@ -251,10 +318,22 @@ function toBlocks(workflow: WorkflowDTO): BlockDraft[] {
     // by picking a workspace lands on the safe pair rather than on blanks.
     stopWhenTasksMountId: n.stopWhenTasks?.mountId ?? "",
     stopWhenTasksFolder: n.stopWhenTasks?.folder ?? "",
+    // A condition saved before this field existed says nothing here, and the
+    // board's own grouping — one folder is one project — is what it meant.
+    stopWhenTasksIncludeSubfolders:
+      n.stopWhenTasks?.includeSubfolders === true,
     stopWhenTasksStatuses:
       n.stopWhenTasks?.statuses.join(",") ?? DEFAULT_STOP_STATUSES,
-    stopWhenTasksAtMost:
-      n.stopWhenTasks?.atMost.toString() ?? DEFAULT_STOP_AT_MOST,
+    // Through `boardThresholds`, so a loop saved against the single-number
+    // shape opens showing the threshold it has always had rather than the
+    // default — an editor that quietly replaced it would save a different
+    // workflow than the one it was handed.
+    stopWhenTasksThresholds: n.stopWhenTasks
+      ? boardThresholds(n.stopWhenTasks).map((t) => ({
+          priority: t.priority,
+          atMost: t.atMost.toString(),
+        }))
+      : defaultThresholds(),
   }));
 }
 
@@ -338,6 +417,16 @@ export function WorkflowEditor({
   /** Why the question could not be asked, which is not the same as an answer. */
   const [unchecked, setUnchecked] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  /**
+   * What each loop's board condition counts today, off the same check.
+   *
+   * Read from the server and never derived here, for this file's standing
+   * reason: the folder on a node is a path *within* its mount and the board
+   * stores the canonical absolute one, so anything this surface computed would
+   * be comparing two spellings of a path — the defect `loopBoardCount` exists
+   * to prevent, drawn in the one place an operator would trust it.
+   */
+  const [boards, setBoards] = useState<LoopBoardReadingDTO[]>([]);
 
   // Ids are minted on an action, never during render: `crypto.randomUUID()` in
   // a state initialiser differs between the server pass and hydration and React
@@ -684,6 +773,7 @@ export function WorkflowEditor({
           const data = (await res.json().catch(() => ({}))) as {
             ok?: boolean;
             error?: string;
+            boards?: LoopBoardReadingDTO[];
           };
           if (!res.ok) {
             setUnchecked(pollFailureMessage(res.status, data.error));
@@ -691,6 +781,11 @@ export function WorkflowEditor({
           }
           setUnchecked(null);
           setRefusal(data.ok ? null : (data.error ?? null));
+          // Kept even when the graph was refused: the readings are answered
+          // beside the verdict rather than behind it, and a figure that blanked
+          // while some *other* block was unfinished would be missing for most
+          // of the time somebody is drawing one.
+          setBoards(data.boards ?? []);
         })
         .catch((err: unknown) => {
           if (controller.signal.aborted) return;
@@ -971,6 +1066,9 @@ export function WorkflowEditor({
                 ambientLine={ambientLine}
                 mounts={mounts}
                 foldersFor={foldersFor}
+                board={
+                  boards.find((b) => b.nodeId === selectedBlock.id) ?? null
+                }
                 onChange={(patch) => updateBlock(selectedBlock.id, patch)}
                 onRemove={() => removeBlock(selectedBlock.id)}
               />
@@ -1238,7 +1336,16 @@ function BlockStatement({
     // outside this graph, and it is also the one that can stop the loop before
     // it starts — so the sentence a press of Run is approved against has to
     // carry it rather than leave the operator to read it off three controls.
-    const atMost = Number(block.stopWhenTasksAtMost);
+    const drafted = block.stopWhenTasksThresholds;
+    // Every number stated, or the sentence says so: a condition with a cleared
+    // field is refused at save, and a statement that quietly read it as zero
+    // would be approving "until the board is clear" on the operator's behalf.
+    const stated =
+      drafted.length > 0 &&
+      drafted.every((t) => {
+        const n = Number(t.atMost);
+        return t.atMost !== "" && Number.isInteger(n) && n >= 0;
+      });
     const board =
       block.stopWhenTasksMountId === "" ? null : (
         <>
@@ -1246,20 +1353,28 @@ function BlockStatement({
           <strong className="mono break-words font-semibold text-ink">
             {block.stopWhenTasksMountId}
             {block.stopWhenTasksFolder ? ` / ${block.stopWhenTasksFolder}` : ""}
+            {block.stopWhenTasksIncludeSubfolders
+              ? " and everything under it"
+              : ""}
           </strong>{" "}
           has{" "}
-          {Number.isInteger(atMost) && atMost >= 0 ? (
+          {stated ? (
             <strong className="font-semibold text-ink">
-              at most {atMost}{" "}
-              {block.stopWhenTasksStatuses.split(",").join(" or ")} task
-              {atMost === 1 ? "" : "s"}
+              {/* The same formatter the live instance's block line uses, so a
+                  loop states one ending in one wording on both pages. */}
+              {fmtBoardThresholds(
+                block.stopWhenTasksStatuses.split(",") as TaskStatusDTO[],
+                drafted.map((t) => ({
+                  priority: t.priority as TaskPriorityDTO | "any",
+                  atMost: Number(t.atMost),
+                })),
+              )}
             </strong>
           ) : (
             <strong className="font-semibold text-danger">
-              an unstated number of tasks
+              an unstated number of tasks left
             </strong>
-          )}{" "}
-          left
+          )}
         </>
       );
     const passCap =
@@ -1364,6 +1479,7 @@ function BlockPanel({
   ambientLine,
   mounts,
   foldersFor,
+  board,
   onChange,
   onRemove,
 }: {
@@ -1384,15 +1500,104 @@ function BlockPanel({
    * counts, and those are not required to be the same.
    */
   foldersFor: (mountId: string) => WorkspaceFolderDTO[];
+  /** What this block's board condition counts today, or null when it sets none. */
+  board: LoopBoardReadingDTO | null;
   onChange: (patch: Partial<BlockDraft>) => void;
   onRemove: () => void;
 }) {
   const mount = mounts.find((m) => m.id === block.mountId);
   const folders = foldersFor(block.mountId);
-  const boardMount = mounts.find((m) => m.id === block.stopWhenTasksMountId);
-  const boardFolders = foldersFor(block.stopWhenTasksMountId);
-  /** Whether the board condition is on, which is the mount picker's answer. */
-  const board = block.stopWhenTasksMountId !== "";
+  /** Whether the board condition is on, which is the project picker's answer. */
+  const boardOn = block.stopWhenTasksMountId !== "";
+  const thresholds = block.stopWhenTasksThresholds;
+
+  /**
+   * Every project this loop may be pointed at: each mount's root, and each
+   * folder under it.
+   *
+   * Off the workspace scan rather than off the board's own rows, which is the
+   * one place this parts company with `places` in `src/app/tasks/page.tsx`:
+   * that list is derived from the tasks that exist, and a loop is most often
+   * pointed at a project whose backlog is filled *between* passes — or by the
+   * schedule that starts it. A project with nothing on it today would otherwise
+   * be the one project unpickable.
+   */
+  const projects = mounts.flatMap((m) => [
+    {
+      key: projectKey(m.id, ""),
+      label: projectLabel(m.label, ""),
+      available: m.available,
+    },
+    ...foldersFor(m.id).map((f) => ({
+      key: projectKey(m.id, f.path),
+      label: projectLabel(m.label, f.path),
+      available: m.available,
+    })),
+  ]);
+  const projectValue = boardOn
+    ? projectKey(block.stopWhenTasksMountId, block.stopWhenTasksFolder)
+    : NO_PROJECT;
+  // A saved condition may name a folder the scan no longer lists — deleted, or
+  // past the per-mount cap. Kept as an option rather than dropped, because a
+  // `<select>` with no matching value draws its first one, and that would be
+  // this panel silently repointing a loop at a different backlog.
+  if (boardOn && !projects.some((p) => p.key === projectValue)) {
+    projects.unshift({
+      key: projectValue,
+      label: projectLabel(
+        block.stopWhenTasksMountId,
+        block.stopWhenTasksFolder,
+      ),
+      available: true,
+    });
+  }
+
+  /** The first priority no threshold has taken, or null when all four are. */
+  const unusedPriority =
+    Object.keys(THRESHOLD_PRIORITY_LABEL).find(
+      (p) => !thresholds.some((t) => t.priority === p),
+    ) ?? null;
+
+  const patchThreshold = (i: number, patch: Partial<ThresholdDraft>) =>
+    onChange({
+      stopWhenTasksThresholds: thresholds.map((t, j) =>
+        j === i ? { ...t, ...patch } : t,
+      ),
+    });
+  const removeThreshold = (i: number) =>
+    onChange({
+      stopWhenTasksThresholds: thresholds.filter((_, j) => j !== i),
+    });
+  const addThreshold = () => {
+    if (unusedPriority === null) return;
+    onChange({
+      stopWhenTasksThresholds: [
+        ...thresholds,
+        { priority: unusedPriority, atMost: "0" },
+      ],
+    });
+  };
+
+  /**
+   * What the picked project holds right now, beside the picker.
+   *
+   * The figure the thresholds below are compared against, so somebody typing
+   * one can see what it means today rather than saving a guess and finding out
+   * a pass later. Every priority, because the row under it can name any of
+   * them. The server's own reading — see `boards` in the editor above.
+   */
+  const boardCountLine = !boardOn
+    ? null
+    : board?.error
+      ? board.error
+      : board?.counts
+        ? `${board.counts.total} ${block.stopWhenTasksStatuses
+            .split(",")
+            .join(" or ")} now — ` +
+          Object.entries(board.counts.byPriority)
+            .map(([priority, n]) => `${n} ${priority}`)
+            .join(", ")
+        : null;
   const missingTemplate =
     block.templateId !== "" && templateName(block.templateId) === null;
   const agent = agents.find((a) => a.id === block.agentId) ?? null;
@@ -1626,69 +1831,62 @@ function BlockPanel({
           </ListRow>
 
           {/* The fifth ending, and the only one that is a fact about something
-              outside this graph. Off unless a workspace is picked, so a saved
-              graph that says nothing here keeps the four it already had. */}
+              outside this graph. Off unless a project is picked, so a saved
+              graph that says nothing here keeps the four it already had. One
+              control and not two: the board names a project by the pair, and an
+              operator picking a workspace and then a folder under it is being
+              asked to assemble a name the board already has a word for. */}
           <ListRow
             label="Stop when a project's board is clear"
-            htmlFor={`${block.id}-boardmount`}
-            description="Counted before every pass, including the first — a backlog already clear starts no run"
+            htmlFor={`${block.id}-boardproject`}
+            description={boardCountLine ?? undefined}
           >
             <div className={ROW_CONTROL}>
               <Select
-                id={`${block.id}-boardmount`}
-                value={block.stopWhenTasksMountId}
-                // The folder belongs to the workspace, so it cannot survive the
-                // workspace changing under it — the block's own pair above
-                // takes the same treatment.
-                onChange={(e) =>
+                id={`${block.id}-boardproject`}
+                value={projectValue}
+                onChange={(e) => {
+                  const pair = projectPair(e.target.value);
                   onChange({
-                    stopWhenTasksMountId: e.target.value,
-                    stopWhenTasksFolder: "",
-                  })
-                }
+                    stopWhenTasksMountId: pair.mountId,
+                    stopWhenTasksFolder: pair.folder,
+                  });
+                }}
               >
-                <option value="">Off — the caps are the only ending</option>
-                {mounts.map((m) => (
-                  <option key={m.id} value={m.id} disabled={!m.available}>
-                    {m.label}
-                    {m.available ? "" : "  (not mounted)"}
+                <option value={NO_PROJECT}>
+                  Off — the caps are the only ending
+                </option>
+                {projects.map((p) => (
+                  <option key={p.key} value={p.key} disabled={!p.available}>
+                    {p.label}
+                    {p.available ? "" : "  (not mounted)"}
                   </option>
                 ))}
               </Select>
             </div>
           </ListRow>
 
-          {board && (
+          {boardOn && (
             <>
+              {/* Off by default, and the row says what that costs rather than
+                  what the switch does: the board groups a project by its own
+                  folder, so `…/app` and `…/app/docs` are two backlogs there and
+                  stay two here unless somebody says otherwise. */}
               <ListRow
-                label="Project"
-                htmlFor={`${block.id}-boardfolder`}
+                label="Count folders under it"
                 description={
-                  block.stopWhenTasksFolder === ""
-                    ? "Tasks filed against the workspace root itself, not everything under it"
-                    : undefined
+                  block.stopWhenTasksIncludeSubfolders
+                    ? "One project, counting every folder beneath it"
+                    : "The board counts this folder's own tasks; anything filed under it is a different project"
                 }
               >
-                <div className={ROW_CONTROL}>
-                  <Select
-                    id={`${block.id}-boardfolder`}
-                    value={block.stopWhenTasksFolder}
-                    onChange={(e) =>
-                      onChange({ stopWhenTasksFolder: e.target.value })
-                    }
-                  >
-                    <option value="">
-                      {boardMount?.label ?? block.stopWhenTasksMountId} — the
-                      workspace root
-                    </option>
-                    {boardFolders.map((f) => (
-                      <option key={f.path} value={f.path}>
-                        {f.path}
-                        {f.isGitRepo ? "  (git)" : ""}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
+                <Switch
+                  checked={block.stopWhenTasksIncludeSubfolders}
+                  onChange={(checked) =>
+                    onChange({ stopWhenTasksIncludeSubfolders: checked })
+                  }
+                  label="Count folders under it"
+                />
               </ListRow>
 
               {/* The rule about `claimed` rides the row rather than the
@@ -1717,20 +1915,79 @@ function BlockPanel({
                 </div>
               </ListRow>
 
-              <ListRow label="At most" htmlFor={`${block.id}-boardatmost`}>
-                <div className={ROW_CONTROL_NARROW}>
-                  <Input
-                    id={`${block.id}-boardatmost`}
-                    type="number"
-                    min={0}
-                    className="tabular-nums"
-                    value={block.stopWhenTasksAtMost}
-                    onChange={(e) =>
-                      onChange({ stopWhenTasksAtMost: e.target.value })
-                    }
-                  />
-                </div>
-              </ListRow>
+              {/* Any one of them ends the loop, and the first row says so —
+                  every row after it is another way for the same loop to stop,
+                  never a second condition it also has to meet. */}
+              {thresholds.map((threshold, i) => (
+                <ListRow
+                  key={i}
+                  label={i === 0 ? "Stop at" : "or at"}
+                  htmlFor={`${block.id}-boardatmost-${i}`}
+                >
+                  <div className="flex items-center gap-2">
+                    <div className={ROW_CONTROL_NARROW}>
+                      <Input
+                        id={`${block.id}-boardatmost-${i}`}
+                        type="number"
+                        min={0}
+                        className="tabular-nums"
+                        value={threshold.atMost}
+                        onChange={(e) =>
+                          patchThreshold(i, { atMost: e.target.value })
+                        }
+                      />
+                    </div>
+                    <Select
+                      aria-label="Which priority this number counts"
+                      value={threshold.priority}
+                      onChange={(e) =>
+                        patchThreshold(i, { priority: e.target.value })
+                      }
+                    >
+                      {Object.entries(THRESHOLD_PRIORITY_LABEL).map(
+                        ([value, label]) => (
+                          <option
+                            key={value}
+                            value={value}
+                            // A priority already spoken for is disabled rather
+                            // than merged: two numbers for one priority is an
+                            // "or" where the larger silently decides, which is
+                            // a line the operator wrote that never fires.
+                            disabled={
+                              value !== threshold.priority &&
+                              thresholds.some((t) => t.priority === value)
+                            }
+                          >
+                            {label}
+                          </option>
+                        ),
+                      )}
+                    </Select>
+                    {thresholds.length > 1 && (
+                      <Button
+                        variant="ghost"
+                        size="compact"
+                        onClick={() => removeThreshold(i)}
+                      >
+                        Remove
+                      </Button>
+                    )}
+                  </div>
+                </ListRow>
+              ))}
+
+              {thresholds.length < MAX_LOOP_BOARD_THRESHOLDS &&
+                unusedPriority !== null && (
+                  <ListRow label="">
+                    <Button
+                      variant="ghost"
+                      size="compact"
+                      onClick={addThreshold}
+                    >
+                      Add a number
+                    </Button>
+                  </ListRow>
+                )}
             </>
           )}
         </ListGroup>

@@ -59,8 +59,9 @@ function block(id: string, over: Partial<BlockDraft> = {}): BlockDraft {
     maxLoopCostUSD: "",
     stopWhenTasksMountId: "",
     stopWhenTasksFolder: "",
+    stopWhenTasksIncludeSubfolders: false,
     stopWhenTasksStatuses: "open",
-    stopWhenTasksAtMost: "0",
+    stopWhenTasksThresholds: [{ priority: "any", atMost: "0" }],
     ...over,
   };
 }
@@ -412,9 +413,24 @@ test("every value a block's kind carries moves the signature", () => {
       edit: { stopWhenTasksStatuses: "open,claimed" },
     },
     {
-      what: "stopWhenTasksAtMost",
+      what: "stopWhenTasksIncludeSubfolders",
       base: { kind: "loop", maxPasses: "3", stopWhenTasksMountId: "work" },
-      edit: { stopWhenTasksAtMost: "4" },
+      edit: { stopWhenTasksIncludeSubfolders: true },
+    },
+    {
+      what: "a threshold's number",
+      base: { kind: "loop", maxPasses: "3", stopWhenTasksMountId: "work" },
+      edit: { stopWhenTasksThresholds: [{ priority: "any", atMost: "4" }] },
+    },
+    {
+      what: "a threshold added beside the first",
+      base: { kind: "loop", maxPasses: "3", stopWhenTasksMountId: "work" },
+      edit: {
+        stopWhenTasksThresholds: [
+          { priority: "any", atMost: "0" },
+          { priority: "normal", atMost: "5" },
+        ],
+      },
     },
   ];
   for (const { what, base, edit } of carried) {
@@ -469,7 +485,10 @@ test("a value the block's kind does not carry is not unsaved work", () => {
     // A board condition a run block still holds from before its kind was
     // switched. It is not merely dropped by a save — it is *refused* by one,
     // so prompting about it would offer to save a graph that cannot be saved.
-    { stopWhenTasksMountId: "work", stopWhenTasksAtMost: "3" },
+    {
+      stopWhenTasksMountId: "work",
+      stopWhenTasksThresholds: [{ priority: "any", atMost: "3" }],
+    },
   ];
   for (const edit of dropped) {
     assert.equal(

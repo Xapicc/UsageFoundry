@@ -1850,8 +1850,8 @@ export interface WorkflowNodeDTO {
    */
   maxLoopCostUSD: number | null;
   /**
-   * A board condition: repeat until one project's task count has fallen to a
-   * number. Null on every other kind, and null on a loop that sets none.
+   * A board condition: repeat until one project's task count has fallen to one
+   * of its numbers. Null on every other kind, and null on a loop that sets none.
    *
    * The third terminus and the same kind of number the two above are — it can
    * only ever end the loop earlier, it reaches no guard, and nothing a model
@@ -1890,7 +1890,23 @@ export interface WorkflowNodeDTO {
 }
 
 /**
- * Which tasks a loop counts, and the number it stops at.
+ * One number the loop stops at, and what it counts to get there.
+ *
+ * `"any"` counts the project whole, which is what the condition asked before it
+ * could ask anything else. A named priority counts only that priority, so
+ * "under 5 normal ones left" is a sentence the condition can hold.
+ */
+export interface LoopBoardThresholdDTO {
+  priority: TaskPriorityDTO | "any";
+  /** How many may be left. An integer ≥ 0; 0 is "until there are none". */
+  atMost: number;
+}
+
+/** How many thresholds one condition may carry. */
+export const MAX_LOOP_BOARD_THRESHOLDS = 5;
+
+/**
+ * Which tasks a loop counts, and the numbers it stops at.
  *
  * `statuses` holds only `open` and `claimed`: `done` and `dropped` are counts
  * that only ever grow, so "at most N" against one is true the first time it is
@@ -1900,14 +1916,92 @@ export interface WorkflowNodeDTO {
  * `folder` is a path *within* the mount, as every other folder on a node is.
  * The board stores a canonical absolute path, so the reader resolves this one
  * through the board's own resolver before it counts — see `loopBoardCount`.
+ *
+ * **The thresholds are an "or", not an "and"**: the loop stops as soon as any
+ * one of them is met. That is the operator's own word for "under 10 left, or
+ * under 5 normal ones", and it is also the safe direction — a condition that
+ * stops earlier ends a loop that is still billing a run per pass, where an
+ * all-of reading would keep one going on a board nobody thought was full.
  */
 export interface LoopBoardConditionDTO {
   mountId: string;
   /** `""` is the mount root, which the board holds as its resolved path. */
   folder: string;
+  /**
+   * Whether folders *under* `folder` count towards the same project.
+   *
+   * False is how the board itself groups one: tasks filed against
+   * `…/terraServe` and `…/terraServe/docs` are two projects on that page, and a
+   * loop that silently merged them would be counting a backlog the operator was
+   * never shown. **Absent is false**, which is every condition saved before this
+   * field existed — the reading every consumer has to take.
+   */
+  includeSubfolders: boolean;
   statuses: TaskStatusDTO[];
-  /** How many may be left. An integer ≥ 0; 0 is "until the board is clear". */
-  atMost: number;
+  /**
+   * At least one, at most `MAX_LOOP_BOARD_THRESHOLDS`, no priority twice.
+   *
+   * **Absent beside an `atMost` is the old single-number shape**, and reads as
+   * one `any` threshold carrying that number — `boardThresholds` is the one
+   * place that reading lives. Stored graphs and stored *instance* snapshots are
+   * both read back as they were written, so this field is undefined on a loop
+   * saved or started before it existed and nothing re-normalises it on the way.
+   */
+  thresholds: LoopBoardThresholdDTO[];
+}
+
+/**
+ * The thresholds a stored condition states, in either shape it may be written.
+ *
+ * The compatibility reading of the whole feature, and it is a function rather
+ * than a normalisation because nothing re-normalises a stored graph: both
+ * `rowToWorkflow` and `rowToInstance` hand back the blob's nodes as they were
+ * written, so a loop saved against the single-number shape reaches
+ * `planLoopPass`, `loopBoardCount` and the editor still carrying it. Reading it
+ * in one place is what keeps those three from each having an opinion.
+ *
+ * The `?.` is load-bearing despite the type: a legacy blob has no `thresholds`
+ * at all, and `undefined.length` is the throw that would take the run loop with
+ * it. Same reason `advanceLoop` asks `typeof node.maxPasses !== "number"`.
+ */
+export function boardThresholds(
+  condition: LoopBoardConditionDTO,
+): readonly LoopBoardThresholdDTO[] {
+  if (condition.thresholds?.length) return condition.thresholds;
+  const single = (condition as { atMost?: unknown }).atMost;
+  return typeof single === "number" ? [{ priority: "any", atMost: single }] : [];
+}
+
+/** What a project's board holds right now, in the terms a threshold names. */
+export interface LoopBoardCountsDTO {
+  /** Every task in the project, whatever its priority. */
+  total: number;
+  /**
+   * One count per priority, all four of them always.
+   *
+   * Every priority rather than the ones the thresholds happen to name, so the
+   * reading and the decision cannot go out of step: a threshold whose count was
+   * missing could only be skipped, and a skipped threshold is a loop that runs
+   * on past the ending somebody wrote. They are `COUNT(*)`s over an index taken
+   * once per pass decision, so the four are not a cost worth trading for that.
+   */
+  byPriority: Record<TaskPriorityDTO, number>;
+}
+
+/**
+ * What one loop's board condition counts today, as the validate route says it.
+ *
+ * Beside the graph's verdict rather than behind it: a graph being drawn is
+ * invalid for most of the time somebody is drawing it, and a picker that blanked
+ * its figure until every *other* block was finished would show an absence
+ * exactly where the number is the point. `counts` and `error` are the two halves
+ * of `LoopBoardReading`, which is what the editor is being handed.
+ */
+export interface LoopBoardReadingDTO {
+  nodeId: string;
+  /** Null when this app could not count the project — `error` says why. */
+  counts: LoopBoardCountsDTO | null;
+  error: string | null;
 }
 
 export interface WorkflowEdgeDTO {
