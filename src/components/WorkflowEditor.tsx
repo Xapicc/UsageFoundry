@@ -44,6 +44,7 @@ import {
   WORKFLOW_LIMIT_TIMING_NOTE,
   describeAmbientAgents,
   fmtBoardThresholds,
+  fmtTaskPlace,
   fmtUSD,
   pctField,
   pctSubmit,
@@ -236,14 +237,16 @@ function projectPair(key: string): { mountId: string; folder: string } {
 /**
  * A project as both this picker and the board name it.
  *
- * `fmtTaskPlace`'s own rule, and deliberately the same words: an operator who
- * filters the board to a project and then points a loop at it must be reading
- * one name, not two spellings of one. A task on a mount root has no relative
- * path and the mount's own name stands alone, which is what that function does
- * with an empty `relPath`.
+ * Delegated rather than restated, for the reason written on `fmtTaskPlace`
+ * itself: an operator who filters the board to a project and then points a loop
+ * at it must be reading one name, not two spellings of one, and a rule written
+ * out twice is a rule with two places to drift. `describeFolder` builds a
+ * task's `mountLabel` from the mount's own `label`, so the two arguments here
+ * are the same two values a task carries. `""` is the mount root, which that
+ * function already answers with the mount's name alone.
  */
 function projectLabel(mountLabel: string, folder: string): string {
-  return folder ? `${mountLabel} / ${folder}` : mountLabel;
+  return fmtTaskPlace({ folder, mountLabel, relPath: folder });
 }
 
 /**

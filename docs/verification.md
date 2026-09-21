@@ -951,6 +951,15 @@ is `docs/agent/testing.md`; interface defects and their classes are
   says the row draws what the route answered, not that the route counted
   right — the entry above is what says that.
 
+- **The picker and the board were read side by side, 2026-09-21.** The loop's
+  project `<select>` offered `ws`, `ws / terraServe`, `ws / terraServe/docs`,
+  `ws / terraServeWeb`; `/tasks`' own filter offered the last three, character
+  for character. The extra is the mount root, which the board lists only once a
+  task is filed there and the picker lists always — that difference is
+  deliberate and written down beside `projects`. Caveat: one mount with a label
+  equal to its directory name, so this does not exercise a mount whose
+  configured label differs from its path.
+
 ### Concurrency and ownership
 
 - **Folder collision, `npm test` 8 cases:** self, parent/child both ways, a
