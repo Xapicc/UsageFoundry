@@ -1200,11 +1200,15 @@ function loopBodyRefusal(
     // What one press of Run would put on the machine over the life of this
     // block, with both factors named: a cap on the product alone is a number
     // the operator cannot act on.
-    const worst = (loop.maxPasses ?? 1) * members.size;
+    // `maxPasses` is never null on a loop by the time this runs — `normalizeNode`
+    // refuses one without it — but the fallback keeps the sentence from saying
+    // "null time(s)" if that order ever changes.
+    const passes = loop.maxPasses ?? 1;
+    const worst = passes * members.size;
     if (worst > MAX_LOOP_RUNS) {
       return (
         `“${loop.name}” repeats ${members.size} block(s) up to ` +
-        `${loop.maxPasses} time(s), which is ${worst} runs from one press of ` +
+        `${passes} time(s), which is ${worst} runs from one press of ` +
         `Run. A loop may start at most ${MAX_LOOP_RUNS}.`
       );
     }

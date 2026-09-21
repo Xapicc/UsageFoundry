@@ -283,7 +283,8 @@ function blockSummary(b: BlockDTO, waits: string[]): string {
   }
   if (b.kind === "run" && b.status !== "waiting") return "never started";
   if (waits.length > 0) return `after ${waits.join(", ")}`;
-  // A loop decides nothing: its first pass is the task it was given.
+  // A loop decides nothing: its first pass is the work it was given — its own
+  // task, or the section it repeats.
   return b.kind === "loop" ? "starts immediately" : "decides immediately";
 }
 

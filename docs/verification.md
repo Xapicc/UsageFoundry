@@ -837,6 +837,30 @@ is `docs/agent/testing.md`; interface defects and their classes are
   Ctrl-click and an unchanged or typed-back editor did not. Browser Back was
   deliberately not tested.
 
+- **A loop block's repeated section round-trips through the save door and the
+  validate route, 2026-09-21.** Against this branch: a graph whose loop carries
+  `bodyNodeIds: ["a","b"]` through `normalizeWorkflowInput` → `createWorkflow`
+  → `getWorkflow` → `workflowDTO` came back with the list intact, and feeding
+  that DTO straight back in kept it — which is what the editor does on every
+  Save. The same function answers the validate route, and a body left in two
+  pieces was refused there by name ("The 2 blocks “L” repeats are not in one
+  order"). Caveat: the validate route handler itself was not invoked, because
+  `tsconfig.test.json` does not build `src/app`; what was exercised is the one
+  function that route hands its parsed body to.
+
+- **`npm run build` and `npm run smoke-pages` are green with the section in,
+  2026-09-21.** 92/92 page loads clean across 23 pages, two skins and two
+  widths, served from `.next/standalone/server.js` — the shipped artifact, not
+  the `next start` fallback. `npm run typecheck` and `npm test` (2898 tests)
+  are clean from the repo root.
+
+- **The section's new tests were checked against three mutants, 2026-09-21.**
+  Chaining a pass onto the *first* run of the one before rather than the last
+  (2 failures), dropping the member from a pass member's id (7), and dropping
+  `continueBranch` inside a pass (4). Each mutant was reverted and the suite
+  returned to 2898 passing. Caveat: this says the tests bite, not that the
+  feature works against a live agent — see below.
+
 ### Concurrency and ownership
 
 - **Folder collision, `npm test` 8 cases:** self, parent/child both ways, a
@@ -3159,6 +3183,19 @@ measurement under *Verified* and cut the item down to what is still open.
 
 - **The pager has not met live instances**: all rows were inserted `finished`
   with no member runs, and none arrived while a page was open.
+
+- **No loop has repeated a section against a live agent.** Everything about a
+  multi-run pass is unit-tested or driven with the members held at `queued`:
+  `loopSection.test.ts` occupies the folder so nothing is released, and writes
+  the branch columns a release would have written, because they are filled in
+  at release and the next pass's `resolveIsolation` refuses a hand-over from a
+  run without them. So the one thing nothing here has exercised is the actual
+  worktree hand-over *between two blocks of one pass* — the claim that a
+  section's second block picks up the first's branch rather than cutting its
+  own. Settle: save a two-block section on a real repository under a template
+  that isolates, press Run, and after pass 2 check `git log --oneline` on the
+  branch — four runs' commits on one ref, and `branchInventory` showing one row
+  rather than four.
 
 - **No real restart has been taken over a live loop block**; the
   `reconcileBlocksOnBoot` fix is unit-tested only. Settle: park a pass inside
