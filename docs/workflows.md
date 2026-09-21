@@ -181,7 +181,9 @@ dependencies form a loop is never released and never terminated: it sits
 `waiting` for ever, holding a prompt you believe is queued. So each pass is a
 *fresh run* that depends on the previous pass's, the run graph stays acyclic,
 and every rule written against it — folder claims, releasing, landing, *Stop
-all* — applies to a pass with nothing new bolted on.
+all* — applies to a pass with nothing new bolted on. A loop that repeats a
+whole section, below, changes nothing about this: a pass is then several fresh
+runs rather than one, and the last of them is what the next pass depends on.
 
 **It stops on five things, and the first is what the agent said.**
 
@@ -258,6 +260,59 @@ of the five exit conditions are facts about the pass that just ended, and a pass
 created before them would have to be withdrawn. The board condition is the
 exception — it is a fact about the board at that moment, which is what lets it
 be read before the first pass as well as between them.
+
+## Repeating a section rather than one task
+
+A loop block repeats **one task** by default: its own, one run per pass. It can
+instead repeat a **section** — several blocks in order, the whole section again
+on every pass. Name the blocks to repeat on the loop and it starts no run of
+its own; each pass creates one run per named block, in the order the section's
+own links give.
+
+"Plan the next slice, do it, write down what changed" is three different jobs
+and three different prompts, and a single block asked to do all three every
+pass is one agent losing the plan in its own context. As a section it is three
+agents with three tasks, and the whole section happens again next pass.
+
+**The section must be a chain.** Each block in it links to at most one other
+block in it, and every block in the section is on that one line. That is not a
+limitation waiting to be lifted — it is what "one branch, all the passes" means.
+The blocks of a pass hand the branch along to each other exactly as two blocks
+joined by a *carry on its branch* link do, and two blocks carrying on one
+predecessor is two runs writing to one branch, which this tool refuses
+everywhere else too. A section that forks is refused when you save the graph,
+naming the block that forks it.
+
+**The loop block is the only way in and out.** A block outside the section
+cannot link to a block inside it, in either direction: link it to the loop
+instead. Otherwise "when does this block start" has two answers — once, or once
+per pass — and only one of them is what anybody meant.
+
+**Only fixed work goes in a section**, so a section holds run blocks and nothing
+else. An orchestrator block inside one would start unapproved runs once per pass
+and spend its fan-out cap again on each. A merge block would land a branch the
+loop is still writing to. A loop inside a loop multiplies one pass cap by
+another. All three are refused by name when you save, and every block of a
+section needs guards that isolate — the loop's own rule, for the loop's own
+reason.
+
+**The last block of the section is the one whose `DONE` ends the loop.** It is
+the agent that finishes a pass, so it is the one in a position to say the work
+is finished; the blocks in front of it hand on to it and say nothing about
+whether to repeat. The other four stop conditions are unchanged, and a pass that
+did not complete stops the loop wherever in the section it stopped.
+
+**Count the runs before you press Run.** A section multiplies: passes × blocks
+in the section is how many runs one press can start, so 10 passes over a
+3-block section is 30 runs and 20 over 4 is 80. A loop whose worst case is more
+than **60 runs** is refused when you save it, with both numbers in the sentence.
+The spending limit across passes is the other bound and is worth setting here
+more than anywhere else in this tool.
+
+A block set to start after a loop still starts after its **last** pass — which
+is now the last block of the last pass — and carries on that one branch. The
+count shown on the block is **passes**, not runs: a three-pass loop over a
+two-block section says three.
 
 ## Limits for the whole workflow
 
