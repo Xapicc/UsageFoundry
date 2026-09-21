@@ -73,7 +73,9 @@ import {
 } from "./agents";
 import {
   currentTaskKnowledge,
+  listTasks,
   readTaskLinks,
+  resolveTaskFolder,
   type TaskLinkReading,
 } from "./tasks";
 import { telemetrySpendSince } from "./otlp";
@@ -197,6 +199,7 @@ import {
   normalizeWorkflowInput,
   type TemplateFacts,
   type Workflow,
+  type LoopBoardCondition,
   type WorkflowEdge,
   type WorkflowGraph,
   type WorkflowInput,
@@ -951,10 +954,36 @@ export interface LoopPassInput {
    * reported.
    */
   spentGuardUSD: number;
+  /**
+   * The board condition this loop was saved with, or null when it set none.
+   *
+   * Null together with `boardCount` below — the pair `maxCostUSD` and
+   * `spentGuardUSD` already are, one field apart: the condition says what to
+   * compare and the reading says what was found, and either one missing is the
+   * test switched off rather than a comparison against nothing.
+   */
+  stopWhenTasks: LoopBoardCondition | null;
+  /**
+   * How many tasks the board holds for that project right now, or null when
+   * there is no condition to read one for.
+   *
+   * An input for `spentGuardUSD`'s reason: this function is the decision and
+   * the reader is the caller's, so the whole of it stays pure and the one thing
+   * that can go silently wrong in the reading — a folder compared against the
+   * board unresolved, which matches nothing for ever — is tested where it
+   * happens rather than here.
+   */
+  boardCount: number | null;
 }
 
 /** Why a loop stopped, in a word the caller can branch on. */
-export type LoopStopCode = "done" | "failed" | "passes" | "cost" | "empty";
+export type LoopStopCode =
+  | "done"
+  | "failed"
+  | "passes"
+  | "cost"
+  | "empty"
+  | "tasks";
 
 export type LoopDecision =
   /** Create pass `pass`. Nothing else has to be true for it to go ahead. */
@@ -997,9 +1026,31 @@ export type LoopDecision =
  *   4. **`reportedDone` stops it**, because that is the loop finishing rather
  *      than being cut off — and it outranks the two caps so a loop that got
  *      there on its last pass says it finished rather than that it ran out.
- *   5. **The caps.** The pass cap before the spend cap: it is the one a person
+ *   5. **The board condition**, below the agent's own word and above the caps.
+ *      An agent that said the work is done outranks a board that has not caught
+ *      up with it; a board that is clear is the loop *finishing* rather than
+ *      running out, so it must not be reported as a cap. It is also the one
+ *      test read **before the first pass**: the other four are facts about a
+ *      pass that ended, where this is a fact about the board at this moment, so
+ *      a loop pointed at a backlog that is already clear starts no run at all —
+ *      which is most of what the condition is for.
+ *   6. **The caps.** The pass cap before the spend cap: it is the one a person
  *      always set, and the one that has to hold when nothing else does.
  */
+/**
+ * The project a board condition counts for, as the graph spells it.
+ *
+ * The mount **id** rather than its label, because this function is pure and a
+ * label is a thing only `config.ts` holds — and the id is what the operator
+ * picked in the editor, so the sentence names something they can find. The
+ * mount root reads as the workspace alone, which is what it is.
+ */
+function boardProject(condition: LoopBoardCondition): string {
+  return condition.folder
+    ? `${condition.mountId} / ${condition.folder}`
+    : condition.mountId;
+}
+
 export function planLoopPass(input: LoopPassInput): LoopDecision {
   const last = input.passes.at(-1);
 
@@ -1039,6 +1090,18 @@ export function planLoopPass(input: LoopPassInput): LoopDecision {
         reason: `“${input.blockName}” reported the work complete on pass ${last.pass}.`,
       };
     }
+  }
+
+  const board = input.stopWhenTasks;
+  if (board && input.boardCount !== null && input.boardCount <= board.atMost) {
+    return {
+      kind: "stop",
+      code: "tasks",
+      reason:
+        `“${input.blockName}” was set to repeat until ${boardProject(board)} ` +
+        `had at most ${board.atMost} ${board.statuses.join(" or ")} task(s) ` +
+        `left. It has ${input.boardCount}.`,
+    };
   }
 
   if (input.passes.length >= input.maxPasses) {
@@ -2048,6 +2111,63 @@ function loopSpend(instanceId: string, nodeId: string): number {
       .prepare(`${MEMBER_SPEND_COLUMNS} WHERE w.instance_id = ? AND w.emitted_by = ?`)
       .all(instanceId, nodeId) as MemberSpendRow[],
   ).spentGuardUSD;
+}
+
+/** A board condition read, or why this app could not read one. */
+export type LoopBoardReading =
+  | { ok: true; count: number | null }
+  | { ok: false; error: string };
+
+/**
+ * How many tasks the board holds for a loop's project, or null for no condition.
+ *
+ * **The folder is canonicalised through the board's own writer, and that is the
+ * one thing here that fails silently.** `tasks.folder` holds the absolute path
+ * `resolveTaskFolder` proved when the task was filed, and `listTasks` matches it
+ * *exactly* — `normalizeTaskListQuery` deliberately does not re-resolve, because
+ * the folder a reader filters on is the canonical one the board already handed
+ * it. A node holds a path **within its mount**, so passing it straight through
+ * would compare `repos/app` against `/workspace/repos/app`, count zero for ever,
+ * and stop every loop on its first check with no error anywhere.
+ *
+ * `total` once per named status rather than a page, and summed: the count is the
+ * whole answer and the rows are never read, so a project with a thousand open
+ * tasks costs two `COUNT(*)`s. The statuses are a closed pair that cannot
+ * overlap, so summing them cannot double-count a row.
+ *
+ * A folder that will not resolve is an **error rather than a zero**, which is
+ * the same choice `advanceLoop` already makes about a block that has left the
+ * graph: zero is "the backlog is clear", the one answer that ends the loop, and
+ * an absent mount is not a finished project.
+ *
+ * Exported for `loopBoardCount.test.ts` and for nothing else, on `land.ts`'s
+ * grounds: the resolution above is the whole defect, it is invisible in a type
+ * and it is two `advanceLoops` and a spawned run away from any door.
+ */
+export function loopBoardCount(node: WorkflowNode): LoopBoardReading {
+  const condition = node.stopWhenTasks;
+  if (!condition) return { ok: true, count: null };
+
+  // `"."` rather than `""` for the mount root: `resolveTaskFolder` refuses a
+  // mount with no folder beside it, and the root is a folder — it is the path a
+  // run working there files its own tasks against. Going round that resolver to
+  // spell the root ourselves is what would put a second folder resolver in this
+  // app, which `tasks.ts` exists to prevent.
+  const resolved = resolveTaskFolder(condition.mountId, condition.folder || ".");
+  if (!resolved.ok) return { ok: false, error: resolved.error };
+
+  let count = 0;
+  for (const status of condition.statuses) {
+    count += listTasks({
+      status,
+      mountId: resolved.mountId,
+      folder: resolved.folder,
+      // The count is the whole answer; the smallest page keeps the rows this
+      // never reads off the wire.
+      limit: 1,
+    }).total;
+  }
+  return { ok: true, count };
 }
 
 /**
@@ -3814,10 +3934,17 @@ function advanceInstance(instanceId: string): void {
   // second advance arriving afterwards finds the block `looping` with a pass in
   // flight and `planLoopPass` tells it to wait — which is the same guarded-UPDATE
   // shape `claimBlock` uses, without the spawn that made that one asynchronous.
+  //
+  // Through `advanceLoop` rather than straight to `createPass`, so the first
+  // pass is decided by the same function every later one is: a board condition
+  // that is already met has to be able to stop a loop before it bills anything,
+  // and that is the whole of what this indirection buys. The claim goes first
+  // for the reason it always did, and it is also what makes the instance read
+  // `started` on the very next line.
   for (const creation of step.loop) {
-    const node = instance.graph.nodes.find((n) => n.id === creation.nodeId);
-    if (!node || !claimLoop(instanceId, creation.nodeId)) continue;
-    createPass(instanceId, node, 1, creation.dependsOn);
+    if (!instance.graph.nodes.some((n) => n.id === creation.nodeId)) continue;
+    if (!claimLoop(instanceId, creation.nodeId)) continue;
+    advanceLoop(instanceId, creation.nodeId, creation.dependsOn);
   }
 
   // Claimed synchronously, spawned after. The claim is what makes this
@@ -4104,8 +4231,21 @@ function advanceLoops(instanceId: string): void {
  * The writing half of `planLoopPass`, and it is synchronous end to end for
  * `createRun`'s reason — one event-loop turn covers reading the passes,
  * deciding, and claiming a folder for the next one.
+ *
+ * **The first pass comes through here too**, carrying the edges the graph gave
+ * the block, and that is what makes the board condition reachable before any
+ * run exists: a loop pointed at a backlog that is already clear must start
+ * nothing, where the two caps are only ever read after a pass has settled. For
+ * a loop with no condition the decision is unchanged — `planLoopPass` with no
+ * passes answers `pass 1`, which is what the direct `createPass` it replaced
+ * did.
  */
-function advanceLoop(instanceId: string, nodeId: string): void {
+function advanceLoop(
+  instanceId: string,
+  nodeId: string,
+  /** What pass 1 depends on. Empty on every advance after it — see below. */
+  firstPassDependsOn: InstanceCreation["dependsOn"] = [],
+): void {
   const instance = getInstance(instanceId);
   if (!instance || instance.status !== "started") return;
 
@@ -4124,6 +4264,21 @@ function advanceLoop(instanceId: string, nodeId: string): void {
     return;
   }
 
+  // Read before the decision and before any pass, including the first. A
+  // condition this app cannot count for ends the loop `failed` rather than
+  // being treated as a clear board: zero is the answer that stops it, and a
+  // mount that has gone is not a finished project.
+  const board = loopBoardCount(node);
+  if (!board.ok) {
+    settleLoop(
+      instanceId,
+      nodeId,
+      "failed",
+      `Its tasks could not be counted: ${board.error}`,
+    );
+    return;
+  }
+
   const passes = loopPasses(instanceId, nodeId);
   const decision = planLoopPass({
     blockName: node.name,
@@ -4131,6 +4286,8 @@ function advanceLoop(instanceId: string, nodeId: string): void {
     maxPasses: node.maxPasses,
     maxCostUSD: node.maxLoopCostUSD,
     spentGuardUSD: loopSpend(instanceId, nodeId),
+    stopWhenTasks: node.stopWhenTasks,
+    boardCount: board.count,
   });
 
   if (decision.kind === "wait") return;
@@ -4153,7 +4310,7 @@ function advanceLoop(instanceId: string, nodeId: string): void {
     decision.pass,
     previous
       ? [{ runId: previous.id, edge: "on-success", continueBranch: true }]
-      : [],
+      : firstPassDependsOn,
   );
 }
 

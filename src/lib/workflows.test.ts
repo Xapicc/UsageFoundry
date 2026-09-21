@@ -992,6 +992,124 @@ describe("normalizeWorkflowInput — loop blocks", () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* Loop blocks: the board condition                                    */
+/* ------------------------------------------------------------------ */
+
+/** The condition as a saved graph carries it, so a case varies one field. */
+function board(over: Record<string, unknown> = {}) {
+  return { mountId: "work", folder: "repo", statuses: ["open"], atMost: 0, ...over };
+}
+
+describe("normalizeWorkflowInput — a loop's board condition", () => {
+  it("keeps a condition a loop block set", () => {
+    const v = value(graph([repeater("a", { stopWhenTasks: board() })]));
+    assert.deepEqual(v.graph.nodes[0].stopWhenTasks, {
+      mountId: "work",
+      folder: "repo",
+      statuses: ["open"],
+      atMost: 0,
+    });
+  });
+
+  it("reads nothing, null and the empty string as off", () => {
+    // The whole of what makes a graph saved before this field existed keep
+    // working: every one of them says nothing here, and the other reading would
+    // turn each into a graph refused at save for a condition nobody wrote.
+    for (const raw of [undefined, null, ""]) {
+      const v = value(graph([repeater("a", { stopWhenTasks: raw })]));
+      assert.equal(v.graph.nodes[0].stopWhenTasks, null, `for ${String(raw)}`);
+    }
+  });
+
+  it("refuses the condition on every kind but a loop", () => {
+    // Refused rather than dropped, which is where this parts company with the
+    // two caps: a cap on a run block is a number nothing reads, where this is an
+    // ending the operator wrote down against a block that has no passes to end.
+    for (const make of [node, decider, merger]) {
+      assert.match(
+        error(graph([make("a", { stopWhenTasks: board() })])),
+        /only a repeating block has passes to stop/,
+      );
+    }
+  });
+
+  it("refuses a workspace that is not mounted", () => {
+    assert.match(
+      error(graph([repeater("a", { stopWhenTasks: board({ mountId: "gone" }) })])),
+      /not mounted: gone/,
+    );
+    assert.match(
+      error(graph([repeater("a", { stopWhenTasks: board({ mountId: "" }) })])),
+      /names no workspace to count them in/,
+    );
+  });
+
+  it("refuses a terminal status by name", () => {
+    // The silent one. `done` and `dropped` only ever grow, so "at most 0"
+    // against either holds the first time it is asked — the loop would stop
+    // before its first pass and nothing would say why.
+    for (const status of ["done", "dropped"]) {
+      assert.match(
+        error(
+          graph([repeater("a", { stopWhenTasks: board({ statuses: [status] }) })]),
+        ),
+        new RegExp(`counts ${status} tasks, and that count only ever grows`),
+        status,
+      );
+    }
+  });
+
+  it("refuses a status the board does not have, and an empty list", () => {
+    assert.match(
+      error(
+        graph([repeater("a", { stopWhenTasks: board({ statuses: ["parked"] }) })]),
+      ),
+      /a state the board does not have: parked/,
+    );
+    assert.match(
+      error(graph([repeater("a", { stopWhenTasks: board({ statuses: [] }) })])),
+      /names no task states to count/,
+    );
+  });
+
+  it("keeps both countable statuses, once each", () => {
+    const v = value(
+      graph([
+        repeater("a", {
+          stopWhenTasks: board({ statuses: ["open", "claimed", "open"] }),
+        }),
+      ]),
+    );
+    assert.deepEqual(v.graph.nodes[0].stopWhenTasks?.statuses, [
+      "open",
+      "claimed",
+    ]);
+  });
+
+  it("refuses a fractional, negative or unreadable number to stop at", () => {
+    for (const atMost of [1.5, -1, null, undefined, "", "many", Number.NaN]) {
+      assert.match(
+        error(graph([repeater("a", { stopWhenTasks: board({ atMost }) })])),
+        /whole number of tasks to stop at/,
+        String(atMost),
+      );
+    }
+  });
+
+  it("keeps zero, which is the whole point of the condition", () => {
+    const v = value(graph([repeater("a", { stopWhenTasks: board({ atMost: 0 }) })]));
+    assert.equal(v.graph.nodes[0].stopWhenTasks?.atMost, 0);
+  });
+
+  it("keeps the mount root as a folder rather than as an absence", () => {
+    // `""` is the workspace root, the same real selection it is on the block's
+    // own folder — the reader canonicalises it through the board's resolver.
+    const v = value(graph([repeater("a", { stopWhenTasks: board({ folder: "" }) })]));
+    assert.equal(v.graph.nodes[0].stopWhenTasks?.folder, "");
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* Halting                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -1352,6 +1470,7 @@ const RUN_BLOCK: WorkflowNode = {
   mergeAutoResolve: false,
   maxPasses: null,
   maxLoopCostUSD: null,
+  stopWhenTasks: null,
 };
 
 /** A template as `planNode` takes one, with every field it reads different. */
@@ -2348,6 +2467,7 @@ function graphNode(
     mergeAutoResolve: false,
     maxPasses: null,
     maxLoopCostUSD: null,
+    stopWhenTasks: null,
     ...extra,
   };
 }
@@ -2908,6 +3028,10 @@ function loopOf(
     maxPasses: 3,
     maxCostUSD: null,
     spentGuardUSD: 0,
+    // Null together, which is the condition switched off — every case below
+    // this line is the loop as it behaved before the board could end one.
+    stopWhenTasks: null,
+    boardCount: null,
     ...extra,
   });
 }
@@ -3049,6 +3173,106 @@ describe("planLoopPass — whether a loop takes another pass", () => {
       spentGuardUSD: 99,
     });
     assert.equal(d.kind === "stop" && d.code, "empty");
+  });
+});
+
+/** A board condition and a reading of it, as `advanceLoop` supplies the pair. */
+function boardOf(count: number, atMost = 0): Partial<LoopPassInput> {
+  return {
+    stopWhenTasks: {
+      mountId: "work",
+      folder: "backlog",
+      statuses: ["open"],
+      atMost,
+    },
+    boardCount: count,
+  };
+}
+
+describe("planLoopPass — the board condition", () => {
+  it("stops before the first pass when the board is already clear", () => {
+    // Most of what the condition is for, and the one thing the two caps cannot
+    // do: they are read off a pass that settled, so a loop pointed at a backlog
+    // that is already empty would bill a whole run to find that out.
+    const d = loopOf([], boardOf(0));
+    assert.equal(d.kind === "stop" && d.code, "tasks");
+  });
+
+  it("names the count, the number it was compared against and the project", () => {
+    const d = loopOf([pass(1, "completed")], boardOf(2, 5));
+    const reason = d.kind === "stop" ? d.reason : "";
+    assert.match(reason, /at most 5 open task\(s\) left/);
+    assert.match(reason, /work \/ backlog/);
+    assert.match(reason, /It has 2\./);
+  });
+
+  it("carries on while the board is above the number", () => {
+    assert.deepEqual(loopOf([], boardOf(1)), { kind: "pass", pass: 1 });
+    assert.deepEqual(loopOf([pass(1, "completed")], boardOf(6, 5)), {
+      kind: "pass",
+      pass: 2,
+    });
+  });
+
+  it("prefers what the agent said to a board that has not caught up", () => {
+    // The ordering that decides which sentence the operator reads. An agent
+    // that replied DONE finished the work; the board is a record of it that may
+    // be one `complete_task` behind, and reporting the board would tell somebody
+    // to go and look at a backlog that is about to be clear.
+    const d = loopOf([pass(1, "completed", { done: true })], boardOf(0));
+    assert.equal(d.kind === "stop" && d.code, "done");
+  });
+
+  it("prefers a broken or empty pass to a met condition", () => {
+    // Both rungs above it, and for the reason they are above the caps too: a
+    // pass that failed is what somebody has to act on, and a board that happens
+    // to be clear at that moment does not make the failure a completion.
+    const broken = loopOf([pass(1, "failed")], boardOf(0));
+    assert.equal(broken.kind === "stop" && broken.code, "failed");
+    const empty = loopOf([{ pass: 1, runs: [] }], boardOf(0));
+    assert.equal(empty.kind === "stop" && empty.code, "empty");
+  });
+
+  it("still waits on an unsettled pass, whatever the board says", () => {
+    assert.deepEqual(loopOf([pass(1, "running")], boardOf(0)), { kind: "wait" });
+  });
+
+  it("outranks both caps, because a clear board is finishing rather than running out", () => {
+    // The operator reads the stop reason to decide whether to raise a cap. A
+    // loop that emptied its backlog on its last pass must not tell them to.
+    const d = loopOf([pass(1, "completed")], {
+      ...boardOf(0),
+      maxPasses: 1,
+      maxCostUSD: 1,
+      spentGuardUSD: 99,
+    });
+    assert.equal(d.kind === "stop" && d.code, "tasks");
+  });
+
+  it("changes nothing at all when no condition is set", () => {
+    // The reading is null together with the condition, so a count that would
+    // otherwise be met cannot reach the test — which is what makes every saved
+    // graph above this line behave exactly as it did.
+    assert.deepEqual(loopOf([], { boardCount: 0 }), { kind: "pass", pass: 1 });
+    assert.deepEqual(loopOf([pass(1, "completed")], { boardCount: 0 }), {
+      kind: "pass",
+      pass: 2,
+    });
+    const capped = loopOf([pass(1, "completed")], {
+      boardCount: 0,
+      maxPasses: 1,
+    });
+    assert.equal(capped.kind === "stop" && capped.code, "passes");
+  });
+
+  it("carries on when the condition is set and the count could not be read", () => {
+    // `advanceLoop` ends the loop itself when the reader refuses, so a null
+    // count beside a condition never reaches here from that caller. It must
+    // still not read as a clear board, which is the one answer that stops it.
+    assert.deepEqual(
+      loopOf([], { ...boardOf(0), boardCount: null }),
+      { kind: "pass", pass: 1 },
+    );
   });
 });
 

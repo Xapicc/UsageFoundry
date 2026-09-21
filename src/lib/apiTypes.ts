@@ -1832,6 +1832,42 @@ export interface WorkflowNodeDTO {
    * instance at every member's cycle boundary.
    */
   maxLoopCostUSD: number | null;
+  /**
+   * A board condition: repeat until one project's task count has fallen to a
+   * number. Null on every other kind, and null on a loop that sets none.
+   *
+   * The third terminus and the same kind of number the two above are — it can
+   * only ever end the loop earlier, it reaches no guard, and nothing a model
+   * emits can widen it. What it adds is an ending an operator can state for
+   * "work this project's backlog until it is empty", which the other three
+   * cannot: `DONE` is the agent's own opinion and the two caps are running out
+   * rather than finishing.
+   *
+   * Null is off, and every graph saved before this field existed says nothing
+   * here — which reads as off, the same way `kind` reads as `run`.
+   */
+  stopWhenTasks: LoopBoardConditionDTO | null;
+}
+
+/**
+ * Which tasks a loop counts, and the number it stops at.
+ *
+ * `statuses` holds only `open` and `claimed`: `done` and `dropped` are counts
+ * that only ever grow, so "at most N" against one is true the first time it is
+ * asked and stops the loop before its first pass. `normalizeWorkflowInput`
+ * refuses them by name rather than dropping them.
+ *
+ * `folder` is a path *within* the mount, as every other folder on a node is.
+ * The board stores a canonical absolute path, so the reader resolves this one
+ * through the board's own resolver before it counts — see `loopBoardCount`.
+ */
+export interface LoopBoardConditionDTO {
+  mountId: string;
+  /** `""` is the mount root, which the board holds as its resolved path. */
+  folder: string;
+  statuses: TaskStatusDTO[];
+  /** How many may be left. An integer ≥ 0; 0 is "until the board is clear". */
+  atMost: number;
 }
 
 export interface WorkflowEdgeDTO {

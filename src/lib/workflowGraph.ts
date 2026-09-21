@@ -24,6 +24,8 @@ import {
   MAX_LOOP_PASSES,
   MAX_WORKFLOW_NAME,
   MAX_WORKFLOW_NODES,
+  type LoopBoardConditionDTO,
+  type TaskStatusDTO,
   type WorkflowNodeKind,
 } from "./apiTypes";
 
@@ -191,7 +193,39 @@ export interface WorkflowNode {
    * whole instance at every member's cycle boundary whatever this says.
    */
   maxLoopCostUSD: number | null;
+  /**
+   * The board condition: repeat until one project's task count has fallen to
+   * `atMost`. Null on every other kind, and null when the condition is off.
+   *
+   * A **terminus**, the third on this node and the same kind of number the two
+   * above are: it can only ever end the loop earlier, it reaches no guard, and
+   * `evaluateInstanceBudget` does not read it either. It is the one ending that
+   * is a fact about the *board* rather than about a pass, which is why it is
+   * checked before the first pass as well as between them — a loop pointed at a
+   * backlog that is already clear must start no run at all, and the two caps
+   * are only ever read after a pass has settled.
+   *
+   * Absent is off, and that reading is load-bearing: every graph saved before
+   * this field existed says nothing here, exactly as it says nothing about
+   * `kind`.
+   */
+  stopWhenTasks: LoopBoardCondition | null;
 }
+
+/** Which tasks a loop counts, and the number it stops at. See the DTO. */
+export type LoopBoardCondition = LoopBoardConditionDTO;
+
+/**
+ * The task states a loop may count, and the two it may not.
+ *
+ * `done` and `dropped` are refused **by name** rather than dropped from the
+ * list: both counts only ever grow, so "at most N" against one is true the
+ * first time it is asked and would stop the loop before its first pass — an
+ * operator who asked to work a backlog would get a workflow that did nothing,
+ * with no error anywhere.
+ */
+const COUNTABLE_TASK_STATUSES: readonly TaskStatusDTO[] = ["open", "claimed"];
+const GROWING_TASK_STATUSES: readonly TaskStatusDTO[] = ["done", "dropped"];
 
 /** "Start `to` after `from` has settled." */
 export interface WorkflowEdge {
@@ -498,6 +532,119 @@ type NodeNormalization =
   | { ok: true; value: WorkflowNode }
   | { ok: false; error: string };
 
+/** Whether a node says nothing at all about a board condition. */
+function boardConditionIsOff(raw: unknown): boolean {
+  return raw === null || raw === undefined || String(raw) === "";
+}
+
+type BoardConditionNormalization =
+  | { ok: true; value: LoopBoardCondition | null }
+  | { ok: false; error: string };
+
+/**
+ * Read a loop's board condition off the wire, or say why it could not run.
+ *
+ * Every refusal names the block, the neighbours' rule, and every one of them is
+ * a thing the operator can change. The silent failures this stands in front of
+ * are the reason it refuses rather than coerces: a terminal status, an empty
+ * status list and a negative `atMost` each produce a condition that is already
+ * met the first time it is asked, which is a loop that never starts a run and
+ * says nothing about why.
+ */
+function normalizeBoardCondition(
+  raw: unknown,
+  nodeName: string,
+  known: WorkflowKnowledge,
+): BoardConditionNormalization {
+  if (boardConditionIsOff(raw)) return { ok: true, value: null };
+  if (typeof raw !== "object") {
+    return {
+      ok: false,
+      error: `“${nodeName}” carries a board condition this app could not read.`,
+    };
+  }
+  const o = raw as Record<string, unknown>;
+
+  const mountId = String(o.mountId ?? "").trim();
+  if (!mountId) {
+    return {
+      ok: false,
+      error:
+        `“${nodeName}” counts tasks to decide when to stop, but names no ` +
+        "workspace to count them in.",
+    };
+  }
+  if (!known.mountIds.includes(mountId)) {
+    return {
+      ok: false,
+      error:
+        `“${nodeName}” counts its tasks in a workspace that is not mounted: ` +
+        `${mountId}.`,
+    };
+  }
+
+  const rawStatuses = Array.isArray(o.statuses) ? o.statuses : [];
+  const statuses: TaskStatusDTO[] = [];
+  for (const entry of rawStatuses) {
+    const status = String(entry ?? "").trim();
+    if (GROWING_TASK_STATUSES.includes(status as TaskStatusDTO)) {
+      return {
+        ok: false,
+        error:
+          `“${nodeName}” counts ${status} tasks, and that count only ever ` +
+          "grows — “at most” against it holds the first time it is asked, so " +
+          "the loop would stop before its first pass. Count open tasks, or " +
+          "open and claimed.",
+      };
+    }
+    if (!COUNTABLE_TASK_STATUSES.includes(status as TaskStatusDTO)) {
+      return {
+        ok: false,
+        error:
+          `“${nodeName}” counts tasks in a state the board does not have: ` +
+          `${status || "(blank)"}.`,
+      };
+    }
+    if (!statuses.includes(status as TaskStatusDTO)) {
+      statuses.push(status as TaskStatusDTO);
+    }
+  }
+  if (statuses.length === 0) {
+    return {
+      ok: false,
+      error:
+        `“${nodeName}” names no task states to count, so the count would be ` +
+        "zero before any work was done and the loop would never take a pass.",
+    };
+  }
+
+  // Missing and blank are refused rather than coerced, which is the one place
+  // this field parts company with the spending cap above: `Number(null)` and
+  // `Number("")` are both 0, and 0 here is the *strictest* legal setting —
+  // "until the board is clear" — so the usual "blank means off" reading would
+  // turn a cleared field into a condition nobody chose.
+  const atMost =
+    o.atMost === null || o.atMost === undefined || String(o.atMost).trim() === ""
+      ? Number.NaN
+      : Number(o.atMost);
+  if (!Number.isInteger(atMost) || atMost < 0) {
+    return {
+      ok: false,
+      error:
+        `“${nodeName}” needs a whole number of tasks to stop at, and not a ` +
+        "negative one. Zero is “until the board is clear”.",
+    };
+  }
+
+  return {
+    ok: true,
+    // The folder is kept as given, mount root and all, for the reason a node's
+    // own folder is: `""` is the mount root and a real selection rather than a
+    // missing one. The reader canonicalises it before it counts.
+    value: { mountId, folder: String(o.folder ?? ""), statuses, atMost },
+  };
+}
+
 /**
  * Read one block off the wire, refusing anything that could not be run.
  *
@@ -633,6 +780,7 @@ function normalizeNode(
     // for a number that bounds spending.
     let maxPasses: number | null = null;
     let maxLoopCostUSD: number | null = null;
+    let stopWhenTasks: LoopBoardCondition | null = null;
     if (kind === "loop") {
       const raw = Number(n.maxPasses);
       if (!Number.isInteger(raw) || raw < 1) {
@@ -663,6 +811,25 @@ function normalizeNode(
         cost <= 0
           ? null
           : cost;
+
+      const board = normalizeBoardCondition(n.stopWhenTasks, nodeName, known);
+      if (!board.ok) return board;
+      stopWhenTasks = board.value;
+    } else if (!boardConditionIsOff(n.stopWhenTasks)) {
+      // Refused rather than dropped, which is where this parts company with the
+      // two caps above it. A cap on a run block is a number nothing reads; a
+      // board condition is an *ending* the operator wrote down, and a block with
+      // no passes has nothing for it to end — so silently discarding it would
+      // leave somebody waiting for a workflow to stop on a backlog nothing was
+      // ever going to count. `agentId` on a merge block is refused on the same
+      // grounds, and the editor sends this field only for a loop for that
+      // reason.
+      return {
+        ok: false,
+        error:
+          `“${nodeName}” stops on a count of tasks, and only a repeating ` +
+          "block has passes to stop. Make it a loop, or drop the condition.",
+      };
     }
 
     // Null is "no template — use the guards in Settings", which is a real
@@ -784,6 +951,7 @@ function normalizeNode(
           mergeAutoResolve,
           maxPasses,
           maxLoopCostUSD,
+          stopWhenTasks,
     },
   };
 }

@@ -698,8 +698,15 @@ export function isTaskOrigin(value: unknown): value is TaskOrigin {
  * This is the one part of the door that touches the filesystem. A mount that is
  * absent right now refuses the task with the sentence `resolveInMount` wrote,
  * which names the mount and the path — the same refusal the new-run form shows.
+ *
+ * Exported for the one *reader* that has to canonicalise a folder rather than
+ * be handed one: a loop block's board condition holds a path within its mount,
+ * where every other caller is already comparing the absolute path this returned
+ * when the task was filed. Reusing this is what keeps the two sides of that
+ * comparison resolved the same way, which is the whole of why the condition
+ * counts anything at all.
  */
-function resolveTaskFolder(
+export function resolveTaskFolder(
   rawMountId: unknown,
   rawFolder: unknown,
 ): { ok: true; mountId: string | null; folder: string | null } | { ok: false; error: string } {
