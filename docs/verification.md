@@ -821,6 +821,27 @@ is `docs/agent/testing.md`; interface defects and their classes are
   one-branch-all-the-passes contract — what a pass does with a section that
   forks or that ends in a merge block is not covered by any of this.
 
+- **A pass as a section, 2026-09-21, `npm test` and `npm run typecheck` from
+  the repo root:** 2964 assertions green, typecheck clean. What was measured is
+  the pass runtime driven through the real creation path against a real git
+  repository and a real SQLite database — `loopSection.test.ts`, 14 cases: two
+  passes of a section that fans out to two members and merges produced exactly
+  six run members and two merge members with the pass in every id, every
+  dependency row carried `continue_branch = 0`, pass 2's entry was created with
+  an empty dependency list and at or after the instant pass 1's merge block
+  finished, and a pass whose third member's branch had never been cut settled
+  its merge `failed` and stopped the loop without taking a second pass. DONE was
+  read from both sides: every run member reporting it stopped the loop on pass
+  1, and only the section's entry reporting it did not. An orchestrator member
+  driven through `emitBlockRuns`/`settleBlock` put both its runs under the
+  member's own id prefix, held the pass open while they were queued, and its
+  $0.25 turn plus their $2.00 each tripped a $3.00 loop cap reporting 4.25.
+  Caveat: **nothing spawned and nothing merged.** `CLAUDE_BIN` names a file that
+  does not exist, members are held at `queued` by a concurrency cap of 1, and
+  every merge resolved to "nothing to land" because each branch sits at its own
+  base — so git's own answer for a branch that has commits on it, and the next
+  pass seeing them, is still unmeasured. See the open item below.
+
 - **Workflows end to end, live dev server, stub CLI:** save refuses each bad
   graph by name; a four-block graph ran its roots in parallel and continued a
   branch; a failed root left its `on-success` dependent `blocked` while the
@@ -3301,19 +3322,36 @@ measurement under *Verified* and cut the item down to what is still open.
 - **The pager has not met live instances**: all rows were inserted `finished`
   with no member runs, and none arrived while a page was open.
 
+- **The three loop panels changed with the runtime have not been opened in a
+  browser.** A pass is no longer a chain, and three places in the editor and the
+  instance page said it was: the section list called its last member "last — its
+  DONE ends the loop" and now marks every run member "its DONE counts"; the
+  intra-section link panel stated one branch handed from block to block and now
+  states per link whether it carries the predecessor's branch or cuts its own;
+  and the instance page's two loop hints said each pass carries on the previous
+  run's branch and now say each pass lands its own work. All three typecheck and
+  none has been rendered. Settle: `npm run build && npm run smoke-pages` for the
+  load assertions, then a dev server, a workflow with a loop over a section that
+  forks, and a look at the section list, a link inside the section, and a
+  started instance's two hints.
+
 - **No loop has repeated a section against a live agent.** Everything about a
-  multi-run pass is unit-tested or driven with the members held at `queued`:
-  `loopSection.test.ts` occupies the folder so nothing is released, and writes
-  the branch columns a release would have written, because they are filled in
-  at release and the next pass's `resolveIsolation` refuses a hand-over from a
-  run without them. The hand-over itself has since been driven for
-  real — six member runs of a three-pass section on one branch, recorded
-  above — so what is still open is narrower: **no run of a section has
-  committed anything**, because the stub agent that drove it does not, and
-  `git log --oneline` on that one ref showing several runs' commits in order
-  has not been seen. Settle: give the stub a `git commit` per cycle, run the
-  same two-block section, and read the log on the branch `/api/branches`
-  names.
+  multi-member pass is unit-tested or driven with the members held at `queued`:
+  `loopSection.test.ts` caps concurrency at 1 so nothing is released, and writes
+  the branch columns a release would have written, because they are filled in at
+  release and a pass's merge block refuses a branch that is not on the disk. Two
+  things are still open, and the second is new since a pass stopped being a
+  chain on one ref. **No run of a section has committed anything**: the stub
+  agent that drove the earlier hand-over does not commit, so no branch of a pass
+  has ever carried a commit. And **no pass has landed for real**: the merges in
+  `loopSection.test.ts` all resolve to "nothing to land", because every branch
+  sits at its own base, so the path from a pass's merge block through
+  `mergeQueue.ts` into the operator's checkout — and the next pass's runs cutting
+  fresh branches that can *see* that landing — has been driven by nothing.
+  Settle both together: give the stub a `git commit` per cycle, run a two-member
+  section for two passes, then read `git log --oneline main` in the mount and
+  check that pass 2's branches are cut from a commit that carries pass 1's
+  work.
 
 - **No instance has been started from a section stated as a `repeats` link.**
   The derivation is unit-tested and `loopSection.test.ts` drives instantiation

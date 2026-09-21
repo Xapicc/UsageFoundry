@@ -195,19 +195,20 @@ set of *fresh runs*, the run graph stays acyclic, and every rule written against
 it — folder claims, releasing, landing, *Stop all* — applies to a pass with
 nothing new bolted on.
 
-**It stops on five things, and the first is what the agent said.**
+**It stops on six things, and the first is what the agents said.**
 
 | It stops when | Because |
 |---|---|
-| The last block of the last pass replied `DONE` | The work is finished, which is the ending you want. Read from what the agent actually said, never from the run's status — `completed` is also what a run that merely used up its work-cycle limit is written as, and that limit defaults to 1, so a loop keyed on the status would stop after every first pass |
-| A run in the pass did not complete | A loop is not a retry mechanism. Connection blips and provider refusals are already retried and waited out *inside* one run, so a fault that got past those is one the next pass would meet too |
+| Every run of the last pass replied `DONE` | The work is finished, which is the ending you want. Every one of them, because a section can run blocks side by side and one of them finishing is not the section finishing. Read from what the agents actually said, never from a run's status — `completed` is also what a run that merely used up its work-cycle limit is written as, and that limit defaults to 1, so a loop keyed on the status would stop after every first pass |
+| A block of the pass did not complete | A loop is not a retry mechanism. Connection blips and provider refusals are already retried and waited out *inside* one run, so a fault that got past those is one the next pass would meet too |
+| The pass did not land everything it produced | The next pass starts fresh from the folder, so whatever was left behind is invisible to it — it would do that work again, billed, and nothing would say so. The reason names what did not land |
 | The pass cap is reached | The number you agreed to when you saved the graph |
 | The spending limit across passes is reached | Optional; blank means the pass cap is the only bound |
 | A project's task board has fallen to one of its numbers | Optional. Repeat until this project has at most N open tasks left, or at most N of one priority — the ending for "work the backlog", which none of the four above can state. Several numbers are an **or**: the first one met stops it |
 
-A pass that somehow started no run at all stops it too, with a reason — because
-the next one would be created the same way and fail the same way, one billed
-attempt at a time.
+A pass that somehow started nothing at all stops it too, with a reason —
+because the next one would be created the same way and fail the same way, one
+billed attempt at a time.
 
 **Repeat until a project's board is clear.** "Work through this backlog" is a
 real instruction and none of the four conditions above can end it: `DONE` is one

@@ -511,10 +511,10 @@ export default function WorkflowInstancePage() {
     ...(instance.blocks.some((b) => b.kind === "loop")
       ? [
           <Hint key="loop">
-            A repeating block starts a run per pass, or one per block of the
-            section it repeats, each carrying on the previous run&rsquo;s
-            branch — it stops when the last run of a pass reports the work
-            complete, a pass does not complete, or one of its caps is reached
+            A repeating block runs the section it repeats once per pass, and
+            each pass lands its own work before the next one starts — it stops
+            when every run of a pass reports the work complete, a pass does not
+            complete or does not land, or one of its caps is reached
           </Hint>,
         ]
       : []),
@@ -887,9 +887,9 @@ export default function WorkflowInstancePage() {
               </Table>
             </TableWrap>
             <Hint>
-              Each pass runs its blocks in the section&rsquo;s own order, one
-              after the other on one branch — the next pass carries on where
-              this one left off
+              Each pass runs the section&rsquo;s blocks as its own links say and
+              lands what they produced — the next pass starts fresh from that
+              landing rather than from a branch
             </Hint>
           </Card>
         </Fragment>

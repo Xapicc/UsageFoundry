@@ -1787,7 +1787,7 @@ function BlockPanel({
           footnote={
             body.length === 0
               ? "Draw a “repeats” link from this block to the one each pass starts at"
-              : "Chain the section along with ordinary links; what comes after the loop is linked from this block"
+              : "Link the section along with ordinary links; what comes after the loop is linked from this block"
           }
         >
           {body.length === 0 ? (
@@ -1801,14 +1801,15 @@ function BlockPanel({
               <ListRow
                 key={member.id}
                 label={blockLabel(member)}
-                description={`${KIND_LABEL[member.kind]} · run ${index + 1} of each pass`}
+                description={`${KIND_LABEL[member.kind]} · ${index === 0 ? "each pass starts here" : "once per pass"}`}
               >
+                {/* Which members end the loop, not which one. DONE is every run
+                    member of a pass reporting it, so naming the last of them as
+                    the one that counts would be telling the operator to read an
+                    exit condition that is not the one the loop uses — and with
+                    a section that forks there is no last one to name. */}
                 <span className="text-sm text-ink-faint">
-                  {index === body.length - 1
-                    ? "last — its DONE ends the loop"
-                    : index === 0
-                      ? "first"
-                      : ""}
+                  {member.kind === "run" ? "its DONE counts" : ""}
                 </span>
               </ListRow>
             ))
