@@ -7,7 +7,7 @@ import type {
   WorkflowScheduleDTO,
 } from "../../../lib/apiTypes";
 import { getSchedule, scheduleView, type ScheduleView } from "../../../lib/schedules";
-import { passMemberOf, passNumberOf } from "../../../lib/passIds";
+import { passMemberOf } from "../../../lib/passIds";
 import {
   blockSpendReading,
   lastRunAt,
@@ -127,9 +127,9 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
     emittedBy: n.emittedBy,
     // Read here rather than on the page, because the member id's format is
     // `passMemberId`'s and a second parser of it is how a three-pass loop over
-    // a two-block section comes to be drawn as six passes. `passNumberOf` is
+    // a two-block section comes to be drawn as six passes. `passMemberOf` is
     // the one reader, and it lives beside the writer.
-    passNumber: passNumberOf(n.nodeId),
+    passMember: passMemberOf(n.nodeId),
   }));
 
   const blocks: WorkflowInstanceBlockDTO[] = instance.blocks.map((b) => ({
@@ -154,6 +154,11 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
     // section ends at are ledger rows, not runs. The loop is what created it
     // when it is the section's entry.
     waitsFor: waitsForRow(b.nodeId, passMemberOf(b.nodeId)?.loopNodeId ?? null),
+    // Off the instance's own graph snapshot, so a pass that already ran keeps
+    // the order it ran in however the workflow has been rewired since.
+    bodyNodeIds:
+      instance.graph.nodes.find((n) => n.id === b.nodeId)?.bodyNodeIds ?? [],
+    passMember: passMemberOf(b.nodeId),
   }));
 
   return {

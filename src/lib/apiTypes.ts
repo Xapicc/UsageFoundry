@@ -2187,17 +2187,36 @@ export interface WorkflowInstanceNodeDTO {
    */
   emittedBy: string | null;
   /**
-   * Which pass of a repeating block this run belongs to, or null.
+   * Which loop, which pass and which block of the section this run is, or null.
    *
-   * Read off the member id by `passNumberOf`, the one reader of the format
+   * Read off the member id by `passMemberOf`, the one reader of the format
    * `passMemberId` writes — never re-derived from a count, because a member
    * whose run row has been deleted is then an empty place in its pass rather
-   * than a pass that shortens every one after it.
+   * than a pass that shortens every one after it. A second parser of it on the
+   * page is how a three-pass loop over a two-block section comes to be drawn as
+   * six passes.
    *
-   * Null on a run of the saved graph and on anything an orchestrator block
-   * started, which is the same "this is not part of a pass" either way.
+   * Null on a run of the saved graph and on anything an orchestrator block of
+   * the graph started, which is the same "this is not part of a pass" either
+   * way. A run an orchestrator *member* started carries the member's own pass,
+   * because it is work that pass caused and its cost is that pass's.
    */
-  passNumber: number | null;
+  passMember: PassMemberDTO | null;
+}
+
+/**
+ * Which loop, which pass and which block of a section one row belongs to.
+ *
+ * `bodyNodeId` is null for the one spelling that names no block — what a loop
+ * wrote when it held a task of its own and repeated *that*. Nothing writes it
+ * any more, but an instance carries a copy of the graph it started from, so a
+ * loop that has been repeating since before a loop became a region is read back
+ * from one and its rows are still in the database.
+ */
+export interface PassMemberDTO {
+  loopNodeId: string;
+  pass: number;
+  bodyNodeId: string | null;
 }
 
 /**
@@ -2266,6 +2285,18 @@ export interface WorkflowInstanceBlockDTO {
   branchesFailed: number;
   error: string | null;
   waitsFor: string[];
+  /**
+   * The section this loop repeats, in the order a pass creates it.
+   *
+   * Empty on every other kind, and on a loop read back from an instance written
+   * before a loop framed a section. It is the *instance's* copy of the graph, so
+   * editing the workflow afterwards cannot reorder a pass that already ran — and
+   * it is what puts a pass's members in order on the page, rather than a second
+   * ordering rule that could disagree with the one the pass actually used.
+   */
+  bodyNodeIds: string[];
+  /** Which pass this ledger row is a member of — see `PassMemberDTO`. */
+  passMember: PassMemberDTO | null;
 }
 
 export interface WorkflowInstanceDTO {

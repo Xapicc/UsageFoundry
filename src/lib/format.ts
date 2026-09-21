@@ -11,6 +11,8 @@ import type {
   TaskOriginDTO,
   TaskPriorityDTO,
   TaskStatusDTO,
+  WorkflowInstanceBlockDTO,
+  WorkflowInstanceNodeDTO,
 } from "./apiTypes";
 
 /**
@@ -551,48 +553,151 @@ export const WORKFLOW_LIMIT_TIMING_NOTE =
   "reaches one of those boundaries, so the total can overshoot by up to one work " +
   "cycle per block running at the time, and blocks running at once multiply that";
 
-/** One pass of a repeating block, with the runs it created. */
-export interface PassGroup<T> {
-  /** The pass number off the member ids, or null where they carried none. */
-  pass: number | null;
-  runs: T[];
+/**
+ * One member of one pass, with whatever that member caused.
+ *
+ * Two shapes because a pass holds two kinds of thing: a run member, which is a
+ * whole billed run with a page of its own, and a ledger member — an
+ * orchestrator, or the merge block the pass lands through — which pays for a
+ * turn rather than a run. `emitted` is the runs an orchestrator member decided
+ * on, which belong under it rather than in the flat table at the foot of the
+ * page: they are work *this pass* caused, and read anywhere else the operator
+ * loses the one fact that says which pass is spending.
+ */
+export type PassMemberRow =
+  | { kind: "run"; key: string; node: WorkflowInstanceNodeDTO }
+  | {
+      kind: "block";
+      key: string;
+      block: WorkflowInstanceBlockDTO;
+      emitted: WorkflowInstanceNodeDTO[];
+    };
+
+/** One pass of a repeating block, as the group a page draws. */
+export interface PassRow {
+  pass: number;
+  members: PassMemberRow[];
+  /**
+   * The merge member the pass lands through, or null.
+   *
+   * **The fact that decides whether the next pass could see this one's work.**
+   * A pass that produced four branches and landed none leaves the next pass
+   * starting where this one did, which is the failure a pass cap spends its
+   * whole budget on and which nothing else on the page would say.
+   */
+  landing: WorkflowInstanceBlockDTO | null;
 }
 
 /**
- * A repeating block's runs, grouped into the passes they belong to.
+ * Everything one loop caused, as passes in order, each pass in section order.
  *
- * **`rows` must already be in creation order**, which is `position` on the
- * wire: that is the order `stepPass` released each pass's members in, so it is
- * the order they are listed in and there is no second sort that could disagree
- * with the section's own links.
+ * Ordered by the loop's own `bodyNodeIds` — the *instance's* copy of the graph,
+ * which is the order the pass actually ran in — rather than by position or by
+ * `startedAt`. Position is two separate sequences here, one for runs and one
+ * for ledger rows, so interleaving by it would put a merge member ahead of the
+ * runs it landed; and a member that never started has no `startedAt` at all. A
+ * row whose block is not in that list sorts last rather than being dropped: it
+ * is still a billed run, and the ordering may not be the thing that hides one.
  *
- * Grouped on a key rather than on the number, which is `groupPasses`' reading
- * on the server and the same safe direction: a member id carrying no pass at
- * all becomes a group of its own instead of being folded into the group beside
- * it. Here the cost of the wrong choice is only what is drawn, but a row folded
- * into the wrong pass is a run listed under work it was not part of, and the
- * operator reads spend off these groups.
- *
- * Returns null when every pass has exactly one run, which is what a loop that
- * repeats its own task always looks like — and what a section of one looks like
- * too, honestly, since one run per pass is what the flat table already says.
- * The caller draws the flat table for that, unchanged.
+ * Rows are taken by their **member id** rather than by `emittedBy`, which is
+ * what puts a run an orchestrator member decided on inside the pass that caused
+ * it: `createEmitted` names one `<memberId>#<specId>`, so it carries the pass
+ * too, and its cost is that pass's.
  */
-export function groupPasses<T extends { passNumber: number | null }>(
-  rows: readonly T[],
-): PassGroup<T>[] | null {
-  const groups: Array<PassGroup<T> & { key: string }> = [];
-  for (const row of rows) {
-    const key =
-      row.passNumber === null ? `row:${groups.length}` : `pass:${row.passNumber}`;
-    const current = groups.at(-1);
-    if (!current || current.key !== key) {
-      groups.push({ key, pass: row.passNumber, runs: [] });
-    }
-    groups.at(-1)!.runs.push(row);
+export function passesOf(
+  loop: WorkflowInstanceBlockDTO,
+  caused: {
+    nodes: readonly WorkflowInstanceNodeDTO[];
+    blocks: readonly WorkflowInstanceBlockDTO[];
+  },
+): PassRow[] {
+  const order = new Map(loop.bodyNodeIds.map((id, index) => [id, index]));
+  const rank = (bodyNodeId: string | null) =>
+    order.get(bodyNodeId ?? "") ?? order.size;
+
+  const byPass = new Map<number, PassMemberRow[]>();
+  const landings = new Map<number, WorkflowInstanceBlockDTO>();
+  const push = (pass: number, member: PassMemberRow) => {
+    const list = byPass.get(pass);
+    if (list) list.push(member);
+    else byPass.set(pass, [member]);
+  };
+
+  const emittedBy = new Map<string, WorkflowInstanceNodeDTO[]>();
+  for (const n of caused.nodes) {
+    if (n.emittedBy === null) continue;
+    const list = emittedBy.get(n.emittedBy);
+    if (list) list.push(n);
+    else emittedBy.set(n.emittedBy, [n]);
   }
-  if (groups.every((group) => group.runs.length <= 1)) return null;
-  return groups.map(({ pass, runs }) => ({ pass, runs }));
+
+  for (const n of caused.nodes) {
+    // Drawn under the member that decided it, not as a member of its own.
+    if (n.emittedBy !== null && emittedBy.has(n.emittedBy)) continue;
+    if (!n.passMember) continue;
+    push(n.passMember.pass, { kind: "run", key: n.nodeId, node: n });
+  }
+  for (const b of caused.blocks) {
+    if (!b.passMember) continue;
+    push(b.passMember.pass, {
+      kind: "block",
+      key: b.nodeId,
+      block: b,
+      emitted: [...(emittedBy.get(b.nodeId) ?? [])].sort(
+        (x, y) => x.position - y.position,
+      ),
+    });
+    if (b.kind === "merge") landings.set(b.passMember.pass, b);
+  }
+
+  const bodyOf = (member: PassMemberRow) =>
+    (member.kind === "run" ? member.node.passMember : member.block.passMember)
+      ?.bodyNodeId ?? null;
+
+  return [...byPass.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([pass, members]) => ({
+      pass,
+      members: [...members].sort((a, b) => rank(bodyOf(a)) - rank(bodyOf(b))),
+      landing: landings.get(pass) ?? null,
+    }));
+}
+
+/**
+ * What a pass landed, in a clause, or null while there is nothing to say.
+ *
+ * Never "landed 0 of 0" for a pass whose merge member has not run: nothing is a
+ * measurement there, and a figure stated before the merge is a claim about what
+ * the next pass starts from that nobody has made.
+ */
+export function landingSummary(
+  landing: WorkflowInstanceBlockDTO | null,
+): string | null {
+  if (landing === null) return null;
+  if (landing.status !== "emitted" && landing.status !== "failed") return null;
+  const branches = landing.branchesLanded + landing.branchesFailed;
+  if (branches === 0) return "landed nothing — the next pass saw no new work";
+  if (landing.branchesFailed === 0) {
+    return `landed ${landing.branchesLanded} branch${
+      landing.branchesLanded === 1 ? "" : "es"
+    } — the next pass starts from them`;
+  }
+  return `landed ${landing.branchesLanded} of ${branches} branches — the next pass did not see the rest`;
+}
+
+/**
+ * Every run one pass caused, for the figure beside its name.
+ *
+ * The member runs **and** the runs an orchestrator member decided on, because
+ * an operator reading what a pass cost is asking what one press of Run is
+ * spending — and a fan-out is exactly the part of that they did not approve one
+ * by one. A ledger member's own turn is not here: the caller sums runs, and a
+ * turn's cost is on the member's own row.
+ */
+export function passRuns(row: PassRow): WorkflowInstanceNodeDTO[] {
+  return row.members.flatMap((member) =>
+    member.kind === "run" ? [member.node] : member.emitted,
+  );
 }
 
 /**

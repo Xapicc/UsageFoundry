@@ -6,10 +6,16 @@ import {
   fmtCycleInFlight,
   fmtCycles,
   fmtTokens,
-  groupPasses,
   guardBadge,
+  landingSummary,
+  passRuns,
+  passesOf,
   pollFailureMessage,
 } from "./format";
+import type {
+  WorkflowInstanceBlockDTO,
+  WorkflowInstanceNodeDTO,
+} from "./apiTypes";
 import type { RunDTO } from "./apiTypes";
 
 /**
@@ -259,78 +265,195 @@ test("a negative token figure is scaled and signed like a positive one", () => {
 });
 
 /**
- * A pass drawn as the wrong number of passes.
+ * A pass drawn as the wrong shape.
  *
- * The instance page reads spend and status off these groups, so a run folded
- * into the pass beside it is listed under work it was not part of — and the
- * failure is silent, because every run is still on the page and the totals
- * still add up. The grouping is also what decides whether a loop's runs are
- * lifted out of the flat table at all, and getting *that* wrong changes how a
- * graph with no section is drawn, which is the one thing this change may not
- * do.
+ * The instance page reads spend, status and the landing off these groups, so a
+ * row folded into the pass beside it is listed under work it was not part of —
+ * and the failure is silent, because every row is still on the page and the
+ * totals still add up. Three things in particular fail without a mark:
+ *
+ * A run an orchestrator **member** started is named `<memberId>#<specId>`, so
+ * it carries the pass too. Read off `emittedBy` alone it lands in the flat
+ * table at the foot of the page, and the pass whose fan-out paid for it reports
+ * a cost that does not include it — which is the figure the operator is reading
+ * to decide whether to let the loop carry on.
+ *
+ * The order within a pass comes from the loop's own `bodyNodeIds`, because
+ * position is two sequences here — one for runs, one for ledger rows — and
+ * interleaving by it draws the merge member ahead of the runs it landed.
+ *
+ * And the landing may not be stated before the merge member has run: "landed 0
+ * of 0" on a pass still working is a claim that the next pass starts from
+ * nothing.
  */
 
-const row = (passNumber: number | null, id: string) => ({ passNumber, id });
+const member = (loopNodeId: string, pass: number, bodyNodeId: string) => ({
+  loopNodeId,
+  pass,
+  bodyNodeId,
+});
 
-test("a pass of several runs is one group, in creation order", () => {
-  const groups = groupPasses([
-    row(1, "build"),
-    row(1, "test"),
-    row(2, "build"),
-    row(2, "test"),
-  ]);
-  assert.ok(groups, "two runs in a pass must not stay in the flat table");
-  assert.deepEqual(
-    groups.map((g) => [g.pass, g.runs.map((r) => r.id)]),
-    [
-      [1, ["build", "test"]],
-      [2, ["build", "test"]],
+const passRun = (
+  nodeId: string,
+  passMember: ReturnType<typeof member> | null,
+  over: Partial<WorkflowInstanceNodeDTO> = {},
+): WorkflowInstanceNodeDTO => ({
+  nodeId,
+  nodeName: nodeId,
+  position: 0,
+  runId: `run-${nodeId}`,
+  run: null,
+  waitsFor: [],
+  emittedBy: null,
+  passMember,
+  ...over,
+});
+
+const passBlock = (
+  nodeId: string,
+  kind: WorkflowInstanceBlockDTO["kind"],
+  passMember: ReturnType<typeof member> | null,
+  over: Partial<WorkflowInstanceBlockDTO> = {},
+): WorkflowInstanceBlockDTO => ({
+  nodeId,
+  nodeName: nodeId,
+  position: 0,
+  kind,
+  status: "emitted",
+  startedAt: null,
+  finishedAt: null,
+  costUSD: null,
+  costUnknown: false,
+  emitted: 0,
+  decided: false,
+  reply: null,
+  notes: [],
+  branchesLanded: 0,
+  branchesFailed: 0,
+  error: null,
+  waitsFor: [],
+  bodyNodeIds: [],
+  passMember,
+  ...over,
+});
+
+/** A loop framing `a` then `m`, which is the shape every case below uses. */
+const nightly = passBlock("loop", "loop", null, { bodyNodeIds: ["a", "m"] });
+
+test("a pass holds its members in the section's own order", () => {
+  // Deliberately the wrong way round by position, which is what an interleave
+  // on that field would produce: the merge member ahead of the run it lands.
+  const passes = passesOf(nightly, {
+    nodes: [passRun("loop#pass-1#a", member("loop", 1, "a"), { position: 7 })],
+    blocks: [
+      passBlock("loop#pass-1#m", "merge", member("loop", 1, "m"), {
+        position: 0,
+      }),
     ],
+  });
+  assert.equal(passes.length, 1);
+  assert.deepEqual(
+    passes[0].members.map((m) => m.key),
+    ["loop#pass-1#a", "loop#pass-1#m"],
   );
 });
 
-test("one run per pass is not grouped at all", () => {
-  // What a loop repeating its own task has always looked like, and what a
-  // section of one honestly looks like too. Null is what keeps the flat table.
-  assert.equal(groupPasses([row(1, "a"), row(2, "a"), row(3, "a")]), null);
-  assert.equal(groupPasses([]), null);
-  assert.equal(groupPasses([row(1, "a")]), null);
+test("passes are numbered off their members and ordered by that number", () => {
+  const passes = passesOf(nightly, {
+    nodes: [
+      passRun("loop#pass-2#a", member("loop", 2, "a")),
+      passRun("loop#pass-1#a", member("loop", 1, "a")),
+    ],
+    blocks: [],
+  });
+  assert.deepEqual(
+    passes.map((p) => p.pass),
+    [1, 2],
+  );
+  assert.equal(passes[0].members.length, 1);
 });
 
-test("a run carrying no pass number is a group of its own", () => {
-  // `groupPasses` on the server takes the same direction for the same reason:
-  // folding an unnumbered member into the pass beside it puts a run under a
-  // heading it does not belong to, and the operator reads spend off that
-  // heading.
-  const groups = groupPasses([
-    row(1, "a"),
-    row(1, "b"),
-    row(null, "loose"),
-    row(2, "c"),
-  ]);
-  assert.ok(groups);
+test("a run a member decided on sits under that member, and in its pass", () => {
+  const decider = passBlock(
+    "loop#pass-1#a",
+    "orchestrator",
+    member("loop", 1, "a"),
+  );
+  const emitted = passRun("loop#pass-1#a#spec-1", member("loop", 1, "a#spec-1"), {
+    emittedBy: "loop#pass-1#a",
+  });
+  const passes = passesOf(passBlock("loop", "loop", null, { bodyNodeIds: ["a"] }), {
+    nodes: [emitted],
+    blocks: [decider],
+  });
+  assert.equal(passes.length, 1);
+  // One member, not two: the run it decided on is drawn under it rather than
+  // beside it, which is also what keeps it out of the flat table.
+  assert.equal(passes[0].members.length, 1);
+  const only = passes[0].members[0];
+  assert.equal(only.kind, "block");
   assert.deepEqual(
-    groups.map((g) => [g.pass, g.runs.map((r) => r.id)]),
-    [
-      [1, ["a", "b"]],
-      [null, ["loose"]],
-      [2, ["c"]],
-    ],
+    only.kind === "block" ? only.emitted.map((n) => n.nodeId) : [],
+    ["loop#pass-1#a#spec-1"],
+  );
+  // And a fan-out is exactly the part of a pass's cost nobody approved one by
+  // one, so it has to be in the figure beside the pass.
+  assert.deepEqual(
+    passRuns(passes[0]).map((n) => n.nodeId),
+    ["loop#pass-1#a#spec-1"],
   );
 });
 
-test("a pass that comes round again is not merged with the earlier one", () => {
-  // Grouped on a run of equal keys rather than into a map, so rows that are
-  // somehow out of creation order stay where they are instead of being pulled
-  // backwards into a pass that had already finished.
-  const groups = groupPasses([row(1, "a"), row(2, "b"), row(1, "c"), row(1, "d")]);
-  assert.ok(groups);
-  assert.deepEqual(
-    groups.map((g) => [g.pass, g.runs.length]),
-    [
-      [1, 1],
-      [2, 1],
-      [1, 2],
+test("a member outside the section's order sorts last rather than vanishing", () => {
+  const passes = passesOf(nightly, {
+    nodes: [
+      passRun("loop#pass-1#zz", member("loop", 1, "zz")),
+      passRun("loop#pass-1#a", member("loop", 1, "a")),
     ],
+    blocks: [],
+  });
+  // `zz` is not in `bodyNodeIds` — an instance whose graph was written before
+  // that field existed reads every member that way. It is still a billed run.
+  assert.deepEqual(
+    passes[0].members.map((m) => m.key),
+    ["loop#pass-1#a", "loop#pass-1#zz"],
+  );
+});
+
+test("the landing is stated once the merge member has run, and not before", () => {
+  const landed = (over: Partial<WorkflowInstanceBlockDTO>) =>
+    passesOf(nightly, {
+      nodes: [],
+      blocks: [passBlock("loop#pass-1#m", "merge", member("loop", 1, "m"), over)],
+    })[0];
+
+  assert.equal(
+    landingSummary(landed({ status: "thinking" }).landing),
+    null,
+    "a merge still working has landed nothing yet, which is not the same as landing nothing",
+  );
+  assert.match(
+    landingSummary(landed({ branchesLanded: 2 }).landing) ?? "",
+    /2 branches/,
+  );
+  assert.match(
+    landingSummary(landed({ branchesLanded: 1, branchesFailed: 2 }).landing) ?? "",
+    /1 of 3/,
+  );
+  assert.match(
+    landingSummary(landed({}).landing) ?? "",
+    /landed nothing/,
+    "a pass that landed nothing is what leaves the next one where this one started",
+  );
+  assert.equal(landingSummary(null), null);
+});
+
+test("a graph with no loop groups nothing, and its runs stay where they were", () => {
+  assert.deepEqual(
+    passesOf(passBlock("plain", "run", null), {
+      nodes: [passRun("a", null)],
+      blocks: [passBlock("b", "merge", null)],
+    }),
+    [],
   );
 });

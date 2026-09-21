@@ -13,9 +13,10 @@ import {
   fmtDateTime,
   fmtPct,
   fmtUSD,
-  groupPasses,
+  landingSummary,
+  passRuns,
+  passesOf,
   pollFailureMessage,
-  type PassGroup,
 } from "@/lib/format";
 import { Markdown } from "@/components/Markdown";
 import { Meter } from "@/components/Meter";
@@ -226,6 +227,73 @@ function RunRows({
   );
 }
 
+/**
+ * A pass member that is a ledger row rather than a run.
+ *
+ * The same five columns as `RunRows`, because it is the same table and a member
+ * of a pass is a member of a pass whichever kind it is — an operator reading a
+ * pass down the page may not have to change how they read it halfway. What
+ * differs is what each column can say: a ledger row has no run to link to, no
+ * work cycles, and a cost that is a turn's rather than a run's.
+ */
+function MemberBlockRows({
+  block,
+  nodeName,
+}: {
+  block: BlockDTO;
+  nodeName: Map<string, string>;
+}) {
+  const waits = block.waitsFor.map((from) => nodeName.get(from) ?? from);
+  return (
+    <TBody>
+      <Tr>
+        <Td className="align-top">
+          <Badge tone={BLOCK_TONE[block.status]}>{blockLabel(block)}</Badge>
+        </Td>
+        <Td className="align-top">
+          <div className="font-medium text-ink">{block.nodeName}</div>
+          <div className="mt-0.5 text-ink-muted">
+            {blockSummary(block, waits)}
+          </div>
+          {block.error && (
+            <div className="mt-0.5 max-w-[56ch] text-ink-muted">
+              {block.error}
+            </div>
+          )}
+          {/* This app's account before the block's own, because a refused
+              emission explains a reply that says it gave up, and the reply read
+              first does not. */}
+          {block.notes.map((note, i) => (
+            <div key={i} className="mt-0.5 max-w-[56ch] text-warn">
+              {note}
+            </div>
+          ))}
+          {block.reply && (
+            <div className="mt-2 max-w-[80ch] rounded-sm border-l-[3px] border-line-strong bg-inset px-3 py-2">
+              <Markdown text={block.reply} />
+            </div>
+          )}
+        </Td>
+        <Td num label="Cycles" className="whitespace-nowrap align-top text-ink-muted">
+          {/* A turn, not a run: there are no work cycles to count, and a `0`
+              here would read as a run that never got going. */}
+          —
+        </Td>
+        <Td num label="Spent" className="whitespace-nowrap align-top">
+          {block.costUSD === null ? "—" : fmtUSD(block.costUSD)}
+        </Td>
+        <Td
+          num
+          label="Started"
+          className="whitespace-nowrap align-top text-ink-muted"
+        >
+          {block.startedAt === null ? "—" : fmtDateTime(block.startedAt)}
+        </Td>
+      </Tr>
+    </TBody>
+  );
+}
+
 function RunTableHead() {
   return (
     // `min-w` rather than `w` on every fixed column here, and it is a
@@ -400,55 +468,72 @@ export default function WorkflowInstancePage() {
   }, [instance]);
 
   /**
-   * The graph's own runs, and the ones a block decided on.
-   *
-   * A boolean per node, so every run lands in exactly one table — a run missing
-   * from both would be an unattended agent this page has no other mention of.
-   * Emitted runs keep their `position` order, which is the order the block
-   * emitted them in.
-   */
-  /**
    * The three tables, split once.
    *
-   * A repeating block's runs stay in `emittedRuns` — where they have always
-   * been, one row per pass — unless one of its passes turned out to be more
-   * than one run. Only then are they lifted into a section of their own and
-   * grouped, which is `groupPasses`' null: a loop that repeats its own task,
-   * and a section of one, are one run per pass and the flat table already
-   * says so.
+   * A pass is several members of several kinds now, so everything one loop
+   * caused is lifted out of the flat tables and grouped: its member runs, the
+   * ledger rows for an orchestrator or merge member, and the runs an
+   * orchestrator member decided on. Every row lands in exactly one place — a
+   * run missing from all of them would be an unattended agent this page has no
+   * other mention of.
    */
   const { savedRuns, emittedRuns, passSections } = useMemo(() => {
     const savedRuns: NodeDTO[] = [];
     const emittedRuns: NodeDTO[] = [];
-    const byLoop = new Map<string, NodeDTO[]>();
-    const loops = new Set(
-      (instance?.blocks ?? [])
-        .filter((b) => b.kind === "loop")
-        .map((b) => b.nodeId),
-    );
+    const loops = (instance?.blocks ?? []).filter((b) => b.kind === "loop");
+    const loopIds = new Set(loops.map((b) => b.nodeId));
+
+    /** Every row one loop caused, keyed on that loop. */
+    const caused = new Map<string, { nodes: NodeDTO[]; blocks: BlockDTO[] }>();
+    const own = (loopNodeId: string) => {
+      const found = caused.get(loopNodeId);
+      if (found) return found;
+      const fresh = { nodes: [] as NodeDTO[], blocks: [] as BlockDTO[] };
+      caused.set(loopNodeId, fresh);
+      return fresh;
+    };
+
     for (const n of instance?.nodes ?? []) {
-      if (!n.emittedBy) {
-        savedRuns.push(n);
-      } else if (loops.has(n.emittedBy)) {
-        byLoop.set(n.emittedBy, [...(byLoop.get(n.emittedBy) ?? []), n]);
-      } else {
+      // The member id decides, not `emittedBy`: a run an orchestrator *member*
+      // started is named under its pass too, and its cost is that pass's.
+      if (n.passMember && loopIds.has(n.passMember.loopNodeId)) {
+        own(n.passMember.loopNodeId).nodes.push(n);
+      } else if (n.emittedBy) {
         emittedRuns.push(n);
+      } else {
+        savedRuns.push(n);
       }
     }
-    const passSections: Array<{
-      nodeId: string;
-      groups: PassGroup<NodeDTO>[];
-    }> = [];
-    for (const [nodeId, rows] of byLoop) {
-      const groups = groupPasses(rows);
-      if (groups === null) emittedRuns.push(...rows);
-      else passSections.push({ nodeId, groups });
+    for (const b of instance?.blocks ?? []) {
+      if (b.passMember && loopIds.has(b.passMember.loopNodeId)) {
+        own(b.passMember.loopNodeId).blocks.push(b);
+      }
     }
+
+    const passSections = loops
+      .map((loop) => ({
+        loop,
+        passes: passesOf(loop, caused.get(loop.nodeId) ?? { nodes: [], blocks: [] }),
+      }))
+      .filter((section) => section.passes.length > 0);
+
     // Back into the order the graph declared, because the split above walked
-    // the loops in whatever order their first run appeared.
+    // the rows in whatever order they were created.
     emittedRuns.sort((a, b) => a.position - b.position);
     return { savedRuns, emittedRuns, passSections };
   }, [instance]);
+
+  /**
+   * The ledger rows that are not part of a pass.
+   *
+   * A pass's own members are drawn in the pass, with what they waited for and
+   * what they landed — listing them here as well would put one block on the
+   * page twice with two different accounts of it.
+   */
+  const standaloneBlocks = useMemo(
+    () => (instance?.blocks ?? []).filter((b) => b.passMember === null),
+    [instance],
+  );
 
   if (!loaded) {
     return (
@@ -707,7 +792,7 @@ export default function WorkflowInstancePage() {
         )}
       </Card>
 
-      {instance.blocks.length > 0 && (
+      {standaloneBlocks.length > 0 && (
         <>
           <CardTitle className="mt-8">Blocks not yet runs</CardTitle>
           <Card emphasis="quiet">
@@ -738,7 +823,7 @@ export default function WorkflowInstancePage() {
                   </tr>
                 </THead>
                 <TBody>
-                  {instance.blocks.map((b) => {
+                  {standaloneBlocks.map((b) => {
                     const waits = b.waitsFor.map(
                       (from) => nodeName.get(from) ?? from,
                     );
@@ -840,48 +925,78 @@ export default function WorkflowInstancePage() {
         )}
       </Card>
 
-      {/* One card per repeating block whose passes are sections. The block's
-          own row in the table above still reads in passes — see
-          `blockSummary` — and this is where those passes are opened up into
-          the runs each one took. */}
-      {passSections.map((section) => (
-        <Fragment key={section.nodeId}>
-          <CardTitle className="mt-8">
-            Passes of {nodeName.get(section.nodeId) ?? section.nodeId}
-          </CardTitle>
+      {/* One card per repeating block. The block's own row in the table above
+          still reads in passes — see `blockSummary` — and this is where those
+          passes are opened up into the members each one took. */}
+      {passSections.map(({ loop, passes }) => (
+        <Fragment key={loop.nodeId}>
+          <CardTitle className="mt-8">Passes of {loop.nodeName}</CardTitle>
           <Card>
             <TableWrap>
               <Table stack>
                 <caption className="sr-only">
-                  Each pass of{" "}
-                  {nodeName.get(section.nodeId) ?? section.nodeId}, and the runs
-                  it took
+                  Each pass of {loop.nodeName}, the blocks it ran and what it
+                  landed
                 </caption>
                 <RunTableHead />
-                {section.groups.map((group, index) => (
-                  <Fragment key={group.pass ?? `ungrouped-${index}`}>
+                {passes.map((row) => (
+                  <Fragment key={row.pass}>
                     <TBody>
                       <Tr>
                         {/* No `label`, which is what `Td` reads as "this cell
                             is the headline the record is identified by" — and
                             once the table stacks that is exactly what it is:
-                            the line the runs under it belong to. */}
+                            the line the members under it belong to. */}
                         <Td
                           colSpan={5}
                           className="bg-inset font-medium text-ink max-md:border-b-0"
                         >
-                          {group.pass === null
-                            ? "Not part of a pass"
-                            : `Pass ${group.pass}`}
+                          Pass {row.pass}
                           <span className="ml-2 font-normal text-ink-muted">
-                            {group.runs.length} run
-                            {group.runs.length === 1 ? "" : "s"}
-                            {passSpend(group.runs)}
+                            {row.members.length} block
+                            {row.members.length === 1 ? "" : "s"}
+                            {passSpend(passRuns(row))}
                           </span>
+                          {/* The landing on the pass's own line, because it is
+                              the fact that decides whether the next pass could
+                              see this one's work — not a property of the merge
+                              member it is read off. */}
+                          {landingSummary(row.landing) && (
+                            <span
+                              className={`ml-2 font-normal ${
+                                row.landing!.branchesFailed > 0 ||
+                                row.landing!.branchesLanded === 0
+                                  ? "text-warn"
+                                  : "text-ink-muted"
+                              }`}
+                            >
+                              · {landingSummary(row.landing)}
+                            </span>
+                          )}
                         </Td>
                       </Tr>
                     </TBody>
-                    <RunRows nodes={group.runs} nodeName={nodeName} />
+                    {row.members.map((member) =>
+                      member.kind === "run" ? (
+                        <RunRows
+                          key={member.key}
+                          nodes={[member.node]}
+                          nodeName={nodeName}
+                        />
+                      ) : (
+                        <Fragment key={member.key}>
+                          <MemberBlockRows
+                            block={member.block}
+                            nodeName={nodeName}
+                          />
+                          {/* Under the member that decided them, indented by
+                              nothing but their own line above: these are runs
+                              this pass caused, and the operator reading a
+                              pass's spend has to see them inside it. */}
+                          <RunRows nodes={member.emitted} nodeName={nodeName} />
+                        </Fragment>
+                      ),
+                    )}
                   </Fragment>
                 ))}
               </Table>
