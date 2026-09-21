@@ -4513,9 +4513,13 @@ function advanceLoop(
   // `on-finish` because a pass that did not complete has already stopped the
   // loop above: stating it on the edge means a race could only ever be refused
   // at admission rather than start a pass on top of a failure.
+  // The **last run** of the last pass, which for a loop repeating a section is
+  // the last block of that section. The passes are one chain, so that run is
+  // the only one a new pass can continue: naming an earlier one would put two
+  // runs on one predecessor, which admission refuses by name.
   const previous = passes.at(-1)?.runs.at(-1);
   createPass(
-    instanceId,
+    instance,
     node,
     decision.pass,
     previous
@@ -4554,16 +4558,20 @@ function advanceLoop(
  * the block that would have finished it never created.
  */
 function createPass(
-  instanceId: string,
+  instance: WorkflowInstance,
   node: WorkflowNode,
   pass: number,
   dependsOn: InstanceCreation["dependsOn"],
 ): void {
-  const instance = getInstance(instanceId);
+  const instanceId = instance.id;
   // From the instance's **own** frozen graph rather than the workflow's, the
   // treatment every other read of a node here gets: a body edited between two
   // passes would otherwise change what this loop repeats half way through.
-  const body = instance ? loopBody(instance.graph, node) : [];
+  // Handed down from `advanceLoop` rather than read again, because a second
+  // read has a null case and there is no honest answer to it: a loop whose
+  // instance had gone would fall back to repeating its own task, which is work
+  // nobody asked for on a folder somebody else may now hold.
+  const body = loopBody(instance.graph, node);
   const members = planPass({ loop: node, body, pass, carry: dependsOn });
   const nodeById = new Map(body.map((n) => [n.id, n]));
 
@@ -4613,8 +4621,11 @@ function createPass(
         // an `orchestrator-block` run: no model decided it — `planLoopPass` did,
         // off the pass before it — and the press of Run that authorised the graph
         // authorised every pass its cap allows.
-        origin: instance?.origin ?? "workflow",
-        originRef: instance?.originRef ?? instanceId,
+        // `?? "workflow"` for the column's own nullability rather than for the
+        // instance's: `runs.origin` predates this and an instance written
+        // before it carries null, where every pass of it is a workflow's.
+        origin: instance.origin ?? "workflow",
+        originRef: instance.originRef ?? instanceId,
       });
       created.push(run.id);
       recordMember(instanceId, {
