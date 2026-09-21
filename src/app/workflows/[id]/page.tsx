@@ -591,31 +591,12 @@ export default function WorkflowPage() {
                           <div className="mono mt-0.5 break-words text-ink-muted">
                             {n.mountId} / {n.folder || "."}
                           </div>
-                          {/* A loop that repeats a section runs no task of its
-                              own — every run of a pass is a member's, and each
-                              member is a row of this table with its own task
-                              below it. Printing the loop's here would put a
-                              sentence on the page that no agent is ever sent,
-                              which is the thing this page exists to state
-                              correctly. A leftover one is named rather than
-                              dropped in silence: the text is the operator's,
-                              and they are owed the reason it stopped showing. */}
-                          {n.kind === "loop" &&
-                          n.bodyNodeIds.length > 0 ? (
-                            n.task && (
-                              <div className="mt-1 text-ink-faint">
-                                Its own task is not read while it repeats a
-                                section
-                              </div>
-                            )
-                          ) : (
-                            <div
-                              className="mt-1 max-w-[56ch] truncate text-ink-muted"
-                              title={n.task}
-                            >
-                              {n.task}
-                            </div>
-                          )}
+                          <div
+                            className="mt-1 max-w-[56ch] truncate text-ink-muted"
+                            title={n.task}
+                          >
+                            {n.task}
+                          </div>
                         </>
                       )}
                     </Td>
