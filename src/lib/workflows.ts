@@ -91,8 +91,16 @@ import { getTemplate, listTemplates, type RunTemplate } from "./templates";
 import { WORKSPACE_MOUNTS, mountById } from "./config";
 import { dataDirRefusal } from "./serverLock";
 import {
+  passMemberId,
+  passMemberName,
+  passMemberOf,
+  passNumberOf,
+  passPrefix,
+} from "./passIds";
+import {
   MAX_FAN_OUT,
   MAX_LOOP_PASSES,
+  MAX_LOOP_RUNS,
   MAX_WORKFLOW_NAME,
   MAX_WORKFLOW_NODES,
   boardThresholds,
@@ -949,16 +957,49 @@ export interface LoopRunState extends DependencyState {
   reportedDone: boolean;
 }
 
-/** One pass of a loop's body: the runs it created, in creation order. */
+/**
+ * One member of one pass — one block of the section, as that pass ran it.
+ *
+ * A pass is the section instantiated, so its members are of the section's own
+ * three kinds, and a reading that knew only about runs would be blind to two of
+ * them: an orchestrator member is a ledger row plus the runs it emitted, and a
+ * merge member is a ledger row plus whether it landed everything. Either can be
+ * the reason a pass is still going, and either can be the reason it stopped.
+ *
+ * `run` and `block` are alternatives rather than a pair. A member starts life as
+ * a `waiting` ledger row; a run member's row is deleted the moment its run
+ * exists, so from then on the run is the whole record, and a member that never
+ * became a run keeps the row because the row is what carries the reason. Both
+ * null is a member whose run row has since been deleted, which `planLoopPass`
+ * reads as settled and not completed.
+ */
+export interface LoopPassMember {
+  /** `workflow_instance_runs.node_id`, or the block row's. Carries the pass. */
+  memberId: string;
+  /** Which block of the section it is, as the instance's own graph names it. */
+  nodeId: string;
+  /** What the page calls it, for the sentence naming what stopped the loop. */
+  name: string;
+  /** Which of the section's three kinds it is. */
+  kind: WorkflowNodeKind;
+  /** The run this member became, or null when it is a block or has gone. */
+  run: LoopRunState | null;
+  /** The ledger row, for a member that is not a run or has not become one. */
+  block: { status: BlockStatus; error: string | null } | null;
+  /** The runs an orchestrator member started, as their rows stand now. */
+  emitted: readonly LoopRunState[];
+}
+
+/** One pass of a loop's section: every member of it, in creation order. */
 export interface LoopPass {
   /** 1-based, and the number the page shows. */
   pass: number;
   /**
-   * Empty is a real state, not a missing one: a pass whose `createRun` threw,
-   * or whose run row has since been deleted, produced nothing. It is the case
-   * that would otherwise loop for ever creating nothing at all.
+   * Empty is a real state, not a missing one: a pass whose rows have since been
+   * deleted, or a loop from before a section was required, produced nothing. It
+   * is the case that would otherwise loop for ever creating nothing at all.
    */
-  runs: readonly LoopRunState[];
+  members: readonly LoopPassMember[];
 }
 
 export interface LoopPassInput {
@@ -1011,7 +1052,7 @@ export type LoopStopCode =
 export type LoopDecision =
   /** Create pass `pass`. Nothing else has to be true for it to go ahead. */
   | { kind: "pass"; pass: number }
-  /** The last pass has not settled; ask again when it does. */
+  /** The last pass has not settled; carry it on, and ask again when it does. */
   | { kind: "wait" }
   | { kind: "stop"; code: LoopStopCode; reason: string };
 
@@ -1022,33 +1063,48 @@ export type LoopDecision =
  * cyclic run graph at admission, and the reason is not tidiness:
  * `releasableRuns` reaches a fixed point and leaves a cyclic set alone, so an
  * edge from a pass back to its own block would be precisely the row nothing ever
- * wakes. So each pass is a *fresh* run depending on the previous pass's, the run
- * graph stays a DAG, and every rule written against one — release, folder
- * claim, landing, halt — holds unchanged. `run_deps` never learns that a loop
- * exists. The next reader will reach for the back edge first; this is why there
- * is not one.
+ * wakes. So each pass is a *fresh* instantiation of the section, the run graph
+ * stays a DAG, and every rule written against one — release, folder claim,
+ * landing, halt — holds unchanged. `run_deps` never learns that a loop exists.
+ * The next reader will reach for the back edge first; this is why there is not
+ * one.
  *
  * Pure and unit-tested for `releasableRuns`' reason, sharpened by what a loop
- * costs: a loop that never terminates is billed one whole run per pass, for ever
- * — and a loop that stops one pass early is silent, because a run that was going
- * to finish the job simply never happens and the branch looks finished.
+ * costs: a loop that never terminates is billed a whole pass per pass, for ever
+ * — and a loop that stops one pass early is silent, because a pass that was
+ * going to finish the job simply never happens and the branch looks finished.
  *
  * The order of the tests is load-bearing:
  *
  *   1. **An unsettled pass waits.** Nothing else can be read off a pass that is
- *      still working, and unrolling ahead of it is what would put two runs on
- *      one predecessor's branch — which admission refuses, so it would surface
- *      as a throw rather than a decision.
+ *      still working, and starting the next one on top of it would put two
+ *      passes into the same folders at once.
  *   2. **A pass that produced nothing stops it.** Another pass would be created
  *      exactly the same way and fail exactly the same way, which is a hot loop
  *      rather than a retry.
- *   3. **A run in the body that did not complete stops it**, rather than trying
- *      again. A loop is not a retry mechanism: `MAX_TRANSIENT_RETRIES` and the
- *      refusal backoff already sit inside a single run, so a fault that got past
- *      them is one the next pass would meet too.
- *   4. **`reportedDone` stops it**, because that is the loop finishing rather
- *      than being cut off — and it outranks the two caps so a loop that got
- *      there on its last pass says it finished rather than that it ran out.
+ *   3. **A member that did not complete stops it**, rather than trying again. A
+ *      loop is not a retry mechanism: `MAX_TRANSIENT_RETRIES` and the refusal
+ *      backoff already sit inside a single run, so a fault that got past them is
+ *      one the next pass would meet too. Over members of all three kinds, and
+ *      the **merge** member is the one with a sentence of its own: a merge block
+ *      that failed still *finished*, so a pass whose merge landed only some of
+ *      what it produced looks complete from every other angle. It is not — the
+ *      next pass's runs cut fresh branches from the folder, so what was left
+ *      behind is invisible to them and they would do it again, billed, in
+ *      silence. Stopping names what did not land.
+ *   4. **DONE is every run member of the pass reporting it**, not one of them.
+ *      A section may run blocks side by side and there is no last-run-of-a-chain
+ *      left to read, so one member finishing is not the section finishing. The
+ *      alternative considered and rejected was marking one member as the one
+ *      whose DONE counts: that is a second control over a fact the members
+ *      already carry, it has to be kept in step with the graph as the section
+ *      is edited, and every way of setting it wrong ends the loop early and
+ *      silently. A pass with **no** run members never reports done — an
+ *      orchestrator and a merge alone say nothing about whether the work is
+ *      finished, and reading "all of none" as done would stop such a loop after
+ *      its first pass, which is a loop that does not loop.
+ *      It outranks the two caps, so a loop that got there on its last pass says
+ *      it finished rather than that it ran out.
  *   5. **The board condition**, below the agent's own word and above the caps.
  *      An agent that said the work is done outranks a board that has not caught
  *      up with it; a board that is clear is the loop *finishing* rather than
@@ -1089,39 +1145,90 @@ function thresholdPriorityWord(priority: LoopBoardThreshold["priority"]): string
   return priority === "any" ? "" : `${priority}-priority `;
 }
 
+/**
+ * Whether one member of a pass can still do anything.
+ *
+ * Three readings rather than one, because a pass holds three kinds of row and
+ * the statuses are different vocabularies — `TERMINAL_STATUSES` for a run,
+ * `BlockStatus` for a ledger row. An orchestrator member is settled only once
+ * the runs it emitted are too: the member's own row says `emitted` the moment
+ * the turn ends, and taking that as the end of it would let the next pass start
+ * while a run this one decided on was still working in the folder.
+ */
+function memberSettled(member: LoopPassMember): boolean {
+  if (member.emitted.some((r) => !TERMINAL_STATUSES.includes(r.status))) {
+    return false;
+  }
+  if (member.run) return TERMINAL_STATUSES.includes(member.run.status);
+  if (member.block) return !LIVE_BLOCK_STATUSES.includes(member.block.status);
+  // Neither row: the run was created and its row has since been deleted. It can
+  // never move again, which is what this question asks.
+  return true;
+}
+
+/**
+ * Whether one member did the thing it was created to do.
+ *
+ * The runs an orchestrator member emitted are deliberately **not** read here.
+ * They are not members: what to start was the model's decision, and what a
+ * failure among them means for the section is stated on the section's own links
+ * — the block behind them is released by `on-finish` and not by `on-success`,
+ * which is a choice the operator made and this must not overrule.
+ */
+function memberCompleted(member: LoopPassMember): boolean {
+  if (member.run) return member.run.status === "completed";
+  if (member.block) return member.block.status === "emitted";
+  return false;
+}
+
+/** How a member ended, in the word the stop sentence uses. */
+function memberEnding(member: LoopPassMember): string {
+  if (member.run) return member.run.status;
+  if (member.block) return member.block.status;
+  return "with its run deleted";
+}
+
 export function planLoopPass(input: LoopPassInput): LoopDecision {
   const last = input.passes.at(-1);
 
   if (last) {
-    if (last.runs.some((r) => !TERMINAL_STATUSES.includes(r.status))) {
-      return { kind: "wait" };
-    }
+    if (!last.members.every(memberSettled)) return { kind: "wait" };
 
-    if (last.runs.length === 0) {
+    if (last.members.length === 0) {
       return {
         kind: "stop",
         code: "empty",
         reason:
-          `Pass ${last.pass} of “${input.blockName}” started no run, so there ` +
+          `Pass ${last.pass} of “${input.blockName}” started nothing, so there ` +
           "is nothing to carry on from. Another pass would be created the same " +
           "way.",
       };
     }
 
-    const broken = last.runs.find((r) => r.status !== "completed");
+    const broken = last.members.find((m) => !memberCompleted(m));
     if (broken) {
       return {
         kind: "stop",
         code: "failed",
         reason:
-          `Pass ${last.pass} of “${input.blockName}” ended ${broken.status}, so ` +
-          "the loop stopped rather than repeating on top of it.",
+          broken.kind === "merge"
+            ? `Pass ${last.pass} of “${input.blockName}” did not land ` +
+              `everything it produced: ${
+                broken.block?.error ?? `“${broken.name}” ended ${memberEnding(broken)}.`
+              } The next pass would start from a folder that cannot see this ` +
+              "pass's work and would do it again, so the loop stopped."
+            : `Pass ${last.pass} of “${input.blockName}” did not finish: ` +
+              `“${broken.name}” ended ${memberEnding(broken)}. The loop ` +
+              "stopped rather than repeating on top of it.",
       };
     }
 
-    // The last run of the body is the one that says whether the work is done —
-    // the earlier ones in a pass are steps towards it.
-    if (last.runs.at(-1)!.reportedDone) {
+    // Every run member, and there has to be one — see the docblock.
+    const runMembers = last.members.filter((m) => m.kind === "run");
+    if (
+      runMembers.length > 0 &&
+      runMembers.every((m) => m.run?.reportedDone === true)
+    ) {
       return {
         kind: "stop",
         code: "done",
@@ -1136,7 +1243,7 @@ export function planLoopPass(input: LoopPassInput): LoopDecision {
     // **Any of them**, and the first one met is the one the sentence names.
     // That is the operator's own "or", and it is the safe direction: a
     // condition that stops earlier ends a loop that is still billing a whole
-    // run per pass, where an all-of reading would keep one going on a board
+    // pass per pass, where an all-of reading would keep one going on a board
     // nobody thought was full.
     for (const threshold of boardThresholds(board)) {
       const left =
@@ -1182,122 +1289,31 @@ export function planLoopPass(input: LoopPassInput): LoopDecision {
   return { kind: "pass", pass: input.passes.length + 1 };
 }
 
-/* ------------------------------------------------------------------ */
-/* What one pass of a loop is made of — pure                           */
-/* ------------------------------------------------------------------ */
-
 /**
- * What a pass's run is called in `workflow_instance_runs.node_id`.
+ * How a loop's ending reads to the block behind it.
  *
- * One definition, because the string is also parsed back — `passNumberOf` is
- * what tells `loopPasses` where one pass ends and the next begins, and a format
- * written in one place and read in another is a grouping that silently reports
- * one pass of six where there were three passes of two.
+ * Pure, tiny and exported because it is the whole of what a successor of a loop
+ * can see. A loop used to resolve to the last run of its last pass, so whether
+ * the *work* went well was a fact the successor read off that run's status. A
+ * pass now lands its own work and the loop hands on no run at all, so the block
+ * row is the only thing left to carry it — and a stop code that ended up on the
+ * wrong side of this function is an `on-success` successor started after a pass
+ * that failed, or one withheld after a loop that finished.
  *
- * **A body-less loop keeps the name it has always had**, `…#pass-N` with no
- * third part: the member of such a pass *is* the loop block, so there is
- * nothing to name, and every row already in a database says this. The member is
- * named only when there is a member to name.
+ * Running out of passes or of money is `emitted`: the passes that happened
+ * completed, and "it did not get there in time" is what the caps are for. A
+ * failed pass and a pass that produced nothing are `failed`, which is the only
+ * reading under which `on-success` after a loop means what it says.
  */
-export function passMemberId(
-  loopNodeId: string,
-  pass: number,
-  bodyNodeId: string | null,
-): string {
-  const own = `${loopNodeId}#pass-${pass}`;
-  return bodyNodeId === null ? own : `${own}#${bodyNodeId}`;
-}
-
-/** Which pass a member id belongs to, or null when it does not carry one. */
-export function passNumberOf(memberId: string): number | null {
-  const found = /#pass-(\d+)(?:#|$)/.exec(memberId);
-  return found ? Number(found[1]) : null;
-}
-
-/** One run of a pass, planned before any run of that pass exists. */
-export interface PassMember {
-  /** The graph block whose work it is — the loop itself, for a body-less loop. */
-  nodeId: string;
-  /** Its `workflow_instance_runs.node_id`. */
-  memberId: string;
-  memberName: string;
-  /**
-   * What it is created waiting for. A link either names a run that already
-   * exists — the previous pass's last run, or whatever released the loop — or
-   * names an earlier member of *this* pass by its index in this list, whose run
-   * id is not known until it has been created.
-   */
-  dependsOn: ReadonlyArray<
-    | { runId: string; edge: DependencyEdge; continueBranch: boolean }
-    | { member: number; edge: DependencyEdge; continueBranch: boolean }
-  >;
-}
-
-/**
- * Every run one pass creates, in the order it creates them.
- *
- * Pure and unit-tested for `planLoopPass`' reason one step along: this is what
- * *commits* the money that function decided to spend, and every way of getting
- * it wrong is silent. A member left off the chain is a second run continuing
- * one predecessor, which admission refuses — a throw in the middle of a pass,
- * with nobody to show it to. A chain wired the other way round runs the section
- * backwards and looks exactly like a section that ran. A member id that does
- * not carry its pass regroups every pass this loop has ever taken.
- *
- * **Within a pass the members carry each other's branch**, `on-success` and
- * `continue_branch`, so the whole pass is one ref and the last member's tip is
- * what the next pass continues. That is not a choice about tidiness: the body
- * is a chain precisely so that "one branch, all the passes" stays true, and
- * `graphRefusal` refuses any body that could not be wired this way.
- *
- * **Across passes it is the caller's `carry`**, which for pass 2 and after is
- * the previous pass's *last* run — `on-success`, because a pass that did not
- * complete has already stopped the loop, so stating it on the edge means a race
- * could only ever be refused at admission rather than start a pass on top of a
- * failure.
- *
- * An empty body plans exactly one member, the loop block itself, carrying the
- * links it was given: that is today's loop, expressed rather than special-cased.
- */
-export function planPass(input: {
-  loop: { id: string; name: string };
-  /** The body in the order its own edges give, or empty for a body-less loop. */
-  body: readonly { id: string; name: string }[];
-  pass: number;
-  /** What the first run of this pass starts after. */
-  carry: InstanceCreation["dependsOn"];
-}): PassMember[] {
-  const { loop, body, pass, carry } = input;
-  if (body.length === 0) {
-    return [
-      {
-        nodeId: loop.id,
-        memberId: passMemberId(loop.id, pass, null),
-        memberName: `${loop.name} — pass ${pass}`,
-        dependsOn: carry,
-      },
-    ];
-  }
-
-  return body.map((member, index) => ({
-    nodeId: member.id,
-    memberId: passMemberId(loop.id, pass, member.id),
-    // The member's own name and the pass, rather than the loop's: a pass of a
-    // section is several rows on the instance page and "Nightly — pass 2" three
-    // times over says nothing about which of them is which.
-    memberName: `${member.name} — pass ${pass}`,
-    dependsOn:
-      index === 0
-        ? carry
-        : [{ member: index - 1, edge: "on-success", continueBranch: true }],
-  }));
+export function loopStopStatus(code: LoopStopCode): "emitted" | "failed" {
+  return code === "failed" || code === "empty" ? "failed" : "emitted";
 }
 
 /**
  * The passes a loop has taken, grouped out of its member rows in creation order.
  *
- * Pure for `planPass`' reason and tested beside it, because the grouping is what
- * `planLoopPass` reads its whole decision off: one pass of six read as six
+ * Pure for `planLoopPass`' reason and tested beside it, because the grouping is
+ * what that function reads its whole decision off: one pass of six read as six
  * passes of one trips the pass cap five passes early and reports it as running
  * out, and six read as one never trips it at all.
  *
@@ -1305,36 +1321,36 @@ export function planPass(input: {
  * is what makes a member whose `runs` row has been deleted an **empty slot
  * rather than a missing pass** — the `workflow_instance_runs` row is still
  * there and still says which pass it belongs to, where counting would shorten
- * every pass after it by one. A pass all of whose runs have gone survives as a
- * pass with no runs, which is `planLoopPass`'s "started no run" stop.
+ * every pass after it by one.
  *
- * `members` must be in `position` order, which is creation order: the last run
- * of a pass is the one `planLoopPass` reads `reportedDone` off, and the last
- * pass is the one everything else is decided against.
+ * `members` must be in `position` order, which is creation order. A pass's rows
+ * are contiguous in it because a pass is only ever started once the one before
+ * it has settled, and `nextPosition` only goes up.
  */
 export function groupPasses(
-  members: readonly { memberId: string; run: LoopRunState | null }[],
+  members: readonly LoopPassMember[],
 ): LoopPass[] {
-  const passes: Array<{ key: string; pass: number; runs: LoopRunState[] }> = [];
+  const passes: Array<{ key: string; pass: number; members: LoopPassMember[] }> =
+    [];
   for (const member of members) {
     const number = passNumberOf(member.memberId);
     // Grouped on a key rather than on the number, so that a member id carrying
     // no pass at all cannot be folded into the pass beside it: it becomes a
     // pass of its own, which is the safe direction. An extra entry in the count
     // can only ever stop a loop early, where a member folded into the wrong
-    // pass changes which run every exit condition is read off.
+    // pass changes which rows every exit condition is read off.
     const key = number === null ? `id:${member.memberId}` : `pass:${number}`;
     const current = passes.at(-1);
     if (!current || current.key !== key) {
       passes.push({
         key,
         pass: number ?? (current ? current.pass + 1 : 1),
-        runs: [],
+        members: [],
       });
     }
-    if (member.run) passes.at(-1)!.runs.push(member.run);
+    passes.at(-1)!.members.push(member);
   }
-  return passes.map(({ pass, runs }) => ({ pass, runs }));
+  return passes.map(({ pass, members: of }) => ({ pass, members: of }));
 }
 
 /* ------------------------------------------------------------------ */
@@ -1368,6 +1384,20 @@ export type BlockStatus =
   | "emitted"
   | "failed"
   | "blocked";
+
+/**
+ * The three statuses a block has not settled in, as one list.
+ *
+ * Named because `planLoopPass` asks the question of a member it cannot write a
+ * SQL literal for, and the list has to be the same one the queries around it
+ * spell out — `looping` included, which is the whole of what the docblock above
+ * warns about.
+ */
+const LIVE_BLOCK_STATUSES: readonly BlockStatus[] = [
+  "waiting",
+  "thinking",
+  "looping",
+];
 
 /** One node of an instance as the scheduler sees it. */
 export interface InstanceNodeState {
@@ -1578,9 +1608,16 @@ export function planInstanceStep(
  * `admitDependencies`' fan-in rule applied to a fan-in nobody could write down.
  * A merge block resolves to **no runs at all** — it created none — so it can
  * only sequence what follows it, which is exactly what a block set to run "after
- * the work has landed" is asking for. A loop block is a *chain*: every pass
- * carries on the one before it, so waiting for the last pass is waiting for all
- * of them, and it is the last pass that a successor carries the branch on from.
+ * the work has landed" is asking for. A loop block resolves to none either, and
+ * for the *same* reason one kind along: each of its passes lands its own work
+ * through the section's own exit, so by the time it hands on there is no branch
+ * left to carry and nothing to wait for but the landing. See `loopVerdict`.
+ *
+ * One reader, and a pass of a loop is what makes that load-bearing rather than
+ * tidy: a pass is the section run as a graph through this same function, so a
+ * second reading of what an edge means would be a second answer to "may this
+ * member go now" — and the member left waiting for ever would be one of the two
+ * that answered differently.
  */
 function edgeVerdict(
   from: WorkflowNode,
@@ -1619,7 +1656,7 @@ function edgeVerdict(
     return SATISFIED;
   }
 
-  if (from.kind === "loop") return loopVerdict(from, state, edge, dependsOn);
+  if (from.kind === "loop") return loopVerdict(from, state, edge);
 
   if (from.kind === "run") {
     if (!state.run) {
@@ -1700,35 +1737,52 @@ function edgeVerdict(
 /**
  * What a loop block says to the block behind it.
  *
- * It resolves to the **last run of the last pass** and to nothing else, which is
- * the reading a chain makes true: within a pass each member depends on the one
- * before it and the first member of each pass depends on the last of the pass
- * before, so that one run having settled means every run of every pass has. A
- * loop that repeats a section changes nothing here for exactly that reason —
- * one chain, however many runs are on it. It is also the only run a successor
- * can carry the branch on from: the earlier runs' commits are on that same ref,
- * reachable from its tip, and naming an earlier one would put two runs on one
- * predecessor, which admission refuses by name.
+ * It resolves to **no runs at all**, exactly as a merge block does, and for the
+ * same reason: by the time a loop hands on, every pass has landed its own work
+ * through the section's own exit, so there is no branch of its own left and no
+ * run for a successor to be told to start after. A successor of a loop is a
+ * successor of a landing — "start once the work is on the target" — which is an
+ * ordinary queued run with an empty dependency list when nothing else is in
+ * front of it. A `continueBranch` link out of a loop is refused at save for the
+ * other half of that fact: the ref a successor would carry on was landed and may
+ * since have been deleted.
+ *
+ * So the block row is the only thing left to read, which is why `settleLoop`
+ * writes `failed` rather than `emitted` for a loop that stopped on a pass that
+ * did not finish — see `loopStopStatus`. `on-finish` is satisfied by either and
+ * `on-success` only by `emitted`, which is `edgeVerdict`'s own reading of a
+ * merge block one kind over.
  *
  * `looping` is pending rather than settled, and that is what stops a successor
- * being created between two passes: the block can still start another run on
- * that branch, so anything behind it would be reviewing or landing a moving ref.
+ * being created between two passes: the block can still commit another whole
+ * pass to the folders behind it.
  */
 function loopVerdict(
   from: WorkflowNode,
   state: InstanceNodeState,
   edge: WorkflowDependencyEdge,
-  dependsOn: InstanceCreation["dependsOn"],
 ): EdgeVerdict {
   const block = state.block;
-  if (!block || block.status === "waiting" || block.status === "looping") {
+  if (
+    !block ||
+    block.status === "waiting" ||
+    block.status === "looping" ||
+    block.status === "thinking"
+  ) {
     return PENDING;
   }
-  if (block.status === "thinking") return PENDING;
-  if (block.status === "failed") {
+  // A loop that stopped on a pass that did not finish still *took* passes, which
+  // is what separates it from one that never ran — the distinction `edgeVerdict`
+  // already draws for a merge block, and the condition on the edge decides
+  // rather than one blanket rule. "Clean up after it however it went" and "only
+  // once every pass landed" are both things a person writes, and there is no
+  // defensible default between them. One sentence for both ways a loop is
+  // `failed` — a pass that did not finish, and the machinery around it giving up
+  // — because the operator reads the reason rather than the classification.
+  if (block.status === "failed" && edge.edge === "on-success") {
     return {
       kind: "blocked",
-      reason: `“${from.name}” could not repeat its task: ${block.error ?? "the block failed."}`,
+      reason: `“${from.name}” did not finish what it repeats: ${block.error ?? "the block failed."}`,
     };
   }
   if (block.status === "blocked") {
@@ -1737,31 +1791,8 @@ function loopVerdict(
       reason: `“${from.name}” never ran: ${block.error ?? "no reason recorded."}`,
     };
   }
-
-  const last = block.emitted.at(-1);
-  if (!last) {
-    return {
-      kind: "blocked",
-      reason:
-        `“${from.name}” took no passes, so there is no work for this block to ` +
-        "follow.",
-    };
-  }
-  if (edgeSatisfied(last, edge.edge)) {
-    dependsOn.push({
-      runId: last.id,
-      edge: edge.edge,
-      continueBranch: edge.continueBranch,
-    });
-    return SATISFIED;
-  }
-  if (TERMINAL_STATUSES.includes(last.status)) {
-    return {
-      kind: "blocked",
-      reason: `Set to start after “${from.name}”, whose last pass ended ${last.status}.`,
-    };
-  }
-  return PENDING;
+  // Emitted. Nothing is pushed onto `dependsOn` — see above.
+  return SATISFIED;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2328,20 +2359,45 @@ export interface InstanceMemberTally {
 /**
  * What one loop block's passes have spent so far.
  *
- * `instanceSpend` narrowed to the members one block created, and it reads the
+ * `instanceSpend` narrowed to the rows one block caused, and it reads the
  * **guard** figure for that function's reason: a cycle killed before it reported
  * contributes nothing to `spent_usd`, so a loop measured on the floor alone
  * would take another pass on money it had already spent. It is never added to
  * `runs.spent_usd`, never to `buildSnapshot()` and never to a meter — the loop's
  * cap is the only thing that reads it, and the instance's own guard still reads
  * every member including these.
+ *
+ * **Every run a pass caused, not only its members**, and the prefix is what says
+ * so: an orchestrator member decides on runs of its own, and a cap that could
+ * not see them would let a loop whose passes fan out spend without bound and
+ * report a fraction of it. A pass's blocks are counted beside them for the same
+ * reason `instanceSpend` counts an instance's — an orchestrator member's turn
+ * and a merge member's conflict resolution are money this loop spent — and
+ * `addBlockSpend` is what decides which figure each column may reach, once,
+ * rather than twice.
  */
 function loopSpend(instanceId: string, nodeId: string): number {
-  return sumMemberSpend(
+  const prefix = passPrefix(nodeId);
+  const members = sumMemberSpend(
     db()
-      .prepare(`${MEMBER_SPEND_COLUMNS} WHERE w.instance_id = ? AND w.emitted_by = ?`)
-      .all(instanceId, nodeId) as MemberSpendRow[],
-  ).spentGuardUSD;
+      .prepare(
+        `${MEMBER_SPEND_COLUMNS} WHERE w.instance_id = ? AND substr(w.node_id, 1, ?) = ?`,
+      )
+      .all(instanceId, prefix.length, prefix) as MemberSpendRow[],
+  );
+  const blocks = db()
+    .prepare(
+      `SELECT COALESCE(SUM(cost_usd), 0) AS spent,
+              COALESCE(SUM(cost_usd_est), 0) AS est,
+              COALESCE(SUM(CASE WHEN cost_unreported > 0 THEN 1 ELSE 0 END), 0)
+                AS unreported,
+              COALESCE(SUM(CASE WHEN kind IN ('orchestrator', 'merge')
+                                THEN 1 ELSE 0 END), 0) AS paying
+         FROM workflow_instance_blocks
+        WHERE instance_id = ? AND substr(node_id, 1, ?) = ?`,
+    )
+    .get(instanceId, prefix.length, prefix) as BlockSpendTotals;
+  return addBlockSpend(members, blocks).spentGuardUSD;
 }
 
 /** A board condition read, or why this app could not read one. */
@@ -3568,9 +3624,8 @@ export function stopInstance(instanceId: string, cause: HaltCause): HaltOutcome 
   if (!instance) return { ok: false, reason: "No such workflow run." };
 
   const members = membersOf(instanceId);
-  const liveBlocks = instance.blocks.filter(
-    (b) =>
-      b.status === "waiting" || b.status === "thinking" || b.status === "looping",
+  const liveBlocks = instance.blocks.filter((b) =>
+    LIVE_BLOCK_STATUSES.includes(b.status),
   ).length;
   const plan = haltPlan({ ...instance, liveBlocks }, members, cause);
   const report: HaltReport = {
@@ -3772,8 +3827,13 @@ export function reconcileHaltsOnBoot(): void {
 
   for (const row of rows) {
     const members = membersOf(row.id);
-    const liveBlocks = blocksOf(row.id).filter(
-      (b) => b.status === "waiting" || b.status === "thinking",
+    // `looping` among them, the reading `stopInstance` and `BlockStatus` both
+    // insist on: between two passes a loop has no child in flight and no live
+    // member, so an instance whose only residue is a loop would be read as
+    // having finished on its own — and left `looping` under a `stopping` row it
+    // would commit a whole further pass the operator had already stopped.
+    const liveBlocks = blocksOf(row.id).filter((b) =>
+      LIVE_BLOCK_STATUSES.includes(b.status),
     ).length;
     if (
       liveBlocks === 0 &&
@@ -4274,7 +4334,7 @@ function advanceInstance(instanceId: string): void {
   // flight and `planLoopPass` tells it to wait — which is the same guarded-UPDATE
   // shape `claimBlock` uses, without the spawn that made that one asynchronous.
   //
-  // Through `advanceLoop` rather than straight to `createPass`, so the first
+  // Through `advanceLoop` rather than straight to a first pass, so the first
   // pass is decided by the same function every later one is: a board condition
   // that is already met has to be able to stop a loop before it bills anything,
   // and that is the whole of what this indirection buys. The claim goes first
@@ -4352,10 +4412,11 @@ function instanceState(
     iterations: number | null;
   }>;
 
-  // Ordered by position, which for a loop block's passes is pass order and,
-  // within a pass, the order the body's blocks were created in — so the last
-  // entry is the last run of the last pass, which is the one `loopVerdict`
-  // takes and the only run a successor may carry the branch on from.
+  // Ordered by position, which for a loop block's members is pass order and,
+  // within a pass, the order the section's blocks were created in. Nothing
+  // reads the *last* of them any more — a loop hands on no run at all, because
+  // every pass lands its own work — but the order is what `loopPasses` groups
+  // on, and this is the query that establishes it.
   const emitted = new Map<string, DependencyState[]>();
   for (const row of runs) {
     // A row whose run has been deleted is treated as gone rather than as
@@ -4516,48 +4577,125 @@ function settleLoop(
 /**
  * Every pass a loop block has taken, oldest first.
  *
- * `LEFT JOIN`, so a member whose run row has been deleted is a pass with no
- * runs rather than a pass that is silently missing — which is what makes
- * `planLoopPass`'s empty case reachable from real data rather than only from a
- * creation that threw.
+ * **Both member tables**, because a pass is the section instantiated and a
+ * section holds run, orchestrator and merge blocks: reading the runs alone would
+ * report a pass as having settled while its merge block was still landing, and
+ * the next pass would start from a folder that cannot see this one's work.
  *
- * The grouping is `groupPasses`', keyed on the pass number written into each
- * member id, because a loop that repeats a *section* takes one pass per several
- * rows and "one row, one pass" would read three passes of two as six passes of
- * one — tripping the cap four passes early and reporting it as the loop running
- * out. `position` is creation order within a pass, which is what makes the last
- * run of a pass the one `planLoopPass` reads its ending off.
+ * Every row a loop causes is named under `passPrefix`, which is what makes one
+ * prefix test the whole of "is this ours" — a member's own row, and the runs an
+ * orchestrator member emitted, which `createEmitted` names under the member.
+ * `emitted_by` is what tells the two apart: a member's row names the **loop**,
+ * an emitted run names the member that decided on it.
+ *
+ * `LEFT JOIN`, so a member whose run row has been deleted is a member with no
+ * run rather than a member that is silently missing — which `planLoopPass` reads
+ * as settled and not completed, rather than waiting on a row that can never
+ * move.
+ *
+ * `position` is creation order, which is what makes each pass's rows contiguous:
+ * a pass is only started once the one before it has settled, and `nextPosition`
+ * only goes up.
  */
 function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
-  const rows = db()
+  const prefix = passPrefix(nodeId);
+  const runRows = db()
     .prepare(
-      `SELECT w.node_id AS memberId, r.id AS id, r.status AS status,
-              r.iterations AS iterations, r.reported_done AS reportedDone
+      `SELECT w.node_id AS memberId, w.node_name AS name,
+              w.emitted_by AS emittedBy, w.position AS position,
+              r.id AS id, r.status AS status, r.iterations AS iterations,
+              r.reported_done AS reportedDone
          FROM workflow_instance_runs w
          LEFT JOIN runs r ON r.id = w.run_id
-        WHERE w.instance_id = ? AND w.emitted_by = ?
+        WHERE w.instance_id = ? AND substr(w.node_id, 1, ?) = ?
         ORDER BY w.position`,
     )
-    .all(instanceId, nodeId) as Array<{
+    .all(instanceId, prefix.length, prefix) as Array<{
     memberId: string;
+    name: string;
+    emittedBy: string | null;
+    position: number;
     id: string | null;
     status: RunStatus | null;
     iterations: number | null;
     reportedDone: number | null;
   }>;
 
+  const blockRows = db()
+    .prepare(
+      `SELECT node_id AS memberId, node_name AS name, position AS position,
+              kind AS kind, status AS status, error AS error
+         FROM workflow_instance_blocks
+        WHERE instance_id = ? AND substr(node_id, 1, ?) = ?
+        ORDER BY position`,
+    )
+    .all(instanceId, prefix.length, prefix) as Array<{
+    memberId: string;
+    name: string;
+    position: number;
+    kind: WorkflowNodeKind;
+    status: BlockStatus;
+    error: string | null;
+  }>;
+
+  const runOf = (row: (typeof runRows)[number]): LoopRunState | null =>
+    row.id && row.status
+      ? {
+          id: row.id,
+          status: row.status,
+          iterations: row.iterations ?? 0,
+          reportedDone: !!row.reportedDone,
+        }
+      : null;
+
+  const emitted = new Map<string, LoopRunState[]>();
+  const rows: Array<{ position: number; member: LoopPassMember }> = [];
+  for (const row of runRows) {
+    if (row.emittedBy !== nodeId) {
+      // A run one of this pass's orchestrator members decided on. It is not a
+      // member, but it is this loop's spend and this loop's liveness.
+      const run = runOf(row);
+      if (!run || !row.emittedBy) continue;
+      const list = emitted.get(row.emittedBy);
+      if (list) list.push(run);
+      else emitted.set(row.emittedBy, [run]);
+      continue;
+    }
+    rows.push({
+      position: row.position,
+      member: {
+        memberId: row.memberId,
+        nodeId: passMemberOf(row.memberId)?.bodyNodeId ?? nodeId,
+        name: row.name,
+        // A member that became a run is a run block: the other two kinds never
+        // do, which is why the kind is not on the row.
+        kind: "run",
+        run: runOf(row),
+        block: null,
+        emitted: [],
+      },
+    });
+  }
+  for (const row of blockRows) {
+    rows.push({
+      position: row.position,
+      member: {
+        memberId: row.memberId,
+        nodeId: passMemberOf(row.memberId)?.bodyNodeId ?? nodeId,
+        name: row.name,
+        kind: row.kind,
+        run: null,
+        block: { status: row.status, error: row.error },
+        emitted: [],
+      },
+    });
+  }
+
+  rows.sort((a, b) => a.position - b.position);
   return groupPasses(
-    rows.map((row) => ({
-      memberId: row.memberId,
-      run:
-        row.id && row.status
-          ? {
-              id: row.id,
-              status: row.status,
-              iterations: row.iterations ?? 0,
-              reportedDone: !!row.reportedDone,
-            }
-          : null,
+    rows.map(({ member }) => ({
+      ...member,
+      emitted: emitted.get(member.memberId) ?? [],
     })),
   );
 }
@@ -4575,24 +4713,40 @@ function advanceLoops(instanceId: string): void {
 }
 
 /**
+ * How many times one advance may re-decide a loop before it gives up.
+ *
+ * Every turn of the loop in `advanceLoop` needs `stepPass` to have written
+ * something, and each of those writes is one-way — a member is created once,
+ * blocked once, claimed once, and a pass is started once — so the sequence is
+ * finite by construction, bounded by the members `MAX_LOOP_RUNS` already caps.
+ * The bound is stated anyway, because the alternative to being wrong about that
+ * is a request that never returns and a loop nothing can stop.
+ */
+const MAX_LOOP_STEPS = 4 * MAX_LOOP_RUNS;
+
+/**
  * Decide whether one loop takes another pass, and act on the answer.
  *
  * The writing half of `planLoopPass`, and it is synchronous end to end for
  * `createRun`'s reason — one event-loop turn covers reading the passes,
- * deciding, and claiming a folder for the next one.
+ * deciding, and claiming folders for the next one.
  *
  * **The first pass comes through here too**, carrying the edges the graph gave
  * the block, and that is what makes the board condition reachable before any
  * run exists: a loop pointed at a backlog that is already clear must start
- * nothing, where the two caps are only ever read after a pass has settled. For
- * a loop with no condition the decision is unchanged — `planLoopPass` with no
- * passes answers `pass 1`, which is what the direct `createPass` it replaced
- * did.
+ * nothing, where the two caps are only ever read after a pass has settled.
+ *
+ * It asks again after every step it took, rather than waiting to be advanced.
+ * A step that blocks the last live member of a pass has *settled* that pass,
+ * and nothing else would ever notice: no run was started, so no terminal run
+ * transition will trigger another advance and the loop would sit `looping` for
+ * ever with a pass that finished. Each turn requires a write — see
+ * `MAX_LOOP_STEPS`.
  */
 function advanceLoop(
   instanceId: string,
   nodeId: string,
-  /** What pass 1 depends on. Empty on every advance after it — see below. */
+  /** What pass 1's first member starts after. Empty on every advance after it. */
   firstPassDependsOn: InstanceCreation["dependsOn"] = [],
 ): void {
   const instance = getInstance(instanceId);
@@ -4613,6 +4767,29 @@ function advanceLoop(
     return;
   }
 
+  // The section, off the instance's **own** frozen graph rather than the
+  // workflow's: a section edited between two passes would otherwise change what
+  // this loop repeats half way through.
+  const section = loopSection(instance.graph, node);
+  if (section.nodes.length === 0) {
+    // A loop that repeats nothing. Not reachable from a graph saved today —
+    // `resolveSections` refuses a loop with no `repeats` link — but an instance
+    // carries a copy of the graph it was started from, and one saved when a
+    // loop held a task of its own and repeated *that* is read back from it.
+    // There is no honest way to carry such a loop on: the mode it needs is
+    // gone, and inventing a pass here would bill an agent for work the current
+    // rules say this block does not do.
+    settleLoop(
+      instanceId,
+      nodeId,
+      "failed",
+      "This block repeats no section. It was saved when a loop held a task of " +
+        "its own; a loop now frames the blocks it repeats, so start this " +
+        "workflow again from its saved graph.",
+    );
+    return;
+  }
+
   // Read before the decision and before any pass, including the first. A
   // condition this app cannot count for ends the loop `failed` rather than
   // being treated as a clear board: zero is the answer that stops it, and a
@@ -4628,175 +4805,373 @@ function advanceLoop(
     return;
   }
 
-  const passes = loopPasses(instanceId, nodeId);
-  const decision = planLoopPass({
-    blockName: node.name,
-    passes,
-    maxPasses: node.maxPasses,
-    maxCostUSD: node.maxLoopCostUSD,
-    spentGuardUSD: loopSpend(instanceId, nodeId),
-    stopWhenTasks: node.stopWhenTasks,
-    boardCounts: board.counts,
-  });
+  for (let step = 0; step < MAX_LOOP_STEPS; step += 1) {
+    const passes = loopPasses(instanceId, nodeId);
+    const decision = planLoopPass({
+      blockName: node.name,
+      passes,
+      maxPasses: node.maxPasses,
+      maxCostUSD: node.maxLoopCostUSD,
+      spentGuardUSD: loopSpend(instanceId, nodeId),
+      stopWhenTasks: node.stopWhenTasks,
+      boardCounts: board.counts,
+    });
 
-  if (decision.kind === "wait") return;
-  if (decision.kind === "stop") {
-    settleLoop(instanceId, nodeId, "emitted", decision.reason);
-    return;
+    if (decision.kind === "stop") {
+      settleLoop(
+        instanceId,
+        nodeId,
+        loopStopStatus(decision.code),
+        decision.reason,
+      );
+      return;
+    }
+
+    if (decision.kind === "pass") {
+      // Every member of the pass, `waiting`, before anything is released. The
+      // shape `instantiate` gives a whole graph, at the scale of one pass, and
+      // it is what makes "the pass has not finished unfolding" a fact on the
+      // rows rather than a count somebody has to keep: a pass whose entry run
+      // has been created and whose merge block does not exist yet would
+      // otherwise read as settled.
+      openPass(instanceId, node, section, decision.pass);
+      // Pass 1's first member starts after whatever released the loop; nothing
+      // is carried between passes at all — see `stepPass`.
+      if (!stepPass(instance, node, section, decision.pass, firstPassDependsOn)) {
+        return;
+      }
+      continue;
+    }
+
+    if (!stepPass(instance, node, section, passes.at(-1)!.pass, [])) return;
   }
 
-  // Pass 2 and after carry on the pass in front of them, through the same
-  // `continue_branch` mechanism a hand-over edge uses — so the chain rules in
-  // `land.ts` see one branch with one owner, and nothing here is a second
-  // definition of what continuing a branch means. `on-success` rather than
-  // `on-finish` because a pass that did not complete has already stopped the
-  // loop above: stating it on the edge means a race could only ever be refused
-  // at admission rather than start a pass on top of a failure.
-  // The **last run** of the last pass, which for a loop repeating a section is
-  // the last block of that section. The passes are one chain, so that run is
-  // the only one a new pass can continue: naming an earlier one would put two
-  // runs on one predecessor, which admission refuses by name.
-  const previous = passes.at(-1)?.runs.at(-1);
-  createPass(
-    instance,
-    node,
-    decision.pass,
-    previous
-      ? [{ runId: previous.id, edge: "on-success", continueBranch: true }]
-      : firstPassDependsOn,
+  settleLoop(
+    instanceId,
+    nodeId,
+    "failed",
+    `This block was still deciding what to do after ${MAX_LOOP_STEPS} steps in ` +
+      "one pass of the scheduler, so it was stopped rather than left to spin.",
   );
 }
 
-/**
- * Create one whole pass: one run per block of the loop's body, or one run for
- * the loop's own task when it has no body.
- *
- * Every run is an ordinary member of the instance, recorded with `emitted_by`
- * set to the **loop block** whatever block's work it is — the column an
- * orchestrator block's runs already use — so the instance budget guard,
- * `stopInstance`, the second-press refusal and the instance page all cover a
- * pass with no new code, and `loopSpend` sums a pass of six the same way it
- * sums a pass of one.
- *
- * **One synchronous pass, with no `await` between the `createRun` calls.**
- * `startWorkflow` holds the same property for the same reason and it is not
- * negotiable here: `createRun`'s folder claim is check-then-act, atomic only
- * inside one event-loop turn, so a pass that yielded half way could have a
- * sibling instance take the folder its second member was about to claim. Every
- * `planNode` is therefore done *before* the first `createRun`, and nothing
- * between them reads the clock or the disk.
- *
- * A failure here **ends the loop** rather than being retried. The next pass
- * would be created the same way against the same folder and fail the same way,
- * which is a hot loop rather than a retry, and `planLoopPass` says the same
- * thing about a pass that produced nothing. **A partly created pass is not a
- * smaller pass**: the members already created are stopped rather than left to
- * run half a section, because the body is a chain the operator wrote as one
- * piece and the first two blocks of it, run without the third, is not a smaller
- * version of that piece — it is a branch left in a state nobody asked for, with
- * the block that would have finished it never created.
- */
-function createPass(
-  instance: WorkflowInstance,
-  node: WorkflowNode,
-  pass: number,
-  dependsOn: InstanceCreation["dependsOn"],
-): void {
-  const instanceId = instance.id;
-  // From the instance's **own** frozen graph rather than the workflow's, the
-  // treatment every other read of a node here gets: a body edited between two
-  // passes would otherwise change what this loop repeats half way through.
-  // Handed down from `advanceLoop` rather than read again, because a second
-  // read has a null case and there is no honest answer to it: a loop whose
-  // instance had gone would fall back to repeating its own task, which is work
-  // nobody asked for on a folder somebody else may now hold.
-  const body = loopBody(instance.graph, node);
-  const members = planPass({ loop: node, body, pass, carry: dependsOn });
-  const nodeById = new Map(body.map((n) => [n.id, n]));
+/** The blocks one loop repeats, as a graph of their own. */
+interface LoopSection {
+  /** In the order the section's own edges give. Empty for a body-less loop. */
+  nodes: readonly WorkflowNode[];
+  /** Those nodes and the edges between them, and nothing else. */
+  graph: WorkflowGraph;
+  /**
+   * The block each pass starts at — the `repeats` link's target, which is the
+   * only member with nothing in front of it inside the section.
+   */
+  entryId: string | null;
+}
 
-  // Every plan before any creation, `startWorkflow`'s rule at the scale of one
-  // pass: a member refused half way through would leave the pass part-created
-  // over a template that was already gone when the pass was decided on.
-  const defaults = chatGuards();
-  const plans: Array<Omit<CreateRunInput, "dependsOn" | "origin">> = [];
-  for (const member of members) {
-    const graphNode = nodeById.get(member.nodeId) ?? node;
-    const plan = planNode(
-      graphNode,
-      graphNode.templateId ? getTemplate(graphNode.templateId) : null,
-      defaults,
-      // Asked again for every pass, `planInstanceStep`'s reason one loop along: a
-      // pass is created minutes or hours after the one before it, so an agent
-      // deleted in between blocks this loop by name rather than quietly starting
-      // a pass that is not the thing the graph named.
-      graphNode.agentId ? getAgent(graphNode.agentId) : null,
+function loopSection(graph: WorkflowGraph, loop: WorkflowNode): LoopSection {
+  const nodes = loopBody(graph, loop);
+  const members = new Set(nodes.map((n) => n.id));
+  return {
+    nodes,
+    graph: {
+      nodes,
+      edges: graph.edges.filter(
+        (e) => members.has(e.from) && members.has(e.to),
+      ),
+    },
+    // The topological order's first entry: every member is reachable from the
+    // `repeats` link's target and the section is acyclic, so that target is the
+    // one member with no incoming edge and sorts first.
+    entryId: nodes[0]?.id ?? null,
+  };
+}
+
+/**
+ * Write down every member of a pass before any of them is released.
+ *
+ * `waiting` rows, in the section's own order, so each member has a position and
+ * a name from the moment the pass exists. Two things rest on it. The page shows
+ * the whole pass rather than one row at a time; and `planLoopPass` can read "has
+ * this pass finished" off the rows, where a pass that wrote a row only when a
+ * member was created would be indistinguishable from a settled one for as long
+ * as its first member was the only one in the table.
+ *
+ * `INSERT OR IGNORE`, so a pass re-opened by an advance that raced another is a
+ * no-op rather than a throw. The claim on the loop block makes that a belt
+ * rather than a brace.
+ */
+function openPass(
+  instanceId: string,
+  loop: WorkflowNode,
+  section: LoopSection,
+  pass: number,
+): void {
+  const insert = db().prepare(
+    `INSERT OR IGNORE INTO workflow_instance_blocks
+       (instance_id, node_id, node_name, position, kind, status)
+     VALUES (?, ?, ?, ?, ?, 'waiting')`,
+  );
+  for (const member of section.nodes) {
+    insert.run(
+      instanceId,
+      passMemberId(loop.id, pass, member.id),
+      passMemberName(member.name, pass),
+      nextPosition(instanceId),
+      member.kind,
     );
-    if (!plan.ok) {
-      settleLoop(instanceId, node.id, "failed", plan.reason);
-      return;
-    }
-    plans.push(plan.input);
+  }
+}
+
+/**
+ * Carry one pass forward: whatever the section can do now, done.
+ *
+ * **There is one scheduler.** A pass is the section instantiated, so what may go
+ * now is `planInstanceStep` over the section's own nodes and edges with this
+ * pass's own member rows — the same function that releases run blocks, spawns
+ * orchestrator turns, waits for every run one emitted, and queues a merge block
+ * with the runs its incoming edges resolved to. A second reading of "which
+ * member may go now" would be a second place for a member to be left waiting for
+ * ever, and it would be a reading nothing else in this file is tested against.
+ *
+ * **Nothing is manufactured.** Members carry each other's branches exactly as
+ * the section's own links say — `edgeVerdict` resolves them and `createRun`
+ * records them — and the pass's merge block lands what its predecessors left.
+ * Nothing is carried between passes either: pass N+1 does not continue pass N's
+ * branch, its runs cut fresh ones in their folders, and what makes the previous
+ * pass visible to them is that it **landed**.
+ *
+ * Synchronous from the first `createRun` to the last, `startWorkflow`'s rule at
+ * the scale of one step: the folder claim is atomic only inside one event-loop
+ * turn, so every `planNode` is done before the first creation and nothing
+ * between them reads the clock or the disk. Turns and merges are claimed
+ * synchronously and dispatched after, exactly as `advanceInstance` does it.
+ *
+ * A member that cannot be created is **blocked**, not rolled back. A pass used
+ * to be a chain created in one go, where half of it was a branch left in a state
+ * nobody asked for; a pass is now a graph released a member at a time, so a
+ * member that cannot start is a settled predecessor and `planInstanceStep`'s own
+ * cascade writes off what was behind it in the same call. The loop then stops
+ * because the pass did not complete, which is where that decision belongs.
+ *
+ * Returns whether anything was written — see `advanceLoop`.
+ */
+function stepPass(
+  instance: WorkflowInstance,
+  loop: WorkflowNode,
+  section: LoopSection,
+  pass: number,
+  /** What the section's entry starts after. Empty for every pass after the first. */
+  carry: InstanceCreation["dependsOn"],
+): boolean {
+  const instanceId = instance.id;
+  const memberId = (nodeId: string) => passMemberId(loop.id, pass, nodeId);
+  const step = planInstanceStep(
+    section.graph,
+    passState(loopPasses(instanceId, loop.id).find((p) => p.pass === pass)),
+  );
+  let wrote = false;
+
+  // Blocked first, `advanceInstance`'s order and for its reason: a node written
+  // off here is a settled predecessor, so the cascade has already reached the
+  // bottom of the section when the creations happen rather than one step later.
+  for (const { nodeId, reason } of step.block) {
+    const node = section.nodes.find((n) => n.id === nodeId);
+    upsertBlock(instanceId, passNode(node, pass, memberId(nodeId)), "blocked", reason);
+    wrote = true;
   }
 
-  const created: string[] = [];
-  try {
-    for (const [index, member] of members.entries()) {
+  const defaults = chatGuards();
+  // Every plan before any creation, for the reason above: a member refused half
+  // way through would leave a `createRun` un-run in a turn that has already
+  // yielded nothing.
+  const plans: Array<{
+    nodeId: string;
+    input: Omit<CreateRunInput, "dependsOn" | "origin">;
+    dependsOn: InstanceCreation["dependsOn"];
+  }> = [];
+  for (const creation of step.create) {
+    const node = section.nodes.find((n) => n.id === creation.nodeId);
+    if (!node) continue;
+    const plan = planNode(
+      node,
+      node.templateId ? getTemplate(node.templateId) : null,
+      defaults,
+      // Asked again for every pass, `planInstanceStep`'s reason one loop along:
+      // a pass is created minutes or hours after the one before it, so an agent
+      // deleted in between blocks this member by name rather than quietly
+      // starting a run that is not the thing the graph named.
+      node.agentId ? getAgent(node.agentId) : null,
+    );
+    if (!plan.ok) {
+      upsertBlock(instanceId, passNode(node, pass, memberId(node.id)), "blocked", plan.reason);
+      wrote = true;
+      continue;
+    }
+    plans.push({
+      nodeId: node.id,
+      input: plan.input,
+      // The section's entry is the only member with nothing in front of it, so
+      // it is the only one that can carry what released the loop. Every pass
+      // after the first carries nothing: its entry is an ordinary queued run,
+      // started once the pass before it landed.
+      dependsOn:
+        node.id === section.entryId
+          ? [...carry, ...creation.dependsOn]
+          : creation.dependsOn,
+    });
+  }
+
+  for (const plan of plans) {
+    const node = section.nodes.find((n) => n.id === plan.nodeId)!;
+    try {
       const run = createRun({
-        ...plans[index],
-        // A link either names a run that already exists — whatever this pass
-        // carries on from — or an earlier member of *this* pass, whose id only
-        // became known a moment ago. `planPass` decided which; this only
-        // substitutes.
-        dependsOn: member.dependsOn.map((link) =>
-          "runId" in link
-            ? link
-            : {
-                runId: created[link.member],
-                edge: link.edge,
-                continueBranch: link.continueBranch,
-              },
-        ),
+        ...plan.input,
+        dependsOn: plan.dependsOn,
         // The instance's own, exactly as a deferred node takes it. A pass is not
         // an `orchestrator-block` run: no model decided it — `planLoopPass` did,
-        // off the pass before it — and the press of Run that authorised the graph
-        // authorised every pass its cap allows.
+        // off the pass before it — and the press of Run that authorised the
+        // graph authorised every pass its cap allows.
         // `?? "workflow"` for the column's own nullability rather than for the
-        // instance's: `runs.origin` predates this and an instance written
-        // before it carries null, where every pass of it is a workflow's.
+        // instance's: `runs.origin` predates this and an instance written before
+        // it carries null, where every pass of it is a workflow's.
         origin: instance.origin ?? "workflow",
         originRef: instance.originRef ?? instanceId,
       });
-      created.push(run.id);
+      // The ledger row held this member's place while it was waiting, so it
+      // carries the position `openPass` gave it; the row itself goes, because a
+      // member in both tables is a member shown twice on the page and counted as
+      // live for ever.
+      const held = getBlock(instanceId, memberId(node.id));
+      db()
+        .prepare(
+          "DELETE FROM workflow_instance_blocks WHERE instance_id=? AND node_id=?",
+        )
+        .run(instanceId, memberId(node.id));
       recordMember(instanceId, {
-        // Its own row in the members table — so a pass is addressable and the
-        // block's own ledger row stays where it is. `passMemberId` owns the
-        // spelling, because `loopPasses` reads the pass number back out of it.
-        nodeId: member.memberId,
-        nodeName: member.memberName,
-        position: nextPosition(instanceId),
+        // `passMemberId` owns the spelling, because `loopPasses` reads the pass
+        // number and the block back out of it.
+        nodeId: memberId(node.id),
+        nodeName: passMemberName(node.name, pass),
+        position: held?.position ?? nextPosition(instanceId),
         runId: run.id,
-        emittedBy: node.id,
+        // The **loop**, whatever block's work this is — the column an
+        // orchestrator block's runs already use — so the instance budget guard,
+        // `stopInstance`, the second-press refusal and the instance page cover a
+        // pass with no new code.
+        emittedBy: loop.id,
       });
+      wrote = true;
+    } catch (err) {
+      // `createRun` refuses a folder that has gone and a dependency graph it
+      // cannot satisfy. Either way this member will never run, and a row saying
+      // so is the difference between that and a member that quietly vanished.
+      upsertBlock(
+        instanceId,
+        passNode(node, pass, memberId(node.id)),
+        "blocked",
+        `It could not be started: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      wrote = true;
     }
-  } catch (err) {
-    // Newest first, `startWorkflow`'s rollback order and for its reason:
-    // stopping a dependency releases its dependents, so a member stopped before
-    // the one it was told to start after would be admitted on its way out.
-    const rolledBack = `Stopped because pass ${pass} of “${node.name}” could not be started in full`;
-    for (const runId of [...created].reverse()) stopRun(runId, rolledBack);
-    settleLoop(
-      instanceId,
-      node.id,
-      "failed",
-      `Pass ${pass} could not be started: ${
-        err instanceof Error ? err.message : String(err)
-      }${
-        created.length > 0
-          ? ` The ${created.length} run(s) of it already created were stopped.`
-          : ""
-      }`,
-    );
   }
+
+  // Claimed synchronously, spawned after — `advanceInstance`'s shape, including
+  // its budget question per claim: the claim itself is what fills the budget, so
+  // the next question already knows about the last answer, and a member left
+  // `waiting` for want of a slot is not written off. Whatever frees one advances
+  // again.
+  const claimed: string[] = [];
+  for (const nodeId of step.spawn) {
+    if (assistBudgetFull()) break;
+    if (claimBlock(instanceId, memberId(nodeId))) claimed.push(memberId(nodeId));
+  }
+  for (const id of claimed) {
+    wrote = true;
+    void startBlockTurn(instanceId, id).catch((err) => {
+      settleBlock(instanceId, id, {
+        status: "failed",
+        error: `The block could not be started: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      });
+    });
+  }
+
+  for (const merge of step.merge) {
+    const id = memberId(merge.nodeId);
+    if (!claimBlock(instanceId, id)) continue;
+    wrote = true;
+    void startMergeBlock(instanceId, id, merge.runIds).catch((err) => {
+      finishMergeBlock(instanceId, id, {
+        ok: false,
+        note: `This block could not start merging: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      });
+    });
+  }
+
+  return wrote;
+}
+
+/**
+ * One block of a section, as the member of a pass that it is.
+ *
+ * The same node with the row's own id and name on it, and that is what lets
+ * every function written against a block — `upsertBlock`, `claimBlock`,
+ * `planNode`, `startBlockTurn`, `startMergeBlock` — work on a pass's member
+ * without learning that passes exist. The alternative was a second id argument
+ * threaded through all of them, which is five signatures and five chances to
+ * pass the graph's id where the row's was meant: the row would be looked up,
+ * not found, and the write would silently do nothing.
+ */
+function passNode(
+  node: WorkflowNode | undefined,
+  pass: number,
+  memberId: string,
+): WorkflowNode | undefined {
+  if (!node) return undefined;
+  return { ...node, id: memberId, name: passMemberName(node.name, pass) };
+}
+
+/**
+ * The block one ledger row is, whether it is a graph node or a pass's member.
+ *
+ * Every block that spawns something looks its node up by the row's id, and for a
+ * pass's member that id names the pass rather than the graph. One resolver, so
+ * "which block is this row" has a single answer: a second one that forgot the
+ * pass spelling would answer `undefined` and settle a live member as no longer
+ * part of its workflow.
+ */
+function blockNode(
+  instance: WorkflowInstance,
+  nodeId: string,
+): WorkflowNode | undefined {
+  const own = instance.graph.nodes.find((n) => n.id === nodeId);
+  if (own) return own;
+  const member = passMemberOf(nodeId);
+  if (!member?.bodyNodeId) return undefined;
+  return passNode(
+    instance.graph.nodes.find((n) => n.id === member.bodyNodeId),
+    member.pass,
+    nodeId,
+  );
+}
+
+/** One pass's members, in the terms `planInstanceStep` reads. */
+function passState(
+  pass: LoopPass | undefined,
+): Map<string, InstanceNodeState> {
+  const state = new Map<string, InstanceNodeState>();
+  for (const member of pass?.members ?? []) {
+    state.set(member.nodeId, {
+      run: member.run,
+      block: member.block
+        ? { ...member.block, emitted: member.emitted }
+        : null,
+    });
+  }
+  return state;
 }
 
 /**
@@ -4817,7 +5192,7 @@ function createPass(
  */
 async function startBlockTurn(instanceId: string, nodeId: string): Promise<void> {
   const instance = getInstance(instanceId);
-  const node = instance?.graph.nodes.find((n) => n.id === nodeId);
+  const node = instance ? blockNode(instance, nodeId) : undefined;
   if (!instance || !node || node.kind !== "orchestrator" || node.fanOut === null) {
     settleBlock(instanceId, nodeId, {
       status: "failed",
@@ -5240,7 +5615,7 @@ async function startMergeBlock(
   runIds: readonly string[],
 ): Promise<void> {
   const instance = getInstance(instanceId);
-  const node = instance?.graph.nodes.find((n) => n.id === nodeId);
+  const node = instance ? blockNode(instance, nodeId) : undefined;
   if (!instance || !node || node.kind !== "merge" || !node.mergeStrategy) {
     finishMergeBlock(instanceId, nodeId, {
       ok: false,
@@ -5486,7 +5861,7 @@ function createEmitted(
   specs: readonly RunSpec[],
 ): void {
   const instance = getInstance(instanceId)!;
-  const node = instance.graph.nodes.find((n) => n.id === nodeId);
+  const node = blockNode(instance, nodeId);
   if (!node) return;
 
   const template = node.templateId ? getTemplate(node.templateId) : null;
@@ -5672,7 +6047,7 @@ export function emitBlockRuns(
   }
 
   const block = getBlock(instanceId, nodeId);
-  const node = instance.graph.nodes.find((n) => n.id === nodeId);
+  const node = blockNode(instance, nodeId);
   if (!block || !node || node.fanOut === null) {
     return { ok: false, reason: "This block is not part of this workflow run." };
   }

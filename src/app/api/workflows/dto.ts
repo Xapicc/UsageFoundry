@@ -7,12 +7,12 @@ import type {
   WorkflowScheduleDTO,
 } from "../../../lib/apiTypes";
 import { getSchedule, scheduleView, type ScheduleView } from "../../../lib/schedules";
+import { passNumberOf } from "../../../lib/passIds";
 import {
   blockSpendReading,
   lastRunAt,
   liveBlocksOf,
   liveRunsOf,
-  passNumberOf,
   runStateOf,
   type Workflow,
   type WorkflowInstance,
@@ -131,6 +131,12 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
     branchesFailed: b.branchesFailed,
     error: b.error,
     waitsFor: waits.get(b.nodeId) ?? [],
+    // A block can be a member of a pass too, now that a loop repeats a section
+    // rather than a task: an orchestrator member and the merge block every
+    // section ends at are ledger rows, not runs. Read the same way a member's
+    // is, and for the same reason — one parser of the format, beside the
+    // writer.
+    passNumber: passNumberOf(b.nodeId),
   }));
 
   return {

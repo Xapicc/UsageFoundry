@@ -5,6 +5,7 @@ import path from "node:path";
 import { git } from "./git";
 import { withRepoAdmin } from "./repoLock";
 import { db } from "./db";
+import { passNumberOf } from "./passIds";
 import { commitDiff, type DiffFile } from "./diff";
 import { githubTokenFor } from "./config";
 import { getSettings } from "./settings";
@@ -765,42 +766,69 @@ export function chainBlocker(
 }
 
 /**
- * A workflow loop block that is still repeating on this chain's branch, by name.
+ * A live pass of a workflow loop that owns this chain's branch, by name.
  *
- * `chainBlocker` answers "can another run that already exists still commit to
- * this ref", and a loop block is the one thing in this app that can commit to it
- * through a run that *does not exist yet*. Between the moment a pass reaches a
- * terminal status and the moment the next one is created there is no unsettled
- * member on the branch at all, so every door here — landing, deleting, purging,
- * paying for a conflict resolution — would read the chain as finished and act on
- * a ref that is about to move.
+ * A pass of a loop lands its own work: the section it repeats ends in a merge
+ * block, and that block is what puts the pass's branches onto their target. So
+ * the ground this refusal used to stand on is gone — it is no longer that the
+ * run which will commit next has not been created — and what replaces it is
+ * simpler and stricter. While a pass is live, its branches belong to that pass:
+ * landing one by hand takes the work out from under the merge block that was
+ * going to land it, deleting or purging one destroys work the pass is not
+ * finished with, and either way the loop's own reading of whether the pass
+ * landed everything is decided by something the operator did behind it.
+ *
+ * Matched on the member id rather than on `emitted_by`, because the runs a
+ * pass's *orchestrator* member decided on are named under that member rather
+ * than under the loop — one prefix covers both, which is what `passMemberId`
+ * exists to make true. A loop that has settled, or an instance that was halted,
+ * leaves no `looping` row, so this is silent for every branch that is not a live
+ * loop's — which is all of them on most installs.
  *
  * Read straight off the tables rather than through `workflows.ts`, which imports
- * `mergeQueue.ts`, which imports this file. A loop block that has settled, or an
- * instance that was halted, leaves no `looping` row, so this is silent for every
- * branch that is not a live loop's — which is all of them on most installs.
+ * `mergeQueue.ts`, which imports this file. `passIds.ts` is the one thing shared
+ * with it, and it imports nothing at all.
  */
-function loopStillRepeating(chain: readonly ChainMember[]): string | null {
+function loopStillRepeating(
+  chain: readonly ChainMember[],
+): { blockName: string; pass: number | null } | null {
   if (chain.length === 0) return null;
   const row = db()
     .prepare(
-      `SELECT b.node_name AS name
+      `SELECT b.node_name AS name, w.node_id AS memberId
          FROM workflow_instance_runs w
          JOIN workflow_instance_blocks b
-           ON b.instance_id = w.instance_id AND b.node_id = w.emitted_by
-        WHERE b.status = 'looping'
-          AND w.run_id IN (${chain.map(() => "?").join(",")})
+           ON b.instance_id = w.instance_id
+          AND b.status = 'looping'
+          -- Every row a loop causes is named <loop>#pass-N...; 6 is the
+          -- length of that separator. See passMemberId, which writes it.
+          AND substr(w.node_id, 1, length(b.node_id) + 6) = b.node_id || '#pass-'
+        WHERE w.run_id IN (${chain.map(() => "?").join(",")})
         LIMIT 1`,
     )
-    .get(...chain.map((m) => m.runId)) as { name: string } | undefined;
-  return row?.name ?? null;
+    .get(...chain.map((m) => m.runId)) as
+    | { name: string; memberId: string }
+    | undefined;
+  return row
+    ? { blockName: row.name, pass: passNumberOf(row.memberId) }
+    : null;
 }
 
 /** The sentence every door that would move or destroy the branch shares. */
-function loopRefusal(blockName: string, doing: string): string {
+function loopRefusal(
+  loop: { blockName: string; pass: number | null },
+  doing: string,
+): string {
+  // The pass, because a loop may have taken a dozen and the operator has to be
+  // able to find the one that holds this branch. Null is a member id from before
+  // the format carried a number; the sentence drops the clause rather than
+  // inventing a pass that may be the wrong one.
+  const which =
+    loop.pass === null ? "A pass" : `Pass ${loop.pass}`;
   return (
-    `The workflow block “${blockName}” repeats on this branch and has another ` +
-    `pass to decide on, so ${doing}. Stop that run of the workflow first.`
+    `${which} of the workflow block “${loop.blockName}” is still running on ` +
+    `this branch and lands it at its own merge block, so ${doing}. Stop that ` +
+    "run of the workflow first."
   );
 }
 
@@ -828,11 +856,10 @@ export function landRefusal(s: {
   /** Every run on this branch, oldest first. See `ChainMember`. */
   chain: readonly ChainMember[];
   /**
-   * A loop block still repeating on this branch, by name. See
-   * `loopStillRepeating` — the run that would commit next does not exist yet, so
-   * `chain` cannot see it.
+   * A live pass of a loop that owns this branch. See `loopStillRepeating` — the
+   * pass is what lands it, and `chain` cannot see a pass.
    */
-  loopBlock?: string | null;
+  loopBlock?: { blockName: string; pass: number | null } | null;
 }): string | null {
   if (!s.branchExists) return "This branch no longer exists.";
   if (!s.target) return "There is no recorded branch for this work to land into.";
@@ -2159,8 +2186,8 @@ export function purgeRefusal(s: {
   confirmBranch: string;
   /** Every run on this branch, oldest first. See `ChainMember`. */
   chain: readonly ChainMember[];
-  /** A loop block still repeating on it. See `loopStillRepeating`. */
-  loopBlock?: string | null;
+  /** A live pass of a loop that owns it. See `loopStillRepeating`. */
+  loopBlock?: { blockName: string; pass: number | null } | null;
 }): string | null {
   if (!s.branch) return "This run has no branch.";
   if (!s.branchExists) return `${s.branch} is already gone.`;
