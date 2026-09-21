@@ -1142,7 +1142,14 @@ export function WorkflowCanvas({
                     {passCapLabel(owner)} · {endingLabel(owner)}
                   </span>
 
-                  <span className="ml-auto flex items-center gap-1.5">
+                  {/* Beside the name, not pushed to the far edge. A card is
+                      220px so its Link handle is always next to its title; a
+                      frame is as wide as the section it holds, so `ml-auto`
+                      here put the only way to put a block in — or to say what
+                      runs after the loop — a thousand pixels right of the thing
+                      it belongs to, off the pane until the operator scrolled
+                      past the whole section to find it. */}
+                  <span className="flex items-center gap-1.5">
                     <button
                       type="button"
                       onPointerDown={(event) => startFrame(event, region.loopId)}

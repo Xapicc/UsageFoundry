@@ -1043,6 +1043,19 @@ is `docs/agent/testing.md`; interface defects and their classes are
   it, and a pass's landing clause, are covered by unit tests and not by this
   measurement.
 
+- **A frame drawn in the editor, saved and run, 2026-09-21:** on a graph with
+  no loop in it, one click on a card and Repeat drew a frame; a pointer **drag**
+  from the frame's Put in handle onto a fourth card took it in — strip *4 blocks
+  in order*, four drawn links — and the saved graph read
+  `block-1:loop[plan,work,spare,land]`, the section in pass order with the merge
+  block last. Run on that graph instantiated a pass of four: the instance page
+  drew *Pass 1 · 4 blocks · $1.50 · landed nothing — the next pass saw no new
+  work* with `plan`, `work`, `spare` and `land` under it, and the loop stopped
+  on *"nightly" reported the work complete on pass 1*. No console error through
+  any of it. This is what found the frame's handles sitting at its far right,
+  off the pane for any section wider than it, now moved beside the name. Caveat:
+  the stub commits nothing, so the landing is the nothing-landed reading.
+
 ### Concurrency and ownership
 
 - **Folder collision, `npm test` 8 cases:** self, parent/child both ways, a
@@ -3397,25 +3410,22 @@ measurement under *Verified* and cut the item down to what is still open.
   check that pass 2's branches are cut from a commit that carries pass 1's
   work.
 
-- **No instance has been started from a section drawn in the editor.** One has
-  now been started from a section stated as a `repeats` link — recorded above,
-  seeded through `/api/workflows` and read back off the instance page as three
-  members under Pass 1 — so what is left open is only the half in the browser:
-  that the frame a person draws saves a graph a press of Run then instantiates
-  the same way. Settle: draw a two-block section in the editor with the Repeat
-  and Put in gestures, save, press Run, and read the instance page for two
-  members under Pass 1.
+- **No section has been drawn on a phone-width viewport and run.** The gestures
+  have been driven end to end above at 1600px; below the breakpoint the canvas
+  is a list rather than a sheet, Repeat frames the tapped block with no modifier
+  to hold, and Put in is the two-press route only. That path renders clean at
+  390px — no console error, no sideways scroll — but no graph has been built
+  through it. Settle: at 390px tap a block, press Repeat, put a second in from
+  the row's own Put in, save, and press Run.
 
-- **No pointer drag has been taken through the frame's Put in handle, and no
-  orchestrator member has emitted a run on a real instance.** Both gestures were
-  driven by clicks rather than drags, which is the two-press branch of
-  `resolveLinkRelease` and not the captured-drag one; and the stub the pass ran
-  under fails an orchestrator turn, so a member's emitted runs drawn beneath it
-  and a pass's landing clause have only their unit tests. Settle: drag from the
-  frame's handle onto a card and check the frame grows; then run a framed
-  section whose orchestrator member has a stub that answers `emit_runs`, and
-  read one pass for the emitted rows under their member and a landing clause on
-  the heading.
+- **No orchestrator member has emitted a run on a real instance.** The stub the
+  passes above ran under fails an orchestrator turn, so a member's emitted runs
+  drawn beneath it — the reading `passesOf` takes off `emittedBy` — has only its
+  unit tests. The landing clause has been seen for a pass that landed nothing;
+  the two figured readings have not. Settle: run a framed section whose
+  orchestrator member has a stub that answers `emit_runs` and whose run blocks
+  commit something, and read one pass for the emitted rows under their member
+  and for *landed N branches* on the heading.
 
 - **No loop has actually stopped on a board threshold.** The figures the
   decision reads were driven by hand against a built server and are recorded
