@@ -404,6 +404,23 @@ test("a run a member decided on sits under that member, and in its pass", () => 
   );
 });
 
+test("a member run released by the loop is still a member of its pass", () => {
+  // Every member run names its loop in `emittedBy`: that is what released it.
+  // Read as "something decided on this", the run is folded under the loop and
+  // disappears off the page — an agent that spent money with nothing on screen
+  // saying it ran. Only a *member* of the pass can be a decider.
+  const passes = passesOf(nightly, {
+    nodes: [
+      passRun("loop#pass-1#a", member("loop", 1, "a"), { emittedBy: "loop" }),
+    ],
+    blocks: [passBlock("loop#pass-1#m", "merge", member("loop", 1, "m"))],
+  });
+  assert.deepEqual(
+    passes[0].members.map((m) => m.key),
+    ["loop#pass-1#a", "loop#pass-1#m"],
+  );
+});
+
 test("a member outside the section's order sorts last rather than vanishing", () => {
   const passes = passesOf(nightly, {
     nodes: [

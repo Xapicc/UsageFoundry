@@ -269,15 +269,32 @@ function longestPathRank(
  *
  * The depths come from `longestPathRank`, which is where the bound on the
  * relaxation and the reason it is load-bearing are written down.
+ *
+ * It **still draws a graph it has not validated**: a cycle is legal to draw and
+ * the server is the only authority on refusing one, so this is on screen
+ * between the second click and the answer and may not iterate on the graph's
+ * shape. `longestPathRank`'s relaxation is bounded for that reason.
+ *
+ * The first row is dropped by a frame's strip where the graph holds a loop.
+ * That strip is where a loop's name, its pass cap and its endings are written —
+ * it is the whole of how a loop is drawn — and a frame round a member at the
+ * very top has nowhere to put it, so it is drawn over the member's own card.
+ * The condition is the kind rather than actual membership, because it has to
+ * hold for a frame put round these blocks *next*, and a layout that jumped the
+ * moment somebody pressed Repeat would move every card away from the hand.
  */
 export function autoLayout(
-  blocks: readonly { id: string }[],
+  blocks: readonly { id: string; kind?: WorkflowNodeKind }[],
   links: readonly { from: string; to: string }[],
 ): Map<string, Point> {
   const rank = longestPathRank(
     blocks.map((b) => b.id),
     links,
   );
+  const topPad =
+    CANVAS_PAD + (blocks.some((b) => "kind" in b && b.kind === "loop")
+      ? BODY_PAD + BODY_LABEL_H
+      : 0);
 
   // Grouped in declaration order, so two reads of one graph stack a column the
   // same way round — the property `topologicalOrder` needs of its tie-break,
@@ -296,7 +313,7 @@ export function autoLayout(
     members.forEach((id, row) => {
       at.set(id, {
         x: CANVAS_PAD + depth * COL_STRIDE,
-        y: CANVAS_PAD + row * ROW_STRIDE,
+        y: topPad + row * ROW_STRIDE,
       });
     });
   }
@@ -325,7 +342,7 @@ function usable(p: Point | undefined): p is Point {
  * or not a number falls back to the derived position rather than being honoured.
  */
 export function resolveLayout(
-  blocks: readonly { id: string }[],
+  blocks: readonly { id: string; kind?: WorkflowNodeKind }[],
   links: readonly { from: string; to: string }[],
   stored: Readonly<Record<string, Point>> | null,
 ): Map<string, Point> {
@@ -728,6 +745,13 @@ export function blockLabel(
  * way out of a block carries its branch and each later one cuts its own and
  * leaves it for the section's merge block, which is what a fork means.
  *
+ * **Only a run block has a branch at either end.** The other three are refused
+ * by name — an orchestrator decides and spends nothing on disk, a merge block
+ * writes into somebody else's checkout and cuts none, and a loop holds no ref
+ * at all — so a link that reaches one carries no branch however few there are
+ * already. Without that test the Put in gesture writes a graph the server
+ * refuses, over a control the operator was never shown.
+ *
  * One definition because three callers draw one of these: the Link handle, and
  * the two frame gestures that put a block inside a frame or splice one out.
  */
@@ -735,12 +759,19 @@ export function sectionLink(
   from: string,
   to: string,
   links: readonly LinkDraft[],
+  blocks: readonly { id: string; kind: WorkflowNodeKind }[] = [],
 ): LinkDraft {
+  const runs = (id: string) =>
+    blocks.length === 0 ||
+    blocks.find((b) => b.id === id)?.kind === "run";
   return {
     from,
     to,
     edge: "on-success",
-    continueBranch: !links.some((l) => l.from === from && l.continueBranch),
+    continueBranch:
+      runs(from) &&
+      runs(to) &&
+      !links.some((l) => l.from === from && l.continueBranch),
   };
 }
 
@@ -862,13 +893,13 @@ export function linksWithMember(
       return [
         ...links.filter((l) => !(l.from === loopId && l.edge === "repeats")),
         { from: loopId, to: blockId, edge: "repeats", continueBranch: false },
-        sectionLink(blockId, exitId, links),
+        sectionLink(blockId, exitId, links, blocks),
       ];
     }
-    const withEntry = [...links, sectionLink(entryId, blockId, links)];
-    return [...withEntry, sectionLink(blockId, exitId, withEntry)];
+    const withEntry = [...links, sectionLink(entryId, blockId, links, blocks)];
+    return [...withEntry, sectionLink(blockId, exitId, withEntry, blocks)];
   }
-  return [...links, sectionLink(members[members.length - 1], blockId, links)];
+  return [...links, sectionLink(members[members.length - 1], blockId, links, blocks)];
 }
 
 /**
@@ -925,7 +956,7 @@ export function linksWithoutMember(
         ...next,
         { from: loopId, to: first, edge: "repeats", continueBranch: false },
       ];
-      for (const other of rest) next = [...next, sectionLink(first, other, next)];
+      for (const other of rest) next = [...next, sectionLink(first, other, next, blocks)];
     }
     return next;
   }
@@ -933,7 +964,7 @@ export function linksWithoutMember(
   for (const from of predecessors) {
     for (const to of successors) {
       if (next.some((l) => l.from === from && l.to === to)) continue;
-      next = [...next, sectionLink(from, to, next)];
+      next = [...next, sectionLink(from, to, next, blocks)];
     }
   }
   return next;

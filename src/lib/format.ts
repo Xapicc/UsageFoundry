@@ -623,9 +623,15 @@ export function passesOf(
     else byPass.set(pass, [member]);
   };
 
+  // Keyed on the **member** that decided a run, and only on one: every member
+  // run of a pass also names something in `emittedBy` — the loop that released
+  // it — so a map over every value here would fold each of them under the loop
+  // and drop it out of its own pass. A run vanishing off this page is an agent
+  // that spent money with nothing on screen saying it ran.
+  const deciders = new Set(caused.blocks.map((b) => b.nodeId));
   const emittedBy = new Map<string, WorkflowInstanceNodeDTO[]>();
   for (const n of caused.nodes) {
-    if (n.emittedBy === null) continue;
+    if (n.emittedBy === null || !deciders.has(n.emittedBy)) continue;
     const list = emittedBy.get(n.emittedBy);
     if (list) list.push(n);
     else emittedBy.set(n.emittedBy, [n]);
@@ -633,7 +639,7 @@ export function passesOf(
 
   for (const n of caused.nodes) {
     // Drawn under the member that decided it, not as a member of its own.
-    if (n.emittedBy !== null && emittedBy.has(n.emittedBy)) continue;
+    if (n.emittedBy !== null && deciders.has(n.emittedBy)) continue;
     if (!n.passMember) continue;
     push(n.passMember.pass, { kind: "run", key: n.nodeId, node: n });
   }

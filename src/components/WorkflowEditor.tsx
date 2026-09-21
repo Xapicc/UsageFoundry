@@ -731,7 +731,7 @@ export function WorkflowEditor({
           : [
               ...prev,
               inSection
-                ? sectionLink(from, to, prev)
+                ? sectionLink(from, to, prev, blocks)
                 : { from, to, edge: "" as const, continueBranch: false },
             ],
       );

@@ -921,7 +921,6 @@ export function WorkflowCanvas({
             offers a refusal. Disabled with nothing marked rather than hidden —
             the control is how an operator learns the gesture exists, and its
             hint below says what to mark. */}
-        <span className="ml-3 text-xs font-medium text-ink-muted">Repeat</span>
         <button
           type="button"
           disabled={marked.length === 0 || full}
@@ -929,13 +928,14 @@ export function WorkflowCanvas({
           aria-describedby={notice === null ? undefined : NOTICE_ID}
           className="uf-button ui-transition inline-flex min-h-[var(--control-h)] max-md:min-h-11
             cursor-pointer select-none items-center rounded-sm border border-warn-line
-            bg-bezel px-2.5 text-sm font-medium text-ink shadow-e1
+            bg-bezel px-2.5 text-sm font-medium text-ink shadow-e1 ml-1.5
             not-disabled:hover:bg-bezel-hover not-disabled:active:shadow-press
             disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {marked.length <= 1
-            ? "These blocks"
-            : `These ${marked.length} blocks`}
+          {/* The count only once there is one worth stating: "Repeat 1 block"
+              on the ordinary press is a number the operator did not need, and
+              the frame that appears holds everything linked after it anyway. */}
+          {marked.length > 1 ? `Repeat ${marked.length} blocks` : "Repeat"}
         </button>
         <span className="ml-auto text-xs tabular-nums text-ink-muted">
           {blocks.length} block{blocks.length === 1 ? "" : "s"} · {drawn.length}{" "}

@@ -20,6 +20,7 @@ import {
   guardBadge,
   pollFailureMessage,
 } from "@/lib/format";
+import { worstCaseRuns } from "@/lib/canvasGraph";
 import { jsonRequest } from "@/lib/jsonRequest";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonLink, ButtonRow } from "@/components/ui/Button";
@@ -537,21 +538,26 @@ export default function WorkflowPage() {
                       )}
                       {n.kind === "loop" && (
                         // And again: the caps are the number of runs the
-                        // operator agrees to when they press Run. With a
-                        // section that is passes × its size, which is the
-                        // figure `BlockStatement` states in the editor — a
-                        // loop of 4 passes over 2 blocks is 8 runs, and "one
-                        // run each" would understate it by the size of the
-                        // section every time.
+                        // operator agrees to when they press Run — and this is
+                        // the page Run is on, so the figure has to be the same
+                        // one `BlockStatement` states in the editor. It is
+                        // `worstCaseRuns` in both places rather than passes ×
+                        // members, because an orchestrator member's fan-out is
+                        // spent again on every pass: a section of one deciding
+                        // block at 5 over 4 passes is twenty runs nobody
+                        // approves one by one, and "4 blocks" says four.
                         <div className="mt-0.5 text-warn">
-                          Repeats until done — up to {n.maxPasses} pass(es),{" "}
-                          {n.bodyNodeIds.length === 0
-                            ? "one run each"
-                            : `${n.bodyNodeIds.length} runs each, so up to ${
-                                n.maxPasses === null
-                                  ? "?"
-                                  : n.maxPasses * n.bodyNodeIds.length
-                              } runs`}
+                          Repeats until done — up to {n.maxPasses} pass(es) over{" "}
+                          {n.bodyNodeIds.length} block(s), so{" "}
+                          {worstCaseRuns(
+                            n.maxPasses,
+                            n.bodyNodeIds
+                              .map((id) =>
+                                workflow.nodes.find((m) => m.id === id),
+                              )
+                              .filter((m) => m !== undefined),
+                          ) ?? "an unstated number of"}{" "}
+                          runs
                           {n.maxLoopCostUSD !== null &&
                             `, or ${fmtUSD(n.maxLoopCostUSD)} across them`}
                           {/* The fifth ending belongs here for the same reason
@@ -574,7 +580,13 @@ export default function WorkflowPage() {
                             )}`}
                         </div>
                       )}
-                      {n.kind !== "merge" && (
+                      {/* Neither of the two kinds that start no child of their
+                          own: a merge block works in whichever repository each
+                          branch came from, and a loop holds no workspace and no
+                          task at all — the model refuses both fields by name,
+                          so printing them draws an empty path under a block
+                          that never had one. */}
+                      {n.kind !== "merge" && n.kind !== "loop" && (
                         <>
                           <div className="mono mt-0.5 break-words text-ink-muted">
                             {n.mountId} / {n.folder || "."}
@@ -589,7 +601,15 @@ export default function WorkflowPage() {
                       )}
                     </Td>
                     <Td label="Guards" className="align-top">
-                      <Badge tone={guards.tone}>{guards.text}</Badge>
+                      {/* A loop starts no child of its own, so it is under no
+                          guard set: every run of a pass is a member's, under
+                          the member's. A badge here would name a template this
+                          block never reaches. */}
+                      {n.kind === "loop" ? (
+                        <span className="text-ink-faint">each member&rsquo;s own</span>
+                      ) : (
+                        <Badge tone={guards.tone}>{guards.text}</Badge>
+                      )}
                     </Td>
                     {/* Above the value: this is a list of block names with a
                         condition on each, not a reading, and in the right half

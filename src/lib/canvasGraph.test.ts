@@ -978,6 +978,32 @@ test("a block put in a frame that lands runs beside the section, not after it", 
   assert.equal(fork?.continueBranch, false);
 });
 
+test("a link into a member that holds no branch never carries one", () => {
+  // Only a run block has a branch at either end — an orchestrator decides and
+  // writes nothing to disk. Handing it one is refused at Save by name, and the
+  // Put in gesture would be writing that refusal over a control the operator
+  // was never shown.
+  const blocks = [
+    loop("l"),
+    block("a"),
+    block("m", { kind: "merge" }),
+    block("d", { kind: "orchestrator" }),
+  ];
+  const next = linksWithMember("l", "d", blocks, [
+    repeats("l", "a"),
+    chain("a", "m"),
+  ]);
+  assert.ok(next !== null);
+  assert.equal(
+    next.find((x) => x.from === "a" && x.to === "d")?.continueBranch,
+    false,
+  );
+  assert.equal(
+    next.find((x) => x.from === "d" && x.to === "m")?.continueBranch,
+    false,
+  );
+});
+
 test("a block put in an empty frame becomes what each pass starts at", () => {
   const blocks = [loop("l"), block("a")];
   const next = linksWithMember("l", "a", blocks, []);
