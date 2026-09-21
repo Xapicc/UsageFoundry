@@ -162,6 +162,21 @@ export interface LinkDraft {
   continueBranch: boolean;
 }
 
+/**
+ * What the layout and the section walks actually read off a link.
+ *
+ * Wider than `LinkDraft` on purpose: `resolveLayout` is handed a saved graph's
+ * `WorkflowEdgeDTO[]` as well as a draft's links, and neither walk reads
+ * `continueBranch`. The `edge` is optional because a caller that has none is
+ * handing over dependencies only, which is what a link with no `repeats` on it
+ * already means here.
+ */
+export interface GraphLink {
+  from: string;
+  to: string;
+  edge?: string;
+}
+
 export interface CanvasDraft {
   blocks: BlockDraft[];
   links: LinkDraft[];
@@ -260,6 +275,42 @@ function longestPathRank(
 }
 
 /**
+ * The links, plus one from each member of a section to whatever runs after its
+ * loop.
+ *
+ * What a link *out* of a frame means is "after the whole loop", and the depth
+ * it is ranked at has to say that: ranked off the loop alone, a block that runs
+ * after a four-block section is laid out in the column beside that section's
+ * first member, and the arrow to it leaves the frame's right edge and doubles
+ * back left — which reads as running *before* the blocks it waits for. The
+ * synthetic links are not a claim about the graph and never leave this
+ * function: they are the arrangement the frame already implies.
+ *
+ * Bounded like everything else on this path — one link per (member, successor)
+ * pair — and `longestPathRank`'s own relaxation is what absorbs a cycle among
+ * them.
+ */
+function pastTheFrames(
+  blocks: readonly { id: string; kind?: WorkflowNodeKind }[],
+  links: readonly GraphLink[],
+): Array<{ from: string; to: string }> {
+  const loops = blocks.filter((b) => b.kind === "loop");
+  if (loops.length === 0) return [...links];
+  const extra: Array<{ from: string; to: string }> = [];
+  for (const loop of loops) {
+    const members = sectionOf(loop.id, blocks, links);
+    if (members.length === 0) continue;
+    const after = links
+      .filter((l) => l.from === loop.id && l.edge !== "repeats")
+      .map((l) => l.to);
+    for (const member of members) {
+      for (const target of after) extra.push({ from: member, to: target });
+    }
+  }
+  return [...links, ...extra];
+}
+
+/**
  * Where the blocks go when nobody has said.
  *
  * Layered left to right by the longest path from a block with nothing in front
@@ -285,11 +336,11 @@ function longestPathRank(
  */
 export function autoLayout(
   blocks: readonly { id: string; kind?: WorkflowNodeKind }[],
-  links: readonly { from: string; to: string }[],
+  links: readonly GraphLink[],
 ): Map<string, Point> {
   const rank = longestPathRank(
     blocks.map((b) => b.id),
-    links,
+    pastTheFrames(blocks, links),
   );
   const topPad =
     CANVAS_PAD + (blocks.some((b) => "kind" in b && b.kind === "loop")
@@ -343,7 +394,7 @@ function usable(p: Point | undefined): p is Point {
  */
 export function resolveLayout(
   blocks: readonly { id: string; kind?: WorkflowNodeKind }[],
-  links: readonly { from: string; to: string }[],
+  links: readonly GraphLink[],
   stored: Readonly<Record<string, Point>> | null,
 ): Map<string, Point> {
   const derived = autoLayout(blocks, links);
@@ -462,7 +513,7 @@ export function bodyOrder(
 export function sectionOf(
   loopId: string,
   blocks: readonly { id: string }[],
-  links: readonly LinkDraft[],
+  links: readonly GraphLink[],
 ): string[] {
   const door = links.find((l) => l.from === loopId && l.edge === "repeats");
   if (!door) return [];
@@ -486,7 +537,7 @@ function reachedFrom(
   entryId: string,
   excludeId: string,
   blocks: readonly { id: string }[],
-  links: readonly LinkDraft[],
+  links: readonly GraphLink[],
 ): string[] {
   const known = new Set(blocks.map((b) => b.id));
   const ordinary = links.filter((l) => l.edge !== "repeats");

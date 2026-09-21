@@ -869,6 +869,31 @@ test("a drawn section survives the editor's own serialisation", () => {
  * this surface states in its own words rather than waiting for the server.
  */
 
+test("what runs after a loop is laid out past its whole section", () => {
+  // Ranked off the loop alone, `after` lands in the column beside the
+  // section's first member: the arrow to it then leaves the frame's right edge
+  // and doubles back left, which reads as running *before* the blocks it
+  // waits for. Nothing throws and the graph is correct — only the picture is
+  // the opposite of what it says.
+  const blocks = [
+    loop("l"),
+    block("a"),
+    block("b"),
+    block("m", { kind: "merge" }),
+    block("after"),
+  ];
+  const at = autoLayout(blocks, [
+    repeats("l", "a"),
+    chain("a", "b"),
+    chain("b", "m"),
+    chain("l", "after"),
+  ]);
+  assert.ok(
+    at.get("after")!.x > at.get("m")!.x,
+    "past the block the section lands through, not beside its first member",
+  );
+});
+
 test("a frame starts at the first block of the selection in pass order", () => {
   const blocks = [block("a"), block("b"), block("c")];
   const links = [chain("a", "b"), chain("b", "c")];
