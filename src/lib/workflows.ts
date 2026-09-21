@@ -4858,9 +4858,20 @@ function advanceLoop(
       // has been created and whose merge block does not exist yet would
       // otherwise read as settled.
       openPass(instanceId, node, section, decision.pass);
-      // Pass 1's first member starts after whatever released the loop; nothing
-      // is carried between passes at all — see `stepPass`.
-      if (!stepPass(instance, node, section, decision.pass, firstPassDependsOn)) {
+      // Pass 1's entry starts after whatever released the loop; nothing is
+      // carried between passes at all — see `stepPass`. Tested on the number
+      // rather than on this being the first time round, which is an invariant
+      // that holds today only because a pass cannot settle in the same call
+      // that created it.
+      if (
+        !stepPass(
+          instance,
+          node,
+          section,
+          decision.pass,
+          decision.pass === 1 ? firstPassDependsOn : [],
+        )
+      ) {
         return;
       }
       continue;
