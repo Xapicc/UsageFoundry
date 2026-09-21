@@ -14,6 +14,7 @@ import {
   linksOfGraph,
   linksWithMember,
   linksWithoutMember,
+  markedAfterPress,
   resolveLayout,
   resolveLinkRelease,
   resolveRepeat,
@@ -855,8 +856,14 @@ test("a drawn section survives the editor's own serialisation", () => {
 /* ------------------------------------------------------------------ */
 
 /**
- * A loop is drawn as a frame and made by one, so these four functions are the
+ * A loop is drawn as a frame and made by one, so these five functions are the
  * whole of what that gesture writes — and every one of them fails silently.
+ *
+ * `markedAfterPress` is the half in front of `resolveRepeat`: what a press on a
+ * block leaves marked, which is what Repeat is then pointed at. It is asserted
+ * here rather than through the canvas because marking is client state and this
+ * suite has no DOM — see the paragraph in `docs/agent/testing.md` — and the
+ * gesture that reaches it is on `docs/verification.md`'s by-hand list.
  *
  * `resolveRepeat` picks the block a frame starts at out of a selection: picking
  * the wrong one frames a *different* section, and the picture is consistent
@@ -892,6 +899,29 @@ test("what runs after a loop is laid out past its whole section", () => {
     at.get("after")!.x > at.get("m")!.x,
     "past the block the section lands through, not beside its first member",
   );
+});
+
+test("a press marks one block, and marks another only with a modifier held", () => {
+  // The plain press replaces whatever was marked, however much of it there
+  // was: an operator who marked three and then pressed a fourth block alone
+  // has pointed Repeat at that fourth block, and a frame round the previous
+  // three would appear over a surface saying otherwise.
+  assert.deepEqual(markedAfterPress(["a", "b", "c"], "d", false), ["d"]);
+  assert.deepEqual(markedAfterPress([], "a", false), ["a"]);
+  // Held, it adds — appended, so the order is the order they were pressed in
+  // even though `resolveRepeat` does not read it.
+  assert.deepEqual(markedAfterPress(["a"], "b", true), ["a", "b"]);
+  // Twice on the same block takes it back out: the gesture that marked one is
+  // the one an operator reaches for to unmark it, and the alternative is a
+  // second id in the list that draws one outline and counts as two blocks.
+  assert.deepEqual(markedAfterPress(["a", "b"], "a", true), ["b"]);
+  assert.deepEqual(markedAfterPress(["a"], "a", true), []);
+  // Never in place: this is React state, and a list mutated under `setMarked`
+  // is a re-render that never comes.
+  const before = ["a", "b"];
+  markedAfterPress(before, "c", true);
+  markedAfterPress(before, "a", true);
+  assert.deepEqual(before, ["a", "b"]);
 });
 
 test("a frame starts at the first block of the selection in pass order", () => {

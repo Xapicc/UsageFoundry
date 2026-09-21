@@ -826,6 +826,29 @@ export function sectionLink(
   };
 }
 
+/**
+ * What a press on a block leaves marked.
+ *
+ * The arithmetic of the Repeat gesture, apart from the four routes that reach
+ * it: a press replaces what was marked, and a press with a modifier held adds
+ * to it — or takes the block back out, because the gesture that marked one is
+ * the one an operator will reach for to unmark it. Pure and here rather than
+ * inside the canvas's `setMarked`, because every way of getting it wrong is
+ * silent: an id marked twice makes "Repeat 3 blocks" a frame round two, and a
+ * press that appended where it should have replaced frames a section the
+ * operator never pointed at. `resolveRepeat` below is what then reads it.
+ */
+export function markedAfterPress(
+  marked: readonly string[],
+  id: string,
+  extend: boolean,
+): string[] {
+  if (!extend) return [id];
+  return marked.includes(id)
+    ? marked.filter((other) => other !== id)
+    : [...marked, id];
+}
+
 /** What pressing Repeat over a selection would do, or why it would do nothing. */
 export type RepeatGesture =
   | { kind: "repeat"; entryId: string; memberIds: string[] }

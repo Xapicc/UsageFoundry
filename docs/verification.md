@@ -1031,6 +1031,28 @@ is `docs/agent/testing.md`; interface defects and their classes are
   Caveat: driven by clicks rather than by pointer drags, so the drag route
   through `resolveLinkRelease` is exercised only by its unit tests.
 
+- **Marking a block, every route into it, real build, 2026-09-21:** driven with
+  real input events against `.next/standalone/server.js` on `/workflows/new`,
+  two blocks from the palette. Before the fix, a Shift-click anywhere on a
+  card's body left Repeat disabled and nothing outlined, and a plain click on
+  the body selected without marking — only the name button marked at all, which
+  is what the footer and every card's `aria-label` promised of the whole card.
+  After it, a plain press on the body marks exactly that block and selects it, a
+  Shift-click on a second reads *Repeat 2 blocks* with both outlined, a third
+  Shift-click on the same card takes it back out, ⌘-click extends the same way,
+  and a 30px drag moved the card and left the marks alone. A press on the bare
+  surface cleared the marks with the selection. The name button's own routes are
+  unchanged and fire once — Shift-click on it and Shift+Enter on it each toggled
+  one block, so the card's captured pointer sequence does not also reach the
+  button beneath it. With Link armed on one card, a press on another card's body
+  drew the link and marked nothing. Shift-clicking a frame's name now marks the
+  frame, which it draws with the card's own outline, and Repeat then answers
+  *"block-3 is a loop, and a loop cannot be inside another one."* — a refusal
+  `resolveRepeat` has always carried and no route could reach. At 390px the list
+  route is unchanged: a tap marks one row, Repeat frames it. No console error in
+  any of it. Caveat: one browser (Chromium) and a two-block graph, and the
+  modifier chord was exercised with Shift and ⌘ but not ctrl.
+
 - **A pass drawn as its members, real build, stub CLI that completes a cycle,
   2026-09-21:** one press of Run on the framed workflow above, with a stub
   `CLAUDE_BIN` that prints an init event, a `DONE` reply and a cost. Pass 1 drew

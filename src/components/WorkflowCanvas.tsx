@@ -20,6 +20,7 @@ import {
   layoutBounds,
   linkKey,
   linkRefusal,
+  markedAfterPress,
   nodeBox,
   regionBounds,
   resolveLinkRelease,
@@ -284,8 +285,7 @@ export function WorkflowCanvas({
   const [frameFrom, setFrameFrom] = useState<string | null>(null);
   const [pointerAt, setPointerAt] = useState<Point | null>(null);
   /**
-   * The blocks a frame would go round, and the selected one is always among
-   * them.
+   * The blocks a frame would go round, which the block just pressed joins.
    *
    * Canvas state rather than the editor's `selection`, which names exactly one
    * thing because the inspector shows exactly one thing. Marking is what lets
@@ -293,6 +293,11 @@ export function WorkflowCanvas({
    * is the only reason to mark at all: membership is derived from the links, so
    * marking the head block alone would frame the same section. That is also the
    * route below the breakpoint, where there is no modifier to hold.
+   *
+   * Every press on a block writes it — `pressBlock` is the one definition — so
+   * the only block that is selected and not marked is one a modifier took back
+   * out. Emptied by a successful Repeat, and by a press on the bare surface,
+   * which is where the other two armed gestures are put down too.
    */
   const [marked, setMarked] = useState<string[]>([]);
   /**
@@ -506,10 +511,11 @@ export function WorkflowCanvas({
     setDrag(null);
     // A press that went nowhere is a click on the card, and the whole card is
     // the target: the name is a button because the keyboard needs one, not
-    // because it is the only place worth aiming at.
+    // because it is the only place worth aiming at. A press that moved is a
+    // drag and marks nothing — the hand that arranged a block did not choose
+    // it, and a graph tidied up would otherwise end with everything marked.
     if (moved) return;
-    if (claimArmed(id)) return;
-    onSelect({ kind: "block", id });
+    pressBlock(id, extendsMark(event));
   }
 
   function nudge(id: string, dx: number, dy: number) {
@@ -673,22 +679,38 @@ export function WorkflowCanvas({
   /* ---------------------------------------------------------------- */
 
   /**
+   * What a press on a block means, wherever on the block it landed.
+   *
+   * One definition and four routes into it, rather than the gesture written out
+   * beside each: the card's body through `endDrag`, the card's name and the
+   * frame's name through their `click`, and the row below the breakpoint
+   * through its tap. Written twice it was two gestures — the name marked and
+   * selected, the rest of the card only selected — so the footer's "Shift-click
+   * marks another" and every card's own label were true of a 200px button and
+   * false of the card around it. Two handlers that must agree about a gesture
+   * are two handlers that will stop agreeing.
+   *
+   * An armed tool still has first claim: a press on a block while Link or Put
+   * in is armed is that gesture's second half and never this one.
+   */
+  function pressBlock(id: string, extend: boolean) {
+    if (claimArmed(id)) return;
+    markBlock(id, extend);
+    onSelect({ kind: "block", id });
+  }
+
+  /**
    * Mark a block, or make it the only marked one.
    *
-   * Both routes land here: a shift-, ⌘- or ctrl-click on a card, and Shift+Enter
-   * on the same card's name button, because a `<button>`'s `click` carries the
-   * modifier either way. So the keyboard reaches the Repeat gesture through the
-   * control the pointer reaches it through, rather than through a key nobody
-   * would guess.
+   * The modifier is read off a `click` and off a `PointerEvent` alike, because
+   * both carry the three and `extendsMark` is the one place that says which —
+   * so a shift-click on a card, ⌘-click on it, and Shift+Enter on its name are
+   * the same gesture, and the keyboard reaches Repeat through the control the
+   * pointer reaches it through rather than through a key nobody would guess.
    */
   function markBlock(id: string, extend: boolean) {
     setNotice(null);
-    setMarked((current) => {
-      if (!extend) return [id];
-      return current.includes(id)
-        ? current.filter((other) => other !== id)
-        : [...current, id];
-    });
+    setMarked((current) => markedAfterPress(current, id, extend));
   }
 
   /** Put a frame round what is marked, or say why that would mean nothing. */
@@ -1038,10 +1060,19 @@ export function WorkflowCanvas({
             // A press on the surface itself rather than on a block: clear what
             // the inspector is showing, and drop out of link mode for anyone
             // who did not find Escape.
+            //
+            // What is marked goes with them. A half-made Repeat is an armed
+            // gesture like the other two and this press is how all three are
+            // put down — the alternative is a Repeat still aimed at a section
+            // the operator has stopped pointing at, and the press that revived
+            // it would frame something nobody chose. It costs a set of marks to
+            // a press on the background, which is a few clicks to rebuild and
+            // is visible while it lasts; the other way round costs a frame.
             if (event.target === event.currentTarget) {
               onSelect(null);
               setLinkFrom(null);
               setFrameFrom(null);
+              setMarked([]);
             }
           }}
         >
@@ -1067,6 +1098,7 @@ export function WorkflowCanvas({
             const selected =
               selection?.kind === "block" && selection.id === region.loopId;
             const armed = linkFrom === region.loopId;
+            const isMarked = marked.includes(region.loopId);
             return (
               <div
                 key={region.loopId}
@@ -1086,21 +1118,35 @@ export function WorkflowCanvas({
                     frameFrom === region.loopId || selected
                       ? "ring-[3px] ring-ring"
                       : ""
+                  } ${
+                    // The card's mark on the thing a loop is drawn as, and the
+                    // same class string: marking is what lets an operator see
+                    // what Repeat would enclose, so a frame that could be
+                    // marked without showing it would be a count on the button
+                    // with nothing on the surface to explain it.
+                    isMarked ? "outline outline-2 outline-offset-2 outline-warn-line" : ""
                   }`}
               >
                 <div className="pointer-events-auto absolute inset-x-0 top-0 flex flex-wrap items-center gap-x-2 gap-y-0.5 px-2 py-1">
                   <button
                     type="button"
-                    onClick={() => {
-                      if (claimArmed(region.loopId)) return;
-                      onSelect({ kind: "block", id: region.loopId });
-                    }}
+                    // A loop is a block and its name is the card's name: the
+                    // same press, so a frame marked with the section beside it
+                    // reaches `resolveRepeat`'s refusal by name — "a loop
+                    // cannot be inside another one" — rather than the frame
+                    // being the one thing on the surface a Shift-click does
+                    // nothing to. Nothing here restates that refusal; the
+                    // press that earns it is the press that says it.
+                    onClick={(event) =>
+                      pressBlock(region.loopId, extendsMark(event))
+                    }
                     onKeyDown={(event) => {
                       if (!isDeleteKey(event.key)) return;
                       event.preventDefault();
                       event.stopPropagation();
                       onRemoveBlock(region.loopId);
                     }}
+                    aria-pressed={isMarked}
                     // The frame's whole sentence in one label, because a screen
                     // reader meets this before any of the members and the two
                     // questions a drawn frame cannot answer aloud are which
@@ -1123,7 +1169,7 @@ export function WorkflowCanvas({
                           )}`
                     }. ${passCapLabel(owner)}, ${endingLabel(owner)}.${
                       linking && !armed ? ` Starts after ${label(linkSource)}.` : ""
-                    } Delete removes this frame and leaves its blocks.`}
+                    } Shift and Enter together marks it for Repeat. Delete removes this frame and leaves its blocks.`}
                     className="ui-transition -my-0.5 cursor-pointer rounded-sm border border-transparent
                       bg-transparent px-1 py-0.5 text-left text-2xs font-semibold text-warn
                       hover:bg-fill-hover"
@@ -1368,19 +1414,15 @@ export function WorkflowCanvas({
                 >
                   <button
                     type="button"
-                    // One handler for the pointer and the keyboard, because a
-                    // `<button>`'s click carries `shiftKey` whether it came
-                    // from a mouse or from Shift+Enter — so the modifier that
-                    // marks a second block is the same gesture on both, and
-                    // neither needs a key of its own to learn.
-                    onClick={(event) => {
-                      if (claimArmed(block.id)) return;
-                      markBlock(
-                        block.id,
-                        event.shiftKey || event.metaKey || event.ctrlKey,
-                      );
-                      onSelect({ kind: "block", id: block.id });
-                    }}
+                    // The same `pressBlock` the card's own body reaches through
+                    // `endDrag`: a `<button>`'s click carries `shiftKey`
+                    // whether it came from a mouse or from Shift+Enter, so the
+                    // modifier that marks a second block is the same gesture on
+                    // the pointer and the keyboard, and neither needs a key of
+                    // its own to learn. The card body's press cannot also reach
+                    // here — `startDrag` captures the pointer, so the trailing
+                    // `click` is dispatched at the card and not at this button.
+                    onClick={(event) => pressBlock(block.id, extendsMark(event))}
                     onKeyDown={(event) => blockKeys(event, block.id)}
                     aria-pressed={isMarked}
                     aria-label={`${label(block)} — ${KIND_LABEL[block.kind]}${
@@ -1575,14 +1617,13 @@ export function WorkflowCanvas({
                 <button
                   type="button"
                   aria-pressed={selected}
-                  onClick={() => {
-                    if (claimArmed(block.id)) return;
-                    // No modifier exists at this width, so a tap marks one
-                    // block and Repeat frames it with everything linked after
-                    // it. That is the whole gesture here — see `marked`.
-                    markBlock(block.id, false);
-                    onSelect({ kind: "block", id: block.id });
-                  }}
+                  // No modifier exists at this width, so a tap marks one block
+                  // and Repeat frames it with everything linked after it. That
+                  // is the whole gesture here — see `marked` — and `false`
+                  // rather than `extendsMark` is what says so: a keyboard
+                  // plugged into a phone would otherwise reach a chord this
+                  // footer does not offer and this list does not draw.
+                  onClick={() => pressBlock(block.id, false)}
                   aria-label={
                     framing && frameFrom !== block.id
                       ? inSection?.loopId === frameFrom
@@ -1782,6 +1823,25 @@ function endingLabel(loop: BlockDraft): string {
 
 /** Where the canvas's own refusal is written, for the control it refused. */
 const NOTICE_ID = "workflow-canvas-notice";
+
+/**
+ * Whether a press adds to what is marked rather than replacing it.
+ *
+ * Typed against the three modifiers alone so that every route into `pressBlock`
+ * can be asked the same question: a `PointerEvent` off the card's body and a
+ * `MouseEvent` off a name button carry them alike, and so does the `click` that
+ * Shift+Enter on a button dispatches. ⌘ and ctrl beside Shift because this is
+ * the extend-a-selection chord every file manager has taught, and an operator
+ * holding the wrong one of the three would otherwise watch their marked section
+ * collapse to the block they had just added to it.
+ */
+function extendsMark(event: {
+  shiftKey: boolean;
+  metaKey: boolean;
+  ctrlKey: boolean;
+}): boolean {
+  return event.shiftKey || event.metaKey || event.ctrlKey;
+}
 
 function isSelectedLink(
   link: LinkDraft,
