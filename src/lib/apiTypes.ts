@@ -2266,17 +2266,6 @@ export interface WorkflowInstanceBlockDTO {
   branchesFailed: number;
   error: string | null;
   waitsFor: string[];
-  /**
-   * Which pass of a loop this block belongs to, or null when it is a block of
-   * the graph itself.
-   *
-   * A loop repeats a *section*, and a section holds orchestrator and merge
-   * blocks as well as runs — every section ends at one — so a ledger row can be
-   * a member of a pass just as a run can. Read off the member id by
-   * `passNumberOf` for `WorkflowInstanceNodeDTO.passNumber`'s reason: one
-   * parser of the format, beside the writer.
-   */
-  passNumber: number | null;
 }
 
 export interface WorkflowInstanceDTO {

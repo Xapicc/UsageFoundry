@@ -7,7 +7,7 @@ import type {
   WorkflowScheduleDTO,
 } from "../../../lib/apiTypes";
 import { getSchedule, scheduleView, type ScheduleView } from "../../../lib/schedules";
-import { passNumberOf } from "../../../lib/passIds";
+import { passMemberOf, passNumberOf } from "../../../lib/passIds";
 import {
   blockSpendReading,
   lastRunAt,
@@ -93,6 +93,27 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
     else waits.set(edge.to, [edge.from]);
   }
 
+  /**
+   * What one row waited for, as node ids the name map can resolve.
+   *
+   * A pass's member is keyed on an id that names the pass, so the graph's own
+   * edges miss it — and a section may fan out now, so "waits for the loop" is
+   * no longer even nearly right: a member of a section that forks waits for its
+   * own predecessors *within its pass*, which is the thing an operator reading
+   * a stalled pass needs. Resolved through the block the member is of, so the
+   * names shown are the section's own; the pass is already on the row's name.
+   *
+   * The section's entry is the one member with no predecessor inside it, and it
+   * falls back to whatever created it — the loop for a member, the block for a
+   * run an orchestrator emitted.
+   */
+  const waitsForRow = (nodeId: string, createdBy: string | null): string[] => {
+    const member = passMemberOf(nodeId);
+    const own = waits.get(member?.bodyNodeId ?? nodeId) ?? [];
+    if (own.length > 0) return own;
+    return createdBy ? [createdBy] : [];
+  };
+
   const nodes: WorkflowInstanceNodeDTO[] = instance.nodes.map((n) => ({
     nodeId: n.nodeId,
     nodeName: n.nodeName,
@@ -102,9 +123,7 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
     // A run an orchestrator block emitted is in no edge of the saved graph — it
     // did not exist when the graph was written — so what it waits for is read
     // off the block that started it instead.
-    waitsFor: n.emittedBy
-      ? [n.emittedBy]
-      : (waits.get(n.nodeId) ?? []),
+    waitsFor: waitsForRow(n.nodeId, n.emittedBy),
     emittedBy: n.emittedBy,
     // Read here rather than on the page, because the member id's format is
     // `passMemberId`'s and a second parser of it is how a three-pass loop over
@@ -130,13 +149,11 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
     branchesLanded: b.branchesLanded,
     branchesFailed: b.branchesFailed,
     error: b.error,
-    waitsFor: waits.get(b.nodeId) ?? [],
     // A block can be a member of a pass too, now that a loop repeats a section
     // rather than a task: an orchestrator member and the merge block every
-    // section ends at are ledger rows, not runs. Read the same way a member's
-    // is, and for the same reason — one parser of the format, beside the
-    // writer.
-    passNumber: passNumberOf(b.nodeId),
+    // section ends at are ledger rows, not runs. The loop is what created it
+    // when it is the section's entry.
+    waitsFor: waitsForRow(b.nodeId, passMemberOf(b.nodeId)?.loopNodeId ?? null),
   }));
 
   return {
