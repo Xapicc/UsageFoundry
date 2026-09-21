@@ -561,8 +561,16 @@ export function WorkflowEditor({
         (l) => l.from === loopId && l.to === firstId && l.edge === "repeats",
       );
       setLinks((prev) => {
+        // Two links go: the loop's own “repeats” link, because it has at most
+        // one, and **any** link it already had to this block, because two links
+        // between one pair is a graph that can never save — the server refuses
+        // it by name, and until then both are drawn on top of each other with
+        // one key between them. An ordinary link from a loop to a block it
+        // repeats is refused anyway, so replacing it is the only outcome this
+        // press could have that leaves a savable graph.
         const rest = prev.filter(
-          (l) => !(l.from === loopId && l.edge === "repeats"),
+          (l) =>
+            !(l.from === loopId && (l.edge === "repeats" || l.to === firstId)),
         );
         return already
           ? rest

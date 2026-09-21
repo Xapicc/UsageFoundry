@@ -987,7 +987,11 @@ export function WorkflowCanvas({
                 className={`ui-transition absolute z-10 inline-flex min-h-[var(--control-h)]
                   max-md:min-h-11 -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center
                   gap-1.5 whitespace-nowrap rounded-pill border px-2.5 py-1 text-2xs font-semibold
-                  ${LINK_CHIP[tone]}`}
+                  ${LINK_CHIP[tone]} ${
+                    tone === "repeats" && isSelectedLink(link, selection)
+                      ? "ring-[3px] ring-ring"
+                      : ""
+                  }`}
               >
                 {EDGE_CHIP_LABEL[link.edge]}
                 {link.continueBranch && <span className="text-accent">· branch</span>}
@@ -1406,16 +1410,24 @@ function label(block: { name: string; id: string } | undefined): string {
   return block.name.trim() || block.id;
 }
 
-function linkTone(link: LinkDraft, selection: CanvasSelection | null): LinkTone {
-  // Ahead of the selection test, unlike the other two: see `LINK_TONE`'s note.
-  if (link.edge === "repeats") return "repeats";
-  if (
+function isSelectedLink(
+  link: LinkDraft,
+  selection: CanvasSelection | null,
+): boolean {
+  return (
     selection?.kind === "link" &&
     selection.from === link.from &&
     selection.to === link.to
-  ) {
-    return "selected";
-  }
+  );
+}
+
+function linkTone(link: LinkDraft, selection: CanvasSelection | null): LinkTone {
+  // Ahead of the selection test, unlike the other two: see `LinkTone`'s note.
+  // The ring that says *this one is selected* is put on the chip separately,
+  // so a containment arrow does not have to stop looking like one to be
+  // selectable.
+  if (link.edge === "repeats") return "repeats";
+  if (isSelectedLink(link, selection)) return "selected";
   return link.edge === "" ? "unchosen" : "chosen";
 }
 
