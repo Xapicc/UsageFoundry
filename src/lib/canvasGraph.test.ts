@@ -10,10 +10,16 @@ import {
   draftToGraph,
   freeSpot,
   layoutBounds,
+  linkRefusal,
   linksOfGraph,
+  linksWithMember,
+  linksWithoutMember,
   resolveLayout,
   resolveLinkRelease,
+  resolveRepeat,
+  sectionExit,
   sectionOf,
+  worstCaseRuns,
   type BlockDraft,
   type CanvasDraft,
   type LinkDraft,
@@ -661,14 +667,27 @@ test("a region fits inside the surface its members size", () => {
   assert.ok(region.y + region.height <= bounds.height);
 });
 
-test("a loop with no “repeats” link is not a region, and neither is another kind", () => {
+test("a loop with nothing in it still draws a frame, and another kind does not", () => {
   const at = new Map([
     ["l", { x: 0, y: 0 }],
     ["a", { x: 400, y: 0 }],
   ]);
-  assert.deepEqual(bodyRegions([loop("l"), block("a")], [], at), []);
+  // The frame is the *whole* of how a loop is drawn — it has no card — so a
+  // frame that vanished the moment its last member was deleted would leave the
+  // loop in the graph with nothing on the canvas to select or delete it by, and
+  // the only way out would be leaving the editor and losing the draft.
+  const [empty, ...rest] = bodyRegions([loop("l"), block("a")], [], at);
+  assert.equal(rest.length, 0);
+  assert.deepEqual(empty.memberIds, []);
+  assert.equal(empty.entryId, null);
+  assert.equal(empty.exitId, null);
+  assert.ok(
+    empty.width >= NODE_W && empty.height >= NODE_H,
+    "sized like a block, so it reads as a place something goes",
+  );
+
   // A “repeats” link out of a block that is not a loop is refused by the server
-  // rather than drawn: a region round it would say the graph was savable.
+  // rather than drawn: a frame round it would say the graph was savable.
   assert.deepEqual(
     bodyRegions([block("l"), block("a")], [repeats("l", "a")], at),
     [],
@@ -825,4 +844,282 @@ test("a drawn section survives the editor's own serialisation", () => {
   );
   assert.ok(saved.ok, saved.ok ? "" : saved.error);
   assert.deepEqual(saved.value.graph.nodes[0].bodyNodeIds, ["a", "m"]);
+});
+
+/* ------------------------------------------------------------------ */
+/* The frame gestures                                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A loop is drawn as a frame and made by one, so these four functions are the
+ * whole of what that gesture writes — and every one of them fails silently.
+ *
+ * `resolveRepeat` picks the block a frame starts at out of a selection: picking
+ * the wrong one frames a *different* section, and the picture is consistent
+ * with itself either way because membership is derived from whatever it picked.
+ * `linksWithoutMember` splices rather than cuts, and the failure is the one
+ * this app has no undo for — an operator takes one block out and four leave
+ * with it. `worstCaseRuns` is the number a press of Run is approved against and
+ * the one an operator cannot compute in their head, because an orchestrator
+ * member's fan-out is spent again on every pass. `linkRefusal` is the only rule
+ * this surface states in its own words rather than waiting for the server.
+ */
+
+test("a frame starts at the first block of the selection in pass order", () => {
+  const blocks = [block("a"), block("b"), block("c")];
+  const links = [chain("a", "b"), chain("b", "c")];
+  // Whatever order they were marked in: the entry is a fact about the links,
+  // and a frame that started wherever the pointer landed first would repeat a
+  // section the operator never drew.
+  for (const marked of [["a", "b", "c"], ["c", "b", "a"], ["b", "c", "a"]]) {
+    const gesture = resolveRepeat(marked, blocks, links);
+    assert.equal(gesture.kind, "repeat");
+    assert.equal(gesture.kind === "repeat" && gesture.entryId, "a");
+  }
+});
+
+test("a frame holds what the links reach, not what was marked", () => {
+  const blocks = [block("a"), block("b"), block("c")];
+  const links = [chain("a", "b"), chain("b", "c")];
+  // Marking the head alone is the whole gesture — the rest follows the links —
+  // and that is also the route below the breakpoint, where there is no modifier
+  // to hold. So this must agree with marking all three.
+  const head = resolveRepeat(["a"], blocks, links);
+  assert.deepEqual(head.kind === "repeat" && head.memberIds, ["a", "b", "c"]);
+  // And a block the selection never reaches is not in it, however it was
+  // marked: `c` is behind `b`, which is not linked from `a` here.
+  const split = resolveRepeat(["a", "c"], blocks, [chain("b", "c")]);
+  assert.deepEqual(split.kind === "repeat" && split.memberIds, ["a"]);
+});
+
+test("Repeat refuses a loop and a block already framed, by name", () => {
+  const blocks = [loop("l"), block("a"), block("b")];
+  const links = [repeats("l", "a"), chain("a", "b")];
+  // Both are refused on the server too. Said here because the alternative is
+  // drawing a frame whose only outcome is that refusal — and because the
+  // sentence has to name the block, or the operator is hunting for which of
+  // four they marked is the problem.
+  const nested = resolveRepeat(["l"], blocks, links);
+  assert.equal(nested.kind, "refused");
+  assert.match(nested.kind === "refused" ? nested.because : "", /\bl\b/);
+
+  const taken = resolveRepeat(["b"], blocks, links);
+  assert.equal(taken.kind, "refused");
+  assert.match(taken.kind === "refused" ? taken.because : "", /\bl\b/);
+
+  const nothing = resolveRepeat([], blocks, links);
+  assert.equal(nothing.kind, "refused");
+});
+
+test("a frame marks the block a pass starts at and the one that lands it", () => {
+  const blocks = [loop("l"), block("a"), block("m", { kind: "merge" })];
+  const links = [repeats("l", "a"), chain("a", "m")];
+  const at = new Map([
+    ["l", { x: 0, y: 0 }],
+    ["a", { x: 100, y: 100 }],
+    ["m", { x: 400, y: 100 }],
+  ]);
+  const [region] = bodyRegions(blocks, links, at);
+  assert.equal(region.entryId, "a", "what runs first");
+  assert.equal(region.exitId, "m", "where the work lands");
+  // The frame is the members' bounding box grown by the padding and the strip,
+  // so it encloses both and starts above and left of them.
+  assert.ok(region.x < 100 && region.y < 100);
+  assert.ok(region.x + region.width >= 400 + NODE_W);
+  assert.ok(region.y + region.height >= 100 + NODE_H);
+});
+
+test("a section that does not end at one merge block has no exit to mark", () => {
+  const blocks = [
+    loop("l"),
+    block("a"),
+    block("b"),
+    block("m", { kind: "merge" }),
+  ];
+  const at = new Map(
+    ["l", "a", "b", "m"].map((id) => [id, { x: 0, y: 0 }] as const),
+  );
+  // Two sinks: the graph is refused by the server, and until it answers the
+  // frame may not name one of them as the place the pass lands. A promise
+  // about where an operator's work ends up is not one to guess at.
+  const forked = bodyRegions(
+    blocks,
+    [repeats("l", "a"), chain("a", "b"), chain("a", "m")],
+    at,
+  );
+  assert.equal(forked[0].exitId, null);
+  // One sink, but not a merge block: same answer, same reason.
+  const unlanded = bodyRegions(
+    blocks,
+    [repeats("l", "a"), chain("a", "b")],
+    at,
+  );
+  assert.equal(unlanded[0].exitId, null);
+});
+
+test("a block put in a frame that lands runs beside the section, not after it", () => {
+  const blocks = [
+    loop("l"),
+    block("a"),
+    block("m", { kind: "merge" }),
+    block("b"),
+  ];
+  const links = [repeats("l", "a"), chain("a", "m")];
+  const next = linksWithMember("l", "b", blocks, links);
+  assert.ok(next !== null);
+  assert.deepEqual(sectionOf("l", blocks, next), ["a", "b", "m"]);
+  // The exit still lands it, or the pass would end with this block's work
+  // stranded on a branch nothing merges.
+  assert.equal(sectionExit(["a", "b", "m"], blocks, next), "m");
+  // And it cuts its own branch rather than claiming `a`'s, which is already
+  // carried by the link to `m`: two links carrying one block's branch is
+  // refused at Save by name.
+  const fork = next.find((l) => l.from === "a" && l.to === "b");
+  assert.equal(fork?.continueBranch, false);
+});
+
+test("a block put in an empty frame becomes what each pass starts at", () => {
+  const blocks = [loop("l"), block("a")];
+  const next = linksWithMember("l", "a", blocks, []);
+  assert.ok(next !== null);
+  assert.deepEqual(sectionOf("l", blocks, next), ["a"]);
+  // A loop has at most one “repeats” link — two is a refusal the server writes
+  // and not one this gesture has any way to mean.
+  assert.equal(next.filter((l) => l.edge === "repeats").length, 1);
+});
+
+test("taking a middle block out keeps the rest of the frame", () => {
+  const blocks = [
+    loop("l"),
+    block("a"),
+    block("b"),
+    block("m", { kind: "merge" }),
+  ];
+  const links = [repeats("l", "a"), chain("a", "b"), chain("b", "m")];
+  const next = linksWithoutMember("l", "b", blocks, links);
+  assert.ok(next !== null);
+  // Cut rather than spliced, this would be ["a"] — the operator asked for one
+  // block and lost two, with no undo in this app to get them back.
+  assert.deepEqual(sectionOf("l", blocks, next), ["a", "m"]);
+  assert.equal(sectionExit(["a", "m"], blocks, next), "m");
+});
+
+test("taking the entry out moves the frame onto what followed it", () => {
+  const blocks = [
+    loop("l"),
+    block("a"),
+    block("b"),
+    block("m", { kind: "merge" }),
+  ];
+  const links = [repeats("l", "a"), chain("a", "b"), chain("b", "m")];
+  const next = linksWithoutMember("l", "a", blocks, links);
+  assert.ok(next !== null);
+  assert.deepEqual(sectionOf("l", blocks, next), ["b", "m"]);
+  assert.equal(next.filter((l) => l.edge === "repeats").length, 1);
+
+  // The last one out leaves the frame empty rather than leaving a link to a
+  // block that is no longer in it.
+  const emptied = linksWithoutMember("l", "b", blocks, [repeats("l", "b")]);
+  assert.deepEqual(emptied, []);
+  // A block that was never in it is not a write at all, so the caller can leave
+  // the links exactly as they were.
+  assert.equal(
+    linksWithoutMember("l", "z", [...blocks, block("z")], links),
+    null,
+  );
+});
+
+test("the worst case counts a fan-out again on every pass", () => {
+  // The number an operator cannot do in their head, and the one a press of Run
+  // is approved against: four passes of one block reads as four runs and is
+  // twenty when that block decides.
+  assert.equal(
+    worstCaseRuns(4, [{ kind: "orchestrator", fanOut: 5 }]),
+    20,
+  );
+  assert.equal(
+    worstCaseRuns(3, [
+      { kind: "run", fanOut: null },
+      { kind: "orchestrator", fanOut: 2 },
+      // A merge member starts no run of its own, and neither does the
+      // orchestrator's own deciding turn.
+      { kind: "merge", fanOut: null },
+    ]),
+    9,
+  );
+  // Both blanks are refused at Save, and a figure that read either as zero
+  // would be approving an unbounded press of Run on the operator's behalf.
+  assert.equal(worstCaseRuns(null, [{ kind: "run", fanOut: null }]), null);
+  assert.equal(
+    worstCaseRuns(4, [{ kind: "orchestrator", fanOut: null }]),
+    null,
+  );
+  assert.equal(worstCaseRuns(0, [{ kind: "run", fanOut: null }]), null);
+});
+
+test("a link into a frame is refused at the release, naming the frame", () => {
+  const blocks = [loop("l"), block("a"), block("b"), block("z")];
+  const links = [repeats("l", "a"), chain("a", "b")];
+  const refusal = linkRefusal("z", "b", blocks, links);
+  assert.ok(refusal !== null);
+  // The frame is what the operator meant, so the sentence has to name it: the
+  // server's own refusal is about the graph and leaves them working out which
+  // of the arrow's two ends it is talking about.
+  assert.match(refusal, /\bl\b/);
+
+  // A link *out* of the frame is what runs after the loop, and a link between
+  // two members is how a section is assembled. Neither is refused here.
+  assert.equal(linkRefusal("b", "z", blocks, links), null);
+  assert.equal(linkRefusal("a", "b", blocks, links), null);
+  assert.equal(linkRefusal("l", "a", blocks, links), null);
+  assert.equal(linkRefusal("z", "l", blocks, links), null);
+});
+
+test("a frame built and a member moved are both changes a save would keep", () => {
+  // The dirty check is `draftSignature` against the snapshot the page opened
+  // with, and nothing else raises the dialog — so a gesture it cannot see is a
+  // graph that leaves the page without a word.
+  const base: CanvasDraft = {
+    blocks: [block("a"), block("m", { kind: "merge" }), block("b")],
+    links: [chain("a", "m")],
+  };
+  const body = (draft: CanvasDraft): WorkflowDraftBody => ({
+    name: "nightly",
+    graph: draftToGraph(draft),
+    instanceBudget: {
+      maxInstanceCostUSD: "",
+      maxSessionFraction: null,
+      maxWeeklyFraction: null,
+    },
+  });
+
+  const framed: CanvasDraft = {
+    blocks: [...base.blocks, loop("l")],
+    links: [...base.links, repeats("l", "a")],
+  };
+  assert.notEqual(draftSignature(body(base)), draftSignature(body(framed)));
+
+  // Putting a block in changes the links *and* `bodyNodeIds`; taking it out
+  // again has to land back on the signature it started from, or an operator who
+  // undid their own gesture by hand is prompted over a graph that is identical.
+  const withB = {
+    ...framed,
+    links: linksWithMember("l", "b", framed.blocks, framed.links)!,
+  };
+  assert.notEqual(draftSignature(body(framed)), draftSignature(body(withB)));
+  assert.ok(
+    draftToGraph(withB).nodes.some(
+      (n) => n.id === "l" && n.bodyNodeIds.includes("b"),
+    ),
+    "the cross-check the server is sent has to move with the links",
+  );
+  const withoutB = {
+    ...withB,
+    links: linksWithoutMember("l", "b", withB.blocks, withB.links)!,
+  };
+  assert.equal(
+    draftSignature(body(withoutB)),
+    draftSignature(body(framed)),
+    "putting a block in and taking it out again is not a change",
+  );
 });

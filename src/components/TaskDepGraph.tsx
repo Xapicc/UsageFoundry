@@ -9,6 +9,7 @@ import {
   edgeGeometry,
   layoutBounds,
   linkKey,
+  nodeBox,
 } from "@/lib/canvasGraph";
 import type { TaskDepGraphEdge, TaskDepGraphNode } from "@/lib/taskDepGraph";
 import { TASK_STATUS_TONE } from "@/lib/format";
@@ -101,7 +102,7 @@ export function TaskDepGraph({
             const from = positions.get(edge.from);
             const to = positions.get(edge.to);
             if (!from || !to) return null;
-            const geometry = edgeGeometry(from, to);
+            const geometry = edgeGeometry(nodeBox(from), nodeBox(to));
             const atAnchor = edge.from === anchorId || edge.to === anchorId;
             return (
               <g key={linkKey(edge)}>

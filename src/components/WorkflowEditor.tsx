@@ -30,8 +30,13 @@ import {
   draftToGraph,
   linkKey,
   linksOfGraph,
+  linksWithMember,
+  linksWithoutMember,
   resolveLayout,
+  sectionExit,
+  sectionLink,
   sectionOf,
+  worstCaseRuns,
   type BlockDraft,
   type LinkDraft,
   type Point,
@@ -632,56 +637,70 @@ export function WorkflowEditor({
   }, []);
 
   /**
-   * Point a loop's “repeats” link at a block, or take the one already pointing
-   * there away.
+   * Put a frame round the section that starts at a block.
    *
    * The whole of what this surface writes about a section, and a write to the
    * *links*: membership and order are read back out of them by `sectionOf`, so
-   * there is no list here to keep in step with the picture. At most one per
-   * loop, by replacing rather than appending — two is a refusal the server
-   * writes, and it is not one this gesture has any way to mean.
+   * there is no list here to keep in step with the picture — and nothing here
+   * writes a rectangle, which is what keeps a frame out of `WorkflowNode`.
    *
-   * It decides nothing else: whether the block may be repeated, whether the
-   * section is a chain and whether two loops are fighting over it are all
-   * `graphRefusal`'s, answered by the validate route while the graph is being
-   * drawn, and a second opinion here would be a rule to keep in step with no
-   * way to notice it had drifted.
+   * The loop is minted here rather than dragged off the palette, because a loop
+   * with nothing in it is a graph the server refuses: making one *is* framing
+   * something, so the gesture that says what it repeats is the gesture that
+   * creates it. It is named after nothing and selected on the way out, so the
+   * inspector opens on the one field it now has that matters.
+   *
+   * It decides nothing else: whether the section is one way in and one way out,
+   * whether it lands through a merge block and whether two loops are fighting
+   * over it are all `graphRefusal`'s, answered by the validate route while the
+   * graph is being drawn, and a second opinion here would be a rule to keep in
+   * step with no way to notice it had drifted.
    */
-  const repeatFrom = useCallback(
-    (loopId: string, firstId: string) => {
-      const already = links.some(
-        (l) => l.from === loopId && l.to === firstId && l.edge === "repeats",
-      );
-      setLinks((prev) => {
-        // Two links go: the loop's own “repeats” link, because it has at most
-        // one, and **any** link it already had to this block, because two links
-        // between one pair is a graph that can never save — the server refuses
-        // it by name, and until then both are drawn on top of each other with
-        // one key between them. An ordinary link from a loop to a block it
-        // repeats is refused anyway, so replacing it is the only outcome this
-        // press could have that leaves a savable graph.
-        const rest = prev.filter(
-          (l) =>
-            !(l.from === loopId && (l.edge === "repeats" || l.to === firstId)),
-        );
-        return already
-          ? rest
-          : [
-              ...rest,
-              {
-                from: loopId,
-                to: firstId,
-                edge: "repeats",
-                continueBranch: false,
-              },
-            ];
+  const repeatSection = useCallback(
+    (entryId: string) => {
+      const id = `block-${nextId.current++}`;
+      setBlocks((prev) => [...prev, emptyBlock(id, defaultMount(), "loop")]);
+      setLinks((prev) => [
+        ...prev,
+        { from: id, to: entryId, edge: "repeats", continueBranch: false },
+      ]);
+      // Where the frame lands if it turns out to hold nothing — which it cannot
+      // at this moment, since it was made round a block, but can the instant
+      // that block is deleted. Above and left of the entry, which is where the
+      // frame is drawn relative to its members anyway.
+      setDragged((prev) => {
+        const at = prev[entryId];
+        return at ? { ...prev, [id]: at } : prev;
       });
-      // The link that was just drawn, so the panel states what it means — and
-      // nothing at all when the press removed one, because a selection pointing
-      // at a link that has gone is an empty panel with a Remove button on it.
-      setSelection(already ? null : { kind: "link", from: loopId, to: firstId });
+      setSelection({ kind: "block", id });
     },
-    [links],
+    [defaultMount],
+  );
+
+  /**
+   * Put a block inside a frame, or take it out again.
+   *
+   * Both directions through one call because it is one gesture, and both are
+   * the same kind of write: a set of links that says what this loop repeats and
+   * in what order. `linksWithMember` and `linksWithoutMember` decide the shape
+   * — in particular that taking a middle block out **splices** rather than cuts,
+   * so the members after it stay in the frame.
+   */
+  const frameMember = useCallback(
+    (loopId: string, blockId: string) => {
+      setLinks((prev) => {
+        const inside = sectionOf(loopId, blocks, prev).includes(blockId);
+        const next = inside
+          ? linksWithoutMember(loopId, blockId, blocks, prev)
+          : linksWithMember(loopId, blockId, blocks, prev);
+        return next ?? prev;
+      });
+      // The block that moved, not the frame: what an operator checks next is
+      // what it now says about itself, and for a block leaving a section that
+      // is a panel that has just grown back its own guards.
+      setSelection({ kind: "block", id: blockId });
+    },
+    [blocks],
   );
 
   const connect = useCallback(
@@ -712,14 +731,7 @@ export function WorkflowEditor({
           : [
               ...prev,
               inSection
-                ? {
-                    from,
-                    to,
-                    edge: "on-success" as const,
-                    continueBranch: !prev.some(
-                      (l) => l.from === from && l.continueBranch,
-                    ),
-                  }
+                ? sectionLink(from, to, prev)
                 : { from, to, edge: "" as const, continueBranch: false },
             ],
       );
@@ -1016,7 +1028,8 @@ export function WorkflowEditor({
             onConnect={connect}
             onRemoveLink={removeLink}
             onRemoveBlock={removeBlock}
-            onRepeat={repeatFrom}
+            onRepeat={repeatSection}
+            onFrameMember={frameMember}
           />
 
           {/* The server's own sentence, asked while the graph is being drawn.
@@ -1099,9 +1112,6 @@ export function WorkflowEditor({
                 link={selectedLink}
                 fromName={nameOf(selectedLink.from)}
                 toName={nameOf(selectedLink.to)}
-                fromIsLoop={
-                  blocks.find((b) => b.id === selectedLink.from)?.kind === "loop"
-                }
                 insideSection={sections.get(selectedLink.from)}
                 onChange={(patch) =>
                   updateLink(selectedLink.from, selectedLink.to, patch)
@@ -1275,6 +1285,7 @@ function blockLabel(block: BlockDraft): string {
 function BlockStatement({
   block,
   body,
+  links,
   guards,
   where,
   asAgent,
@@ -1288,6 +1299,8 @@ function BlockStatement({
    * rather than the order somebody happened to mark them in.
    */
   body: readonly BlockDraft[];
+  /** The graph's links, which are what say where a pass lands its work. */
+  links: readonly LinkDraft[];
   guards: ReactNode;
   where: ReactNode;
   /**
@@ -1415,67 +1428,96 @@ function BlockStatement({
         between them
       </>
     ) : null;
-    // Where the loop's own DONE comes from. With a section it is the *last*
-    // member's, because that is the run `planLoopPass` reads `reportedDone` off
-    // — and naming the wrong block is how somebody asks the wrong agent for it.
-    const reporter =
-      body.length === 0 ? (
-        "the agent"
-      ) : (
-        <strong className="font-semibold text-ink">
-          {blockLabel(body[body.length - 1])}
-        </strong>
-      );
-
-    if (body.length > 0) {
-      // Not "Repeats in {where} … under {guards}": with a section, the loop's
-      // own workspace, template, task and agent are read by nothing. Every run
-      // a pass creates is the member's own, so the sentence names the members
-      // and says the guards are theirs rather than claiming a set the members
-      // do not use.
-      const worst =
-        Number.isInteger(passes) && passes > 0 ? passes * body.length : null;
+    // A frame with nothing in it. Refused at Save by name, and stated rather
+    // than left blank: this is the ordinary state of a frame whose last member
+    // was just deleted, and a statement that said nothing would be a panel that
+    // looks finished over a graph that cannot run.
+    if (body.length === 0) {
       return (
         <p className="mb-3.5 text-sm leading-normal text-ink-muted">
           Repeats{" "}
-          <strong className="font-semibold text-ink">
-            {body.length} block{body.length === 1 ? "" : "s"}
-          </strong>{" "}
-          each pass, in this order:{" "}
-          {body.map((member, index) => (
-            <span key={member.id}>
-              {index > 0 && ", then "}
-              <strong className="font-semibold text-ink">
-                {blockLabel(member)}
-              </strong>
-            </span>
-          ))}
-          . Each is a whole run in its own workspace, under its own guards, with
-          no approval. At most {passCap}, so{" "}
-          {worst === null ? (
-            <strong className="font-semibold text-danger">
-              an unstated number of runs
-            </strong>
-          ) : (
-            <strong className="font-semibold text-warn">
-              up to {worst} run{worst === 1 ? "" : "s"}
-            </strong>
-          )}
-          . It stops when {reporter} reports the work complete, when a pass does
-          not complete, after the pass cap{spentBetween}
+          <strong className="font-semibold text-danger">nothing yet</strong> —
+          put a block inside the frame, and everything linked after it is in the
+          pass too. At most {passCap}
+          {spentBetween}
           {board}.
         </p>
       );
     }
 
+    // **The worst case in runs, with an orchestrator member's fan-out spent
+    // again on every pass.** A member count times a pass cap is the number an
+    // operator would reach for and it is wrong by the fan-out: a section of one
+    // orchestrator at 5 over 4 passes is twenty runs nobody approves one by
+    // one. `worstCaseRuns` is where that arithmetic lives, and it answers null
+    // rather than guessing where a figure is not stated.
+    const worst = worstCaseRuns(
+      Number.isInteger(passes) && passes > 0 ? passes : null,
+      body.map((member) => ({
+        kind: member.kind,
+        fanOut:
+          member.fanOut.trim() === "" ? null : Number(member.fanOut),
+      })),
+    );
+    const fansOut = body.some((member) => member.kind === "orchestrator");
+    // The merge block the section lands through, which is what makes a pass
+    // visible to the next one. Null where the section does not end at exactly
+    // one — a graph the server refuses — and named rather than assumed, because
+    // "each pass lands its own work" is a promise about the operator's own
+    // checkout and may not be made on a graph that has nowhere to land it.
+    const exitId = sectionExit(
+      body.map((member) => member.id),
+      body,
+      links,
+    );
+    const exit = body.find((member) => member.id === exitId);
+
     return (
       <p className="mb-3.5 text-sm leading-normal text-ink-muted">
-        Repeats in {where}, each pass a whole run under {guards}
-        {asAgent ? <>, as {asAgent}</> : null}. It stops when {reporter} reports
-        the work complete, when a pass does not complete,{" "}
-        {capped ? "after " : "or after "}
-        {passCap}
-        {spentBetween}
+        Repeats{" "}
+        <strong className="font-semibold text-ink">
+          {body.length} block{body.length === 1 ? "" : "s"}
+        </strong>{" "}
+        each pass, in this order:{" "}
+        {body.map((member, index) => (
+          <span key={member.id}>
+            {index > 0 && ", then "}
+            <strong className="font-semibold text-ink">
+              {blockLabel(member)}
+            </strong>
+          </span>
+        ))}
+        . Each is a whole run in its own workspace, under its own guards, with no
+        approval. At most {passCap}, so{" "}
+        {worst === null ? (
+          <strong className="font-semibold text-danger">
+            an unstated number of runs
+          </strong>
+        ) : (
+          <strong className="font-semibold text-warn">
+            up to {worst} run{worst === 1 ? "" : "s"}
+          </strong>
+        )}
+        {fansOut
+          ? " — a deciding member's fan-out is spent again on every pass"
+          : ""}
+        .{" "}
+        {exit ? (
+          <>
+            Every pass lands its own work through{" "}
+            <strong className="font-semibold text-ink">
+              {blockLabel(exit)}
+            </strong>
+            , and the next pass starts from what landed.
+          </>
+        ) : (
+          <span className="text-danger">
+            No merge block ends the section, so a pass has nowhere to land its
+            work and the next one could not see it.
+          </span>
+        )}{" "}
+        It stops when every run of a pass reports the work complete, when a pass
+        does not complete or does not land, after the pass cap{spentBetween}
         {board}.
       </p>
     );
@@ -1633,11 +1675,10 @@ function BlockPanel({
   const missingAgent = block.agentId !== "" && agentsLoaded && agent === null;
   const orchestrator = block.kind === "orchestrator";
   // A loop block is a **region**: a frame round the blocks it repeats. It holds
-  // the two caps and the board condition, and nothing that describes a run —
-  // `draftToGraph` sends none of those fields for a loop, and `normalizeNode`
-  // refuses each of them by name, so the controls below that still offer them
-  // are inert. Removing those controls is the canvas run's; leaving them
-  // costs a graph nothing, because what they set is dropped before the wire.
+  // the two caps, the board condition and a statement of what is inside it, and
+  // **nothing that describes a run** — `draftToGraph` sends none of those fields
+  // for a loop and `normalizeNode` refuses each of them by name, so a control
+  // for one is a field an operator can fill in and then be refused for.
   const loop = block.kind === "loop";
   // A merge block holds none of the fields below the kind picker: no guards,
   // because it starts no agent; no workspace or folder, because it works in
@@ -1647,8 +1688,8 @@ function BlockPanel({
 
   // The section in the order a pass will create it, which is the order the
   // statement reads out and the rows below number. Empty on every kind but a
-  // loop, and on a loop with no “repeats” link yet — which is a graph the
-  // server refuses, so what this surface draws for it is a loop mid-assembly
+  // loop, and on a loop whose frame has nothing in it — which is a graph the
+  // server refuses, so what this surface draws for it is a frame mid-assembly
   // rather than a loop that repeats itself. That mode is gone.
   const body = sectionOf(block.id, blocks, links)
     .map((id) => blocks.find((b) => b.id === id))
@@ -1705,6 +1746,7 @@ function BlockPanel({
       <BlockStatement
         block={block}
         body={body}
+        links={links}
         guards={guards}
         where={where}
         asAgent={asAgent}
@@ -1722,23 +1764,42 @@ function BlockPanel({
           </div>
         </ListRow>
 
-        <ListRow label="Block" htmlFor={`${block.id}-kind`}>
-          <div className={ROW_CONTROL}>
-            <Select
-              id={`${block.id}-kind`}
-              value={block.kind}
-              onChange={(e) =>
-                onChange({ kind: e.target.value as WorkflowNodeKind })
-              }
-            >
-              {(Object.keys(KIND_LABEL) as WorkflowNodeKind[]).map((kind) => (
-                <option key={kind} value={kind}>
-                  {KIND_LABEL[kind]}
-                </option>
-              ))}
-            </Select>
-          </div>
-        </ListRow>
+        {/* A loop's kind is stated, not picked. It is not in the picker below
+            either, and both are the same rule: a loop is *made* by framing
+            blocks and unmade by deleting the frame, so a picker offering the
+            kind would be a second way to create one — and one that creates the
+            shape the server refuses, a frame with nothing inside it. Switching
+            an existing loop away would be worse still: containment is not drawn
+            as an arrow any more, so the orphaned “repeats” link it left behind
+            would be a refusal at Save with nothing on the canvas to explain it. */}
+        {loop ? (
+          <ListRow
+            label="Block"
+            description="Made by framing blocks; Delete on the frame unmakes it"
+          >
+            <span className="text-sm text-ink">{KIND_LABEL.loop}</span>
+          </ListRow>
+        ) : (
+          <ListRow label="Block" htmlFor={`${block.id}-kind`}>
+            <div className={ROW_CONTROL}>
+              <Select
+                id={`${block.id}-kind`}
+                value={block.kind}
+                onChange={(e) =>
+                  onChange({ kind: e.target.value as WorkflowNodeKind })
+                }
+              >
+                {(Object.keys(KIND_LABEL) as WorkflowNodeKind[])
+                  .filter((kind) => kind !== "loop")
+                  .map((kind) => (
+                    <option key={kind} value={kind}>
+                      {KIND_LABEL[kind]}
+                    </option>
+                  ))}
+              </Select>
+            </div>
+          </ListRow>
+        )}
       </ListGroup>
 
       {/* Three named groups from here down, in a fixed order: what the block
@@ -1777,8 +1838,8 @@ function BlockPanel({
 
       {loop && (
         /* Read-only, and that is the change this group exists to record: what a
-           loop repeats is said once, on the canvas, by the “repeats” link and
-           the links after it. A control here would be a second way to set one
+           loop repeats is said once, on the canvas, by the frame round the
+           blocks it holds. A control here would be a second way to set one
            fact — which is what this group was, beside an order it could not
            set and did not show. */
         <ListGroup
@@ -1786,14 +1847,14 @@ function BlockPanel({
           label="What it repeats"
           footnote={
             body.length === 0
-              ? "Draw a “repeats” link from this block to the one each pass starts at"
-              : "Link the section along with ordinary links; what comes after the loop is linked from this block"
+              ? "Put a block inside the frame on the canvas; everything linked after it is in the pass too"
+              : "Put blocks in and take them out on the frame; a link drawn from it is what runs after the whole loop"
           }
         >
           {body.length === 0 ? (
-            <ListRow label="Its own task">
-              <span className="text-sm text-ink-faint">
-                Every pass is one run of this block
+            <ListRow label="Nothing yet">
+              <span className="text-sm text-danger">
+                A loop with nothing inside it cannot be saved
               </span>
             </ListRow>
           ) : (
@@ -1801,15 +1862,26 @@ function BlockPanel({
               <ListRow
                 key={member.id}
                 label={blockLabel(member)}
-                description={`${KIND_LABEL[member.kind]} · ${index === 0 ? "each pass starts here" : "once per pass"}`}
+                description={`${KIND_LABEL[member.kind]} · ${
+                  index === 0 ? "each pass starts here" : "once per pass"
+                }`}
               >
-                {/* Which members end the loop, not which one. DONE is every run
-                    member of a pass reporting it, so naming the last of them as
-                    the one that counts would be telling the operator to read an
-                    exit condition that is not the one the loop uses — and with
-                    a section that forks there is no last one to name. */}
+                {/* What each member is *for* in the pass, and only where there
+                    is something to say. The exit is the one worth a word: it is
+                    what makes a pass's work visible to the next one, and the
+                    two ends are the questions the drawn frame cannot answer.
+                    Not "its DONE counts" on the runs — DONE is every run member
+                    of a pass reporting it, so marking one of them would name an
+                    exit condition the loop does not use. */}
                 <span className="text-sm text-ink-faint">
-                  {member.kind === "run" ? "its DONE counts" : ""}
+                  {member.id ===
+                  sectionExit(
+                    body.map((other) => other.id),
+                    body,
+                    links,
+                  )
+                    ? "lands the pass"
+                    : ""}
                 </span>
               </ListRow>
             ))
@@ -2105,7 +2177,13 @@ function BlockPanel({
         </ListGroup>
       )}
 
-      {!merge && (
+      {/* Neither a merge block nor a loop, and for the same reason read one
+          level apart: neither starts a child of its own. A merge block's fields
+          are coerced away on the server; a loop's are refused **by name** — it
+          frames the blocks it repeats and each of those names its own — so a
+          control here would be a field an operator can fill in and then be
+          refused for at Save, over a value nothing was ever going to read. */}
+      {!merge && !loop && (
         <>
           {/* The task is the rest of "what it does", so it sits with the caps
               that bound it rather than at the foot of the panel — a run block,
@@ -2122,31 +2200,11 @@ function BlockPanel({
               the whole of this one. It is the bare label rather than an empty
               `ListGroup`, which would draw a rounded box with a hairline round
               nothing above the two fields. */}
-          {/* A loop's two groups above are named for its section and its caps,
-              so unlike an orchestrator it still owes the task below a heading
-              of its own. */}
           {!orchestrator && <GroupLabel>What it does</GroupLabel>}
 
           <Field
-            label={
-              orchestrator ? "What to decide" : loop ? "Task to repeat" : "Task"
-            }
+            label={orchestrator ? "What to decide" : "Task"}
             htmlFor={`${block.id}-task`}
-            // How the loop *ends*, and it belongs on the field that decides it:
-            // `reported_done` is set by the agent printing DONE on a line of its
-            // own, so a task that never asks for it can only stop on a cap.
-            //
-            // A loop repeating a *section* reads none of this: every run of a
-            // pass is a member's own, so the field is still here — the section
-            // can be cleared again — and the hint says what it is worth now
-            // rather than a sentence about passes that is no longer true.
-            hint={
-              loop && body.length > 0
-                ? "Not read while this block repeats a section — each block in it has its own task"
-                : loop
-                  ? "Every pass gets this same text — ask for DONE when the work is complete, which is what ends the loop"
-                  : undefined
-            }
           >
             <Textarea
               id={`${block.id}-task`}
@@ -2164,9 +2222,7 @@ function BlockPanel({
             label={
               orchestrator
                 ? "Standing instructions for the runs it starts"
-                : loop
-                  ? "Standing instructions for every pass"
-                  : "Standing instructions"
+                : "Standing instructions"
             }
             htmlFor={`${block.id}-prompt`}
             hint="Replaces the template's own prompt"
@@ -2386,11 +2442,18 @@ function BlockPanel({
   );
 }
 
+/**
+ * What one drawn link says, and the controls that change it.
+ *
+ * It never answers for a “repeats” link, and cannot be reached by one: that
+ * relation is the frame on the canvas now, drawn as no arrow and offered by no
+ * picker, so there is nothing to select and nothing to convert. What used to be
+ * a panel explaining that nothing waits for this arrow is the frame itself.
+ */
 function LinkPanel({
   link,
   fromName,
   toName,
-  fromIsLoop,
   insideSection,
   onChange,
   onRemove,
@@ -2398,31 +2461,12 @@ function LinkPanel({
   link: LinkDraft;
   fromName: string;
   toName: string;
-  /** Whether a “repeats” link may leave this source at all. */
-  fromIsLoop: boolean;
   /** The loop that repeats both ends of this link, or undefined. */
   insideSection: string | undefined;
   onChange: (patch: Partial<LinkDraft>) => void;
   onRemove: () => void;
 }) {
   const id = linkKey(link).replace(/[^A-Za-z0-9_-]/g, "-");
-
-  if (link.edge === "repeats") {
-    return (
-      <>
-        <p className="mb-3.5 text-sm leading-normal text-ink-muted">
-          <strong className="font-semibold text-ink">{fromName}</strong> repeats{" "}
-          <strong className="font-semibold text-ink">{toName}</strong> and
-          everything linked after it, once per pass.{" "}
-          <span className="text-warn">
-            Nothing waits for this link — it says what is inside the loop, not
-            what starts after it.
-          </span>
-        </p>
-        <RemoveLinkRow onRemove={onRemove} />
-      </>
-    );
-  }
 
   // Inside a section the condition is not a choice, and this panel states it
   // rather than offering a control something downstream overrules: a pass has
@@ -2500,10 +2544,10 @@ function LinkPanel({
               {/* Declaration order, which puts the unanswered state first —
                   the same walk the kind picker above takes over `KIND_LABEL`. */}
               {(Object.keys(EDGE_OPTION_LABEL) as Array<LinkDraft["edge"]>)
-                // Containment is offered only where it means something: every
-                // other kind of block starts one run and has no passes to
-                // repeat anything in, and the server refuses it by name.
-                .filter((edge) => edge !== "repeats" || fromIsLoop)
+                // Containment is never offered: it is the frame on the canvas,
+                // drawn as no arrow, so a link converted to it here would be a
+                // link that vanished with no way to get it back.
+                .filter((edge) => edge !== "repeats")
                 .map((edge) => (
                   <option key={edge} value={edge}>
                     {EDGE_OPTION_LABEL[edge]}
