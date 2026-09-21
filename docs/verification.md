@@ -812,6 +812,21 @@ is `docs/agent/testing.md`; interface defects and their classes are
   refusals as `normalizeWorkflowInput`'s sentence and a valid graph as
   `{"ok":true}`; all four workflow pages answered 200.
 
+- **A loop's board stop condition, 2026-09-21** (production standalone build,
+  scratch `DATA_DIR`, Chromium 1280×1600): `/api/workflows/validate` returned
+  `{"ok":true}` for `["open"]`/0 and refused `["done"]` and `atMost: -1` as
+  `normalizeWorkflowInput`'s own sentences. A graph saved with
+  `["open","claimed"]`/2 read back through `GET /api/workflows/[id]` byte for
+  byte and re-populated all four controls in the editor. The block's sentence
+  on both the editor panel and the instance page named the project, the states
+  and the number. `npm run smoke-pages` was 92/92 with no console error.
+  **Not measured by hand:** a loop actually declining to start its first pass
+  against a clear board — the decision is covered by `planLoopPass`'s unit
+  tests and the count by `loopBoardCount.test.ts`, but nothing here drove a
+  real instance through `runInstanceStep`. `npm run dev`, save a one-loop
+  graph pointed at an empty project, press Run, and read the block's status
+  and reason without a run appearing.
+
 - **A workflow's history pages, 2026-09-07**, `next start`, 45 seeded
   instances: 20 by default, `?offset=999` clamps to the oldest row and
   `?limit=5000` to 100; the page drew `1–20 of 45`, Next drew `21–40 of 45`.
