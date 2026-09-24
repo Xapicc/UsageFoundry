@@ -38,6 +38,50 @@ describe("the model catalogue", () => {
     }
   });
 
+  it("gives every priced model a declared label, not its own id", () => {
+    // The other half of the agreement one case up, and the half that was
+    // implied rather than asserted. `seedCatalogue` falls back to
+    // `MODEL_LABELS[id] ?? id`, so a model added to `PRICES` and forgotten in
+    // `MODEL_LABELS` seeds *fine* — one entry, enabled or not as the seed says,
+    // wearing `claude-opus-5-5` where the picker beside it says "Claude Opus 5".
+    // A label check that only asks for a non-blank string passes that, which
+    // made the docblock's claim that this file is the loud channel for a
+    // half-added model not quite true.
+    for (const entry of SEEDED_MODEL_CATALOGUE) {
+      if (entry.id.endsWith("[1m]")) continue; // derived: `${label} (1M context)`
+      assert.notEqual(
+        entry.label,
+        entry.id,
+        `${entry.id} is priced but has no entry in MODEL_LABELS`,
+      );
+    }
+  });
+
+  it("carries Claude Opus 5.5, its 1M variant, and both enabled on seed", () => {
+    // Pinned by name because the three tables it has to appear in are in two
+    // files and nothing joins them: `PRICES` decides what it costs,
+    // `MODEL_LABELS` what it is called, `ONE_MEGA_VARIANTS` whether the 1M
+    // deployment the pinned CLI names can be picked at all. Missing from the
+    // last one is the quiet one — no error anywhere, just an option that is not
+    // on the list, and an operator who types the id by hand gets a refusal from
+    // a validator that is working exactly as written.
+    const byId = new Map(SEEDED_MODEL_CATALOGUE.map((e) => [e.id, e]));
+    assert.deepEqual(byId.get("claude-opus-5-5"), {
+      id: "claude-opus-5-5",
+      label: "Claude Opus 5.5",
+      enabled: true,
+    });
+    assert.deepEqual(byId.get("claude-opus-5-5[1m]"), {
+      id: "claude-opus-5-5[1m]",
+      label: "Claude Opus 5.5 (1M context)",
+      enabled: true,
+    });
+    // An addition and not a replacement: Opus 5 is listed legacy and still
+    // served, so a transcript naming it still prices and a run may still start
+    // on it.
+    assert.equal(byId.get("claude-opus-5")?.enabled, true);
+  });
+
   it("gives every [1m] variant a base the price table can resolve", () => {
     // The suffix is the CLI's and the base is the price table's, so a variant
     // whose base has been renamed prices at `UNKNOWN_MODEL_PRICE` — $10/$50 on

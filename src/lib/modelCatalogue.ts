@@ -67,6 +67,7 @@ const MODEL_LABELS: Record<string, string> = {
   "claude-mythos-5": "Claude Mythos 5",
   "claude-mythos-preview": "Claude Mythos Preview",
 
+  "claude-opus-5-5": "Claude Opus 5.5",
   "claude-opus-5": "Claude Opus 5",
   "claude-opus-4-8": "Claude Opus 4.8",
   "claude-opus-4-7": "Claude Opus 4.7",
@@ -91,18 +92,25 @@ const MODEL_LABELS: Record<string, string> = {
 /**
  * The `[1m]` ids, and the price-table key each sits under.
  *
- * MEASURED rather than reasoned: these are exactly the eight `[1m]` strings the
- * pinned CLI carries (`claude --version` 2.1.260), read out of the binary. The
- * suffix is a request for the 1M-context deployment of that model, so the list
- * is the CLI's to grow and not this build's to guess — `claude-fable-5-1[1m]`
- * looks like it should exist and the pinned CLI does not name it, which is
- * precisely why nothing here derives a variant from a base.
+ * MEASURED rather than reasoned: these are exactly the nine `claude-…[1m]`
+ * strings the pinned CLI carries (2.1.280, the `CLAUDE_CLI_VERSION` in
+ * `Dockerfile`), read out of `@anthropic-ai/claude-code-linux-arm64`'s binary.
+ * The suffix is a request for the 1M-context deployment of that model, so the
+ * list is the CLI's to grow and not this build's to guess —
+ * `claude-fable-5-1[1m]` looks like it should exist and the pinned CLI does not
+ * name it, which is precisely why nothing here derives a variant from a base.
+ *
+ * Re-measuring it is one grep, and the count to expect is nine rather than what
+ * that grep prints: the binary also carries the CLI's short aliases
+ * (`opus[1m]`, `sonnet-4-6[1m]`, `opusplan[1m]` and four more), which are not
+ * model ids and are not this list's business.
  *
  * `base` is a price-table key rather than a label, so a variant cannot end up
  * named after a model the price table has never heard of.
  */
 const ONE_MEGA_VARIANTS: { id: string; base: string }[] = [
   { id: "claude-fable-5[1m]", base: "claude-fable-5" },
+  { id: "claude-opus-5-5[1m]", base: "claude-opus-5-5" },
   { id: "claude-opus-5[1m]", base: "claude-opus-5" },
   { id: "claude-opus-4-8[1m]", base: "claude-opus-4-8" },
   { id: "claude-opus-4-7[1m]", base: "claude-opus-4-7" },
@@ -130,6 +138,8 @@ const ENABLED_ON_SEED: ReadonlySet<string> = new Set([
   "claude-fable-5-1",
   "claude-fable-5",
   "claude-fable-5[1m]",
+  "claude-opus-5-5",
+  "claude-opus-5-5[1m]",
   "claude-opus-5",
   "claude-opus-5[1m]",
   "claude-opus-4-8",

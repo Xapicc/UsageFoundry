@@ -1629,22 +1629,6 @@ describe("netReceipt", () => {
     assert.equal(netReceipt(base, 30).priced, true);
   });
 
-  it("prices at the receipt's own date, not at today's list", () => {
-    // Sonnet 5 carried an introductory rate that expires, so the same prune is
-    // worth different amounts depending on which day it is priced on. A read-time
-    // lookup would reprice last month's history every time the page loaded.
-    // Both instants are fixed, so this says the same thing whenever it is run —
-    // a `Date.now()` here would have started passing or failing on its own the
-    // day the introductory rate expired.
-    const sonnet = { ...base, model: "claude-sonnet-5" };
-    const intro = netReceipt({ ...sonnet, ts: Date.parse("2026-08-01T00:00:00Z") }, 30);
-    const list = netReceipt({ ...sonnet, ts: Date.parse("2026-10-01T00:00:00Z") }, 30);
-    assert.ok(intro.priced && list.priced);
-    assert.ok(
-      intro.cacheSavedUSD < list.cacheSavedUSD,
-      "a prune during the introductory rate saved less money for the same tokens",
-    );
-  });
 });
 
 describe("sumPruneSavings", () => {

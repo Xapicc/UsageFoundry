@@ -70,7 +70,13 @@ const PRICES: Record<string, ModelPrice> = {
   "claude-mythos-5": { input: 10, output: 50 },
   "claude-mythos-preview": { input: 10, output: 50 },
 
-  // Opus tier
+  // Opus tier. `claude-opus-5-5` is listed ahead of the `claude-opus-5` it would
+  // otherwise prefix-match, the 5.1 pair's shape for the 5.1 pair's reason: it
+  // halves the cache read rate to 0.05x ($0.20/MTok against a $4 input). Unlike
+  // that pair it is also cheaper on both visible columns, so a missing entry
+  // here would show as *some* overcharge — but 2x of it would land on the cache
+  // read, which is the line item nobody can check and ~98% of this workload.
+  "claude-opus-5-5": { input: 4, output: 20, cacheReadMultiplier: 0.05 },
   "claude-opus-5": { input: 5, output: 25 },
   "claude-opus-4-8": { input: 5, output: 25 },
   "claude-opus-4-7": { input: 5, output: 25 },
@@ -80,8 +86,13 @@ const PRICES: Record<string, ModelPrice> = {
   "claude-opus-4-0": { input: 15, output: 75 },
   "claude-3-opus": { input: 15, output: 75 },
 
-  // Sonnet tier (claude-sonnet-5 has promotional pricing — see resolvePrice)
-  "claude-sonnet-5": { input: 3, output: 15 },
+  // Sonnet tier. $2/$10 is Claude Sonnet 5's *standard* rate, not a promotion
+  // this table is waiting out: it shipped as introductory pricing with a rise to
+  // $3/$15 scheduled for 2026-09-01, and Anthropic cancelled that rise and made
+  // the introductory number the list price. The dated ramp that used to live
+  // here is deleted rather than expired — restoring it from memory would
+  // overstate every Sonnet 5 run by 50% on a figure the budget guard acts on.
+  "claude-sonnet-5": { input: 2, output: 10 },
   "claude-sonnet-4-6": { input: 3, output: 15 },
   "claude-sonnet-4-5": { input: 3, output: 15 },
   "claude-sonnet-4-0": { input: 3, output: 15 },
@@ -94,15 +105,26 @@ const PRICES: Record<string, ModelPrice> = {
   "claude-3-haiku": { input: 0.25, output: 1.25 },
 };
 
-/** Fast mode runs the same model at premium rates. */
+/**
+ * Fast mode runs the same model at premium rates.
+ *
+ * Keyed on the price-table key `resolvePrice` already matched, and an entry here
+ * *replaces* the `PRICES` one rather than overlaying it — so it inherits no
+ * `cacheReadMultiplier` either.
+ *
+ * That is worth knowing for the Opus 5.5 row. Its base entry departs to 0.05x
+ * and this one does not, so a fast-mode cache read prices at 0.10x of $8 rather
+ * than the 2x-of-base every other column here scales by. **The fast-mode cache
+ * read rate was not measured**: only the $8/$40 input/output pair was published
+ * where this was read from, so the row carries the two numbers that were and
+ * leaves the third at the default. The default is the dearer of the two
+ * plausible answers, which is the direction a guard may safely be wrong in.
+ */
 const FAST_MODE_PRICES: Record<string, ModelPrice> = {
+  "claude-opus-5-5": { input: 8, output: 40 },
   "claude-opus-5": { input: 10, output: 50 },
   "claude-opus-4-8": { input: 10, output: 50 },
 };
-
-/** Claude Sonnet 5 introductory pricing runs through 2026-08-31 inclusive. */
-const SONNET_5_INTRO_PRICE: ModelPrice = { input: 2, output: 10 };
-const SONNET_5_INTRO_ENDS = Date.parse("2026-09-01T00:00:00Z");
 
 /**
  * Rate charged to a model this table cannot place — for the budget guard only.
@@ -167,6 +189,16 @@ function canonicalModelId(model: string): string {
  * Returns null for unknown models rather than guessing — an unpriced model
  * should surface as "unknown" in the UI, not silently contribute $0 and make
  * a budget look safer than it is.
+ *
+ * **`at` reads no entry today.** The only rate that ever varied with it was
+ * Claude Sonnet 5's introductory $2/$10, and Anthropic cancelled the rise to
+ * $3/$15 rather than letting it land, so the ramp is gone and every entry is
+ * flat in time. It stays on the signature because the callers that pass one are
+ * repricing turns that already ran, and "what did this cost" is a question about
+ * the day it happened rather than about today — `metering.md` writes that down
+ * as the shape a future dated rate takes, and `windows.ts`'s per-day memo key
+ * assumes it (a rate turning over anywhere but a UTC midnight would make that
+ * memo wrong for the turns either side). A new dated rate branches here.
  */
 export function resolvePrice(
   model: string | undefined,
@@ -180,10 +212,6 @@ export function resolvePrice(
 
   if (opts.speed === "fast" && FAST_MODE_PRICES[key]) {
     return FAST_MODE_PRICES[key];
-  }
-  if (key === "claude-sonnet-5") {
-    const at = opts.at ?? Date.now();
-    if (at < SONNET_5_INTRO_ENDS) return SONNET_5_INTRO_PRICE;
   }
   return PRICES[key];
 }

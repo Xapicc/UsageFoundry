@@ -333,7 +333,7 @@ Four more files and 91 cases across thirteen of them landed with the audit pass 
 
 `transcriptWalk.test.ts` is the directory walk, and it is `transcriptScan.test.ts`'s grounds applied to an ordering. The walk feeds a dedupe that keeps the record with the most output and a `sort` that is stable, so **file order decides which copy of a turn survives and where two turns sharing a millisecond land** — and the obvious reading of "run each level concurrently" emits every root-level transcript before any nested one, which is a different list inside the same order-insensitive-looking wrapper with every dollar figure still plausible. So the walk is compared against a depth-first reference rather than a written-down list. Its second half is the fan-out, asserted in both directions because a limit is not the same thing as reading one directory at a time and serialising would satisfy the bound while being the thing the change exists to remove; `fsPromises.readdir` is replaced module-wide to count the overlap and to refuse one directory, which is that file's device for counting descriptors.
 
-The nine files that gained cases gained them for what the changes could break quietly. `budget.test.ts` pins that an unreadable window no longer disables the guards below it and that the documented order still decides which refusal is *named*. `windows.test.ts` pins a model-scoped wall standing on its own with `planFraction` still null, that a projection past its own window's reset is dropped rather than clamped and that a trailing 7-day window keeps its projection for want of a reset to drop it at, that the counterfactual's buckets still add up to the window and that each turn is priced at the rate in force on the day it ran, that `byTool` is empty for a caller that supplies none, and that the session carries the provider's reading forward on **its own** post-fetch spend rather than the week's — the two windows are anchored independently, so a block open across a weekly rollover holds turns newer than the fetch and older than the week, and summing the residue from the week slice while the total comes from the block leaves `atFetch` describing neither window; both fixtures are a meter reading 50% over a guard that is wrong in whichever direction those turns fall. `installSpend.test.ts` pins the two bounding columns — a parked run ageing out without waiting to finish, and one that parked yesterday and is spending now counted whole — and a chat turn counted inside the window rather than the thread's whole life. `fleet.test.ts` pins that the sheet's budget keeps a ceiling it never asked about and that the terminus pair is refused at this door. `orchestrator.test.ts` pins `startsFresh`'s threshold and its three refusals, and that the price list and the read guard ride the same flags on a *resumed* cycle while an absent price list leaves the prompt byte-identical. `land.test.ts` pins `selectProbeTargets`, which is the cap made exact before the first probe is dispatched. `retention.test.ts` gains `treeSize`, and it earns the not-pure exception on `settleOnExit`'s terms: what can go wrong is a property of the concurrency alone, a batch the walk forgets to wait for being a total that is silently short. `http.test.ts` pins the compress-or-not decision, whose two directions are large answers and bytes a client will not decode, and that a route which moved off `jsonNoStore` still writes its cache directive at the call site. `knowledgeGraph.test.ts` moves onto links carried as positions. And `src/app/api/settings/route.test.ts` gains three probe rows rather than cases, the typed table making a new `Settings` key a compile error there until it is probed — one of them asserting a *clamp*, since a read cap at or past what the CLI itself refuses is a switch that reads as on and does nothing.
+The nine files that gained cases gained them for what the changes could break quietly. `budget.test.ts` pins that an unreadable window no longer disables the guards below it and that the documented order still decides which refusal is *named*. `windows.test.ts` pins a model-scoped wall standing on its own with `planFraction` still null, that a projection past its own window's reset is dropped rather than clamped and that a trailing 7-day window keeps its projection for want of a reset to drop it at, that the counterfactual's buckets still add up to the window, that `byTool` is empty for a caller that supplies none, and that the session carries the provider's reading forward on **its own** post-fetch spend rather than the week's — the two windows are anchored independently, so a block open across a weekly rollover holds turns newer than the fetch and older than the week, and summing the residue from the week slice while the total comes from the block leaves `atFetch` describing neither window; both fixtures are a meter reading 50% over a guard that is wrong in whichever direction those turns fall. `installSpend.test.ts` pins the two bounding columns — a parked run ageing out without waiting to finish, and one that parked yesterday and is spending now counted whole — and a chat turn counted inside the window rather than the thread's whole life. `fleet.test.ts` pins that the sheet's budget keeps a ceiling it never asked about and that the terminus pair is refused at this door. `orchestrator.test.ts` pins `startsFresh`'s threshold and its three refusals, and that the price list and the read guard ride the same flags on a *resumed* cycle while an absent price list leaves the prompt byte-identical. `land.test.ts` pins `selectProbeTargets`, which is the cap made exact before the first probe is dispatched. `retention.test.ts` gains `treeSize`, and it earns the not-pure exception on `settleOnExit`'s terms: what can go wrong is a property of the concurrency alone, a batch the walk forgets to wait for being a total that is silently short. `http.test.ts` pins the compress-or-not decision, whose two directions are large answers and bytes a client will not decode, and that a route which moved off `jsonNoStore` still writes its cache directive at the call site. `knowledgeGraph.test.ts` moves onto links carried as positions. And `src/app/api/settings/route.test.ts` gains three probe rows rather than cases, the typed table making a new `Settings` key a compile error there until it is probed — one of them asserting a *clamp*, since a read cap at or past what the CLI itself refuses is a switch that reads as on and does nothing.
 
 `logLifecycle` in `orchestrator.test.ts` earns the not-pure exception on `settleOnExit`'s terms: what it decides is a *line* on container stdout, and both halves of that line fail silently. The level is a **routing** decision — the field a shipper filters on to decide whether a person is woken — so one `info` for all nine statuses made the ending whose entire content is *a person should look at this* arrive indistinguishable from an ordinary completion, and the only evidence of getting it wrong is an alert that never fires, which reads exactly like a fleet with nothing wrong. All nine statuses are therefore one case in both directions, `stopped` pinned at `info` beside the three at `warn`, since an operator's own cancel arrives as that one and a guard trip already has `run.guard_tripped`. The field set is the other half and fails the other way: the function **projects** rather than serialising, because a `status` payload at creation carries the folder and an `iteration` payload carries the whole prompt, so two cases assert a line's exact key set rather than the presence of a field — which is the only mechanical guard there is on a spread being added later, and the leak it would be is onto a stream with a different audience and a different lifetime from `run_events`. The 429 ladder's two booleans are pinned in all three of their readings, because `retrying: false` is a refusal that will park and an *absent* `retrying` is a spawn failure that was never a refusal at all, and collapsing the second into the first files every dead container as a rate limit the ladder had given up on. It is exported for that test and for nothing else, `tickSchedules`' precedent.
 
@@ -435,13 +435,66 @@ longest-prefix-first never reaches it. The case also runs `claude-fable-5[1m]`
 through the 5.1-versus-5 trap above, where the wrong answer is again 4× on the
 invisible column.
 
+**Claude Opus 5.5 added four more, and it is the 5.1 pair's trap one tier down
+with a second edge on it.** `claude-opus-5-5` is $4/$20 against Claude Opus 5's
+$5/$25 *and* halves the cache read to 0.05×, so a fall-through to the shorter key
+is 25% wrong on the two columns a person can check — at least visible — and 2×
+wrong on the one they cannot, in the direction that refuses a run against a
+ceiling it never reached. The resolution case pins both entries whole and pins
+that the collision does not run backwards. The cache-read case is deliberately
+written against a shape this workload produces rather than a single token — 5M
+reads, 250k one-hour writes, and the input and output of a real cycle — and
+asserts the same shape's read term at $1.00 beside the $2.00 an inherited default
+would charge, so the 2× is a number in the file rather than a claim about one.
+The third runs `[1m]`, a dated snapshot and both provider decorations onto the
+one entry, and the fourth pins fast mode at $8/$40 with the two older fast rows
+untouched beside it — and, in the same case, that a fast row carries the *default*
+cache read rate, because `FAST_MODE_PRICES` replaces the base entry rather than
+overlaying it and no fast-mode cache read rate was published to put there.
+
+**Claude Sonnet 5's $2/$10 earned its own block by being a rate that stopped
+moving.** It shipped as introductory pricing with a rise to $3/$15 scheduled for
+2026-09-01, this table carried the dated ramp, and Anthropic then cancelled the
+rise and made the introductory figure the list price. The ramp is *deleted*
+rather than expired, and what the cases pin is that it stays deleted: the rate is
+asserted at three fixed instants — inside the old introductory window, on the day
+the increase was scheduled for, and months past it — plus the no-`at` call every
+guard site actually makes, which under the ramp could disagree with the shown
+figure by a day. Restoring it from memory would price every Sonnet 5 run 50% high
+on a figure `evaluateBudget` acts on, with nothing on any page saying a rate
+expired. Two tests went with the mechanism, deliberately and not by weakening
+them: `windows.test.ts`'s *prices each turn at the rate in force on the day it
+ran*, which pinned the counterfactual's per-day memo key against the ramp's UTC
+midnight, and `contextPruning.test.ts`'s *prices at the receipt's own date*,
+which pinned `netReceipt` reading its own `ts` rather than `Date.now()`. Both
+observed time-dependence through the only entry that had any, and with the table
+flat there is nothing either can assert that is not a restatement of the code.
+The rule they protected is not gone — `resolvePrice`'s note and `metering.md`
+both say a new dated rate goes in that shape and turns over at a UTC midnight —
+and a case for each comes back with the next one.
+
 **`modelCatalogue.test.ts` covers the list every model field is now validated
 against**, and each of its cases is a wrong answer that renders as a plausible
 page rather than an error. The seed is walked against `knownModelIds()` in both
 directions, because `pricing.ts` is the one answer to which models exist and a
 seed that drifted either way is silent — a missing entry is a picker one option
 short for no stated reason, an invented one is an id nothing can price showing
-as $0.00 rather than as a mistake. `modelRefusal` is pinned on the four values
+as $0.00 rather than as a mistake. **The label half of that agreement was implied
+and is now asserted**, which Claude Opus 5.5 is what exposed: `seedCatalogue`
+falls back to `MODEL_LABELS[id] ?? id`, so a model added to `PRICES` and
+forgotten in `MODEL_LABELS` seeds perfectly well and wears its own raw id on a
+picker beside entries that read "Claude Opus 5" — and the label check that only
+asked for a non-blank string passed it, which made this file's claim to be the
+loud channel for a half-added model not quite true. Every priced entry is now
+required to have a label that is *not* its id. Opus 5.5 is pinned by name
+alongside it, on all three of the tables it has to appear in across two files
+with nothing joining them, and the quiet one is `ONE_MEGA_VARIANTS`: a missing
+`[1m]` row is no error anywhere, just an option that is not on the list, and an
+operator who types the id by hand gets a refusal from a validator working exactly
+as written. The same case pins Claude Opus 5 still enabled beside it, because
+5.5 is an addition and not a replacement — Opus 5 is listed legacy and still
+served, so a transcript naming it must still price and a run may still start on
+it. `modelRefusal` is pinned on the four values
 that must **not** refuse (null, undefined, `""`, whitespace: every way of naming
 none, and a refusal on any of them takes away all three fallback rungs from the
 ordinary run), on an empty catalogue meaning *no catalogue* rather than *no

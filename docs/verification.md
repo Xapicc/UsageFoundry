@@ -1299,6 +1299,20 @@ is `docs/agent/testing.md`; interface defects and their classes are
   the form's sentence; a stored `bypassEverything` mode with a corrupt budget
   reads back as `plan` and one work cycle. Plus 20 `npm test` assertions.
 
+- **The `[1m]` model ids on the pinned 2.1.280 binary, 2026-09-24.** `npm pack
+  @anthropic-ai/claude-code-linux-arm64@2.1.280` and `grep -a -o -E
+  '[a-zA-Z0-9._@-]+\[1m\]'` over the unpacked 233 MB `claude`: sixteen distinct
+  strings, of which **nine** are `claude-…` model ids and seven are the CLI's
+  own short aliases (`opus[1m]`, `opusplan[1m]`, `fable[1m]`, `sonnet[1m]`,
+  `sonnet-5[1m]`, `sonnet-4-6[1m]`, `sonnet-4-5-20250929[1m]`), which
+  `ONE_MEGA_VARIANTS` does not carry and never did. Against the eight that list
+  held, `claude-opus-5-5[1m]` is the single addition and every other entry is
+  unchanged, the dated `claude-sonnet-4-5-20250929[1m]` included. `claude-opus-5-5`
+  appears 41 times undecorated in the same binary, no snapshot suffix. Caveat:
+  this is the **arm64** package, matching the container it was read in
+  (`uname -m` → `aarch64`); the amd64 build of the same version was not read,
+  and the pin in `Dockerfile` is the version rather than the arch.
+
 - **`--agent` / `--agents`, seven probes on CLI 2.1.226:** `--agent` selects a
   definition passed on the same argv, exits 1 on an unregistrable one, keeps
   `--append-system-prompt`, survives `--resume`, and yields to the run's
@@ -3124,15 +3138,18 @@ measurement under *Verified* and cut the item down to what is still open.
   re-measured against it.** Every figure above that names a CLI names 2.1.226
   or 2.1.260, because those are the builds they were taken from: the
   `stream-json` shapes `handleStreamLine` parses, the OTLP records `otlp.ts`
-  reads, the compaction threshold `readCompactions` keys on, the model list in
-  `modelCatalogue.ts`, the mount points in `sandboxMountPoints.ts`, and the
+  reads, the compaction threshold `readCompactions` keys on, the mount points in
+  `sandboxMountPoints.ts`, and the
   nine sandbox answers in `scripts/sandbox-probe/RUNBOOK.md` (whose probe pin
   follows the shipped image's and has moved with it). Those readings stand as
   history and are not claims about what the image now installs. What **was**
   checked before the bump is the cheap half, the same half 2026-09-04's was:
   every flag `buildArgs` and `sessionAgentArgs` emit is in the 2.1.280 binary
   (entry above), so a run will at least start, an unknown flag being the one
-  failure here that is loud. What was **not**: a single container run on the
+  failure here that is loud. `modelCatalogue.ts`'s `[1m]` list has since been
+  read off the 2.1.280 arm64 binary and is no longer on this list (entry under
+  *Agents, templates and models*); the amd64 build of that version still has
+  not been read. What was **not**: a single container run on the
   new pin, so no `stream-json` line, no `result` event, no OTLP record and no
   transcript written by 2.1.280 has been through this app's parsers. Each of
   those degrades *quietly* — an unparsed line becomes a log entry, a missing

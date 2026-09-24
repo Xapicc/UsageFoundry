@@ -1123,14 +1123,19 @@ describe("agent attribution", () => {
  * The cheaper-model counterfactual on the agent column.
  *
  * It earns a test because everything about it is quiet. It is arithmetic over
- * every turn in the window against a *second* price table lookup, it is
- * date-dependent (Sonnet 5's introductory rate is a different number from its
- * list rate, and which one applies is decided per turn), and it is rendered as
- * a dollar figure beside a real one. Every way of getting it wrong produces a
- * plausible number: a memo keyed too coarsely prices a September turn at
- * August's rate, a bucket missed in the second pass reads as work that would
+ * every turn in the window against a *second* price table lookup, priced per
+ * turn at the rate in force on the day that turn ran, and it is rendered as a
+ * dollar figure beside a real one. Every way of getting it wrong produces a
+ * plausible number: a bucket missed in the second pass reads as work that would
  * have been free, and `null` collapsing to `0` says the same thing about the
  * whole column on the guard path — which is the one caller that never asks.
+ *
+ * What is **not** pinned here any more is the per-day memo key. It used to be,
+ * against Sonnet 5's introductory rate turning over at a UTC midnight, and
+ * Anthropic cancelled that increase rather than letting it land — so no entry in
+ * `pricing.ts` varies with time today and there is nothing a coarser key could
+ * get wrong to assert. `resolvePrice`'s own note says where the next dated rate
+ * goes; a case for the memo comes back with it.
  */
 describe("cheaper-model counterfactual", () => {
   const tokenEntry = (
@@ -1188,35 +1193,6 @@ describe("cheaper-model counterfactual", () => {
       snap.byAgent.reduce((s, r) => s + (r.counterfactualUSD ?? 0), 0),
       perToken * 4,
     );
-  });
-
-  it("prices each turn at the rate in force on the day it ran", () => {
-    // Sonnet 5's introductory rate runs through 2026-08-31 inclusive, so these
-    // two turns are the same tokens at two different prices. A memo keyed on
-    // anything coarser than the day would give them both the same one — and the
-    // whole point of the figure is to inform a decision about *future* work, so
-    // a page that quietly extended an expiring rate over it would be wrong in
-    // the direction that costs money.
-    const intro = Date.UTC(2026, 7, 30, 12);
-    const list = Date.UTC(2026, 8, 2, 12);
-    const later = Date.UTC(2026, 8, 3, 12);
-    const snap = buildSnapshot(
-      [
-        tokenEntry(intro, "before", 1_000_000),
-        tokenEntry(list, "after", 1_000_000),
-      ],
-      NO_LIMITS,
-      later,
-      null,
-      null,
-      null,
-      [],
-      "claude-sonnet-5",
-    );
-
-    const byName = new Map(snap.byAgent.map((r) => [r.agent, r]));
-    assert.equal(byName.get("before")?.counterfactualUSD, 2);
-    assert.equal(byName.get("after")?.counterfactualUSD, 3);
   });
 
   it("reprices a turn upwards when the target is dearer than what ran", () => {
