@@ -75,9 +75,9 @@ RUN apt-get update \
 # with the shipped image's. Following the invariant rather than freezing it is
 # deliberate: a probe of a CLI this repository no longer installs answers about
 # a program no run will ever start. Re-running the runbook now re-measures the
-# nine questions against 2.1.260 and the answers may differ from the ones
+# nine questions against 2.1.280 and the answers may differ from the ones
 # written down.
-ARG CLAUDE_CLI_VERSION=2.1.260
+ARG CLAUDE_CLI_VERSION=2.1.280
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}" \
  && npm cache clean --force \
  && claude --version

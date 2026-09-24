@@ -203,6 +203,20 @@ is `docs/agent/testing.md`; interface defects and their classes are
 - **Every flag `buildArgs` and `sessionAgentArgs` emit is in `claude --help` on
   2.1.260**, checked before the 2026-09-04 bump, so a run will at least start.
 
+- **Every flag `buildArgs` and `sessionAgentArgs` emit is in the 2.1.280 binary,
+  2026-09-24**, checked before that day's bump from 2.1.260. Sixteen flags
+  grepped out of `@anthropic-ai/claude-code-linux-arm64@2.1.280`'s own strings
+  rather than out of `claude --help` — `--add-dir`, `--agent`, `--agents`,
+  `--allowedTools`, `--append-system-prompt`, `--disallowedTools`,
+  `--forward-subagent-text`, `--max-budget-usd`, `--mcp-config`, `--model`,
+  `--output-format`, `--permission-mode`, `--plugin-dir`, `--resume`,
+  `--settings`, `--verbose`, every one present. So a run will at least start,
+  an unknown flag being the one failure here that is loud.
+  `cycleInvocation.ts:1525`'s `--output-last-message` matches **zero** bytes of
+  2.1.280 — but zero of the installed 2.1.260 as well, both greps run the same
+  afternoon against the two binaries side by side, so that is how the binary
+  stores the literal and not a flag that went away.
+
 - **The failed `tool_result` shape comes from real CLI 2.1.226 transcripts.**
   Both the string and the array-of-blocks `content` carry `is_error: true`.
 
@@ -3105,6 +3119,39 @@ measurement under *Verified* and cut the item down to what is still open.
   green build proves nothing about metering. One assist's 2.1.260 stdout has
   been parsed (2026-09-09); nobody has compared a 2.1.260 work cycle's spend,
   OTLP records or transcript against the 2.1.226 readings.
+
+- **The pin moved to 2.1.280 on 2026-09-24, and nothing on this page has been
+  re-measured against it.** Every figure above that names a CLI names 2.1.226
+  or 2.1.260, because those are the builds they were taken from: the
+  `stream-json` shapes `handleStreamLine` parses, the OTLP records `otlp.ts`
+  reads, the compaction threshold `readCompactions` keys on, the model list in
+  `modelCatalogue.ts`, the mount points in `sandboxMountPoints.ts`, and the
+  nine sandbox answers in `scripts/sandbox-probe/RUNBOOK.md` (whose probe pin
+  follows the shipped image's and has moved with it). Those readings stand as
+  history and are not claims about what the image now installs. What **was**
+  checked before the bump is the cheap half, the same half 2026-09-04's was:
+  every flag `buildArgs` and `sessionAgentArgs` emit is in the 2.1.280 binary
+  (entry above), so a run will at least start, an unknown flag being the one
+  failure here that is loud. What was **not**: a single container run on the
+  new pin, so no `stream-json` line, no `result` event, no OTLP record and no
+  transcript written by 2.1.280 has been through this app's parsers. Each of
+  those degrades *quietly* — an unparsed line becomes a log entry, a missing
+  `result` understates spend, an unrecognised compaction boundary is simply not
+  seen — so a green build here proves nothing about metering. Nor does `npm
+  test`: the two lists `sandboxMountPoints.test.ts` asserts are read out of
+  whatever `claude.exe` is installed beside it, which in the container this
+  entry was written in is still 2.1.260 (`claude --version`, checked), so that
+  suite keeps passing against the build the pin just left and will not notice a
+  2.1.280 change to either list until the image is rebuilt. No image has been
+  built on this pin at all: the container the bump was made in carries no
+  Docker client and no daemon socket, so the `npm install -g
+  @anthropic-ai/claude-code@2.1.280` line is unexercised beyond the registry
+  confirming that the version resolves. The first `docker compose up --build`
+  with a real cycle is what settles all of it. Note also that 2.1.280 was
+  **not** npm's newest that day — `latest` was 2.1.281 and `next` 2.1.282, both
+  read from the registry after the pin was chosen. It was held at 2.1.280
+  deliberately, so that the model-id list being measured against exactly this
+  build stays a claim about the program the image installs.
 
 - **The per-repository cost card has never been rendered or read against a
   real multi-repository install.** `groupRunSpend` is unit-tested only. Check
