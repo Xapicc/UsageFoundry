@@ -447,10 +447,16 @@ reads, 250k one-hour writes, and the input and output of a real cycle — and
 asserts the same shape's read term at $1.00 beside the $2.00 an inherited default
 would charge, so the 2× is a number in the file rather than a claim about one.
 The third runs `[1m]`, a dated snapshot and both provider decorations onto the
-one entry, and the fourth pins fast mode at $8/$40 with the two older fast rows
-untouched beside it — and, in the same case, that a fast row carries the *default*
-cache read rate, because `FAST_MODE_PRICES` replaces the base entry rather than
-overlaying it and no fast-mode cache read rate was published to put there.
+one entry. The fourth pins fast mode at $8/$40 with the two older fast rows
+untouched beside it, and carries the subtler half: `FAST_MODE_PRICES` *replaces*
+the base entry rather than overlaying it, so the 0.05× has to be repeated there
+and its absence is silent in the usual way — every published figure right and the
+invisible one at 4× its base where the two visible ones are 2×. Anthropic's page
+settles which it should be ("prompt caching multipliers apply on top of fast mode
+pricing", and the multiplier is the model's own), so the case pins $0.40/MTok and
+pins the invariant behind it: every fast column is exactly twice its base column,
+the cache read included. The Opus 5 and 4.8 rows are asserted to keep the default
+in the same case, because their base rows use it too and so already double.
 
 **Claude Sonnet 5's $2/$10 earned its own block by being a rate that stopped
 moving.** It shipped as introductory pricing with a rise to $3/$15 scheduled for

@@ -109,19 +109,22 @@ const PRICES: Record<string, ModelPrice> = {
  * Fast mode runs the same model at premium rates.
  *
  * Keyed on the price-table key `resolvePrice` already matched, and an entry here
- * *replaces* the `PRICES` one rather than overlaying it — so it inherits no
- * `cacheReadMultiplier` either.
+ * *replaces* the `PRICES` one rather than overlaying it — so a row that needs a
+ * `cacheReadMultiplier` has to repeat it, and the Opus 5.5 row does.
  *
- * That is worth knowing for the Opus 5.5 row. Its base entry departs to 0.05x
- * and this one does not, so a fast-mode cache read prices at 0.10x of $8 rather
- * than the 2x-of-base every other column here scales by. **The fast-mode cache
- * read rate was not measured**: only the $8/$40 input/output pair was published
- * where this was read from, so the row carries the two numbers that were and
- * leaves the third at the default. The default is the dearer of the two
- * plausible answers, which is the direction a guard may safely be wrong in.
+ * Anthropic's pricing page states it directly: "Fast mode pricing stacks with
+ * other pricing modifiers … prompt caching multipliers apply on top of fast mode
+ * pricing", and the caching multiplier is the per-model one (0.05x on Claude
+ * Opus 5.5). So a fast-mode Opus 5.5 cache read is 0.05x of $8 — $0.40/MTok, 2x
+ * its own base rate, the same doubling the input and output columns take. The
+ * Opus 5 and 4.8 rows carry nothing because their *base* entries use the 0.10x
+ * default, so inheriting it here already gives them that doubling.
+ *
+ * Omitting it from the 5.5 row would have charged $0.80/MTok, 4x the base rate
+ * where every other column is 2x, on the term that is ~98% of this workload.
  */
 const FAST_MODE_PRICES: Record<string, ModelPrice> = {
-  "claude-opus-5-5": { input: 8, output: 40 },
+  "claude-opus-5-5": { input: 8, output: 40, cacheReadMultiplier: 0.05 },
   "claude-opus-5": { input: 10, output: 50 },
   "claude-opus-4-8": { input: 10, output: 50 },
 };

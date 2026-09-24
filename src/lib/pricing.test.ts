@@ -168,18 +168,32 @@ describe("the cache read rate is a property of the model", () => {
     }
   });
 
-  it("charges fast mode on Opus 5.5 at $8/$40", () => {
-    // Fast mode replaces the whole entry rather than overlaying the base one, so
-    // this is also where a `cacheReadMultiplier` would have to be repeated if a
-    // fast-mode rate ever departed. None was published, so the default stands
-    // and the two numbers that were published are what is pinned.
+  it("charges fast mode on Opus 5.5 at $8/$40, cache reads included", () => {
+    // `FAST_MODE_PRICES` replaces the base entry rather than overlaying it, so
+    // the 0.05x has to be repeated there and its absence would be silent — every
+    // published figure right and the invisible one 4x its base where the two
+    // visible ones are 2x. Anthropic's page settles which it should be: caching
+    // multipliers stack on top of fast mode, and the multiplier is the model's
+    // own. So $0.40/MTok, and a million reads cost exactly that.
     const fast = resolvePrice("claude-opus-5-5", { speed: "fast" });
     assert.ok(fast);
     assert.deepEqual({ input: fast.input, output: fast.output }, { input: 8, output: 40 });
-    assert.equal(cacheReadMultiplierOf(fast), CACHE_READ_MULTIPLIER);
+    assert.equal(cacheReadMultiplierOf(fast), 0.05);
+    assert.equal(costOf({ ...ZERO_TOKENS, cacheRead: 1_000_000 }, fast), 0.4);
 
-    // The older entries are untouched by the addition.
-    assert.equal(resolvePrice("claude-opus-5", { speed: "fast" })?.input, 10);
+    // Every fast column is exactly twice its base column, the cache read now
+    // among them — which is the invariant the missing multiplier would break.
+    const base = resolvePrice("claude-opus-5-5");
+    assert.ok(base);
+    assert.equal(fast.input, base.input * 2);
+    assert.equal(fast.output, base.output * 2);
+
+    // The older entries are untouched by the addition, and inherit the default
+    // because their *base* rows do too — which already gives them the doubling.
+    const opus5Fast = resolvePrice("claude-opus-5", { speed: "fast" });
+    assert.ok(opus5Fast);
+    assert.deepEqual(opus5Fast, { input: 10, output: 50 });
+    assert.equal(cacheReadMultiplierOf(opus5Fast), CACHE_READ_MULTIPLIER);
     assert.equal(resolvePrice("claude-opus-4-8", { speed: "fast" })?.output, 50);
   });
 

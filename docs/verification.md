@@ -1299,6 +1299,23 @@ is `docs/agent/testing.md`; interface defects and their classes are
   the form's sentence; a stored `bypassEverything` mode with a corrupt budget
   reads back as `plan` and one work cycle. Plus 20 `npm test` assertions.
 
+- **Claude Opus 5.5 and Claude Sonnet 5 read off Anthropic's own pricing page,
+  2026-09-24** (`platform.claude.com/docs/en/about-claude/pricing`, fetched).
+  Opus 5.5: $4/MTok input, $20 output, 5m write $5, 1h write $8, cache hits
+  **$0.20/MTok**, with the page's own footnote "Cache hits and refreshes on
+  Claude Opus 5.5 are priced at 0.05x the base input price" — so the write
+  multipliers are the unchanged 1.25x/2.0x and only the read departs. Opus 5
+  stays $5/$25 and is still listed, not retired. Sonnet 5 is $2/$10 with a
+  footnote that the $2/$10 "announced at launch as introductory pricing through
+  August 31, 2026, is now the standard price. The previously scheduled increase
+  to $3/$15 … on September 1, 2026 will not occur." Fast mode is $8/$40 for Opus
+  5.5 against $10/$50 for Opus 5 / 4.8, and the page states that "prompt caching
+  multipliers apply on top of fast mode pricing" — which is what puts
+  `cacheReadMultiplier: 0.05` on the fast-mode row too, at $0.40/MTok. Caveat:
+  read through `WebFetch`'s markdown conversion of the docs page rather than
+  from an invoice, so it is Anthropic's published list price and not a measured
+  charge; no request has been billed on Opus 5.5 from this install.
+
 - **The `[1m]` model ids on the pinned 2.1.280 binary, 2026-09-24.** `npm pack
   @anthropic-ai/claude-code-linux-arm64@2.1.280` and `grep -a -o -E
   '[a-zA-Z0-9._@-]+\[1m\]'` over the unpacked 233 MB `claude`: sixteen distinct
