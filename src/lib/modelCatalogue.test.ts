@@ -6,6 +6,7 @@ import {
   SEEDED_MODEL_CATALOGUE,
   adoptModelIds,
   enabledModels,
+  mergeSeededModels,
   modelRefusal,
   normalizeModelCatalogue,
 } from "./modelCatalogue";
@@ -223,6 +224,129 @@ describe("the model catalogue", () => {
     it("is idempotent, which is the only thing making it safe in migrate()", () => {
       const once = adoptModelIds(SEEDED_MODEL_CATALOGUE, ["claude-opus-9"]);
       assert.deepEqual(adoptModelIds(once, ["claude-opus-9"]), once);
+    });
+  });
+
+  /**
+   * What reaches an install that has already pinned its list.
+   *
+   * The settings page promises it in as many words — a seeded row has no Remove
+   * button because "the seed comes back on the next release" — and until
+   * `mergeSeededModels` nothing kept it. `saveSettings` pins `modelCatalogue`
+   * the moment it differs from `DEFAULTS`, which one model switched off is
+   * enough to do, and from then on every future seed addition was dead for that
+   * install. Silent in the way that matters: the picker is simply one option
+   * short, with nothing anywhere saying a model shipped.
+   */
+  describe("mergeSeededModels", () => {
+    const SEED = [
+      { id: "new-opus", label: "New Opus", enabled: true },
+      { id: "old-opus", label: "Old Opus", enabled: true },
+      { id: "retired", label: "Retired", enabled: false },
+    ];
+
+    it("adds what this release seeded and keeps every stored answer", () => {
+      // `new-opus` shipped after this list was written. `old-opus` the operator
+      // switched off and `retired` they switched on — both are their answers and
+      // neither is the seed's to revisit, which is the difference between this
+      // and re-running adoption.
+      const stored = [
+        { id: "old-opus", label: "Old Opus", enabled: false },
+        { id: "retired", label: "Retired", enabled: true },
+      ];
+      assert.deepEqual(mergeSeededModels(stored, SEED), [
+        { id: "new-opus", label: "New Opus", enabled: true },
+        { id: "old-opus", label: "Old Opus", enabled: false },
+        { id: "retired", label: "Retired", enabled: true },
+      ]);
+    });
+
+    it("puts a new model where the seed declares it, not on the end", () => {
+      // Declaration order is display order, so an id appended to the list would
+      // read as older than everything above it — and the newest model is the one
+      // an operator is looking for.
+      const merged = mergeSeededModels(
+        [{ id: "old-opus", label: "Old Opus", enabled: true }],
+        SEED,
+      );
+      assert.equal(merged[0]?.id, "new-opus");
+    });
+
+    it("keeps the operator's own entries, after the seed and in their order", () => {
+      // Theirs is the one kind of entry that can be removed, so it is also the
+      // one kind this must never reorder or drop: it is not in the seed and
+      // nothing here has an opinion about it.
+      const merged = mergeSeededModels(
+        [
+          { id: "old-opus", label: "Old Opus", enabled: true },
+          { id: "acme-one", label: "acme-one", enabled: true },
+          { id: "acme-two", label: "acme-two", enabled: false },
+        ],
+        SEED,
+      );
+      assert.deepEqual(merged.slice(-2), [
+        { id: "acme-one", label: "acme-one", enabled: true },
+        { id: "acme-two", label: "acme-two", enabled: false },
+      ]);
+    });
+
+    it("names a model the operator had typed in before it was seeded", () => {
+      // `addModel` and `adoptModelIds` both write the raw id as the label,
+      // because it is the only true thing known about a model the build has not
+      // heard of. Once it is seeded the build has heard of it, and leaving the
+      // id there puts `new-opus` on a picker under "Old Opus". Their `enabled`
+      // is still untouched — a label gates nothing.
+      const merged = mergeSeededModels(
+        [{ id: "new-opus", label: "new-opus", enabled: false }],
+        SEED,
+      );
+      assert.deepEqual(merged[0], {
+        id: "new-opus",
+        label: "New Opus",
+        enabled: false,
+      });
+    });
+
+    it("leaves a label the operator chose alone", () => {
+      const merged = mergeSeededModels(
+        [{ id: "new-opus", label: "My Opus", enabled: true }],
+        SEED,
+      );
+      assert.equal(merged[0]?.label, "My Opus");
+    });
+
+    it("is idempotent, which is what makes it safe on every boot", () => {
+      // `adoptModelsInUse` beside it has to run once, because re-adopting from
+      // templates would switch a model back on the morning after the operator
+      // switched it off. This one cannot: a seeded id has no Remove button, so
+      // "absent" can only ever mean "shipped since", never "taken off".
+      const once = mergeSeededModels([], SEED);
+      assert.deepEqual(mergeSeededModels(once, SEED), once);
+      assert.deepEqual(
+        mergeSeededModels(SEEDED_MODEL_CATALOGUE),
+        SEEDED_MODEL_CATALOGUE.map((entry) => ({ ...entry })),
+      );
+    });
+
+    it("carries Claude Opus 5.5 onto a list written before it shipped", () => {
+      // The case that found all of this: priced, labelled and seeded on, and
+      // invisible on every picker of an install that had ever touched the list.
+      const before = SEEDED_MODEL_CATALOGUE.filter(
+        (entry) => !entry.id.startsWith("claude-opus-5-5"),
+      );
+      const after = mergeSeededModels(before);
+      assert.deepEqual(
+        after.filter((entry) => entry.id.startsWith("claude-opus-5-5")),
+        [
+          { id: "claude-opus-5-5", label: "Claude Opus 5.5", enabled: true },
+          {
+            id: "claude-opus-5-5[1m]",
+            label: "Claude Opus 5.5 (1M context)",
+            enabled: true,
+          },
+        ],
+      );
+      assert.equal(after.length, SEEDED_MODEL_CATALOGUE.length);
     });
   });
 });

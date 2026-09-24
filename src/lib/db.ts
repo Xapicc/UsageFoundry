@@ -13,7 +13,12 @@ import { heldByAnotherProcess } from "./serverLock";
 // A value import, and safe to be one: `modelCatalogue.ts` imports only
 // `pricing.ts`, which imports nothing at all. `settings.ts` imports both this
 // module and that one, so the seed has to live where neither can reach back.
-import { adoptModelIds, SEEDED_MODEL_CATALOGUE } from "./modelCatalogue";
+import {
+  adoptModelIds,
+  mergeSeededModels,
+  SEEDED_MODEL_CATALOGUE,
+  type ModelCatalogueEntry,
+} from "./modelCatalogue";
 
 /**
  * SQLite persistence. Single-writer, single-process — matching the fact that
@@ -2502,6 +2507,10 @@ function migrate(db: Database.Database) {
   );
 
   adoptModelsInUse(db);
+  // After it, and never instead of it: the two answer different questions and an
+  // install that needs adopting needs it done before there is a list to merge
+  // into. `adoptModelsInUse` writes at most once, this runs every boot.
+  mergeSeededModelsInto(db);
 
   // Anything still wearing the rebuild suffix after the one rebuild above has
   // run. Last, so a leftover this boot has just completed is not reported as
@@ -2780,6 +2789,58 @@ function adoptModelsInUse(db: Database.Database) {
     `INSERT INTO settings (key, value) VALUES ('settings', ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
   ).run(JSON.stringify({ ...stored, modelCatalogue: adopted }));
+}
+
+/**
+ * Whatever this release added to the seed, onto a list this install has pinned.
+ *
+ * The keeping of a promise the settings page already makes — a seeded row has no
+ * Remove button because "the seed comes back on the next release" — and which
+ * nothing was keeping. `mergeSeededModels` carries the reasoning and the safety
+ * argument; this is its call site.
+ *
+ * Runs every boot, unlike `adoptModelsInUse` above, and is idempotent: the
+ * second boot finds nothing to add and writes nothing. The unchanged test is
+ * length **and** labels, because the merge does two things — a longer list, and
+ * a stored entry whose label is still the raw id getting the name the seed now
+ * knows. A length-only gate would silently never apply the second.
+ *
+ * Only for an install that stores a list. One that does not is still following
+ * `DEFAULTS.modelCatalogue`, which *is* the seed and already has everything —
+ * writing here would pin the blob and cost that install every future seed
+ * addition, which is the trap this exists to undo.
+ */
+function mergeSeededModelsInto(db: Database.Database) {
+  const raw = db
+    .prepare("SELECT value FROM settings WHERE key = 'settings'")
+    .get() as { value: string } | undefined;
+  if (!raw) return;
+
+  let stored: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(raw.value) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+    stored = parsed as Record<string, unknown>;
+  } catch {
+    // `getSettings()` answers an unreadable blob with the defaults, and writing
+    // over it here would destroy whatever an operator might still recover.
+    return;
+  }
+
+  const held = stored.modelCatalogue;
+  if (!Array.isArray(held)) return;
+
+  const entries = held as ModelCatalogueEntry[];
+  const merged = mergeSeededModels(entries);
+  const unchanged =
+    merged.length === entries.length &&
+    merged.every((entry, i) => entry.label === entries[i]?.label);
+  if (unchanged) return;
+
+  db.prepare(
+    `INSERT INTO settings (key, value) VALUES ('settings', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  ).run(JSON.stringify({ ...stored, modelCatalogue: merged }));
 }
 
 /**

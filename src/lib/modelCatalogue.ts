@@ -290,3 +290,58 @@ export function adoptModelIds(
   }
   return adopted;
 }
+
+/**
+ * Models this release added to the seed, onto a list an install already stores.
+ *
+ * **The settings page already promises this and nothing was keeping it.** A
+ * seeded row has no Remove button, and the comment on that button says why in
+ * so many words: an operator's own entry never comes back, "the seed comes back
+ * on the next release". It did not. `adoptModelsInUse` runs at most once per
+ * install, `saveSettings` pins `modelCatalogue` into the stored blob the moment
+ * it differs from `DEFAULTS` — one model switched off is enough — and from then
+ * on the shipped seed was dead for that install. Claude Opus 5.5 is what found
+ * it: priced, labelled and seeded on, and invisible on every picker of any
+ * install that had ever touched the list.
+ *
+ * Safe to run on every boot, and that is the whole design rather than a risk
+ * taken. `adoptModelsInUse` must run once because re-adopting from templates
+ * and agents would switch a model back on the morning after the operator
+ * switched it off. This cannot do that: it only ever adds an id the stored list
+ * does **not** carry, and a seeded id is one the operator has no way to remove —
+ * the switch retires it in place, and a retired entry is present and `enabled:
+ * false`, so it is not missing and is not touched. What they *can* remove is
+ * their own typed entry, which is by definition not in the seed. So "absent from
+ * a stored list" means "shipped after that list was written", which is exactly
+ * the case this exists for.
+ *
+ * Order is the seed's, because declaration order is display order and a model
+ * inserted at the end of the list would read as older than everything above it.
+ * Entries the seed does not name — the operator's own, and whatever
+ * `adoptModelsInUse` took off their templates — keep their relative order and
+ * follow, which is where both already sat.
+ *
+ * Every stored entry is otherwise returned untouched: `enabled` is the
+ * operator's answer and this never has an opinion on it. The one exception is a
+ * label that is still the raw id, which is what both `addModel` and
+ * `adoptModelIds` write for a model the build did not know — once it is seeded
+ * the build does know, and keeping the id there would leave `claude-opus-5-5` on
+ * a picker under "Claude Opus 5". A label is cosmetic and gates nothing.
+ */
+export function mergeSeededModels(
+  stored: readonly ModelCatalogueEntry[],
+  seed: readonly ModelCatalogueEntry[] = SEEDED_MODEL_CATALOGUE,
+): ModelCatalogueEntry[] {
+  const byId = new Map(stored.map((entry) => [entry.id, entry]));
+  const seedIds = new Set(seed.map((entry) => entry.id));
+
+  const merged = seed.map((seeded) => {
+    const held = byId.get(seeded.id);
+    if (!held) return { ...seeded };
+    return held.label === held.id && seeded.label !== seeded.id
+      ? { ...held, label: seeded.label }
+      : held;
+  });
+
+  return [...merged, ...stored.filter((entry) => !seedIds.has(entry.id))];
+}

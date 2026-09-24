@@ -500,7 +500,33 @@ operator who types the id by hand gets a refusal from a validator working exactl
 as written. The same case pins Claude Opus 5 still enabled beside it, because
 5.5 is an addition and not a replacement — Opus 5 is listed legacy and still
 served, so a transcript naming it must still price and a run may still start on
-it. `modelRefusal` is pinned on the four values
+it. **`mergeSeededModels` earned its own block, and it is the case the seed
+assertions above could not reach.** Everything they pin is about
+`SEEDED_MODEL_CATALOGUE`, which is `DEFAULTS.modelCatalogue` — and an install
+that has *stored* a list is no longer reading it. `saveSettings` pins the key the
+moment it differs from the default, one model switched off is enough, and from
+then on every future seed addition was dead there: a picker one option short,
+with nothing anywhere saying a model had shipped. The settings page promised
+otherwise in as many words (a seeded row has no Remove button because "the seed
+comes back on the next release") and nothing kept it. The cases pin what reaches
+such a list and what must not be touched on the way: a newly seeded model arrives
+where the *seed* declares it rather than appended to the end, because declaration
+order is display order and the newest model is the one being looked for; every
+stored `enabled` survives, including a seeded model switched off, which is the
+one thing re-running adoption would have undone; the operator's own entries keep
+their relative order and stay last; and a stored label still equal to its raw id
+gets the name the seed now knows, which is the `addModel` case — an operator who
+typed `claude-opus-5-5` in before upgrading would otherwise keep that string on a
+picker under "Claude Opus 5" — while a label they actually chose is left alone.
+Idempotence is asserted directly, because it is what makes running on every boot
+safe where `adoptModelIds` beside it must run once. `modelAdoption.test.ts` then
+drives the same thing through a real boot rather than asserting about it, that
+file's standing rule: the pure function was correct and *unreachable* until
+`migrate()` called it, and nothing in a unit test of it would have said so. Its
+fixture is derived from what the install actually stores rather than written
+down, so it keeps meaning "a list from before the newest model" once the newest
+model is no longer this one, and it ends by booting twice to pin that the second
+boot writes nothing. `modelRefusal` is pinned on the four values
 that must **not** refuse (null, undefined, `""`, whitespace: every way of naming
 none, and a refusal on any of them takes away all three fallback rungs from the
 ordinary run), on an empty catalogue meaning *no catalogue* rather than *no

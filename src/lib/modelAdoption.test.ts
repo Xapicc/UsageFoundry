@@ -139,4 +139,68 @@ describe("adopting the models an install already runs on", () => {
       false,
     );
   });
+
+  /**
+   * The other half, and the one an upgrade depends on: a model added to the
+   * seed **does** reach an install that has pinned its list.
+   *
+   * Driven through the real boot for this file's stated reason —
+   * `mergeSeededModels` has its own cases in `modelCatalogue.test.ts` and
+   * calling it here would pin this file's own argument rather than what a boot
+   * writes. What a boot writes is the whole question: the pure function was
+   * correct and unreachable until `migrate()` called it, and the symptom of that
+   * is a picker one option short with nothing anywhere saying why.
+   */
+  it("brings a newly seeded model onto a list the install already stores", () => {
+    // Exactly the state an upgrade arrives at, built from what this install
+    // actually stores — the seed plus the three `acme-*` entries the cases above
+    // adopted — with the Opus 5.5 rows taken back out. Derived rather than
+    // written down so it keeps meaning "a list from before the newest model"
+    // when the newest model is no longer this one.
+    const withoutNewest = (storedCatalogue() ?? [])
+      .filter((e) => !e.id.startsWith("claude-opus-5-5"))
+      .map((e) => ({ ...e }));
+    assert.ok(
+      withoutNewest.length > 0 && withoutNewest.some((e) => e.id === "acme-opus"),
+      "the fixture did not inherit the adopted list from the cases above",
+    );
+    // One seeded model switched off, to prove the merge is not a reset: that is
+    // the operator's answer, and re-running adoption is what would undo it.
+    const retired = withoutNewest.find((e) => e.id === "claude-opus-5");
+    assert.ok(retired, "the fixture no longer names claude-opus-5");
+    retired.enabled = false;
+
+    dbMod.setJSON("settings", {
+      ...storedSettings(),
+      modelCatalogue: withoutNewest,
+    });
+
+    reboot();
+
+    const after = storedCatalogue();
+    assert.ok(after, "the boot dropped the catalogue");
+    assert.deepEqual(
+      after.filter((e) => e.id.startsWith("claude-opus-5-5")),
+      [
+        { id: "claude-opus-5-5", label: "Claude Opus 5.5", enabled: true },
+        {
+          id: "claude-opus-5-5[1m]",
+          label: "Claude Opus 5.5 (1M context)",
+          enabled: true,
+        },
+      ],
+      "the newly seeded model did not reach a stored list",
+    );
+    // The switch the operator threw is still thrown, and their own adopted
+    // entries from the cases above survived the merge.
+    assert.equal(after.find((e) => e.id === "claude-opus-5")?.enabled, false);
+    for (const id of ["acme-opus", "acme-haiku", "acme-sonnet"]) {
+      assert.ok(after.some((e) => e.id === id), `${id} was lost in the merge`);
+    }
+
+    // And a second boot is a no-op rather than a second write.
+    const snapshot = JSON.stringify(after);
+    reboot();
+    assert.equal(JSON.stringify(storedCatalogue()), snapshot);
+  });
 });
