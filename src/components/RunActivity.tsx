@@ -2,6 +2,7 @@
 
 import type { RunToolActivityDTO } from "@/lib/apiTypes";
 import { fmtDuration } from "@/lib/format";
+import { toolDisplayName } from "@/lib/logLine";
 import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Log";
 
@@ -86,8 +87,8 @@ export function RunActivity({
           say "Bash, four minutes twelve seconds" sixty times a minute. */}
       <p className="sr-only" aria-live="polite">
         {tools.length === 1
-          ? `Still running: ${tools[0].name}`
-          : `Still running: ${tools.map((t) => t.name).join(", ")}`}
+          ? `Still running: ${toolDisplayName(tools[0].name)}`
+          : `Still running: ${tools.map((t) => toolDisplayName(t.name)).join(", ")}`}
       </p>
       <ul>
         {tools.map((tool) => (
@@ -104,7 +105,7 @@ export function RunActivity({
             </span>
             <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1 text-xs text-ink-muted">
               <Badge tone={tool.retry === null ? "accent" : "warn"}>
-                {tool.name}
+                {toolDisplayName(tool.name)}
               </Badge>
               {/* A retry is the CLI waiting on a wall rather than a tool doing
                   work, and the two must not read alike: a sub-agent on its third

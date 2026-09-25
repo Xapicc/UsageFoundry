@@ -207,6 +207,27 @@ describe("toolArgs — an object with nothing to say", () => {
   });
 });
 
+describe("describeEvent — an MCP tool's wire name", () => {
+  it("qualifies the tool's own name by its server, in words", () => {
+    const entry = describeEvent(toolEvent({ name: "mcp__uf__list_my_tasks", input: {} }));
+    assert.equal(entry?.label, "uf:list_my_tasks");
+    // No headline field and no other field at all: a genuinely blank call.
+    assert.equal(entry?.text, "");
+  });
+
+  it("keeps the sub-agent attribution ahead of the server-qualified name", () => {
+    const entry = describeEvent(
+      toolEvent({
+        name: "mcp__uf__list_my_tasks",
+        input: {},
+        parentToolUseId: "t1",
+        subagent: "Explore",
+      }),
+    );
+    assert.equal(entry?.label, "Explore › uf:list_my_tasks");
+  });
+});
+
 describe("matchesLogFilter", () => {
   const toolCall: RunEventDTO = {
     id: 1,
@@ -288,6 +309,22 @@ describe("matchesLogFilter", () => {
     assert.equal(logFilterActive({ query: "", kind: "tool" }), true);
     // Whitespace is not a query, so a line is kept rather than matched on it.
     assert.equal(keeps(toolCall, { query: "   ", kind: "all" }), true);
+  });
+
+  it("still finds an MCP tool row by its bare name once the server prefix renders", () => {
+    const mcpCall: RunEventDTO = {
+      id: 5,
+      runId: "r",
+      ts: 0,
+      kind: "tool",
+      payload: { name: "mcp__uf__list_my_tasks", input: {} },
+    };
+    // The realistic query: an operator searching for the tool they know by name.
+    assert.equal(keeps(mcpCall, { query: "list_my_tasks", kind: "all" }), true);
+    // The loss this rendering accepts, pinned so a later change to the label's
+    // form does not silently break the case above instead: a query typed as
+    // the raw wire name no longer matches the row it names.
+    assert.equal(keeps(mcpCall, { query: "mcp__uf__list_my_tasks", kind: "all" }), false);
   });
 });
 

@@ -320,6 +320,34 @@ function pluginLine(message: string): { plugin: string; text: string } | null {
 }
 
 /**
+ * An MCP tool's wire name, in words: `mcp__<server>__<tool>` becomes
+ * `<server>:<tool>`. Every other name — everything the CLI ships that is not
+ * an MCP call — is returned exactly as it arrived.
+ *
+ * The CLI reports an MCP call under the literal key its config registers the
+ * server as, and this app's own tools arrive as `mcp__uf__list_my_tasks`
+ * because `writeMcpConfig` (`chat.ts`) names the server `uf`. Every other row
+ * in this feed is written in words, which is what makes that raw protocol
+ * name read as a fault rather than a successful call. `:` rather than the `›`
+ * a tool row already spends on attributing a call to a sub-agent or an assist
+ * (`sub-agent › Grep`, `assist › Bash`): a second `›` here would read as a
+ * second hop of delegation — `sub-agent › uf › list_my_tasks` — rather than
+ * one speaker naming one tool.
+ *
+ * Matched on the `mcp__…__…` shape rather than on `uf` by name, for
+ * `HEADLINE_FIELDS`' own reason: a third-party MCP server an operator points
+ * the CLI at gets the same treatment without this file ever learning its
+ * name. The split lands at the *first* `__` after the prefix, which is right
+ * as long as the server's own name carries no double underscore — true of
+ * every server this app registers; a hand-configured one that does splits in
+ * the wrong place rather than not at all.
+ */
+export function toolDisplayName(name: string): string {
+  const m = /^mcp__(.+?)__(.+)$/.exec(name);
+  return m ? `${m[1]}:${m[2]}` : name;
+}
+
+/**
  * What an out-of-cycle child is called on the log, from its `assist` field.
  *
  * One mapping for the two places that name one — the row saying it started and
@@ -402,7 +430,7 @@ export function describeEvent(e: RunEventDTO): LogEntry | null {
     }
 
     case "tool": {
-      const tool = String(p.name ?? "tool");
+      const tool = toolDisplayName(String(p.name ?? "tool"));
       // What was stored is bounded (see `clipToolInput`), so the line says when
       // it is looking at a shortened input. A short call and a shortened one
       // reading alike is the failure `runEvents` already avoids on a replay it
@@ -437,7 +465,7 @@ export function describeEvent(e: RunEventDTO): LogEntry | null {
     }
 
     case "tool_error": {
-      const tool = String(p.name ?? "tool");
+      const tool = toolDisplayName(String(p.name ?? "tool"));
       // Attributed the way a delegated call is, and for that reason: a failed
       // `Bash` sitting between two of the main thread's lines otherwise reads
       // as the main thread's.
@@ -459,7 +487,7 @@ export function describeEvent(e: RunEventDTO): LogEntry | null {
     }
 
     case "sandbox": {
-      const tool = String(p.name ?? "tool");
+      const tool = toolDisplayName(String(p.name ?? "tool"));
       const command = String(p.command ?? "").trim();
       // This row sits directly under the `tool_error` for the same call, which
       // already carries the tool's own words in full. So it says the one thing
