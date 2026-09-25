@@ -3508,6 +3508,65 @@ describe("planInstanceStep — what an instance may do next", () => {
   });
 });
 
+/**
+ * A run the operator left behind — `leaveRunBehind`.
+ *
+ * Silent in both directions, which is what earns these: a waiver the scheduler
+ * ignores leaves the pick-up doing nothing and the workflow stuck exactly as it
+ * was, and one it honours by *resolving through* the run lands the branch of the
+ * run the operator chose not to land.
+ */
+describe("planInstanceStep — a run left behind", () => {
+  const MERGE_AFTER: WorkflowGraph = {
+    nodes: [
+      graphNode("pick", "Pick the work", { kind: "orchestrator", fanOut: 3 }),
+      graphNode("land", "Land it", { kind: "merge", mergeStrategy: "merge" }),
+    ],
+    edges: [edge("pick", "land", { edge: "on-success" })],
+  };
+
+  it("releases the merge behind it, without the branch it left behind", () => {
+    const pick = decided("emitted", [["r-1", "completed"]]);
+    pick.block!.leftBehind = 1;
+    const step = stepOf({ pick, land: decided("waiting") }, MERGE_AFTER);
+    assert.deepEqual(step.block, []);
+    assert.deepEqual(step.merge, [{ nodeId: "land", runIds: ["r-1"] }]);
+  });
+
+  it("releases it with nothing to land when every run was left behind", () => {
+    // Not "decided there was nothing to start": it did start work, and the
+    // operator chose to carry on without all of it.
+    const pick = decided("emitted", []);
+    pick.block!.leftBehind = 2;
+    const step = stepOf({ pick, land: decided("waiting") }, MERGE_AFTER);
+    assert.deepEqual(step.block, []);
+    assert.deepEqual(step.merge, [{ nodeId: "land", runIds: [] }]);
+  });
+
+  it("satisfies an on-success edge from a run block, resolving to no run", () => {
+    const chain: WorkflowGraph = {
+      nodes: [
+        graphNode("build", "Build"),
+        graphNode("land", "Land it", { kind: "merge", mergeStrategy: "merge" }),
+      ],
+      edges: [edge("build", "land", { edge: "on-success" })],
+    };
+    const build: InstanceNodeState = {
+      run: { id: "r-b", status: "needs-review", iterations: 1 },
+      block: null,
+    };
+    const stuck = stepOf({ build, land: decided("waiting") }, chain);
+    assert.match(stuck.block[0].reason, /“Build”, which ended needs-review/);
+
+    const waived = stepOf(
+      { build: { ...build, leftBehind: true }, land: decided("waiting") },
+      chain,
+    );
+    assert.deepEqual(waived.block, []);
+    assert.deepEqual(waived.merge, [{ nodeId: "land", runIds: [] }]);
+  });
+});
+
 /* ------------------------------------------------------------------ */
 /* A “repeats” link is never a dependency                              */
 /* ------------------------------------------------------------------ */
@@ -4179,6 +4238,39 @@ function counts(
     byPriority: { urgent: 0, high: 0, normal: 0, low: 0, ...byPriority },
   };
 }
+
+/**
+ * A member the operator left behind, as `planLoopPass` reads it.
+ *
+ * The pick-up reopens the pass and then asks this function again, so a member
+ * it still reads as unfinished stops the loop a second time with the same
+ * sentence — the button would do nothing, visibly — and one it reads as DONE
+ * would end a loop on work nobody finished.
+ */
+describe("planLoopPass — a member left behind", () => {
+  it("does not stop the loop, so the next pass is taken", () => {
+    const stuck = runMember("b", "needs-review");
+    const waived: LoopPassMember = {
+      ...stuck,
+      run: { ...stuck.run!, leftBehind: true },
+    };
+    const members = [runMember("a", "completed"), waived];
+    assert.equal(loopOf([{ pass: 1, members: [runMember("a", "completed"), stuck] }]).kind, "stop");
+    assert.deepEqual(loopOf([{ pass: 1, members }]), { kind: "pass", pass: 2 });
+  });
+
+  it("is not asked whether the work is done", () => {
+    // Every member still waited on said DONE; the waived one said nothing,
+    // and must not be the reason the loop carries on or stops.
+    const waived = runMember("b", "needs-review");
+    waived.run = { ...waived.run!, leftBehind: true };
+    const decision = loopOf([
+      { pass: 1, members: [runMember("a", "completed", { done: true }), waived] },
+    ]);
+    assert.equal(decision.kind, "stop");
+    assert.match(decision.kind === "stop" ? decision.reason : "", /reported the work complete/);
+  });
+});
 
 /** A board condition and a reading of it, as `advanceLoop` supplies the pair. */
 function boardOf(

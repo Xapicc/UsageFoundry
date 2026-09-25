@@ -2202,6 +2202,11 @@ export interface WorkflowInstanceNodeDTO {
    * because it is work that pass caused and its cost is that pass's.
    */
   passMember: PassMemberDTO | null;
+  /**
+   * The operator carried the workflow on past this run — its own status is
+   * unchanged, and nothing in the workflow waits on it or lands its branch.
+   */
+  leftBehind: boolean;
 }
 
 /**
@@ -2306,6 +2311,34 @@ export interface WorkflowInstanceBlockDTO {
   passMember: PassMemberDTO | null;
 }
 
+/** One thing holding a workflow run up — see `pickUpsOf`. */
+export type WorkflowPickUpDTO =
+  | {
+      kind: "run";
+      runId: string;
+      nodeName: string;
+      status: RunDTO["status"];
+      /** Why it cannot be left behind, or null when it can. */
+      leaveBehindRefusal: string | null;
+    }
+  | {
+      kind: "merge";
+      nodeId: string;
+      nodeName: string;
+      error: string | null;
+      /** Why it cannot be retried, or null when it can. */
+      retryRefusal: string | null;
+    }
+  | {
+      /** A stopped loop whose latest pass would now go through. */
+      kind: "loop";
+      nodeId: string;
+      nodeName: string;
+      pass: number;
+      /** Why it cannot be carried on, or null when it can. */
+      refusal: string | null;
+    };
+
 export interface WorkflowInstanceDTO {
   id: string;
   workflowId: string;
@@ -2390,6 +2423,8 @@ export interface WorkflowInstanceDTO {
   nodes: WorkflowInstanceNodeDTO[];
   /** Blocks that are not runs: orchestrator turns, and blocks never created. */
   blocks: WorkflowInstanceBlockDTO[];
+  /** What is holding this run up, one obstacle at a time — empty when nothing is. */
+  pickUps: WorkflowPickUpDTO[];
 }
 
 /**

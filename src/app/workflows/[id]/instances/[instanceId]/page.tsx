@@ -3,7 +3,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import type { WorkflowInstanceDTO } from "@/lib/apiTypes";
+import type { WorkflowInstanceDTO, WorkflowPickUpDTO } from "@/lib/apiTypes";
 import type { BadgeTone, PassRow } from "@/lib/format";
 import {
   STATUS_TONE,
@@ -21,7 +21,7 @@ import {
 import { Markdown } from "@/components/Markdown";
 import { Meter } from "@/components/Meter";
 import { Badge } from "@/components/ui/Badge";
-import { Button } from "@/components/ui/Button";
+import { Button, ButtonLink } from "@/components/ui/Button";
 import {
   Card,
   CardTitle,
@@ -252,6 +252,11 @@ function RunRows({
                 </div>
               )}
               {inFlight && <div className="mt-0.5 text-accent">{inFlight}</div>}
+              {n.leftBehind && (
+                <div className="mt-0.5 text-warn">
+                  Left behind — the workflow carried on without it
+                </div>
+              )}
               {n.run?.stopReason && (
                 <div className="mt-0.5 max-w-[56ch] text-ink-muted">
                   {n.run.stopReason}
@@ -396,6 +401,204 @@ function RunTableHead() {
         </Th>
       </tr>
     </THead>
+  );
+}
+
+/** The request each kind of pick-up sends. */
+function pickUpRequest(p: WorkflowPickUpDTO): Record<string, string> {
+  switch (p.kind) {
+    case "run":
+      return { action: "leave-behind", runId: p.runId };
+    case "merge":
+      return { action: "retry-merge", nodeId: p.nodeId };
+    case "loop":
+      return { action: "resume-loop", nodeId: p.nodeId };
+  }
+}
+
+/** What each kind's confirmation says, before anything is released. */
+const PICK_UP_SHEET: Record<
+  WorkflowPickUpDTO["kind"],
+  { title: (name: string) => string; confirm: string; body: string }
+> = {
+  run: {
+    title: (name) => `Continue without “${name}”?`,
+    confirm: "Continue without it",
+    body:
+      "The workflow stops waiting on this run and carries on now: a merge behind it lands the other branches without this one, and if it is in a loop, the next pass starts once this one has landed. The run keeps its status and its branch, for you to handle from its own page.",
+  },
+  merge: {
+    title: (name) => `Retry “${name}”?`,
+    confirm: "Retry merge",
+    body:
+      "Every branch it was given that is not on its target yet goes back through the merge queue, into your checkout; a branch already landed is skipped. If the section repeats, its next pass starts once this one has landed.",
+  },
+  loop: {
+    title: (name) => `Carry on “${name}”?`,
+    confirm: "Carry on the loop",
+    body:
+      "The pass it stopped at is decided again on what is true now: its merge lands what the pass produced, and the loop takes its next pass if its limits allow — each pass starting agents with nobody watching.",
+  },
+};
+
+/**
+ * What is holding this workflow run up, and the way past each obstacle.
+ *
+ * One row per obstacle and one press per row, never "pick everything up": each
+ * way past starts agents nobody watches, and the question a `needs-review` run
+ * asked is the operator's to answer by name. Resume is a link rather than a
+ * button because resuming is `reopenRun`, which asks for the budget and the note
+ * on the run's own page — and already carries the workflow on once the run
+ * completes. The two actions here are the ones no other page can take.
+ *
+ * Both go through a `Sheet`: each releases work straight away — a merge into
+ * the operator's checkout, a loop's next pass — which is the kind of action the
+ * grouping vocabulary reserves one for.
+ */
+function PickUpCard({
+  pickUps,
+  workflowId,
+  instanceId,
+  onPickedUp,
+}: {
+  pickUps: WorkflowPickUpDTO[];
+  workflowId: string;
+  instanceId: string;
+  onPickedUp: (instance: WorkflowInstanceDTO) => void;
+}) {
+  const [pending, setPending] = useState<WorkflowPickUpDTO | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function confirm() {
+    if (!pending) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/workflows/${workflowId}/instances/${instanceId}/pick-up`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(pickUpRequest(pending)),
+        },
+      );
+      const data = (await res.json().catch(() => ({}))) as {
+        instance?: WorkflowInstanceDTO;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+      if (data.instance) onPickedUp(data.instance);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+      // Closed however this ended, `stopAll`'s reason: the error renders behind
+      // the modal, and a sheet left open over a failure reads as one that is
+      // still waiting to be confirmed.
+      setPending(null);
+    }
+  }
+
+  return (
+    <>
+      <CardTitle>What is holding this up</CardTitle>
+      <Card>
+        {error && (
+          <Notice tone="danger" live>
+            {error}
+          </Notice>
+        )}
+        <ListGroup>
+          {pickUps.map((p) =>
+            p.kind === "run" ? (
+              <ListRow
+                key={p.runId}
+                label={
+                  <Link href={`/runs/${p.runId}`} className="font-medium text-ink hover:text-accent">
+                    {p.nodeName}
+                  </Link>
+                }
+                description={
+                  p.leaveBehindRefusal ?? `Ended ${p.status} — nothing behind it will start until you pick it up`
+                }
+              >
+                <div className="flex flex-wrap justify-end gap-2">
+                  <ButtonLink href={`/runs/${p.runId}`} size="compact">
+                    Resume…
+                  </ButtonLink>
+                  {p.leaveBehindRefusal === null && (
+                    <Button
+                      size="compact"
+                      variant="secondary"
+                      onClick={() => setPending(p)}
+                      disabled={busy}
+                    >
+                      Continue without it
+                    </Button>
+                  )}
+                </div>
+              </ListRow>
+            ) : p.kind === "loop" ? (
+              <ListRow
+                key={p.nodeId}
+                label={<span className="font-medium text-ink">{p.nodeName}</span>}
+                description={
+                  p.refusal ??
+                  `Stopped at pass ${p.pass}, and what stopped it has since cleared`
+                }
+              >
+                {p.refusal === null && (
+                  <Button
+                    size="compact"
+                    variant="secondary"
+                    onClick={() => setPending(p)}
+                    disabled={busy}
+                  >
+                    Carry on the loop
+                  </Button>
+                )}
+              </ListRow>
+            ) : (
+              <ListRow
+                key={p.nodeId}
+                label={<span className="font-medium text-ink">{p.nodeName}</span>}
+                description={p.retryRefusal ?? p.error ?? "The merge failed"}
+              >
+                {p.retryRefusal === null && (
+                  <Button
+                    size="compact"
+                    variant="secondary"
+                    onClick={() => setPending(p)}
+                    disabled={busy}
+                  >
+                    Retry merge
+                  </Button>
+                )}
+              </ListRow>
+            ),
+          )}
+        </ListGroup>
+        {pickUps.some((p) => p.kind === "run") && (
+          <Hint>
+            Resuming a run carries the workflow on once it completes. Continuing
+            without it leaves the run as it is, with its branch unlanded, for
+            you to pick up from its own page later
+          </Hint>
+        )}
+      </Card>
+      {/* Always rendered, never conditionally mounted — see `Sheet`. */}
+      <Sheet
+        open={pending !== null}
+        onDismiss={() => setPending(null)}
+        title={pending ? PICK_UP_SHEET[pending.kind].title(pending.nodeName) : ""}
+        confirmLabel={pending ? PICK_UP_SHEET[pending.kind].confirm : ""}
+        busy={busy}
+        onConfirm={confirm}
+      >
+        {pending ? PICK_UP_SHEET[pending.kind].body : null}
+      </Sheet>
+    </>
   );
 }
 
@@ -930,6 +1133,17 @@ export default function WorkflowInstancePage() {
           )}
           {instance.stopReason}
         </Notice>
+      )}
+
+      {instance.pickUps.length > 0 && (
+        <div className="mb-8">
+          <PickUpCard
+            pickUps={instance.pickUps}
+            workflowId={id}
+            instanceId={instanceId}
+            onPickedUp={setInstance}
+          />
+        </div>
       )}
 
       <CardTitle>Limits for the whole workflow</CardTitle>

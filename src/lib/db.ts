@@ -2506,6 +2506,12 @@ function migrate(db: Database.Database) {
       WHERE task_id IS NOT NULL AND task_ids IS NULL`,
   );
 
+  // When the operator picked a workflow up past this run rather than through
+  // it, or null. A column on the membership row rather than a run status: the
+  // run's own ending stays exactly as it was — a `needs-review` row is still the
+  // question it asked — and only this workflow stops waiting on it.
+  addColumn(db, "workflow_instance_runs", "left_behind_at", "INTEGER");
+
   adoptModelsInUse(db);
   // After it, and never instead of it: the two answer different questions and an
   // install that needs adopting needs it done before there is a list to merge

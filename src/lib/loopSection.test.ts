@@ -740,6 +740,160 @@ describe("an orchestrator member of a pass", () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* Picking a stuck pass up                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Settle every queued run, ending the ones `stuck` names needs-review, until the
+ * loop stops. The stuck run keeps a real branch, so a merge that wrongly
+ * resolved through it would land it.
+ */
+async function driveUntilStopped(
+  instanceId: string,
+  stuck: (memberId: string) => boolean,
+): Promise<void> {
+  for (let step = 0; step < 40; step += 1) {
+    for (const row of membersOf(instanceId)) {
+      const run = dbMod
+        .db()
+        .prepare("SELECT status FROM runs WHERE id=?")
+        .get(row.runId) as { status: string } | undefined;
+      if (run?.status !== "queued") continue;
+      settleOne(row.runId);
+      if (stuck(row.memberId)) {
+        dbMod.db().prepare("UPDATE runs SET status='needs-review' WHERE id=?").run(row.runId);
+      }
+    }
+    workflows.advanceInstances();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    if (loopBlock(instanceId).status !== "looping") return;
+  }
+  assert.fail("the loop never stopped");
+}
+
+const passTwoOpened = (instanceId: string, entry: string) =>
+  workflows.blocksOf(instanceId).some((b) => b.nodeId === passMemberId("L", 2, entry)) ||
+  membersOf(instanceId).some((m) => m.memberId === passMemberId("L", 2, entry));
+
+describe("picking up a pass that stopped the loop", () => {
+  it("carries on past a run left behind, landing the rest without its branch", async () => {
+    // The shape that asked for this: a deciding turn fans out, one of its runs
+    // asks for review, and the merge behind them — on-success — never runs.
+    const instanceId = scene({
+      ...DECIDER,
+      edges: [
+        { from: "L", to: "o", edge: "repeats" },
+        { from: "o", to: "m", edge: "on-success" },
+      ],
+      maxPasses: 2,
+    });
+    workflows.advanceInstances();
+    decide(instanceId, passMemberId("L", 1, "o"), twoRuns, 0);
+    await driveUntilStopped(instanceId, (id) => id.endsWith("#two"));
+
+    assert.equal(loopBlock(instanceId).status, "failed");
+    assert.equal(blockRow(instanceId, passMemberId("L", 1, "m")).status, "blocked");
+    const two = membersOf(instanceId).find((m) => m.memberId.endsWith("#two"))!;
+
+    assert.deepEqual(workflows.leaveRunBehind(instanceId, two.runId), { ok: true });
+    for (let step = 0; step < 40 && !passTwoOpened(instanceId, "o"); step += 1) {
+      workflows.advanceInstances();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    const merge = workflows.blocksOf(instanceId).find(
+      (b) => b.nodeId === passMemberId("L", 1, "m"),
+    )!;
+    assert.equal(merge.status, "emitted", merge.error ?? "");
+    // The fixture's branches carry no commits, so the merge reports each one it
+    // was given by name as having nothing to land — which is what shows which
+    // runs it resolved to.
+    const one = membersOf(instanceId).find((m) => m.memberId.endsWith("#one"))!;
+    assert.match(merge.error ?? "", new RegExp(`uf/${one.runId}`));
+    assert.doesNotMatch(
+      merge.error ?? "",
+      new RegExp(`uf/${two.runId}`),
+      "the branch of the run left behind was handed to the merge",
+    );
+    assert.ok(passTwoOpened(instanceId, "o"), "the loop never took its next pass");
+    const stillAsked = dbMod
+      .db()
+      .prepare("SELECT status FROM runs WHERE id=?")
+      .get(two.runId) as { status: string };
+    assert.equal(stillAsked.status, "needs-review", "the run's own ending is untouched");
+  });
+
+  it("carries on once a stuck member is resumed and completes", async () => {
+    // The other way through: `reopenRun` wakes what the ending wrote off, and a
+    // pass's members and its loop have no node of the graph to be found from.
+    const instanceId = scene({ ...FAN_OUT, maxPasses: 2 });
+    await driveUntilStopped(instanceId, (id) => id.endsWith("#c"));
+    assert.equal(loopBlock(instanceId).status, "failed");
+
+    const c = membersOf(instanceId).find((m) => m.memberId === passMemberId("L", 1, "c"))!;
+    dbMod.db().prepare("UPDATE runs SET status='queued' WHERE id=?").run(c.runId);
+    assert.ok(workflows.reviveBlockedBlocks([c.runId]) > 0);
+    assert.equal(loopBlock(instanceId).status, "looping");
+    assert.equal(blockRow(instanceId, passMemberId("L", 1, "m")).status, "waiting");
+
+    for (let step = 0; step < 40 && !passTwoOpened(instanceId, "a"); step += 1) {
+      settleQueuedRuns(instanceId);
+      workflows.advanceInstances();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.ok(passTwoOpened(instanceId, "a"), "the loop never took its next pass");
+  });
+
+  it("retries a merge that failed, and the loop carries on", async () => {
+    const instanceId = scene({ ...FAN_OUT, maxPasses: 2 });
+    for (let step = 0; step < 40; step += 1) {
+      for (const row of membersOf(instanceId)) {
+        const run = dbMod
+          .db()
+          .prepare("SELECT status FROM runs WHERE id=?")
+          .get(row.runId) as { status: string } | undefined;
+        if (run?.status !== "queued") continue;
+        settleOne(row.runId, {
+          branch: row.memberId.endsWith("#c") ? "uf/cut-later" : undefined,
+        });
+      }
+      workflows.advanceInstances();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      if (loopBlock(instanceId).status !== "looping") break;
+    }
+    assert.equal(blockRow(instanceId, passMemberId("L", 1, "m")).status, "failed");
+
+    // What an operator does about a branch that was never there: put it there.
+    git(repoRoot(), "branch", "-f", "uf/cut-later", "HEAD");
+    assert.deepEqual(
+      workflows.retryMergeBlock(instanceId, passMemberId("L", 1, "m")),
+      { ok: true },
+    );
+    for (let step = 0; step < 40 && !passTwoOpened(instanceId, "a"); step += 1) {
+      workflows.advanceInstances();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(blockRow(instanceId, passMemberId("L", 1, "m")).status, "emitted");
+    assert.ok(passTwoOpened(instanceId, "a"), "the loop never took its next pass");
+  });
+
+  it("refuses a run that completed, and a loop that ended on its own terms", async () => {
+    const instanceId = scene({ ...FAN_OUT, maxPasses: 1 });
+    await drive(instanceId);
+    assert.equal(loopBlock(instanceId).status, "emitted");
+    const a = membersOf(instanceId)[0];
+    const refused = workflows.leaveRunBehind(instanceId, a.runId);
+    assert.equal(refused.ok, false);
+    assert.match(refused.ok ? "" : refused.error, /Only a run that ended without completing/);
+
+    dbMod.db().prepare("UPDATE runs SET status='needs-review' WHERE id=?").run(a.runId);
+    const ended = workflows.leaveRunBehind(instanceId, a.runId);
+    assert.match(ended.ok ? "" : ended.error, /ended on its own terms/);
+    assert.equal(loopBlock(instanceId).status, "emitted", "the refusal wrote nothing");
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* Stopping a workflow while a pass is live                            */
 /* ------------------------------------------------------------------ */
 

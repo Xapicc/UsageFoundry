@@ -1153,6 +1153,19 @@ is `docs/agent/testing.md`; interface defects and their classes are
   own — and the frame entries higher up this section are the current readings of
   every surface those two name.
 
+- **A loop stopped on a pass is picked up from the instance page, against a
+  copy of the live database (2026-09-25, at `3276ef9` plus this change).** A
+  snapshot of the container's database under `next dev` with a `CLAUDE_BIN`
+  that cannot spawn. The Sep 25 run of "Dockrac - Taskboard sweep" had stopped
+  at pass 2 on a needs-review run that was since resumed and completed on its
+  own page; `pickUpsOf` offered "Carry on the loop", the press reopened the
+  loop, and pass 2's merge was released with all nine branches — then failed
+  because the branches do not exist on the host, and the loop stopped again
+  naming that and offering "Retry merge". The two Sep 21 runs each offered
+  "Retry merge" for a pass-1 merge that had failed. With the loop's board
+  folder missing the pick-up was refused by name and wrote nothing. Caveat:
+  nothing landed; see the open item below.
+
 ### Concurrency and ownership
 
 - **Folder collision, `npm test` 8 cases:** self, parent/child both ways, a
@@ -3647,6 +3660,12 @@ measurement under *Verified* and cut the item down to what is still open.
 
 - **The rollback path.** Its stop-everything-and-record-`failed` branch has
   never run; read it rather than trust it.
+
+- **A pick-up that actually lands.** Leaving a run behind, retrying a merge
+  and carrying a loop on have run against a database snapshot and in
+  `loopSection.test.ts`'s repository, never against a real checkout with real
+  branches. Settle it by picking a stuck loop up in the container and reading
+  the merge queue's rows and the target branch afterwards.
 
 ### Concurrency and ownership
 

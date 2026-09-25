@@ -306,6 +306,7 @@ const passRun = (
   waitsFor: [],
   emittedBy: null,
   passMember,
+  leftBehind: false,
   ...over,
 });
 

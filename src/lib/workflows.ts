@@ -955,6 +955,11 @@ export interface LoopRunState extends DependencyState {
    * not loop. `runs.reported_done` is what the agent said.
    */
   reportedDone: boolean;
+  /**
+   * The operator picked the workflow up past this run — see `leaveRunBehind`.
+   * Optional so a state built before the column existed reads as not.
+   */
+  leftBehind?: boolean;
 }
 
 /**
@@ -1176,7 +1181,10 @@ function memberSettled(member: LoopPassMember): boolean {
  * which is a choice the operator made and this must not overrule.
  */
 function memberCompleted(member: LoopPassMember): boolean {
-  if (member.run) return member.run.status === "completed";
+  // A run the operator left behind is waived rather than done: the pass is
+  // judged on the members it is still waiting for, which is what leaving one
+  // behind asked for.
+  if (member.run) return member.run.status === "completed" || member.run.leftBehind === true;
   if (member.block) return member.block.status === "emitted";
   return false;
 }
@@ -1223,8 +1231,12 @@ export function planLoopPass(input: LoopPassInput): LoopDecision {
       };
     }
 
-    // Every run member, and there has to be one — see the docblock.
-    const runMembers = last.members.filter((m) => m.kind === "run");
+    // Every run member, and there has to be one — see the docblock. A member
+    // left behind says nothing either way about whether the work is done, so it
+    // is not asked; a pass whose every run member was left behind claims nothing.
+    const runMembers = last.members.filter(
+      (m) => m.kind === "run" && m.run?.leftBehind !== true,
+    );
     if (
       runMembers.length > 0 &&
       runMembers.every((m) => m.run?.reportedDone === true)
@@ -1404,13 +1416,24 @@ export interface InstanceNodeState {
   /** The run this node became, or null when it has not been created. */
   run: DependencyState | null;
   /**
+   * The operator picked the workflow up past `run` — see `leaveRunBehind`. Its
+   * successors stop waiting on it and resolve to no run through it, so a merge
+   * behind it does not land its branch.
+   */
+  leftBehind?: boolean;
+  /**
    * The ledger row: an orchestrator block's turn, or a run block that was
    * never created because nothing in front of it could hand it any work.
    */
   block: {
     status: BlockStatus;
-    /** The runs an orchestrator block started, as their rows stand now. */
+    /**
+     * The runs an orchestrator block started, as their rows stand now — less
+     * any the operator left behind, which are counted in `leftBehind` instead.
+     */
     emitted: readonly DependencyState[];
+    /** How many of the block's runs were left behind, and so are not above. */
+    leftBehind?: number;
     /** Why it ended this way, for the sentence its successors carry. */
     error: string | null;
   } | null;
@@ -1671,6 +1694,10 @@ function edgeVerdict(
       }
       return PENDING;
     }
+    // Waived: nothing waits on it and nothing is resolved through it, whatever
+    // the edge's condition. No `dependsOn` entry, so a merge behind it leaves
+    // its branch where it is and a successor starts fresh rather than on it.
+    if (state.leftBehind) return SATISFIED;
     if (edgeSatisfied(state.run, edge.edge)) {
       dependsOn.push({
         runId: state.run.id,
@@ -1706,7 +1733,9 @@ function edgeVerdict(
   }
 
   // Emitted. Nothing to follow is the deliberate refusal — see `planInstanceStep`.
-  if (block.emitted.length === 0) {
+  // A block whose every run was left behind is not that: it did start work, and
+  // the operator chose to carry on without it, so it resolves to no run at all.
+  if (block.emitted.length === 0 && !block.leftBehind) {
     return {
       kind: "blocked",
       reason:
@@ -2031,6 +2060,8 @@ export interface WorkflowInstanceNode {
   runId: string;
   /** The orchestrator block that started this run, or null for a saved block. */
   emittedBy: string | null;
+  /** When the workflow was picked up past this run — see `leaveRunBehind`. */
+  leftBehindAt?: number | null;
 }
 
 /** One block of an instance that is not a run. See `workflow_instance_blocks`. */
@@ -2735,7 +2766,7 @@ function rowToInstance(row: InstanceRow): WorkflowInstance {
   const nodes = db()
     .prepare(
       `SELECT node_id AS nodeId, node_name AS nodeName, position, run_id AS runId,
-              emitted_by AS emittedBy
+              emitted_by AS emittedBy, left_behind_at AS leftBehindAt
          FROM workflow_instance_runs WHERE instance_id = ? ORDER BY position`,
     )
     .all(row.id) as WorkflowInstanceNode[];
@@ -4182,52 +4213,592 @@ export function reviveBlockedBlocks(roots: readonly string[]): number {
 
   const rows = db()
     .prepare(
-      `SELECT w.instance_id AS instanceId,
+      `SELECT w.instance_id AS instanceId, w.node_id AS memberId,
               COALESCE(w.emitted_by, w.node_id) AS nodeId
          FROM workflow_instance_runs w
          JOIN workflow_instances i ON i.id = w.instance_id
         WHERE i.status = 'started'
           AND w.run_id IN (${roots.map(() => "?").join(",")})`,
     )
-    .all(...roots) as Array<{ instanceId: string; nodeId: string }>;
+    .all(...roots) as Array<{ instanceId: string; memberId: string; nodeId: string }>;
   if (rows.length === 0) return 0;
 
-  const byInstance = new Map<string, string[]>();
+  const byInstance = new Map<string, typeof rows>();
   for (const row of rows) {
     const list = byInstance.get(row.instanceId);
-    if (list) list.push(row.nodeId);
-    else byInstance.set(row.instanceId, [row.nodeId]);
+    if (list) list.push(row);
+    else byInstance.set(row.instanceId, [row]);
   }
 
+  let revived = 0;
+  for (const [instanceId, members] of byInstance) {
+    const instance = getInstance(instanceId);
+    if (!instance) continue;
+    revived += reviveGraphDependents(
+      instance,
+      members.map((m) => m.nodeId),
+    );
+    // A root inside a pass has no node of the graph to walk from — its id is
+    // the pass's, not the section's — so what its ending wrote off is the rest
+    // of its pass and, when that pass stopped the loop, the loop itself. A
+    // refusal here is not the reopen's business: the run is picked up either
+    // way, and the instance page offers the same question with its answer.
+    for (const pass of passRootsOf(members.map((m) => m.memberId))) {
+      if (loopPassRefusal(instance, pass.loopNodeId, pass.pass) !== null) continue;
+      revived += db().transaction(() =>
+        reopenLoopPass(instance, pass.loopNodeId, pass.pass),
+      )();
+    }
+  }
+  return revived;
+}
+
+/**
+ * Put every blocked node of one instance reachable from `nodeIds` back to
+ * `waiting` — the graph half of `reviveBlockedBlocks`, and of every pick-up.
+ */
+function reviveGraphDependents(
+  instance: WorkflowInstance,
+  nodeIds: readonly string[],
+): number {
+  const candidates = instance.blocks
+    .filter((b) => b.status === "blocked")
+    .map((b) => b.nodeId);
+  if (candidates.length === 0 || nodeIds.length === 0) return 0;
+
+  const links = instance.graph.edges
+    .filter(isDependencyEdge)
+    .map((e) => ({
+      runId: e.to,
+      dependsOn: e.from,
+      edge: e.edge as DependencyEdge,
+    }));
   const reopen = db().prepare(
     "UPDATE workflow_instance_blocks SET status='waiting', error=NULL, finished_at=NULL" +
       " WHERE instance_id=? AND node_id=? AND status='blocked'",
   );
-
   let revived = 0;
-  for (const [instanceId, nodes] of byInstance) {
-    const instance = getInstance(instanceId);
-    if (!instance) continue;
-
-    const candidates = instance.blocks
-      .filter((b) => b.status === "blocked")
-      .map((b) => b.nodeId);
-    if (candidates.length === 0) continue;
-
-    const links = instance.graph.edges
-      .filter(isDependencyEdge)
-      .map((e) => ({
-        runId: e.to,
-        dependsOn: e.from,
-        edge: e.edge as DependencyEdge,
-      }));
-    for (const nodeId of revivableDependents(nodes, candidates, links)) {
-      // Guarded on `blocked` for `upsertBlock`'s reason: a row that settled
-      // between the read and the write keeps its own answer.
-      revived += reopen.run(instanceId, nodeId).changes;
-    }
+  for (const nodeId of revivableDependents(nodeIds, candidates, links)) {
+    // Guarded on `blocked` for `upsertBlock`'s reason: a row that settled
+    // between the read and the write keeps its own answer.
+    revived += reopen.run(instance.id, nodeId).changes;
   }
   return revived;
+}
+
+/** The distinct passes a set of member ids belongs to. */
+function passRootsOf(
+  memberIds: readonly string[],
+): Array<{ loopNodeId: string; pass: number }> {
+  const seen = new Map<string, { loopNodeId: string; pass: number }>();
+  for (const id of memberIds) {
+    const member = passMemberOf(id);
+    if (member) seen.set(`${member.loopNodeId}#${member.pass}`, member);
+  }
+  return [...seen.values()];
+}
+
+/**
+ * The first block behind `nodeId` that has already left `waiting`, by name, or
+ * null.
+ *
+ * What makes reopening a settled block safe to offer at all. Its successors
+ * were decided on its ending — an `on-finish` one may have started on it — and
+ * reopening it underneath one that has would put new work in front of a block
+ * that has already acted on the old ending: another pass landing on top of the
+ * cleanup that followed the loop, or a merge retried after the review that
+ * followed it. Only the direct successors are asked, because everything further
+ * down depends on one of them and cannot have started first.
+ */
+function startedBehind(instance: WorkflowInstance, nodeId: string): string | null {
+  for (const edge of instance.graph.edges) {
+    if (edge.from !== nodeId || !isDependencyEdge(edge)) continue;
+    const run = instance.nodes.find((n) => n.nodeId === edge.to);
+    if (run) return run.nodeName;
+    const block = instance.blocks.find((b) => b.nodeId === edge.to);
+    if (block && block.status !== "waiting" && block.status !== "blocked") {
+      return block.nodeName;
+    }
+  }
+  return null;
+}
+
+/**
+ * Why pass `pass` of a loop cannot be carried on, or null when it can.
+ *
+ * Pure over the instance as read, so a pick-up asks it before writing anything
+ * and refuses with the sentence rather than half-reopening. A loop still
+ * `looping` is always fine: the pass is live, and reviving its members is the
+ * whole of what there is to do.
+ */
+function loopPassRefusal(
+  instance: WorkflowInstance,
+  loopNodeId: string,
+  pass: number,
+): string | null {
+  const loop = instance.blocks.find(
+    (b) => b.nodeId === loopNodeId && b.kind === "loop",
+  );
+  if (!loop) return "That loop is not part of this workflow run.";
+  const latest = loopPasses(instance.id, loopNodeId).at(-1)?.pass ?? 0;
+  if (pass !== latest) {
+    return (
+      `Pass ${pass} of “${loop.nodeName}” is not its latest — pass ${latest} ` +
+      "has started since, so there is nothing of it left to carry on."
+    );
+  }
+  if (loop.status === "looping") return null;
+  // `emitted` is a loop that ended on its own terms — done, a limit reached, or
+  // the board condition met. Carrying one on past its caps is a new press of
+  // Run, and the monotone terminus the caps are is not this door's to lift.
+  if (loop.status !== "failed") {
+    return (
+      `“${loop.nodeName}” ended on its own terms, so there is no stuck pass ` +
+      "to pick up — run the workflow again for more passes."
+    );
+  }
+  const started = startedBehind(instance, loopNodeId);
+  if (started) {
+    return (
+      `“${started}” has already started after “${loop.nodeName}” ended, so ` +
+      "the loop cannot take more passes in front of it."
+    );
+  }
+  // Asked here because `advanceLoop` asks it before it steps a pass, and a
+  // board it cannot count settles the loop `failed` there with the pass just
+  // reopened underneath it — members back at `waiting` that nothing will ever
+  // step again, holding the instance open for good.
+  const node = instance.graph.nodes.find((n) => n.id === loopNodeId);
+  if (node?.kind === "loop") {
+    const board = loopBoardCount(node);
+    if (!board.ok) return `Its tasks could not be counted: ${board.error}`;
+  }
+  return null;
+}
+
+/**
+ * Reopen pass `pass` of a loop: its blocked members back to `waiting`, a
+ * stopped loop back to `looping`, and whatever its stop wrote off behind it
+ * back to `waiting` too. Writes only — the caller has asked `loopPassRefusal`,
+ * holds the transaction and advances afterwards.
+ *
+ * The next advance decides everything again on what is true now, exactly as
+ * `reviveBlockedBlocks` does for a node: `stepPass` re-plans the members, and
+ * `planLoopPass` still reads every rung, so a pass that is stuck for the same
+ * reason stops the loop again with the same sentence and a loop at its pass cap
+ * stops at its cap. The worst this can do is rewrite a stale reason.
+ */
+function reopenLoopPass(
+  instance: WorkflowInstance,
+  loopNodeId: string,
+  pass: number,
+): number {
+  const prefix = `${passPrefix(loopNodeId)}${pass}#`;
+  let revived = db()
+    .prepare(
+      "UPDATE workflow_instance_blocks SET status='waiting', error=NULL, finished_at=NULL" +
+        " WHERE instance_id=? AND status='blocked' AND substr(node_id, 1, ?) = ?",
+    )
+    .run(instance.id, prefix.length, prefix).changes;
+  const loop = db()
+    .prepare(
+      "UPDATE workflow_instance_blocks SET status='looping', error=NULL, finished_at=NULL" +
+        " WHERE instance_id=? AND node_id=? AND status='failed'",
+    )
+    .run(instance.id, loopNodeId);
+  if (loop.changes > 0) {
+    revived += loop.changes + reviveGraphDependents(instance, [loopNodeId]);
+  }
+  return revived;
+}
+
+/** A run ending that can hold a workflow up, as the pick-up list offers it. */
+const STUCK_RUN_STATUSES: readonly RunStatus[] = ["needs-review", "failed", "stopped"];
+
+/** One thing holding a workflow run up, and whether it can be stepped past. */
+export type PickUp =
+  | {
+      kind: "run";
+      runId: string;
+      nodeName: string;
+      status: RunStatus;
+      /** Why `leaveRunBehind` would refuse it, or null when it would not. */
+      leaveBehindRefusal: string | null;
+    }
+  | {
+      kind: "merge";
+      nodeId: string;
+      nodeName: string;
+      error: string | null;
+      /** Why `retryMergeBlock` would refuse it, or null when it would not. */
+      retryRefusal: string | null;
+    }
+  | {
+      /**
+       * A stopped loop whose latest pass would now go through: what blocked
+       * its members has since cleared — most often a run resumed and completed
+       * on its own page before resuming a run could reopen a pass.
+       */
+      kind: "loop";
+      nodeId: string;
+      nodeName: string;
+      pass: number;
+      /** Why `resumeLoop` would refuse it, or null when it would not. */
+      refusal: string | null;
+    };
+
+/**
+ * What is holding this workflow run up — each run whose ending wrote off
+ * something behind it, and each merge block that failed — for the page to offer
+ * one at a time.
+ *
+ * Answered here rather than on the page, because "did this ending write
+ * anything off" is the revive's own reachability and the refusals are the
+ * pick-ups' own: a page that re-derived either would offer a button the route
+ * then refuses, or hide one it would have honoured.
+ *
+ * Inside a loop only the pass that stopped it counts: an earlier pass has been
+ * carried past already, and nothing it did is holding anything up now.
+ */
+export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
+  if (!instanceIsOpen(instance.status)) return [];
+
+  const blockedNodes = [
+    ...instance.blocks.filter((b) => b.status === "blocked").map((b) => b.nodeId),
+    ...instance.nodes
+      .filter((n) => getRun(n.runId)?.status === "blocked")
+      .map((n) => n.nodeId),
+  ];
+  const links = instance.graph.edges.filter(isDependencyEdge).map((e) => ({
+    runId: e.to,
+    dependsOn: e.from,
+    edge: e.edge as DependencyEdge,
+  }));
+  const stoppedPasses = new Map<string, number>();
+  for (const loop of instance.blocks) {
+    if (loop.kind !== "loop" || loop.status !== "failed") continue;
+    const last = loopPasses(instance.id, loop.nodeId).at(-1)?.pass;
+    if (last !== undefined) stoppedPasses.set(loop.nodeId, last);
+  }
+  const holdsUp = (memberId: string, graphNodeId: string): boolean => {
+    const pass = passMemberOf(memberId);
+    if (pass) return stoppedPasses.get(pass.loopNodeId) === pass.pass;
+    return revivableDependents([graphNodeId], blockedNodes, links).length > 0;
+  };
+  const passRefusal = (memberId: string): string | null => {
+    const pass = passMemberOf(memberId);
+    return pass ? loopPassRefusal(instance, pass.loopNodeId, pass.pass) : null;
+  };
+
+  const out: PickUp[] = [];
+  for (const node of instance.nodes) {
+    if (node.leftBehindAt) continue;
+    const run = getRun(node.runId);
+    if (!run || !STUCK_RUN_STATUSES.includes(run.status)) continue;
+    if (!holdsUp(node.nodeId, node.emittedBy ?? node.nodeId)) continue;
+    const waitedOn = db()
+      .prepare(
+        `SELECT COUNT(*) AS n FROM run_deps d JOIN runs r ON r.id = d.run_id
+          WHERE d.depends_on = ? AND r.status IN ('waiting','blocked')`,
+      )
+      .get(node.runId) as { n: number };
+    out.push({
+      kind: "run",
+      runId: node.runId,
+      nodeName: node.nodeName,
+      status: run.status,
+      leaveBehindRefusal:
+        waitedOn.n > 0
+          ? "Another run is chained directly behind it, so resuming it is the way through."
+          : passRefusal(node.nodeId),
+    });
+  }
+  for (const block of instance.blocks) {
+    if (block.kind !== "merge" || block.status !== "failed") continue;
+    const pass = passMemberOf(block.nodeId);
+    if (pass && stoppedPasses.get(pass.loopNodeId) !== pass.pass) continue;
+    const started = pass ? null : startedBehind(instance, block.nodeId);
+    out.push({
+      kind: "merge",
+      nodeId: block.nodeId,
+      nodeName: block.nodeName,
+      error: block.error,
+      retryRefusal: pass
+        ? passRefusal(block.nodeId)
+        : started
+          ? `“${started}” has already started after it failed.`
+          : null,
+    });
+  }
+  for (const loop of instance.blocks) {
+    const pass = stoppedPasses.get(loop.nodeId);
+    if (pass === undefined) continue;
+    // Only once nothing above is offered for this pass: a stuck run or a failed
+    // merge is the obstacle to name, and carrying the loop on underneath one
+    // would stop it again on the same sentence.
+    const named = out.some((p) => {
+      const id = p.kind === "run"
+        ? instance.nodes.find((n) => n.runId === p.runId)?.nodeId
+        : p.kind === "merge" ? p.nodeId : undefined;
+      const member = id ? passMemberOf(id) : null;
+      return member?.loopNodeId === loop.nodeId && member.pass === pass;
+    });
+    if (named || !passWouldProceed(instance, loop.nodeId, pass)) continue;
+    out.push({
+      kind: "loop",
+      nodeId: loop.nodeId,
+      nodeName: loop.nodeName,
+      pass,
+      refusal: loopPassRefusal(instance, loop.nodeId, pass),
+    });
+  }
+  return out;
+}
+
+/**
+ * Whether reopening pass `pass` would let its blocked members go now, rather
+ * than blocking them again on the same sentence.
+ *
+ * The scheduler itself, dry: `planInstanceStep` over the section with every
+ * blocked member of the pass put back to `waiting`, which is exactly what
+ * `reopenLoopPass` writes. A pass with nothing blocked is not a stuck pass.
+ */
+function passWouldProceed(
+  instance: WorkflowInstance,
+  loopNodeId: string,
+  pass: number,
+): boolean {
+  const node = instance.graph.nodes.find((n) => n.id === loopNodeId);
+  if (!node || node.kind !== "loop") return false;
+  const row = loopPasses(instance.id, loopNodeId).find((p) => p.pass === pass);
+  const blocked = (row?.members ?? []).filter((m) => m.block?.status === "blocked");
+  if (blocked.length === 0) return false;
+
+  const state = passState(row);
+  for (const member of blocked) {
+    const own = state.get(member.nodeId);
+    if (own?.block) state.set(member.nodeId, { ...own, block: { ...own.block, status: "waiting" } });
+  }
+  const step = planInstanceStep(loopSection(instance.graph, node).graph, state);
+  const reblocked = new Set(step.block.map((b) => b.nodeId));
+  return blocked.every((m) => !reblocked.has(m.nodeId));
+}
+
+/**
+ * Carry a stopped loop on from its latest pass, once what stopped that pass has
+ * cleared — `pickUpsOf` offers it only when a dry run of the scheduler says the
+ * pass would now go through. Every rung of `planLoopPass` is still read after
+ * it, so the caps end the loop where they always would have.
+ */
+export function resumeLoop(instanceId: string, loopNodeId: string): PickUpOutcome {
+  const opened = openInstanceFor(instanceId);
+  if ("refusal" in opened) return opened.refusal;
+  const { instance } = opened;
+
+  const loop = instance.blocks.find((b) => b.nodeId === loopNodeId && b.kind === "loop");
+  if (!loop) {
+    return { ok: false, status: 404, error: "That loop is not part of this workflow run." };
+  }
+  const pass = loopPasses(instanceId, loopNodeId).at(-1)?.pass;
+  if (pass === undefined || loop.status !== "failed") {
+    return {
+      ok: false,
+      status: 409,
+      error: `“${loop.nodeName}” is ${loop.status}, so there is no stopped pass to carry on from.`,
+    };
+  }
+  const refusal = loopPassRefusal(instance, loopNodeId, pass);
+  if (refusal) return { ok: false, status: 409, error: refusal };
+
+  db().transaction(() => {
+    reopenLoopPass(instance, loopNodeId, pass);
+    noteBlock(instanceId, loopNodeId, `Picked up at pass ${pass}: carried on.`);
+  })();
+
+  advanceInstances();
+  return { ok: true };
+}
+
+/** What a pick-up said. `status` is the HTTP answer a refusal maps to. */
+export type PickUpOutcome =
+  | { ok: true }
+  | { ok: false; status: 404 | 409; error: string };
+
+/** The instance a pick-up may act on, or the refusal. */
+function openInstanceFor(
+  instanceId: string,
+): { instance: WorkflowInstance } | { refusal: PickUpOutcome } {
+  const instance = getInstance(instanceId);
+  if (!instance) {
+    return { refusal: { ok: false, status: 404, error: "No such workflow run." } };
+  }
+  // A halted workflow is halted whole, `reviveBlockedDependents`' rule: waking
+  // part of it would put agents back to work under an instance the page reports
+  // as stopped, where its budget guard no longer acts.
+  if (!instanceIsOpen(instance.status)) {
+    return {
+      refusal: {
+        ok: false,
+        status: 409,
+        error: `This workflow run is ${instance.status}, so nothing in it can be picked up. Run the workflow again instead.`,
+      },
+    };
+  }
+  return { instance };
+}
+
+/**
+ * Carry a workflow run on past one of its runs rather than through it.
+ *
+ * For a run that ended without completing — most often `needs-review` — whose
+ * ending stopped what was behind it. The run is left exactly as it is: its
+ * status, its branch and the question it asked stay on its own page for later,
+ * and only this workflow stops waiting on it. `left_behind_at` is the whole
+ * record, and every reader of the graph's state honours it the same way — a
+ * successor resolves to no run through it, so a merge behind it does **not**
+ * land its branch, and a pass is judged on the members it is still waiting for.
+ *
+ * Refused for a run another *run* waits on through `run_deps`: that edge is
+ * `releasableRuns`', which knows nothing of workflows, and a waiver that half
+ * the scheduler honoured would leave the other half blocking on it. Resuming
+ * the run is the way through there, and the refusal says so.
+ *
+ * Synchronous from the checks to the advance, for `createRun`'s reason: the
+ * advance creates runs, and the state it reads must be the state just written.
+ */
+export function leaveRunBehind(instanceId: string, runId: string): PickUpOutcome {
+  const opened = openInstanceFor(instanceId);
+  if ("refusal" in opened) return opened.refusal;
+  const { instance } = opened;
+
+  const member = db()
+    .prepare(
+      `SELECT node_id AS memberId, node_name AS name,
+              COALESCE(emitted_by, node_id) AS nodeId, left_behind_at AS leftBehindAt
+         FROM workflow_instance_runs WHERE instance_id=? AND run_id=?`,
+    )
+    .get(instanceId, runId) as
+    | { memberId: string; name: string; nodeId: string; leftBehindAt: number | null }
+    | undefined;
+  if (!member) {
+    return { ok: false, status: 404, error: "That run is not part of this workflow run." };
+  }
+
+  const run = getRun(runId);
+  if (!run || !TERMINAL_STATUSES.includes(run.status) || run.status === "completed") {
+    return {
+      ok: false,
+      status: 409,
+      error:
+        `“${member.name}” is ${run?.status ?? "gone"}. Only a run that ended ` +
+        "without completing can be left behind.",
+    };
+  }
+
+  const waitedOn = db()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM run_deps d JOIN runs r ON r.id = d.run_id
+        WHERE d.depends_on = ? AND r.status IN ('waiting','blocked')`,
+    )
+    .get(runId) as { n: number };
+  if (waitedOn.n > 0) {
+    return {
+      ok: false,
+      status: 409,
+      error:
+        `Another run is chained directly behind “${member.name}”, so it cannot ` +
+        "be left behind here. Resume it instead, from its own page.",
+    };
+  }
+
+  const pass = passMemberOf(member.memberId);
+  if (pass) {
+    const refusal = loopPassRefusal(instance, pass.loopNodeId, pass.pass);
+    if (refusal) return { ok: false, status: 409, error: refusal };
+  }
+
+  db().transaction(() => {
+    db()
+      .prepare(
+        "UPDATE workflow_instance_runs SET left_behind_at=?" +
+          " WHERE instance_id=? AND run_id=? AND left_behind_at IS NULL",
+      )
+      .run(Date.now(), instanceId, runId);
+    if (pass) {
+      reopenLoopPass(instance, pass.loopNodeId, pass.pass);
+      noteBlock(
+        instanceId,
+        pass.loopNodeId,
+        `Picked up at pass ${pass.pass}: “${member.name}” was left behind.`,
+      );
+    } else {
+      reviveGraphDependents(instance, [member.nodeId]);
+    }
+  })();
+
+  advanceInstances();
+  return { ok: true };
+}
+
+/**
+ * Run a merge block that failed again, landing whatever of its branches is not
+ * on the target yet.
+ *
+ * Safe to repeat for the reason a merge is safe at all: every branch is
+ * previewed against git at its own turn in the queue, and one already on its
+ * target is skipped as having nothing to land. So the usual way through a
+ * conflict — resolve it on the run's branch, or land that one branch by hand
+ * from Branches — ends with a retry that lands the rest and settles the block.
+ *
+ * The runs it lands are resolved again from its edges rather than recalled, so
+ * a run left behind since the failure is not landed now.
+ */
+export function retryMergeBlock(instanceId: string, nodeId: string): PickUpOutcome {
+  const opened = openInstanceFor(instanceId);
+  if ("refusal" in opened) return opened.refusal;
+  const { instance } = opened;
+
+  const block = instance.blocks.find((b) => b.nodeId === nodeId && b.kind === "merge");
+  if (!block) {
+    return { ok: false, status: 404, error: "That merge block is not part of this workflow run." };
+  }
+  if (block.status !== "failed") {
+    return {
+      ok: false,
+      status: 409,
+      error: `“${block.nodeName}” is ${block.status}, so there is no failed merge to retry.`,
+    };
+  }
+
+  const pass = passMemberOf(nodeId);
+  const refusal = pass
+    ? loopPassRefusal(instance, pass.loopNodeId, pass.pass)
+    : startedBehind(instance, nodeId) === null
+      ? null
+      : `“${startedBehind(instance, nodeId)}” has already started after “${block.nodeName}” failed, so retrying it now would land work behind a block that has moved on.`;
+  if (refusal) return { ok: false, status: 409, error: refusal };
+
+  db().transaction(() => {
+    db()
+      .prepare(
+        "UPDATE workflow_instance_blocks SET status='waiting', error=NULL, finished_at=NULL" +
+          " WHERE instance_id=? AND node_id=? AND status='failed'",
+      )
+      .run(instanceId, nodeId);
+    if (pass) {
+      reopenLoopPass(instance, pass.loopNodeId, pass.pass);
+      noteBlock(
+        instanceId,
+        pass.loopNodeId,
+        `Picked up at pass ${pass.pass}: “${block.nodeName}” was retried.`,
+      );
+    } else {
+      reviveGraphDependents(instance, [nodeId]);
+    }
+  })();
+
+  advanceInstances();
+  return { ok: true };
 }
 
 /**
@@ -4414,7 +4985,8 @@ function instanceState(
   const runs = db()
     .prepare(
       `SELECT w.node_id AS nodeId, w.emitted_by AS emittedBy, r.id AS id,
-              r.status AS status, r.iterations AS iterations
+              r.status AS status, r.iterations AS iterations,
+              w.left_behind_at AS leftBehindAt
          FROM workflow_instance_runs w
          LEFT JOIN runs r ON r.id = w.run_id
         WHERE w.instance_id = ?
@@ -4426,6 +4998,7 @@ function instanceState(
     id: string | null;
     status: RunStatus | null;
     iterations: number | null;
+    leftBehindAt: number | null;
   }>;
 
   // Ordered by position, which for a loop block's members is pass order and,
@@ -4434,6 +5007,7 @@ function instanceState(
   // every pass lands its own work — but the order is what `loopPasses` groups
   // on, and this is the query that establishes it.
   const emitted = new Map<string, DependencyState[]>();
+  const emittedLeftBehind = new Map<string, number>();
   for (const row of runs) {
     // A row whose run has been deleted is treated as gone rather than as
     // finished, the same reading `releasableRuns` gives a missing dependency:
@@ -4446,11 +5020,22 @@ function instanceState(
       iterations: row.iterations ?? 0,
     };
     if (row.emittedBy) {
+      if (row.leftBehindAt !== null) {
+        emittedLeftBehind.set(
+          row.emittedBy,
+          (emittedLeftBehind.get(row.emittedBy) ?? 0) + 1,
+        );
+        continue;
+      }
       const list = emitted.get(row.emittedBy);
       if (list) list.push(run);
       else emitted.set(row.emittedBy, [run]);
     } else {
-      state.set(row.nodeId, { run, block: null });
+      state.set(row.nodeId, {
+        run,
+        block: null,
+        leftBehind: row.leftBehindAt !== null,
+      });
     }
   }
 
@@ -4460,6 +5045,7 @@ function instanceState(
       block: {
         status: block.status,
         emitted: emitted.get(block.nodeId) ?? [],
+        leftBehind: emittedLeftBehind.get(block.nodeId) ?? 0,
         error: block.error,
       },
     });
@@ -4620,7 +5206,7 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
       `SELECT w.node_id AS memberId, w.node_name AS name,
               w.emitted_by AS emittedBy, w.position AS position,
               r.id AS id, r.status AS status, r.iterations AS iterations,
-              r.reported_done AS reportedDone
+              r.reported_done AS reportedDone, w.left_behind_at AS leftBehindAt
          FROM workflow_instance_runs w
          LEFT JOIN runs r ON r.id = w.run_id
         WHERE w.instance_id = ? AND substr(w.node_id, 1, ?) = ?
@@ -4635,6 +5221,7 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
     status: RunStatus | null;
     iterations: number | null;
     reportedDone: number | null;
+    leftBehindAt: number | null;
   }>;
 
   const blockRows = db()
@@ -4661,6 +5248,7 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
           status: row.status,
           iterations: row.iterations ?? 0,
           reportedDone: !!row.reportedDone,
+          leftBehind: row.leftBehindAt !== null,
         }
       : null;
 
@@ -5198,10 +5786,18 @@ function passState(
 ): Map<string, InstanceNodeState> {
   const state = new Map<string, InstanceNodeState>();
   for (const member of pass?.members ?? []) {
+    // Split the way `instanceState` splits them, so a pass and the graph around
+    // it read a left-behind run identically.
+    const kept = member.emitted.filter((r) => r.leftBehind !== true);
     state.set(member.nodeId, {
       run: member.run,
+      leftBehind: member.run?.leftBehind === true,
       block: member.block
-        ? { ...member.block, emitted: member.emitted }
+        ? {
+            ...member.block,
+            emitted: kept,
+            leftBehind: member.emitted.length - kept.length,
+          }
         : null,
     });
   }

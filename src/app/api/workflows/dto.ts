@@ -13,6 +13,7 @@ import {
   lastRunAt,
   liveBlocksOf,
   liveRunsOf,
+  pickUpsOf,
   runStateOf,
   type Workflow,
   type WorkflowInstance,
@@ -130,6 +131,7 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
     // a two-block section comes to be drawn as six passes. `passMemberOf` is
     // the one reader, and it lives beside the writer.
     passMember: passMemberOf(n.nodeId),
+    leftBehind: !!n.leftBehindAt,
   }));
 
   const blocks: WorkflowInstanceBlockDTO[] = instance.blocks.map((b) => {
@@ -184,5 +186,6 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
     spentSubjects: instance.spend.subjects,
     nodes,
     blocks,
+    pickUps: pickUpsOf(instance),
   };
 }
