@@ -42,7 +42,10 @@ export interface LogEntry {
   tone: LogTone;
   /** The tool's name, or what a system row is about. Null for agent prose. */
   label: string | null;
-  /** The body. Blank only on a tool call that carried no arguments. */
+  /**
+   * The body. Blank only on a tool call that carried no arguments — an object
+   * with no own enumerable keys, per `toolArgs` below.
+   */
   text: string;
 }
 
@@ -104,6 +107,14 @@ function clip(s: string): string {
  * the command with it, and "which field names a call" must have one definition
  * — two would drift with nothing reporting it, and the second would be the one
  * an operator reads next to a 403.
+ *
+ * An object with no own enumerable keys returns `""` rather than the literal
+ * `"{}"`: that is the true statement about a tool declared with no parameters
+ * (`list_my_tasks` and its neighbours in `route.ts`), and the caller already
+ * renders a blank body as no body at all. An object that *does* carry fields,
+ * none of them a headline one, still falls through to its raw JSON — that
+ * string is the only thing the reader has for such a call, and hiding it to
+ * match the empty case would lose the call rather than describe it plainly.
  */
 export function toolArgs(input: unknown): string {
   if (input === null || input === undefined) return "";
@@ -111,6 +122,7 @@ export function toolArgs(input: unknown): string {
   if (typeof input !== "object") return clip(String(input));
 
   const fields = input as Record<string, unknown>;
+  if (Object.keys(fields).length === 0) return "";
   for (const key of HEADLINE_FIELDS) {
     const value = fields[key];
     if (typeof value === "string" && value.trim() !== "") return clip(value);

@@ -6,6 +6,7 @@ import {
   describeEvent,
   logFilterActive,
   matchesLogFilter,
+  toolArgs,
   type LogFilter,
 } from "./logLine";
 
@@ -187,6 +188,22 @@ describe("describeEvent — a tool call somebody else made", () => {
       )?.label,
       "Explore › Grep",
     );
+  });
+});
+
+describe("toolArgs — an object with nothing to say", () => {
+  it("renders no own keys as blank, not the literal '{}'", () => {
+    // The true statement about a tool declared with no parameters, and the
+    // one the caller already treats as no body at all (`Log.tsx`'s `tool`
+    // branch guards the args span on `entry.text &&`).
+    assert.equal(toolArgs({}), "");
+  });
+
+  it("still renders raw JSON when nothing present is a headline field", () => {
+    // Losing this would hide the call rather than describe it: the JSON is
+    // the only thing the reader has for it.
+    const input = { count: 3, force: true };
+    assert.equal(toolArgs(input), JSON.stringify(input));
   });
 });
 
