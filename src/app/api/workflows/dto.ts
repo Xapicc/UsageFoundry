@@ -132,34 +132,38 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
     passMember: passMemberOf(n.nodeId),
   }));
 
-  const blocks: WorkflowInstanceBlockDTO[] = instance.blocks.map((b) => ({
-    nodeId: b.nodeId,
-    nodeName: b.nodeName,
-    position: b.position,
-    kind: b.kind,
-    status: b.status,
-    startedAt: b.startedAt,
-    finishedAt: b.finishedAt,
-    costUSD: blockSpendReading(b),
-    costUnknown: b.costUnknown,
-    emitted: b.emitted,
-    decided: b.decided,
-    reply: b.reply,
-    notes: b.notes,
-    branchesLanded: b.branchesLanded,
-    branchesFailed: b.branchesFailed,
-    error: b.error,
-    // A block can be a member of a pass too, now that a loop repeats a section
-    // rather than a task: an orchestrator member and the merge block every
-    // section ends at are ledger rows, not runs. The loop is what created it
-    // when it is the section's entry.
-    waitsFor: waitsForRow(b.nodeId, passMemberOf(b.nodeId)?.loopNodeId ?? null),
-    // Off the instance's own graph snapshot, so a pass that already ran keeps
-    // the order it ran in however the workflow has been rewired since.
-    bodyNodeIds:
-      instance.graph.nodes.find((n) => n.id === b.nodeId)?.bodyNodeIds ?? [],
-    passMember: passMemberOf(b.nodeId),
-  }));
+  const blocks: WorkflowInstanceBlockDTO[] = instance.blocks.map((b) => {
+    const snapshot = instance.graph.nodes.find((n) => n.id === b.nodeId);
+    return {
+      nodeId: b.nodeId,
+      nodeName: b.nodeName,
+      position: b.position,
+      kind: b.kind,
+      status: b.status,
+      startedAt: b.startedAt,
+      finishedAt: b.finishedAt,
+      costUSD: blockSpendReading(b),
+      costUnknown: b.costUnknown,
+      emitted: b.emitted,
+      decided: b.decided,
+      reply: b.reply,
+      notes: b.notes,
+      branchesLanded: b.branchesLanded,
+      branchesFailed: b.branchesFailed,
+      error: b.error,
+      // A block can be a member of a pass too, now that a loop repeats a section
+      // rather than a task: an orchestrator member and the merge block every
+      // section ends at are ledger rows, not runs. The loop is what created it
+      // when it is the section's entry.
+      waitsFor: waitsForRow(b.nodeId, passMemberOf(b.nodeId)?.loopNodeId ?? null),
+      // Off the instance's own graph snapshot, so a pass that already ran keeps
+      // the order it ran in however the workflow has been rewired since.
+      bodyNodeIds: snapshot?.bodyNodeIds ?? [],
+      maxPasses: snapshot?.kind === "loop" ? snapshot.maxPasses : null,
+      maxLoopCostUSD: snapshot?.kind === "loop" ? snapshot.maxLoopCostUSD : null,
+      passMember: passMemberOf(b.nodeId),
+    };
+  });
 
   return {
     id: instance.id,

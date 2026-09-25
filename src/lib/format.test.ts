@@ -333,6 +333,8 @@ const passBlock = (
   error: null,
   waitsFor: [],
   bodyNodeIds: [],
+  maxPasses: null,
+  maxLoopCostUSD: null,
   passMember,
   ...over,
 });

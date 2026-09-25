@@ -2295,6 +2295,13 @@ export interface WorkflowInstanceBlockDTO {
    * ordering rule that could disagree with the one the pass actually used.
    */
   bodyNodeIds: string[];
+  /**
+   * A loop's own caps, off the same snapshot, so the page can say how far
+   * through them it got. Null on every other kind — and `maxPasses` is also
+   * null on a loop written before the cap was saved with it.
+   */
+  maxPasses: number | null;
+  maxLoopCostUSD: number | null;
   /** Which pass this ledger row is a member of — see `PassMemberDTO`. */
   passMember: PassMemberDTO | null;
 }

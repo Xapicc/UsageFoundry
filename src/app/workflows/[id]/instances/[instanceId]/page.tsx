@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { WorkflowInstanceDTO } from "@/lib/apiTypes";
-import type { BadgeTone } from "@/lib/format";
+import type { BadgeTone, PassRow } from "@/lib/format";
 import {
   STATUS_TONE,
   WORKFLOW_LIMIT_TIMING_NOTE,
@@ -22,7 +22,14 @@ import { Markdown } from "@/components/Markdown";
 import { Meter } from "@/components/Meter";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { Card, CardTitle, Empty, SkeletonText } from "@/components/ui/Card";
+import {
+  Card,
+  CardTitle,
+  Empty,
+  SkeletonText,
+  Stat,
+  StatSub,
+} from "@/components/ui/Card";
 import { Disclosure } from "@/components/ui/Disclosure";
 import { Hint } from "@/components/ui/Hint";
 import { ListGroup, ListRow } from "@/components/ui/List";
@@ -112,12 +119,56 @@ type NodeDTO = WorkflowInstanceDTO["nodes"][number];
  * that did — the same partial reading the workflow's own meter takes, and the
  * count beside it says how many runs the figure is over.
  */
-function passSpend(runs: readonly NodeDTO[]): string {
+function passSpend(runs: readonly NodeDTO[]): { usd: number | null; reported: number } {
   const reported = runs
     .map((n) => n.run?.spentUSD)
     .filter((usd): usd is number => usd !== null && usd !== undefined);
-  if (reported.length === 0) return "";
-  return ` · ${fmtUSD(reported.reduce((total, usd) => total + usd, 0))}`;
+  if (reported.length === 0) return { usd: null, reported: 0 };
+  return {
+    usd: reported.reduce((total, usd) => total + usd, 0),
+    reported: reported.length,
+  };
+}
+
+/**
+ * How a set of runs ended, most common first: "9 completed · 1 needs-review".
+ *
+ * The run's own status words, because they are the badges on the rows the fold
+ * hides — a summary in other words is a second vocabulary to translate.
+ */
+function statusTally(runs: readonly NodeDTO[]): string {
+  const counts = new Map<string, number>();
+  for (const n of runs) {
+    const status = n.run?.status ?? "gone";
+    counts.set(status, (counts.get(status) ?? 0) + 1);
+  }
+  return [...counts]
+    .sort((a, b) => b[1] - a[1])
+    .map(([status, count]) => `${count} ${status}`)
+    .join(" · ");
+}
+
+/**
+ * Whether a pass landed, including the two states `landingSummary` leaves out.
+ *
+ * `landingSummary` answers only for a merge that ran. A merge still waiting is
+ * nothing to say yet, but a **blocked** one is the pass that did not land at
+ * all — the ending that stops a loop, and the one its summary line most needs.
+ */
+function passLanding(
+  landing: BlockDTO | null,
+): { text: string; warn: boolean } | null {
+  if (landing === null) return null;
+  if (landing.status === "blocked") {
+    return { text: "not landed — its merge never started", warn: true };
+  }
+  if (landing.status === "thinking") return { text: "landing…", warn: false };
+  const text = landingSummary(landing);
+  if (text === null) return null;
+  return {
+    text,
+    warn: landing.branchesFailed > 0 || landing.branchesLanded === 0,
+  };
 }
 
 /** Where the run is working. Absolute when its mount has since been removed. */
@@ -136,9 +187,17 @@ function folderLabel(run: NonNullable<NodeDTO["run"]>): string {
 function RunRows({
   nodes,
   nodeName,
+  nested = false,
 }: {
   nodes: NodeDTO[];
   nodeName: Map<string, string>;
+  /**
+   * Drawn directly under the block that decided them, inside a pass. The
+   * "started by" line is dropped there rather than repeated: the row above is
+   * that block, and ten copies of its name down one pass buried the one line
+   * per run that differed.
+   */
+  nested?: boolean;
 }) {
   return (
     <TBody>
@@ -163,20 +222,24 @@ function RunRows({
                 <Badge tone="neutral">gone</Badge>
               )}
             </Td>
-            <Td className="align-top">
+            <Td
+              className={`align-top ${nested ? "md:border-l-2 md:border-l-line md:pl-4" : ""}`}
+            >
               <Link
                 href={`/runs/${n.runId}`}
                 className="block font-medium text-ink hover:text-accent max-md:inline-flex max-md:min-h-11 max-md:items-center"
               >
                 {n.nodeName}
               </Link>
-              <div className="mt-0.5 text-ink-muted">
-                {n.emittedBy
-                  ? `started by ${nodeName.get(n.emittedBy) ?? n.emittedBy}`
-                  : waits.length === 0
-                    ? "started immediately"
-                    : `after ${waits.join(", ")}`}
-              </div>
+              {!nested && (
+                <div className="mt-0.5 text-ink-muted">
+                  {n.emittedBy
+                    ? `started by ${nodeName.get(n.emittedBy) ?? n.emittedBy}`
+                    : waits.length === 0
+                      ? "started immediately"
+                      : `after ${waits.join(", ")}`}
+                </div>
+              )}
               {n.run && (
                 // Under the name because a block a model wrote chose this
                 // folder itself, within the mount the operator fixed — it is
@@ -333,6 +396,182 @@ function RunTableHead() {
         </Th>
       </tr>
     </THead>
+  );
+}
+
+/**
+ * One repeating block: how far through its caps it got, why it stopped, and
+ * each pass folded down to the line that says how it went.
+ *
+ * The loop's own status and stop reason used to sit in "Blocks not yet runs",
+ * a card away from the passes they explain, and every pass was one flat table
+ * under a thin heading row — a pass of ten runs was twenty screen-heights of
+ * scrolling before the next one began. A pass's summary line carries what a
+ * reader scans for — how its runs ended, what they cost, whether it landed —
+ * so the earlier passes fold behind it. The latest opens at mount, and only at
+ * mount: `Disclosure` is uncontrolled so a poll never closes one under a
+ * reader.
+ */
+function LoopCard({
+  loop,
+  passes,
+  nodeName,
+  emphasis,
+}: {
+  loop: BlockDTO;
+  passes: PassRow[];
+  nodeName: Map<string, string>;
+  emphasis: "primary" | "default";
+}) {
+  const runs = passes.flatMap(passRuns);
+  const spend = passSpend(runs);
+  const waits = loop.waitsFor.map((from) => nodeName.get(from) ?? from);
+
+  return (
+    <Card emphasis={emphasis}>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Badge tone={BLOCK_TONE[loop.status]}>{blockLabel(loop)}</Badge>
+        {loop.startedAt !== null && (
+          <span className="text-ink-muted">
+            started {fmtDateTime(loop.startedAt)}
+          </span>
+        )}
+      </div>
+
+      {passes.length === 0 ? (
+        <Empty>
+          <div className="text-ink-muted">
+            No pass yet — {blockSummary(loop, waits)}.
+          </div>
+        </Empty>
+      ) : (
+        <div className="mt-4 grid grid-cols-3 gap-4">
+          <div>
+            <div className="text-xs text-ink-muted">Passes</div>
+            <Stat>{passes.length}</Stat>
+            <StatSub>
+              {loop.maxPasses === null ? "no pass limit" : `of ${loop.maxPasses} at most`}
+            </StatSub>
+          </div>
+          <div>
+            <div className="text-xs text-ink-muted">Runs</div>
+            <Stat>{runs.length}</Stat>
+            <StatSub>{statusTally(runs)}</StatSub>
+          </div>
+          <div>
+            <div className="text-xs text-ink-muted">Spent by its runs</div>
+            {/* A dash rather than $0.00 when nothing reported: see `passSpend`. */}
+            <Stat>{spend.usd === null ? "—" : fmtUSD(spend.usd)}</Stat>
+            <StatSub>
+              {loop.maxLoopCostUSD === null
+                ? "no spending limit"
+                : `of ${fmtUSD(loop.maxLoopCostUSD)} limit`}
+              {spend.reported < runs.length &&
+                ` · ${spend.reported} of ${runs.length} reported a cost`}
+            </StatSub>
+          </div>
+        </div>
+      )}
+
+      {/* Why it stopped, above the passes rather than in a table cell beside
+          the loop's name: it is the sentence every pass below is read against. */}
+      {loop.error && (
+        <Notice
+          tone={loop.status === "failed" ? "danger" : "info"}
+          className="mt-4"
+        >
+          {loop.error}
+        </Notice>
+      )}
+      {loop.notes.map((note, i) => (
+        <Notice key={i} tone="warn" className="mt-4">
+          {note}
+        </Notice>
+      ))}
+
+      {passes.length > 0 && (
+        <div className="mt-4 border-t border-line">
+          {passes.map((row, index) => {
+            const passRunList = passRuns(row);
+            const passCost = passSpend(passRunList);
+            const landing = passLanding(row.landing);
+            return (
+              <Disclosure
+                key={row.pass}
+                defaultOpen={index === passes.length - 1}
+                className="border-b border-line py-2"
+                summary={
+                  <>
+                    <span className="font-medium text-ink">Pass {row.pass}</span>
+                    <span className="ml-2 text-ink-muted">
+                      {passRunList.length === 0
+                        ? "no runs"
+                        : statusTally(passRunList)}
+                      {passCost.usd !== null && ` · ${fmtUSD(passCost.usd)}`}
+                    </span>
+                    {/* The landing on the pass's own line, because it is the
+                        fact that decides whether the next pass could see this
+                        one's work — not a property of the merge member it is
+                        read off. */}
+                    {landing && (
+                      <span
+                        className={landing.warn ? "text-warn" : "text-ink-muted"}
+                      >
+                        {" "}
+                        · {landing.text}
+                      </span>
+                    )}
+                  </>
+                }
+              >
+                <div className="mt-2">
+                  <TableWrap>
+                    <Table stack>
+                      <caption className="sr-only">
+                        Pass {row.pass} of {loop.nodeName}: the blocks it ran and
+                        the runs they started
+                      </caption>
+                      <RunTableHead />
+                      {row.members.map((member) =>
+                        member.kind === "run" ? (
+                          <RunRows
+                            key={member.key}
+                            nodes={[member.node]}
+                            nodeName={nodeName}
+                          />
+                        ) : (
+                          <Fragment key={member.key}>
+                            <MemberBlockRows
+                              block={member.block}
+                              nodeName={nodeName}
+                            />
+                            {/* Under the member that decided them: these are
+                                runs this pass caused, and the operator reading a
+                                pass's spend has to see them inside it. */}
+                            <RunRows
+                              nodes={member.emitted}
+                              nodeName={nodeName}
+                              nested
+                            />
+                          </Fragment>
+                        ),
+                      )}
+                    </Table>
+                  </TableWrap>
+                </div>
+              </Disclosure>
+            );
+          })}
+        </div>
+      )}
+
+      <Hint>
+        Each pass runs the section&rsquo;s blocks as its own links say and lands
+        what they produced, and the next pass starts fresh from that landing. It
+        stops when every run of a pass reports the work complete, a pass does
+        not complete or does not land, or one of its limits is reached
+      </Hint>
+    </Card>
   );
 }
 
@@ -510,12 +749,12 @@ export default function WorkflowInstancePage() {
       }
     }
 
-    const passSections = loops
-      .map((loop) => ({
-        loop,
-        passes: passesOf(loop, caused.get(loop.nodeId) ?? { nodes: [], blocks: [] }),
-      }))
-      .filter((section) => section.passes.length > 0);
+    // Every loop, including one with no pass yet: its card is where its
+    // status is drawn now, so a loop still waiting must not vanish off the page.
+    const passSections = loops.map((loop) => ({
+      loop,
+      passes: passesOf(loop, caused.get(loop.nodeId) ?? { nodes: [], blocks: [] }),
+    }));
 
     // Back into the order the graph declared, because the split above walked
     // the rows in whatever order they were created.
@@ -524,14 +763,18 @@ export default function WorkflowInstancePage() {
   }, [instance]);
 
   /**
-   * The ledger rows that are not part of a pass.
+   * The ledger rows that are not part of a pass, and not a loop.
    *
    * A pass's own members are drawn in the pass, with what they waited for and
-   * what they landed — listing them here as well would put one block on the
-   * page twice with two different accounts of it.
+   * what they landed, and a loop is drawn on its own card above its passes —
+   * listing either here as well would put one block on the page twice with two
+   * different accounts of it.
    */
   const standaloneBlocks = useMemo(
-    () => (instance?.blocks ?? []).filter((b) => b.passMember === null),
+    () =>
+      (instance?.blocks ?? []).filter(
+        (b) => b.passMember === null && b.kind !== "loop",
+      ),
     [instance],
   );
 
@@ -593,16 +836,6 @@ export default function WorkflowInstancePage() {
       A deciding block&rsquo;s own spend is counted against this workflow&rsquo;s
       limit and never against a run
     </Hint>,
-    ...(instance.blocks.some((b) => b.kind === "loop")
-      ? [
-          <Hint key="loop">
-            A repeating block runs the section it repeats once per pass, and
-            each pass lands its own work before the next one starts — it stops
-            when every run of a pass reports the work complete, a pass does not
-            complete or does not land, or one of its caps is reached
-          </Hint>,
-        ]
-      : []),
     ...(instance.blocks.some((b) => b.kind === "merge")
       ? [
           <Hint key="merge">
@@ -898,115 +1131,53 @@ export default function WorkflowInstancePage() {
         </>
       )}
 
-      {/* Whichever table holds the runs leads. A workflow that is one
-          orchestrator block has no saved-graph run at all, and an empty primary
-          card above the runs the operator came for is the wrong emphasis. */}
-      <CardTitle className="mt-8">Blocks</CardTitle>
-      <Card emphasis={savedRuns.length > 0 ? "primary" : "quiet"}>
-        {savedRuns.length === 0 ? (
-          <Empty>
-            <div className="text-ink-muted">
-              No block of the saved graph became a run.
-            </div>
-          </Empty>
-        ) : (
-          <TableWrap>
-            {/* Both of these tables are one `RunTableHead` and one `RunRows`,
-                so the stacked presentation is one component too — a second copy
-                would be the column that gained a fix here and not there. */}
-            <Table stack>
-              <caption className="sr-only">
-                Each block of the workflow and the run it created
-              </caption>
-              <RunTableHead />
-              <RunRows nodes={savedRuns} nodeName={nodeName} />
-            </Table>
-          </TableWrap>
-        )}
-      </Card>
-
-      {/* One card per repeating block. The block's own row in the table above
-          still reads in passes — see `blockSummary` — and this is where those
-          passes are opened up into the members each one took. */}
-      {passSections.map(({ loop, passes }) => (
-        <Fragment key={loop.nodeId}>
-          <CardTitle className="mt-8">Passes of {loop.nodeName}</CardTitle>
-          <Card>
-            <TableWrap>
-              <Table stack>
-                <caption className="sr-only">
-                  Each pass of {loop.nodeName}, the blocks it ran and what it
-                  landed
-                </caption>
-                <RunTableHead />
-                {passes.map((row) => (
-                  <Fragment key={row.pass}>
-                    <TBody>
-                      <Tr>
-                        {/* No `label`, which is what `Td` reads as "this cell
-                            is the headline the record is identified by" — and
-                            once the table stacks that is exactly what it is:
-                            the line the members under it belong to. */}
-                        <Td
-                          colSpan={5}
-                          className="bg-inset font-medium text-ink max-md:border-b-0"
-                        >
-                          Pass {row.pass}
-                          <span className="ml-2 font-normal text-ink-muted">
-                            {row.members.length} block
-                            {row.members.length === 1 ? "" : "s"}
-                            {passSpend(passRuns(row))}
-                          </span>
-                          {/* The landing on the pass's own line, because it is
-                              the fact that decides whether the next pass could
-                              see this one's work — not a property of the merge
-                              member it is read off. */}
-                          {landingSummary(row.landing) && (
-                            <span
-                              className={`ml-2 font-normal ${
-                                row.landing!.branchesFailed > 0 ||
-                                row.landing!.branchesLanded === 0
-                                  ? "text-warn"
-                                  : "text-ink-muted"
-                              }`}
-                            >
-                              · {landingSummary(row.landing)}
-                            </span>
-                          )}
-                        </Td>
-                      </Tr>
-                    </TBody>
-                    {row.members.map((member) =>
-                      member.kind === "run" ? (
-                        <RunRows
-                          key={member.key}
-                          nodes={[member.node]}
-                          nodeName={nodeName}
-                        />
-                      ) : (
-                        <Fragment key={member.key}>
-                          <MemberBlockRows
-                            block={member.block}
-                            nodeName={nodeName}
-                          />
-                          {/* Under the member that decided them, indented by
-                              nothing but their own line above: these are runs
-                              this pass caused, and the operator reading a
-                              pass's spend has to see them inside it. */}
-                          <RunRows nodes={member.emitted} nodeName={nodeName} />
-                        </Fragment>
-                      ),
-                    )}
-                  </Fragment>
-                ))}
-              </Table>
-            </TableWrap>
-            <Hint>
-              Each pass runs the section&rsquo;s blocks as its own links say and
-              lands what they produced — the next pass starts fresh from that
-              landing rather than from a branch
-            </Hint>
+      {/* Whichever table holds the runs leads — the saved graph's own runs,
+          then a loop's passes, then what a block decided on. A workflow that is
+          one orchestrator block has no saved-graph run at all, and an empty
+          primary card above the runs the operator came for is the wrong
+          emphasis; a workflow that is one loop has the same empty card, and
+          there it is dropped outright, because the loop card below already
+          says where every run went. */}
+      {(savedRuns.length > 0 || passSections.length === 0) && (
+        <>
+          <CardTitle className="mt-8">Blocks</CardTitle>
+          <Card emphasis={savedRuns.length > 0 ? "primary" : "quiet"}>
+            {savedRuns.length === 0 ? (
+              <Empty>
+                <div className="text-ink-muted">
+                  No block of the saved graph became a run.
+                </div>
+              </Empty>
+            ) : (
+              <TableWrap>
+                {/* Both of these tables are one `RunTableHead` and one `RunRows`,
+                    so the stacked presentation is one component too — a second copy
+                    would be the column that gained a fix here and not there. */}
+                <Table stack>
+                  <caption className="sr-only">
+                    Each block of the workflow and the run it created
+                  </caption>
+                  <RunTableHead />
+                  <RunRows nodes={savedRuns} nodeName={nodeName} />
+                </Table>
+              </TableWrap>
+            )}
           </Card>
+        </>
+      )}
+
+      {/* One card per repeating block, titled with the block's own name. */}
+      {passSections.map(({ loop, passes }, index) => (
+        <Fragment key={loop.nodeId}>
+          <CardTitle className="mt-8">{loop.nodeName}</CardTitle>
+          <LoopCard
+            loop={loop}
+            passes={passes}
+            nodeName={nodeName}
+            emphasis={
+              savedRuns.length === 0 && index === 0 ? "primary" : "default"
+            }
+          />
         </Fragment>
       ))}
 
@@ -1016,7 +1187,13 @@ export default function WorkflowInstancePage() {
       {emittedRuns.length > 0 && (
         <>
           <CardTitle className="mt-8">Runs a block started</CardTitle>
-          <Card emphasis={savedRuns.length > 0 ? "default" : "primary"}>
+          <Card
+            emphasis={
+              savedRuns.length > 0 || passSections.length > 0
+                ? "default"
+                : "primary"
+            }
+          >
             <TableWrap>
               <Table stack>
                 <caption className="sr-only">
