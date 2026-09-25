@@ -21,6 +21,7 @@ import type {
   ToolInventoryDTO,
   ToolRowDTO,
   ToolStateDTO,
+  EffortLevel,
   PruneTier,
   RunGuardsDTO,
   SandboxDTO,
@@ -252,6 +253,14 @@ const LAND_OPTIONS: readonly SegmentedOption<LandStrategy>[] = [
   { value: "squash", label: "Squash" },
 ];
 
+const EFFORT_OPTIONS: readonly { value: EffortLevel; label: string }[] = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "Extra high" },
+  { value: "max", label: "Max" },
+];
+
 const PRUNE_TIER_OPTIONS: readonly SegmentedOption<PruneTier>[] = [
   { value: "standard", label: "Standard" },
   { value: "aggressive", label: "Aggressive" },
@@ -339,6 +348,7 @@ const EDITABLE_PATHS = [
   "defaultModel",
   "defaultAgentId",
   "forwardSubAgentText",
+  "runEffort",
   "defaultPermissionMode",
   "maxConcurrentRuns",
   "maxConcurrentAssists",
@@ -3386,6 +3396,36 @@ export default function SettingsPage() {
                       Agent no longer in the registry
                     </option>
                   )}
+              </Select>
+            </div>
+          </SettingRow>
+
+          {/* Here and nowhere else: the new-run form, a template, an agent, a
+              workflow node and a chat proposal have no effort field, so the
+              orchestrator — which may pick a run's model and agent — cannot
+              move it. */}
+          <SettingRow
+            htmlFor="effort"
+            edited={isEdited("runEffort")}
+            label="Reasoning effort"
+            description="Every work cycle of every run starts at this level, and nothing the orchestrator proposes can change it. CLI default leaves it to Claude Code, which runs Opus 5.5 at medium whatever its own settings file asks for"
+          >
+            <div className="w-48">
+              <Select
+                id="effort"
+                value={effective.runEffort ?? ""}
+                onChange={(e) =>
+                  patch({
+                    runEffort: (e.target.value || null) as EffortLevel | null,
+                  })
+                }
+              >
+                <option value="">CLI default</option>
+                {EFFORT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
               </Select>
             </div>
           </SettingRow>

@@ -5,7 +5,9 @@ import { NextResponse } from "next/server";
 import { armDreaming, disarmDreaming } from "../../../lib/dreamingRun";
 import {
   DEFAULTS,
+  EFFORT_LEVELS,
   getSettings,
+  isEffortLevel,
   PERMISSION_MODES,
   sameValue,
   saveSettings,
@@ -429,6 +431,18 @@ async function putHandler(req: Request) {
 
   if ("forwardSubAgentText" in body) {
     patch.forwardSubAgentText = Boolean(body.forwardSubAgentText);
+  }
+
+  if ("runEffort" in body) {
+    // Refused rather than coerced: the value lands on every work cycle's argv,
+    // and a level the CLI does not know fails every spawn.
+    if (body.runEffort !== null && !isEffortLevel(body.runEffort)) {
+      return NextResponse.json(
+        { error: `runEffort must be null or one of ${EFFORT_LEVELS.join(", ")}` },
+        { status: 400 },
+      );
+    }
+    patch.runEffort = body.runEffort;
   }
 
   if ("readGuard" in body) {

@@ -9350,6 +9350,10 @@ export async function startRun(id: string): Promise<void> {
         // what reaches the log — it is not a capability, nothing acts on it,
         // and the guards are unaffected either way.
         forwardSubAgentText: settings.forwardSubAgentText,
+        // Off the same segment-fixed `settings` read, and from nowhere else on
+        // purpose: no proposal, template, agent or workflow node carries an
+        // effort, so nothing the orchestrator chat writes can move it.
+        effort: settings.runEffort,
         // Inside the argv the adapter builds rather than appended to it after
         // the fact, which is where it used to be. The paths are the same for
         // every provider and the flag that carries them is not — a `--settings`

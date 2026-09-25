@@ -16,6 +16,7 @@
 import { sessionAgentArgs, type AgentDefinition } from "./agents";
 import { pluginDirArgs } from "./plugins";
 import type { PermissionMode } from "./settings";
+import type { EffortLevel } from "./apiTypes";
 import { shortId } from "./format";
 import type { ToolCall } from "./orchestrator";
 
@@ -1055,6 +1056,15 @@ export function buildArgs(opts: {
    */
   forwardSubAgentText?: boolean;
   /**
+   * `--effort`, from `settings.runEffort` and nowhere else. Passed on every
+   * cycle including a resumed one, `--plugin-dir`'s rule — whether `--resume`
+   * restores it is not measured, and a cycle that lost it would run at whatever
+   * the CLI resolves on its own, which on Opus 5.5 is `medium`, with nothing
+   * but the transcript's `effort` field to say so. Optional, and
+   * absent is the argv this app emitted before the setting existed.
+   */
+  effort?: EffortLevel | null;
+  /**
    * Claude Code plugin directories to load, already proved inside a mount.
    *
    * Passed per cycle rather than once, and that is the property to preserve:
@@ -1211,6 +1221,7 @@ export function buildArgs(opts: {
   if (opts.model) args.push("--model", opts.model);
   if (opts.permissionMode) args.push("--permission-mode", opts.permissionMode);
   if (opts.forwardSubAgentText) args.push("--forward-subagent-text");
+  if (opts.effort) args.push("--effort", opts.effort);
   // One encoder for every spawn site, because every way of getting the shape
   // wrong is silent when a member is merely offered and fails the spawn outright
   // when it is selected — see `agentsFlagValue` and `sessionAgentArgs`. This
@@ -1456,6 +1467,8 @@ export function codexPromptPreamble(fileCostNotice?: string | null): string {
  *   That is the whole reason `providerTerminusRefusal` exists in `budget.ts`:
  *   such a run is refused at the door unless a work-cycle or time limit bounds
  *   it, because its spending limit reaches no cycle.
+ * - **`effort`.** A Claude Code flag, not translated: a Codex cycle runs at
+ *   whatever reasoning effort its own configuration resolves.
  * - **`agent`, `pluginDirs`, `forwardSubAgentText`.** Claude Code mechanisms
  *   with no Codex equivalent on this CLI surface. A run started as an agent and
  *   spawned as Codex opens on its prompt through the ordinary prompt path and

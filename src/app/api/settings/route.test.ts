@@ -94,6 +94,7 @@ const PROBES: Record<keyof Settings, Probe> = {
   continuationPrompt: { send: "CHANGED continuation" },
   includeSidechains: { send: false },
   forwardSubAgentText: { send: false },
+  runEffort: { send: "xhigh" },
   readGuard: { send: true },
   contextPruning: { send: true },
   contextPruningStrictness: { send: "aggressive" },

@@ -3098,6 +3098,28 @@ describe("buildArgs", () => {
   });
 
   /**
+   * The operator's effort, on a resumed cycle as on the first. Unset leaves the
+   * argv as it was before the setting existed; set but dropped, a run falls
+   * back to the CLI's own level — `medium` on Opus 5.5 — and only the
+   * transcript would say so.
+   */
+  it("carries the configured effort on every cycle, and none when unset", () => {
+    assert.equal(buildArgs({ ...base, isolated: true }).includes("--effort"), false);
+    assert.equal(
+      buildArgs({ ...base, isolated: true, effort: null }).includes("--effort"),
+      false,
+    );
+
+    const resumed = buildArgs({
+      ...base,
+      isolated: true,
+      resumeSessionId: "sess-2",
+      effort: "xhigh",
+    });
+    assert.equal(resumed[resumed.indexOf("--effort") + 1], "xhigh");
+  });
+
+  /**
    * The only thing that bounds what *one* work cycle spends.
    *
    * `maxRunCostUSD` is read between cycles, so on its own it bounds the number
@@ -3217,6 +3239,7 @@ describe("the cycle adapter", () => {
       model: null,
     },
     forwardSubAgentText: true,
+    effort: "xhigh" as const,
     pluginDirs: ["/workspace/orient"],
     vaultSkill: { pluginDir: "/data/skills/vault", vaultPath: "/vault" },
     readGuardDir: "/data/skills/read-guard",
@@ -3237,6 +3260,7 @@ describe("the cycle adapter", () => {
       "--model",
       "--permission-mode",
       "--forward-subagent-text",
+      "--effort",
       "--agents",
       "--agent",
       "--allowedTools",

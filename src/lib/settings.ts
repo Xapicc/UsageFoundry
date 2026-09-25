@@ -5,7 +5,7 @@ import {
   type ModelCatalogueEntry,
 } from "./modelCatalogue";
 import type { LimitConfig, WeeklyAnchor } from "./windows";
-import type { PruneTier } from "./apiTypes";
+import type { EffortLevel, PruneTier } from "./apiTypes";
 
 /**
  * User-editable preferences.
@@ -169,6 +169,23 @@ export interface Settings {
    * in, but it wants a switch that does not need a rebuild.
    */
   forwardSubAgentText: boolean;
+  /**
+   * The reasoning effort every work cycle runs at, or `null` for whatever the
+   * CLI resolves on its own.
+   *
+   * An install-wide setting and deliberately nothing else: no proposal, no
+   * template, no agent and no workflow node has a field for it, so the
+   * orchestrator chat — which may write a run's prompt, agent and model — has
+   * no way to move it. Effort is a price as much as the model is, and this one
+   * is the operator's alone.
+   *
+   * `null` is not "xhigh by another route". Measured 2026-09-25 against 2.1.280
+   * and 2.1.282: a mounted `settings.json` asking for `xhigh`, both top-level
+   * and under `modelSettings["claude-opus-5-5"]`, left every Opus 5.5 run turn
+   * at `medium` while Opus 5 and Sonnet 5 turns got `xhigh`. The flag is what
+   * makes the level the one chosen here.
+   */
+  runEffort: EffortLevel | null;
   /**
    * Refuse a `Read` this session has already made, and cap one whole read.
    *
@@ -878,6 +895,12 @@ export const PERMISSION_MODES: readonly PermissionMode[] = [
   "plan",
 ];
 
+export const EFFORT_LEVELS: readonly EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
+
+export function isEffortLevel(value: unknown): value is EffortLevel {
+  return typeof value === "string" && (EFFORT_LEVELS as readonly string[]).includes(value);
+}
+
 export const DEFAULT_CONTINUATION_PROMPT =
   "Continue working on the task. If it is fully complete and verified, reply " +
   "with exactly DONE on its own line and make no further changes.";
@@ -982,6 +1005,7 @@ export const DEFAULTS: Settings = {
   continuationPrompt: DEFAULT_CONTINUATION_PROMPT,
   includeSidechains: true,
   forwardSubAgentText: true,
+  runEffort: null,
   readGuard: false,
   readGuardMaxTokens: null,
   contextPruning: false,

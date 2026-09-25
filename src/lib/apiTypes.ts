@@ -3047,6 +3047,12 @@ export interface AccountResponse {
 export type PruneTier = "standard" | "aggressive";
 
 /**
+ * A reasoning effort `claude --effort` accepts. The list is the pinned CLI's
+ * own `--help`; a level it does not know fails every spawn.
+ */
+export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
+
+/**
  * One model this install may start work on.
  *
  * Mirrors `ModelCatalogueEntry`, `RunGuardsDTO`'s rule — this file imports
@@ -3091,6 +3097,8 @@ export interface SettingsDTO {
   includeSidechains: boolean;
   /** Put a delegated turn's own words in the run log. */
   forwardSubAgentText: boolean;
+  /** Every work cycle's `--effort`; `null` leaves it to the CLI. See `settings.runEffort`. */
+  runEffort: EffortLevel | null;
   /**
    * Refuse a `Read` this session has already made, and cap one whole read.
    * Off by default — see `settings.readGuard`, which states what is measured
