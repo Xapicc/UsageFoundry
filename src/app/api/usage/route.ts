@@ -133,7 +133,7 @@ export async function GET(req: Request) {
     // Pruning's value over three spans that nest, read and priced **once**:
     // pricing counts the turns after each receipt out of the transcript scan,
     // and asking for the three separately re-counted the same tail three times
-    // on a ten-second poll.
+    // on every dashboard poll.
     //
     // The span is bounded rather than run over the whole table, and at the
     // transcript horizon specifically — the same one `completeFrom` carries
@@ -313,7 +313,7 @@ export async function GET(req: Request) {
           ...new Set(entries.map((e) => e.entrypoint).filter(Boolean)),
         ] as string[],
         // Cached from the boot probe, so this costs a property read rather than
-        // a stat per mount on a ten-second poll. On this page because a wrongly
+        // a stat per mount on every poll. On this page because a wrongly
         // pointed mount and a wrongly pointed CLAUDE_HOME both present as the
         // zeros above it, which is also what a quiet week looks like.
         configProblems: configProblems(),
