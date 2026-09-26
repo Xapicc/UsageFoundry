@@ -382,7 +382,7 @@ describe("docs/agent/security.md's environment scrubs", () => {
     const claim = claimIn(
       doc,
       read(doc),
-      /`OPENAI_API_KEY` and `CODEX_API_KEY` are on all ([a-z]+) and reach none of them/,
+      /`OPENAI_API_KEY`, `CODEX_API_KEY` and `CODEX_ACCESS_TOKEN` are on all ([a-z]+) and reach none of them/,
     );
     const scrubs = (variable: string) =>
       sources
@@ -391,6 +391,20 @@ describe("docs/agent/security.md's environment scrubs", () => {
         .map(({ rel }) => rel);
     const openai = scrubs("OPENAI_API_KEY");
     const codex = scrubs("CODEX_API_KEY");
+    // Contained in rather than equal to: `codexAuthEnv` strips the access token
+    // and keeps the two keys, and `codexAuth.ts` says why.
+    const access = scrubs("CODEX_ACCESS_TOKEN");
+    const accessMissing = openai.filter((rel) => !access.includes(rel));
+
+    assert.deepEqual(
+      accessMissing,
+      [],
+      stale(
+        doc,
+        "`CODEX_ACCESS_TOKEN` is on every copy that strips the two keys",
+        `it is missing from ${accessMissing.join(", ")}`,
+      ),
+    );
 
     assert.deepEqual(
       openai,

@@ -1422,6 +1422,14 @@ is `docs/agent/testing.md`; interface defects and their classes are
   (`rule(...)` and `define_program(...)` do not parse); a seeded Codex run
   renders `148.2k` tokens against a dash, not `$0.00`, in the built app.
 
+- **`CODEX_ACCESS_TOKEN` outranks a stored Codex credential, 2026-09-26**,
+  `codex-cli 0.153.4`, scratch `CODEX_HOME` holding a key stored by
+  `--with-api-key`: `login status` says `Logged in using an API key` (exit 0)
+  without it and `Error checking login status: invalid agent identity JWT
+  format` (exit 1) with it set to a non-JWT; blank is ignored. `OPENAI_API_KEY`
+  and `CODEX_API_KEY` each left an empty home at `Not logged in`. No valid token
+  was tried (no OpenAI account), so what a parsing one reports is unmeasured.
+
 ### Knowledge and plugins
 
 - **Vault reader on a real 773-note vault, read-only, 2026-08-21:** 885 nodes

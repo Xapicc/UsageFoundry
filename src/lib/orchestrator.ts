@@ -5772,8 +5772,12 @@ export function sandboxArgsFor(scope: SandboxScope): string[] {
  *   the `UF_` rule above: these are Next's private channel to its own
  *   children, and nothing this app spawns is one of them.
  *
- *   `OPENAI_API_KEY`, `CODEX_API_KEY` — a second provider's credential, which
- *   no child this app spawns has any use for: all five of them are `CLAUDE_BIN`.
+ *   `OPENAI_API_KEY`, `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN`: the Codex CLI's
+ *   three credential variables (`proposals/ProviderFallback/14-validation.md`
+ *   §1f), which no child this app spawns may take from the environment. A
+ *   `CLAUDE_BIN` child has no use for them, and a Codex cycle, the one child
+ *   spawned as `CODEX_BIN` through this same function, authenticates from
+ *   `$CODEX_HOME/auth.json`, the credential the Codex sign-in panel reports on.
  *   Withheld because a denylist fails open, and this one fails open on a key an
  *   operator may well have set for a sibling tool on the same server — reaching
  *   a session that has `Bash`, where `env` is read-only shell that `acceptEdits`
@@ -5850,9 +5854,9 @@ export function contextShapingEnv(
  * The strip, applied. Every exclusion's reasoning is the block above
  * `CONTEXT_SHAPING_ENV`, which the three copies of this list cite in turn.
  *
- * Exported for the test that pins the two provider keys' absence, on
+ * Exported for the test that pins the three provider credentials' absence, on
  * `telemetryEnv`'s grounds: there is nothing else in this app that would notice
- * if either came back.
+ * if any of them came back.
  */
 export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, FORCE_COLOR: "0" };
@@ -5864,6 +5868,7 @@ export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
       key === "ANTHROPIC_ADMIN_KEY" ||
       key === "OPENAI_API_KEY" ||
       key === "CODEX_API_KEY" ||
+      key === "CODEX_ACCESS_TOKEN" ||
       key === "CLAUDE_CODE_ENABLE_TELEMETRY" ||
       key === "DATA_DIR" ||
       key === "NODE_OPTIONS"

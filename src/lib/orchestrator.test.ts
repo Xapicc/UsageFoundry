@@ -4418,16 +4418,18 @@ describe("sandboxSettings — what one child may write", () => {
 });
 
 describe("childEnv — a credential class the app has no use for", () => {
-  // A denylist fails open, and these two are the shape it fails open on today:
+  // A denylist fails open, and these three are the shape it fails open on today:
   // an operator running a second provider's CLI on the same server sets one,
-  // and every `CLAUDE_BIN` child this app spawns inherits it — inside a session
-  // that has `Bash`, where `env` is read-only shell `acceptEdits` approves
-  // without asking. Nothing in the app reads them, so nothing in the app would
-  // report it if they came back; that is what this pins.
-  // `proposals/ProviderFallback/13-recommendation.md` has the finding.
+  // and every child this app spawns, `CLAUDE_BIN` or `CODEX_BIN`, inherits it
+  // inside a session that has `Bash`, where `env` is read-only shell
+  // `acceptEdits` approves without asking. Nothing in the app reads them, so
+  // nothing in the app would report it if they came back; that is what this
+  // pins. `proposals/ProviderFallback/13-recommendation.md` has the finding, and
+  // `14-validation.md` §1f names the third, which the first strip missed.
   const planted = {
     OPENAI_API_KEY: "sk-openai-that-nothing-here-bills-against",
     CODEX_API_KEY: "codex-key",
+    CODEX_ACCESS_TOKEN: "codex-access-token",
   };
   const previous = Object.fromEntries(
     Object.keys(planted).map((k) => [k, process.env[k]]),

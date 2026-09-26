@@ -249,9 +249,10 @@ export function normalizeCode(input: unknown): ClaudeAuthResult<string> {
  * `ANTHROPIC_API_KEY` is **not** stripped, and that is the point rather than an
  * oversight: `childEnv` passes it to every work cycle, so a status read that
  * hid it would report the subscription login while runs billed a key. The panel
- * has to answer for the credential runs actually get. `OPENAI_API_KEY` and
- * `CODEX_API_KEY` are on the list for the opposite reason — no child this app
- * spawns bills against either, so there is nothing for a panel to answer for.
+ * has to answer for the credential runs actually get. `OPENAI_API_KEY`,
+ * `CODEX_API_KEY` and `CODEX_ACCESS_TOKEN` are on the list for the opposite
+ * reason: no child this app spawns bills against any of them (a Codex cycle
+ * reads `$CODEX_HOME/auth.json`), so there is nothing for a panel to answer for.
  *
  * A copy rather than an import of `orchestrator.ts`'s, for the reason
  * `review.ts` keeps its own `settleOnExit`: an auth route has no business
@@ -266,6 +267,7 @@ function authEnv(): NodeJS.ProcessEnv {
       key === "ANTHROPIC_ADMIN_KEY" ||
       key === "OPENAI_API_KEY" ||
       key === "CODEX_API_KEY" ||
+      key === "CODEX_ACCESS_TOKEN" ||
       key === "CLAUDE_CODE_ENABLE_TELEMETRY" ||
       key === "DATA_DIR" ||
       key === "NODE_OPTIONS"
