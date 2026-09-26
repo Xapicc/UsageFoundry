@@ -1224,6 +1224,48 @@ export function tasksForRun(runId: string, folder: string | null): RunTasks {
 }
 
 /**
+ * One task a run may read whole, or null — `tasksForRun`'s two `WHERE` clauses
+ * as a predicate on one id, and nothing wider.
+ *
+ * The predicate rather than membership of the lists, so the open task
+ * twenty-first in its folder is readable too: `openInFolderTotal` has already
+ * told the run it exists, and the cap is about what a listing costs by the
+ * token, not about what the run may see. What must not change is the scope
+ * itself — a held task in any status, or an open one in this run's own folder —
+ * because this is the door that returns a brief whole, and one that answered
+ * for a claimed task in the same folder would hand a run the brief another run
+ * is working from.
+ *
+ * The null folder is its own branch rather than left to SQL: `folder = NULL` is
+ * never true, so one query would be narrow today, but "no folder" read as "no
+ * filter" is the widening `tasksForRun` names, and a later `IS ?` would make it
+ * without failing anything.
+ *
+ * One null for "not yours" and "not there", deliberately: a caller that could
+ * tell them apart could probe the rest of the board for ids.
+ */
+export function taskVisibleToRun(
+  runId: string,
+  folder: string | null,
+  taskId: string,
+): Task | null {
+  const row = (
+    folder
+      ? db()
+          .prepare(
+            `SELECT ${COLUMNS} FROM tasks
+              WHERE id = ?
+                AND (claimed_by_run_id = ? OR (status = 'open' AND folder = ?))`,
+          )
+          .get(taskId, runId, folder)
+      : db()
+          .prepare(`SELECT ${COLUMNS} FROM tasks WHERE id = ? AND claimed_by_run_id = ?`)
+          .get(taskId, runId)
+  ) as TaskRow | undefined;
+  return row ? rowToTask(row) : null;
+}
+
+/**
  * File a task. Always `open`, and always with `closed_at` null.
  *
  * A `parentTaskId` that names nothing is refused rather than stored as a

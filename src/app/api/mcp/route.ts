@@ -70,9 +70,11 @@ import {
   tasksLinkedToRun,
   taskRefusal,
   tasksForRun,
+  taskVisibleToRun,
   updateTask,
   TASK_ORIGINS,
   TASK_STATUSES,
+  type Task,
   type TaskActor,
   type TaskOrigin,
   type TaskStatus,
@@ -466,13 +468,13 @@ const SHARED_TOOLS = [
 /**
  * Everything a work cycle gets, and the whole of it.
  *
- * **Five tools, and what is absent is the design.** A run does not get
+ * **Six tools, and what is absent is the design.** A run does not get
  * `SHARED_TOOLS`: not `list_runs`, not `get_run_diff`, not `list_folders`, and
- * deliberately not `list_tasks` — a work cycle is an unattended agent that was
- * pointed at one folder and given one brief, and the whole backlog is neither
- * its business nor something it can act on. `list_my_tasks` is the narrower
- * question it can actually answer from: what am I holding, and what is already
- * written down where I am working.
+ * deliberately not `list_tasks` or `get_task` — a work cycle is an unattended
+ * agent that was pointed at one folder and given one brief, and the whole
+ * backlog is neither its business nor something it can act on. `list_my_tasks`
+ * is the narrower question it can actually answer from: what am I holding, and
+ * what is already written down where I am working.
  *
  * Nothing here starts a run, approves anything, reads another run's work or
  * moves a task this run does not hold. The one rule that needs enforcing rather
@@ -497,6 +499,16 @@ const SHARED_TOOLS = [
  * against a guessed id is a state nothing can tell apart from the truth. There
  * is no tool that removes one, and that absence is the design rather than work
  * left over: only the operator takes an edge away.
+ *
+ * `get_my_task` is the sixth, the whole-brief door onto `list_my_tasks`' own
+ * rows, and its scope is that list's and never wider: a task this run holds, in
+ * any status, or one open in its own folder — `taskVisibleToRun`, the list's two
+ * `WHERE` clauses as a predicate. It exists because the list clips every brief
+ * at `MAX_LIST_TASK_BODY` and runs were digging the rest out of transcripts on
+ * disk. Whole bodies on `held` instead would be up to twenty briefs on every
+ * call to the tool a run calls before each `complete_task` and each
+ * `create_task`; a separate door is read once. It refuses "not yours" and "not
+ * there" in one sentence, so it cannot be used to probe the board for ids.
  */
 const RUN_TOOLS = [
   {
@@ -506,7 +518,8 @@ const RUN_TOOLS = [
       "the folder you are working in. Not the whole board. Read it before you " +
       "call complete_task, so you close the things you were given rather than " +
       "one you read about, and before create_task, so you do not write down " +
-      "something already on the board.",
+      "something already on the board. Each bodyPreview is clipped: call " +
+      "get_my_task for the whole brief of any task listed here.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -655,6 +668,30 @@ const RUN_TOOLS = [
         },
       },
       required: ["taskId", "dependsOnTaskId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    // The description names the scope rather than leaving it to the refusal,
+    // for `complete_task`'s reason: a model that learns what a tool may read
+    // only by being refused spends a call per id finding out.
+    name: "get_my_task",
+    description:
+      "One task whole: the brief list_my_tasks clips to bodyPreview, every " +
+      "note on it, and what it is recorded as waiting for. Call it before you " +
+      "work from a task whose bodyClipped is true — the preview is cut short " +
+      "and the brief is the whole of what the task asks. It reads a " +
+      "task this run holds, or one open in the folder you are working in, " +
+      "and nothing else on the board.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: {
+          type: "string",
+          description: "An id from list_my_tasks — under held or under openInFolder.",
+        },
+      },
+      required: ["taskId"],
       additionalProperties: false,
     },
   },
@@ -1681,18 +1718,29 @@ function subjectRefusal(subject: CapabilitySubject, name: string): string {
   // of the tools it is most likely to reach for have a real answer — write it
   // down, or say it in the reply that the operator reads — and neither is
   // "start something", which is the reading this surface must never leave.
-  if (name === "list_tasks" || name === "get_task") {
+  if (name === "list_tasks") {
     return (
       `${name} is not available to a work cycle: a run sees the task it holds ` +
       "and what is open in the folder it is working in, not the whole board. " +
       "Call list_my_tasks."
     );
   }
+  // Its own sentence, because the thing a run asking for `get_task` wants — a
+  // brief it cannot finish reading — now has an answer, and "call
+  // list_my_tasks" alone sends it back to the same clipped preview.
+  if (name === "get_task") {
+    return (
+      "get_task is not available to a work cycle: a run sees the task it holds " +
+      "and what is open in the folder it is working in, not the whole board. " +
+      "Call get_my_task for the whole brief of one of those; list_my_tasks " +
+      "shows their ids."
+    );
+  }
   return (
     `${name} is not available to a work cycle. A run can list the tasks it ` +
-    "holds, complete one of those, write a note on one and file a new one — it " +
-    "cannot start work, approve anything or touch another run. Anything else " +
-    "belongs in your reply, which the operator reads."
+    "holds, read one whole, complete one of those, write a note on one and " +
+    "file a new one — it cannot start work, approve anything or touch another " +
+    "run. Anything else belongs in your reply, which the operator reads."
   );
 }
 
@@ -2152,14 +2200,15 @@ async function callTool(
 
     // Narrowed rather than asserted, for `emit_runs`' reason: the gate above
     // proves the tool is on this subject's list, and the union is what makes the
-    // run id unmixable with a chat id or an instance id. The run id these two
+    // run id unmixable with a chat id or an instance id. The run id these three
     // act on comes from here and from nowhere else — no argument supplies one.
     case "list_my_tasks":
+    case "get_my_task":
     case "complete_task": {
       if (subject.kind !== "run") return text(subjectRefusal(subject, name), true);
-      return name === "list_my_tasks"
-        ? listMyTasks(subject.runId)
-        : await completeTaskForRun(args, subject.runId);
+      if (name === "list_my_tasks") return listMyTasks(subject.runId);
+      if (name === "get_my_task") return getMyTask(args, subject.runId);
+      return await completeTaskForRun(args, subject.runId);
     }
 
     case "ask_operator":
@@ -3108,23 +3157,10 @@ function getTaskTool(args: Record<string, unknown>) {
   }
 
   const links = runLinksForTasks([task.id]).get(task.id);
-  const thread = listTaskComments(task.id, MAX_TOOL_TASK_COMMENTS);
-  const neighbourhood = depsForTask(task.id);
   return text(
     JSON.stringify(
       {
-        taskId: task.id,
-        title: task.title,
-        body: task.body,
-        // The thread, because this is the unclipped door and a note the
-        // operator wrote on a task is part of what the task asks for. Oldest
-        // first with the oldest dropped when it does not fit — `listTaskComments`
-        // carries why that end and not the other.
-        comments: thread.comments.map(toolComment),
-        commentsShown: thread.comments.length,
-        commentsTotal: thread.total,
-        status: task.status,
-        priority: task.priority,
+        ...wholeBrief(task),
         origin: task.origin,
         mountId: task.mountId,
         folder: task.folder,
@@ -3138,30 +3174,7 @@ function getTaskTool(args: Record<string, unknown>) {
         // separately for the reason the diff names its omissions.
         runsStartedForIt: links?.runIds ?? [],
         runsStartedForItTotal: links?.runCount ?? 0,
-        // The neighbourhood, which is the unclipped door for it as much as for
-        // the brief: `list_tasks` carries two counts and this carries the
-        // tasks themselves, with the project each one is in, because an edge
-        // may cross projects and "which repository is this waiting on" is not
-        // answerable from an id.
-        //
-        // `blockedByCount` is counted over every edge rather than over
-        // `dependsOn`, which is capped — a model reading a ten-long list beside
-        // a count of twelve is being told the list is short, and one reading a
-        // count derived from the list would be told a task is ready when it is
-        // not.
-        dependsOn: neighbourhood.dependsOn.map(toolTaskRef),
-        dependsOnShown: neighbourhood.dependsOn.length,
-        dependsOnTotal: neighbourhood.dependsOnCount,
-        blockedByCount: neighbourhood.blockedByCount,
-        blocks: neighbourhood.dependents.map(toolTaskRef),
-        blocksShown: neighbourhood.dependents.length,
-        blocksTotal: neighbourhood.dependentCount,
-        // The sentence the shape cannot carry, `list_my_tasks`' note one tool
-        // along: two arrays of task ids read as a queue unless something says
-        // they are not.
-        dependencyNote:
-          "Dependencies are advisory. Nothing here holds a task back: one with " +
-          "unfinished dependencies can still be claimed, started and closed.",
+        ...taskNeighbourhood(task.id),
         createdAt: new Date(task.createdAt).toISOString(),
         updatedAt: new Date(task.updatedAt).toISOString(),
       },
@@ -3172,14 +3185,132 @@ function getTaskTool(args: Record<string, unknown>) {
 }
 
 /**
+ * One task whole, for a work cycle: `get_task`'s answer narrowed to the rows
+ * `list_my_tasks` names.
+ *
+ * **The scope is `taskVisibleToRun`'s and the run id is the token's.** A task
+ * this run holds, in any status, or one open in the folder the run's own row
+ * names — and a run with no folder gets only what it holds, for the reason
+ * `tasksForRun` gives an empty `openInFolder` rather than the board. No
+ * argument names a run, `complete_task`'s rule: one that did would be a work
+ * cycle able to read every brief on the board by guessing an id.
+ *
+ * What it leaves out of `get_task`'s answer is the part that is about the rest
+ * of the board — which runs were started for the task and which filed or closed
+ * it are other runs' ids, and the placement is the folder this run is in.
+ */
+function getMyTask(args: Record<string, unknown>, runId: string) {
+  const taskId = String(args.taskId ?? "").trim();
+  if (!taskId) {
+    return text(
+      "get_my_task needs the taskId of a task this run holds or one open in " +
+        "its folder. list_my_tasks returns them under held and openInFolder.",
+      true,
+    );
+  }
+
+  const task = taskVisibleToRun(runId, runFolder(runId).folder, taskId);
+  if (!task) {
+    // One sentence for another folder's task, another run's, a closed one and
+    // an id on no row at all, and never `taskRefusal`'s "not on the board":
+    // telling those apart is what would let a run probe the rest of the board
+    // for which ids exist. It still names what the run *can* read, so a
+    // mistyped id is a call to `list_my_tasks` rather than a dead end.
+    return text(
+      `get_my_task cannot read "${taskId}": it reads a task this run holds, ` +
+        "or one open in the folder this run is working in, and nothing else on " +
+        "the board. list_my_tasks shows the ids you can read, under held and " +
+        "openInFolder.",
+      true,
+    );
+  }
+
+  return text(
+    JSON.stringify(
+      {
+        ...wholeBrief(task),
+        // Which half of `list_my_tasks` this came from, said rather than left
+        // to be inferred from the status: only one half is closeable, and a
+        // brief read whole reads like the task this run was given.
+        held: task.claimedByRunId === runId,
+        ...taskNeighbourhood(task.id),
+        updatedAt: new Date(task.updatedAt).toISOString(),
+      },
+      null,
+      1,
+    ),
+  );
+}
+
+/**
+ * The brief, its thread and where it stands — what both whole-task doors return.
+ *
+ * One function under `get_task` and `get_my_task` rather than a copy in each, so
+ * the two cannot come to disagree about what "whole" means: a door that
+ * returned the body and not the notes would be a brief with the operator's
+ * answers to it missing.
+ */
+function wholeBrief(task: Task) {
+  const thread = listTaskComments(task.id, MAX_TOOL_TASK_COMMENTS);
+  return {
+    taskId: task.id,
+    title: task.title,
+    body: task.body,
+    // The thread, because this is the unclipped door and a note the operator
+    // wrote on a task is part of what the task asks for. Oldest first with the
+    // oldest dropped when it does not fit — `listTaskComments` carries why that
+    // end and not the other.
+    comments: thread.comments.map(toolComment),
+    commentsShown: thread.comments.length,
+    commentsTotal: thread.total,
+    status: task.status,
+    priority: task.priority,
+  };
+}
+
+/**
+ * A task's dependencies both ways, as both whole-task doors carry them.
+ *
+ * The unclipped door for the neighbourhood as much as for the brief: `list_tasks`
+ * carries two counts and this carries the tasks themselves, with the project each
+ * one is in, because an edge may cross projects and "which repository is this
+ * waiting on" is not answerable from an id.
+ */
+function taskNeighbourhood(taskId: string) {
+  const neighbourhood = depsForTask(taskId);
+  return {
+    // `blockedByCount` is counted over every edge rather than over `dependsOn`,
+    // which is capped — a model reading a ten-long list beside a count of twelve
+    // is being told the list is short, and one reading a count derived from the
+    // list would be told a task is ready when it is not.
+    dependsOn: neighbourhood.dependsOn.map(toolTaskRef),
+    dependsOnShown: neighbourhood.dependsOn.length,
+    dependsOnTotal: neighbourhood.dependsOnCount,
+    blockedByCount: neighbourhood.blockedByCount,
+    blocks: neighbourhood.dependents.map(toolTaskRef),
+    blocksShown: neighbourhood.dependents.length,
+    blocksTotal: neighbourhood.dependentCount,
+    // The sentence the shape cannot carry, `list_my_tasks`' note one tool
+    // along: two arrays of task ids read as a queue unless something says
+    // they are not.
+    dependencyNote:
+      "Dependencies are advisory. Nothing here holds a task back: one with " +
+      "unfinished dependencies can still be claimed, started and closed.",
+  };
+}
+
+/**
  * One note as a tool result carries it.
  *
  * `author` rather than a run id, because that pairing is the whole of what the
  * column records and a model handed a bare id would attribute a note to whoever
  * it guessed. The body is **whole** and not clipped, which is the one place this
- * departs from `bodyPreview` beside it: a work cycle has no `get_task`, so there
- * is no second call that would return the rest, and a clipped note is an
- * instruction it can never finish reading.
+ * departs from `bodyPreview` beside it. `get_my_task` would now return the rest
+ * of a clipped note, but a note is the part of a task that changes between
+ * cycles — the operator answering something the run asked — and `list_my_tasks`
+ * is what a run re-reads before it acts. A clip there is an answer the run has
+ * to notice is short and go and fetch, and the one it does not notice is an
+ * instruction it acts on half of.
  */
 /**
  * The other end of a dependency as a tool result carries it.
@@ -3513,7 +3644,9 @@ function listMyTasks(runId: string) {
           "needs a note, or create_task if it is work of its own. waitingFor " +
           "is a record of ordering and holds nothing back: carry on with the " +
           "task you were given even if something it waits for is unfinished, " +
-          "and say in your reply if that turns out to be why you could not.",
+          "and say in your reply if that turns out to be why you could not. " +
+          "bodyPreview is clipped wherever bodyClipped is true: get_my_task " +
+          "returns the whole brief of any task here, with its notes.",
       },
       null,
       1,

@@ -826,6 +826,15 @@ is `docs/agent/testing.md`; interface defects and their classes are
   operator cannot claim, and the page-shift race between two pages of one
   status was reasoned about, not provoked.
 
+- **`get_my_task`, in-process, 2026-09-26**: `src/app/api/mcp/route.test.ts`
+  drives the real route with tokens from `mintRunCapability`/`mintCapability`,
+  6/6 tests. The run's tool list gained exactly `get_my_task` and the chat and
+  block lists did not; a held 808-character brief came back whole while
+  `list_my_tasks` still said `bodyClipped`; another folder's task, another run's
+  claimed and done ones and an unknown id got one sentence modulo the id; a
+  deleted run's token read only what it held. All six failed before the change.
+  Caveat: no real CLI and no model was involved.
+
 ### Workflows and schedules
 
 - **A loop as a region, 2026-09-21** (production standalone build from this
@@ -3163,8 +3172,8 @@ fixed.
   note reached the model and what it did with it.
 
 - **The `MAX_RUN_TASKS × MAX_TOOL_TASK_COMMENTS` ceiling on a
-  `list_my_tasks` payload has never been reached.** Bodies are not clipped in
-  a tool result, deliberately — a work cycle has no `get_task` — so a run
+  `list_my_tasks` payload has never been reached.** Note bodies are not clipped
+  in a tool result, deliberately — see `toolComment` in `route.ts` — so a run
   holding twenty tasks each carrying ten notes at `MAX_TASK_COMMENT` is a
   reply nothing bounds below two megabytes. Nothing in this app produces that
   shape (a run holds one task in practice) and no measurement says what a
@@ -3611,6 +3620,14 @@ measurement under *Verified* and cut the item down to what is still open.
   and `docs/taskboard.md` describes the feature as it will read once it does.
   `npm run smoke-pages` was deliberately not re-run, because no page changed.
   Settle it with the run that draws it.
+
+- **`get_my_task` has never been called by a model.** What it was added to
+  replace — a run told to read its brief in full digging the body out of
+  transcripts on disk — is what is unmeasured: whether a cycle handed a clipped
+  `bodyPreview` calls it, once, before working. Settle it after
+  `docker compose up --build` by starting a run from a task whose body is well
+  over 200 characters and reading the first cycle's transcript for a
+  `get_my_task` call and for no read under `~/.claude/projects`.
 
 ### Workflows and schedules
 

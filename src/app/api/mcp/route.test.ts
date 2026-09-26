@@ -1,0 +1,299 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { after, before, test } from "node:test";
+import type { Task } from "../../../lib/tasks";
+
+/**
+ * What a work cycle may read of the board through `/api/mcp`, from the wire.
+ *
+ * `get_my_task` is the one tool on the run surface that returns a brief whole,
+ * and every way its scope can be wrong is silent: a run handed another
+ * project's brief, or the brief another run is working from, reads it as the
+ * truth about its own work and nothing throws, fails to typecheck or looks
+ * wrong on a page. So the scope is pinned through the route rather than beside
+ * `taskVisibleToRun`, because the run id it is keyed on is the capability
+ * token's — a test of the predicate alone could not see a handler that took
+ * the id off the call instead.
+ *
+ * The refusals are asserted to be **one sentence** across another folder's
+ * task, another run's, a closed one and an id on no row, because the failure
+ * that equality closes is a run probing the rest of the board for which ids
+ * exist. And the tool lists are pinned for all three subjects, since the gate
+ * in `callTool` is a membership test against the same `toolsFor` — a tool added
+ * to the wrong list is reachable, not merely visible.
+ *
+ * `DATA_DIR`, `WORKSPACE_ROOTS` and the Claude paths are read at module load,
+ * so they are set before anything is imported; the assertion in `before` is
+ * what makes a change to that fail loudly rather than write into the
+ * operator's own database.
+ */
+
+const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-mcp-route-")));
+const ws = path.join(root, "ws");
+const HERE = path.join(ws, "RepoOne");
+const ELSEWHERE = path.join(ws, "RepoTwo");
+fs.mkdirSync(HERE, { recursive: true });
+fs.mkdirSync(ELSEWHERE, { recursive: true });
+
+process.env.WORKSPACE_ROOTS = `Main=${ws}`;
+process.env.DATA_DIR = path.join(root, "data");
+process.env.CLAUDE_HOME = path.join(root, "claude");
+process.env.CLAUDE_CONFIG_DIR = path.join(root, "claude");
+// Nothing here spawns, and this is the second lock on that door.
+process.env.CLAUDE_BIN = path.join(root, "no-such-claude");
+process.env.CODEX_BIN = path.join(root, "no-such-codex");
+process.env.CODEX_HOME = path.join(root, "codex");
+
+/** The id is `slug(label)` and never the label — `parseMounts` in `config.ts`. */
+const MOUNT = "main";
+
+let route: typeof import("./route");
+let tasks: typeof import("../../../lib/tasks");
+let chat: typeof import("../../../lib/chat");
+let comments: typeof import("../../../lib/taskComments");
+let db: typeof import("../../../lib/db").db;
+
+before(async () => {
+  const config = await import("../../../lib/config");
+  assert.equal(
+    config.DATA_DIR,
+    process.env.DATA_DIR,
+    "config was already loaded by another test file in this process — refusing " +
+      "to run against the real database",
+  );
+  tasks = await import("../../../lib/tasks");
+  chat = await import("../../../lib/chat");
+  comments = await import("../../../lib/taskComments");
+  db = (await import("../../../lib/db")).db;
+  route = await import("./route");
+});
+
+after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+/**
+ * A `runs` row with nothing on it but the columns the insert refuses to be
+ * without, `tasks.test.ts`' reason: the route reads the run's folder and
+ * nothing else, and reaching `createRun` would claim a folder and a slot to
+ * answer a question about one column.
+ */
+function seedRun(folder: string): { runId: string; token: string } {
+  const runId = randomUUID();
+  db()
+    .prepare(
+      `INSERT INTO runs (id, folder, prompt, status, created_at, budget)
+       VALUES (?, ?, 'seeded', 'running', ?, '{}')`,
+    )
+    .run(runId, folder, Date.now());
+  return { runId, token: chat.mintRunCapability(runId) };
+}
+
+function file(folder: string, over: Record<string, unknown> = {}): Task {
+  const parsed = tasks.normalizeTaskInput(
+    { title: `Task ${randomUUID()}`, body: "the brief", mountId: MOUNT, folder, ...over },
+    { origin: "operator", createdByRunId: null },
+  );
+  if (!parsed.ok) throw new Error(`fixture refused at the door: ${parsed.error}`);
+  const created = tasks.createTask(parsed.value);
+  if (!created.ok) throw new Error(`fixture refused by the store: ${created.error}`);
+  return created.task;
+}
+
+function move(task: Task, status: "claimed" | "done", runId: string): void {
+  const moved = tasks.updateTask(task.id, { status }, { kind: "run", runId });
+  if (!moved.ok) throw new Error(`fixture move refused: ${moved.error}`);
+}
+
+async function rpc(token: string, method: string, params?: unknown) {
+  const res = await route.POST(
+    new Request("http://localhost/api/mcp", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    }),
+  );
+  assert.equal(res.status, 200);
+  return ((await res.json()) as { result: unknown }).result;
+}
+
+async function toolNames(token: string): Promise<string[]> {
+  const result = (await rpc(token, "tools/list")) as { tools: { name: string }[] };
+  return result.tools.map((t) => t.name);
+}
+
+async function callTool(
+  token: string,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<{ text: string; isError: boolean }> {
+  const result = (await rpc(token, "tools/call", { name, arguments: args })) as {
+    content: { text: string }[];
+    isError: boolean;
+  };
+  return { text: result.content[0].text, isError: result.isError };
+}
+
+test("a work cycle is handed get_my_task, and neither orchestrator subject is", async () => {
+  const { token } = seedRun(HERE);
+  assert.deepEqual(await toolNames(token), [
+    "list_my_tasks",
+    "complete_task",
+    "create_task",
+    "comment_on_task",
+    "add_task_dependency",
+    "get_my_task",
+  ]);
+
+  const chatToken = chat.mintCapability({ kind: "chat", chatId: randomUUID() });
+  const blockToken = chat.mintCapability({
+    kind: "block",
+    instanceId: randomUUID(),
+    nodeId: "decide",
+  });
+  for (const [who, orchestrator] of [
+    ["chat", chatToken],
+    ["block", blockToken],
+  ] as const) {
+    const names = await toolNames(orchestrator);
+    assert.ok(names.includes("get_task"), `${who} still reads the board whole`);
+    assert.ok(names.includes("list_tasks"), `${who} still lists the board`);
+    assert.ok(!names.includes("get_my_task"), `${who} is not handed a run's view`);
+    assert.ok(!names.includes("list_my_tasks"), `${who} is not handed a run's view`);
+
+    // Refused at the gate rather than reaching the handler: the gate is the
+    // same list, so what is not offered is not callable either.
+    const asked = await callTool(orchestrator, "get_my_task", { taskId: randomUUID() });
+    assert.equal(asked.isError, true);
+    assert.match(asked.text, /is not available/);
+  }
+});
+
+test("a run reads the whole brief of a task it holds", async () => {
+  const { runId, token } = seedRun(HERE);
+  const body = `${"The part of the brief past the preview. ".repeat(20)}The end.`;
+  assert.ok(body.length > 200);
+  const held = file(HERE, { body });
+  move(held, "claimed", runId);
+  const noted = comments.addTaskComment(
+    held.id,
+    { body: "A note from the operator." },
+    { kind: "operator" },
+  );
+  assert.ok(noted.ok);
+
+  // The list is still a clip — the rejected alternative was to stop clipping
+  // it, and this is what says it did not happen.
+  const listed = JSON.parse((await callTool(token, "list_my_tasks", {})).text);
+  assert.equal(listed.held[0].taskId, held.id);
+  assert.equal(listed.held[0].bodyClipped, true);
+
+  const read = await callTool(token, "get_my_task", { taskId: held.id });
+  assert.equal(read.isError, false);
+  const task = JSON.parse(read.text);
+  assert.equal(task.body, body, "the brief whole, not the preview");
+  assert.equal(task.held, true);
+  assert.equal(task.status, "claimed");
+  assert.deepEqual(
+    task.comments.map((c: { body: string }) => c.body),
+    ["A note from the operator."],
+  );
+  assert.equal(task.commentsTotal, 1);
+  assert.deepEqual(task.dependsOn, []);
+  assert.match(task.dependencyNote, /advisory/);
+
+  // A run that has completed its task can still read it, `held`'s rule.
+  move(held, "done", runId);
+  const after = JSON.parse((await callTool(token, "get_my_task", { taskId: held.id })).text);
+  assert.equal(after.status, "done");
+});
+
+test("a run reads an open task filed in its own folder", async () => {
+  const { token } = seedRun(HERE);
+  const open = file(HERE, { body: "Written down where this run is working." });
+
+  const read = await callTool(token, "get_my_task", { taskId: open.id });
+  assert.equal(read.isError, false);
+  const task = JSON.parse(read.text);
+  assert.equal(task.taskId, open.id);
+  assert.equal(task.body, "Written down where this run is working.");
+  assert.equal(task.status, "open");
+  assert.equal(task.held, false, "readable is not closeable");
+});
+
+test("a run is refused in one sentence for anything it may not read", async () => {
+  const reader = seedRun(HERE);
+  const other = seedRun(HERE);
+
+  const elsewhere = file(ELSEWHERE, { title: "Another project's open task" });
+  const claimedHere = file(HERE, { title: "Claimed by another run here" });
+  move(claimedHere, "claimed", other.runId);
+  const doneHere = file(HERE, { title: "Done by another run here" });
+  move(doneHere, "claimed", other.runId);
+  move(doneHere, "done", other.runId);
+  const missing = randomUUID();
+
+  const cases: [string, string][] = [
+    ["an open task in another folder", elsewhere.id],
+    ["a claimed task in its folder that it does not hold", claimedHere.id],
+    ["a done task in its folder that it does not hold", doneHere.id],
+    ["an id that is on no row", missing],
+  ];
+  const sentences = new Set<string>();
+  for (const [what, taskId] of cases) {
+    const refused = await callTool(reader.token, "get_my_task", { taskId });
+    assert.equal(refused.isError, true, `${what} is refused`);
+    assert.match(refused.text, /list_my_tasks/, "and says where the readable ids are");
+    for (const task of [elsewhere, claimedHere, doneHere]) {
+      assert.ok(!refused.text.includes(task.title), `${what} leaks no title`);
+    }
+    sentences.add(refused.text.replaceAll(taskId, "<id>"));
+  }
+  assert.equal(
+    sentences.size,
+    1,
+    `"not yours" and "not there" must read the same, or the refusal is a probe: ${[...sentences].join(" | ")}`,
+  );
+
+  // The run id is the token's: naming the holder in the call reads nothing.
+  const smuggled = await callTool(reader.token, "get_my_task", {
+    taskId: claimedHere.id,
+    runId: other.runId,
+  });
+  assert.equal(smuggled.isError, true);
+});
+
+test("a run with no folder reads what it holds and nothing else", async () => {
+  // A run deleted mid-cycle is how `runFolder` comes to answer null for a
+  // token that is still live — the case its own docblock names.
+  const { runId, token } = seedRun(HERE);
+  const held = file(HERE);
+  move(held, "claimed", runId);
+  const openHere = file(HERE);
+  db().prepare("DELETE FROM runs WHERE id = ?").run(runId);
+
+  const read = await callTool(token, "get_my_task", { taskId: held.id });
+  assert.equal(read.isError, false, "what a run holds does not depend on a folder");
+  assert.equal(JSON.parse(read.text).taskId, held.id);
+
+  // "No folder" read as "no filter" is the widening this pins.
+  const refused = await callTool(token, "get_my_task", { taskId: openHere.id });
+  assert.equal(refused.isError, true);
+  const missing = await callTool(token, "get_my_task", { taskId: "no-such-task" });
+  assert.equal(
+    refused.text.replaceAll(openHere.id, "<id>"),
+    missing.text.replaceAll("no-such-task", "<id>"),
+  );
+});
+
+test("a work cycle asking for get_task is pointed at get_my_task", async () => {
+  const { runId, token } = seedRun(HERE);
+  const held = file(HERE);
+  move(held, "claimed", runId);
+
+  const refused = await callTool(token, "get_task", { taskId: held.id });
+  assert.equal(refused.isError, true);
+  assert.match(refused.text, /get_my_task/);
+  assert.match(refused.text, /list_my_tasks/);
+});

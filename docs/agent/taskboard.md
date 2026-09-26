@@ -210,11 +210,13 @@ Injected there it would rewrite that prefix on every cycle that gained a note,
 which is the most expensive possible way to deliver a sentence. So the run reads
 its threads out of `list_my_tasks`, on the `held` half and deliberately not on
 `openInFolder`: `held` is what this run may act on, where a note on a task it may
-only read about is tokens spent on somebody else's conversation. Bodies in a tool
-result are **whole** rather than clipped, which is the one place this departs from
-`bodyPreview` beside it — a work cycle has no `get_task`, so there is no second
-call that would return the rest, and a clipped note is an instruction it can
-never finish reading. `MAX_TOOL_TASK_COMMENTS` is the cap and the count travels
+only read about is tokens spent on somebody else's conversation. Note bodies in a
+tool result are **whole** rather than clipped, which is the one place this departs
+from `bodyPreview` beside it. `get_my_task` would now return the rest of a clipped
+one, but a note is the part of a task that changes between cycles and
+`list_my_tasks` is what a run re-reads before it acts: a clip there is an answer
+the run has to notice is short and go and fetch, and the one it does not notice is
+an instruction it acts on half of. `MAX_TOOL_TASK_COMMENTS` is the cap and the count travels
 beside it; the read is one query per held row rather than one for the set, which
 is the N+1 the board's own listing refuses and is admissible only because `held`
 is capped at `MAX_RUN_TASKS` and a tool call is not a ten-second poll.
@@ -513,7 +515,7 @@ idea of the work. The refusal a block gets names `list_tasks` and the `taskIds`
 field rather than pointing at `emit_runs`, because answering "write this down for
 later" with the one tool that starts work *now* is the opposite of what was
 asked. A **work cycle** gets neither of the shared tools and a `create_task` of
-its own; the next four paragraphs are its half.
+its own; the next five paragraphs are its half.
 
 **The gate is one membership test against the list the same function published,
 and that shape is load-bearing rather than tidy.** `toolsFor(subject)` decides
@@ -532,10 +534,11 @@ names something the caller *can* do instead — `agentRefusal`'s rule, for
 `agentRefusal`'s reason: a model told only "no" reaches for the next tool on the
 list.
 
-**A work cycle's three tools, and what their absence is.** `list_my_tasks`,
-`complete_task`, `create_task`, and nothing else — deliberately not
-`SHARED_TOOLS`, so a run has no `list_runs`, no `get_run_diff`, no
-`list_folders`, and specifically **no `list_tasks`**. The two orchestrator
+**A work cycle's six tools, and what their absence is.** `list_my_tasks`,
+`get_my_task`, `complete_task`, `create_task`, `comment_on_task` and
+`add_task_dependency`, and nothing else — deliberately not `SHARED_TOOLS`, so a
+run has no `list_runs`, no `get_run_diff`, no `list_folders`, and specifically
+**no `list_tasks`** and no `get_task`. The two orchestrator
 subjects are deciding what work to start and need to see the install to do it; a
 run is already doing one piece of work in one folder, and the whole backlog is
 neither its business nor something it can act on. `tasksForRun` answers the
@@ -554,6 +557,30 @@ below `MAX_TASK_PAGE` because this is a tool result a cycle pays for by the toke
 rather than a page somebody scrolls, and the count of what was left out travels
 beside the rows on a shortened diff's rule — a run shown twenty of sixty and told
 nothing files the duplicate it read the list to avoid.
+
+**`get_my_task` is the whole-brief door onto exactly those rows, and its scope is
+the list's and never wider.** It exists because `list_my_tasks` clips every brief
+at `MAX_LIST_TASK_BODY` and runs told to read the task body in full were digging
+the rest out of transcripts on disk. Its scope is `taskVisibleToRun`: the list's
+two `WHERE` clauses as a predicate on one id — a task this run holds, in any
+status, or one open in the run's own folder — rather than membership of the
+capped list, so the open task twenty-first in its folder is readable too, since
+`openInFolderTotal` has already told the run it exists. A claimed task in the
+same folder is refused because it is the brief another run is working from, and a
+run whose folder is null reads only what it holds, on the null-folder rule above.
+The run id is the token's, as on every other tool here. **"Not yours" and "not
+there" are one sentence**, and never `taskRefusal`'s "not on the board": a door
+that told them apart is one a run could probe the rest of the board with for
+which ids exist. It is deliberately **not** whole bodies on `held`: a run calls
+`list_my_tasks` before every `complete_task` and every `create_task`, and up to
+twenty whole briefs on each of those calls is a recurring cost where a separate
+door is read once — the shape the chat surface already has in `list_tasks`
+clipping and `get_task` returning the whole. What it leaves out of `get_task`'s
+answer is the part about the rest of the board: the runs started for the task and
+the runs that filed or closed it are other runs' ids. The neighbourhood it does
+carry is `get_task`'s, refs rather than briefs: a dependency in another folder is
+named by id, title and status, as `waitingFor` on `held` already names it, and
+`get_my_task` on that id is refused like any other.
 
 **The run id comes from the token and never from the call, and that sentence is
 the entire authorisation of this surface.** `CapabilitySubject` gained a third
