@@ -1,5 +1,8 @@
 import path from "node:path";
 import { NextResponse } from "next/server";
+// Relative, not "@/…", `health/route.ts`' reason: tsconfig.test.json emits plain
+// CommonJS and nothing rewrites the alias at runtime, and `route.test.ts` loads
+// this file to pin which tools each capability subject is handed.
 import {
   appendMessage,
   chatOwnsRun,
@@ -24,7 +27,7 @@ import {
   type ProposalInput,
   type ProposalStatus,
   type QuestionInput,
-} from "@/lib/chat";
+} from "../../../lib/chat";
 import {
   describeSchedule,
   getSchedule,
@@ -34,15 +37,15 @@ import {
   proposedScheduleOf,
   scheduleRefusal,
   scheduleView,
-} from "@/lib/schedules";
-import { scanDreaming } from "@/lib/dreaming";
+} from "../../../lib/schedules";
+import { scanDreaming } from "../../../lib/dreaming";
 import {
   ledgerCounts,
   listNotes,
   noteStillPresent,
   writtenSignatures,
-} from "@/lib/dreamingLedger";
-import { resolveKnowledgeRoot } from "@/lib/knowledge";
+} from "../../../lib/dreamingLedger";
+import { resolveKnowledgeRoot } from "../../../lib/knowledge";
 import {
   currentKnowledge,
   emitBlockRuns,
@@ -54,7 +57,7 @@ import {
   liveBlocksOf,
   liveRunsOf,
   normalizeWorkflowInput,
-} from "@/lib/workflows";
+} from "../../../lib/workflows";
 import {
   createTask,
   currentTaskKnowledge,
@@ -73,29 +76,29 @@ import {
   type TaskActor,
   type TaskOrigin,
   type TaskStatus,
-} from "@/lib/tasks";
+} from "../../../lib/tasks";
 import {
   addTaskComment,
   listTaskComments,
   MAX_TOOL_TASK_COMMENTS,
   type TaskComment,
-} from "@/lib/taskComments";
-import { addTaskDep, depsForTask, depsForTasks } from "@/lib/taskDeps";
-import type { TaskDepRefDTO } from "@/lib/apiTypes";
-import { completeTaskWithValidation } from "@/lib/validation";
+} from "../../../lib/taskComments";
+import { addTaskDep, depsForTask, depsForTasks } from "../../../lib/taskDeps";
+import type { TaskDepRefDTO } from "../../../lib/apiTypes";
+import { completeTaskWithValidation } from "../../../lib/validation";
 import {
   createTemplate,
   getTemplate,
   listTemplates,
   normalizeTemplateInput,
   updateTemplate,
-} from "@/lib/templates";
+} from "../../../lib/templates";
 import {
   agentRefusal,
   currentAgentKnowledge,
   listAgents,
   listAmbientAgents,
-} from "@/lib/agents";
+} from "../../../lib/agents";
 import {
   activeRuns,
   currentSnapshot,
@@ -107,19 +110,19 @@ import {
   resolveWorkspaceFolder,
   runEvents,
   type DependencyEdge,
-} from "@/lib/orchestrator";
-import { diffAsText, runDiff } from "@/lib/diff";
-import { rivalContinuation } from "@/lib/proposalContinuation";
-import { chatGuards, getSettings } from "@/lib/settings";
-import { enabledModels, modelRefusal } from "@/lib/modelCatalogue";
+} from "../../../lib/orchestrator";
+import { diffAsText, runDiff } from "../../../lib/diff";
+import { rivalContinuation } from "../../../lib/proposalContinuation";
+import { chatGuards, getSettings } from "../../../lib/settings";
+import { enabledModels, modelRefusal } from "../../../lib/modelCatalogue";
 import {
   MAX_REMOTES_READ,
   folderKey,
   githubRemotes,
   scanWorkspace,
-} from "@/lib/workspace";
-import { mountById } from "@/lib/config";
-import { fmtUSD } from "@/lib/format";
+} from "../../../lib/workspace";
+import { mountById } from "../../../lib/config";
+import { fmtUSD } from "../../../lib/format";
 import { auditMutation, sourceAddress } from "../../../lib/requestLog";
 import { opsLog } from "../../../lib/ops";
 
