@@ -826,6 +826,26 @@ is `docs/agent/testing.md`; interface defects and their classes are
   operator cannot claim, and the page-shift race between two pages of one
   status was reasoned about, not provoked.
 
+- **The run page no longer draws its own run's notes, 2026-09-26**, standalone
+  server, Chromium at **1920x963 and 390x844**, default skin, light theme, one
+  completed run seeded straight into a throwaway `DATA_DIR` (the notes by the run
+  itself need an `author_run_id` no operator route writes) and linked to four
+  tasks. A task holding only a 40-line report by this run drew *This run left 1
+  note, 3m ago. Read it on the task* and no row; one holding that report plus an
+  operator note drew the same line above the operator's row alone; one with no
+  notes drew *Nothing said yet* as before; and a seven-note thread whose newest
+  three were this run's, another run's, this run's drew *Newest 3 of 7, 2 of them
+  by this run, the latest 1m ago* above one row, `Run 9c1e44aa`, with its run
+  link. Every link opened `/tasks/<id>`, and no console error at either width.
+  `/tasks/[id]` for the second task still drew both notes whole, the run's with
+  its `Run 337d38f5` header. Gate on the same tree: `npm run typecheck` exit 0;
+  `npm test` **3033 tests, 3033 pass, 0 fail**, exit 0, beside the one suite
+  that throws during construction against CLI 2.1.280 (`sandboxMountPoints`,
+  already on the board); `npm run smoke-pages` against
+  `.next/standalone/server.js`, **92/92 page loads clean**. Caveat: one engine
+  and one skin for this block, and `smoke-pages`' own seed carries no notes, so
+  its pass says nothing about it.
+
 ### Workflows and schedules
 
 - **A loop as a region, 2026-09-21** (production standalone build from this
