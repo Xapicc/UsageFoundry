@@ -815,6 +815,17 @@ is `docs/agent/testing.md`; interface defects and their classes are
   one could not be read* with the immediate neighbours still on the graph.
   Caveat: one browser engine, and the default skin only.
 
+- **The board reads every task, one status at a time, 2026-09-26**, standalone
+  server, Chromium at 1280px, 320 urgent Done, 1 Dropped and 30 normal Open
+  seeded through `/api/tasks`. The old single `?limit=300` request answered 300
+  of 351 rows with **0 of the 30 Open**; the board now draws 30/30 Open,
+  320/320 Done and 1/1 Dropped from five requests (one per status, a second
+  page of Done), with no truncation notice and no console error. The live
+  install at the time held 816 tasks, and the old request hid 77 of 154 Open
+  and 5 of 13 Claimed. Caveat: Claimed was empty in the seed, since the
+  operator cannot claim, and the page-shift race between two pages of one
+  status was reasoned about, not provoked.
+
 ### Workflows and schedules
 
 - **A loop as a region, 2026-09-21** (production standalone build from this

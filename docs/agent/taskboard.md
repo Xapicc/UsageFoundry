@@ -238,9 +238,9 @@ can still do with the board, on `subjectRefusal`'s rule.
 
 **The comment count is on `TaskDTO` and is passed rather than read.**
 `commentCountsForTasks` is one `GROUP BY` for a whole page, `runLinksForTasks`'
-shape and its reason — the board draws up to `MAX_TASK_PAGE` rows on a ten-second
-poll, so a per-row read is a second N+1 on the same timer. It reaches `taskDTO`
-as an argument so that nothing in `tasks.ts` imports `taskComments.ts`: the
+shape and its reason — a board request answers up to `MAX_TASK_PAGE` rows on a
+ten-second poll, so a per-row read is a second N+1 on the same timer. It reaches
+`taskDTO` as an argument so that nothing in `tasks.ts` imports `taskComments.ts`: the
 dependency between the two runs one way, and a read there would close the loop
 for a number that is drawn beside a row rather than decided on. Both task routes
 fill it, because `chatDTO`'s rule applies to a count as much as to a link — a
@@ -471,27 +471,32 @@ a run, where a row under Workflows would read as a third way of describing work
 to do — which is the one thing the first paragraph of this document says a task
 is not.
 
-**The board asks for the whole page and narrows in the browser, which is the one
-place this feature departs from `/api/runs`' rule that narrowing belongs in the
-query.** Two reasons, both specific to a board rather than to a list. The page
-draws every status group at once, so a server-side narrowing is one request per
-group against an offset that cuts across them — page two of a priority-ordered
-listing is half of Open and half of Claimed, and the two requests that produce
-it can disagree about what a row's status is. And the project filter's options
-are derived from the same answer the rows are, so the select can offer neither a
+**The board reads every row, one status at a time, and narrows only the project
+in the browser.** It used to ask for one page of `MAX_TASK_PAGE` rows across
+every status and narrow everything in the browser, and that trade stopped
+holding on 2026-09-26 at 816 tasks: the listing is priority first, so long-done
+urgent work outranked today's normal work, and the one page held 215 Done rows
+while 77 of 154 Open and 5 of 13 Claimed were not on the board at all — with a
+notice that named only the total, which is the "board that looks like an
+answer" failure one layer up from the route. So status is narrowed **in the
+query**, on `/api/runs`' rule: one request per status the board draws, each with
+its own offset, paged to its end in steps of the first page's length, the later
+pages asked for together once `total` is known. The per-request ceiling stays —
+it is what stops one request serialising the table — and **the answer to a
+bigger board is more pages, never a larger cap**. The read is all or nothing,
+because a board missing one status draws that group as empty, which reads as a
+clear backlog; and a row that moved between two of the requests is kept once by
+id, with one that slipped between two pages back on the next poll. The project
+filter is the one narrowing still done in the browser, because its options are
+derived from the same answer the rows are, so the select can offer neither a
 project the board cannot show nor a hidden one it can; built from
 `/api/folders` instead they would need a mount root joined to a stored relative
 path *in the browser*, which is the second, looser resolver the `resolveInMount`
-paragraph above exists to prevent. The cost is bounded and stated rather than
-hidden: the page asks for `MAX_TASK_PAGE` rows, and a `total` larger than what
-came back is a notice on the board saying so — because a filter narrowing a
-silently truncated set is the "board that looks like an answer" failure one
-layer up from the route. `MAX_TASK_PAGE` therefore lives in `apiTypes.ts` beside
-`MAX_LIST_TASK_BODY`, not in `tasks.ts`: written twice, the page would ask for a
-number the route quietly reduced and then report a whole board it had not been
-sent. **The day the board needs a second page is the day this trade stops
-holding**, and the answer then is a per-status request with its own offset, not
-a larger cap.
+paragraph above exists to prevent. `MAX_TASK_PAGE` lives in `apiTypes.ts` beside
+`MAX_LIST_TASK_BODY`, not in `tasks.ts`, because the dependency picker still asks
+for exactly one page of it and says when `total` was larger — written twice, it
+would ask for a number the route quietly reduced and then report a whole list it
+had not been sent.
 
 **Which subject may do what to the board, and the one thing none of them may
 do.** `src/app/api/mcp/route.ts` gates its tool list by capability subject, and

@@ -4403,10 +4403,13 @@ export const MAX_TASK_DEP_LINKS = 10;
  * task, so the ceiling is what stops a board that has grown for two years being
  * one request that serialises the whole table.
  *
- * Here rather than in `tasks.ts` because the board asks for exactly this many
- * and then says whether `total` was larger — see the note on the fetch in
- * `src/app/tasks/page.tsx`. Written twice, the page would ask for a number the
- * route silently reduced and report a whole board it had not been sent.
+ * A ceiling per request and not on the board: the board pages each status to
+ * its end in steps of this — see `readStatus` in `src/app/tasks/page.tsx` — so
+ * a bigger board is more requests, never a larger number here. Here rather than
+ * in `tasks.ts` because the dependency picker asks for exactly this many and
+ * then says whether `total` was larger; written twice, it would ask for a
+ * number the route silently reduced and report a whole list it had not been
+ * sent.
  */
 export const MAX_TASK_PAGE = 300;
 

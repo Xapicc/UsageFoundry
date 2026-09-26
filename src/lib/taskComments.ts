@@ -342,8 +342,8 @@ export function listTaskComments(taskId: string, limit: number): TaskCommentThre
 /**
  * How many notes each of these tasks carries, in one query rather than one each.
  *
- * `runLinksForTasks`' shape and its reason: the board draws up to `MAX_TASK_PAGE`
- * rows and polls every ten seconds, so the per-row read this replaces is an N+1
+ * `runLinksForTasks`' shape and its reason: a board request answers up to
+ * `MAX_TASK_PAGE` rows and the board polls every ten seconds, so the per-row read this replaces is an N+1
  * running on a timer. A task with no notes is **absent** from the map rather
  * than present as zero, which is what lets the caller's `?? 0` be the one place
  * the default is written.

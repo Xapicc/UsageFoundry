@@ -26,7 +26,12 @@ import {
   pollFailureMessage,
   shortId,
 } from "@/lib/format";
-import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
+import {
+  actionFailureMessage,
+  jsonRequest,
+  type JsonFailure,
+  type JsonResult,
+} from "@/lib/jsonRequest";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonLink, ButtonRow } from "@/components/ui/Button";
 import { Card, CardTitle, Empty, SkeletonText } from "@/components/ui/Card";
@@ -67,19 +72,20 @@ import {
  * What is left on this page is a list: it draws rows, narrows them, counts them
  * and offers the moves.
  *
- * **The whole board arrives in one request and the narrowing happens here**,
- * which is the one place this page departs from `docs/agent/conventions.md`'s
- * "narrow in the query" rule, deliberately and for two reasons that are
- * specific to a board. The board draws every status group at once, so a
- * server-side narrowing would be one request per group with an offset that cuts
- * across them — page two of a priority-ordered list is half of Open and half of
- * Claimed. And the project filter's options are built from the same answer the
- * rows are, so the select can never offer a project the board cannot show or
- * hide one it can; drawn from anywhere else they would need a mount root joined
- * to a relative path in the browser, which is the second, looser resolver
- * `docs/agent/taskboard.md` exists to prevent. The cap is real and the board
- * says so: `MAX_TASK_PAGE` rows are asked for and a `total` above what came
- * back is a notice naming what the filter therefore could not reach.
+ * **The whole board is read, one status at a time, and the project filter
+ * narrows here.** Status is narrowed in the query, on
+ * `docs/agent/conventions.md`'s rule: the board used to take the newest
+ * `MAX_TASK_PAGE` rows across every status, and because the order is priority
+ * first, old urgent work that was long done outranked today's normal work —
+ * measured 2026-09-26, 649 closed tasks hid 77 of 154 open and 5 of 13 claimed,
+ * while the notice spoke only of the total. Each status is now its own listing
+ * with its own offset, paged to its end, so the size of the closed pile can no
+ * longer decide what the open groups show. The project
+ * filter stays in the browser because its options are built from the same rows
+ * the board draws, so the select can never offer a project the board cannot
+ * show or hide one it can; drawn from anywhere else they would need a mount
+ * root joined to a relative path in the browser, which is the second, looser
+ * resolver `docs/agent/taskboard.md` exists to prevent.
  */
 
 /**
@@ -90,7 +96,8 @@ import {
  * or claimed by a door this page does not own — a chat turn, a work cycle —
  * whatever the board currently holds, and a board of nothing but closed work is
  * exactly when a newly filed task is the thing worth seeing. So there is no
- * gate to re-arm, and the cost is one small request every ten seconds.
+ * gate to re-arm, and the cost is the whole board every ten seconds: a request
+ * per status, plus one per `MAX_TASK_PAGE` rows a status holds beyond the first.
  */
 const POLL_MS = 10_000;
 
@@ -112,6 +119,74 @@ const CLOSED_GROUPS = [
   { status: "done" as const, title: "Done" },
   { status: "dropped" as const, title: "Dropped" },
 ];
+
+/** What the board asks for is exactly what it draws, in the order it draws it. */
+const BOARD_STATUSES: TaskStatusDTO[] = [
+  ...OPEN_GROUPS.map((group) => group.status),
+  ...CLOSED_GROUPS.map((group) => group.status),
+];
+
+type BoardRead = { ok: true; tasks: TaskListItemDTO[] } | JsonFailure;
+
+async function readPage(
+  status: TaskStatusDTO,
+  offset: number,
+): Promise<JsonResult<TaskListDTO>> {
+  const res = await jsonRequest<TaskListDTO>(
+    `/api/tasks?status=${status}&limit=${MAX_TASK_PAGE}&offset=${offset}`,
+  );
+  if (res.ok && !Array.isArray(res.data.tasks)) {
+    return { ok: false, status: 200, error: "no tasks in the response" };
+  }
+  return res;
+}
+
+/**
+ * Every task in one status, in the route's order, however many pages it takes.
+ *
+ * The first page says how many there are, and the rest are asked for together
+ * rather than one after another. The step is the first page's length rather
+ * than its `limit`, so the loop is driven by rows that arrived and cannot spin
+ * on a field `jsonRequest`'s cast never checked.
+ */
+async function readStatus(status: TaskStatusDTO): Promise<BoardRead> {
+  const first = await readPage(status, 0);
+  if (!first.ok) return first;
+  const step = first.data.tasks.length;
+  const offsets: number[] = [];
+  for (let offset = step; step > 0 && offset < first.data.total; offset += step) {
+    offsets.push(offset);
+  }
+  const rest = await Promise.all(offsets.map((offset) => readPage(status, offset)));
+
+  const tasks: TaskListItemDTO[] = [];
+  for (const page of [first, ...rest]) {
+    if (!page.ok) return page;
+    tasks.push(...page.data.tasks);
+  }
+  return { ok: true, tasks };
+}
+
+/**
+ * The whole board, or the first reason it could not be read.
+ *
+ * All or nothing: a board missing one status would draw that group as empty,
+ * which reads as a clear backlog rather than a failed read. A row can move
+ * between the requests — closed while Done was being read, or bumped up a page
+ * while the next was in flight — so it is kept once by id; one that slipped
+ * between two pages is back on the next poll.
+ */
+async function readBoard(): Promise<BoardRead> {
+  const reads = await Promise.all(BOARD_STATUSES.map(readStatus));
+  const byId = new Map<string, TaskListItemDTO>();
+  for (const read of reads) {
+    if (!read.ok) return read;
+    for (const task of read.tasks) {
+      if (!byId.has(task.id)) byId.set(task.id, task);
+    }
+  }
+  return { ok: true, tasks: [...byId.values()] };
+}
 
 /**
  * The project filter's two special values. Neither can collide with a real key:
@@ -250,7 +325,6 @@ function DepLine({ deps }: { deps: TaskDepsDTO }) {
 
 export default function TasksPage() {
   const [tasks, setTasks] = useState<TaskListItemDTO[]>([]);
-  const [total, setTotal] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [pollError, setPollError] = useState<string | null>(null);
   // The instant the rows on screen were read. Every relative phrase below is
@@ -280,21 +354,13 @@ export default function TasksPage() {
   const [moving, setMoving] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const res = await jsonRequest<TaskListDTO>(
-      `/api/tasks?limit=${MAX_TASK_PAGE}`,
-    );
-    if (!res.ok || !Array.isArray(res.data.tasks)) {
-      setPollError(
-        pollFailureMessage(
-          res.ok ? 200 : res.status,
-          res.ok ? "no tasks in the response" : res.error,
-        ),
-      );
+    const res = await readBoard();
+    if (!res.ok) {
+      setPollError(pollFailureMessage(res.status, res.error));
       setLoaded(true);
       return;
     }
-    setTasks(res.data.tasks);
-    setTotal(res.data.total);
+    setTasks(res.tasks);
     setFetchedAt(Date.now());
     setPollError(null);
     setLoaded(true);
@@ -339,8 +405,6 @@ export default function TasksPage() {
     [visible],
   );
 
-  const truncated = total > tasks.length;
-
   /**
    * One move, decided by the server.
    *
@@ -372,9 +436,9 @@ export default function TasksPage() {
 
   /** The three ways of having nothing, told apart before anything is drawn. */
   const unreadable = pollError !== null && tasks.length === 0;
-  const boardIsEmpty = !unreadable && loaded && total === 0;
+  const boardIsEmpty = !unreadable && loaded && tasks.length === 0;
   const filterMatchedNone =
-    !unreadable && loaded && total > 0 && visible.length === 0;
+    !unreadable && loaded && tasks.length > 0 && visible.length === 0;
 
   /** What the select's options are, so a press can keep the label it chose. */
   function pick(key: string) {
@@ -658,14 +722,7 @@ export default function TasksPage() {
           {note}
         </Notice>
       )}
-      {truncated && (
-        <Notice tone="warn">
-          Showing {tasks.length} of {total} tasks — the newest {MAX_TASK_PAGE}{" "}
-          by priority. The groups and the project filter below reach only these.
-        </Notice>
-      )}
-
-      {loaded && !unreadable && total > 0 && (
+      {loaded && !unreadable && tasks.length > 0 && (
         <Card emphasis="quiet" className="mb-6">
           <Field
             label="Project"
@@ -750,8 +807,7 @@ export default function TasksPage() {
           <Empty>
             <div className="font-medium text-ink">No tasks in {place.label}</div>
             <div className="mx-auto mt-1 max-w-[52ch]">
-              The board holds {tasks.length}
-              {truncated ? ` of ${total}` : ""}, and this filter matched none of
+              The board holds {tasks.length}, and this filter matched none of
               them.
             </div>
             <div className="mt-3">

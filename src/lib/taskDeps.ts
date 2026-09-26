@@ -322,7 +322,7 @@ function neighbourRef(row: NeighbourRow): TaskDepRefDTO {
  * Both ends of every edge touching these tasks, in two queries rather than two
  * per task.
  *
- * `runLinksForTasks`' shape and its reason: the board draws up to
+ * `runLinksForTasks`' shape and its reason: a board request answers up to
  * `MAX_TASK_PAGE` rows on a ten-second poll, so the per-row read this replaces
  * is an N+1 running on a timer. Two queries rather than one because the two
  * directions are two different joins — `idx_task_deps_depends_on` exists for the
