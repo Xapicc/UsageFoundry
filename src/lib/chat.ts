@@ -4141,10 +4141,13 @@ function mcpConfigBase(): string {
  *
  * @param ownership defaulted from `privsep.ts`; a parameter so the modes can be
  *   tested without a second uid, which a unit test in this process cannot have.
+ * @param extraServers entries beside `uf`; only a work cycle passes any
+ *   (`localReader.ts`), and none of them carries a credential.
  */
 export function writeMcpConfig(
   token: string,
   ownership: McpConfigOwnership | null = mcpConfigOwnership(),
+  extraServers: Record<string, unknown> = {},
 ): string {
   const dir = path.join(
     mcpConfigBase(),
@@ -4169,6 +4172,7 @@ export function writeMcpConfig(
             url: MCP_SELF_URL,
             headers: { Authorization: `Bearer ${token}` },
           },
+          ...extraServers,
         },
       }),
       { mode: fileMode },

@@ -3118,6 +3118,18 @@ fixed.
 
 ## Not yet verified by hand
 
+- **Whether a work cycle under `UF_SANDBOX=1` can reach the local reader's
+  model server** (`local-offload-trial` branch only). The container reaches it:
+  `curl http://192.168.0.190:1234/v1/models` from `docker exec` answered 200 in
+  0.11 s on 2026-09-26, CLI 2.1.280. What is not known is whether the CLI wraps
+  a stdio MCP server it starts in the sandbox, which would put the server behind
+  the network proxy (Node's `fetch` does not read `HTTP_PROXY`) and in a network
+  namespace of its own, so the slot lock on a loopback port would no longer be
+  shared between cycles. Either way the server lists no tools rather than
+  failing calls. Settling it: set the four `UF_LOCAL_READER_*` variables, run
+  one cycle, and look for `mcp__uf_local__` tools in its transcript and a
+  `"session"` line with `"offered": true` in `UF_LOCAL_READER_LOG`.
+
 - **The graph at a size no hand-drawn ordering reaches.** Every reading above is
   against eight tasks. `autoLayout` is bounded by the block count rather than run
   to a fixed point, so it terminates, but nothing has measured what the sheet

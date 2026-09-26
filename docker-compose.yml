@@ -418,6 +418,13 @@ services:
       # Optional: a name for this install, for an operator who runs more than
       # one. It is the `install` field of that body and nothing else reads it.
       UF_INSTALL_LABEL: "${UF_INSTALL_LABEL:-}"
+      # Optional, trial branch only: LocalModelOffload's local reader beside the
+      # taskboard in every work cycle's MCP config (src/lib/localReader.ts).
+      # Blank base URL is off and leaves that config exactly as it was.
+      UF_LOCAL_READER_BASE_URL: "${UF_LOCAL_READER_BASE_URL:-}"
+      UF_LOCAL_READER_MODEL: "${UF_LOCAL_READER_MODEL:-}"
+      UF_LOCAL_READER_SERVER: "${UF_LOCAL_READER_SERVER:-}"
+      UF_LOCAL_READER_LOG: "${UF_LOCAL_READER_LOG:-}"
 
     volumes:
       # Credentials + transcripts. Read-write because Claude Code writes new
