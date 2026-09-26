@@ -14,6 +14,7 @@
 
 import type { RunEventDTO, SandboxRefusalKindDTO } from "./apiTypes";
 import { fmtPct, fmtUSD } from "./format";
+import { describeMcpServers, mcpServersOfInit } from "./mcpStatus";
 
 /**
  * What kind of statement a line is, which is what decides how it is set.
@@ -723,6 +724,16 @@ export function describeEvent(e: RunEventDTO): LogEntry | null {
 
     case "log": {
       const message = String(p.message ?? "");
+      // The one system event with a line: which MCP servers the cycle actually
+      // got. A server the operator added — a plugin's, their own `~/.claude`'s —
+      // that failed to start is otherwise invisible, and so is one that started
+      // and listed no tools.
+      if (message === "system:init") {
+        const servers = mcpServersOfInit(p.raw);
+        return servers
+          ? { voice: "system", tone: "neutral", label: "MCP servers", text: describeMcpServers(servers) }
+          : null;
+      }
       if (message === "" || message.startsWith("system:")) return null;
       // `accent` rather than `ok` or `warn`, and the same tone whatever the
       // sentence says: one prefix carries a checkpoint that was written and a

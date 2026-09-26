@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 // Relative rather than aliased, which is what every route with a test here
 // does: `node --test` runs the compiled output, and nothing resolves `@/` there.
+import type { PluginsReportDTO } from "../../../lib/apiTypes";
+import { recentCycleInits } from "../../../lib/db";
+import { pluginMcpSightings } from "../../../lib/mcpStatus";
 import { discoverPlugins, setPluginEnabled } from "../../../lib/plugins";
 import { auditMutation } from "../../../lib/requestLog";
 
@@ -22,8 +25,31 @@ export const dynamic = "force-dynamic";
  * why the plugin an operator is looking at is not there.
  */
 export async function GET() {
+  return NextResponse.json(report());
+}
+
+/**
+ * How many recent work cycles to search for a plugin's MCP servers. Fifty
+ * cycles is hours of work on a busy install and days on a quiet one; a plugin
+ * none of them loaded is shown as not loaded recently, not as failing.
+ */
+const INITS_SEARCHED = 50;
+
+/**
+ * Discovery, plus what each plugin's MCP servers did in the newest cycle that
+ * loaded it. A plugin can be switched on and still fail to start its server,
+ * and nothing else in this app would say so: the CLI reports it in the cycle's
+ * `system:init` and nowhere else.
+ */
+function report(): PluginsReportDTO {
   const { plugins, problems } = discoverPlugins();
-  return NextResponse.json({ plugins, problems });
+  const withServers = plugins.filter((p) => p.components.includes("mcp")).map((p) => p.path);
+  const sightings =
+    withServers.length > 0 ? pluginMcpSightings(withServers, recentCycleInits(INITS_SEARCHED)) : new Map();
+  return {
+    plugins: plugins.map((p) => ({ ...p, mcp: sightings.get(p.path) ?? null })),
+    problems,
+  };
 }
 
 async function postHandler(req: Request) {
@@ -54,8 +80,7 @@ async function postHandler(req: Request) {
     );
   }
 
-  const { plugins, problems } = discoverPlugins();
-  return NextResponse.json({ plugins, problems });
+  return NextResponse.json(report());
 }
 
 /** Wrapped so the request that changed what every agent loads is on the audit log. */

@@ -3255,6 +3255,35 @@ export interface PluginDTO {
    */
   components: string[];
   enabled: boolean;
+  /**
+   * What this plugin's MCP servers did in the newest work cycle that loaded it,
+   * read from that cycle's stored `system:init` (`pluginMcpSightings`). Null
+   * when the plugin ships no `.mcp.json`, or none of the recent cycles loaded
+   * it — which, for a plugin just switched on, is every cycle so far.
+   */
+  mcp: PluginMcpDTO | null;
+}
+
+/** One MCP server as a work cycle's `system:init` reported it. */
+export interface McpServerStatusDTO {
+  name: string;
+  /** As the CLI says it: `connected`, `failed`, `needs-auth`, `pending`. */
+  status: string;
+  /** `dynamic` (this app's `--mcp-config`), `user`, `plugin`, `claudeai`. */
+  source: string | null;
+  /**
+   * How many of the init's tools are this server's. A server can be connected
+   * and list none: LocalModelOffload's local reader does that on purpose while
+   * its model is not loaded.
+   */
+  tools: number;
+}
+
+export interface PluginMcpDTO {
+  runId: string;
+  /** When that cycle's init was stored. */
+  ts: number;
+  servers: McpServerStatusDTO[];
 }
 
 export interface PluginsReportDTO {

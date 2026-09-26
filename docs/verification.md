@@ -1472,6 +1472,31 @@ is `docs/agent/testing.md`; interface defects and their classes are
 
 - **`graphTags`, `tagGroups` and the query they write are unit-tested.**
 
+- **A plugin's `.mcp.json` server starts under `--plugin-dir`, CLI 2.1.280,
+  2026-09-26.** Probed in the container as uid 1000 with `UF_SANDBOX=1`:
+  LocalModelOffload's local reader, packaged as a plugin, connected and listed
+  six tools named `mcp__plugin_<plugin>_<server>__<tool>`, with its path given
+  as `${CLAUDE_PLUGIN_ROOT}/../poc/local-reader.mjs`. A server that cannot start
+  is reported `failed` and the session starts anyway, and
+  `--strict-mcp-config` drops plugin and user-scope servers alike
+  (`proposals/McpServers/04-validation.md`).
+
+- **A work cycle gets it from Settings › Plugins, 2026-09-26.** Run
+  `656b73eb`'s first cycle at 23:01 UTC listed `plugin:local-reader:local`
+  connected with six tools, and its transcript carried the server's
+  instructions (`mcp_instructions_delta`).
+
+- **A stdio MCP server a work cycle starts runs inside the sandbox,
+  2026-09-26.** The local reader, started by the trial's first cycles under
+  `UF_SANDBOX=1`, reached the model host on the LAN, wrote its log under
+  `/workspace` and was rooted in the run's worktree.
+
+- **User-scope MCP servers reach work cycles, CLI 2.1.280, 2026-09-26**, with
+  the Mac's paths: the CLI keeps them in `.config.json` inside the mounted
+  config directory, and every cycle's init lists the operator's `daiveloper`
+  and `uf_local` as `failed`, `source: user`. `docs/install.md` says the
+  opposite.
+
 ### Dreaming
 
 - **The dreaming pane's cold read, streamed rather than read whole,
@@ -3848,6 +3873,16 @@ measurement under *Verified* and cut the item down to what is still open.
   rules file (a wrong dialect loads as zero rules): ask one to `pkill -f`.
 
 ### Knowledge and plugins
+
+- **The MCP status has not been seen rendered.** The run log's "MCP servers"
+  line and the per-plugin status in Settings › Plugins are unit-tested
+  (`mcpStatus.test.ts`, `logLine.test.ts`); settled by opening both after a
+  cycle with the local-reader plugin on.
+
+- **Whether every cycle, a resumed one included, stores its own
+  `system:init`.** Both readers assume it. Settled by comparing
+  `select run_id, count(*) from run_events where json_extract(payload,
+  '$.message') = 'system:init' group by run_id` with `iterations`.
 
 - **None of the four pinned-bundle hook and read facts has been run.** Each
   stays read-not-run until a billed run confirms it.

@@ -135,6 +135,30 @@ describe("describeEvent — what is not a plugin", () => {
     assert.equal(describeEvent(logEvent("system: initialising session")), null);
     assert.equal(describeEvent(logEvent("")), null);
   });
+
+  it("gives a cycle's init one line saying which MCP servers it got, and drops every other system event", () => {
+    const init = (raw: unknown): RunEventDTO => ({
+      id: 1,
+      runId: "r",
+      ts: 0,
+      kind: "log",
+      payload: { message: "system:init", raw },
+    });
+    assert.deepEqual(
+      describeEvent(
+        init({
+          tools: ["mcp__uf__list_my_tasks"],
+          mcp_servers: [
+            { name: "uf", status: "connected", source: "dynamic" },
+            { name: "daiveloper", status: "failed", source: "user" },
+          ],
+        }),
+      ),
+      { voice: "system", tone: "neutral", label: "MCP servers", text: "uf 1 tool · failed: daiveloper" },
+    );
+    assert.equal(describeEvent(init({ subtype: "init" })), null, "an init without a server list says nothing");
+    assert.equal(describeEvent(logEvent("system:hook_started")), null);
+  });
 });
 
 /**

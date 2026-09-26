@@ -17,6 +17,7 @@ import type {
   CodexAuthDTO,
   CodexAuthStateDTO,
   KnowledgeStatusDTO,
+  PluginDTO,
   PluginsReportDTO,
   ToolInventoryDTO,
   ToolRowDTO,
@@ -31,6 +32,7 @@ import type {
 } from "@/lib/apiTypes";
 import { PRUNE_ENGINE_LABEL } from "@/lib/pruneStatement";
 import { parseVerifyCommand } from "@/lib/verifyCommand";
+import { toolCount } from "@/lib/mcpStatus";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
 import {
   describeAmbientAgents,
@@ -877,6 +879,46 @@ function EditedRail({ on }: { on: boolean }) {
         on ? "bg-accent" : "bg-transparent"
       }`}
     />
+  );
+}
+
+/**
+ * What an enabled plugin's MCP servers did in the newest work cycle that loaded
+ * it. Switched on is not the same as started: the CLI can fail to start a
+ * plugin's server, or start one that lists no tools, and says so only in that
+ * cycle's `system:init`.
+ */
+function PluginMcpStatus({ plugin }: { plugin: PluginDTO }) {
+  if (!plugin.components.includes("mcp")) return null;
+  if (!plugin.mcp) {
+    return plugin.enabled ? (
+      <span className="block">No recent work cycle has loaded it yet.</span>
+    ) : null;
+  }
+  const { servers, ts, runId } = plugin.mcp;
+  const prefix = `plugin:${plugin.name}:`;
+  const tone = servers.some((s) => s.status !== "connected")
+    ? "danger"
+    : servers.some((s) => s.tools === 0)
+      ? "warn"
+      : "neutral";
+  const said =
+    servers.length === 0
+      ? "no MCP server started"
+      : servers
+          .map((s) => {
+            const name = s.name.startsWith(prefix) ? s.name.slice(prefix.length) : s.name;
+            return s.status === "connected" ? `${name} connected, ${toolCount(s.tools)}` : `${name} ${s.status}`;
+          })
+          .join("; ");
+  return (
+    <span className="block">
+      <Toned tone={tone}>{said}</Toned> in the newest cycle that loaded it, {ago(ts)} (
+      <Link href={`/runs/${runId}`} className="underline">
+        run {runId.slice(0, 8)}
+      </Link>
+      ).
+    </span>
   );
 }
 
@@ -4436,6 +4478,7 @@ export default function SettingsPage() {
                     <span className="block font-mono text-2xs text-ink-muted">
                       {p.mountLabel} / {p.relPath}
                     </span>
+                    <PluginMcpStatus plugin={p} />
                   </>
                 }
               >

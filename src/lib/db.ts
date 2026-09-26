@@ -9,6 +9,8 @@ import type { OpsFields, OpsLevel } from "./ops";
 // import path and so on `git.ts`'s, and a value import here is the cycle that
 // left `serverLock.ts`'s constants `NaN`.
 import type { SandboxFailureReading, SandboxRefusal } from "./sandbox";
+// Types only: `mcpStatus.ts` is client-safe and has no reason to reach here.
+import type { CycleInit } from "./mcpStatus";
 import { heldByAnotherProcess } from "./serverLock";
 // A value import, and safe to be one: `modelCatalogue.ts` imports only
 // `pricing.ts`, which imports nothing at all. `settings.ts` imports both this
@@ -2984,4 +2986,33 @@ export function recentSandboxFailures(now = Date.now()): SandboxFailureReading {
   }
 
   return { count: rows.length, hours: SANDBOX_FAILURE_WINDOW_HOURS, latest };
+}
+
+/**
+ * The newest work cycles' `system:init` events, newest first, across runs.
+ *
+ * No index: the scan runs backwards over the primary key and stops at `limit`,
+ * and a cycle stores about one init per 150 rows, so fifty of them cost about
+ * 7,500 rows — 25 ms, parse included, against a 140,000-row table on
+ * 2026-09-27. A row that does not parse is skipped rather than failing the
+ * reading; the next one down is as good.
+ */
+export function recentCycleInits(limit: number): CycleInit[] {
+  const rows = db()
+    .prepare(
+      "SELECT run_id, ts, payload FROM run_events" +
+        " WHERE kind = 'log' AND json_extract(payload, '$.message') = 'system:init'" +
+        " ORDER BY id DESC LIMIT ?",
+    )
+    .all(limit) as { run_id: string; ts: number; payload: string }[];
+  const inits: CycleInit[] = [];
+  for (const row of rows) {
+    try {
+      const payload = JSON.parse(row.payload) as { raw?: unknown };
+      inits.push({ runId: row.run_id, ts: row.ts, raw: payload.raw });
+    } catch {
+      continue;
+    }
+  }
+  return inits;
 }
