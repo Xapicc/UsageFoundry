@@ -1816,7 +1816,10 @@ export default function RunDetail({
               <ListGroup>
                 <ListRow label="This run">
                   <GuardValue>
-                    {run.model ?? "Claude Code's own default"}
+                    {run.model ??
+                      (run.provider === "codex"
+                        ? "Codex's own default"
+                        : "Claude Code's own default")}
                   </GuardValue>
                 </ListRow>
                 {run.agent && (
