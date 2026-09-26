@@ -11,8 +11,10 @@ import {
   passRuns,
   passesOf,
   pollFailureMessage,
+  runPageNotes,
 } from "./format";
 import type {
+  TaskCommentDTO,
   WorkflowInstanceBlockDTO,
   WorkflowInstanceNodeDTO,
 } from "./apiTypes";
@@ -476,4 +478,110 @@ test("a graph with no loop groups nothing, and its runs stay where they were", (
     }),
     [],
   );
+});
+
+/**
+ * The run page hides the notes its own run wrote and says so in one line, and
+ * every way that line can be wrong is a well-formed sentence: "nothing said yet"
+ * over a task the run just reported on, a count of this run's notes over a
+ * thread the route only sent the newest three of, or "Newest 3 of 7" above one
+ * row. `authorRunId` is the whole test for "this run's", so a note by another
+ * run is the control that the filter is not on `author`.
+ */
+const NOW = Date.UTC(2026, 8, 26, 12, 0);
+const RUN = "run-self";
+
+function note(
+  id: string,
+  minutesAgo: number,
+  author: TaskCommentDTO["author"],
+  authorRunId: string | null = null,
+): TaskCommentDTO {
+  return {
+    id,
+    taskId: "task-1",
+    author,
+    authorRunId,
+    body: `body of ${id}`,
+    createdAt: NOW - minutesAgo * 60_000,
+  };
+}
+
+test("a thread holding only this run's note draws no row and still says it was written", () => {
+  const { drawn, line } = runPageNotes(
+    { taskId: "task-1", newest: [note("a", 3, "run", RUN)], total: 1 },
+    RUN,
+    NOW,
+  );
+  assert.deepEqual(drawn, []);
+  assert.deepEqual(line, { text: "This run left 1 note, 3m ago.", link: "Read it on the task" });
+});
+
+test("the operator and another run keep their rows beside this run's counted notes", () => {
+  const { drawn, line } = runPageNotes(
+    {
+      taskId: "task-1",
+      newest: [note("a", 9, "run", RUN), note("b", 5, "run", "run-other"), note("c", 2, "run", RUN)],
+      total: 3,
+    },
+    RUN,
+    NOW,
+  );
+  assert.deepEqual(drawn.map((n) => n.id), ["b"]);
+  // The age is the newest of this run's notes, not the slice's oldest.
+  assert.deepEqual(line, {
+    text: "This run left 2 notes, the latest 2m ago.",
+    link: "Read them on the task",
+  });
+
+  const theirs = runPageNotes(
+    { taskId: "task-1", newest: [note("a", 4, "operator"), note("b", 1, "run", "run-other")], total: 2 },
+    RUN,
+    NOW,
+  );
+  assert.deepEqual(theirs.drawn.map((n) => n.id), ["a", "b"]);
+  assert.equal(theirs.line, null);
+});
+
+test("past the slice, the count is only claimed over the newest notes", () => {
+  const { drawn, line } = runPageNotes(
+    {
+      taskId: "task-1",
+      newest: [note("e", 6, "run", RUN), note("f", 4, "operator"), note("g", 1, "run", RUN)],
+      total: 7,
+    },
+    RUN,
+    NOW,
+  );
+  assert.deepEqual(drawn.map((n) => n.id), ["f"]);
+  assert.deepEqual(line, {
+    text: "Newest 3 of 7, 2 of them by this run, the latest 1m ago.",
+    link: "Read the thread",
+  });
+
+  const all = runPageNotes(
+    {
+      taskId: "task-1",
+      newest: [note("e", 6, "run", RUN), note("f", 4, "run", RUN), note("g", 1, "run", RUN)],
+      total: 7,
+    },
+    RUN,
+    NOW,
+  );
+  assert.deepEqual(all.drawn, []);
+  assert.equal(all.line?.text, "Newest 3 of 7, all by this run, the latest 1m ago.");
+});
+
+test("a clipped thread with none of this run's notes reads as it did before", () => {
+  const { drawn, line } = runPageNotes(
+    {
+      taskId: "task-1",
+      newest: [note("e", 6, "operator"), note("f", 4, "chat"), note("g", 1, "run", "run-other")],
+      total: 9,
+    },
+    RUN,
+    NOW,
+  );
+  assert.equal(drawn.length, 3);
+  assert.deepEqual(line, { text: "Newest 3 of 9.", link: "Read the thread" });
 });
