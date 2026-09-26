@@ -726,6 +726,21 @@ function logAssistTools(runId: string, kind: AssistKind, line: string): void {
   }
 }
 
+/**
+ * The `--model` an assist's child is given, or null for the CLI's own default.
+ *
+ * Every assist spawns `CLAUDE_BIN` whatever provider did the run's work, so a
+ * Codex run's model is an id that CLI does not take. Such a run is assisted on
+ * the Claude default Settings names when the assist starts; a Claude run keeps
+ * the model frozen onto it at creation, as it always has.
+ */
+export function assistModel(
+  run: Pick<RunRow, "model" | "provider">,
+  defaultModel: string | null,
+): string | null {
+  return run.provider === "codex" ? defaultModel : run.model;
+}
+
 /** Spawn one, and record what it cost whatever happened. */
 function spawnAssist(id: string, req: AssistRequest): Promise<void> {
   const { run, kind, cwd, prompt, permissionMode, allowedTools } = req;
@@ -751,7 +766,8 @@ function spawnAssist(id: string, req: AssistRequest): Promise<void> {
       "--permission-mode",
       permissionMode,
     ];
-    if (run.model) args.push("--model", run.model);
+    const model = assistModel(run, getSettings().defaultModel);
+    if (model) args.push("--model", model);
     if (req.maxBudgetUSD !== null && req.maxBudgetUSD !== undefined) {
       // A hard stop inside the CLI, and the only money bound an automatic
       // assist has: `windowRefusal` is read once at the door, so without this a
