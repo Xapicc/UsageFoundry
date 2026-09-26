@@ -139,7 +139,6 @@ import {
 // runtime cycle between the run loop and a notifier would be one more thing
 // that can fail at module load, and there is nothing here it needs at runtime.
 import { notifyLifecycle } from "./notify";
-import { configuredLocalReader } from "./localReader";
 // The log's own extraction of what a tool call is about, so the parser retains
 // the same line for a call whose result comes back an error. Client-safe and
 // pure; the dependency runs the permitted way round.
@@ -8588,10 +8587,7 @@ function prepareRunTaskboard(
   try {
     return {
       kind: "ready",
-      // The local reader trial rides the taskboard's file, so it reaches a
-      // cycle only while `taskboardForRuns` is on; a half-configured trial
-      // throws into the `unavailable` row below, on the run's own log.
-      mcpConfigPath: writeMcpConfig(mintRunCapability(runId), null, configuredLocalReader()),
+      mcpConfigPath: writeMcpConfig(mintRunCapability(runId), null),
     };
   } catch (err) {
     return {

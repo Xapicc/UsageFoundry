@@ -548,17 +548,6 @@ export const PUBLIC_URL = optionalEnv("UF_PUBLIC_URL");
 export const INSTALL_LABEL = optionalEnv("UF_INSTALL_LABEL");
 
 /**
- * The local reader trial (`localReader.ts`): the model server's OpenAI-compatible
- * URL, the model's name there, the path of LocalModelOffload's `local-reader.mjs`
- * as this container sees it, and where it appends its per-session and per-call
- * lines. The URL is the off switch; the other three are only read when it is set.
- */
-export const LOCAL_READER_BASE_URL = optionalEnv("UF_LOCAL_READER_BASE_URL");
-export const LOCAL_READER_MODEL = optionalEnv("UF_LOCAL_READER_MODEL");
-export const LOCAL_READER_SERVER = optionalEnv("UF_LOCAL_READER_SERVER");
-export const LOCAL_READER_LOG = optionalEnv("UF_LOCAL_READER_LOG");
-
-/**
  * Whether a run that simply *worked* is also worth a notification. `"1"` is on.
  *
  * Off is the shipped state and the reasoning for that is in `notify.ts`: at a
@@ -666,12 +655,6 @@ export const BLANK_MEANINGFUL_ENV_VARS = [
   // Blank is "only the endings that need a person", which is the shipped
   // filter; "1" widens it to every run that finished cleanly.
   "UF_NOTIFY_ON_SUCCESS",
-  // Blank is "off" for the local reader trial, and the three beside it are
-  // only read when the first is set.
-  "UF_LOCAL_READER_BASE_URL",
-  "UF_LOCAL_READER_MODEL",
-  "UF_LOCAL_READER_SERVER",
-  "UF_LOCAL_READER_LOG",
   // Blank is the *success* case, and it is not an operator value at all:
   // compose computes it from the workspace slots it could not mount, so any
   // non-blank value here refuses the boot. There is no `.env` edit that clears

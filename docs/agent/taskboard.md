@@ -621,11 +621,7 @@ config left on disk is a live capability, where the token it names is bounded by
 the loop. Ownership is passed as `null`, which is the opposite of the chat's and
 is stated rather than absorbed — the run child is not in `UF_CHAT_GID` and must
 not be, so there is no file mode separating two work cycles from each other.
-`security.md` holds what that costs. **On the `local-offload-trial` branch the
-file is not the taskboard's alone**: with `UF_LOCAL_READER_BASE_URL` set, it also
-names LocalModelOffload's local reader as a stdio server (`localReader.ts`), and
-so reaches a cycle only while this setting is on. That entry carries no
-credential, and blank leaves the file as it was.
+`security.md` holds what that costs.
 
 **The run is told the board exists on the appended system prompt, and the notice
 rides the same value the flag does.** `TASKBOARD_NOTICE` in `cycleInvocation.ts`
