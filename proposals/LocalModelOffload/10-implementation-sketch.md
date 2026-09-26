@@ -131,7 +131,8 @@ Pure where it can be, so the silent failures are unit-testable (the bar in
   transcript so far, **trimmed** — oldest tool results replaced by a one-line
   stub whenever the estimate exceeds `contextTokens` minus the answer budget.
 - `applyReply(state, reply)` returns one of: run these tool calls, final answer,
-  malformed (tool call as text — the vault's commonest silent failure), or
+  malformed (tool call as text, one of the silent failures in *What Breaks
+  When Claude Code Runs on a Local Model*), or
   budget exceeded. Malformed twice ends the call with an error rather than a
   guess.
 - The executor runs the tool calls itself and appends results. `maxTurns` is a
@@ -171,8 +172,8 @@ range), `answered` (turns, tokens in and out, wall clock, answer clipped),
 `refused` or `aborted` (why). `RunActivity` renders them under the tool call
 they belong to; the run page shows a per-run total — calls, wall clock, local
 tokens — **beside** the cost figures and never summed into them, because none
-of the three cost sources may count it (`docs/agent/architecture.md`, "which
-cost source may reach what").
+of the three cost sources may count it (`docs/agent/architecture.md` is where
+which cost source may reach what is settled).
 
 ## 9. Build order
 

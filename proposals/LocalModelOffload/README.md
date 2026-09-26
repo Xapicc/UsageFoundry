@@ -31,11 +31,11 @@ else:
   them.** The median read-only sub-agent peaked at **75,672 tokens** of
   context, over the 64K window the vault recommends, and would take 1.5 to 15
   minutes to replay on a Max- or Ultra-class Mac.
-- **The largest block is the main loop reading, 42.6%** — almost all of it the
-  main loop re-reading a median 116,217-token prefix to decide to read, one
-  read per turn (only 5.5% of tool turns carry more than one read). That is the
-  one block a local agent could reach by collapsing several reads into one
-  call, and whether the frontier model then does its task as well is the
+- **The largest block is the main loop reading, 42.6%** — about half of it
+  (53.3%) the main loop re-reading a median 116,217-token prefix to decide to
+  read, one read per turn (only 5.5% of tool turns carry more than one read).
+  That is the one block a local agent could reach by collapsing several reads
+  into one call, and whether the frontier model then does its task as well is the
   vault's open question, measured by nobody.
 
 Three more findings narrow it further:
@@ -46,11 +46,13 @@ Three more findings narrow it further:
   no `--strict-mcp-config` (`src/lib/cycleInvocation.ts:1188`), so an MCP server
   in the operator's own `~/.claude` config already reaches every work cycle.
 - **CustomStacks cannot carry an MCP server.** A stack is binaries, environment
-  and caches, install-wide, with no MCP field (`proposals/CustomStacks/14-stack-object-model.md`).
+  and caches with no MCP field, install-wide as shipped (`src/lib/stacks.ts:321`;
+  [`01-constraints.md`](01-constraints.md) C12).
 - **Claude Code aborts an HTTP MCP call after 300 s with no response or
   progress, and a `-p` session does not background a long one** — read from the
-  installed 2.1.280 binary. With one GPU slot and four concurrent runs, a
-  queued local call can outlive its caller.
+  installed 2.1.280 binary's bundled code, whose names are minified (C7). With
+  one GPU slot and four concurrent runs, a queued local call can outlive its
+  caller.
 
 ## Recommendation, in one line
 
@@ -88,11 +90,11 @@ name, and five things that would overturn it.
 | | target, measured here | local task class | per call | new surface | build | verdict |
 |---|---|---|---|---|---:|---|
 | **A** cheaper Claude | 8.0% (4.4% movable) | Sonnet/Opus 0.90 | — | none | **0** | **do first** |
-| **B** one-shot tool | main-loop reads, 42.6% of steps | summarise: parity | 10–93 s | one app-read path | 2–3 d | **trial, then build** |
-| **C** local agent MCP | **2.0%** safely; main-loop route unmeasured | search: one study | 26 s–15 min, serialised | app reads an agent can swap | 9–11 d | **trial; build after B** |
+| **B** one-shot tool | main-loop reads, 42.6% of steps | summarise: parity | 10–93 s | one app-read path | 4–5 d | **trial, then build** |
+| **C** local agent MCP | **2.0%** safely; main-loop route unmeasured | search: one study | 26–216 s alone, multiples of that queued | app reads an agent can swap | 9–11 d | **trial; build after B** |
 | **D** local-provider run | the whole run | multi-step: ~0.5 | an hour+ a cycle | the whole run | 2–6 d | no |
 | **E** gateway | 8.0%, inseparable | multi-step: ~0.5 | Claude-sized | a proxy on all traffic | 5–8 d | no |
-| **F** app-internal | small, unmeasured | review only | 10–90 s | one diff | ~2 d | no |
+| **F** app-internal | small, unmeasured | review only | 17–164 s | one diff | ~2 d | no |
 
 ## Reused, not redone
 
@@ -102,7 +104,7 @@ credential strip and `providerTerminusRefusal`
 numbers against `4a49627` (`childEnv` is now at `src/lib/orchestrator.ts:5857` and
 strips both OpenAI keys; `providerTerminusRefusal` at `src/lib/budget.ts:477`) and
 relies on the rest. The deleted ModelRouter survey
-(`git show 0232554:"proposals/notRecomended - ModelRouter/README.md"`) settled
+(`git show 0232554:"proposals/notRecomended - ModelRouter/11-option-route-the-delegated-turn.md"`) settled
 that delegated turns are "displacement, not a gap" and recommended no router;
 Options A and E agree and add only the environment variable it never examined.
 

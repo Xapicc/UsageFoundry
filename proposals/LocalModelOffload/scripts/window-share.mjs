@@ -101,7 +101,7 @@ const totals = {
   weight: 0, unpriced: 0, requests: 0,
   main: 0, subagent: 0,
   byModel: {}, byAgentType: {}, byKind: { readOnly: 0, readAndBash: 0, wrote: 0 },
-  mainByTool: {}, mainByStep: {}, mainContexts: [], mainToolTurns: 0, mainMultiToolTurns: 0, mainMultiReadTurns: 0, subagents: [], sessions: 0, dirs: 0, first: null, last: null,
+  mainByTool: {}, mainByStep: {}, mainContexts: [], mainToolTurns: 0, mainCacheRead: 0, mainReadStepCacheRead: 0, mainReadStepWeight: 0, mainMultiToolTurns: 0, mainMultiReadTurns: 0, subagents: [], sessions: 0, dirs: 0, first: null, last: null,
 };
 const add = (obj, k, v) => { obj[k] = (obj[k] ?? 0) + v; };
 const span = (f, l) => {
@@ -124,6 +124,12 @@ function tally(requests, bucket, agentType, byStep) {
     }
     fresh += (r.usage.input_tokens ?? 0) + (r.usage.cache_creation_input_tokens ?? 0);
     out += r.usage.output_tokens ?? 0;
+    if (bucket === "main") {
+      const [, input, , cacheRead] = priceOf(r.model);
+      totals.mainCacheRead += ((r.usage.cache_read_input_tokens ?? 0) * input * cacheRead) / 1e6;
+      if (r.tools.some((t) => t === "read")) totals.mainReadStepCacheRead += ((r.usage.cache_read_input_tokens ?? 0) * input * cacheRead) / 1e6;
+      if (r.tools.some((t) => t === "read")) totals.mainReadStepWeight += x;
+    }
     if (bucket === "main" && r.tools.length) { totals.mainToolTurns++; if (r.tools.length > 1) totals.mainMultiToolTurns++; if (r.tools.filter((t) => t === "read").length > 1) totals.mainMultiReadTurns++; }
     if (bucket === "main") totals.mainContexts.push((r.usage.input_tokens ?? 0) + (r.usage.cache_creation_input_tokens ?? 0) + (r.usage.cache_read_input_tokens ?? 0));
     peak = Math.max(peak, (r.usage.input_tokens ?? 0) + (r.usage.cache_creation_input_tokens ?? 0) + (r.usage.cache_read_input_tokens ?? 0));
@@ -192,6 +198,9 @@ const report = {
   // How often the main loop already batches: a turn with several tool calls
   // pays for one prefix re-read, which is what a delegated call would save.
   mainLoopToolTurns: { withTools: totals.mainToolTurns, withSeveral: totals.mainMultiToolTurns, withSeveralReads: totals.mainMultiReadTurns },
+  // How much of the main loop is re-reading its cached prefix, overall and in
+  // the requests that emitted a read: the bytes a local reader would not touch.
+  mainLoopCacheReadShare: { ofMainLoop: pct(totals.mainCacheRead * totals.weight / Math.max(totals.main, 1e-9)), ofReadSteps: pct(totals.mainReadStepCacheRead * totals.weight / Math.max(totals.mainReadStepWeight, 1e-9)) },
   subagentCount: subs.length,
   meanReadOnlySubagentUSD: +(totals.byKind.readOnly / Math.max(1, subs.filter((s) => s.kind === "readOnly").length)).toFixed(2),
   subagentCountByKind: { readOnly: subs.filter((s) => s.kind === "readOnly").length, readAndBash: subs.filter((s) => s.kind === "readAndBash").length, wrote: subs.filter((s) => s.kind === "wrote").length },

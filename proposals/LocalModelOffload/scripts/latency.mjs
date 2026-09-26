@@ -69,6 +69,9 @@ function seconds(p, shape) {
 const READ_JOB = { turns: 6, result: 2000, step: 150, answer: 800 };
 const SHAPES = [
   { name: "one-shot summarise, 8k of material", first: 8300, turns: 0, result: 0, step: 0, answer: 400 },
+  // Review: a diff capped at 60,000 bytes (src/lib/review.ts:65), at an
+  // assumed 4 bytes a token, plus a 600-token reading.
+  { name: "one-shot review of a 60 KB diff", first: 15300, turns: 0, result: 0, step: 0, answer: 600 },
   { name: "minimal loop, 6 reads", first: 2500, ...READ_JOB },
   { name: "Aider-sized harness, 6 reads", first: 3000, ...READ_JOB },
   { name: "OpenCode-sized harness, 6 reads", first: 6500, ...READ_JOB },

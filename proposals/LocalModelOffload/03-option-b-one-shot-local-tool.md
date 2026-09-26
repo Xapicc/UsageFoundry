@@ -16,7 +16,8 @@ is ([`01-constraints.md`](01-constraints.md) C12):
   pair, `src/lib/orchestrator.ts:1244`; "Both checks are load-bearing",
   `docs/agent/security.md:11`), sends instruction plus content to the local
   server, returns the answer.
-- `local_extract { path, instruction, schema }` — the same, with the reply
+- later, `local_extract { path, instruction, schema }` — not in the
+  implementation sketch's build order — the same, with the reply
   constrained to a JSON schema, which the vault calls free locally ("schema
   *validity* is free locally through grammar-constrained decoding", *Local
   Model Quality by Agent Task*).
@@ -79,9 +80,12 @@ is unknown (U3).
 
 ## What it costs
 
-In-app: ~2–3 days (the MCP route's second server, a settings block, one HTTP
-client with an abort signal, containment, a run-log row; phase 1 of
-[`10-implementation-sketch.md`](10-implementation-sketch.md)). Operator-side
+In-app: ~4–5 days — phase 1 of
+[`10-implementation-sketch.md`](10-implementation-sketch.md): the MCP route's
+second server, a settings block, one HTTP client with an abort signal, the
+descriptor-verified containment, the queue and the run-log rows. Without the
+queue and the rows it would be two or three days, and it should not ship
+without them. Operator-side
 trial: an afternoon, no repository change.
 
 ## Verdict

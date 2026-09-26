@@ -242,7 +242,9 @@ calling session while it waits:
 - **Its turn blocks.** A work cycle is `-p` (`src/lib/cycleInvocation.ts:1220`),
   where Claude Code does not auto-background a long MCP call (C7).
 - **Claude Code aborts an HTTP MCP call after 300 s with no response or
-  progress** (C7) — the dense-27B fourth-in-line case. It then sees an error and
+  progress** (C7; read from the 2.1.280 binary, where the constant is declared
+  in the statement before the function that reads it) — already the case for a
+  dense 27B on an M4 Max at **second** in line (~432 s). It then sees an error and
   typically does the reading itself, having paid the brief *and* the wait.
 - **It burns time worked** against `maxDurationMinutes`, which counts through a
   blocked call (`src/lib/budget.ts:513`), and nothing in the cost meters shows it.
@@ -311,8 +313,8 @@ The honest answer is **unknown, and small at best in this install**:
   sub-agents, $s = 2.0\%$. If it replaced every sub-agent, $s = 8.0\%$ — but
   5.2 of those points ran Bash and 0.8 wrote, which §3 excludes. The only route
   to a larger $s$ is the main loop calling the tool *instead of reading*, whose
-  share (42.6%) is mostly prefix re-reads that one call saves only when it
-  replaces several reads.
+  share (42.6%) is about half prefix re-reads (53.3% of the read steps'
+  weight), which one call saves only when it replaces several reads.
 - **The frontier-side arithmetic in §1 is favourable per call**, and it is a
   model, not a measurement. It assumes the job would otherwise have been six
   sequential reads, that failures are noticed, and that the main loop re-reads

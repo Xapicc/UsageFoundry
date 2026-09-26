@@ -5,15 +5,15 @@
 | | A — cheaper Claude sub-agents | B — one-shot local tool | C — local agent MCP | D — local-provider run | E — gateway | F — app-internal calls |
 |---|---|---|---|---|---|---|
 | **What it moves** | delegated turns | one read or log, by the main loop's choice | a read-only exploration job | a whole run | sub-agents by name or tier | review, at most |
-| **Target share, measured here** | 8.0% (4.4% movable by the env var) | main-loop read steps 42.6%, but mostly prefix re-reads it does not remove | **2.0%** safely; the main-loop route unmeasured | the run: 92%+ | 8.0%, not separable into read-only | unmeasured; the chat, for scale, is ~1% of runs |
+| **Target share, measured here** | 8.0% (4.4% movable by the env var) | main-loop read steps 42.6%, about half of it prefix re-reads it does not remove | **2.0%** safely; the main-loop route unmeasured | the run: 92%+ | 8.0%, not separable into read-only | unmeasured; the chat, for scale, is ~1% of runs |
 | **Task class on the vault's evidence** | Sonnet/Opus 0.90 | summarising: parity or better | search: one study; multi-step: ~0.5 | multi-step: ~0.5 | multi-step: ~0.5 | review: parity; the rest no |
-| **Wall clock per call, Max-class Mac** | none | 10–93 s | 26 s–15 min, serialised across runs | an hour or more per cycle (D1) | per sub-agent, Claude-sized prompt | 10–90 s per review |
+| **Wall clock per call, Max-class Mac** | none | 10–93 s | 26–216 s alone, multiples of that queued across runs | an hour or more per cycle (D1) | per sub-agent, Claude-sized prompt | 17–164 s per review (`scripts/latency.mjs`, a 60 KB diff at an assumed 4 bytes a token) |
 | **Fits a 64K local window** | n/a | yes | only if the job is sized for it (§2 of C) | D1: prompt alone 12k–70k | median delegated job does not | yes |
 | **New containment surface** | none | one app-read path | app-read paths an agent can swap | the whole run | a proxy on all traffic | one diff |
 | **Credential exposure** | none | none | none in shape (i) | D1: the OAuth trap | token relaying, terms open | none |
 | **Needs host reach from** | — | the app | the app | the child | the child, via the gateway | the app |
 | **Collides with winnow's `ANTHROPIC_BASE_URL`** | no | no | no | D1 yes | yes | no |
-| **App code** | none | ~2–3 days alone; phase 1 of C is ~4–5 days | ~1,300 lines, ~9–11 days | 2–6 days | 5–8 days | ~2 days |
+| **App code** | none | ~4–5 days (phase 1 of C) | ~1,300 lines, ~9–11 days | 2–6 days | 5–8 days | ~2 days |
 | **Saving evidence** | a benchmark ratio and a fixed-token counterfactual | Minions, on documents; coding unmeasured | a frontier-side model; the vault's seed open | the vault says do not | the vault says not now | none |
 | **Operator-side trial with no app code** | yes: one compose line | **yes**: own MCP config reaches runs | yes, same route, reduced (§4 of C) | no | no | no |
 

@@ -70,9 +70,9 @@ already has two providers (`RunProviderDTO`, `src/lib/apiTypes.ts:1174`;
   `proposals/ProviderFallback/02-the-handover-contract.md`).
 - **D2 depends on an API the vault's recommended server may not speak.** Codex
   needs `/v1/responses`; whether `llama-server` serves it is unverified (U7),
-  and Ollama's small-machine default context "truncates silently" (*Choosing a
-  Local Inference Runtime*) — the runtime the vault says to avoid unless
-  `OLLAMA_CONTEXT_LENGTH` is raised.
+  and Ollama's small-machine default of 4k "truncates silently" (*Recommended
+  Local and Claude Hybrid Setup*, step 3) — the runtime the vault says to avoid
+  unless `OLLAMA_CONTEXT_LENGTH` is raised.
 - **One slot for the whole fleet** (C6). A local run holds the GPU for its
   entire duration; a second local run, or Option B/C calls from Claude runs,
   queue behind it.

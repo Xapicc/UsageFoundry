@@ -24,7 +24,7 @@ below was run end to end on a Mac").
 
 The vault's case for offload starts from one month of the operator's own Claude
 Code sessions on the Mac: **a third of window share went to delegated
-sub-agents**, 96.8% of it on Opus-family models, and the largest main-loop block
+sub-agents**, 96.8% of the whole window was on Opus-family models, and the largest main-loop block
 was reading and searching files at 37% (*Local Offload Economics*,
 `confidence: medium`, `status: growing`; the breakdown is the author's own
 measurement over 157 sessions, 2026-08-26 to 2026-09-25).
@@ -53,7 +53,7 @@ formula is unpublished.
 | Sub-agents, all | **8.0%** | 30.6% | 35.6% |
 | — workflow sub-agents | 0.0% | 17.2% | 21.4% |
 | — general-purpose | 4.4% | 12.8% | 13.5% |
-| — Explore | 2.9% | 0.3% | 0.7% (with fork) |
+| — Explore (and fork) | 2.9% | 0.3% (+ fork 0.3%) | 0.7% together |
 | — named agents (`go-coder`, `typescript`, `claude`) | 0.8% | — | — |
 | On Opus 5 / Opus 5.5 | 90.0% / 7.9% | — | 96.8% together |
 | On Fable 5.1 | 1.4% | — | 3.0% |
@@ -101,8 +101,10 @@ The main loop, weighted by what each step did (a request's weight goes to the
 tool calls it emitted, "text" when none — the vault's attribution), as a share
 of all run weight: **read and search 42.6%**, other Bash 29.6%, edits 14.4%,
 plain text 2.5%, MCP 2.2%, delegation 0.3%. Reading is the largest block, as
-the vault found on the Mac (37%) — and it is almost all the cost of the main
-loop re-reading its own prefix to decide to read, not the file bytes.
+the vault found on the Mac (37%) — and **53.3%** of the read steps' weight is
+cache reads, the main loop re-reading its own prefix to decide to read, not the
+file bytes (57.5% across the whole main loop; `mainLoopCacheReadShare` in the
+same script's output). The Mac's figure for the whole main loop was 69%.
 
 Three other populations, same script, same run:
 
@@ -110,7 +112,8 @@ Three other populations, same script, same run:
   22 sessions, 2026-09-15 → 2026-09-26, **$60.63** at list price, sub-agents
   0.4%. Around 1% of what runs spend.
 - **Runs without a worktree**, which write under their folder's own directory
-  (`^-workspace-[^-]`): 146 sessions, $607.64, sub-agents 5.2%. These
+  (`'^-workspace-[^-]|^-workspace$'`, the bare `-workspace` directory
+  included): 146 sessions, $607.64, sub-agents 5.2%. These
   directories may also hold sessions that were not runs; they are reported,
   not added in.
 - **Codex runs**: none found. `~/.codex` holds only `tmp`, so no Codex session

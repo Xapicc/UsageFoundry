@@ -82,8 +82,9 @@ has it in full, with a build order that ships Option B first.
    week, a smaller measured saving is worth building for, and the 15% bar
    should drop.
 3. **The operator's hardware prefills fast.** If U5 measures a 16k-token prompt
-   in under ~10 s (an RTX-class GPU is 5–9 s per 32k in the vault's table; M5
-   "narrowed the gap", *Local Decode and Prefill Speed*), C's latency objection
+   in under ~10 s (an RTX-class GPU is 5–9 s per 32k in *Local Decode and
+   Prefill Speed*'s table; M5 "narrowed the gap", *Local Inference MOC*), C's
+   latency objection
    largely falls and its contention table shrinks by several times.
 4. **The runs start delegating.** If this install's sub-agent share rises
    towards the Mac's third — runs using workflows, or a template that

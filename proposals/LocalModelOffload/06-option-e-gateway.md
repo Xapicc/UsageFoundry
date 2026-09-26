@@ -46,16 +46,19 @@ endpoint of its own: the configuration "is **session-wide**" (claude-code
   … with no error. `llama-server`: `API Error: 400 … exceeds the available
   context size`" (*What Breaks When Claude Code Runs on a Local Model*).
 - **The Explore agent does not follow the tier.** `CLAUDE_CODE_SUBAGENT_MODEL`
-  "does not move the built-in Explore and Plan sub-agents", and Explore
-  "inherits the main conversation's model" — so the tier-routing variant misses
+  "does not move the built-in Explore and Plan sub-agents" (*Hybrid Claude and
+  Local Model Setups*), and Explore "inherits the main conversation's model"
+  (*Local Offload Economics*, quoting the CLI's changelog) — so the tier-routing
+  variant misses
   2.9 of the 8 points.
 - **It chains with, or replaces, winnow's proxy.** Two proxies in series is a
   new failure point on every request every run makes — the Claude ones
   included — for a slice of 8%.
 - **The terms question is open**, not answered by winnow's precedent: "A
   person's own proxy on their own machine is neither clearly inside nor clearly
-  outside that sentence" (*Is Relaying a Claude Subscription Through a Local
-  Gateway Permitted*, `status: seed`, `confidence: low`). And whether a
+  outside that sentence" (*Hybrid Claude and Local Model Setups*,
+  `confidence: medium`), seeded as *Is Relaying a Claude Subscription Through a
+  Local Gateway Permitted* (`status: seed`, `confidence: low`). And whether a
   subscription login goes through a gateway at all is disputed between
   Anthropic's docs and claude-code #91746 (*Hybrid Claude and Local Model
   Setups*, `meta/contradiction`).

@@ -125,8 +125,11 @@ The vault's server line is `llama-server -m <model>.gguf -c 65536 --jinja -np 1`
 and Claude Hybrid Setup*, step 3). One slot serves one request at a time.
 Against it: `maxConcurrentRuns` 4 (`src/lib/settings.ts:1016`) and
 `maxConcurrentAssists` 2 (`:1017`). Four slots instead of one would quarter the
-context per request — 16K each at `-c 65536` — which no agent prompt fits
-(*Choosing a Local Inference Runtime*: "4 slots sharing one KV pool").
+context per request — 16K each at `-c 65536` (*Choosing a Local Inference
+Runtime*: "4 slots sharing one KV pool") — which the delegated jobs measured
+here cannot fit (median read-only peak 75,672 tokens, [`00-problem.md`](00-problem.md)
+§1) and which even a minimal loop's six-read job, peaking near 16,200 tokens
+([`scripts/latency.mjs`](scripts/latency.mjs)), would sit at the edge of.
 
 ### C7. Clocks that a slow tool call runs into
 
@@ -234,9 +237,11 @@ Exactly one server, and only when `taskboardForRuns` is on (default `false`,
 
 CustomStacks, the decided vehicle for installing tools, **cannot carry an MCP
 server**: a stack is binaries on `PATH`, environment and cache directories,
-install-wide, with no MCP field and nothing linking it to `--mcp-config`
-(`proposals/CustomStacks/14-stack-object-model.md` §7; `src/lib/stacks.ts:321` grants
-only `Bash(...)` entries). A stack also may not set `OPENAI_*` (`proposals/CustomStacks/01b-stack-format.md`
+with no MCP field and nothing linking it to `--mcp-config`, and as shipped it is
+install-wide (`src/lib/stacks.ts:321` grants only `Bash(...)` entries; per-repository
+selection is designed in `proposals/CustomStacks/23-revision-per-repo-and-login.md`,
+which supersedes `proposals/CustomStacks/14-stack-object-model.md` §7 on that point, and is not built —
+it adds no MCP field either). A stack also may not set `OPENAI_*` (`proposals/CustomStacks/01b-stack-format.md`
 §2.2), which blocks the usual `OPENAI_BASE_URL` wiring.
 
 ## Part 2 — unknowns, and what settles each
