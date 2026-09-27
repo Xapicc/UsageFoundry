@@ -561,9 +561,10 @@ export async function assistRefusal(): Promise<string | null> {
   // The shutdown is read after the scan rather than first, because the scan is
   // the one `await` here: a shutdown that began during it would otherwise be let
   // through, and for a chat turn and a validation nothing else stands between
-  // this answer and the spawn. It outranks whatever the others found because it
-  // is the one refusal that holds for every later caller in this process, which
-  // is what the merge queue reads it for.
+  // this answer and the spawn. A review and a resolution still await after it,
+  // which is why `spawnAssist` reads it again. It outranks whatever the others
+  // found because it is the one refusal that holds for every later caller in
+  // this process, which is what the merge queue reads it for.
   return isShuttingDown() ? SHUTDOWN_REFUSAL : refusal;
 }
 
@@ -839,8 +840,53 @@ function logAssistTools(runId: string, kind: AssistKind, line: string): void {
   }
 }
 
+/**
+ * Run the caller's `after`, then write the row.
+ *
+ * `after` runs on every outcome, so a caller can always clean up: a resolution
+ * aborts its merge and discards its checkout here whether the child finished,
+ * failed, or was never spawned at all.
+ */
+async function settleAssist(
+  id: string,
+  req: AssistRequest,
+  result: AssistResult,
+): Promise<void> {
+  let final = result;
+  if (req.after) {
+    try {
+      const patch = await req.after(result);
+      if (patch) final = { ...final, ...patch };
+    } catch (err) {
+      final = {
+        ...final,
+        status: "failed",
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+  finish(id, req.run.id, req.kind, final);
+}
+
 /** Spawn one, and record what it cost whatever happened. */
-function spawnAssist(id: string, req: AssistRequest): Promise<void> {
+async function spawnAssist(id: string, req: AssistRequest): Promise<void> {
+  // Read again here rather than trusted from the door. `assistRefusal` answered
+  // before `startReview` awaited `reviewCwd` and before a resolution awaited its
+  // checkout, its merge and its conflict scan, so a shutdown that began inside
+  // those spawned a child the ladder never signals or waits on, since it
+  // snapshots the children alive at the signal, and left its row `running` for
+  // the boot. Nothing awaits between this and the spawn: `startAssist` calls
+  // this synchronously and the executor below is synchronous up to `spawn`.
+  //
+  // Settled through `after`, as a spawn `error` is, rather than refused from
+  // `startAssist`: a resolution's caller has a merge in progress by now and
+  // nothing but `after` to roll it back with, so a bare `{ ok: false }` would
+  // leave its throwaway checkout mid-merge.
+  if (isShuttingDown()) {
+    await settleAssist(id, req, { status: "failed", error: SHUTDOWN_REFUSAL });
+    return;
+  }
+
   const { run, kind, cwd, prompt, permissionMode, allowedTools } = req;
 
   return new Promise((resolve) => {
@@ -1012,8 +1058,6 @@ function spawnAssist(id: string, req: AssistRequest): Promise<void> {
     };
 
     /**
-     * `after` runs on every outcome, so a caller can always clean up.
-     *
      * The latch is on `land` rather than on `done` because `land` is what
      * writes the row and runs `after`: a resolution that committed a merge and
      * then discarded its checkout must not do either twice. It is set before
@@ -1024,20 +1068,7 @@ function spawnAssist(id: string, req: AssistRequest): Promise<void> {
     const land = async (result: AssistResult) => {
       if (settled) return;
       settled = true;
-      let final = result;
-      if (req.after) {
-        try {
-          const patch = await req.after(result);
-          if (patch) final = { ...final, ...patch };
-        } catch (err) {
-          final = {
-            ...final,
-            status: "failed",
-            error: err instanceof Error ? err.message : String(err),
-          };
-        }
-      }
-      finish(id, run.id, kind, final);
+      await settleAssist(id, req, result);
       done();
     };
 

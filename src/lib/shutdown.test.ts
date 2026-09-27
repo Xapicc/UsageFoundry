@@ -64,7 +64,7 @@ const {
 const { db } = require("./db") as typeof import("./db");
 const { claimDataDir, releaseDataDir } =
   require("./serverLock") as typeof import("./serverLock");
-const { assistRefusal, SHUTDOWN_REFUSAL } =
+const { assistRefusal, getAssist, SHUTDOWN_REFUSAL, startAssist } =
   require("./review") as typeof import("./review");
 const { getSettings, saveSettings } =
   require("./settings") as typeof import("./settings");
@@ -499,5 +499,68 @@ describe("shutting down with a child that is not a work cycle", () => {
       db().prepare("DELETE FROM chat_sessions WHERE id=?").run("shutdown-chat");
       saveSettings({ maxConcurrentAssists: cap });
     }
+  });
+
+  it("settles one that passed the door before the shutdown through `after`, and spawns nothing", async () => {
+    await shutdownRuns("SIGTERM");
+
+    // The state `startReview` and a resolution reach when the shutdown begins
+    // inside the awaits between `assistRefusal` and `startAssist`: the door
+    // said yes, and the process is now going down.
+    db()
+      .prepare(
+        "INSERT INTO runs (id, folder, prompt, model, status, budget, max_iterations," +
+          " iterations, created_at, spent_usd, spent_tokens) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+      )
+      .run(
+        "resolved-during-shutdown",
+        path.join(tmp, "workspace", "project"),
+        "task",
+        null,
+        "completed",
+        "{}",
+        1,
+        1,
+        Date.now(),
+        0,
+        0,
+      );
+    const run = getRun("resolved-during-shutdown")!;
+    const spawnedBefore = spawned;
+    const handed: { status: string; error?: string }[] = [];
+
+    const started = startAssist({
+      run,
+      kind: "resolve",
+      cwd: path.join(tmp, "workspace", "project"),
+      permissionMode: "acceptEdits",
+      prompt: "resolve the conflict",
+      // A resolution's rollback — `merge --abort` and the checkout discarded —
+      // lives here and nowhere else, so a refusal that skipped it would leave
+      // the throwaway checkout mid-merge.
+      after: async (result) => {
+        handed.push({ status: result.status, error: result.error });
+      },
+    });
+    assert.equal(started.ok, true);
+    const id = started.ok ? started.id : "";
+
+    await waitFor(
+      () => getAssist(id)?.status !== "running",
+      "the resolution's row to settle",
+    );
+
+    // The finding: the child was spawned during the grace, got no SIGINT
+    // because the ladder snapshots its children at the signal, and left this
+    // row `running` for the boot.
+    assert.equal(spawned, spawnedBefore, "no child may be spawned once the process is going down");
+    assert.deepEqual(
+      handed,
+      [{ status: "failed", error: SHUTDOWN_REFUSAL }],
+      "`after` must run once, with the failure, so a resolution can roll back",
+    );
+    const row = getAssist(id)!;
+    assert.equal(row.status, "failed");
+    assert.equal(row.error, SHUTDOWN_REFUSAL);
   });
 });
