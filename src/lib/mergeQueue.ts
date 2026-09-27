@@ -10,7 +10,7 @@ import {
 } from "./land";
 import { getAssist } from "./review";
 import { dataDirRefusal, mayWriteDataDir } from "./serverLock";
-import { getRun, type RunRow } from "./orchestrator";
+import { getRun, isShuttingDown, type RunRow } from "./orchestrator";
 
 /**
  * Landing several branches, one after another.
@@ -736,6 +736,12 @@ export function startWorker(): void {
   // than per repository because the answer is about this process, not about
   // which queue it would drain.
   if (!mayWriteDataDir()) return;
+  // A drain started during a shutdown is `drainRepo`'s landing-on-the-way-out
+  // by another door, and that drain's own tail call comes back through here:
+  // without this it would claim the repository again, find the row it just
+  // left `queued`, leave it again and re-arm, synchronously, until the stack
+  // gave out.
+  if (isShuttingDown()) return;
   for (const repo of queuedRepos()) {
     if (workers.active.size >= MAX_MERGE_WORKERS) break;
     if (workers.active.has(repo)) continue;
@@ -776,6 +782,19 @@ export function startWorker(): void {
  * uncertainty. It halts the repository for `planItem`'s reason: a fault in this
  * app will meet the branch behind this one identically, and each rediscovery is
  * another merge attempted into a directory a person owns.
+ *
+ * **A shutdown stops it taking the next row, and never touches the one in
+ * flight.** It used to read nothing, so a drain under way at SIGTERM went on
+ * calling `landRun`, a `git merge` into the operator's own checkout, for every
+ * clean branch behind the current one, in a process that could exit part-way
+ * through any of them and leave a row for the boot to call uncertain. The rows
+ * it does not take stay `queued`, and `reconcileMergeQueueOnBoot` cancels them:
+ * a queue never merges into somebody's checkout by itself, and the grace before
+ * a restart is no more the operator's say-so than the boot after it. The row
+ * already `landing` or `resolving` is left alone, because nothing on the
+ * landing path has a clock on its duration and a shutdown is not a reason to
+ * abort a merge part-way; if the process exits first, the boot fails it with
+ * the sentence it gives any row caught mid-merge.
  */
 async function drainRepo(repo: string): Promise<void> {
   /** Why this repository was given up on, if it was. */
@@ -783,6 +802,10 @@ async function drainRepo(repo: string): Promise<void> {
 
   try {
     for (let row = nextQueuedIn(repo); row; row = nextQueuedIn(repo)) {
+      // Before anything answers the row, so every row behind a shutdown is
+      // left for the boot to cancel with the same sentence.
+      if (isShuttingDown()) break;
+
       const run = getRun(row.run_id);
       if (!run) {
         setStatus(row.id, "failed", { message: "That run no longer exists." });
@@ -917,10 +940,12 @@ async function processOne(
  * is a slot somebody frees in minutes, so the item behind it asks again.
  *
  * A shutdown (`SHUTDOWN_REFUSAL`) matches, because it too holds for every later
- * item, and asking again only spends a `landState` per branch in a process that
- * is exiting. Matching cannot park anything past the restart: what it sets is
- * `resolutionsRefused`, which is this process's memory and dies with it, and
- * the boot cancels every row still `queued` whatever this drain decided.
+ * item and asking again would spend a `landState` per branch in a process that
+ * is exiting. It is the belt now rather than the whole of it: `drainRepo` stops
+ * before the next item once the process is going down. Matching cannot park
+ * anything past the restart: what it sets is `resolutionsRefused`, which is
+ * this process's memory and dies with it, and the boot cancels every row still
+ * `queued` whatever this drain decided.
  *
  * Pure and exported for a test, because both ways of getting it wrong are
  * silent: a sentence reworded out from under the match costs every later item a
