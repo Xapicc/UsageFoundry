@@ -185,6 +185,14 @@
 - **Picking a `completed` run back up with a follow-up, through a real
   `claude`**: the note as the next turn, DONE pushback only after a real `DONE`.
 
+- **A run a real `docker compose stop` cut off mid-cycle, picked up
+  (2026-09-27).** `shutdown.test.ts` pins `restart_cut_cycle` against a stubbed
+  child only; no container has been stopped with a real cycle in flight.
+  Settle: `docker compose stop usagefoundry` mid-tool-call, then `SELECT id,
+  status, restart_cut_cycle FROM runs WHERE restart_closed = 1` should read
+  `stopped`, 1; pick it up with no note and its next `iteration` event's
+  `prompt` should begin "Your last work cycle did not finish".
+
 - **`detached: true`**: that Ctrl-C during `npm run dev` still kills the agent
   (via `instrumentation.ts`) and any long command it started.
 
