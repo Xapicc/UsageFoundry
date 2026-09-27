@@ -2821,9 +2821,28 @@ function rowToInstance(row: InstanceRow): WorkflowInstance {
   };
 }
 
-const INSTANCE_COLUMNS =
-  "id, workflow_id, workflow_name, graph, created_at, status, error," +
-  " stopped_at, stop_cause, stop_reason, instance_budget";
+// Keyed on `InstanceRow` so a column the row type declares and the SELECT
+// leaves out fails to typecheck: the `as InstanceRow` casts that read these
+// rows cannot see it, and the column then reads as null. For `origin` that is
+// silent — every run a scheduled instance creates after it started would be
+// recorded as a press of Run.
+const INSTANCE_COLUMN_NAMES: Record<keyof InstanceRow, true> = {
+  id: true,
+  workflow_id: true,
+  workflow_name: true,
+  graph: true,
+  created_at: true,
+  status: true,
+  error: true,
+  stopped_at: true,
+  stop_cause: true,
+  stop_reason: true,
+  instance_budget: true,
+  origin: true,
+  origin_ref: true,
+};
+
+const INSTANCE_COLUMNS = Object.keys(INSTANCE_COLUMN_NAMES).join(", ");
 
 /** Statuses a run has not finished in — it will spend, or is waiting to. */
 const LIVE_STATUSES: readonly RunStatus[] = [
