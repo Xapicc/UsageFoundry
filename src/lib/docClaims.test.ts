@@ -97,15 +97,98 @@ function stale(doc: string, claim: string, tree: string): string {
  * stops matching is the one way this whole file could go quiet while every
  * claim it names rots.
  */
+function unpinned(where: string, pattern: RegExp): string {
+  return (
+    `The claim this case pins is no longer in ${where}:\n  ${pattern}\n` +
+    "  If the sentence was reworded, update the pattern here so the claim stays\n" +
+    "  pinned. If it was deleted, delete this case with it."
+  );
+}
+
 function claimIn(doc: string, text: string, pattern: RegExp): RegExpExecArray {
   const match = pattern.exec(text);
-  assert.ok(
-    match,
-    `${doc} no longer contains the claim this case pins:\n  ${pattern}\n` +
-      "  If the sentence was reworded, update the pattern here so the claim stays\n" +
-      "  pinned. If it was deleted, delete this case with it.",
-  );
+  assert.ok(match, unpinned(doc, pattern));
   return match;
+}
+
+/** An index is a document with a directory of its own name beside it. */
+function topicDirectory(rel: string): string {
+  return rel.replace(/\.md$/, "");
+}
+
+function isDirectory(rel: string): boolean {
+  return fs.statSync(path.join(root, rel), { throwIfNoEntry: false })?.isDirectory() ?? false;
+}
+
+type DocFile = { rel: string; text: string; isIndex: boolean };
+
+/**
+ * A document as `CLAUDE.md` routes a reader to it, which is no longer one file.
+ * `CLAUDE.md`'s `## Docs` splits anything under `docs/agent/` past about 20 KB,
+ * in the change that pushes it over, into a short index at the old path and
+ * topic files under `docs/agent/<area>/`, moving the paragraphs verbatim. So a
+ * case reads the path and every file beneath its directory rather than naming
+ * today's topic files: pinning those would break at the next split exactly as a
+ * single fixed path broke six of these cases at the last one.
+ */
+function readDocument(rel: string): DocFile[] {
+  const found = [rel];
+  const walk = (dir: string) => {
+    const entries = fs
+      .readdirSync(path.join(root, dir), { withFileTypes: true })
+      .sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      const child = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(child);
+      else if (entry.name.endsWith(".md")) found.push(child);
+    }
+  };
+  if (isDirectory(topicDirectory(rel))) walk(topicDirectory(rel));
+  return found.map((file) => ({
+    rel: file,
+    text: read(file),
+    isIndex: isDirectory(topicDirectory(file)),
+  }));
+}
+
+/**
+ * Where a claim is read from once its document may be split. An index line
+ * repeats its paragraph's lead claim cut at about 200 characters, so a pattern
+ * can match it as well as the sentence, and a lazy capture that runs past the
+ * cut reads the next entry's words as the claim's. The full sentence is read
+ * wherever one matches, and an index line only when nothing else does. Copies
+ * that agree are all named, because each needs the same correction; copies that
+ * disagree fail, because the document has stopped making one claim.
+ */
+function claimInDocument(
+  files: DocFile[],
+  pattern: RegExp,
+): { doc: string; match: RegExpExecArray } {
+  const hits = files.flatMap((file) => {
+    const match = pattern.exec(file.text);
+    return match ? [{ ...file, match }] : [];
+  });
+  const [index] = files;
+  assert.ok(
+    hits.length > 0,
+    unpinned(
+      index.isIndex ? `${index.rel} or any file under ${topicDirectory(index.rel)}/` : index.rel,
+      pattern,
+    ),
+  );
+
+  const sentences = hits.some((hit) => !hit.isIndex) ? hits.filter((hit) => !hit.isIndex) : hits;
+  const readings = new Set(sentences.map((hit) => JSON.stringify(hit.match.slice(1))));
+  assert.equal(
+    readings.size,
+    1,
+    [
+      "The claim this case pins is made in more than one place, and they disagree:",
+      ...sentences.map((hit) => `  ${hit.rel}: ${hit.match[0].replace(/\s+/g, " ")}`),
+      "  Correct whichever is stale, so the document makes one claim.",
+    ].join("\n"),
+  );
+  return { doc: sentences.map((hit) => hit.rel).join(" and "), match: sentences[0].match };
 }
 
 const NUMBER_WORDS: Record<string, number> = {
@@ -141,9 +224,8 @@ function spelledNumber(doc: string, word: string): number {
   return value;
 }
 
-describe("docs/agent/architecture.md's db.ts table list", () => {
-  const doc = "docs/agent/architecture.md";
-  const architecture = read(doc);
+describe("docs/agent/architecture's db.ts table list", () => {
+  const architecture = readDocument("docs/agent/architecture.md");
   const dbSource = read("src/lib/db.ts");
   const created = [
     ...new Set(
@@ -156,8 +238,7 @@ describe("docs/agent/architecture.md's db.ts table list", () => {
   // failure this file exists for: a list that invites trust and had grown
   // twelve short before anything re-measured it.
   it("names every table migrate() creates, and no table it does not", () => {
-    const claim = claimIn(
-      doc,
+    const { doc, match: claim } = claimInDocument(
       architecture,
       /every table migrate\(\) creates, and there are (\d+) —([\s\S]*?)\. The list is a\s+completeness claim/,
     );
@@ -192,7 +273,10 @@ describe("docs/agent/architecture.md's db.ts table list", () => {
   // not. Two comment lines quote the statement; every other line creates a
   // table, so the gap between the two counts is the part that must stay two.
   it("states what a plain grep -c over db.ts answers, and why it differs", () => {
-    const claim = claimIn(doc, architecture, /`grep -c` says (\d+) and counts two comments/);
+    const { doc, match: claim } = claimInDocument(
+      architecture,
+      /`grep -c` says (\d+) and counts two comments/,
+    );
     const lines = dbSource
       .split("\n")
       .filter((line) => line.includes("CREATE TABLE IF NOT EXISTS")).length;
@@ -220,7 +304,7 @@ describe("docs/agent/architecture.md's db.ts table list", () => {
   });
 });
 
-describe("the globalThis key roster in CLAUDE.md and docs/agent/conventions.md", () => {
+describe("the globalThis key roster in CLAUDE.md and docs/agent/conventions", () => {
   // A key is *declared* where it is named as a member of the cast's object
   // type. Counting every mention instead counts the three retired names the
   // comments warn about reusing, which is how a hand count reaches 59 for a
@@ -282,10 +366,8 @@ describe("the globalThis key roster in CLAUDE.md and docs/agent/conventions.md",
   }
 
   it("CLAUDE.md's grep finds every key, and names the right decade", () => {
-    const doc = "CLAUDE.md";
-    const claim = claimIn(
-      doc,
-      read(doc),
+    const { doc, match: claim } = claimInDocument(
+      readDocument("CLAUDE.md"),
       /`grep -rn "([^"]+)" src\/` finds the ([a-z]+)-odd keys already there/,
     );
     const missed = keysMissedBy(claim[1]);
@@ -301,11 +383,9 @@ describe("the globalThis key roster in CLAUDE.md and docs/agent/conventions.md",
     assertDecade(doc, claim[2]);
   });
 
-  it("conventions.md's grep finds every one, and names the right decade", () => {
-    const doc = "docs/agent/conventions.md";
-    const claim = claimIn(
-      doc,
-      read(doc),
+  it("docs/agent/conventions' grep finds every one, and names the right decade", () => {
+    const { doc, match: claim } = claimInDocument(
+      readDocument("docs/agent/conventions.md"),
       /there are ([a-z]+)-odd such keys and `grep -rn "([^"]+)" src\/` finds every one/,
     );
     const missed = keysMissedBy(claim[2]);
@@ -322,16 +402,18 @@ describe("the globalThis key roster in CLAUDE.md and docs/agent/conventions.md",
   });
 });
 
-describe("docs/agent/conventions.md's pane list", () => {
-  const doc = "docs/agent/conventions.md";
-  const conventions = read(doc);
+describe("docs/agent/conventions' pane list", () => {
+  const conventions = readDocument("docs/agent/conventions.md");
 
   // #163 was this list drifting once already, and it is the claim with the
   // hardest ceiling behind it: ⌘1…⌘9 is nine digits, so an eleventh row is two
   // panes with no shortcut and a vocabulary sentence that no longer describes
   // the file it points at.
   it("is closed at the number of rows panes.ts holds", () => {
-    const claim = claimIn(doc, conventions, /the list is closed at ([a-z]+), because/);
+    const { doc, match: claim } = claimInDocument(
+      conventions,
+      /the list is closed at ([a-z]+), because/,
+    );
     const panes = read("src/components/shell/panes.ts");
     const literal = claimIn(
       "src/components/shell/panes.ts",
@@ -352,7 +434,10 @@ describe("docs/agent/conventions.md's pane list", () => {
   });
 
   it("counts the modules that read panes.ts", () => {
-    const claim = claimIn(doc, conventions, /and ([a-z]+) things read that file/);
+    const { doc, match: claim } = claimInDocument(
+      conventions,
+      /and ([a-z]+) things read that file/,
+    );
     const readers = sources
       .filter(({ rel }) => rel !== path.join("src", "components", "shell", "panes.ts"))
       .filter(({ text }) => /from "[^"]*\bpanes"/.test(text))
@@ -370,27 +455,24 @@ describe("docs/agent/conventions.md's pane list", () => {
   });
 });
 
-describe("docs/agent/security.md's environment scrubs", () => {
-  const doc = "docs/agent/security.md";
-  const security = read(doc);
+describe("docs/agent/security's environment scrubs", () => {
+  const security = readDocument("docs/agent/security.md");
 
-  // security.md anticipates this count decaying and says what to do when it
-  // does: the next spawn site adds another copy of the denylist, not a shared
-  // module. This case is what tells anybody that one has arrived, in either
-  // shape. A copy that strips all three variables moves the count the doc
+  // docs/agent/security anticipates this count decaying and says what to do
+  // when it does: the next spawn site adds another copy of the denylist, not a
+  // shared module. This case is what tells anybody that one has arrived, in
+  // either shape. A copy that strips all three variables moves the count the doc
   // spells out; one that strips the access token alone must be a copy the doc
   // names as deliberately different. The ordinal is paraphrased rather than
   // quoted because it moves with every new copy, and the one quoted here fell
   // two behind. Test files are excluded because the claim is about spawn sites,
   // and a test asserting on the name is not one.
   it("counts the copies that strip a second provider's credential", () => {
-    const claim = claimIn(
-      doc,
+    const { doc, match: claim } = claimInDocument(
       security,
       /`OPENAI_API_KEY`, `CODEX_API_KEY` and `CODEX_ACCESS_TOKEN` are on all ([a-z]+) and reach none of them/,
     );
-    const differing = claimIn(
-      doc,
+    const { doc: differingDoc, match: differing } = claimInDocument(
       security,
       /A [a-z]+, `\w+` \(`([\w.]+)`[^)]*\), is a copy of `\w+` that is deliberately \*not\* byte-identical/,
     );
@@ -414,7 +496,7 @@ describe("docs/agent/security.md's environment scrubs", () => {
       accessOnly.map((rel) => path.basename(rel)),
       [differing[1]],
       stale(
-        doc,
+        differingDoc,
         `the one copy that differs is in \`${differing[1]}\``,
         `${accessOnly.length} strip \`CODEX_ACCESS_TOKEN\` but not the two keys: ${accessOnly.join(", ")}`,
       ),
@@ -451,15 +533,16 @@ describe("docs/agent/security.md's environment scrubs", () => {
   });
 });
 
-describe("docs/agent/testing.md's rendering tests", () => {
-  const doc = "docs/agent/testing.md";
-
+describe("docs/agent/testing's rendering tests", () => {
   // "which is the whole of that class" is the completeness claim, and the file
   // ships the command that measures it. A rendering test added without a line
   // here is one whose grounds nobody wrote down, which is the thing this
   // document exists to refuse.
   it("counts every *.test.tsx in the tree", () => {
-    const claim = claimIn(doc, read(doc), /^([A-Z][a-z]+) are renderings rather than functions/m);
+    const { doc, match: claim } = claimInDocument(
+      readDocument("docs/agent/testing.md"),
+      /^([A-Z][a-z]+) are renderings rather than functions/m,
+    );
     const renderings = sources.filter(({ rel }) => rel.endsWith(".test.tsx")).map(({ rel }) => rel);
 
     assert.equal(
