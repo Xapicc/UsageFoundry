@@ -11950,6 +11950,37 @@ const RESTART_KILLED_NOTICE =
   "whole. Then continue the task from there.";
 
 /**
+ * Why a conflict resolution or the merge queue holds this run's branch, or null.
+ *
+ * Neither is an active run, so `activeRuns()` does not see them. Read off
+ * their rows rather than asked of `land.ts`, which imports this module; the
+ * resolution's in-memory claim is the one half that cannot be read from here,
+ * and it covers only the few git calls before its row is written.
+ */
+function branchHolderRefusal(runId: string): string | null {
+  const resolution = db()
+    .prepare(
+      "SELECT 1 FROM run_reviews WHERE run_id = ? AND kind = 'resolve' AND status = 'running' LIMIT 1",
+    )
+    .get(runId);
+  const queued = db()
+    .prepare(
+      "SELECT status FROM merge_queue WHERE run_id = ? AND status IN ('landing','resolving') LIMIT 1",
+    )
+    .get(runId) as { status: "landing" | "resolving" } | undefined;
+  if (resolution || queued?.status === "resolving") {
+    return (
+      "Claude is resolving a conflict on its branch, with the merge open in the " +
+      "checkout this run would pick up in. Wait for the resolution to finish."
+    );
+  }
+  if (queued) {
+    return "The merge queue is landing its branch right now. Wait for that to finish.";
+  }
+  return null;
+}
+
+/**
  * Put a finished run back to work, continuing its Claude Code session, and
  * optionally say something to it.
  *
@@ -12055,6 +12086,13 @@ export function reopenRun(
       };
     }
   }
+
+  // The same question about a holder that is not a run. A resolution's merge is
+  // open in this run's own slot with the conflicted files still marked, and the
+  // cycle this would start is granted `git add` and `git commit` there; a land
+  // is part-way through merging the branch this run would go on committing to.
+  const branchHeld = branchHolderRefusal(id);
+  if (branchHeld) return { ok: false, reason: branchHeld };
 
   const policy = normalizePolicy(budget);
   const spentUSD = run.spent_usd + run.spent_usd_est;
