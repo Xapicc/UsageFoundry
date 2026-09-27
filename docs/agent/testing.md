@@ -68,6 +68,7 @@ Seventeen are renderings rather than functions — every `*.test.tsx` in the tre
 | `costBaseline.test.ts` |  |
 | `costSplit.test.ts` |  |
 | `formProblems.test.ts` |  |
+| `formSeed.test.ts` |  |
 | `installSpend.test.ts` | [chat], [harnesses] |
 | `instanceBudget.test.ts` |  |
 
@@ -343,7 +344,7 @@ These are in the tree, and no topic file says what they earned.
 
 ## Checking this page is complete
 
-The rest of the suite is named by *subject* in the topic files rather than by filename, which is the right way round for deciding whether something is already covered and the wrong way round for checking that this page is complete — so the filenames are here too, and nothing else is claimed about them: `budgetPayload.test.ts`, `agentRegistry.test.ts`, `agents.test.ts`, `authGuard.test.ts`, `budget.test.ts`, `canvasGraph.test.ts`, `chatRequest.test.ts`, `claudeAuth.test.ts`, `config.test.ts`, `configCheck.test.ts`, `contextPruningReporting.test.ts`, `cycles.test.ts`, `diff.test.ts`, `forkAttempts.test.ts`, `format.test.ts`, `formProblems.test.ts`, `git.test.ts`, `http.test.ts`, `jsonRequest.test.ts`, `land.test.ts`, `loginLimiter.test.ts`, `logLine.test.ts`, `patch.test.ts`, `planUsage.test.ts`, `plugins.test.ts`, `privsep.test.ts`, `repoSpend.test.ts`, `retention.test.ts`, `review.test.ts`, `sandbox.test.ts`, `sandboxMountPoints.test.ts`, `schedules.test.ts`, `serverLock.test.ts`, `sessionToken.test.ts`, `stacks.test.ts`, `templates.test.ts`, `toolInventory.test.ts`, `applyStacks.test.ts`, `transcriptForkDedupe.test.ts`, `unsavedWork.test.ts`, `windows.test.ts` and `workflows.test.ts`.
+The rest of the suite is named by *subject* in the topic files rather than by filename, which is the right way round for deciding whether something is already covered and the wrong way round for checking that this page is complete — so the filenames are here too, and nothing else is claimed about them: `budgetPayload.test.ts`, `agentRegistry.test.ts`, `agents.test.ts`, `authGuard.test.ts`, `budget.test.ts`, `canvasGraph.test.ts`, `chatRequest.test.ts`, `claudeAuth.test.ts`, `config.test.ts`, `configCheck.test.ts`, `contextPruningReporting.test.ts`, `cycles.test.ts`, `diff.test.ts`, `forkAttempts.test.ts`, `format.test.ts`, `formProblems.test.ts`, `formSeed.test.ts`, `git.test.ts`, `http.test.ts`, `jsonRequest.test.ts`, `land.test.ts`, `loginLimiter.test.ts`, `logLine.test.ts`, `patch.test.ts`, `planUsage.test.ts`, `plugins.test.ts`, `privsep.test.ts`, `repoSpend.test.ts`, `retention.test.ts`, `review.test.ts`, `sandbox.test.ts`, `sandboxMountPoints.test.ts`, `schedules.test.ts`, `serverLock.test.ts`, `sessionToken.test.ts`, `stacks.test.ts`, `templates.test.ts`, `toolInventory.test.ts`, `applyStacks.test.ts`, `transcriptForkDedupe.test.ts`, `unsavedWork.test.ts`, `windows.test.ts` and `workflows.test.ts`.
 
 The completeness `CLAUDE.md` promises for this page is therefore checkable rather than asserted, and a test added without a paragraph here fails it:
 

@@ -228,3 +228,9 @@ nothing about it.
   foot of every scroll. Found with `getBoundingClientRect()` read after load
   without scrolling; fixed by publishing the split's measured top as
   `--split-top` and capping at the pane less that less `3rem`.
+- **2026-09-27, class C.** `/runs/new`'s workspace select held a value with no
+  option — a copied run or template naming a gone mount, or a copy whose seed
+  fetch failed — so React showed the first mount while state kept `""`, and on
+  a one-mount install choosing it fired no change and Start could not be
+  satisfied. Found by reading the source and React's `updateOptions`; fixed
+  with a disabled "Choose a workspace" option carrying the current value.

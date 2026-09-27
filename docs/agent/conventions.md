@@ -92,6 +92,7 @@ Each rule is in one topic file under `docs/agent/conventions/`; the lines below 
 - `Field` is finished; do not fork it. Label, `hint`, `error`, `unit`, `prefix`, `disabled` and the mode-picker-plus-value row (`LimitField`) are all props.
 - `Slider` and `ColorSwatch` are `Field`'s two newest members, and a slider always shows its figure.
 - `ListGroup`/`ListRow` is the grouped inset list, and `Switch` is the control that usually sits in one.
+- A `Select` whose value can name something its options do not has an option for that value.
 - When you fix an interface defect, record its class.
 
 ## [Canvases and charts](conventions/canvas-and-charts.md)
