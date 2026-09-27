@@ -30,8 +30,7 @@ import { TBody, THead, Table, Td, Th, Tr } from "@/components/ui/Table";
  *
  * So it is a reading beside the other two and never a correction to either. The
  * three measure the same run by three routes and disagreeing is the expected
- * outcome; adding any pair of them counts the same work twice, which is what the
- * copy at the foot of this card has to keep saying.
+ * outcome; adding any pair of them counts the same work twice.
  *
  * Its own poll, on its own cadence, for the reason the route documents: this
  * costs a full transcript scan, and the run page's row poll runs every three
@@ -217,15 +216,12 @@ export function RunAgentCost({
         </div>
       )}
 
-      {/* Shortened, but two of its claims may not go: this is one of the two
-          places the three cost readings say in user-visible copy that they must
-          not be added, and the `startedAs` sentence is the whole reason the
-          prop exists — under `--agent` a card reading entirely `(main thread)`
-          and one reading entirely the agent's name are both correct, and both
-          read as a bug to anyone expecting the other. */}
+      {/* The `startedAs` sentence may not go: it is the whole reason the prop
+          exists — under `--agent` a card reading entirely `(main thread)` and
+          one reading entirely the agent's name are both correct, and both read
+          as a bug to anyone expecting the other. */}
       <p className="mt-2 text-xs leading-snug text-ink-muted">
-        Priced from your own transcripts. A third reading, never added to the
-        two above.
+        Priced from your own transcripts.
         {startedAs &&
           ` Started as ${startedAs}, so the rows may sit wholly under that name or wholly under (main thread).`}
         {spend?.excludedFromTotals &&
