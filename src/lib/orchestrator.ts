@@ -297,6 +297,11 @@ export interface RunRow {
    */
   refusal_pauses: number;
   /**
+   * Work cycles a live guard cut short and the loop refunded to `iterations`,
+   * which `MAX_PAUSES_PER_RUN` also caps. Only ever increases.
+   */
+  guard_refunds: number;
+  /**
    * Parked milliseconds already closed off. Open parks are not in here — the
    * total at any instant is this plus `now - paused_at` while `paused_at` is
    * set. The duration guard subtracts it, because `maxDurationMinutes` caps
@@ -1799,9 +1804,11 @@ const MIN_REFUSAL_WAIT_MS = 5 * 60_000;
 /** Never hold a folder longer than one window plus slack on a refusal. */
 const MAX_REFUSAL_WAIT_MS = 6 * 3_600_000;
 /**
- * How many times one run may wait out a refusal.
+ * How many times one run may wait out a refusal, and how many work cycles a
+ * live guard may cut short and have refunded. Two counts on two columns, and
+ * the one number bounds each.
  *
- * Counted on `runs.refusal_pauses`, and not on `pause_count`. A refusal is
+ * Refusals are counted on `runs.refusal_pauses`, and not on `pause_count`. A refusal is
  * someone else's claim about someone else's counter, and a misread one must not
  * re-park forever. Only the refusal branch advances the count: a run that
  * stepped aside at its own 5-hour guard has not waited out a refusal, and
@@ -1809,6 +1816,14 @@ const MAX_REFUSAL_WAIT_MS = 6 * 3_600_000;
  * because a run failed `pauses-spent` and picked up by hand is the fresh
  * attempt this cap was not meant to span — carried, the count failed it again
  * at the next wall without one wait.
+ *
+ * Guard refunds are counted on `runs.guard_refunds`. A `live-resume` cycle the
+ * live guard cut is refunded to `iterations`, and unbounded that refund stops
+ * `maxIterations` from advancing: a run whose cycle is longer than the share of
+ * a window its guard allows never completes one, so the cycle cap never ends
+ * it and a run with no time limit parks for ever. Past this many a cut cycle
+ * stays charged. Nothing resets the count, `reopenRun` included: it
+ * corrects `iterations`, and a pick-up carries `iterations`.
  *
  * `pause_count` counts every park of either kind and is never reset, because
  * `ensureWorktree` reads it as "this run has worked before".
@@ -8779,6 +8794,10 @@ export async function startRun(id: string): Promise<void> {
   // How many cycles the context ceiling has ended and refunded. See
   // `MAX_EARLY_ENDS_PER_RUN`.
   let earlyEnds = 0;
+  // How many guard-cut cycles have been refunded, over the run's whole life
+  // rather than this segment's: every cut ends a segment. See
+  // `MAX_PAUSES_PER_RUN`.
+  let guardRefunds = run.guard_refunds ?? 0;
   /** The operator's message for the first cycle of this segment, if any. */
   let followUp: string | null = run.follow_up ?? null;
   /**
@@ -9827,11 +9846,22 @@ export async function startRun(id: string): Promise<void> {
         // resume continues this same conversation rather than starting fresh
         // work, and charging it would mean `live-resume` with a single work
         // cycle could only park and then stop at `cycles` without ever
-        // finishing. `MAX_PAUSES_PER_RUN` bounds the refund, so one cycle is at
-        // most four billed invocations. Only here — `applyInterrupt`'s other
-        // two call sites run *before* the increment above, and refunding there
-        // would discount a cycle that completed.
-        if (postCycle.pause) iterations -= 1;
+        // finishing. Only here — `applyInterrupt`'s other two call sites run
+        // *before* the increment above, and refunding there would discount a
+        // cycle that completed.
+        //
+        // Bounded by `MAX_PAUSES_PER_RUN`, counted on the row and written with
+        // `iterations` in the ending below, because every cut ends a segment
+        // and a local would restart at zero each time. It used to be bounded by
+        // nothing: a run whose cycle is longer than its guard's share of a
+        // window was cut and refunded every window, never reached its cycle
+        // cap, and parked for ever. Past the bound the cut cycle stays charged
+        // and the cycle cap ends the run on its ordinary verdict, so guard cuts
+        // add at most that many billed invocations to what `maxIterations` buys.
+        if (postCycle.pause && guardRefunds < MAX_PAUSES_PER_RUN) {
+          guardRefunds += 1;
+          iterations -= 1;
+        }
         break;
       }
 
@@ -10303,6 +10333,9 @@ export async function startRun(id: string): Promise<void> {
     const carried: Partial<RunRow> = {
       stop_reason: stopReason,
       iterations,
+      // Beside the count it corrects, so no ending can store one without the
+      // other.
+      guard_refunds: guardRefunds,
       spent_usd: spentUSD,
       spent_tokens: spentTokens,
       spent_usd_est: spentEstUSD,

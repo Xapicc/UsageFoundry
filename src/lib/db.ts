@@ -965,6 +965,12 @@ function migrate(db: Database.Database) {
       db.exec("UPDATE runs SET refusal_pauses = pause_count");
     }
   })();
+  // Work cycles a live guard cut short and the loop refunded, which
+  // `MAX_PAUSES_PER_RUN` bounds so that `maxIterations` still ends a run whose
+  // every cycle is cut. On the row because the bound has to outlive the park
+  // each cut ends in. No backfill: a refund taken before this column was never
+  // counted, and 0 grants an old row at most one more allowance.
+  addColumn(db, "runs", "guard_refunds", "INTEGER NOT NULL DEFAULT 0");
   // Milliseconds this run has spent parked, closed off every time it leaves a
   // park. `maxDurationMinutes` is a cap on *worked* minutes, so the guard
   // subtracts this from the wall clock since `started_at`; without it a run that

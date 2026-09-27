@@ -9,7 +9,8 @@ import type { BudgetPolicy } from "./budget";
 import type { Interrupt } from "./orchestrator";
 
 /**
- * Which counter each park is charged to, driven through the real run loop.
+ * Which counter each park and each refund is charged to, driven through the
+ * real run loop.
  *
  * `MAX_PAUSES_PER_RUN` bounds how many refusals one run may wait out, and the
  * count it reads is written in exactly one place: the `paused` branch of
@@ -19,6 +20,13 @@ import type { Interrupt } from "./orchestrator";
  * Charged for guard parks, a run that stepped aside at its own 5-hour guard is
  * failed at its first real wall "out of waits" it never took. Never charged at
  * all, a misread refusal re-parks for ever.
+ *
+ * The refund of a cycle the live guard cut is the same kind of silence from
+ * the other side. It is taken in the post-cycle checkpoint and counted in a
+ * frame that every cut ends, so a bound kept anywhere but the row is a bound
+ * that resets at each park — and a run that is always cut, always refunded and
+ * always parked never reaches its cycle cap. What that looks like from outside
+ * is an ordinary parked run.
  *
  * `orchestrator.test.ts` cannot say either, because nothing there spawns: it
  * pins `CLAUDE_BIN` at a path that does not exist precisely so a regression
@@ -239,5 +247,47 @@ describe("which parks spend the refusal allowance", () => {
     assert.equal(row.status, "failed", `still parking: ${row.stop_reason}`);
     assert.match(row.stop_reason ?? "", /Out of waits/);
     assert.equal(spawned, MAX_PAUSES_PER_RUN + 1);
+  });
+});
+
+describe("what bounds the refund of a cycle the live guard cut", () => {
+  it("ends a run whose every cycle is cut, at its cycle cap", async () => {
+    // The run the unbounded refund could not end: `live-resume`, a cycle cap
+    // and no time limit, and a task longer than its guard's share of a window
+    // — so the live guard cuts every cycle, every cut was refunded, and
+    // `iterations` never reached `maxIterations`. A run spending limit would
+    // still have ended it; this one has none, which the terminus rule allows.
+    const id = start(
+      "every-cycle-cut",
+      Array<Cycle>(MAX_PAUSES_PER_RUN + 3).fill("guard-pause"),
+      { maxIterations: 1, enforcement: "live-resume" },
+    );
+
+    // Handed back for as long as it keeps parking, with room for two parks
+    // more than the bound allows, so an unbounded refund reads as a run that
+    // is still parking rather than as a test that never returns.
+    for (let park = 0; park < MAX_PAUSES_PER_RUN + 3; park++) {
+      await settled(id);
+      if (getRun(id)!.status !== "paused") break;
+      unpark(id);
+    }
+
+    await settled(id);
+    const row = getRun(id)!;
+    // Matched on the cycle cap's own sentence and not on the status alone: the
+    // pre-cycle guard ends a capped run `stopped`, which is also what the stub
+    // ends a run on when its script runs out.
+    assert.match(
+      row.stop_reason ?? "",
+      /Used all 1 work cycle allowed/,
+      `${row.status} after ${spawned} billed cycles, none of them charged: ${row.stop_reason}`,
+    );
+    assert.equal(
+      spawned,
+      MAX_PAUSES_PER_RUN + 1,
+      "one work cycle, plus one refunded cut for each the bound allows",
+    );
+    assert.equal(row.iterations, 1, "the cut past the bound is the cycle the cap counted");
+    assert.equal(row.guard_refunds, MAX_PAUSES_PER_RUN);
   });
 });
