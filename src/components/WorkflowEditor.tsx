@@ -26,15 +26,18 @@ import {
   boardThresholds,
 } from "@/lib/apiTypes";
 import {
+  conditionClause,
   draftSignature,
   draftToGraph,
   linkKey,
   linksOfGraph,
+  linksWithKind,
   linksWithMember,
   linksWithoutMember,
   resolveLayout,
   sectionExit,
   sectionLink,
+  sectionLinkStatement,
   sectionOf,
   worstCaseRuns,
   type BlockDraft,
@@ -610,9 +613,21 @@ export function WorkflowEditor({
     [defaultMount],
   );
 
-  const updateBlock = useCallback((id: string, patch: Partial<BlockDraft>) => {
-    setBlocks((prev) => prev.map((b) => (b.id === id ? { ...b, ...patch } : b)));
-  }, []);
+  const updateBlock = useCallback(
+    (id: string, patch: Partial<BlockDraft>) => {
+      setBlocks((prev) =>
+        prev.map((b) => (b.id === id ? { ...b, ...patch } : b)),
+      );
+      // A kind is the one field that decides whether a block may hold a
+      // branch, and a section's links carry theirs with no switch on the panel
+      // to take it off — see `linksWithKind`.
+      const { kind } = patch;
+      if (kind !== undefined) {
+        setLinks((prev) => linksWithKind(id, kind, blocks, prev));
+      }
+    },
+    [blocks],
+  );
 
   const removeBlock = useCallback((id: string) => {
     setBlocks((prev) => prev.filter((b) => b.id !== id));
@@ -984,6 +999,14 @@ export function WorkflowEditor({
     selection?.kind === "link"
       ? links.find((l) => l.from === selection.from && l.to === selection.to)
       : undefined;
+  const selectedCarrier =
+    selectedLink &&
+    links.find(
+      (l) =>
+        l.to === selectedLink.to &&
+        l.from !== selectedLink.from &&
+        l.continueBranch,
+    );
 
   const nameOf = useCallback(
     (id: string) => {
@@ -1113,6 +1136,11 @@ export function WorkflowEditor({
                 fromName={nameOf(selectedLink.from)}
                 toName={nameOf(selectedLink.to)}
                 insideSection={sections.get(selectedLink.from)}
+                carriedFrom={
+                  selectedCarrier === undefined
+                    ? undefined
+                    : nameOf(selectedCarrier.from)
+                }
                 onChange={(patch) =>
                   updateLink(selectedLink.from, selectedLink.to, patch)
                 }
@@ -2455,6 +2483,7 @@ function LinkPanel({
   fromName,
   toName,
   insideSection,
+  carriedFrom,
   onChange,
   onRemove,
 }: {
@@ -2463,22 +2492,24 @@ function LinkPanel({
   toName: string;
   /** The loop that repeats both ends of this link, or undefined. */
   insideSection: string | undefined;
+  /**
+   * The block whose branch the target carries on through another link, or
+   * undefined: a run holds one ref, so a fan-in hands only one branch on.
+   */
+  carriedFrom: string | undefined;
   onChange: (patch: Partial<LinkDraft>) => void;
   onRemove: () => void;
 }) {
   const id = linkKey(link).replace(/[^A-Za-z0-9_-]/g, "-");
 
-  // Inside a section the condition is not a choice, and this panel states it
-  // rather than offering a control something downstream overrules: a pass has
-  // to land what it produced, so a member that did not finish is not something
-  // the rest of the section carries on from.
-  //
-  // The branch is not stated, because it is not the same for every link: a
-  // section may fork, and two links carrying one block's branch is refused at
-  // Save. `connect` gives the first way out of a block its branch and each
-  // later one its own, so what this says is what that link actually does.
+  // Inside a section this panel offers no controls and states what the link
+  // does, in the words `sectionLinkStatement` decides.
   if (insideSection !== undefined) {
-    const conforms = link.edge === "on-success";
+    const statement = sectionLinkStatement(link, {
+      from: fromName,
+      to: toName,
+      carriedFrom,
+    });
     return (
       <>
         <p className="mb-3.5 text-sm leading-normal text-ink-muted">
@@ -2486,16 +2517,9 @@ function LinkPanel({
           after <strong className="font-semibold text-ink">{fromName}</strong>{" "}
           inside the section{" "}
           <strong className="font-semibold text-ink">{insideSection}</strong>{" "}
-          repeats, only if it completes.{" "}
-          {link.continueBranch
-            ? `${toName} commits onto ${fromName}'s branch.`
-            : `${toName} cuts its own branch, and the section's merge block lands it.`}
-          {!conforms && (
-            <span className="text-warn">
-              {" "}
-              This one says otherwise, so the graph is refused. Remove it and
-              draw it again.
-            </span>
+          repeats{statement.clause} {statement.branch}
+          {statement.refusal !== null && (
+            <span className="text-warn"> {statement.refusal}</span>
           )}
         </p>
         <RemoveLinkRow onRemove={onRemove} />
@@ -2508,11 +2532,7 @@ function LinkPanel({
       <p className="mb-3.5 text-sm leading-normal text-ink-muted">
         <strong className="font-semibold text-ink">{toName}</strong> starts after{" "}
         <strong className="font-semibold text-ink">{fromName}</strong>
-        {link.edge === ""
-          ? ", once you have said when."
-          : link.edge === "on-success"
-            ? ", only if it completes."
-            : ", once it finishes either way."}
+        {conditionClause(link.edge) ?? ", once you have said when."}
         {link.continueBranch &&
           ` ${toName} commits onto ${fromName}'s branch rather than cutting its own.`}
       </p>
