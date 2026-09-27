@@ -144,9 +144,8 @@ export default function DreamingPage() {
 
       <Notice quiet>
         Every row here is a <strong>normalised string</strong>, not a cause. Numbers, hashes
-        and path interiors are collapsed, so one problem can appear as several rows — four
-        permission denials at four paths are one denial — and one row can carry many causes.
-        A count is a count of strings that recurred.
+        and path interiors are collapsed, so one problem can appear as several rows and one
+        row can carry many causes.
       </Notice>
 
       {error && <Notice tone="danger" live>{error}</Notice>}
@@ -210,7 +209,7 @@ function Summary({
               Rescan
             </Button>
             <Button onClick={onRun} disabled={busy || !!data.refusal}>
-              {busy ? "Running…" : "Run tonight's pass now"}
+              {busy ? "Running…" : "Run nightly pass"}
             </Button>
           </ButtonRow>
         </CardTitle>
@@ -243,13 +242,11 @@ function Summary({
           ms, {data.filesRead.toLocaleString()} of them re-read
           {data.duplicates > 0 &&
             `, ${data.duplicates.toLocaleString()} records skipped as copies a resumed session rewrote`}
-          . This scan keeps its own cache and never rides the dashboard&apos;s.
         </Hint>
 
         {data.refusal ? (
           <Notice tone="warn" className="mt-3">
-            <strong>Nothing will be written.</strong> {data.refusal} The readout above needs
-            none of that and is always available.{" "}
+            <strong>Nothing will be written.</strong> {data.refusal}{" "}
             <ButtonLink href="/settings">Settings</ButtonLink>
           </Notice>
         ) : (
@@ -272,8 +269,7 @@ function Recurring({ data }: { data: DreamingDTO }) {
     return (
       <Empty>
         Nothing has failed on more than {data.minDays === 1 ? "one day" : `${data.minDays - 1} day(s)`}{" "}
-        in the scanned window — {data.totalSignatures.toLocaleString()} distinct failures across{" "}
-        {data.days.length} day(s), none of them recurring.
+        in the scanned window.
       </Empty>
     );
   }
@@ -335,7 +331,7 @@ function Written({
     return (
       <Empty>
         Nothing has been written into the vault yet.
-        {data.refusal ? " Writing is off." : " The next qualifying night will write the first."}
+        {data.refusal && " Writing is off."}
       </Empty>
     );
   }
@@ -344,8 +340,7 @@ function Written({
     <TableWrap>
       {data.notesTruncated && (
         <Notice tone="warn" quiet className="mb-3">
-          Showing the newest {data.noteLimit} notes. This list is the record of what this app
-          has written into the vault, so a cut one is saying less than it knows.
+          Showing the newest {data.noteLimit} notes.
         </Notice>
       )}
       <Table stack>
