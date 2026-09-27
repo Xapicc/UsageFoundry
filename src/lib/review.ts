@@ -58,9 +58,9 @@ import {
  * pressing something, and a **validation** is started by a run asking to close
  * a task, which is why `installSpend` had to be widened to see this table at
  * all. A resolution is either — the Resolve button, or the merge queue draining
- * a batch queued with auto-resolve — and nothing can stop one once it is
- * spawned, which is why it carries `--max-budget-usd` as a validation does and
- * a review, bounded by its clock, does not.
+ * a batch queued with auto-resolve — and nothing a person can press stops one
+ * once it is spawned, which is why it carries `--max-budget-usd` as a
+ * validation does and a review, bounded by its clock, does not.
  */
 export type AssistKind = "review" | "resolve" | "validate";
 
@@ -85,17 +85,13 @@ const REVIEW_TIMEOUT_MS = 10 * 60_000;
 /**
  * The clock for one assist, or none at all.
  *
- * A resolution is unbounded on purpose (see above), and nothing else in this
- * app stops one either: this timer is the only thing that signals an assist's
- * child, and `cancelBatch` cancels a batch's *queued* rows while leaving the
- * one in flight to finish. What ends a resolution is its child exiting, or a
- * container restart taking the child down with everything else. Its *spend* is
- * bounded all the same, by `resolutionBudgetUSD` inside the CLI, which is the
- * half of a clock's job a clock could not do without ending large merges. A
- * child that spends nothing and never exits is the part left over: it holds
- * one of `maxConcurrentAssists` and its repository's merge worker until that
- * restart, and `docs/agent/isolation-and-landing.md` records why that is
- * accepted rather than timed.
+ * A resolution is unbounded on purpose (see above): nothing ends one for how
+ * long it has taken. What ends one is its child exiting, `RESOLVE_SILENCE_MS`
+ * once it has printed nothing for an hour, or a container restart taking the
+ * child down with everything else. `cancelBatch` is not among them: it cancels
+ * a batch's *queued* rows and leaves the one in flight to finish. Its *spend*
+ * is bounded all the same, by `resolutionBudgetUSD` inside the CLI, which is
+ * the half of a clock's job a clock could not do without ending large merges.
  */
 const assistTimeoutMs = (kind: AssistKind): number =>
   // A validation is bounded for the review's reason and more sharply: a run is
@@ -103,6 +99,35 @@ const assistTimeoutMs = (kind: AssistKind): number =>
   // `maxConcurrentRuns`, so a verdict that never arrives is a slot that never
   // comes back. The measured median is 49.5s against this ten minutes.
   kind === "resolve" ? 0 : REVIEW_TIMEOUT_MS;
+
+/**
+ * How long a *resolution* may print nothing before it is taken to be stuck.
+ *
+ * Silence, not duration, for the reason `maxCycleSilenceMinutes` gives a work
+ * cycle one: the clock is the time since the child last printed, so a large
+ * merge that is still reporting is never ended however long it takes, and
+ * that is all the landing path's no-clock rule protects. What it ends is the
+ * case the spending ceiling cannot: a child wedged with nothing to spend,
+ * holding one of `maxConcurrentAssists` and its repository's merge worker, for
+ * which the only other way out was a restart that interrupts every run in
+ * flight.
+ *
+ * An hour against a longest measured gap of 193.5s, across 79 real resolution
+ * transcripts (`docs/agent/isolation-and-landing.md` has the spread), so about
+ * eighteen times the worst seen. The error is asymmetric the way the work
+ * cycle's is: a resolution ended wrongly is rolled back by `after` and can be
+ * asked again, while a stuck one freed after an hour instead of thirty minutes
+ * is still freed without anybody restarting anything. A constant and not a
+ * setting, as the review's clock is, because the margin is the whole argument
+ * and a setting's floor would be a second number to defend.
+ */
+const RESOLVE_SILENCE_MS = 60 * 60_000;
+
+/** The silence deadline for one assist, or none at all. */
+const assistSilenceMs = (kind: AssistKind): number =>
+  // A review and a validation are ended by their ten-minute clock long before
+  // any silence deadline worth having could fire.
+  kind === "resolve" ? RESOLVE_SILENCE_MS : 0;
 
 export interface ReviewRow {
   id: string;
@@ -345,11 +370,13 @@ export interface AssistRequest {
    * **Null for a review, and a number for the two kinds nothing can stop.** A
    * review is one press, read-only and killed at ten minutes. A validation
    * fires whenever a run asks to close a task, which on a fleet is per finished
-   * piece of work with nobody present; a resolution has no clock at all (the
-   * landing path's rule) and is started by the merge queue as often as by a
-   * button, and no control reaches its child once it is spawned — so a person
-   * watching bounds nothing. `chatTurnBudgetUSD` is the precedent for the shape
-   * and for the reason the default is a number rather than null: this bounds
+   * piece of work with nobody present; a resolution has no clock on its
+   * duration (the landing path's rule) and is started by the merge queue as
+   * often as by a button, and no control reaches its child once it is spawned —
+   * so a person watching bounds nothing, and its silence deadline ends only a
+   * child that has stopped printing, not one that is spending.
+   * `chatTurnBudgetUSD` is the precedent for the shape and for the reason the
+   * default is a number rather than null: this bounds
    * *this app's own behaviour* rather than guessing at an allowance Anthropic
    * publishes nowhere.
    */
@@ -653,9 +680,10 @@ const EXIT_DRAIN_MS = 2_000;
  * runs. For a review, `killProcessGroup` plus the ten-minute clock eventually
  * reaps the group and records the completed, billed answer as a timeout; with
  * it off there is no group to kill and nothing else reaps the grandchild. A
- * **resolution has no clock at all** — see `assistTimeoutMs` — so settling on
- * `exit` is not the fast path there, it is the only path: without it that row
- * is `running` until the server restarts, and the merge queue is waiting on it.
+ * **resolution has no clock on its duration** — see `assistTimeoutMs` — and its
+ * silence deadline stands down at `exit`, so settling on `exit` is not the
+ * fast path there, it is the only path: without it that row is `running` until
+ * the server restarts, and the merge queue is waiting on it.
  *
  * `runIteration` and `chat.ts`'s `settleOnExit` settle the identical hazard the
  * identical way: `exit` is the guarantee, `close` is the fast path, and the
@@ -685,6 +713,50 @@ export function settleOnExit(
     setTimeout(() => once(code), EXIT_DRAIN_MS).unref?.();
   });
   child.on("close", (code) => once(code));
+}
+
+/**
+ * Call `onSilent` once `child` has printed nothing on either stream for `ms`.
+ *
+ * `runIteration`'s shape for the same deadline: every chunk moves
+ * `lastOutputAt` and the timer is re-armed from it when it fires, rather than
+ * cleared and set again on the hot path. It stands down at `exit` rather than
+ * at the settle, so a child that exits on its own in the last seconds of its
+ * hour is not then signalled during `EXIT_DRAIN_MS` and recorded as stuck.
+ */
+function watchSilence(
+  child: ChildProcess,
+  ms: number,
+  onSilent: () => void,
+): () => void {
+  let lastOutputAt = Date.now();
+  let timer: NodeJS.Timeout | null = null;
+  const heard = () => {
+    lastOutputAt = Date.now();
+  };
+  const check = () => {
+    const quietFor = Date.now() - lastOutputAt;
+    if (quietFor < ms) {
+      arm(ms - quietFor);
+      return;
+    }
+    timer = null;
+    onSilent();
+  };
+  const arm = (wait: number) => {
+    timer = setTimeout(check, wait);
+    timer.unref?.();
+  };
+  const stop = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+
+  child.stdout?.on("data", heard);
+  child.stderr?.on("data", heard);
+  child.once("exit", stop);
+  arm(ms);
+  return stop;
 }
 
 /**
@@ -894,9 +966,24 @@ function spawnAssist(id: string, req: AssistRequest): Promise<void> {
         : null;
     timer?.unref?.();
 
+    // Nobody decided this one, so it lands as `failed` through the same `after`
+    // as every other failure, which for a resolution is `merge --abort` and the
+    // checkout discarded.
+    let silent = false;
+    const silenceMs = assistSilenceMs(kind);
+    const stopWatching =
+      silenceMs > 0
+        ? watchSilence(child, silenceMs, () => {
+            silent = true;
+            signalTree(child, "SIGTERM");
+            setTimeout(() => signalTree(child, "SIGKILL"), 5_000).unref?.();
+          })
+        : null;
+
     let settled = false;
     const done = () => {
       if (timer) clearTimeout(timer);
+      stopWatching?.();
       resolve();
     };
 
@@ -943,6 +1030,15 @@ function spawnAssist(id: string, req: AssistRequest): Promise<void> {
         void land({
           status: "failed",
           error: `It did not finish within ${limitMs / 60_000} minutes and was stopped.`,
+        });
+        return;
+      }
+      if (silent) {
+        void land({
+          status: "failed",
+          error:
+            `It printed nothing for ${silenceMs / 60_000} minutes, so it was ` +
+            "taken to be stuck and stopped.",
         });
         return;
       }

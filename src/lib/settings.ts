@@ -431,7 +431,9 @@ export interface Settings {
    * `validationBudgetUSD`'s shape and its reason, arrived at from the other
    * end: a resolution has **no clock** — the landing path's rule, because a
    * clock was ending large merges — and nothing reaches its child once it is
-   * spawned, so without this the only bound on one was that it exits. The merge
+   * spawned but a deadline on its *silence*, which a child that is working and
+   * spending never meets, so without this the only bound on one was that it
+   * exits. The merge
    * queue starts one per conflicting branch of a batch queued with auto-resolve,
    * a workflow's merge block included, with nobody present; the install ceiling
    * is read once at the door, so a resolution admitted just under it could

@@ -9,7 +9,9 @@ import { after, before, describe, it } from "node:test";
  * What a conflict resolution's child is handed as a spending ceiling.
  *
  * A resolution has no clock — the landing path's rule, because a clock was
- * ending large merges — and nothing reaches its child once it is spawned. The
+ * ending large merges — and nothing reaches its child once it is spawned but
+ * a deadline on its silence, which a child that is working and spending never
+ * meets (`resolutionSilence.test.ts`). The
  * merge queue starts one per conflicting branch of a batch queued with
  * auto-resolve, a workflow's merge block included, with nobody present, and the
  * install ceiling is read once at the door. So `--max-budget-usd` is the only
