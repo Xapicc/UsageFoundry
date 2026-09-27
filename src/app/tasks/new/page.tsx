@@ -19,8 +19,7 @@ export default function NewTaskPage() {
     <>
       <h1 className="mb-1 text-xl font-semibold tracking-tight">New task</h1>
       <p className="mb-5 max-w-[80ch] text-sm text-ink-muted">
-        A brief nobody has started, and the folder it belongs to. Writing one
-        down costs nothing; starting the work is a separate press. ·{" "}
+        Filing a task costs nothing; starting the work is a separate press. ·{" "}
         <Link href="/tasks">Back to the taskboard</Link>
       </p>
       <TaskEditor task={null} />
