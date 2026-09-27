@@ -134,7 +134,24 @@
   boundary off this machine.** The session matched and the notice rendered in
   full; only the run loop's call site is unexercised.
 
+- **The ceiling's below-the-mark reset adds almost nothing but cuts,
+  2026-09-27.** Replaying the minute tick (last main-thread `usage` frame,
+  `apiContextTokens`' sum) over the 256 transcripts under
+  `~/.claude/projects/-workspace*` that crossed 200,000: 581 measurements under
+  the old pacing, 656 with the reset. Of those only the reset took, 117 followed
+  a drop of 25,000 or more and 5 a dip of 2k-23k. In-loop dips are common frame
+  to frame (5,245, median 492 tokens) but a minute's growth hides them, so a
+  threshold on the reset buys nothing. Caveat: per file not per run, ticks
+  rebuilt from timestamps, cuts inferred from the drop.
+
 ## Not yet verified by hand
+
+- **The mark clears in `pruneAtBoundary` and the fresh-start branch have not
+  met a real run**; `contextCeilingRace.test.ts` drives only the tick's reset.
+  Settled by a fork-engine run that declines at the ceiling, forks at a natural
+  boundary and crosses again: `prune_decisions` should hold an `early-end` row
+  at its first `context_samples` reading over 200,000 after the fork, not
+  25,000 past the pre-fork decline.
 
 - **No netted prune figure has been read against a real run.** The KPI
   arithmetic rests on unit tests and a clean `npm run build`; the
