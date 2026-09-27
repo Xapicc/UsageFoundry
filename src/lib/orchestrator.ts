@@ -380,6 +380,12 @@ export interface RunRow {
    */
   restart_closed: number;
   /**
+   * 1 when the shutdown that set `restart_closed` found this run's child still
+   * running, so its last cycle was cut off rather than never started. Cleared
+   * with `restart_closed`. See the column note in `db.ts`.
+   */
+  restart_cut_cycle: number;
+  /**
    * When an operator set this run aside, or null. Both bulk pick-ups skip a run
    * that carries one; picking it up on its own page clears it. Says nothing
    * about how the run ended — see the column note in `db.ts`.
@@ -11582,11 +11588,7 @@ export function reopenPrompt(o: {
   donePushback: string;
   /**
    * This run's last cycle was cut off by a restart rather than by the agent.
-   *
-   * `reconcileOnBoot` and `shutdownRuns` are the only writers of `failed` with
-   * `restart_closed` set, so the pair names exactly the mid-cycle kill: the
-   * queued and paused-too-long branches both write `stopped`, and
-   * `markRestartClosed` only touches rows that were `running`.
+   * `cycleCutByRestart` decides it from the row, and says which endings count.
    */
   restartKilled: boolean;
 }): string {
@@ -11602,12 +11604,14 @@ export function reopenPrompt(o: {
   // note about a severed conversation would be describing one that is gone.
   if (o.restartKilled && o.sessionId) return RESTART_KILLED_NOTICE;
   // Below `restartKilled` and above the pushback, and only one half of that is
-  // load-bearing. `restartKilled` is `status === "failed" && restart_closed`, so
-  // the two above can never both be true — the order between them is written
-  // this way for the next reader rather than for this code: if `reconcileOnBoot`
-  // ever widens what it writes on a mid-cycle kill, a kill must still outrank a
-  // stale ending. The order below it *is* load-bearing for the reason stated
-  // there, which is that the pushback reads a column and this reads a status.
+  // load-bearing. `restartKilled` holds only for a `failed` row or for one whose
+  // child the shutdown found running — and that loop's post-cycle checkpoint
+  // ends it `stopped` before any cycle ending is read — so the two above can
+  // never both be true. The order between them is written this way for the next
+  // reader rather than for this code: if either writer ever widens what it
+  // records on a mid-cycle kill, a kill must still outrank a stale ending. The
+  // order below it *is* load-bearing for the reason stated there, which is that
+  // the pushback reads a column and this reads a status.
   //
   // Doing nothing here would already satisfy the cheap reading of this branch —
   // the pushback tests `completed`, which this row is not, so a `needs-review`
@@ -11628,6 +11632,32 @@ export function reopenPrompt(o: {
     return o.donePushback;
   }
   return "";
+}
+
+/**
+ * Whether a restart, rather than the agent, ended this run's last cycle.
+ *
+ * Two writers record that fact and they write it differently. `reconcileOnBoot`
+ * fails a row the previous process left `running`, with `restart_closed` set;
+ * its queued and paused-too-long branches write `stopped`, so `failed` beside
+ * the flag is that branch alone. `shutdownRuns` interrupts every `running` row,
+ * and `interruptOutcome` ends each one `stopped` — the run whose child it
+ * killed mid-tool-call and the run it caught in its pre-cycle scan alike. That
+ * ending cannot tell them apart and the second has nothing to be told about,
+ * so the shutdown records `restart_cut_cycle` from whether a child was in
+ * flight when it landed. Reading only `failed` here missed every run cut off by
+ * a `docker compose up --build`, which is the ordinary deploy.
+ *
+ * Pure and tested because both mistakes are silent: miss one and the run is
+ * asked whether it is finished on a tree its kill left half-mutated; widen it to
+ * every `stopped` restart row and a run that never started a cycle is told one
+ * was cut off.
+ */
+export function cycleCutByRestart(
+  run: Pick<RunRow, "status" | "restart_closed" | "restart_cut_cycle">,
+): boolean {
+  if (run.restart_closed === 0) return false;
+  return run.status === "failed" || run.restart_cut_cycle !== 0;
 }
 
 /**
@@ -11850,9 +11880,9 @@ export function reopenRun(
     sessionId: run.session_id,
     note,
     donePushback: getSettings().donePushbackPrompt,
-    // Read here rather than after the UPDATE below, which clears the column in
-    // the same statement that queues the run.
-    restartKilled: run.status === "failed" && run.restart_closed !== 0,
+    // Read here rather than after the UPDATE below, which clears both columns
+    // in the same statement that queues the run.
+    restartKilled: cycleCutByRestart(run),
   });
 
   const flip = db()
@@ -11861,6 +11891,10 @@ export function reopenRun(
       // leaves the count the restart notice offers to pick up. Cleared here
       // rather than when it next ends, because what that count answers is "how
       // many runs is the restart still holding up", not "how many did it touch".
+      // `restart_cut_cycle=0` goes with it, because it describes the ending this
+      // row records and only a shutdown rewrites it: a later boot that sets
+      // `restart_closed` again from its queued or paused branch would otherwise
+      // tell a run whose last cycle finished cleanly that it was cut off.
       //
       // `set_aside_at=NULL` for the mirror of that reason. Setting a run aside
       // says "not with the others", and this is the operator picking up this one
@@ -11885,7 +11919,8 @@ export function reopenRun(
       `UPDATE runs SET status=?, budget=?, max_iterations=?, follow_up=?, reopened_at=?,
          started_at=NULL, finished_at=NULL, exit_code=NULL, stop_reason=NULL,
          needs_review_reason=NULL, paused_ms=0, paused_at=NULL,
-         resume_at=NULL, restart_closed=0, set_aside_at=NULL WHERE id=? AND status=?`,
+         resume_at=NULL, restart_closed=0, restart_cut_cycle=0, set_aside_at=NULL
+         WHERE id=? AND status=?`,
     )
     .run(
       waitingAgain ? "waiting" : "queued",
@@ -12250,17 +12285,23 @@ export async function shutdownRuns(
   // Every `running` row, not only the ones holding a child: a run in its
   // pre-cycle transcript scan has no process to signal and is very much about
   // to spawn one, and `interruptRun` is what its next checkpoint reads.
+  //
+  // Which of the two each row was is recorded here, before the signal, because
+  // nothing after it can tell: both end `stopped` with the same reason, and the
+  // child is gone from `procs` the moment it closes. `cycleCutByRestart` reads
+  // it to decide whether a pick-up is told its last cycle was cut off.
   const markRestartClosed = db().prepare(
-    "UPDATE runs SET restart_closed = 1 WHERE id = ?",
+    "UPDATE runs SET restart_closed = 1, restart_cut_cycle = ? WHERE id = ?",
   );
   for (const { id } of pending) {
+    const cutCycle = procs.has(id);
     interruptRun(id, {
       kind: "shutdown",
       reason: `The server shut down (${sig}) while this run was working. Its work is on disk; pick it up to carry on.`,
       pause: false,
       at: Date.now(),
     });
-    markRestartClosed.run(id);
+    markRestartClosed.run(cutCycle ? 1 : 0, id);
   }
 
   // The children that are not work cycles: a review, a resolution, a

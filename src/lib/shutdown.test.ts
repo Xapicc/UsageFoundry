@@ -52,6 +52,7 @@ assert.equal(
 
 const {
   createRun,
+  cycleCutByRestart,
   getRun,
   killAllAgents,
   reconcileInterruptedCycles,
@@ -208,6 +209,11 @@ describe("shutting down with a work cycle in flight", () => {
       1,
       "it has to be findable as one the restart closed out",
     );
+    // And as one whose cycle the restart cut off, which `stopped` cannot say:
+    // this is the row picking it up must tell that its last cycle did not
+    // finish, and it read as an ordinary stop.
+    assert.equal(settled.restart_cut_cycle, 1);
+    assert.equal(cycleCutByRestart(settled), true);
 
     // One child, not two: the second work cycle its budget allowed must not
     // have been spawned on the way out of the door.
@@ -255,6 +261,11 @@ describe("shutting down with a work cycle in flight", () => {
     );
     assert.match(settled.stop_reason ?? "", /server shut down \(SIGINT\)/);
     assert.equal(spawned, spawnedBefore, "no work cycle may start on the way out");
+    // Closed out by the restart like the run above, and with the same ending,
+    // but it had no cycle to cut off and must not be told it had one.
+    assert.equal(settled.restart_closed, 1);
+    assert.equal(settled.restart_cut_cycle, 0);
+    assert.equal(cycleCutByRestart(settled), false);
   });
 
   it("mops up a cycle whose loop never got to finish", async () => {
@@ -354,6 +365,9 @@ describe("shutting down with a work cycle in flight", () => {
     assert.equal(row.active_started_at, null);
     assert.equal(row.status, "failed");
     assert.equal(row.restart_closed, 1);
+    // No shutdown reached it to record a child, so `failed` is what says so.
+    assert.equal(row.restart_cut_cycle, 0);
+    assert.equal(cycleCutByRestart(row), true);
   });
 });
 

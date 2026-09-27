@@ -1526,6 +1526,19 @@ function migrate(db: Database.Database) {
   // ever had.
   addColumn(db, "runs", "restart_closed", "INTEGER NOT NULL DEFAULT 0");
 
+  // Whether the shutdown that closed this run out cut off a work cycle, rather
+  // than catching the run between cycles or in its pre-cycle scan.
+  //
+  // Its own column because `restart_closed` cannot say it and the status cannot
+  // either: `shutdownRuns` marks every `running` row, and every one of them ends
+  // `stopped` through `interruptOutcome`, whether its child was mid-tool-call
+  // or it had not spawned one yet. `reopenRun` tells only the first kind that
+  // its cycle did not finish, and saying so to the second would be false. Rows
+  // `reconcileOnBoot` fails are not flagged here — `failed` with
+  // `restart_closed` already names them — so this is written by the shutdown
+  // alone and cleared by `reopenRun` beside `restart_closed`.
+  addColumn(db, "runs", "restart_cut_cycle", "INTEGER NOT NULL DEFAULT 0");
+
   // When an operator set this run aside — "leave this one alone".
   //
   // Both bulk pick-ups act on a *set*: the restart notice on every

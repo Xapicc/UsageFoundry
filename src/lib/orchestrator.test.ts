@@ -80,6 +80,7 @@ const {
   compactionNotice,
   conflictKey,
   contextShapingEnv,
+  cycleCutByRestart,
   cycleEnding,
   cycleSilenceMs,
   declaresSubmodule,
@@ -1602,6 +1603,69 @@ describe("prompt for a reopened run", () => {
     // The control, and half the test: an ordinary completed run that really did
     // reply DONE is still pushed back on.
     assert.equal(reopenPrompt(base), "PUSHBACK");
+  });
+});
+
+/**
+ * Covers which rows a restart cut off mid-cycle, which is the input the restart
+ * branch above is only as good as.
+ *
+ * It read `failed` alone, and `failed` is what `reconcileOnBoot` writes. A
+ * graceful shutdown — every `docker compose up --build` — ends each run it
+ * interrupts `stopped` through `interruptOutcome`, so every run that deploy cut
+ * off was picked up with the plain continuation or the DONE pushback. Widening
+ * it to every `stopped` restart row is the other silent mistake: the shutdown
+ * also closes runs caught in their pre-cycle scan, which had no cycle to cut.
+ */
+describe("which runs a restart cut off mid-cycle", () => {
+  it("tells a run the shutdown found with a child in flight", () => {
+    // What `shutdownRuns` leaves on a row whose cycle it killed: the loop's
+    // post-cycle checkpoint applies the `shutdown` interrupt as `stopped`.
+    const cut = { status: "stopped" as const, restart_closed: 1, restart_cut_cycle: 1 };
+    assert.equal(cycleCutByRestart(cut), true);
+    assert.match(
+      reopenPrompt({
+        status: cut.status,
+        reportedDone: true,
+        sessionId: "sess-1",
+        note: "",
+        donePushback: "PUSHBACK",
+        restartKilled: cycleCutByRestart(cut),
+      }),
+      /server restarted/,
+      "a run that said DONE before the kill must not be told it reported the task complete",
+    );
+  });
+
+  it("does not tell a run the shutdown caught in its pre-cycle scan", () => {
+    // Same status, same flag, same stop reason: only the in-flight record
+    // separates it from the row above.
+    assert.equal(
+      cycleCutByRestart({ status: "stopped", restart_closed: 1, restart_cut_cycle: 0 }),
+      false,
+    );
+  });
+
+  it("still tells a run the boot failed", () => {
+    // `reconcileOnBoot` does not write the in-flight flag, and a row written
+    // before the column existed reads 0 in it, so `failed` has to carry this.
+    assert.equal(
+      cycleCutByRestart({ status: "failed", restart_closed: 1, restart_cut_cycle: 0 }),
+      true,
+    );
+  });
+
+  it("tells nothing to a run the restart did not close out", () => {
+    // A `failed` run that crashed on its own is continued like any other, and
+    // the in-flight flag says nothing about a run the restart is not holding.
+    assert.equal(
+      cycleCutByRestart({ status: "failed", restart_closed: 0, restart_cut_cycle: 0 }),
+      false,
+    );
+    assert.equal(
+      cycleCutByRestart({ status: "stopped", restart_closed: 0, restart_cut_cycle: 1 }),
+      false,
+    );
   });
 });
 
