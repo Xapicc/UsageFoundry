@@ -1340,10 +1340,16 @@ export default function RunDetail({
             {/* Announced, because it is the one thing on the page that changes
                 on its own and matters. The detail below it is not: while the
                 run is parked it carries a countdown that reticks every second,
-                and a live region there would read it out every second. */}
+                and a live region there would read it out every second.
+
+                `mb-1` stated rather than left unset, because unset is not
+                zero here: the legacy sheet gives every `h2` a 12px bottom
+                margin, which beat the detail's `mt-1` and stood the headline
+                three steps off the sentences it heads while each of those sat
+                one step off the next. `/settings` sets its lede the same way. */}
             <h2
               aria-live="polite"
-              className="flex items-center gap-2 text-md font-semibold tracking-tight text-ink"
+              className="mb-1 flex items-center gap-2 text-md font-semibold tracking-tight text-ink"
             >
               {run.status === "running" && <Spinner />}
               {state.headline}
