@@ -826,6 +826,26 @@ is `docs/agent/testing.md`; interface defects and their classes are
   operator cannot claim, and the page-shift race between two pages of one
   status was reasoned about, not provoked.
 
+- **The run page no longer draws its own run's notes, 2026-09-26**, standalone
+  server, Chromium at **1920x963 and 390x844**, default skin, light theme, one
+  completed run seeded straight into a throwaway `DATA_DIR` (the notes by the run
+  itself need an `author_run_id` no operator route writes) and linked to four
+  tasks. A task holding only a 40-line report by this run drew *This run left 1
+  note, 3m ago. Read it on the task* and no row; one holding that report plus an
+  operator note drew the same line above the operator's row alone; one with no
+  notes drew *Nothing said yet* as before; and a seven-note thread whose newest
+  three were this run's, another run's, this run's drew *Newest 3 of 7, 2 of them
+  by this run, the latest 1m ago* above one row, `Run 9c1e44aa`, with its run
+  link. Every link opened `/tasks/<id>`, and no console error at either width.
+  `/tasks/[id]` for the second task still drew both notes whole, the run's with
+  its `Run 337d38f5` header. Gate on the same tree: `npm run typecheck` exit 0;
+  `npm test` **3033 tests, 3033 pass, 0 fail**, exit 0, beside the one suite
+  that throws during construction against CLI 2.1.280 (`sandboxMountPoints`,
+  already on the board); `npm run smoke-pages` against
+  `.next/standalone/server.js`, **92/92 page loads clean**. Caveat: one engine
+  and one skin for this block, and `smoke-pages`' own seed carries no notes, so
+  its pass says nothing about it.
+
 ### Workflows and schedules
 
 - **A loop as a region, 2026-09-21** (production standalone build from this
@@ -3236,6 +3256,60 @@ fixed.
   is flat, so the label figure is the pair's endpoint rather than what most of
   the stroke measures; and the static shell carries no `next/font`, so the
   glyphs were painted in the fallback face rather than in SF.
+
+- **The run inspector's polish pass, 2026-09-27**, standalone server, Chromium
+  at **1920x963 DPR 2 and 390x844 DPR 2**, both skins, both themes, 48 page loads
+  per build. Six run rows (completed with a board task and a checkout, running,
+  paused, queued, `needs-review` with a 42-character Bedrock model id, and a
+  failed, set-aside Codex run) were served by intercepting `GET /api/runs/<id>`
+  over one run seeded through the API, so both builds read identical rows;
+  before is `35b8164`, after `da450be`. Before, under the ascii skin at 1920:
+  the card was its own scroll container and its frame box (1559.5 to 1906.5)
+  lay round a padding box of 1567 to 1899, so no edge of the frame drew; the
+  3px state edge was transparent; and the long id ran to x=1887 against a
+  content edge of 1883, over its own label. In both skins every region led by
+  a `Section` drew two hairlines round its heading, and the headline sat 12px
+  above its detail against 4px between every other header line. After: the
+  scroll box is exactly the card's padding box (332x877), the frame box is
+  unchanged and does not move when the box is scrolled to its end, the left
+  edge's six device columns read the tone at every column (the frame's stroke
+  used to grey two of them), and every state's scroll height is 58px shorter,
+  which is the 8px headline gap and 25px from each of the two regions and
+  nothing else. No console error in any of the 96 loads, and no content past
+  the card's edge in any of the after build's 48. Gate on `da450be`: `npm run typecheck` exit 0; `npm test`
+  **3033 tests, 3033 pass**, exit 0, beside the `sandboxMountPoints` suite
+  that throws during construction against CLI 2.1.280 (already on the board);
+  `npm run smoke-pages` against `.next/standalone/server.js`, **92/92**. Shots
+  and both probes' readings are in `scratch/run-inspector-polish/`. Caveat: one
+  engine, and the run rows are crafted rather than written by the
+  orchestrator, so a field combination no real run reaches may be among them.
+
+- **The run inspector's cap against the window, 2026-09-27**, standalone
+  server, Chromium at **1920x963 and 1280x800, DPR 2**, both skins, two seeded
+  runs (a 30-line prompt and a one-line one; both inspectors outgrow any cap
+  here), each on the log tab and with a 2400px block appended to the pane
+  column to stand in for a long tab. `getBoundingClientRect()` read after load
+  without scrolling, then with the pane scrolled to where the card sticks,
+  then at the foot. Before is `887670b`, after `3a50d6a`. Before, standard skin:
+  card 161 to 1040 at 1920x963 and 161 to 877 at 1280x800, so **77px** below
+  the window at both; the log tab scrolled 125px for nothing but that; at the
+  foot of every scroll the card's top was at y=36 against a pane edge at 52.
+  Before, ascii: computed `position` **relative, not sticky**, the card 16px
+  below its own split (177 on a split at 161), so **93px** below the window
+  and the frame 99.5px, and on a long tab it scrolled off with the page. After,
+  both skins alike, `--split-top` 109px: card 161 to 915 at 1920x963 and 161 to
+  752 at 1280x800, ascii frame bottom 921.5 and 758.5; the log tab scrolls
+  0px; on a long tab the card sticks at 68 and stays there to the foot of the
+  scroll. What it cost: stuck on a long tab the card keeps its load height,
+  754px where it had 879 (591 where it had 716), so 141px stand empty below
+  it. Gate on `3a50d6a`: `npm run typecheck` exit 0; `npm test` **3033 pass,
+  0 fail**; `npm run smoke-pages` against `.next/standalone/server.js`,
+  **92/92**. A lede lengthened in the DOM and then rewrapped to three lines by
+  a resize to 1100px (ascii) re-measured to 128.5px, and the card still ended
+  at 915 with the log tab at 0px of scroll. Caveat: one engine; below `lg`
+  nothing was measured before and after, and is claimed unchanged only because
+  both edits apply above it; a notice appearing above the split was reasoned
+  about and not seen.
 
 ## Not yet verified by hand
 
