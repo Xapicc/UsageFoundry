@@ -324,6 +324,19 @@ describe("the deliver route refuses a malformed body before any git runs", () =>
     }
     assert.deepEqual(opened, []);
   });
+
+  it("answers 400 with the run-state sentence for an active run, on a well-formed body", async () => {
+    // The press a card left open across a Reopen makes: the body is fine and
+    // the run is not.
+    const s = scene("route-paused", "paused");
+
+    const res = await press(s.runId, "{}");
+
+    assert.equal(res.status, 400);
+    assert.match(((await res.json()) as { error: string }).error, /^This run is still active\./);
+    assert.equal(remoteTip(s), null);
+    assert.deepEqual(opened, []);
+  });
 });
 
 describe("the delivered pull request outlives the event sweep and belongs to the branch", () => {
