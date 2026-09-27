@@ -65,6 +65,7 @@ Seventeen are renderings rather than functions — every `*.test.tsx` in the tre
 |---|---|
 | `assistBudget.test.ts` |  |
 | `budgetPayload.test.ts` | [pricing] |
+| `calibration.test.ts` |  |
 | `costBaseline.test.ts` |  |
 | `costSplit.test.ts` |  |
 | `formProblems.test.ts` |  |
