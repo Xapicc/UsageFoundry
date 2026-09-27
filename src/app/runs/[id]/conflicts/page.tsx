@@ -214,7 +214,7 @@ export default function RunConflictsPage({ params }: Ctx) {
                 {plan.foldedFiles} file{plan.foldedFiles === 1 ? "" : "s"}
               </strong>{" "}
               {plan.foldedFiles === 1 ? "is" : "are"} behind {plan.folded.length} folded
-              director{plan.folded.length === 1 ? "y" : "ies"}; click one to open it.
+              director{plan.folded.length === 1 ? "y" : "ies"}.
             </Notice>
           )}
 
