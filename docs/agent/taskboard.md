@@ -41,7 +41,10 @@ nothing anywhere saying that happened. A lease tuned long enough not to would
 release nothing anybody was waiting on. So a stale claim is left standing and is
 the operator's to release — `claimed → open` — which is a press on a board they
 are already reading, against a run whose status they can see on the same screen.
-The lever that exists is visibility, not expiry. Nothing here calls
+The lever that exists is visibility, not expiry. `release_task` does not change
+this: it is the holding run giving the task back by its own decision while it is
+still alive, never something that fires when a run ends, fails or is stopped. A
+run that dies holding a task still leaves the claim for the operator. Nothing here calls
 `setTimeout`, nothing stores an expiry, and `updated_at` is a record of the last
 edit rather than a countdown; a future editor reaching for a `claimed_at` should
 know that the column's absence is the decision.
@@ -56,10 +59,10 @@ Eight edges exist and every pair not on the list is refused:
 
 | From | To | Who |
 |---|---|---|
-| `open` | `claimed` | any actor, and the claim names the run that will hold it |
+| `open` | `claimed` | any actor, and the claim names the run that will hold it — **nobody** while the task is operator-only |
 | `open` | `done` | operator only — a run claims first |
 | `open` | `dropped` | operator only |
-| `claimed` | `open` | operator, or the run that holds it (releasing) |
+| `claimed` | `open` | operator, or the run that holds it (releasing, through `release_task`) |
 | `claimed` | `done` | operator, or the run that holds it |
 | `claimed` | `dropped` | operator only |
 | `done` | `open` | operator only (re-opening) |
@@ -102,6 +105,104 @@ re-open is the operator saying the work is not done. What that costs is the
 record of who had done it before, and the trade is deliberate — the mutation
 itself is on `request_log` and in `ops_events`, and a board whose columns
 contradict its own status is worse than a board that has forgotten one thing.
+
+**Operator-only is a flag, not a fifth status, and it says who may do the work
+rather than where the task is.** `tasks.operator_only` marks work no run in this
+container can do: it needs a Mac or a GUI, hardware, credentials only the
+operator holds, or a physical action. An operator-only task is still `open`, and
+that is the reason it is a column rather than a status: a fifth status would have
+to be threaded through every edge of `taskTransitionRefusal`, and it would stop
+meaning "open" to every reader that already asks for open work — the board's
+groups, `tasksForRun`, the chat's `list_tasks`, a loop's count. The one edge the
+flag changes is `open → claimed`, refused for **every** actor while it is set,
+the operator included: a claim names the run that will hold the task, and the
+flag says no run here can do it. The operator's way round is to clear the flag
+first, which says the blocker is gone rather than claiming past it. A task
+already claimed when the flag is set keeps its claim, because a claim is a record
+and taking it off is a release. The operator still closes and drops one the
+ordinary way. It defaults to false on an existing install (`addColumn`, `NOT NULL
+DEFAULT 0`), because every row filed before the column existed was filed as
+agent work — there was no other kind.
+
+**Who may move the flag is `operatorOnlyRefusal`, beside the transition rule, and
+a model may move work into the operator's lane and never out of it.** Same shape
+as `taskTransitionRefusal`: pure, total, one wording for every door, and asked by
+both writers — `createTask` against the actor the origin names, `updateTask`
+against the row.
+
+| Actor | File a task marked | Mark an existing task | Clear the mark |
+|---|---|---|---|
+| operator | yes | yes | yes |
+| run | yes, through its `create_task` | only a task it holds, in the write that releases it (`release_task`) | no |
+| chat | yes, through chat `create_task` | no | no |
+| block | no | no | no |
+
+**Only the operator clears it**, which is the board's "may put work on, never take
+it off" applied to this flag: cleared by a model, it is a run started on work
+somebody was told needs a Mac, spending its budget finding that out again. A
+**run** may mark only in the write that moves its own claim back to `open` — the
+rule reads that move off the row rather than taking a caller's word for it, and
+asks `taskTransitionRefusal` for the holder check instead of keeping a second one.
+It is the only actor that has *tried* the work, which is what earns it the
+judgement that the environment is the blocker. A **chat** may file a task already
+marked, because it is writing down what the operator just told it with the
+operator at the keyboard, but may not mark one already on the board, which is a
+judgement about work it has not tried; `comment_on_task` is where it says what it
+knows. A **block** does neither: it has no door that files a task, and nobody is
+reading its turn to weigh the claim.
+
+**Where an agent is shown open work, the flag rides beside the status.**
+`list_my_tasks` carries `operatorOnly: true` on both halves only when set — the
+result is paid for by the token on every call, and its `note` says what the
+absence means — and marks rather than drops the operator-only rows of
+`openInFolder`, because that half exists so a run does not file a duplicate, and
+an operator-only task is still a task somebody already wrote down. `list_tasks`
+returns the flag on every row and takes an `operatorOnly` filter, refused by name
+when it is not a boolean; `get_task` returns it. `readTaskLinks` refuses an
+operator-only id in **`taskIds`** — on `propose_run` and `emit_runs` alike, since
+both read through it — and names `relatedTaskIds` as the way to say the brief
+only mentions it. That is refused at the proposal rather than left to the claim
+because a claim refusal is a log line on a run that has already started. The rule
+that a named open task must be accounted for is untouched: an operator-only task
+named in a brief and in neither list is refused exactly as any other is. A
+proposal already written names its tasks as they were when it was written; one
+marked between the proposal and the approval is refused at the claim, on the run's
+log, the same as a task deleted in that gap.
+
+**A loop's board count leaves operator-only tasks out.** `countBoardCondition`
+counts `operatorOnly: false` only. No pass can bring an operator-only task down,
+so a loop told to repeat until at most N are open would otherwise never stop once
+the operator's own lane held more than N — it would run to its pass cap, every
+pass looking as though it had done its work. The loop editor's live reading goes
+through the same function and shows the same number.
+
+**A run gives back a task it cannot finish with `release_task`, and the move and
+the reason commit together or not at all.** Before it existed the edge
+`claimed → open` was allowed to the holder with no tool that made it, so a run
+that could not finish — a Dockrac run on Linux arm64 asked for Mac work — could
+only end with its task still `claimed`, and the board showed it held by a run
+that had finished. The tool takes `taskId`, a required `reason` and an optional
+`operatorOnly`. `releaseTask` in `taskRelease.ts` moves the task through
+`updateTask` (so `taskTransitionRefusal` is still the whole of who may, and the
+run id is still the token's), writes the reason as a note signed by the run, and
+sets the flag if asked — all inside one `db.transaction`, because a release that
+opened the task and lost the reason sends the next run to try the same thing
+again with nothing saying it was tried. A note the store refuses rolls the move
+back; that is pinned by forcing the insert to fail. `taskRelease.ts` is its own
+module because this is the one write across both tables, and `tasks.ts` must not
+import `taskComments.ts` while `taskComments.ts` must not call `updateTask`. It
+refuses a task that is already `open`, which is the one check it adds: `open →
+open` is not a move and the transition rule allows it for anybody, so without it
+any run could sign a release note on any open task. The reason is bounded at
+`MAX_RELEASE_REASON`, which keeps the note it becomes — a fixed first line saying
+it was a release, and whether it was marked, then the run's words — inside
+`MAX_TASK_COMMENT`, so a reason the tool took is never refused by the store for a
+length the caller never typed. The note is where the operator reads it: the
+task's thread already draws a run's note with its whitespace, and there is no
+second place. The description says when to use it (the run cannot finish, and
+another run or the operator should take the task) and what the flag is for —
+blockers this container cannot remove, **not** work that was hard, long or
+unclear, which is a plain release for the next run.
 
 **A `mount_id`/`folder` pair is proved against the app's own mount list at the
 door, through the resolver a run is confined by, and half a pair is refused
@@ -443,8 +544,9 @@ that could be persuaded to act as another actor kind would be a route around the
 rule above, so the way a run or a chat turn gets access later is a door of its
 own carrying its own credential — not a field on this one's body. Both mutating
 handlers are wrapped in `auditMutation`. The list route reads `offset`, `limit`,
-`status`, `origin`, `mountId` and `folder` off `searchParams` and refuses an
-unknown `status` or `origin` with a **400** rather than dropping it, on
+`status`, `origin`, `mountId`, `folder` and `operatorOnly` off `searchParams`
+and refuses an unknown `status` or `origin`, or an `operatorOnly` that is not
+`true` or `false`, with a **400** rather than dropping it, on
 `/api/runs`' rule that a parameter deciding *which rows exist* must never widen
 quietly: answering "every task" to "show me the claimed ones" is a board that
 looks like an answer, and on a backlog that reads as an absence of work rather
@@ -487,12 +589,16 @@ bigger board is more pages, never a larger cap**. The read is all or nothing,
 because a board missing one status draws that group as empty, which reads as a
 clear backlog; and a row that moved between two of the requests is kept once by
 id, with one that slipped between two pages back on the next poll. The project
-filter is the one narrowing still done in the browser, because its options are
+filter is one of the two narrowings still done in the browser, because its options are
 derived from the same answer the rows are, so the select can offer neither a
 project the board cannot show nor a hidden one it can; built from
 `/api/folders` instead they would need a mount root joined to a stored relative
 path *in the browser*, which is the second, looser resolver the `resolveInMount`
-paragraph above exists to prevent. `MAX_TASK_PAGE` lives in `apiTypes.ts` beside
+paragraph above exists to prevent. The other is the operator-only filter beside
+it (all work, agent work, operator only), which follows the project filter
+rather than the query: in the browser over the same rows, not kept in the URL
+because the project filter is not, and counted within the chosen project because
+that is the set it narrows. `MAX_TASK_PAGE` lives in `apiTypes.ts` beside
 `MAX_LIST_TASK_BODY`, not in `tasks.ts`, because the dependency picker still asks
 for exactly one page of it and says when `total` was larger — written twice, it
 would ask for a number the route quietly reduced and then report a whole list it
@@ -532,8 +638,9 @@ names something the caller *can* do instead — `agentRefusal`'s rule, for
 `agentRefusal`'s reason: a model told only "no" reaches for the next tool on the
 list.
 
-**A work cycle's three tools, and what their absence is.** `list_my_tasks`,
-`complete_task`, `create_task`, and nothing else — deliberately not
+**A work cycle's tools, and what their absence is.** `list_my_tasks`,
+`complete_task`, `release_task` and `create_task`, the two notes beside them
+(`comment_on_task`, `add_task_dependency`), and nothing else — deliberately not
 `SHARED_TOOLS`, so a run has no `list_runs`, no `get_run_diff`, no
 `list_folders`, and specifically **no `list_tasks`**. The two orchestrator
 subjects are deciding what work to start and need to see the install to do it; a
@@ -631,10 +738,12 @@ that pairing exists to make impossible, both of which look like a normal run fro
 the outside. What it says is **behavioural rather than descriptive**: the tool
 list already says what the tools are, and a model reading only that closes its
 task and stops, or finds a second defect and fixes it because nothing told it
-there was anywhere else to put one. "Complete only what you hold" and "file what
-you find rather than fixing it" are the two sentences that earn their tokens.
+there was anywhere else to put one. "Complete only what you hold", "give back what
+you cannot finish" and "file what you find rather than fixing it" are the
+sentences that earn their tokens; the middle one is there because a run that
+stops with its task held leaves the board saying a finished run is working it.
 What it may **not** carry is `security.md`'s rule about literals: nothing on this
-prompt may give an agent a pattern that selects a process. The three tool names
+prompt may give an agent a pattern that selects a process. The four tool names
 are shared across every board-enabled run on the box and are exactly that kind of
 literal — what keeps them safe is that nothing near them offers a pattern, no
 verb selects a process, no command is named and there are no digits at all. They
@@ -658,7 +767,8 @@ one brief would be reading it. It is deliberately **not** gated on
 setting is about what an *agent* may do, so a run started from a task with the
 board switched off still holds it. Every refusal on that path is a log line and
 never a failure — a task somebody dropped, one another run still holds, one the
-operator deleted between the press and the start. None of them says anything
+operator deleted between the press and the start, one marked operator-only since
+the proposal named it. None of them says anything
 about whether this run can do the work it was given, and a run that refused to
 start over the state of a row on a backlog would be this app turning a note into
 a lock. The sentence shown is `taskTransitionRefusal`'s own, repeated onto the
@@ -685,8 +795,9 @@ once on the run's own log rather than left silent, because an operator who
 switched the board on and started a Codex run would otherwise watch it finish
 having filed nothing with nothing to read that explains it.
 
-**Nothing on the MCP surface can move a task to any status, and that is enforced
-twice rather than once.** `create_task` files as `open`, there is no `status`
+**Nothing a chat turn or a block holds can move a task to any status, and that is
+enforced twice rather than once.** (A work cycle moves only its own claim, to
+`done` or back to `open`, through `complete_task` and `release_task`.) `create_task` files as `open`, there is no `status`
 property on its schema, and `normalizeTaskInput` refuses one **by name** if a
 model sends it regardless — the same door the operator's own POST goes through.
 The reason a second enforcement is not belt-and-braces is that the first one is
@@ -848,6 +959,15 @@ of guard for a different reason: a stored folder the workspace scan does not
 currently offer stays in the list as its own option, since a `<select>` whose
 value is absent resolves to the first option and an unrelated save would then
 move the task to a folder nobody picked.
+
+**On an existing task, operator-only is its own press and never a field of the
+draft.** The draft is seeded once and this page does not poll, so a run that
+released the task and marked it while the form was open would have its mark
+cleared by the next save of an unrelated field — and the next run would be started
+on work the last one had just said needs a Mac. So `tasks/[id]` draws a toggle
+that sends `{ operatorOnly }` alone, against the row as last read, and re-reads
+after; `TaskEditor` sends the flag only when filing, where there is no row for
+anything else to have marked.
 
 **The thread is drawn on the task's own page, and it does not poll either.**
 `TaskThread` in `src/components/TaskThread.tsx` — lifted out of the page when the
