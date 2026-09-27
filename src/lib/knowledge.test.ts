@@ -413,8 +413,8 @@ test("backlinks are the incoming edges, and degrees agree with them", () => {
 });
 
 test("a note's backlinks name the note each link was written in", () => {
-  // Every field of an edge that names a note — `target`, `label`, `toNotePath`
-  // — names the note being viewed when the edge comes *in*, so a Backlinks
+  // Every field of an edge that names a note (`target`, `label`, `toNotePath`)
+  // names the note being viewed when the edge comes *in*, so a Backlinks
   // panel drawn from them lists the open note once per link, each row a link
   // to the page it is already on.
   const idx = synthetic([

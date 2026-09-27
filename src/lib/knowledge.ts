@@ -1321,7 +1321,7 @@ export function knowledgeNoteView(index: KnowledgeIndex, rel: string): Knowledge
 function withSourceNote(index: KnowledgeIndex, edge: KnowledgeEdgeDTO): KnowledgeBacklinkDTO {
   const source = index.nodes.get(edge.from);
   // `buildIndex` draws edges only out of notes, and makes every note's node
-  // before the first edge — so this is a broken index, not a vault to render.
+  // before the first edge, so this is a broken index, not a vault to render.
   if (source?.kind !== "note" || source.path === null) {
     throw new Error(
       `A backlink starts at ${edge.from}, which is ${source ? `a ${source.kind} node` : "not in the index"}; every edge starts at a note`,

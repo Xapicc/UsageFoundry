@@ -3799,8 +3799,8 @@ export interface KnowledgeEdgeDTO {
 /**
  * An edge into the open note, with the note it was written in.
  *
- * Every field of `KnowledgeEdgeDTO` that names a note — `target`, `label`,
- * `toNotePath` — names the far end, which for an incoming edge is the note
+ * Every field of `KnowledgeEdgeDTO` that names a note (`target`, `label`,
+ * `toNotePath`) names the far end, which for an incoming edge is the note
  * being viewed; the linking note is only in `from`, as a node id. A Backlinks
  * panel drawn from the edge alone listed the open note once per link, each row
  * a link to the page it was already on. A second shape beside the edge rather
