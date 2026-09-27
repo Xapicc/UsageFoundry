@@ -212,11 +212,14 @@ describe("SANDBOX_TREE_ROOT_EXCLUDES", () => {
  * same way the lists were first written, and deliberately anchors on string
  * literals rather than on minified identifiers wherever a literal will do: the
  * identifiers change every release and the literals are the CLI's own data. The
- * two identifiers it cannot avoid — the config-directory accessor and the set
- * that marks which entries are files — are *discovered* from a literal anchor
- * rather than written down. When the shape changes past recognising, the
- * extraction throws and this test fails saying so, which is the right answer:
- * somebody has to go and read it again.
+ * identifiers it cannot avoid (the path join, the config-directory accessor,
+ * the set that marks which entries are files, the directory spelling and the
+ * functions naming a policy file's sidecars) are all *discovered* from the one
+ * statement that binds the main list rather than written down. Two of them used
+ * to be written down, which is why 2.1.280, renaming every one, failed this at
+ * the extraction rather than at the name it added. When the shape changes past
+ * recognising, the extraction throws and this test fails saying so, which is
+ * the right answer: somebody has to go and read it again.
  *
  * Skipped, loudly, only when there is no CLI to read. That is a checkout outside
  * the image rather than a defect, and `npm test` is meant to run in one.
@@ -265,6 +268,62 @@ function must(pattern: RegExp, haystack: string, what: string): RegExpExecArray 
 }
 
 /**
+ * The bundle module a match sits in.
+ *
+ * The CLI is a Bun bundle of a few hundred modules, each opening with a
+ * `// @bun` header, and the minifier names identifiers per module: at 2.1.280
+ * `nt` is `path.resolve` in the sandbox module and something else in the next
+ * one. A pattern built from identifiers discovered in one module therefore only
+ * means something inside it. Without the header the scope is the whole binary,
+ * which is what this read before 2.1.280; a wider scope can only add matches,
+ * and a name added that way fails the accounting assertion rather than passing.
+ */
+function moduleAround(src: string, index: number): string {
+  const start = src.lastIndexOf("// @bun", index);
+  const end = src.indexOf("// @bun", index);
+  return src.slice(start === -1 ? 0 : start, end === -1 ? src.length : end);
+}
+
+/** The `{…}` block opening at `open`. The loop bodies read with it hold no string with a brace in it. */
+function blockAt(src: string, open: number): string {
+  let depth = 0;
+  for (let at = open; at < src.length; at++) {
+    if (src[at] === "{") depth++;
+    else if (src[at] === "}" && --depth === 0) return src.slice(open, at + 1);
+  }
+  throw new Error(`no end to the block opening at offset ${open} of ${path.basename(CLI_PATH ?? "")}`);
+}
+
+/**
+ * What one of the sidecar-naming functions appends to a policy file's path.
+ *
+ * Each is `function f(e){return`${e}.signature.json`}`, or since 2.1.280 the
+ * same with the suffix in a constant of its own module (`${e}${Ee}` beside
+ * `Ee=".stamp.json"`). A minified name can be defined in more than one module,
+ * so every definition of that shape must agree, or this throws rather than
+ * choosing between them.
+ */
+function sidecarSuffix(src: string, fn: string): string {
+  const found = new Set<string>();
+  const definition = new RegExp(`function ${fn}\\(\\w+\\)\\{return\`\\$\\{\\w+\\}(?:([^\`$]+)|\\$\\{(\\w+)\\})\`\\}`, "g");
+  for (const def of src.matchAll(definition)) {
+    if (def[1] !== undefined) {
+      found.add(def[1]);
+      continue;
+    }
+    const constant = new RegExp(`[,;\\s]${def[2]}="([^"]+)"`).exec(moduleAround(src, def.index));
+    if (constant) found.add(constant[1]);
+  }
+  if (found.size !== 1) {
+    throw new Error(
+      `${fn} names a policy file's sidecar in ${path.basename(CLI_PATH ?? "")}, and ` +
+        `${found.size === 0 ? "no definition of it was readable" : `its definitions disagree: ${[...found].join(", ")}`}.`,
+    );
+  }
+  return [...found][0];
+}
+
+/**
  * What the CLI binds, read out of it.
  *
  * `latin1` and not `utf8` deliberately: this is a binary holding compressed
@@ -292,60 +351,74 @@ function bindLists(cli: string): {
   const rootFiles = literals(rootPair[1]);
   const rootDirs = literals(rootPair[2]);
 
-  // The config directory's main list, and the accessor that turns a name in it
-  // into a path. Both anchored on the list's own first two entries.
+  // The config directory's main list, and the statement around it, which is
+  // matched whole because every identifier the rest needs is read off it: the
+  // sidecar list spread into it, the set marking its files, the path join, the
+  // config-directory accessor and the directory spelling. Anchored on the
+  // literals, and on the loop's own shape, `name → path → file ? path :
+  // dir(path)`, which is the decision this test transcribes.
   const main = must(
-    /for\(let (\w+) of(\["shell-snapshots","session-env"[^\]]*\])\)\{let \w+=\w+\(tl\((\w+)\(\),\1\)\)/,
+    new RegExp(
+      String.raw`(?<sidecars>\w+)=\[(?<sidecarCalls>(?:\w+\("policy-limits\.json"\),?)+)\],` +
+        String.raw`(?<fileSet>\w+)=new Set\((?<fileSetBody>\["scheduled_tasks\.json"[^\]]*\])\);` +
+        String.raw`for\(let (?<name>\w+) of(?<list>\["shell-snapshots","session-env"[^\]]*\])\)` +
+        String.raw`\{let (?<path>\w+)=\w+\((?<join>\w+)\((?<configDir>\w+)\(\),\k<name>\)\);` +
+        String.raw`\w+\.push\(\k<fileSet>\.has\(\k<name>\)\?\k<path>:(?<directory>\w+)\(\k<path>\)\)\}`,
+    ),
     src,
     "the config-directory bind loop",
   );
-  const configDir = main[3];
+  // Every group is outside any `?` or `|`, so a match has all of them.
+  const { sidecars, sidecarCalls, fileSetBody, list, join, configDir, directory } =
+    main.groups as Record<string, string>;
+  const scope = moduleAround(src, main.index);
 
-  // Which of the main list's entries are files. The rest take the CLI's
-  // directory form, which on Windows is the same path with a trailing separator.
-  const fileSet = new Set(
-    literals(must(/new Set\(\["scheduled_tasks\.json"[^\]]*\]/, src, "the config-directory file set")[0]),
+  // `policy-limits.json`'s sidecars: one call per suffix, spread into both the
+  // list and the file set. Any other spread is contents this does not know.
+  const suffixOf = new Map(
+    [...sidecarCalls.matchAll(/(\w+)\("policy-limits\.json"\)/g)].map((call) => [
+      call[1],
+      sidecarSuffix(src, call[1]),
+    ]),
   );
-  // The two signature names are spliced into both lists as template literals, so
-  // they are read from the functions that build them rather than from the array.
-  const suffixes = ["\\.signature\\.json", "\\.signature-iat\\.json"].map(
-    (suffix) =>
-      must(
-        new RegExp(`function \\w+\\(\\w+\\)\\{return\`\\$\\{\\w+\\}(${suffix})\``),
-        src,
-        `the ${suffix.replace(/\\/g, "")} suffix`,
-      )[1],
-  );
+  const expand = (array: string): string[] => {
+    const names = literals(array);
+    for (const spread of array.matchAll(/\.\.\.(\w+)/g)) {
+      if (spread[1] !== sidecars) {
+        throw new Error(`the config-directory list spreads ${spread[1]}, which this does not model`);
+      }
+      for (const suffix of suffixOf.values()) names.push(`policy-limits.json${suffix}`);
+    }
+    return names;
+  };
+  const fileSet = new Set(expand(fileSetBody));
   const files = new Set<string>();
   const dirs = new Set<string>();
-  for (const name of literals(main[2])) {
-    (fileSet.has(name) ? files : dirs).add(name);
-    if (name === "policy-limits.json") for (const s of suffixes) files.add(name + s);
-  }
+  for (const name of expand(list)) (fileSet.has(name) ? files : dirs).add(name);
 
   // Everything the CLI binds one name at a time rather than through that list.
   // Its binder takes the directory flag third, so the *call* is what says which
-  // of the two a name is — and `SN(...)`, the trailing-separator wrapper, says
-  // the same thing at the one site that pushes a path straight on.
+  // of the two a name is, and the directory spelling, wrapped round a path
+  // pushed straight on, says the same thing at the one site that does that.
   //
-  // The call and not merely the path expression: `tl(cfg(),"plugins")` also
+  // The call and not merely the path expression: `join(cfg(),"plugins")` also
   // appears on the right of a `!==` deciding whether a plugin root was
   // redirected, and reading that as a bind puts `plugins` on both lists at once.
   // Hence four shapes, and a name matching none of them is left out rather than
   // guessed — it then fails the accounting assertion, which is where a reader
   // should find out that the CLI grew a fifth.
   const DIRECTORY_FLAG = String.raw`,\s*![01](,\s*!0)`;
-  for (const found of src.matchAll(new RegExp(`tl\\(${configDir}\\(\\),"([^"]+)"\\)`, "g"))) {
+  for (const found of scope.matchAll(new RegExp(`${join}\\(${configDir}\\(\\),"([^"]+)"\\)`, "g"))) {
     const name = found[1];
-    const head = src.slice(Math.max(0, found.index - 48), found.index);
-    const tail = src.slice(found.index + found[0].length, found.index + found[0].length + 400);
+    const head = scope.slice(Math.max(0, found.index - 48), found.index);
+    const tail = scope.slice(found.index + found[0].length, found.index + found[0].length + 400);
 
-    // `SN(tl(…))` — pushed on as a path, in the CLI's directory spelling.
-    if (head.endsWith("SN(")) {
+    // `directory(join(…))`: pushed on as a path, in the CLI's directory spelling.
+    if (head.endsWith(`${directory}(`)) {
       dirs.add(name);
       continue;
     }
-    // `binder(tl(…), !x)` and `binder(tl(…), !x, !0)`.
+    // `binder(join(…), !x)` and `binder(join(…), !x, !0)`.
     if (/\w+\($/.test(head)) {
       const direct = new RegExp(`^(?:${DIRECTORY_FLAG}?)\\)`).exec(tail);
       if (direct) {
@@ -353,7 +426,7 @@ function bindLists(cli: string): {
         continue;
       }
     }
-    // `v=tl(…)` first, bound a few statements later.
+    // `v=join(…)` first, bound a few statements later.
     const assigned = /(?:^|[,;{(\s])(\w+)=$/.exec(head);
     if (assigned) {
       const via = new RegExp(`\\w+\\(${assigned[1]}${DIRECTORY_FLAG}?\\)`).exec(tail);
@@ -362,25 +435,30 @@ function bindLists(cli: string): {
         continue;
       }
     }
-    // One of several paths collected into a set and bound in the loop's body.
+    // One of several paths collected into a set and bound in the loop's body,
+    // which is also where `remote-settings.json` gets its sidecars. They are
+    // read off the body's own calls rather than assumed to be those of
+    // `policy-limits.json`, because at 2.1.280 they are not: it takes two of
+    // the three.
     const iterated = new RegExp(String.raw`for\(let (\w+) of new Set\(\[$`).exec(head);
     if (iterated) {
-      const via = new RegExp(`\\w+\\(${iterated[1]}${DIRECTORY_FLAG}?\\)`).exec(tail);
+      const body = blockAt(scope, scope.indexOf("{", found.index));
+      const via = new RegExp(`\\w+\\(${iterated[1]}${DIRECTORY_FLAG}?\\)`).exec(body);
       if (via) (via[1] === undefined ? files : dirs).add(name);
+      for (const bound of body.matchAll(new RegExp(`\\w+\\((\\w+)\\(${iterated[1]}\\)${DIRECTORY_FLAG}?\\)`, "g"))) {
+        const suffix = suffixOf.get(bound[1]) ?? sidecarSuffix(src, bound[1]);
+        (bound[2] === undefined ? files : dirs).add(name + suffix);
+      }
     }
   }
   // …and the loops over a literal list of names, which carry the same flag once
   // for every name in them.
   const grouped = new RegExp(
-    `for\\(let (\\w+) of(\\[(?:"[^"]*",)*"[^"]*"\\])\\)\\s*\\w+\\(tl\\(${configDir}\\(\\),\\1\\)${DIRECTORY_FLAG}?\\)`,
+    `for\\(let (\\w+) of(\\[(?:"[^"]*",)*"[^"]*"\\])\\)\\s*\\w+\\(${join}\\(${configDir}\\(\\),\\1\\)${DIRECTORY_FLAG}?\\)`,
     "g",
   );
-  for (const loop of src.matchAll(grouped)) {
+  for (const loop of scope.matchAll(grouped)) {
     for (const name of literals(loop[2])) (loop[3] === undefined ? files : dirs).add(name);
-  }
-  // The two policy documents each have their signature pair bound beside them.
-  for (const document of ["policy-limits.json", "remote-settings.json"]) {
-    if (files.has(document)) for (const s of suffixes) files.add(document + s);
   }
 
   return {
@@ -420,13 +498,13 @@ describe("the lists against the installed CLI", { skip: NO_CLI }, () => {
     );
   });
 
-  it("refuses only the three files it gives a reason for", () => {
+  it("refuses only the four files it gives a reason for", () => {
     // Every other refusal must be a directory. A file quietly joining this list
     // is a failure left in place with the docblock's reasoning no longer
     // covering it.
     assert.deepEqual(
       SANDBOX_CONFIG_DIR_REFUSED.filter((name) => bound.configDirFiles.includes(name)),
-      ["CLAUDE.md", "policy-limits.json", "remote-settings.json"],
+      ["CLAUDE.md", "policy-limits.json", "policy-limits.json.stamp.json", "remote-settings.json"],
     );
   });
 

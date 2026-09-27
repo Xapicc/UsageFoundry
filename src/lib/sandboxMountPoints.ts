@@ -103,8 +103,8 @@ export const SANDBOX_MOUNT_POINT_NAMES: readonly string[] = [
  * Do not read a residual `Can't find source path` as this list being wrong.
  *
  * **Only the names the CLI itself treats as files, and not all of those.** Its
- * list marks each entry file or directory — the two are built from the same
- * array and told apart by a set the bundle calls `De`, which is the file half —
+ * list marks each entry file or directory (the two are built from the same
+ * array and told apart by a set declared beside it, which is the file half),
  * and an empty file where a directory belongs is the `skills` harm the list
  * above names, one directory over. `SANDBOX_CONFIG_DIR_REFUSED` holds
  * everything left out, each kind with its reason, and the two lists together are
@@ -142,7 +142,7 @@ export const SANDBOX_CONFIG_DIR_NAMES: readonly string[] = [
  * name by name in one place or the other, which is what lets the test fail on a
  * name a later version adds instead of letting it arrive as a dead tool call.
  *
- * Three reasons, and the first covers twenty-two of the twenty-five:
+ * Four reasons, and the first covers twenty-two of the twenty-six:
  *
  *   - **a directory.** These are the operator's real `~/.claude` through a bind
  *     mount: `projects` is their transcripts, `plugins` what they installed,
@@ -163,6 +163,16 @@ export const SANDBOX_CONFIG_DIR_NAMES: readonly string[] = [
  *     2026-09-11. Anyone reaching for it again needs the CLI's answer to "what
  *     does a zero-byte `policy-limits.json` mean" first, and that answer is not
  *     in this repository.
+ *   - **`policy-limits.json.stamp.json`**, bound since 2.1.280: not a
+ *     signature but the CLI's own voucher for the policy it has cached (an
+ *     identity hash, the policy's `sha`, `confirmed_at` and a `hipaa_seen`
+ *     history), written beside `policy-limits.json` on a fetch. An empty one is
+ *     not the same as none. A missing stamp reads as `absent`; an empty one
+ *     fails its schema and reads as `unusable`, which the CLI turns into that
+ *     history marked incomplete and the cache treated as unvouched. That is a
+ *     policy decision taken against a file this app would have invented, so it
+ *     is refused for the policy documents' reason. It has never failed here: the
+ *     CLI wrote it on this install, 339 bytes, the same instant as the policy.
  *   - **`CLAUDE.md`**, the operator's global memory: a file, otherwise
  *     qualifying, and content a person wrote or will write. It has never failed
  *     here — it exists on any install that has ever used it — and inventing an
@@ -184,6 +194,7 @@ export const SANDBOX_CONFIG_DIR_REFUSED: readonly string[] = [
   "output-styles",
   "plugins",
   "policy-limits.json",
+  "policy-limits.json.stamp.json",
   "projects",
   "remote-settings.json",
   "routines",
