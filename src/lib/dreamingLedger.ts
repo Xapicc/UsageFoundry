@@ -96,6 +96,10 @@ export function listNotes(limit = NOTE_LIMIT): DreamingNote[] {
  * `note_path` stays null until `recordNotePath` hears otherwise, so a claimed
  * signature reads on the pane as "attempted, no file recorded" rather than as a
  * note that exists.
+ *
+ * `rollups` must be the array `buildDreamingPrompt` was handed, in its order:
+ * each row stores its 1-based place in it as `prompt_item`, which is the item
+ * number the run's report will name it by.
  */
 export function claimSignatures(
   night: string,
@@ -105,12 +109,12 @@ export function claimSignatures(
 ): number {
   const insert = db().prepare(
     `INSERT OR IGNORE INTO dreaming_notes
-       (signature, sample, written_at, night, run_id, note_path, days_seen, instances)
-     VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`,
+       (signature, sample, written_at, night, run_id, note_path, days_seen, instances, prompt_item)
+     VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
   );
   return db().transaction(() => {
     let claimed = 0;
-    for (const r of rollups) {
+    for (const [index, r] of rollups.entries()) {
       const res = insert.run(
         r.signature,
         r.sample,
@@ -119,6 +123,7 @@ export function claimSignatures(
         runId,
         r.days.length,
         r.instances,
+        index + 1,
       );
       claimed += res.changes;
     }
