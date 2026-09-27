@@ -1186,6 +1186,14 @@ function memberSettled(member: LoopPassMember): boolean {
 }
 
 /**
+ * `planLoopPass`'s first rung, on its own because `advanceLoop` asks it before
+ * it reads anything else the decision needs — see there.
+ */
+function passSettled(pass: LoopPass): boolean {
+  return pass.members.every(memberSettled);
+}
+
+/**
  * Whether one member did the thing it was created to do.
  *
  * The runs an orchestrator member emitted are deliberately **not** read here.
@@ -1214,7 +1222,7 @@ export function planLoopPass(input: LoopPassInput): LoopDecision {
   const last = input.passes.at(-1);
 
   if (last) {
-    if (!last.members.every(memberSettled)) return { kind: "wait" };
+    if (!passSettled(last)) return { kind: "wait" };
 
     if (last.members.length === 0) {
       return {
@@ -4383,10 +4391,11 @@ function loopPassRefusal(
       "the loop cannot take more passes in front of it."
     );
   }
-  // Asked here because `advanceLoop` asks it before it steps a pass, and a
-  // board it cannot count settles the loop `failed` there with the pass just
-  // reopened underneath it — members back at `waiting` that nothing will ever
-  // step again, holding the instance open for good.
+  // Asked here because a pick-up is for letting the loop carry on, and one
+  // whose board cannot be counted cannot: `advanceLoop` would carry the
+  // reopened pass to its landing and then fail the loop again on this same
+  // sentence. Refused up front, the operator is told what to fix before a pass
+  // is billed rather than after.
   const node = instance.graph.nodes.find((n) => n.id === loopNodeId);
   if (node?.kind === "loop") {
     const board = loopBoardCount(node);
@@ -5379,11 +5388,7 @@ function advanceLoop(
   if (!instance || instance.status !== "started") return;
 
   const node = instance.graph.nodes.find((n) => n.id === nodeId);
-  // `typeof` rather than `!== null`, and that is the difference between a loop
-  // that ends and one that does not: an instance blob written before this
-  // column existed, or by anything but `normalizeWorkflowInput`, carries
-  // `undefined` here — and `passes.length >= undefined` is false for ever.
-  if (!node || node.kind !== "loop" || typeof node.maxPasses !== "number") {
+  if (!node || node.kind !== "loop") {
     settleLoop(
       instanceId,
       nodeId,
@@ -5398,23 +5403,52 @@ function advanceLoop(
   // this loop repeats half way through.
   const section = loopSection(instance.graph, node);
 
-  // Read before the decision and before any pass, including the first. A
-  // condition this app cannot count for ends the loop `failed` rather than
-  // being treated as a clear board: zero is the answer that stops it, and a
-  // mount that has gone is not a finished project.
-  const board = loopBoardCount(node);
-  if (!board.ok) {
-    settleLoop(
-      instanceId,
-      nodeId,
-      "failed",
-      `Its tasks could not be counted: ${board.error}`,
-    );
-    return;
-  }
-
   for (let step = 0; step < MAX_LOOP_STEPS; step += 1) {
     const passes = loopPasses(instanceId, nodeId);
+    const latest = passes.at(-1);
+
+    // A pass still working is carried on before anything only the decision
+    // reads is looked at: the pass cap and the board below can each end the
+    // loop, and ending it now would end it mid-pass. The block behind it would
+    // be decided on a loop whose runs are still in its folders, and the members
+    // not yet released would stay `waiting` with nothing ever to step them — a
+    // pass that never lands, holding the instance open until somebody stops
+    // it. `planLoopPass` asks the same question first; asking it here too keeps
+    // a failed read from ever being acted on ahead of that rung.
+    if (latest && !passSettled(latest)) {
+      if (!stepPass(instance, node, section, latest.pass, [])) return;
+      continue;
+    }
+
+    // `typeof` rather than `!== null`, and that is the difference between a
+    // loop that ends and one that does not: an instance blob written before
+    // this column existed, or by anything but `normalizeWorkflowInput`, carries
+    // `undefined` here — and `passes.length >= undefined` is false for ever.
+    if (typeof node.maxPasses !== "number") {
+      settleLoop(
+        instanceId,
+        nodeId,
+        "failed",
+        "This block is no longer in the workflow this run was started from.",
+      );
+      return;
+    }
+
+    // Read before every decision, including the one in front of the first
+    // pass. A condition this app cannot count for ends the loop `failed` rather
+    // than being treated as a clear board: zero is the answer that stops it,
+    // and a mount that has gone is not a finished project.
+    const board = loopBoardCount(node);
+    if (!board.ok) {
+      settleLoop(
+        instanceId,
+        nodeId,
+        "failed",
+        `Its tasks could not be counted: ${board.error}`,
+      );
+      return;
+    }
+
     const decision = planLoopPass({
       blockName: node.name,
       passes,
@@ -5435,6 +5469,8 @@ function advanceLoop(
       return;
     }
 
+    // `wait` needs no branch: an unsettled pass is stepped above, so this
+    // decision is only ever asked about a settled one or about none.
     if (decision.kind === "pass") {
       // A loop that repeats nothing cannot take another pass. Not reachable
       // from a graph saved today — `resolveSections` refuses a loop with no
@@ -5484,10 +5520,7 @@ function advanceLoop(
       ) {
         return;
       }
-      continue;
     }
-
-    if (!stepPass(instance, node, section, passes.at(-1)!.pass, [])) return;
   }
 
   settleLoop(

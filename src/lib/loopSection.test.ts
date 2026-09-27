@@ -52,6 +52,7 @@ import { passMemberId } from "./passIds";
 
 let workflows: typeof import("./workflows");
 let dbMod: typeof import("./db");
+let tasks: typeof import("./tasks");
 let root: string;
 let mountId: string;
 
@@ -110,6 +111,7 @@ before(async () => {
 
   dbMod = await import("./db");
   workflows = await import("./workflows");
+  tasks = await import("./tasks");
 
   // One run at a time, so a member that isolates is still held at `queued`
   // behind the run each fixture parks in the repository. Nothing here is about
@@ -133,6 +135,7 @@ beforeEach(() => {
     "workflows",
     "run_deps",
     "runs",
+    "tasks",
   ]) {
     dbMod.db().prepare(`DELETE FROM ${table}`).run();
   }
@@ -184,6 +187,7 @@ function scene(opts: {
   body: string[];
   maxPasses?: number;
   maxLoopCostUSD?: number | null;
+  stopWhenTasks?: NodeBlob | null;
   /** Blocks of the graph itself, which get a `waiting` row like the loop's. */
   ownBlocks?: Array<{ id: string; kind: string }>;
 }): string {
@@ -195,6 +199,7 @@ function scene(opts: {
     folder: "",
     maxPasses: opts.maxPasses ?? 3,
     maxLoopCostUSD: opts.maxLoopCostUSD ?? null,
+    stopWhenTasks: opts.stopWhenTasks ?? null,
     bodyNodeIds: opts.body,
   });
   const graph = JSON.stringify({
@@ -1015,5 +1020,132 @@ describe("a successor of a loop", () => {
     const successor = membersOf(instanceId).find((m) => m.memberId === "after");
     assert.ok(successor, "the successor was never created");
     assert.deepEqual(depsOf(successor.runId), []);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* A loop that cannot decide while a pass is working                   */
+/* ------------------------------------------------------------------ */
+
+/** One entry and the merge that lands it, with a block behind the loop. */
+const WITH_SUCCESSOR = {
+  nodes: [node("a"), mergeNode("m"), node("after")],
+  edges: [
+    { from: "L", to: "a", edge: "repeats" },
+    { from: "a", to: "m", edge: "on-success" },
+    // `on-finish`, the link that is released by a loop that failed: a loop
+    // settled mid-pass hands it a folder its pass is still working in.
+    { from: "L", to: "after", edge: "on-finish" },
+  ],
+  body: ["a", "m"],
+  ownBlocks: [{ id: "after", kind: "run" }],
+};
+
+function finishedAt(instanceId: string, nodeId: string): number | null {
+  const row = dbMod
+    .db()
+    .prepare(
+      "SELECT finished_at AS at FROM workflow_instance_blocks WHERE instance_id=? AND node_id=?",
+    )
+    .get(instanceId, nodeId) as { at: number | null } | undefined;
+  assert.ok(row, `no ledger row for ${nodeId}`);
+  return row.at;
+}
+
+/**
+ * Start pass 1, break something only the loop's *decision* reads, and advance
+ * with the pass still working — which any terminal run anywhere in the app does.
+ */
+async function breakMidPass(instanceId: string, breakIt: () => void): Promise<void> {
+  workflows.advanceInstances();
+  assert.ok(
+    membersOf(instanceId).some((m) => m.memberId === passMemberId("L", 1, "a")),
+    "pass 1 never started",
+  );
+  breakIt();
+  workflows.advanceInstances();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(
+    loopBlock(instanceId).status,
+    "looping",
+    "the loop was settled on top of a pass that was still working",
+  );
+  assert.equal(blockRow(instanceId, passMemberId("L", 1, "m")).status, "waiting");
+  assert.equal(
+    membersOf(instanceId).some((m) => m.memberId === "after"),
+    false,
+    "the block behind the loop was released while its pass was still working",
+  );
+}
+
+/** The pass landed first, and the loop ended on `reason` only after it. */
+function assertLandedThenFailed(instanceId: string, reason: RegExp): void {
+  const merge = passMemberId("L", 1, "m");
+  assert.equal(blockRow(instanceId, merge).status, "emitted", "the pass never landed");
+  const loop = loopBlock(instanceId);
+  assert.equal(loop.status, "failed");
+  assert.match(loop.error ?? "", reason);
+  const mergedAt = finishedAt(instanceId, merge);
+  const failedAt = finishedAt(instanceId, "L");
+  assert.ok(
+    mergedAt !== null && failedAt !== null && mergedAt <= failedAt,
+    "the loop failed before its pass finished landing",
+  );
+}
+
+describe("a loop that cannot decide while a pass is working", () => {
+  it("carries the pass to its landing when the board can no longer be counted", async () => {
+    // A folder beside the repository rather than in it, so taking it away
+    // touches nothing a member works in.
+    const boardDir = path.join(root, MOUNT_DIR, "board");
+    fs.mkdirSync(boardDir, { recursive: true });
+    // One open task, so "at most none" is not met and pass 1 starts.
+    const input = tasks.normalizeTaskInput(
+      { title: "Still to do", body: "Work for the loop.", mountId, folder: "board" },
+      { origin: "operator", createdByRunId: null },
+    );
+    if (!input.ok) throw new Error(input.error);
+    const filed = tasks.createTask(input.value);
+    if (!filed.ok) throw new Error(filed.error);
+
+    const instanceId = scene({
+      ...WITH_SUCCESSOR,
+      stopWhenTasks: {
+        mountId,
+        folder: "board",
+        includeSubfolders: false,
+        statuses: ["open"],
+        thresholds: [{ priority: "any", atMost: 0 }],
+      },
+    });
+
+    // An agent in the pass renamed the folder, or the mount blipped.
+    await breakMidPass(instanceId, () => fs.rmSync(boardDir, { recursive: true }));
+
+    await drive(instanceId);
+    assertLandedThenFailed(instanceId, /could not be counted/);
+  });
+
+  it("carries the pass to its landing when the instance's graph has no pass cap", async () => {
+    // What an instance blob written before `maxPasses` existed reads back as.
+    const instanceId = scene(WITH_SUCCESSOR);
+    await breakMidPass(instanceId, () => {
+      const db = dbMod.db();
+      const row = db
+        .prepare("SELECT graph FROM workflow_instances WHERE id=?")
+        .get(instanceId) as { graph: string };
+      const graph = JSON.parse(row.graph) as { nodes: NodeBlob[] };
+      const loop = graph.nodes.find((n) => n.id === "L");
+      assert.ok(loop);
+      delete loop.maxPasses;
+      db.prepare("UPDATE workflow_instances SET graph=? WHERE id=?").run(
+        JSON.stringify(graph),
+        instanceId,
+      );
+    });
+
+    await drive(instanceId);
+    assertLandedThenFailed(instanceId, /no longer in the workflow/);
   });
 });
