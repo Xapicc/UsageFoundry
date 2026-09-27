@@ -1,4 +1,5 @@
 import { GITHUB_TOKEN } from "./config";
+import { jsonKind } from "./http";
 
 /**
  * The exit this app does not have.
@@ -117,6 +118,39 @@ export function planDelivery(o: {
     };
   }
   return { ok: true, remote, head: o.branch, base: o.target };
+}
+
+/** What a Deliver press may carry. Both fields are optional. */
+export interface DeliveryRequest {
+  title?: string;
+  body?: string;
+}
+
+/**
+ * The fields of a Deliver request body, or the sentence refusing them.
+ *
+ * Checked before anything runs rather than trusted as a cast, because the cast
+ * failed late: `{"title": 5}` reached `.trim()` only after `git push` had
+ * published the branch, so the press answered 500, wrote no `deliver` record
+ * and left the card offering it again over a branch that was already out.
+ * Unknown keys are ignored, as they are on every other body here.
+ */
+export function readDeliveryFields(
+  raw: Record<string, unknown>,
+): { ok: true; value: DeliveryRequest } | { ok: false; error: string } {
+  const value: DeliveryRequest = {};
+  for (const key of ["title", "body"] as const) {
+    const field = raw[key];
+    if (field === undefined) continue;
+    if (typeof field !== "string") {
+      return {
+        ok: false,
+        error: `"${key}" has to be a string when it is given; got ${jsonKind(field)}. Nothing was pushed.`,
+      };
+    }
+    value[key] = field;
+  }
+  return { ok: true, value };
 }
 
 export type PullRequest = { number: number; url: string };

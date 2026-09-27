@@ -8,11 +8,13 @@ import { after, before, beforeEach, describe, it } from "node:test";
 /**
  * What `deliverRun` pushes, and what the card remembers afterwards.
  *
- * A fault that stays silent until somebody looks at GitHub. Deliver pushed the
+ * Two faults, each silent until somebody looks at GitHub. Deliver pushed the
  * branch of a run that could still commit, a running one or one with a link
  * queued up behind it, and opened a pull request on half the work: its only
  * guards were the folder overlap and the `landing` claim, and an isolated run
- * works in `.uf-worktrees`, which overlaps nothing.
+ * works in `.uf-worktrees`, which overlaps nothing. Its route cast the body, so
+ * `null` or a title that was not a string threw after `git push` had already
+ * published the branch.
  *
  * Driven for real, a database, a repository, the run's own checkout and a
  * remote, because what is pinned is what reaches the remote and what the card
@@ -31,6 +33,7 @@ let land: typeof import("./land");
 let dbMod: typeof import("./db");
 let settings: typeof import("./settings");
 let orchestrator: typeof import("./orchestrator");
+let route: typeof import("../app/api/runs/[id]/deliver/route");
 let root: string;
 
 const MOUNT_DIR = "deliver-mount";
@@ -97,6 +100,7 @@ before(async () => {
   land = await import("./land");
   settings = await import("./settings");
   orchestrator = await import("./orchestrator");
+  route = await import("../app/api/runs/[id]/deliver/route");
 
   realFetch = globalThis.fetch;
   globalThis.fetch = stubFetch;
@@ -209,6 +213,14 @@ function remoteTip(s: Scene): string | null {
   return line ? line.split(" ")[1] : null;
 }
 
+function deliverEvents(runId: string): number {
+  const row = dbMod
+    .db()
+    .prepare("SELECT COUNT(*) AS n FROM run_events WHERE run_id = ? AND kind = 'deliver'")
+    .get(runId) as { n: number };
+  return row.n;
+}
+
 describe("deliverRun refuses a branch something can still commit to, and pushes nothing", () => {
   it("delivers a finished run's branch: one push, one pull request", async () => {
     // The control: without it every refusal below could be the harness.
@@ -262,5 +274,49 @@ describe("deliverRun refuses a branch something can still commit to, and pushes 
 
     assert.equal(state.possible, false);
     assert.equal(state.reason, pressed.ok ? "" : pressed.reason);
+  });
+});
+
+/** One press of the card's button, through the route and its body check. */
+function press(runId: string, body: string): Promise<Response> {
+  return route.POST(
+    new Request(`http://localhost/api/runs/${runId}/deliver`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    }),
+    { params: Promise.resolve({ id: runId }) },
+  );
+}
+
+describe("the deliver route refuses a malformed body before any git runs", () => {
+  it("delivers on the card's own body, {}", async () => {
+    // The control, for the reason the first describe has one.
+    const s = scene("route-control");
+
+    const res = await press(s.runId, "{}");
+
+    assert.equal(res.status, 200, JSON.stringify(await res.clone().json()));
+    assert.equal(remoteTip(s), git(s.slot, "rev-parse", "HEAD").trim());
+  });
+
+  it("answers 400 with a sentence for null and for a title that is not a string", async () => {
+    // Before the fix both reached `.trim()` after `git push`: the branch was on
+    // the remote, the answer was a 500, and no record of the push was written.
+    for (const [name, body, sentence] of [
+      ["route-null", "null", /^The body has to be a JSON object; got null\.$/],
+      ["route-title", '{"title": 5}', /^"title" has to be a string when it is given; got a number\./],
+      ["route-garbled", "{title", /did not parse as JSON/],
+    ] as const) {
+      const s = scene(name);
+
+      const res = await press(s.runId, body);
+
+      assert.equal(res.status, 400, name);
+      assert.match(((await res.json()) as { error: string }).error, sentence, name);
+      assert.equal(remoteTip(s), null, `${name} pushed the branch`);
+      assert.equal(deliverEvents(s.runId), 0, name);
+    }
+    assert.deepEqual(opened, []);
   });
 });

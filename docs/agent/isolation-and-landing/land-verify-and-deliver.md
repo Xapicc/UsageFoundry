@@ -2,7 +2,7 @@
 
 [← isolation-and-landing index](../isolation-and-landing.md)
 
-Read before editing `landRun`, `landRefusal`, `unsettledBranchRefusal`, `chainBlocker`, `verifyTree`, `deliverRun` or `deliveryState` in `src/lib/land.ts`, or `src/lib/landGate.ts`, `src/lib/verifyCommand.ts` or `src/lib/delivery.ts`.
+Read before editing `landRun`, `landRefusal`, `unsettledBranchRefusal`, `chainBlocker`, `verifyTree`, `deliverRun` or `deliveryState` in `src/lib/land.ts`, the Deliver route, or `src/lib/landGate.ts`, `src/lib/verifyCommand.ts` or `src/lib/delivery.ts`.
 
 **The tool does now merge, and every protection the old "never merges" rule bought is a check in `land.ts` rather than a caveat.** The operator's checkout must be clean (unreadable counts as dirty, same rule as `emitHandoff`) *and* standing on the recorded target branch — landing onto the wrong branch is the one mistake here with no undo, so it is refused by name rather than caveated. An active run's branch is never landable: `running`/`queued`/`paused` can commit again, and the base that merges cleanly now will not be the base in ten minutes. A failed merge is aborted immediately and the conflicting files reported, so a half-merged index never survives the request. `landRefusal` is pure and unit-tested for exactly these branches, because it is the decision that writes into a directory a person also works in. **The checkout half is proved twice, and the second proof is the one the merge stands on.** `landRefusal` answers from `landState`'s read, which is taken before the operator's verify command and may be `VERIFY_TIMEOUT_MS` old by the time the merge runs — and that window is exactly when a person waiting on the spinner goes back to the checkout. A `git switch` made in it received the run's work under a `landed_into` naming the branch it did not go to; a run promoted into the folder in it was merged underneath; an edit made in it met a squash. So `landRun` asks `landRecheck` after the check, from a fresh `checkoutStateOf` and a fresh `activeRuns()` overlap check, with nothing awaited between that read and the merge's spawn, and it refuses in `landRefusal`'s own sentences. **The undo never runs `reset --hard`.** A squash writes no MERGE_HEAD, so `merge --abort` has nothing to work from, and the old fall-through to `reset --hard HEAD` ran after squashes git had *refused* — which it does precisely because the checkout holds changes the squash would overwrite — destroying every uncommitted edit in the tree while the card said "rolled back". A squash git refused wrote nothing and gets no undo at all, `conflictedFiles` coming back empty being the test; `reset --merge` would be no better there, because it resets a *staged* edit too. One that did write — conflicted, or staged under a commit the operator's hooks refused — is undone with `reset --merge`, which keeps an unstaged edit it did not touch and refuses where the two are tangled in one file, and that refusal is reported as a checkout left part-way rather than as a rollback. `landUnwind.test.ts` and `landAfterVerify.test.ts` pin both halves against real repositories.
 
@@ -108,7 +108,12 @@ not, and `land.test.ts` pins that Land's answer is still exactly it.
 `deliverRun` asks it before any git runs, from a fresh read of the run and its
 chain, and asks again after the verify gate with nothing awaited before the
 push, because a check can run for `VERIFY_TIMEOUT_MS`. Deliver asks as a
-person, `null` for the asker, since nothing in the run loop reaches it.
+person, `null` for the asker, since nothing in the run loop reaches it. **And
+the body is checked before anything runs**: the route cast it, so `null` or
+`{"title": 5}` threw at `.trim()` after `git push` had published the branch,
+answered 500 and wrote no record. It now goes through `readJsonObject` and
+`readDeliveryFields`, and a malformed one is a 400 with nothing pushed; `{}` is
+the ordinary press, and an empty body is refused like any other unparseable one.
 
 **The Land card offers it once, and states every refusal instead of discovering
 one.** `deliveryState` answers the card from `planDelivery` and

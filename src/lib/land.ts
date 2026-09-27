@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { runVerify } from "./landGate";
-import { openPullRequest, planDelivery } from "./delivery";
+import { openPullRequest, planDelivery, type DeliveryRequest } from "./delivery";
 import path from "node:path";
 import { git } from "./git";
 import { withRepoAdmin } from "./repoLock";
@@ -3604,7 +3604,7 @@ function deliverHoldNow(run: RunRow): string | null {
 
 export async function deliverRun(
   runId: string,
-  o: { title?: string; body?: string } = {},
+  o: DeliveryRequest = {},
 ): Promise<
   | { ok: true; url: string; number: number }
   | { ok: false; reason: string }
@@ -3663,7 +3663,7 @@ async function pushAndOpen(a: {
   run: NonNullable<ReturnType<typeof getRun>>;
   state: NonNullable<Awaited<ReturnType<typeof landState>>>;
   folder: string;
-  o: { title?: string; body?: string };
+  o: DeliveryRequest;
 }): Promise<
   { ok: true; url: string; number: number } | { ok: false; reason: string }
 > {

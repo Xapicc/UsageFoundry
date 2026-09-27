@@ -27,10 +27,11 @@ export function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** What a body that is not a JSON object parsed to, for the refusal's sentence. */
-function jsonKind(value: unknown): string {
+/** What a value that is not the expected JSON shape is, for a refusal's sentence. */
+export function jsonKind(value: unknown): string {
   if (value === null) return "null";
   if (Array.isArray(value)) return "an array";
+  if (typeof value === "object") return "an object";
   return `a ${typeof value}`;
 }
 
