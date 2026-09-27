@@ -1350,14 +1350,7 @@ export default function NewRunPage() {
         <Card className="mb-4" emphasis="primary">
           <CardTitle>What to work on</CardTitle>
 
-          <ListGroup
-            className="mb-4"
-            footnote={
-              folder === "" && folders.length > 0
-                ? "No run in any folder of this workspace can start until this one finishes"
-                : undefined
-            }
-          >
+          <ListGroup className="mb-4">
             {templates.length > 0 && (
               <ListRow
                 htmlFor="tpl"
@@ -1790,8 +1783,8 @@ export default function NewRunPage() {
           )}
           {!rootOccupant && rootParked && (
             <Hint className="mb-3.5">
-              A parked run is waiting somewhere in this workspace. Yours starts
-              now; it takes its folder back when yours finishes
+              Yours starts now; a parked run waiting in this workspace takes
+              its folder back when yours finishes
             </Hint>
           )}
           {occupant && (
@@ -1803,9 +1796,9 @@ export default function NewRunPage() {
           )}
           {!occupant && parked && (
             <Hint className="mb-3.5">
-              A <Link href={`/runs/${parked}`}>parked run</Link> is waiting for
-              this folder. Yours starts now; it takes the folder back when yours
-              finishes
+              Yours starts now; the{" "}
+              <Link href={`/runs/${parked}`}>parked run</Link> waiting for this
+              folder takes it back when yours finishes
             </Hint>
           )}
 
@@ -1817,7 +1810,7 @@ export default function NewRunPage() {
             hint={
               prompt.trim() === ""
                 ? "Say what to change and how Claude will know it worked"
-                : "Sent verbatim as the first turn; the run ends when Claude replies DONE"
+                : "Sent verbatim as the first turn"
             }
             error={problemFor("prompt")?.message}
           >
@@ -1861,7 +1854,7 @@ export default function NewRunPage() {
                     setCarriedPermission(false);
                   }}
                 >
-                  Only let it edit files
+                  Edit files only
                 </Button>
                 <Button
                   type="button"
@@ -1989,7 +1982,7 @@ export default function NewRunPage() {
                     setCarriedEnforcement(false);
                   }}
                 >
-                  Let the cycle finish instead
+                  Let cycles finish
                 </Button>
                 <Button
                   type="button"
@@ -2456,7 +2449,7 @@ export default function NewRunPage() {
               label="Remember the workspace and folder"
               description={
                 rememberFolder
-                  ? "The template pre-selects that folder"
+                  ? undefined
                   : "The template asks for a folder each time"
               }
             >
@@ -2488,7 +2481,7 @@ export default function NewRunPage() {
         {permissionMode === "bypassPermissions" &&
           (resuming || continueAfterDone) && (
             <Notice tone="danger">
-              <strong>Read this before starting.</strong> This run can run any
+              This run can run any
               command without asking
               {resuming && ", will keep going across several 5-hour windows"}
               {continueAfterDone &&
