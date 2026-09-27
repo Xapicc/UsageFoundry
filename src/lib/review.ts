@@ -16,6 +16,7 @@ import {
   currentSnapshot,
   emitRunEvent,
   getRun,
+  isShuttingDown,
   sandboxArgsFor,
   SEARCH_TOOLS,
   signalTree,
@@ -514,9 +515,20 @@ export function assistBudgetFull(): boolean {
 }
 
 /**
+ * What `assistRefusal` says while the process is going down.
+ *
+ * Exported so `mergeQueue`'s `refusesEveryLaterResolution` is pinned against
+ * these words rather than a copy of them: "is shutting down" is the part it
+ * matches on.
+ */
+export const SHUTDOWN_REFUSAL =
+  "The server is shutting down, so it is not starting any more Claude processes. " +
+  "Try again once it has restarted.";
+
+/**
  * The door for a caller that is about to **take** a slot outside a work cycle:
- * the process budget is full, the install's rolling-day ceiling is reached, or
- * the operator's own window ceiling is spent.
+ * the process budget is full, the install's rolling-day ceiling is reached, the
+ * operator's own window ceiling is spent, or the process is shutting down.
  *
  * Cheapest first. The budget is a `COUNT`, the install ceiling a handful of
  * `SUM`s, and `windowRefusal` a full transcript scan — and the merge queue calls
@@ -542,12 +554,17 @@ export function assistBudgetFull(): boolean {
  * exact anyway, because `advanceInstance` claims synchronously.
  */
 export async function assistRefusal(): Promise<string | null> {
-  const budget = assistBudgetRefusal(
-    liveAssistChildren(),
-    getSettings().maxConcurrentAssists,
-  );
-  if (budget) return budget;
-  return installBudgetRefusal() ?? windowRefusal();
+  const refusal =
+    assistBudgetRefusal(liveAssistChildren(), getSettings().maxConcurrentAssists) ??
+    installBudgetRefusal() ??
+    (await windowRefusal());
+  // The shutdown is read after the scan rather than first, because the scan is
+  // the one `await` here: a shutdown that began during it would otherwise be let
+  // through, and for a chat turn and a validation nothing else stands between
+  // this answer and the spawn. It outranks whatever the others found because it
+  // is the one refusal that holds for every later caller in this process, which
+  // is what the merge queue reads it for.
+  return isShuttingDown() ? SHUTDOWN_REFUSAL : refusal;
 }
 
 /**

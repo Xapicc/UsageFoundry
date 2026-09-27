@@ -24,6 +24,7 @@ import {
   describeFolder,
   edgeSatisfied,
   getRun,
+  isShuttingDown,
   probeIsolation,
   promoteQueued,
   releaseDependents,
@@ -4943,9 +4944,12 @@ function advanceInstance(instanceId: string): void {
   // not written off — this is a shortage of memory rather than a decision about
   // the work, and `blocked` here would end the branch of the graph behind it for
   // a condition that clears in minutes. Whatever frees a slot advances again.
+  //
+  // A shutdown leaves it `waiting` for the same reason, and what decides it then
+  // is `reconcileBlocksOnBoot`, which already has a rule for a `waiting` block.
   const claimed: string[] = [];
   for (const nodeId of step.spawn) {
-    if (assistBudgetFull()) break;
+    if (assistBudgetFull() || isShuttingDown()) break;
     if (claimBlock(instanceId, nodeId)) claimed.push(nodeId);
   }
   for (const nodeId of claimed) {
@@ -5701,10 +5705,10 @@ function stepPass(
   // its budget question per claim: the claim itself is what fills the budget, so
   // the next question already knows about the last answer, and a member left
   // `waiting` for want of a slot is not written off. Whatever frees one advances
-  // again.
+  // again. Its shutdown question too.
   const claimed: string[] = [];
   for (const nodeId of step.spawn) {
-    if (assistBudgetFull()) break;
+    if (assistBudgetFull() || isShuttingDown()) break;
     if (claimBlock(instanceId, memberId(nodeId))) claimed.push(memberId(nodeId));
   }
   for (const id of claimed) {
@@ -5810,8 +5814,9 @@ function passState(
  * The gate in front of it is a chat turn's and no more: the host process budget
  * — taken at `advanceInstance`'s claim rather than here, so a shortage defers
  * this turn instead of failing it — `windowRefusal()`, the operator's own
- * configured ceiling already spent, and `installBudgetRefusal()`, the
- * install-wide rolling-day ceiling this is the fifth door of. There is
+ * configured ceiling already spent, `installBudgetRefusal()`, the
+ * install-wide rolling-day ceiling this is the fifth door of, and
+ * `isShuttingDown()`, asked at the claim and again before the spawn. There is
  * deliberately no `evaluateBudget` here — this is not a work cycle and
  * inventing a per-block
  * fraction would be a threshold nobody set — and the instance's own budget is
@@ -5898,6 +5903,20 @@ async function startBlockTurn(instanceId: string, nodeId: string): Promise<void>
       node,
       "blocked",
       "The workflow was stopped before this block could start deciding.",
+    );
+    return;
+  }
+
+  // The same question of the process. The claim's own shutdown check ran before
+  // the scans above, so a shutdown that began during them would otherwise spawn
+  // a billed child that the exit is about to kill. Written off as `blocked` for
+  // the reason the branch above gives: nothing was spawned and nothing spent.
+  if (isShuttingDown()) {
+    upsertBlock(
+      instanceId,
+      node,
+      "blocked",
+      "The server shut down before this block could start deciding.",
     );
     return;
   }

@@ -64,6 +64,10 @@ const {
 const { db } = require("./db") as typeof import("./db");
 const { claimDataDir, releaseDataDir } =
   require("./serverLock") as typeof import("./serverLock");
+const { assistRefusal, SHUTDOWN_REFUSAL } =
+  require("./review") as typeof import("./review");
+const { getSettings, saveSettings } =
+  require("./settings") as typeof import("./settings");
 
 const SESSION = "11111111-2222-3333-4444-555555555555";
 const lockFile = path.join(config.DATA_DIR, "server.lock");
@@ -470,5 +474,30 @@ describe("shutting down with a child that is not a work cycle", () => {
       untrack();
     }
     assert.deepEqual(signals, ["SIGKILL"]);
+  });
+
+  it("refuses to start another once the process is going down", async () => {
+    await shutdownRuns("SIGTERM");
+
+    // The finding: nothing but `promoteQueued` read the flag, so a review, a
+    // resolution, a validation or a chat turn asked for during the grace was
+    // spawned, got no SIGINT, and left its row open for the next boot.
+    assert.equal(await assistRefusal(), SHUTDOWN_REFUSAL);
+
+    // And it outranks a full process budget, whose sentence the merge queue
+    // deliberately asks again after: once per branch, in a process that is
+    // exiting.
+    const cap = getSettings().maxConcurrentAssists;
+    const now = Date.now();
+    saveSettings({ maxConcurrentAssists: 1 });
+    db()
+      .prepare("INSERT INTO chat_sessions (id, created_at, updated_at, status) VALUES (?,?,?,?)")
+      .run("shutdown-chat", now, now, "thinking");
+    try {
+      assert.equal(await assistRefusal(), SHUTDOWN_REFUSAL);
+    } finally {
+      db().prepare("DELETE FROM chat_sessions WHERE id=?").run("shutdown-chat");
+      saveSettings({ maxConcurrentAssists: cap });
+    }
   });
 });
