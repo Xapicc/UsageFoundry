@@ -882,9 +882,9 @@ async function processOne(
         status: "failed",
         message: resolved.reason,
         resolveCost,
-        // A window already at its ceiling refuses every later resolution
-        // identically, and each attempt costs a full transcript scan to find
-        // that out again.
+        // A window or an install already at its ceiling refuses every later
+        // resolution identically, and each attempt costs a fresh `landState`
+        // (and, for the window, a full transcript scan) to find that out again.
         ...(resolved.refusesEveryResolution
           ? { refusedResolutions: resolved.reason }
           : {}),
@@ -902,6 +902,25 @@ async function processOne(
     };
   }
   return { status: "failed", message: landed.reason, resolveCost };
+}
+
+/**
+ * Whether a refusal at the resolution door will refuse every later item too.
+ *
+ * The two refusals that are about the operator's limits rather than about this
+ * branch: the window ceiling (`windowRefusal`) and the install's rolling-day
+ * ceiling (`installBudgetRefusal`), both worded elsewhere and matched on the
+ * part that is not a figure or a branch name. Neither changes between one item
+ * and the next. The process budget deliberately does not match — a full budget
+ * is a slot somebody frees in minutes, so the item behind it asks again.
+ *
+ * Pure and exported for a test, because both ways of getting it wrong are
+ * silent: a sentence reworded out from under the match costs every later item a
+ * fresh refusal, and a match too wide fails branches a free slot would have let
+ * through.
+ */
+export function refusesEveryLaterResolution(reason: string): boolean {
+  return /already at the ceiling|limit set in Settings for everything it runs/.test(reason);
 }
 
 interface ResolveOutcome {
@@ -929,10 +948,7 @@ async function resolveWithClaude(
       ok: false,
       reason: started.reason,
       costUSD: 0,
-      // The one refusal that is about the operator's window rather than about
-      // this branch. Worded by `assistRefusal`, matched on the part of it that
-      // is not a branch name.
-      refusesEveryResolution: /already at the ceiling/.test(started.reason),
+      refusesEveryResolution: refusesEveryLaterResolution(started.reason),
     };
   }
   // A preview that had gone stale: the branches agreed after all and no child

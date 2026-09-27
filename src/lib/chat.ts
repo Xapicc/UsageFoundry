@@ -2701,10 +2701,11 @@ export async function sendChatMessage(
   // already spent. A chat turn spends against the same window as everything
   // else, and unlike a run it goes through no `evaluateBudget` — there is no
   // per-chat fraction and inventing one would be a threshold nobody set.
-  // …and the install-wide ceiling, which is the one limit in this app a chat
-  // turn was never measured against at all: `chatTurnBudgetUSD` bounds *this*
-  // turn and nothing bounds the hundredth.
-  const refusal = (await assistRefusal()) ?? installBudgetRefusal();
+  // …and the install-wide ceiling, which `assistRefusal` now asks for every
+  // caller and which is the one limit a chat turn was once never measured
+  // against at all: `chatTurnBudgetUSD` bounds *this* turn and nothing bounds
+  // the hundredth.
+  const refusal = await assistRefusal();
   if (refusal) return { ok: false, reason: refusal };
 
   // From here to the spawn there is deliberately no `await`: one event-loop

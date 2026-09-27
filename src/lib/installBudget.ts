@@ -14,12 +14,13 @@ import { getSettings } from "./settings";
 /**
  * What this installation has spent, and whether it may start anything else.
  *
- * Its own module rather than a corner of `orchestrator.ts` because all five
- * doors read it and they live in four different files — `orchestrator.ts`
+ * Its own module rather than a corner of `orchestrator.ts` because every door
+ * reads it and they live in four different files — `orchestrator.ts`
  * (`createRun` and the pre-cycle guard), `workflows.ts` (`startWorkflow`,
- * `startBlockTurn`), `chat.ts` (`sendChatMessage`) — and the last two already
- * import the first, so a home in any one of them would be an import cycle
- * waiting to happen. It reads the database and nothing else: the *decision* is
+ * `startBlockTurn`), `review.ts` (`assistRefusal`, which a review, a
+ * resolution, a validation and a chat turn all pass) and `chat.ts` (its
+ * re-check during a turn) — and the last three already import the first, so a
+ * home in any one of them would be an import cycle waiting to happen. It reads the database and nothing else: the *decision* is
  * `evaluateInstallBudget`, which is pure and unit-tested beside the run and
  * instance guards.
  *

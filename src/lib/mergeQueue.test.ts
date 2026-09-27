@@ -4,12 +4,15 @@ import { describe, it } from "node:test";
 import {
   isQueueActive,
   planItem,
+  refusesEveryLaterResolution,
   selectHistoryBatches,
   selectQueueBatches,
   type BatchSummary,
   type QueueStatus,
 } from "./mergeQueue";
 import type { LandState } from "./land";
+import { evaluateInstallBudget } from "./budget";
+import { assistBudgetRefusal } from "./review";
 
 /**
  * Covers the queue's two pure decisions and nothing else.
@@ -342,5 +345,40 @@ describe("selectHistoryBatches", () => {
     assert.deepEqual(ids(selectHistoryBatches([batch("a", 1, ["landed"])], 9)), []);
     // A tail of nothing puts every finished batch here.
     assert.deepEqual(ids(selectHistoryBatches([batch("a", 1, ["landed"])], 0)), ["a"]);
+  });
+});
+
+describe("refusesEveryLaterResolution", () => {
+  it("recognises the window ceiling's refusal", () => {
+    assert.equal(
+      refusesEveryLaterResolution(
+        "Your 5-hour window is already at the ceiling you set. A review spends " +
+          "against the same window, so it would push you further past it.",
+      ),
+      true,
+    );
+  });
+
+  it("recognises the install ceiling's refusal, read off the verdict that words it", () => {
+    // Taken from `evaluateInstallBudget` rather than typed out, so rewording
+    // that sentence fails here instead of quietly costing every later branch in
+    // the queue a fresh refusal.
+    const verdict = evaluateInstallBudget(
+      { maxInstallCostUSD: 5 },
+      { spentUSD: 6, spentGuardUSD: 6 },
+    );
+    assert.equal(verdict.allowed, false);
+    assert.equal(refusesEveryLaterResolution(verdict.allowed ? "" : verdict.reason), true);
+  });
+
+  it("does not skip the queue on a full process budget, which clears in minutes", () => {
+    assert.equal(refusesEveryLaterResolution(assistBudgetRefusal(2, 2) ?? ""), false);
+  });
+
+  it("does not skip the queue on a refusal about this branch", () => {
+    assert.equal(
+      refusesEveryLaterResolution("uf/a does not conflict with main, so there is nothing to resolve."),
+      false,
+    );
   });
 });
