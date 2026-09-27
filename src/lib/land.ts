@@ -3550,33 +3550,40 @@ export async function deliveryState(
 }
 
 /**
- * The pull request a previous delivery opened, from the run's own timeline.
+ * The pull request a previous delivery opened for this run's **branch**.
  *
- * Read off the `deliver` event rather than a column, because the event is what
- * `deliverRun` writes and a second store for the same fact is a second thing to
- * keep in step. Newest wins: a branch pushed again after a pull request was
- * closed opens a new one, and the old number is history.
+ * Read off the `runs.delivered_pr_*` columns rather than the `deliver` event,
+ * which is what it used to be read from and is still written beside them for
+ * the timeline. The event is evidence with a horizon: `sweepRunEvents` deletes
+ * a settled run's events after `eventRetentionDays`, and a card that forgot the
+ * pull request offered "Open pull request" again, whose press pushed and was
+ * then refused by GitHub's "already exists". A run's row is permanent, which is
+ * what `retention.md` says it is for.
+ *
+ * Keyed on the branch rather than on this run, because a chain's links share
+ * one ref and so one pull request: read per run, a pull request opened from
+ * one link was invisible on the card of the link that carried the branch on,
+ * which offered it again. Newest wins: a branch pushed again after a pull
+ * request was closed opens a new one, and the old number is history.
  */
 export function deliveredPullRequest(
   runId: string,
 ): { url: string; number: number; at: number } | null {
+  const run = getRun(runId);
+  // No branch, nothing delivered: `deliverRun` refuses a run without one.
+  if (!run?.worktree_branch || !run.repo_root) return null;
   const row = db()
     .prepare(
-      "SELECT ts, payload FROM run_events WHERE run_id = ? AND kind = 'deliver'" +
-        " ORDER BY id DESC LIMIT 1",
+      `SELECT delivered_pr_url AS url, delivered_pr_number AS number, delivered_at AS at
+         FROM runs
+        WHERE repo_root = ? AND worktree_branch = ? AND delivered_pr_url IS NOT NULL
+        ORDER BY delivered_at DESC
+        LIMIT 1`,
     )
-    .get(runId) as { ts: number; payload: string } | undefined;
-  if (!row) return null;
-  try {
-    const payload = JSON.parse(row.payload) as { url?: string; number?: number };
-    if (!payload.url || typeof payload.number !== "number") return null;
-    return { url: payload.url, number: payload.number, at: row.ts };
-  } catch {
-    // A payload this app wrote and cannot read back is a bug, not a state to
-    // render: reporting "never delivered" is the safe half of being wrong,
-    // since the operator can press and be told the pull request exists.
-    return null;
-  }
+    .get(run.repo_root, run.worktree_branch) as
+    | { url: string; number: number; at: number }
+    | undefined;
+  return row ?? null;
 }
 
 /**
@@ -3748,11 +3755,21 @@ async function pushAndOpen(a: {
   });
   if (!opened.ok) return { ok: false, reason: opened.reason };
 
+  // On the row as well as the timeline, for `deliveredPullRequest`'s reason:
+  // the event is swept after `eventRetentionDays`, and the row is what the card
+  // reads to withdraw the button.
+  const deliveredAt = Date.now();
+  db()
+    .prepare(
+      "UPDATE runs SET delivered_pr_url = ?, delivered_pr_number = ?, delivered_at = ? WHERE id = ?",
+    )
+    .run(opened.pr.url, opened.pr.number, deliveredAt, runId);
+
   // On the run's own timeline, the way a land is: this is the other exit, and
   // the question "where did this work go" is asked on the run's page.
   emitRunEvent({
     runId,
-    ts: Date.now(),
+    ts: deliveredAt,
     kind: "deliver",
     payload: {
       branch: plan.head,

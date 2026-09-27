@@ -2,7 +2,7 @@
 
 [← isolation-and-landing index](../isolation-and-landing.md)
 
-Read before editing `landRun`, `landRefusal`, `unsettledBranchRefusal`, `chainBlocker`, `verifyTree`, `deliverRun` or `deliveryState` in `src/lib/land.ts`, the Deliver route, or `src/lib/landGate.ts`, `src/lib/verifyCommand.ts` or `src/lib/delivery.ts`.
+Read before editing `landRun`, `landRefusal`, `unsettledBranchRefusal`, `chainBlocker`, `verifyTree`, `deliverRun`, `deliveredPullRequest` or `deliveryState` in `src/lib/land.ts`, the Deliver route, or `src/lib/landGate.ts`, `src/lib/verifyCommand.ts` or `src/lib/delivery.ts`.
 
 **The tool does now merge, and every protection the old "never merges" rule bought is a check in `land.ts` rather than a caveat.** The operator's checkout must be clean (unreadable counts as dirty, same rule as `emitHandoff`) *and* standing on the recorded target branch — landing onto the wrong branch is the one mistake here with no undo, so it is refused by name rather than caveated. An active run's branch is never landable: `running`/`queued`/`paused` can commit again, and the base that merges cleanly now will not be the base in ten minutes. A failed merge is aborted immediately and the conflicting files reported, so a half-merged index never survives the request. `landRefusal` is pure and unit-tested for exactly these branches, because it is the decision that writes into a directory a person also works in. **The checkout half is proved twice, and the second proof is the one the merge stands on.** `landRefusal` answers from `landState`'s read, which is taken before the operator's verify command and may be `VERIFY_TIMEOUT_MS` old by the time the merge runs — and that window is exactly when a person waiting on the spinner goes back to the checkout. A `git switch` made in it received the run's work under a `landed_into` naming the branch it did not go to; a run promoted into the folder in it was merged underneath; an edit made in it met a squash. So `landRun` asks `landRecheck` after the check, from a fresh `checkoutStateOf` and a fresh `activeRuns()` overlap check, with nothing awaited between that read and the merge's spawn, and it refuses in `landRefusal`'s own sentences. **The undo never runs `reset --hard`.** A squash writes no MERGE_HEAD, so `merge --abort` has nothing to work from, and the old fall-through to `reset --hard HEAD` ran after squashes git had *refused* — which it does precisely because the checkout holds changes the squash would overwrite — destroying every uncommitted edit in the tree while the card said "rolled back". A squash git refused wrote nothing and gets no undo at all, `conflictedFiles` coming back empty being the test; `reset --merge` would be no better there, because it resets a *staged* edit too. One that did write — conflicted, or staged under a commit the operator's hooks refused — is undone with `reset --merge`, which keeps an unstaged edit it did not touch and refuses where the two are tangled in one file, and that refusal is reported as a checkout left part-way rather than as a rollback. `landUnwind.test.ts` and `landAfterVerify.test.ts` pin both halves against real repositories.
 
@@ -123,10 +123,21 @@ reasons are standing conditions of the install (no credential for this
 repository, a remote that is not GitHub, a branch that is already the target)
 or a branch something can still commit to, never something only a press would
 find out. What it does *not* pre-empt is the verify gate and the push, which are
-about the branch now. Offered once per pull request, and replaced afterwards by a link to it, read off
-the run's own `deliver` event: a second press would push again — updating the
-pull request — and then be refused by GitHub's "already exists", so what it
-reported and what it did would disagree. **The whole path has been driven
+about the branch now. Offered once per pull request, and replaced afterwards by
+a link to it: a second press would push again, updating the pull request, and
+then be refused by GitHub's "already exists", so what it reported and what it
+did would disagree. **The link is read off the run's row, per branch, and never
+off the `deliver` event.** The event was the only record, and it failed both
+ways: `sweepRunEvents` deletes a settled run's events after
+`eventRetentionDays`, after which the card offered the press again, and it was
+kept per run while a chain's links share one ref, so a pull request opened from
+one link was invisible on the card of the link that carried the branch on.
+`deliverRun` writes `runs.delivered_pr_url`/`delivered_pr_number`/`delivered_at`
+beside the event, the row being permanent on `retention.md`'s rule, and
+`deliveredPullRequest` takes the newest across every run with the same
+`repo_root` and `worktree_branch`. The migration that added the columns
+backfilled them once from each run's newest readable `deliver` event, so a run
+delivered before it keeps its link past the next sweep. **The whole path has been driven
 against a real repository once**, which is what makes the paragraph above a
 record rather than an intention: the refusal before a remote existed, the offer
 once one did, one press pushing the branch and opening the pull request, the

@@ -287,6 +287,13 @@ export interface RunRow {
   landed_strategy: string | null;
   /** Branch tip at that moment — the only proof a squash took these commits. */
   landed_tip: string | null;
+  /**
+   * The pull request Deliver opened from this run, and when. Null means never.
+   * Read per branch rather than per run; see `deliveredPullRequest`.
+   */
+  delivered_pr_url: string | null;
+  delivered_pr_number: number | null;
+  delivered_at: number | null;
   /** Paused runs: when to look again. A hint, not a promise — see sweepPaused. */
   resume_at: number | null;
   paused_at: number | null;

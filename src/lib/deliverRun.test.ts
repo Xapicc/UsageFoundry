@@ -8,13 +8,16 @@ import { after, before, beforeEach, describe, it } from "node:test";
 /**
  * What `deliverRun` pushes, and what the card remembers afterwards.
  *
- * Two faults, each silent until somebody looks at GitHub. Deliver pushed the
+ * Three faults, each silent until somebody looks at GitHub. Deliver pushed the
  * branch of a run that could still commit, a running one or one with a link
  * queued up behind it, and opened a pull request on half the work: its only
  * guards were the folder overlap and the `landing` claim, and an isolated run
  * works in `.uf-worktrees`, which overlaps nothing. Its route cast the body, so
  * `null` or a title that was not a string threw after `git push` had already
- * published the branch.
+ * published the branch. And the pull request it opened was remembered only by
+ * the run's newest `deliver` event, which `sweepRunEvents` deletes after
+ * `eventRetentionDays`, and only on the run that pressed, so either the sweep
+ * or a chain made the card offer the press again.
  *
  * Driven for real, a database, a repository, the run's own checkout and a
  * remote, because what is pinned is what reaches the remote and what the card
@@ -33,6 +36,7 @@ let land: typeof import("./land");
 let dbMod: typeof import("./db");
 let settings: typeof import("./settings");
 let orchestrator: typeof import("./orchestrator");
+let retention: typeof import("./retention");
 let route: typeof import("../app/api/runs/[id]/deliver/route");
 let root: string;
 
@@ -100,6 +104,7 @@ before(async () => {
   land = await import("./land");
   settings = await import("./settings");
   orchestrator = await import("./orchestrator");
+  retention = await import("./retention");
   route = await import("../app/api/runs/[id]/deliver/route");
 
   realFetch = globalThis.fetch;
@@ -318,5 +323,84 @@ describe("the deliver route refuses a malformed body before any git runs", () =>
       assert.equal(deliverEvents(s.runId), 0, name);
     }
     assert.deepEqual(opened, []);
+  });
+});
+
+describe("the delivered pull request outlives the event sweep and belongs to the branch", () => {
+  it("still withdraws the button once the deliver event has been swept", async () => {
+    const s = scene("swept");
+    const delivered = await land.deliverRun(s.runId);
+    assert.equal(delivered.ok, true, delivered.ok ? "" : delivered.reason);
+    assert.equal(deliverEvents(s.runId), 1);
+
+    settings.saveSettings({ eventRetentionDays: 1 });
+    retention.sweepRunEvents(Date.now() + 3 * 86_400_000);
+
+    // The sweep did what it is for, so what follows is not the event surviving.
+    assert.equal(deliverEvents(s.runId), 0);
+    const state = await land.deliveryState(s.runId);
+    assert.deepEqual(
+      state.delivered && { url: state.delivered.url, number: state.delivered.number },
+      delivered.ok ? { url: delivered.url, number: delivered.number } : null,
+    );
+  });
+
+  it("shows a link pressed from one link on the card of the link that carries it on", async () => {
+    const s = scene("carried");
+    const delivered = await land.deliverRun(s.runId);
+    assert.equal(delivered.ok, true, delivered.ok ? "" : delivered.reason);
+
+    const next = continuation(s, "completed", 1);
+    const state = await land.deliveryState(next);
+
+    assert.equal(state.delivered?.url, delivered.ok ? delivered.url : "");
+    assert.equal(state.delivered?.number, delivered.ok ? delivered.number : -1);
+  });
+});
+
+describe("migrate carries a pull request delivered before the column existed", () => {
+  /** A restart: `open()` runs `migrate` again against what is on disk. */
+  function reboot(): void {
+    const g = globalThis as { __ufDb?: { close(): void } };
+    g.__ufDb?.close();
+    delete g.__ufDb;
+    dbMod.db();
+  }
+
+  it("backfills from the newest deliver event, and boots past a payload it cannot read", () => {
+    const db = dbMod.db();
+    const insertRun = db.prepare(
+      `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                         created_at, isolation, repo_root, worktree_branch)
+       VALUES (?, '/r', 'p', 'completed', '{}', 1, 1, ?, 'worktree', '/r', ?)`,
+    );
+    const insertEvent = db.prepare(
+      "INSERT INTO run_events (run_id, ts, kind, payload) VALUES (?, ?, 'deliver', ?)",
+    );
+    insertRun.run("run-old", 1, "uf/old");
+    insertEvent.run("run-old", 100, JSON.stringify({ url: "https://x/pull/1", number: 1 }));
+    insertEvent.run("run-old", 200, JSON.stringify({ url: "https://x/pull/2", number: 2 }));
+    insertRun.run("run-garbled", 2, "uf/garbled");
+    insertEvent.run("run-garbled", 300, "{not json");
+    insertRun.run("run-unnumbered", 3, "uf/unnumbered");
+    insertEvent.run("run-unnumbered", 400, JSON.stringify({ url: "https://x/pull/3", number: "3" }));
+    // The database as it was before the migration step existed.
+    for (const col of ["delivered_pr_url", "delivered_pr_number", "delivered_at"]) {
+      db.exec(`ALTER TABLE runs DROP COLUMN ${col}`);
+    }
+
+    reboot();
+
+    const read = (id: string) =>
+      dbMod
+        .db()
+        .prepare(
+          "SELECT delivered_pr_url AS url, delivered_pr_number AS number, delivered_at AS at" +
+            " FROM runs WHERE id = ?",
+        )
+        .get(id);
+    assert.deepEqual(read("run-old"), { url: "https://x/pull/2", number: 2, at: 200 });
+    assert.deepEqual(read("run-garbled"), { url: null, number: null, at: null });
+    assert.deepEqual(read("run-unnumbered"), { url: null, number: null, at: null });
   });
 });

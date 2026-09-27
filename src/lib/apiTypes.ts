@@ -2786,7 +2786,7 @@ export interface DeliveryStateDTO {
   remote: string | null;
   head: string | null;
   base: string | null;
-  /** What a previous press opened, off the run's own `deliver` event. */
+  /** What a previous press on this branch opened. See `deliveredPullRequest`. */
   delivered: { url: string; number: number; at: number } | null;
 }
 
