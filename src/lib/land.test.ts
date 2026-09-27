@@ -6,6 +6,7 @@ import {
   conflictRegions,
   gitFailureLine,
   hasConflictMarkers,
+  landRecheck,
   landRefusal,
   parseMergeTree,
   parseStatusZ,
@@ -422,6 +423,60 @@ describe("landRefusal for a branch a chain shares", () => {
     assert.match(
       landRefusal({ ...base, runId: "bbbbbbbb", chain, merged: true }) ?? "",
       /Already in main/,
+    );
+  });
+});
+
+/**
+ * The same checkout questions again, asked after the operator's verify command
+ * and immediately before the merge. `landRefusal` answered them up to fifteen
+ * minutes earlier, and in that window a squash met an edit the operator made
+ * and its unwind destroyed it, and a `git switch` received the run's work.
+ */
+describe("landRecheck", () => {
+  const clean: CheckoutState = {
+    path: "/workspace/repo",
+    headBranch: "main",
+    dirty: false,
+    readable: true,
+  };
+  const landable = {
+    runId: "run-a",
+    runStatus: "completed" as const,
+    branchExists: true,
+    target: "main",
+    merged: false,
+    landedUnchanged: false,
+    ahead: 3,
+    pendingCount: 0,
+    preview: { outcome: "clean" as const },
+    checkout: clean,
+    chain: [{ runId: "run-a", status: "completed" as const, iterations: 1 }],
+  };
+
+  it("lets the merge go ahead on a checkout still clean and on the target", () => {
+    assert.equal(landRecheck({ target: "main", checkout: clean, busyRunId: null }), null);
+  });
+
+  it("refuses each change a person can make during the check, in landRefusal's own words", () => {
+    // In `landRefusal`'s words and not merely refused: the operator has already
+    // been taught what each of these sentences asks of them.
+    for (const checkout of [
+      { ...clean, dirty: true },
+      { ...clean, dirty: true, readable: false },
+      { ...clean, headBranch: "feature/other" },
+      { ...clean, headBranch: null },
+    ]) {
+      const refusal = landRecheck({ target: "main", checkout, busyRunId: null });
+      assert.ok(refusal, `${JSON.stringify(checkout)} was let through`);
+      assert.equal(refusal, landRefusal({ ...landable, checkout }));
+    }
+  });
+
+  it("refuses a run that started working in the folder during the check", () => {
+    assert.match(
+      landRecheck({ target: "main", checkout: clean, busyRunId: "abcdef0123456789" }) ?? "",
+      /Run abcdef01 is working in this folder/,
     );
   });
 });

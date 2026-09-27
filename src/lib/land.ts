@@ -1033,20 +1033,57 @@ export function landRefusal(s: {
   }
   if (s.preview.outcome === "unknown") return s.preview.reason;
 
-  if (!s.checkout) return "This run's folder is no longer inside a workspace mount.";
-  if (!s.checkout.readable) {
+  return checkoutRefusal(s.checkout, s.target);
+}
+
+/**
+ * The half of `landRefusal` that is about the operator's checkout rather than
+ * the work, split out so that `landRecheck` refuses in the same sentences.
+ */
+function checkoutRefusal(checkout: CheckoutState | null, target: string): string | null {
+  if (!checkout) return "This run's folder is no longer inside a workspace mount.";
+  if (!checkout.readable) {
     return "Could not read your checkout's status, so nothing is offered. Check it by hand.";
   }
-  if (s.checkout.dirty) {
+  if (checkout.dirty) {
     return "Your checkout has uncommitted changes — commit or stash them first.";
   }
-  if (s.checkout.headBranch !== s.target) {
+  if (checkout.headBranch !== target) {
     return (
-      `Your checkout is on ${s.checkout.headBranch ?? "a detached HEAD"}, and this work belongs on ` +
-      `${s.target}. Switch to it first — landing onto the wrong branch is not something this can undo.`
+      `Your checkout is on ${checkout.headBranch ?? "a detached HEAD"}, and this work belongs on ` +
+      `${target}. Switch to it first — landing onto the wrong branch is not something this can undo.`
     );
   }
   return null;
+}
+
+/** Why a land will not merge into a folder a run is working in. */
+function folderBusyRefusal(runId: string): string {
+  return `Run ${runId.slice(0, 8)} is working in this folder. Landing while it writes would merge into a moving tree.`;
+}
+
+/**
+ * Why the merge must not happen after all, from a read taken immediately
+ * before it, or null when it may.
+ *
+ * `landRefusal` answers from a read taken before the operator's verify
+ * command, which may run for `VERIFY_TIMEOUT_MS` — fifteen minutes in which a
+ * person waiting on a spinner goes back to the checkout the merge writes into.
+ * A proof that old let a squash meet an edit made in the meantime, and let a
+ * `git switch` made in the meantime receive the run's work under a
+ * `landed_into` that names the branch it did not go to. So everything
+ * `landRefusal` requires of the checkout, and the overlap check `landRun`
+ * takes beside it, is required again here from a fresh read — with nothing
+ * awaited between that read and the merge.
+ */
+export function landRecheck(s: {
+  target: string;
+  checkout: CheckoutState;
+  /** An active run working in, above or below the folder, read in the merge's turn. */
+  busyRunId: string | null;
+}): string | null {
+  if (s.busyRunId) return folderBusyRefusal(s.busyRunId);
+  return checkoutRefusal(s.checkout, s.target);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1108,12 +1145,7 @@ export async function landRun(
   // does there.
   const key = conflictKey(folder);
   const busy = activeRuns().find((r) => overlaps(key, conflictKey(workDirOf(r))));
-  if (busy) {
-    return {
-      ok: false,
-      reason: `Run ${busy.id.slice(0, 8)} is working in this folder. Landing while it writes would merge into a moving tree.`,
-    };
-  }
+  if (busy) return { ok: false, reason: folderBusyRefusal(busy.id) };
 
   // Read after `landState`, the last `await` before the registration, so a
   // land this lets through is one the shutdown will find and wait for. Refused
@@ -1155,6 +1187,19 @@ export async function landRun(
     // identifiable afterwards.
     const tip = (await git(folder, ["rev-parse", branch], NO_CLOCK)).stdout;
 
+    // Re-proved here rather than trusted from `landState`, which was read
+    // before the operator's check and may be fifteen minutes old — see
+    // `landRecheck`. The status read is the last `await` before the merge, so
+    // the overlap check below and the merge's spawn share one turn.
+    const checkout = await checkoutStateOf(folder);
+    const refusal = landRecheck({
+      target,
+      checkout,
+      busyRunId:
+        activeRuns().find((r) => overlaps(key, conflictKey(workDirOf(r))))?.id ?? null,
+    });
+    if (refusal) return { ok: false, reason: refusal };
+
     // Again where nothing awaits before the spawn, `spawnAssist`'s reason: the
     // operator's check and the `rev-parse` both await after the read above,
     // and a merge begun during the grace is one the exit can cut off part-way.
@@ -1172,13 +1217,14 @@ export async function landRun(
 
     if (!merge.ok) {
       const conflicts = await conflictedFiles(folder);
-      await unwind(folder, strategy);
+      const restored = await unwind(folder, strategy, conflicts.length > 0);
       return {
         ok: false,
-        reason:
-          conflicts.length > 0
+        reason: !restored
+          ? `The merge conflicted and could not be rolled back, so your checkout is part-way through it — look at git status there before anything else. Conflicting: ${conflicts.join(", ")}`
+          : conflicts.length > 0
             ? `The merge conflicted and was rolled back — your checkout is untouched. Conflicting: ${conflicts.join(", ")}`
-            : `git refused the merge and it was rolled back: ${merge.stderr.split("\n")[0] || "unknown error"}`,
+            : `git refused the merge, and your checkout is as it was: ${merge.stderr.split("\n")[0] || "unknown error"}`,
         conflicts,
       };
     }
@@ -1198,10 +1244,13 @@ export async function landRun(
         NO_CLOCK,
       );
       if (!commit.ok) {
-        await unwind(folder, strategy);
+        const restored = await unwind(folder, strategy, true);
+        const why = commit.stderr.split("\n")[0] || "unknown error";
         return {
           ok: false,
-          reason: `The squash could not be committed and was rolled back: ${commit.stderr.split("\n")[0] || "unknown error"}`,
+          reason: restored
+            ? `The squash could not be committed and was rolled back: ${why}`
+            : `The squash could not be committed and could not be rolled back, so it is still staged in your checkout — look at git status there before anything else: ${why}`,
         };
       }
     }
@@ -1262,19 +1311,43 @@ export async function conflictedFiles(folder: string): Promise<string[]> {
 }
 
 /**
- * Put the checkout back the way it was found.
+ * Put the checkout back the way it was found, and say whether it is.
  *
- * `merge --abort` is the right undo for a real merge. A failed `--squash` never
- * writes MERGE_HEAD, so abort has nothing to work from and `reset --hard` is
- * the only recovery — safe here, and only here, because the tree was proved
- * clean seconds earlier and no run is allowed to be writing in it.
+ * `wrote` is whether git left anything of this land in the checkout: conflicts
+ * after a failed merge, or a staged squash its commit then refused.
+ *
+ * `merge --abort` is the right undo for a real merge. A `--squash` never writes
+ * MERGE_HEAD, so for one there is nothing to abort — any MERGE_HEAD in this
+ * checkout is the operator's — and two things replace it:
+ *
+ *  - **A squash git refused writes nothing**, so it gets no undo at all. This
+ *    used to fall through to `reset --hard HEAD`, and git refuses a squash
+ *    precisely *because* the checkout holds changes it would overwrite: the
+ *    undo destroyed every uncommitted edit in the operator's tree, related to
+ *    the branch or not, and the card said "rolled back".
+ *  - **One that did write is undone with `reset --merge`**, never `--hard`. It
+ *    discards what the squash staged and conflicted and keeps an unstaged edit
+ *    it did not touch, and where the two are tangled in one file it refuses
+ *    rather than choosing — which is reported, not papered over. `--hard`
+ *    was only ever safe on a tree proved clean immediately before, and the
+ *    squash's commit runs the operator's hooks, which can take minutes.
+ *
+ * Exported for `landUnwind.test.ts`, `conflictedFiles`' precedent: what has to
+ * be pinned is what git does to a real checkout.
  */
-async function unwind(folder: string, strategy: LandStrategy): Promise<void> {
-  // Least of all this one: a rollback killed part-way through leaves the
+export async function unwind(
+  folder: string,
+  strategy: LandStrategy,
+  wrote: boolean,
+): Promise<boolean> {
+  // Least of all these: a rollback killed part-way through leaves the
   // operator's own checkout mid-merge.
-  const abort = await git(folder, ["merge", "--abort"], NO_CLOCK);
-  if (abort.ok || strategy !== "squash") return;
-  await git(folder, ["reset", "--hard", "HEAD"], NO_CLOCK);
+  if (strategy !== "squash") {
+    const abort = await git(folder, ["merge", "--abort"], NO_CLOCK);
+    return abort.ok || !wrote;
+  }
+  if (!wrote) return true;
+  return (await git(folder, ["reset", "--merge"], NO_CLOCK)).ok;
 }
 
 /** First line of the task, as a commit subject. */
