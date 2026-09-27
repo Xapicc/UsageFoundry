@@ -247,11 +247,11 @@ function internOptional(value: string | undefined): string | undefined {
  * `readAppended` reads a file's byte offset and writes it back with four awaits
  * in between, pushing parsed records into the shared `entries` array. Two scans
  * that overlap — and they routinely do, since the run loop scans before every
- * work cycle while the dashboard polls every 10s — both read the same stale
- * offset, read the same bytes, and append the same records. Cross-file dedupe in
- * `scanUsage` hides that from the totals, so it is invisible in the UI, but the
- * cached array grows without bound and every later scan gets slower, which
- * widens the window that caused it.
+ * work cycle while the dashboard polls every minute or two — both read the
+ * same stale offset, read the same bytes, and append the same records.
+ * Cross-file dedupe in `scanUsage` hides that from the totals, so it is
+ * invisible in the UI, but the cached array grows without bound and every
+ * later scan gets slower, which widens the window that caused it.
  *
  * Sharing one promise makes the second caller reuse the first one's parse. Its
  * view is at most one refresh stale, which is well inside the lag transcripts
@@ -273,9 +273,9 @@ const inflight: Map<string, Promise<FileCacheEntry>> =
  * `O(n log n)` over all of them; together they are 55% of the self time of a
  * warm scan on this operator's corpus (68,665 turns and 83,584 tool calls, 70 ms
  * a scan). Nothing else in `runScan` scales with the corpus that way, and the
- * dashboard polls every 10s while the run loop scans before every work cycle —
- * so the same answer was being rebuilt from the same bytes several times a
- * second.
+ * dashboard polls every minute or two while the run loop scans before every
+ * work cycle — so the same answer was being rebuilt from the same bytes
+ * several times a second.
  *
  * **Keyed on byte size, per file, in walk order.** That is not an approximation
  * of freshness, it is the same test `readAppended` already makes: it returns the
