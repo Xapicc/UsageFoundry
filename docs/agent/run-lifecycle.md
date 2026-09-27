@@ -23,6 +23,8 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 ## [Parking, refusals and the rate-limit ladder](run-lifecycle/parking-and-refusals.md)
 
 - A run parks on two triggers, and only one of them needs configuring.
+- The refusal allowance is its own count, and only a refusal spends it.
+- The run page names which trigger parked the run, off the event that parked it.
 - A refused run backs off; it does not trust the window boundary.
 - …and every run's answer is spread, because every input to it is shared.
 - A `<synthetic>` turn is not by itself a refusal — the cycle's own outcome decides.

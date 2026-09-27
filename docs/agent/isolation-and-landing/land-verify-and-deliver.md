@@ -22,7 +22,18 @@ is the failure the field exists to prevent. It is argv and never a shell line:
 `parseVerifyCommand` refuses shell metacharacters rather than escaping them,
 for the reason `security.md` gives about spawn argv generally. It runs as the
 child uid, before anything merges — a failing check on an already-merged branch
-is a report, and what was asked for was a refusal.
+is a report, and what was asked for was a refusal. Its bound is its own:
+`VERIFY_TIMEOUT_MS`, fifteen minutes, ends the command's whole process group —
+it is spawned `detached` for that — and the refusal says it did not finish and
+was killed after that long. `runVerify` settles on the child's `exit` plus a
+two-second drain rather than on `close`, which waits for every process holding
+the pipes: a hung grandchild of `npm test` used to hold Land and Deliver past
+the timeout for as long as it hung, with the folder's `landing` claim held, so
+nothing could land into that checkout until a restart. The group is killed after
+every exit, a pass included, so nothing the check started outlives it in the
+tree about to be merged. This is not the clock `landing-timeouts.md` forbids:
+nothing has merged, the refusal rolls nothing back, and its sentence says the
+check ran out of time rather than that the work is bad.
 
 **Which tree the check runs in is the whole of whether it checks anything.**
 `verifyTree` resolves the **run's own** worktree slot, never `state.checkout`:

@@ -952,6 +952,30 @@ function migrate(db: Database.Database) {
   addColumn(db, "runs", "resume_at", "INTEGER");
   addColumn(db, "runs", "paused_at", "INTEGER");
   addColumn(db, "runs", "pause_count", "INTEGER NOT NULL DEFAULT 0");
+  // The refusal parks alone, which is what `MAX_PAUSES_PER_RUN` bounds.
+  // `pause_count` counts guard parks as well and is never reset, so a run that
+  // had stepped aside at its own 5-hour guard was failed `pauses-spent` at its
+  // first real refusal. Backfilled from `pause_count` because an existing row
+  // cannot say which of its parks were refusals, and counting them all keeps
+  // exactly the allowance those rows had before this column. In one transaction
+  // with the ALTER so a crash between the two cannot leave the column added and
+  // the backfill never run.
+  db.transaction(() => {
+    if (addColumn(db, "runs", "refusal_pauses", "INTEGER NOT NULL DEFAULT 0")) {
+      db.exec("UPDATE runs SET refusal_pauses = pause_count");
+    }
+  })();
+  // Work cycles a live guard cut short and the loop refunded, which
+  // `MAX_PAUSES_PER_RUN` bounds so that `maxIterations` still ends a run whose
+  // every cycle is cut. On the row because the bound has to outlive the park
+  // each cut ends in. No backfill: a refund taken before this column was never
+  // counted, and 0 grants an old row at most one more allowance.
+  addColumn(db, "runs", "guard_refunds", "INTEGER NOT NULL DEFAULT 0");
+  // Work cycles the context ceiling ended early and refunded, which
+  // `MAX_EARLY_ENDS_PER_RUN` bounds. It was a local of `startRun`, so the bound
+  // was per segment and reset at every park, restart and pick-up. No backfill,
+  // for `guard_refunds`' reason.
+  addColumn(db, "runs", "early_ends", "INTEGER NOT NULL DEFAULT 0");
   // Milliseconds this run has spent parked, closed off every time it leaves a
   // park. `maxDurationMinutes` is a cap on *worked* minutes, so the guard
   // subtracts this from the wall clock since `started_at`; without it a run that
@@ -1525,6 +1549,19 @@ function migrate(db: Database.Database) {
   // still outstanding rather than a history of every restart this install has
   // ever had.
   addColumn(db, "runs", "restart_closed", "INTEGER NOT NULL DEFAULT 0");
+
+  // Whether the shutdown that closed this run out cut off a work cycle, rather
+  // than catching the run between cycles or in its pre-cycle scan.
+  //
+  // Its own column because `restart_closed` cannot say it and the status cannot
+  // either: `shutdownRuns` marks every `running` row, and every one of them ends
+  // `stopped` through `interruptOutcome`, whether its child was mid-tool-call
+  // or it had not spawned one yet. `reopenRun` tells only the first kind that
+  // its cycle did not finish, and saying so to the second would be false. Rows
+  // `reconcileOnBoot` fails are not flagged here — `failed` with
+  // `restart_closed` already names them — so this is written by the shutdown
+  // alone and cleared by `reopenRun` beside `restart_closed`.
+  addColumn(db, "runs", "restart_cut_cycle", "INTEGER NOT NULL DEFAULT 0");
 
   // When an operator set this run aside — "leave this one alone".
   //
@@ -2553,8 +2590,8 @@ function migrate(db: Database.Database) {
   //   status filter, first page      9.48 ms -> 0.44 ms
   //   history page (settledBefore)  15.01 ms -> 4.19 ms
   //
-  // and the unfiltered first page — the only one of these on the four-second
-  // poll — is unmoved at 0.41 ms, as is the `LIKE` search, which nothing can
+  // and the unfiltered first page — then the only one of these on the
+  // four-second poll — is unmoved at 0.41 ms, as is the `LIKE` search, which nothing can
   // index. So this buys the filtered pages and risks nothing on the hot one.
   //
   // Unconditional rather than gated on the stats being absent: they are an
@@ -2898,13 +2935,13 @@ function addColumn(
   table: string,
   col: string,
   decl: string,
-) {
+): boolean {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all() as {
     name: string;
   }[];
-  if (!cols.some((c) => c.name === col)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${decl}`);
-  }
+  if (cols.some((c) => c.name === col)) return false;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${decl}`);
+  return true;
 }
 
 export function db(): Database.Database {

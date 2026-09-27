@@ -61,7 +61,9 @@ import {
   describeEvent,
   logFilterActive,
   matchesLogFilter,
+  parkTrigger,
   type LogFilterKind,
+  type ParkTrigger,
 } from "@/lib/logLine";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
 import { RunAgentCost } from "@/components/RunAgentCost";
@@ -237,7 +239,12 @@ function describeQueued(run: RunDTO): RunState {
 
 function describeRun(
   run: RunDTO,
-  ctx: { now: number; cycleInFlight: string | null; stoppedByGuard: boolean },
+  ctx: {
+    now: number;
+    cycleInFlight: string | null;
+    stoppedByGuard: boolean;
+    parkedBy: ParkTrigger | null;
+  },
 ): RunState {
   switch (run.status) {
     case "waiting": {
@@ -284,8 +291,15 @@ function describeRun(
         headline: "Waiting for the next 5-hour window",
         detail: (
           <>
-            Your 5-hour window reached the percentage this run was told to step
-            aside at.{" "}
+            {/* Which park, off the event that parked it. Neither sentence when
+                that event has not arrived: the headline already says what the
+                run is waiting for, and a guessed cause is the defect this
+                replaced — every park blamed a guard a stock install cannot
+                fire. */}
+            {ctx.parkedBy === "guard" &&
+              "Your 5-hour window reached the percentage this run was told to step aside at. "}
+            {ctx.parkedBy === "refusal" &&
+              `${run.provider ? RUN_PROVIDER_LABEL[run.provider] : "The provider"} refused a work cycle because the account's 5-hour allowance ran out. `}
             {run.resume_at ? (
               <>
                 It tries again at {fmtDateTime(run.resume_at)},{" "}
@@ -297,11 +311,25 @@ function describeRun(
             ) : (
               "It tries again when the window rolls over."
             )}{" "}
-            It is still holding{" "}
-            <span className="mono" title={run.work_dir ?? run.folder}>
-              {run.relPath || run.mountLabel || shortPath(run.folder, 2)}
-            </span>
-            , so nothing else can run there until it finishes or you stop it.
+            {/* Not "still holding" its folder, which is what this said and the
+                opposite of the rule: a parked run keeps its worktree slot and
+                yields its folder, so a run started meanwhile works there, and
+                telling the operator to stop this one — terminal, and its place
+                lost — freed a folder that was already free. */}
+            {run.isolation === "worktree" && run.worktree_branch ? (
+              <>
+                It keeps its checkout on{" "}
+                <span className="mono">{run.worktree_branch}</span> meanwhile.
+              </>
+            ) : (
+              <>
+                Other runs can use{" "}
+                <span className="mono" title={run.work_dir ?? run.folder}>
+                  {run.relPath || run.mountLabel || shortPath(run.folder, 2)}
+                </span>{" "}
+                meanwhile; it waits for any still there to finish.
+              </>
+            )}
           </>
         ),
       };
@@ -1051,6 +1079,8 @@ export default function RunDetail({
     [events],
   );
 
+  const parkedBy = useMemo(() => parkTrigger(events), [events]);
+
   /**
    * Both of these read an *outcome* out of a 200 and say what it means, so a
    * request that never got one must not fall through to that sentence: "This
@@ -1267,6 +1297,7 @@ export default function RunDetail({
     now: nowTick,
     cycleInFlight,
     stoppedByGuard,
+    parkedBy,
   });
   const isolated = run.isolation === "worktree" && Boolean(run.worktree_branch);
   // Read in three places below, all of them money: the figure, its footnote and

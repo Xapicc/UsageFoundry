@@ -12,7 +12,6 @@ import {
 import type {
   AgentDTO,
   AmbientAgentDTO,
-  BudgetPolicyDTO,
   EnforcementModeDTO,
   FoldersResponse,
   RunDTO,
@@ -56,38 +55,12 @@ import {
   budgetFromForm,
   modelFromForm,
 } from "./budgetPayload";
-import { runFormProblems } from "./formProblems";
-
-/** Everything a template or an earlier run supplies to this form. */
-interface FormSeed {
-  mountId: string | null;
-  folder: string | null;
-  prompt: string;
-  isolate: boolean;
-  permissionMode: string;
-  /**
-   * The saved agent, by id. A copied run carries null: it holds the definition
-   * it ran with rather than the id, deliberately, so there is nothing to select
-   * with — and picking the agent that happens to have the same name today would
-   * be this form guessing at an identity the run never recorded.
-   */
-  agentId: string | null;
-  /**
-   * The model the seed names, or null for "whatever Settings says".
-   *
-   * Both paths fill it now that a template carries one. It **seeds** the field,
-   * the treatment `mountId`/`folder` get and not the treatment the prompt and
-   * the guards get: what starts the run is whatever is in the box when Start is
-   * pressed, so a template's model can be overridden for one run without
-   * editing the template. Filling it is not the same act as pre-filling an
-   * empty form with `settings.defaultModel`, which this page deliberately does
-   * not do: a seed's model is a fact about that template or that run, and both
-   * *Start another like this* and picking a template promise the configuration
-   * that was saved rather than today's defaults.
-   */
-  model: string | null;
-  budget: BudgetPolicyDTO;
-}
+import {
+  limitProblems,
+  runFormProblems,
+  windowGuardUnreadable,
+} from "./formProblems";
+import { type FormSeed, seedFromRun } from "./formSeed";
 
 /**
  * Every value a template or a copied run can put on this form, in one object.
@@ -649,8 +622,8 @@ export default function NewRunPage() {
       const loaded = res.ok ? res.data.settings : undefined;
       if (!loaded) {
         // A 200 with no `settings` in it is the same failure by a third door:
-        // `setSettings(undefined)` reads as "no ceiling configured" everywhere
-        // else on this form as well.
+        // `setSettings(undefined)` leaves every other setting this form reads
+        // at its fallback as well.
         setSettingsError(
           res.ok
             ? pollFailureMessage(200, "no settings in the answer")
@@ -711,34 +684,8 @@ export default function NewRunPage() {
         .then((d) => {
           const run = d?.run as RunDTO | undefined;
           if (!run) return;
-          // A run stores its folder absolute; `relPath` is the same folder as
-          // the picker names it. A run whose mount has since gone gives null,
-          // and then the folder cannot be carried at all.
-          //
-          // `isolation` is what the run *did*, not what it asked for — a run
-          // that requested a worktree and got none because the folder was not
-          // a repository comes back as "work in the folder itself". Copying the
-          // outcome is the honest reading: it is the arrangement that produced
-          // the result being copied.
           applySeed(
-            {
-              mountId: run.mountId ?? null,
-              folder: run.mountId ? (run.relPath ?? "") : null,
-              prompt: run.prompt,
-              isolate: run.isolation === "worktree",
-              permissionMode: run.budget.permissionMode ?? "acceptEdits",
-              // A run records the definition it was given, not the row it came
-              // from, so there is no id to carry — see `FormSeed`.
-              agentId: null,
-              // The model the run actually got, which is the point of the
-              // copy: a run started under a model that has since stopped being
-              // the default would otherwise come back as a differently-priced
-              // run wearing the same task. The same treatment the permission
-              // mode gets, and for the same reason — what is copied is the
-              // arrangement that produced the result, not today's settings.
-              model: run.model,
-              budget: run.budget,
-            },
+            seedFromRun(run),
             "run",
             `Copied from run ${run.id.slice(0, 8)}`,
           );
@@ -837,10 +784,14 @@ export default function NewRunPage() {
   const parked = isolated ? null : (selectedFolder?.parkedRunId ?? null);
   const rootParked = folder === "" ? (activeMount?.parkedRunId ?? null) : null;
 
-  const weeklyCeilingSet =
-    settings?.weeklyTokenLimit != null || settings?.weeklyCostLimit != null;
-  const sessionCeilingSet =
-    settings?.sessionTokenLimit != null || settings?.sessionCostLimit != null;
+  const sessionUnreadable = windowGuardUnreadable(
+    maxSessionFraction,
+    usage?.snapshot.session ?? null,
+  );
+  const weeklyUnreadable = windowGuardUnreadable(
+    maxWeeklyFraction,
+    usage?.snapshot.weekly ?? null,
+  );
   const weeklyRolling = settings != null && settings.weeklyAnchor == null;
   const live = enforcement !== "between-cycles";
   const resuming = enforcement === "live-resume";
@@ -1133,6 +1084,31 @@ export default function NewRunPage() {
   }
 
   async function saveTemplate() {
+    // Start's refusals about the limits, said the way Start says them. The
+    // server refuses a blank limit as well, but a template saved past one would
+    // carry no cap into the chat and the canvas, and only here can the sentence
+    // land beside the box that caused it.
+    const refused = limitProblems({
+      iterationsCapped,
+      effIterations,
+      costLimited,
+      effCost,
+      timeLimited,
+      effMinutes,
+      noTerminus,
+    });
+    if (refused.length > 0) {
+      setTouched((t) => ({
+        ...t,
+        ...Object.fromEntries(refused.map((p) => [p.focus, true])),
+      }));
+      // An earlier "Saved" left under the button would read as this press's.
+      setTemplateNote(null);
+      setTemplateError(null);
+      requestAnimationFrame(() => focusControl(refused[0].focus));
+      return;
+    }
+
     const name = templateName.trim();
     // Typing an existing name is how an edit is asked for. Matched
     // case-insensitively because the unique index is, so the alternative is a
@@ -1476,6 +1452,17 @@ export default function NewRunPage() {
                   required
                 >
                   {!foldersLoaded && <option value="">Loading…</option>}
+                  {/* A value with no option of its own shows the first
+                      enabled one while state still holds the old value, and
+                      choosing what is already shown fires no change — so on a
+                      one-mount install the form could not be submitted. It
+                      happens after a copied run or a template names a mount
+                      that is gone, or a copy's seed never arrived. */}
+                  {foldersLoaded && mounts.length > 0 && !activeMount && (
+                    <option value={mountId} disabled>
+                      Choose a workspace
+                    </option>
+                  )}
                   {mounts.map((m) => (
                     <option key={m.id} value={m.id} disabled={!m.available}>
                       {m.label}
@@ -2234,11 +2221,12 @@ export default function NewRunPage() {
               description={
                 problemFor("sess") ? (
                   <Toned tone="danger">{problemFor("sess")?.message}</Toned>
-                ) : maxSessionFraction && !sessionCeilingSet ? (
+                ) : sessionUnreadable ? (
                   <Toned tone="warn">
-                    No 5-hour ceiling is set, so this guard has nothing to
-                    measure against and the run is refused before its first
-                    cycle — <Link href="/settings">set one</Link>
+                    Nothing to measure this guard against: Anthropic&rsquo;s
+                    own reading is unavailable and no 5-hour ceiling is set, so
+                    the run is refused before its first cycle —{" "}
+                    <Link href="/settings">set a ceiling</Link>
                   </Toned>
                 ) : (
                   <>
@@ -2287,11 +2275,12 @@ export default function NewRunPage() {
               description={
                 problemFor("wk") ? (
                   <Toned tone="danger">{problemFor("wk")?.message}</Toned>
-                ) : maxWeeklyFraction && !weeklyCeilingSet ? (
+                ) : weeklyUnreadable ? (
                   <Toned tone="warn">
-                    No weekly ceiling is set, so this guard has nothing to
-                    measure against and the run is refused before its first
-                    cycle — <Link href="/settings">set one</Link>
+                    Nothing to measure this guard against: Anthropic&rsquo;s
+                    own reading is unavailable and no weekly ceiling is set, so
+                    the run is refused before its first cycle —{" "}
+                    <Link href="/settings">set a ceiling</Link>
                   </Toned>
                 ) : (
                   <>

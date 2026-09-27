@@ -244,6 +244,67 @@ describe("runVerify hands the child that environment and not this process's", ()
 });
 
 /**
+ * WHETHER THE CHECK EVER ENDS, which decides whether Land ever answers.
+ *
+ * `landRun` and `deliverRun` await this inside the folder's `landing` claim, so
+ * a promise that never settles is a Land button that never answers and a folder
+ * nothing can land into until a restart. It used to settle on `close` alone and
+ * kill only the direct child at the timeout, and `close` waits for every
+ * process holding the pipes: a wrapper whose grandchild hung outlived the
+ * timeout by as long as the grandchild did, and a check that passed but left a
+ * process behind held the land until that process exited. Measured before the
+ * fix at 8008ms and 6005ms against the one-second timeouts below.
+ *
+ * Subprocesses and a clock, on `settleOnExit`'s grounds: the shape is a process
+ * tree, and nothing short of one reaches it. The bound is the timeout plus the
+ * drain with a second of slack, well short of either measurement.
+ */
+describe("runVerify stops waiting when the timeout says so", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "uf-landgate-tree-"));
+  after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const BOUND_MS = 1_000 + 2_000 + 1_000;
+  const timed = async (script: string, body: string) => {
+    fs.writeFileSync(path.join(dir, script), body);
+    const started = Date.now();
+    const outcome = await runVerify(dir, `sh ${script}`, { timeoutMs: 1_000 });
+    return { outcome, took: Date.now() - started };
+  };
+
+  it("refuses a check whose grandchild hangs, and says it timed out", async () => {
+    const { outcome, took } = await timed("hang.sh", "sleep 8\n");
+    assert.ok(took < BOUND_MS, `a hung check held Land for ${took}ms`);
+    assert.equal(outcome.passed, false);
+    assert.match(outcome.reason, /did not finish in time/);
+    assert.match(outcome.reason, /killed after 1 second/);
+  });
+
+  it("does not wait on a process a passing check left behind", async () => {
+    const { outcome, took } = await timed("leave.sh", "sleep 6 &\nexit 0\n");
+    assert.ok(took < BOUND_MS, `a leftover process held Land for ${took}ms`);
+    assert.equal(outcome.passed, true, outcome.reason);
+  });
+
+  it("ends everything the check started, on a timeout and after a pass", async () => {
+    // Each leaves a process that writes a file two seconds in if it is still
+    // alive. Settling on time is not enough on its own: a land that answered
+    // while the check's daemon carried on running would leave it writing into
+    // the tree that was just merged. Two seconds rather than one so the write
+    // cannot race the one-second timeout, and read half a second after it.
+    const survivor = (name: string) => `{ sleep 2; touch ${name}; } &\n`;
+    const started = Date.now();
+    await Promise.all([
+      timed("hang-and-spawn.sh", survivor("after-timeout") + "sleep 8\n"),
+      timed("pass-and-spawn.sh", survivor("after-pass") + "exit 0\n"),
+    ]);
+    await new Promise((r) => setTimeout(r, Math.max(0, started + 2_500 - Date.now())));
+    for (const name of ["after-timeout", "after-pass"]) {
+      assert.equal(fs.existsSync(path.join(dir, name)), false, `${name}: a process outlived the check`);
+    }
+  });
+});
+
+/**
  * WHICH TREE THE CHECK RUNS IN, which is the whole of whether it checks
  * anything.
  *

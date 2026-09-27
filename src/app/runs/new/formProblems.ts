@@ -96,6 +96,56 @@ export function runFormProblems(v: RunFormState): Problem[] {
       immediate: true,
     });
   }
+  problems.push(...limitProblems(v));
+  // Above 100 is not a stricter guard, it is a hundredth of one: the form sends
+  // a fraction and `normalizePolicy` divides anything over 1 by a hundred
+  // again, so a typed 150 arrives as 1.5%.
+  if (
+    v.maxSessionFraction !== "" &&
+    !(v.effSessionPct !== null && v.effSessionPct <= 100)
+  ) {
+    problems.push({
+      focus: "sess",
+      message: "The 5-hour guard has to be between 1 and 100 percent.",
+      immediate: true,
+    });
+  }
+  if (
+    v.maxWeeklyFraction !== "" &&
+    !(v.effWeeklyPct !== null && v.effWeeklyPct <= 100)
+  ) {
+    problems.push({
+      focus: "wk",
+      message: "The weekly guard has to be between 1 and 100 percent.",
+      immediate: true,
+    });
+  }
+  return problems;
+}
+
+/** What `limitProblems` reads: the limits, and nothing about where the run works. */
+export type LimitState = Pick<
+  RunFormState,
+  | "iterationsCapped"
+  | "effIterations"
+  | "costLimited"
+  | "effCost"
+  | "timeLimited"
+  | "effMinutes"
+  | "noTerminus"
+>;
+
+/**
+ * The refusals about the limits alone, in the order `runFormProblems` gives them.
+ *
+ * Split out because Save reads them too. A template is saved from this form
+ * and inherited by the chat and the canvas with no form in front of them, so a
+ * limit switched on with its box blank has to be refused at Save in the same
+ * words as at Start — the server refuses it as well, but only here can the
+ * sentence land beside the box.
+ */
+export function limitProblems(v: LimitState): Problem[] {
+  const problems: Problem[] = [];
   if (v.iterationsCapped && v.effIterations === null) {
     problems.push({
       focus: "iters",
@@ -130,28 +180,24 @@ export function runFormProblems(v: RunFormState): Problem[] {
       immediate: true,
     });
   }
-  // Above 100 is not a stricter guard, it is a hundredth of one: the form sends
-  // a fraction and `normalizePolicy` divides anything over 1 by a hundred
-  // again, so a typed 150 arrives as 1.5%.
-  if (
-    v.maxSessionFraction !== "" &&
-    !(v.effSessionPct !== null && v.effSessionPct <= 100)
-  ) {
-    problems.push({
-      focus: "sess",
-      message: "The 5-hour guard has to be between 1 and 100 percent.",
-      immediate: true,
-    });
-  }
-  if (
-    v.maxWeeklyFraction !== "" &&
-    !(v.effWeeklyPct !== null && v.effWeeklyPct <= 100)
-  ) {
-    problems.push({
-      focus: "wk",
-      message: "The weekly guard has to be between 1 and 100 percent.",
-      immediate: true,
-    });
-  }
   return problems;
+}
+
+/**
+ * Whether a window guard typed on this form will be refused at the door for
+ * having nothing to read.
+ *
+ * The door's own test rather than a guess at it: `readWindowGuard` calls a
+ * window unreadable only when its `fraction` is null, and that fraction is
+ * Anthropic's own percentage whenever it answered — so on a stock install,
+ * with no ceiling set, the guard is readable and enforced. Keyed on a
+ * configured ceiling instead, the form told the operator a working guard would
+ * refuse their run. A snapshot that has not arrived is not a no: the form
+ * cannot know yet, so it says nothing.
+ */
+export function windowGuardUnreadable(
+  guard: string,
+  window: { fraction: number | null } | null,
+): boolean {
+  return guard !== "" && window !== null && window.fraction === null;
 }

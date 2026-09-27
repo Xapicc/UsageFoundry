@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { after, describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
 import type { BudgetPolicy } from "./budget";
 // Type-only, so it is erased rather than hoisted above the environment setup
 // below — the same reason the values come through `require`.
@@ -63,6 +63,10 @@ process.env.CODEX_HOME = path.join(tmp, "codex");
 // asserted the fallback while the code read the variable would pass or fail on
 // whoever ran it. Pinned above the `require` for the same reason as the others.
 process.env.GOPATH = path.join(tmp, "gopath");
+// The XDG cache the other way round: the image leaves XDG_CACHE_HOME unset, so
+// the fallback is the path production takes, and unset here is what makes the
+// test assert that path rather than whatever a developer's shell exports.
+delete process.env.XDG_CACHE_HOME;
 // And TMPDIR, which the write set follows for the same reason: the sandbox
 // creates its sockets under it, and `os.tmpdir()` reads it at every call.
 process.env.TMPDIR = path.join(tmp, "tmp");
@@ -80,12 +84,14 @@ const {
   compactionNotice,
   conflictKey,
   contextShapingEnv,
+  cycleCutByRestart,
   cycleEnding,
   cycleSilenceMs,
   declaresSubmodule,
   dependencyCycle,
   isRunStatus,
   normalizeRunListQuery,
+  listRunsPage,
   duePausedRuns,
   edgeSatisfied,
   injectionFates,
@@ -1602,6 +1608,69 @@ describe("prompt for a reopened run", () => {
     // The control, and half the test: an ordinary completed run that really did
     // reply DONE is still pushed back on.
     assert.equal(reopenPrompt(base), "PUSHBACK");
+  });
+});
+
+/**
+ * Covers which rows a restart cut off mid-cycle, which is the input the restart
+ * branch above is only as good as.
+ *
+ * It read `failed` alone, and `failed` is what `reconcileOnBoot` writes. A
+ * graceful shutdown — every `docker compose up --build` — ends each run it
+ * interrupts `stopped` through `interruptOutcome`, so every run that deploy cut
+ * off was picked up with the plain continuation or the DONE pushback. Widening
+ * it to every `stopped` restart row is the other silent mistake: the shutdown
+ * also closes runs caught in their pre-cycle scan, which had no cycle to cut.
+ */
+describe("which runs a restart cut off mid-cycle", () => {
+  it("tells a run the shutdown found with a child in flight", () => {
+    // What `shutdownRuns` leaves on a row whose cycle it killed: the loop's
+    // post-cycle checkpoint applies the `shutdown` interrupt as `stopped`.
+    const cut = { status: "stopped" as const, restart_closed: 1, restart_cut_cycle: 1 };
+    assert.equal(cycleCutByRestart(cut), true);
+    assert.match(
+      reopenPrompt({
+        status: cut.status,
+        reportedDone: true,
+        sessionId: "sess-1",
+        note: "",
+        donePushback: "PUSHBACK",
+        restartKilled: cycleCutByRestart(cut),
+      }),
+      /server restarted/,
+      "a run that said DONE before the kill must not be told it reported the task complete",
+    );
+  });
+
+  it("does not tell a run the shutdown caught in its pre-cycle scan", () => {
+    // Same status, same flag, same stop reason: only the in-flight record
+    // separates it from the row above.
+    assert.equal(
+      cycleCutByRestart({ status: "stopped", restart_closed: 1, restart_cut_cycle: 0 }),
+      false,
+    );
+  });
+
+  it("still tells a run the boot failed", () => {
+    // `reconcileOnBoot` does not write the in-flight flag, and a row written
+    // before the column existed reads 0 in it, so `failed` has to carry this.
+    assert.equal(
+      cycleCutByRestart({ status: "failed", restart_closed: 1, restart_cut_cycle: 0 }),
+      true,
+    );
+  });
+
+  it("tells nothing to a run the restart did not close out", () => {
+    // A `failed` run that crashed on its own is continued like any other, and
+    // the in-flight flag says nothing about a run the restart is not holding.
+    assert.equal(
+      cycleCutByRestart({ status: "failed", restart_closed: 0, restart_cut_cycle: 0 }),
+      false,
+    );
+    assert.equal(
+      cycleCutByRestart({ status: "stopped", restart_closed: 0, restart_cut_cycle: 1 }),
+      false,
+    );
   });
 });
 
@@ -4293,6 +4362,12 @@ describe("sandboxSettings — what one child may write", () => {
       writable(isolated, path.join(process.env.GOPATH as string, "pkg", "mod")),
       true,
     );
+    // And the XDG cache, which uv, pip, node-gyp and swiftc's clang module
+    // cache all default to. Named at a depth a real tool writes, since the
+    // failure this pins was `.cache/clang/ModuleCache/…` refused on EROFS.
+    const xdgCache = path.join(os.homedir(), ".cache");
+    assert.equal(writable(isolated, path.join(xdgCache, "uv")), true);
+    assert.equal(writable(isolated, path.join(xdgCache, "clang", "ModuleCache")), true);
 
     // And the resolver gets them too: it is the other child an operator can
     // point at a build command, through `settings.resolveAllowedTools`.
@@ -4303,6 +4378,7 @@ describe("sandboxSettings — what one child may write", () => {
     });
     assert.equal(writable(resolver, os.tmpdir()), true);
     assert.equal(writable(resolver, path.join(os.homedir(), ".npm")), true);
+    assert.equal(writable(resolver, path.join(xdgCache, "pip")), true);
   });
 
   it("keeps CLAUDE_CONFIG_DIR writable, which is the metering path", () => {
@@ -5713,6 +5789,38 @@ describe("picking up a blocked run", () => {
     assert.equal(row.paused_ms, 0, "and so does what is subtracted from it");
     assert.equal(row.paused_at, null);
   });
+
+  it("gives a run that ran out of waits its refusal allowance back, and nothing else", () => {
+    // The row `pauses-spent` leaves: failed, having waited out every refusal
+    // the cap allows. Carried into the pick-up, the count failed the run again
+    // at its next wall without a single wait, saying it "had already waited out
+    // 3 windows" in a segment where it waited none.
+    const spent = insertRun({ status: "failed", workDir: `${ws}/RepoOne` });
+    db()
+      .prepare("UPDATE runs SET pause_count=?, refusal_pauses=? WHERE id=?")
+      .run(MAX_PAUSES_PER_RUN, MAX_PAUSES_PER_RUN, spent);
+    // Something else in that folder, so the promotion at the end starts nothing.
+    insertRun({ status: "running", workDir: `${ws}/RepoOne` });
+
+    assert.equal(reopenRun(spent, RAISED).ok, true);
+
+    const row = getRun(spent)!;
+    assert.deepEqual(
+      refusalDisposition({
+        kind: "allowance",
+        pauseCount: row.refusal_pauses,
+        transientRetries: 0,
+      }),
+      { action: "park" },
+      "the operator's pick-up is the fresh attempt the cap was not meant to span",
+    );
+    assert.equal(
+      row.pause_count,
+      MAX_PAUSES_PER_RUN,
+      "`ensureWorktree` reads this as \"has worked before\"; zeroed, a run parked " +
+        "in its first cycle would be sent past the orphaned-branch guard",
+    );
+  });
 });
 
 /**
@@ -6224,6 +6332,40 @@ describe("applying the sweeper's decision", () => {
     assert.equal(row.status, "queued");
   });
 
+  it("resumes a run parked at the start of a cycle a task check granted", async () => {
+    // Its cap is 1 and it has used 1: the pre-cycle guard admitted a second
+    // cycle only because the check granted one, and then parked on the window.
+    // Read without the grant, this tick ends it on the cap the loop had just
+    // widened — the grant spent, the task still claimed.
+    const parkedAt = async (grants: number) => {
+      saveSettings({ maxConcurrentRuns: 1 });
+      insertRun({ status: "running", workDir: `${ws}/blocker-${seq}` });
+      const id = insertRun({
+        status: "paused",
+        workDir: `${ws}/parked-granted-${grants}`,
+        budget: '{"maxIterations":1,"maxDurationMinutes":600}',
+      });
+      db()
+        .prepare(
+          "UPDATE runs SET iterations = 1, max_iterations = 1, validation_cycles = ? WHERE id = ?",
+        )
+        .run(grants, id);
+      try {
+        await sweepPaused();
+        return getRun(id)!;
+      } finally {
+        saveSettings({ maxConcurrentRuns: null });
+      }
+    };
+
+    assert.equal((await parkedAt(1)).status, "queued");
+    // The control: the same row with nothing granted is at its cap, so the
+    // fixture does reach the cycle check rather than passing by missing it.
+    const capped = await parkedAt(0);
+    assert.equal(capped.status, "stopped");
+    assert.equal(capped.stop_reason, "Used all 1 work cycle allowed for this run.");
+  });
+
   it("closes the park when the operator stops a parked run", async () => {
     const now = Date.now();
     const parked = insertRun({
@@ -6524,6 +6666,172 @@ describe("the live ticker's two cadences", () => {
   });
 });
 
+/**
+ * The live tick's budget half against a cycle that ends while it is scanning.
+ *
+ * `liveGuardTick` takes its list of guards and then awaits `currentSnapshot()`,
+ * a coalesced transcript scan that can take seconds, so a cycle ending inside
+ * that await is ordinary. A guard it then evaluates anyway belongs to a
+ * finished cycle: its `progress()` reads the loop's live spend, which by then
+ * includes that cycle's `result`, and adds telemetry since the same cycle's
+ * start on top — the cycle counted twice. On the brief's figures, $3 reported
+ * and $3 of telemetry for the same cycle read $6 against a $5 limit, and a run
+ * that had spent $3 was stopped. With no child left to signal, the stop landed
+ * on whatever the run did next: its next cycle, or its next pick-up.
+ *
+ * What is pinned is the absence of a write, so the control is half the test,
+ * `contextCeilingRace.test.ts`'s rule for the context half of the same tick.
+ * The scan is held open through the one seam it has — the in-flight promise
+ * `currentSnapshot` hands every caller — and a case asserts the tick really
+ * joined it before the cycle ends, or it could pass for the wrong reason.
+ */
+describe("the live guard against a cycle that ends while it is scanning", () => {
+  const { currentSnapshot, liveGuardTick, startRun } =
+    require("./orchestrator") as typeof import("./orchestrator");
+  type Guard = {
+    policy: BudgetPolicy;
+    progress: () => import("./budget").RunProgress;
+  };
+  type Snapshot = import("./windows").UsageSnapshot;
+  const shared = globalThis as unknown as {
+    __ufLiveGuards: Map<string, Guard>;
+    __ufInterrupts: Map<string, import("./orchestrator").Interrupt>;
+    __ufSnapshotInflight?: Promise<Snapshot> | null;
+    __ufGuardScan: { at: number };
+  };
+  let seq = 0;
+
+  function insertRun(status: string, extra = ""): string {
+    const id = `live-race-${++seq}`;
+    db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations,
+                           iterations, created_at, started_at, work_dir)
+         VALUES (?, ?, 'do the thing', ?, '{"maxIterations":1,"maxDurationMinutes":600}',
+                 1, 1, ?, ?, ?)`,
+      )
+      .run(id, ws, status, Date.now() + seq, Date.now() - 60_000, `${ws}/live-race-${seq}${extra}`);
+    return id;
+  }
+
+  /** A guard over a $5 limit reading $6: $3 reported, and $3 of telemetry for the same cycle. */
+  function register(id: string): Guard {
+    const guard: Guard = {
+      policy: normalizePolicy({ maxIterations: 4, maxRunCostUSD: 5, enforcement: "live" }),
+      progress: () => ({
+        iterations: 0,
+        spentUSD: 3,
+        spentTokens: 0,
+        spentGuardUSD: 6,
+        spentGuardTokens: 0,
+        startedAt: Date.now(),
+      }),
+    };
+    shared.__ufLiveGuards.set(id, guard);
+    return guard;
+  }
+
+  /** One tick, with its scan held open while `meanwhile` runs. */
+  async function tickWhileScanning(meanwhile: () => void): Promise<void> {
+    const snapshot = await currentSnapshot();
+    let release!: (s: Snapshot) => void;
+    let joined = false;
+    const held = new Promise<Snapshot>((resolve) => (release = resolve));
+    // `currentSnapshot` returns this promise to its caller, which then calls
+    // `then` on it — the only sign the tick has taken its list of guards and
+    // is waiting on the scan.
+    const then = held.then.bind(held);
+    held.then = ((...args: Parameters<typeof held.then>) => {
+      joined = true;
+      return then(...args);
+    }) as typeof held.then;
+
+    shared.__ufSnapshotInflight = held;
+    // Due whatever an earlier tick left: the budget half runs on its own cadence.
+    shared.__ufGuardScan.at = 0;
+    try {
+      const tick = liveGuardTick();
+      for (let i = 0; !joined && i < 100; i++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      assert.ok(joined, "the tick never reached its scan, so this proves nothing");
+      meanwhile();
+      release(snapshot);
+      await tick;
+    } finally {
+      shared.__ufSnapshotInflight = null;
+    }
+  }
+
+  it("records no interrupt for a run whose cycle ended during the scan", async () => {
+    const id = insertRun("running");
+    const guard = register(id);
+
+    // `startRun`'s inner `finally`, which is what a cycle ending does to it.
+    await tickWhileScanning(() => shared.__ufLiveGuards.delete(id));
+
+    assert.equal(
+      shared.__ufInterrupts.get(id),
+      undefined,
+      "a finished cycle's guard was evaluated, counting that cycle twice and " +
+        "leaving a stop for whatever the run does next",
+    );
+    assert.equal(guard.progress().spentGuardUSD, 6, "the fixture must be over its limit");
+  });
+
+  it("still stops a run whose cycle is still in flight", async () => {
+    const id = insertRun("running");
+    register(id);
+    try {
+      await tickWhileScanning(() => {});
+
+      const recorded = shared.__ufInterrupts.get(id);
+      assert.ok(recorded, "the live guard stopped acting at all");
+      assert.equal(recorded.kind, "guard");
+      assert.equal(recorded.code, "run_cost");
+    } finally {
+      shared.__ufLiveGuards.delete(id);
+      shared.__ufInterrupts.delete(id);
+    }
+  });
+
+  it("drops a stale guard verdict when the run is picked up again", async () => {
+    // The second line, for an entry the first did not stop: written after the
+    // loop's `finally` cleared the map, where nothing else would clear it. The
+    // run is at its cap, so its own pre-cycle guard ends it before any spawn
+    // — which reason it ends on is the whole assertion.
+    saveSettings({ maxConcurrentRuns: 1 });
+    insertRun("running", "-blocker");
+    const id = insertRun("queued");
+    shared.__ufInterrupts.set(id, {
+      kind: "guard",
+      code: "run_cost",
+      reason: "This run has spent $6.00, reaching its $5.00 spending limit.",
+      pause: false,
+      at: Date.now(),
+    });
+    try {
+      await startRun(id);
+    } finally {
+      saveSettings({ maxConcurrentRuns: null });
+    }
+
+    const row = getRun(id)!;
+    assert.equal(row.status, "stopped");
+    assert.equal(
+      row.stop_reason,
+      "Used all 1 work cycle allowed for this run.",
+      "the run ended on a verdict about a cycle that had finished before it was picked up",
+    );
+    assert.ok(
+      runEvents(id)
+        .events.filter((e) => e.kind === "log")
+        .some((e) => /Discarded a live budget verdict/.test(String(e.payload.message ?? ""))),
+      "a verdict dropped without a word reads as a guard that never fired",
+    );
+  });
+});
+
 describe("normalizeRunListQuery", () => {
   it("answers an unreadable page size with the ordinary page, not the smallest one", () => {
     // `selectBranchCandidates`' reasoning verbatim: these arrive off a query
@@ -6600,8 +6908,126 @@ describe("normalizeRunListQuery", () => {
   it("carries no status when none was named", () => {
     // Null rather than undefined, because the query below tests `!== null` to
     // decide whether the clause exists at all.
-    assert.equal(normalizeRunListQuery().status, null);
-    assert.equal(normalizeRunListQuery({ status: "failed" }).status, "failed");
+    assert.equal(normalizeRunListQuery().statuses, null);
+    assert.deepEqual(normalizeRunListQuery({ statuses: ["failed"] }).statuses, ["failed"]);
+  });
+
+  it("reads an empty status set as every status, not as none", () => {
+    // `IN ()` is a SQLite syntax error, and "no status matches" would draw an
+    // empty "In flight" band that reads as nothing running.
+    assert.equal(normalizeRunListQuery({ statuses: [] }).statuses, null);
+    assert.deepEqual(
+      normalizeRunListQuery({ statuses: ["running", "paused", "running"] }).statuses,
+      ["running", "paused"],
+    );
+  });
+
+  it("reads a settled-after boundary at or before the epoch as no boundary", () => {
+    // `settledBefore`'s rule, for the same blank parameter.
+    assert.equal(normalizeRunListQuery().settledAfter, null);
+    assert.equal(normalizeRunListQuery({ settledAfter: 0 }).settledAfter, null);
+    assert.equal(normalizeRunListQuery({ settledAfter: Number("") }).settledAfter, null);
+    assert.equal(
+      normalizeRunListQuery({ settledAfter: 1_750_000_000_000 }).settledAfter,
+      1_750_000_000_000,
+    );
+  });
+});
+
+/**
+ * The runs page's top bands, each asked for in its own query.
+ *
+ * They used to be cut in the browser out of one unfiltered hundred-row page,
+ * and the rows that fell off were the *oldest* active ones — which, behind a
+ * queue a workflow or a schedule filled, are the ones actually running. The
+ * seeding is that case: two old rows and a hundred newer queued ones, all in a
+ * folder of their own so the rows other cases in this file leave behind cannot
+ * move the counts.
+ */
+describe("listRunsPage", () => {
+  const folder = `${ws}/RunListBands`;
+  const now = Date.now();
+  const hour = 60 * 60 * 1000;
+  const boundary = now - 24 * hour;
+
+  function insertRun(
+    id: string,
+    status: RunStatus,
+    createdAt: number,
+    finishedAt: number | null,
+  ): void {
+    db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations,
+                           iterations, created_at, started_at, finished_at)
+         VALUES (?, ?, 'list the runs', ?, '{}', 5, 0, ?, ?, ?)`,
+      )
+      .run(id, folder, status, createdAt, createdAt, finishedAt);
+  }
+
+  // The running row also holds the folder, so a `promoteQueued` reached from
+  // anywhere while these exist finds none of the queued ones startable.
+  before(() => {
+    insertRun("bands-old-running", "running", now - 72 * hour, null);
+    insertRun("bands-old-finished", "failed", now - 71 * hour, now - hour);
+    // Settled exactly on the boundary, which belongs to exactly one side of it.
+    insertRun("bands-on-boundary", "completed", now - 70 * hour, boundary);
+    for (let i = 0; i < 100; i++) {
+      insertRun(`bands-queued-${String(i).padStart(3, "0")}`, "queued", now + i, null);
+    }
+  });
+
+  // Gone afterwards: a hundred queued rows and a running one would otherwise
+  // sit in every active-run walk the cases after this one make.
+  after(() => {
+    db().prepare("DELETE FROM runs WHERE folder = ?").run(folder);
+  });
+
+  const ids = (page: { rows: Array<{ id: string }> }) => page.rows.map((r) => r.id);
+
+  it("loses both old runs from the unfiltered newest page", () => {
+    // The shape the page used to cut its bands out of, pinned so the cases
+    // below are known to be answering a question this one cannot.
+    const page = listRunsPage({ q: folder });
+    assert.equal(page.rows.length, 100);
+    assert.equal(page.total, 103);
+    assert.ok(!ids(page).includes("bands-old-running"));
+    assert.ok(!ids(page).includes("bands-old-finished"));
+  });
+
+  it("finds the old running run when asked for what is executing", () => {
+    const page = listRunsPage({ q: folder, statuses: ["running", "paused"] });
+    assert.deepEqual(ids(page), ["bands-old-running"]);
+  });
+
+  it("reports the cap rather than hiding it when the active set outgrows a page", () => {
+    // Why the page asks for running and paused runs apart from the queue: over
+    // all four active statuses the default page is the hundred newest queued
+    // rows, and the running run is the one that falls off. `total` is what
+    // says so.
+    const page = listRunsPage({
+      q: folder,
+      statuses: ["running", "paused", "queued", "waiting"],
+    });
+    assert.equal(page.rows.length, 100);
+    assert.equal(page.total, 101);
+    assert.ok(!ids(page).includes("bands-old-running"));
+  });
+
+  it("finds the old run that finished an hour ago when asked for what settled since the boundary", () => {
+    const page = listRunsPage({ q: folder, settledAfter: boundary });
+    assert.deepEqual(ids(page).sort(), ["bands-old-finished", "bands-on-boundary"]);
+    // Settled means terminal: the hundred queued rows were created after the
+    // boundary and have no end instant, and must not be read as finished.
+    assert.equal(page.total, 2);
+  });
+
+  it("files a run that ended on the boundary in exactly one of the two lists", () => {
+    const after = ids(listRunsPage({ q: folder, settledAfter: boundary }));
+    const before = ids(listRunsPage({ q: folder, settledBefore: boundary }));
+    assert.ok(after.includes("bands-on-boundary"));
+    assert.ok(!before.includes("bands-on-boundary"));
+    assert.ok(!before.includes("bands-old-finished"));
   });
 });
 

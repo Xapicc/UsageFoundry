@@ -43,13 +43,24 @@ import { TBody, THead, Table, Td, Th, Tr } from "@/components/ui/Table";
  * `waiting` belongs here even though it holds no folder — it is a run the
  * operator started and expects to see start, and dropping it into the history
  * table below would file a run that has not happened yet under what has.
+ *
+ * Two requests rather than one, split where the bound changes. A workflow or a
+ * schedule can queue any number of runs, and over all four statuses a page of
+ * the newest rows is the newest *queued* ones — so the run actually spending,
+ * created before the queue was, is the one a cap cuts. This band used to be
+ * cut in the browser out of the hundred newest rows of every status, and lost
+ * exactly that run, with its Stop button, while the Fleet card still counted
+ * it. `listRunsPage`'s tests pin the case.
  */
-const ACTIVE: ReadonlySet<RunListItemDTO["status"]> = new Set([
-  "running",
-  "queued",
-  "paused",
-  "waiting",
-]);
+const EXECUTING: readonly RunListItemDTO["status"][] = ["running", "paused"];
+const QUEUE: readonly RunListItemDTO["status"][] = ["queued", "waiting"];
+
+/**
+ * Rows each band asks for: the route's own ceiling, which it answers with as
+ * the applied `limit`. What is past it is counted in `total` and said under
+ * the band, never dropped without a word.
+ */
+const BAND_LIMIT = 200;
 
 /**
  * What is spending now, then what will spend again on its own, then what has
@@ -90,9 +101,9 @@ const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
  * The instant dividing "finished in the last 24 hours" from "older", to the
  * minute.
  *
- * Quantised because it is read in two places that must agree — the bucket pass
- * over the poll's rows, and the `settledBefore` the older-runs fold asks the
- * route for — and the fold re-requests whenever it moves. At millisecond
+ * Quantised because it is read in two places that must agree — the
+ * `settledAfter` the poll asks the route for, and the `settledBefore` the
+ * older-runs fold does — and the fold re-requests whenever it moves. At millisecond
  * resolution that is a request per poll for an answer that cannot have changed;
  * pinned, the heading drifts on a tab left open overnight and eventually claims
  * a run finished in the last 24 hours that finished the day before. A minute is
@@ -102,6 +113,61 @@ const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
  */
 function bucketBoundary(at: number): number {
   return Math.floor((at - RECENT_WINDOW_MS) / 60_000) * 60_000;
+}
+
+/** The two bands above the fold, each as the server counted it. */
+interface Bands {
+  active: RunListItemDTO[];
+  activeTotal: number;
+  recent: RunListItemDTO[];
+  recentTotal: number;
+}
+
+const NO_BANDS: Bands = { active: [], activeTotal: 0, recent: [], recentTotal: 0 };
+
+/** One band's request, at the route's ceiling rather than its default page. */
+function bandRequest(params: Record<string, string>) {
+  const query = new URLSearchParams({ ...params, limit: String(BAND_LIMIT) });
+  return jsonRequest<RunListDTO>(`/api/runs?${query}`);
+}
+
+/**
+ * The "In flight" band out of its two answers: what is spending now, then what
+ * will spend again on its own, then what has not started.
+ *
+ * Deduplicated because the two are separate reads, so a run whose status moves
+ * between them can be in both — or in neither, for one poll. One key twice in a
+ * list is a React error; which copy survives does not matter, since the next
+ * poll reads it once.
+ */
+function activeBand(executing: RunListDTO, queue: RunListDTO): RunListItemDTO[] {
+  const byId = new Map<string, RunListItemDTO>();
+  for (const r of [...executing.runs, ...queue.runs]) {
+    if (!byId.has(r.id)) byId.set(r.id, r);
+  }
+  return [...byId.values()].sort(
+    (a, b) =>
+      ACTIVE_ORDER[a.status as keyof typeof ACTIVE_ORDER] -
+      ACTIVE_ORDER[b.status as keyof typeof ACTIVE_ORDER],
+  );
+}
+
+/**
+ * What a band holds when it holds less than the server counted.
+ *
+ * Every band is capped, and each of its queries drops its oldest rows. A band
+ * that silently stops at its cap is the failure this page's bands were split
+ * into their own queries to end, so the count comes with the rows. The count
+ * and nothing about which rows: in "In flight" the run created first is the
+ * running one and is shown, so "the oldest are missing" would be untrue there.
+ */
+function BandCap({ shown, total }: { shown: number; total: number }) {
+  if (total <= shown) return null;
+  return (
+    <p className="mt-2 text-sm tabular-nums text-ink-muted">
+      Showing {shown} of {total}.
+    </p>
+  );
 }
 
 /**
@@ -118,10 +184,10 @@ type Filter = "all" | "completed" | "needs-review" | "stopped" | "failed" | "blo
 const FILTERS: readonly SegmentedOption<Filter>[] = [
   { value: "all", label: "All" },
   { value: "completed", label: "Completed" },
-  // The segment is what makes this ending findable. `ACTIVE` correctly does not
-  // hold it, so the run drops into the history table already — but without a
-  // segment of its own the one state whose entire content is "a person should
-  // look at this" is reachable only under "All".
+  // The segment is what makes this ending findable. `EXECUTING` and `QUEUE`
+  // correctly do not hold it, so the run drops into the history table already —
+  // but without a segment of its own the one state whose entire content is "a
+  // person should look at this" is reachable only under "All".
   { value: "needs-review", label: "Needs review" },
   { value: "stopped", label: "Stopped" },
   { value: "failed", label: "Failed" },
@@ -598,7 +664,7 @@ function RunList({
 }
 
 export default function RunsPage() {
-  const [runs, setRuns] = useState<RunListItemDTO[]>([]);
+  const [bands, setBands] = useState<Bands>(NO_BANDS);
   const [boot, setBoot] = useState<BootReconcileDTO | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -622,13 +688,13 @@ export default function RunsPage() {
   /**
    * The instant that divides "finished in the last 24 hours" from "older".
    *
-   * One value, read by both sides, which is the whole point: the poll's rows are
-   * bucketed against it here and the fold asks the route for the settled runs
-   * from *before* it. Two clocks a few seconds apart would leave a run sitting
-   * on the boundary in neither list — on this page a run that has simply
-   * vanished — or in both, which is the duplication the bucket pass below was
-   * written to end. Advanced by the poll and quantised by `bucketBoundary`, so
-   * the fold reloads when it steps rather than on every poll.
+   * One value, sent by both sides, which is the whole point: the poll asks the
+   * route for the runs that settled at or after it and the fold for the ones
+   * from *before* it, which the route files on either side of one comparison.
+   * Two clocks a few seconds apart would leave a run sitting on the boundary in
+   * neither list — on this page a run that has simply vanished — or in both.
+   * Advanced by the poll and quantised by `bucketBoundary`, so the fold reloads
+   * when it steps rather than on every poll.
    */
   const [boundary, setBoundary] = useState(() => bucketBoundary(Date.now()));
   // Ticked into state rather than read during render: paused runs show a live
@@ -653,30 +719,43 @@ export default function RunsPage() {
    * unhandled one that nothing on the page reacted to.
    */
   const loadRuns = useCallback(async () => {
+    // The bucket boundary rides the poll rather than a clock of its own, and
+    // steps once a minute: React discards an identical number, so the fourteen
+    // polls in between are not fourteen reloads of the fold below. Read before
+    // the requests, so the one the recent band is asked with is the one the
+    // fold is then handed.
+    const cut = bucketBoundary(Date.now());
+    // Each band in its own query, per `EXECUTING`: narrowed by the route over
+    // every row, never cut here out of a page that was capped before it arrived.
     try {
-      const res = await fetch("/api/runs", { cache: "no-store" });
-      // Parsed before the status check: a 500 carries no JSON, and letting that
-      // throw would report a reachable server as an unreachable one.
-      const data = (await res.json().catch(() => ({}))) as Partial<
-        RunListDTO & { error: string }
-      >;
-      if (!res.ok || !data.runs) {
-        const detail = data.error ?? (res.ok ? "no runs in the response" : null);
-        setPollError(pollFailureMessage(res.status, detail));
-        return;
+      const answers = await Promise.all([
+        bandRequest({ status: EXECUTING.join(",") }),
+        bandRequest({ status: QUEUE.join(",") }),
+        bandRequest({ settledAfter: String(cut) }),
+      ]);
+      const pages: RunListDTO[] = [];
+      for (const answer of answers) {
+        if (!answer.ok) {
+          setPollError(pollFailureMessage(answer.status, answer.error));
+          return;
+        }
+        if (!Array.isArray(answer.data.runs)) {
+          setPollError(pollFailureMessage(200, "no runs in the response"));
+          return;
+        }
+        pages.push(answer.data);
       }
-      const at = Date.now();
-      setRuns(data.runs);
-      setBoot(data.lastBootReconcile ?? null);
-      setReadAt(at);
-      // The bucket boundary rides the poll rather than a clock of its own, and
-      // steps once a minute: React discards an identical number, so the fourteen
-      // polls in between are not fourteen reloads of the fold below.
-      setBoundary(bucketBoundary(at));
+      const [executing, queue, settled] = pages;
+      setBands({
+        active: activeBand(executing, queue),
+        activeTotal: executing.total + queue.total,
+        recent: settled.runs,
+        recentTotal: settled.total,
+      });
+      setBoot(executing.lastBootReconcile ?? null);
+      setReadAt(Date.now());
+      setBoundary(cut);
       setPollError(null);
-    } catch (err) {
-      const cause = err instanceof Error ? err.message : String(err);
-      setPollError(pollFailureMessage(null, cause));
     } finally {
       setLoaded(true);
     }
@@ -691,12 +770,13 @@ export default function RunsPage() {
   /**
    * The fold's own page of history, filtered and paged by the server.
    *
-   * A second request rather than a slice of the first, because the two ask
+   * A request of its own rather than a slice of the poll's, because the two ask
    * different questions of the same table. The poll above is "what is happening
-   * now": the newest page, unfiltered, every four seconds, and it is what the
-   * two sections above are drawn from. This is "what happened": one page of the
-   * runs that settled before the boundary, narrowed by whatever the fold's own
-   * controls say, over every row there is rather than over the newest hundred.
+   * now": what is in flight and what settled since the boundary, every four
+   * seconds, and it is what the two sections above are drawn from. This is
+   * "what happened": one page of the runs that settled before the boundary,
+   * narrowed by whatever the fold's own controls say, over every row there is
+   * rather than over the newest hundred.
    *
    * Not on the four-second poll. A run that settled more than a day ago does not
    * move on its own, so this reloads on what actually changes it: one of the
@@ -760,8 +840,8 @@ export default function RunsPage() {
    * since the last four-second poll.
    */
   const counting = useMemo(
-    () => runs.some((r) => r.status === "paused" && r.resume_at),
-    [runs],
+    () => bands.active.some((r) => r.status === "paused" && r.resume_at),
+    [bands],
   );
 
   useEffect(() => {
@@ -773,43 +853,6 @@ export default function RunsPage() {
     const clock = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(clock);
   }, [counting]);
-
-  /**
-   * One pass, two buckets, no overlap — and the third bucket is the server's.
-   *
-   * This used to sort the same rows into three, the last of them being the
-   * hundred-newest window's leftovers. The fold at the bottom asks the route for
-   * that bucket directly now, filtered and paged over the whole table, so a row
-   * older than the boundary is dropped here rather than rendered in both places
-   * — which is the duplication this pass replaced in the first place, when the
-   * active runs appeared in their own table *and* again in the history table.
-   *
-   * Cut against `boundary` rather than the countdown's clock, for two reasons.
-   * It is the same value the fold's request carried, and it has to be, or a run
-   * on the boundary lands in neither list; and the rows it sorts arrive with the
-   * poll, so asking at 1 Hz rebuilt both arrays — and re-rendered every list
-   * below them — to answer a question that cannot change between two reads of
-   * the same list.
-   */
-  const { active, recent } = useMemo(() => {
-    const active: RunListItemDTO[] = [];
-    const recent: RunListItemDTO[] = [];
-    for (const r of runs) {
-      if (ACTIVE.has(r.status)) {
-        active.push(r);
-        continue;
-      }
-      const at = r.finished_at ?? r.started_at ?? r.created_at;
-      if (at < boundary) continue;
-      recent.push(r);
-    }
-    active.sort(
-      (a, b) =>
-        ACTIVE_ORDER[a.status as keyof typeof ACTIVE_ORDER] -
-        ACTIVE_ORDER[b.status as keyof typeof ACTIVE_ORDER],
-    );
-    return { active, recent };
-  }, [runs, boundary]);
 
   /**
    * Whether the fold is narrowed, which is what tells an empty one apart from an
@@ -851,18 +894,20 @@ export default function RunsPage() {
   const resume = (id: string) => act(id, `/api/runs/${id}/resume`, "POST");
 
   /** Empty because nothing arrived, as against empty because nothing is there. */
-  const blank = runs.length === 0 && pollError !== null;
+  const blank =
+    bands.active.length === 0 && bands.recent.length === 0 && pollError !== null;
 
   /**
-   * The finished runs a bulk pick-up would act on: the ones the poll's own page
-   * holds, in the order it read them.
+   * The finished runs a bulk pick-up would act on: the ones in the "Finished in
+   * the last 24 hours" band, in the order the poll read them.
    *
-   * Read from the poll rather than from what is rendered, and that is a decision
-   * now that the fold below is paged. A list built from the rendered rows would
-   * make the button's count a function of which page of history somebody
-   * happened to be on — press it on page five and it picks up page five — while
-   * the poll's page is the same hundred newest runs it has always been, so the
-   * count does not move under the operator.
+   * Read from the poll rather than from the fold, and that is a decision now
+   * that the fold below is paged. A list built from the fold's rows would make
+   * the button's count a function of which page of history somebody happened
+   * to be on — press it on page five and it picks up page five — while the
+   * band is the same question every four seconds. It used to be the poll's
+   * hundred newest rows of any age, most of which no band drew, so the button
+   * swept runs nobody on this page had been shown.
    *
    * Derived here and handed down rather than read inside the control, because
    * the rule is about *what somebody looked at* — a run that failed between the
@@ -875,11 +920,13 @@ export default function RunsPage() {
    */
   const reopenable = useMemo(
     () =>
-      runs
+      bands.recent
         .filter((r) => REOPENABLE.has(r.status) && !r.set_aside_at)
         .map((r) => ({ id: r.id, status: r.status })),
-    [runs],
+    [bands],
   );
+
+  const { active, activeTotal, recent, recentTotal } = bands;
 
   return (
     <>
@@ -946,11 +993,11 @@ export default function RunsPage() {
       <div className="mb-8">
         <CardTitle>
           In flight
-          {active.length > 0 && <Badge tone="accent">{active.length}</Badge>}
+          {activeTotal > 0 && <Badge tone="accent">{activeTotal}</Badge>}
         </CardTitle>
         <p className="sr-only" aria-live="polite">
           {loaded
-            ? `${active.length} run${active.length === 1 ? "" : "s"} in flight`
+            ? `${activeTotal} run${activeTotal === 1 ? "" : "s"} in flight`
             : ""}
         </p>
         {!loaded ? (
@@ -982,15 +1029,18 @@ export default function RunsPage() {
             </Empty>
           </Card>
         ) : (
-          <RunList
-            runs={active}
-            kind="active"
-            now={now}
-            busyId={busyId}
-            onStop={stop}
-            onResume={resume}
-            caption="Runs in flight, the ones spending now first"
-          />
+          <>
+            <RunList
+              runs={active}
+              kind="active"
+              now={now}
+              busyId={busyId}
+              onStop={stop}
+              onResume={resume}
+              caption="Runs in flight, the ones spending now first"
+            />
+            <BandCap shown={active.length} total={activeTotal} />
+          </>
         )}
       </div>
 
@@ -1022,12 +1072,15 @@ export default function RunsPage() {
             </Empty>
           </Card>
         ) : (
-          <RunList
-            runs={recent}
-            kind="history"
-            now={now}
-            caption="Runs that finished in the last 24 hours, newest first"
-          />
+          <>
+            <RunList
+              runs={recent}
+              kind="history"
+              now={now}
+              caption="Runs that finished in the last 24 hours, newest first"
+            />
+            <BandCap shown={recent.length} total={recentTotal} />
+          </>
         )}
       </div>
 

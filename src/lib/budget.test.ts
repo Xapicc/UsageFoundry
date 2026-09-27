@@ -668,6 +668,66 @@ describe("evaluateBudget", () => {
     );
   });
 
+  /**
+   * The cycle a task check grants is past `maxIterations` by construction, so
+   * a guard that does not add it back refuses the very cycle it was granted —
+   * on the default cap of 1, every run the check sent back ended there with the
+   * verdict paid for and the task left claimed.
+   */
+  it("admits a cycle a task check granted past the cap, and only that one", () => {
+    const policy = { ...base, maxIterations: 1 };
+    const granted = evaluateBudget(
+      policy,
+      snapshot(null, null),
+      { ...noProgress, iterations: 1, grantedCycles: 1 },
+      0,
+    );
+    assert.equal(granted.allowed, true);
+    assert.deepEqual(
+      granted.meters.find((m) => m.label === "Work cycles used"),
+      { label: "Work cycles used", value: 1, limit: 2, unit: "count" },
+      "the card has to show the cap the guard decided on, or it reads 2/1",
+    );
+
+    const none = evaluateBudget(
+      policy,
+      snapshot(null, null),
+      { ...noProgress, iterations: 1, grantedCycles: 0 },
+      0,
+    );
+    assert.equal(none.allowed === false && none.code, "iterations");
+
+    const spent = evaluateBudget(
+      policy,
+      snapshot(null, null),
+      { ...noProgress, iterations: 2, grantedCycles: 1 },
+      0,
+    );
+    assert.equal(spent.allowed === false && spent.code, "iterations");
+    assert.match(
+      spent.allowed === false ? spent.reason : "",
+      /Used all 2 work cycles .* the 1 it was given and 1 more the check on its task granted/,
+    );
+  });
+
+  it("widens the cycle cap and nothing else, so a grant cannot outlast time or money", () => {
+    const outOfTime = evaluateBudget(
+      { ...base, maxIterations: 1, maxDurationMinutes: 10 },
+      snapshot(null, null),
+      { ...noProgress, iterations: 1, grantedCycles: 1 },
+      STARTED_AT + 10 * 60_000,
+    );
+    assert.equal(outOfTime.allowed === false && outOfTime.code, "duration");
+
+    const outOfMoney = evaluateBudget(
+      { ...base, maxIterations: 1, maxRunCostUSD: 5 },
+      snapshot(null, null),
+      { ...noProgress, iterations: 1, grantedCycles: 1, spentUSD: 5 },
+      0,
+    );
+    assert.equal(outOfMoney.allowed === false && outOfMoney.code, "run_cost");
+  });
+
   it("stops at the time limit exactly, because the clock is a terminus", () => {
     const policy = { ...base, maxDurationMinutes: 10 };
     const v = evaluateBudget(

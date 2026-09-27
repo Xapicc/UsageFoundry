@@ -52,6 +52,7 @@ assert.equal(
 
 const {
   createRun,
+  cycleCutByRestart,
   getRun,
   killAllAgents,
   reconcileInterruptedCycles,
@@ -69,6 +70,7 @@ const { assistRefusal, getAssist, SHUTDOWN_REFUSAL, startAssist } =
   require("./review") as typeof import("./review");
 const { getSettings, saveSettings } =
   require("./settings") as typeof import("./settings");
+const { runVerify } = require("./landGate") as typeof import("./landGate");
 
 const SESSION = "11111111-2222-3333-4444-555555555555";
 const lockFile = path.join(config.DATA_DIR, "server.lock");
@@ -208,6 +210,11 @@ describe("shutting down with a work cycle in flight", () => {
       1,
       "it has to be findable as one the restart closed out",
     );
+    // And as one whose cycle the restart cut off, which `stopped` cannot say:
+    // this is the row picking it up must tell that its last cycle did not
+    // finish, and it read as an ordinary stop.
+    assert.equal(settled.restart_cut_cycle, 1);
+    assert.equal(cycleCutByRestart(settled), true);
 
     // One child, not two: the second work cycle its budget allowed must not
     // have been spawned on the way out of the door.
@@ -255,6 +262,11 @@ describe("shutting down with a work cycle in flight", () => {
     );
     assert.match(settled.stop_reason ?? "", /server shut down \(SIGINT\)/);
     assert.equal(spawned, spawnedBefore, "no work cycle may start on the way out");
+    // Closed out by the restart like the run above, and with the same ending,
+    // but it had no cycle to cut off and must not be told it had one.
+    assert.equal(settled.restart_closed, 1);
+    assert.equal(settled.restart_cut_cycle, 0);
+    assert.equal(cycleCutByRestart(settled), false);
   });
 
   it("mops up a cycle whose loop never got to finish", async () => {
@@ -354,6 +366,9 @@ describe("shutting down with a work cycle in flight", () => {
     assert.equal(row.active_started_at, null);
     assert.equal(row.status, "failed");
     assert.equal(row.restart_closed, 1);
+    // No shutdown reached it to record a child, so `failed` is what says so.
+    assert.equal(row.restart_cut_cycle, 0);
+    assert.equal(cycleCutByRestart(row), true);
   });
 });
 
@@ -517,6 +532,31 @@ describe("shutting down with a child that is not a work cycle", () => {
       untrack();
     }
     assert.deepEqual(signals, ["SIGKILL"]);
+  });
+
+  it("reaches a land's verify command, which is waited on and nothing else signals", async () => {
+    // A real child, through the spawn this file otherwise replaces: what has to
+    // hold is that the sweep reaches the process `runVerify` started, and the
+    // fake exits on any signal it is handed. Its own timeout is the
+    // fifteen-minute default, so nothing but the sweep can end it inside the
+    // bound.
+    const dir = fs.mkdtempSync(path.join(tmp, "verify-"));
+    fs.writeFileSync(path.join(dir, "check.sh"), "sleep 6\n");
+    const fakeSpawn = childProcess.spawn;
+    childProcess.spawn = realSpawn;
+    const started = Date.now();
+    let verdict: ReturnType<typeof runVerify>;
+    try {
+      verdict = runVerify(dir, "sh check.sh");
+    } finally {
+      childProcess.spawn = fakeSpawn;
+    }
+
+    killAllAgents("SIGKILL");
+    const outcome = await verdict;
+
+    assert.ok(Date.now() - started < 4_000, "the check outlived the final sweep");
+    assert.equal(outcome.passed, false);
   });
 
   it("refuses to start another once the process is going down", async () => {

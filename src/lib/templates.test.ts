@@ -20,9 +20,10 @@ import {
  * Specifically: a `permissionMode` that reaches `--permission-mode` without
  * being one of the four literals; a template that can be saved but never
  * instantiated, because `maxIterations: null` with no time limit is refused by
- * `POST /api/runs` and again as `no_terminus`; and a folder whose "not
- * recorded" collapses into "the whole workspace", which is the one selection
- * that blocks every other run in the tree.
+ * `POST /api/runs` and again as `no_terminus`; a limit switched on with its
+ * box left blank, which `normalizePolicy` would store as no limit at all; and
+ * a folder whose "not recorded" collapses into "the whole workspace", which is
+ * the one selection that blocks every other run in the tree.
  */
 
 const OK = {
@@ -143,6 +144,34 @@ describe("normalizeTemplateInput — budget", () => {
     });
     assert.equal(v.budget.maxIterations, null);
     assert.equal(v.budget.maxDurationMinutes, 120);
+  });
+
+  it("refuses a spending limit switched on with its box blank", () => {
+    for (const blank of ["", "  "]) {
+      assert.match(
+        error({ ...OK, budget: { maxIterations: "5", maxRunCostUSD: blank } }),
+        /spending limit/,
+      );
+    }
+  });
+
+  it("refuses a time limit switched on with its box blank", () => {
+    for (const blank of ["", "  "]) {
+      assert.match(
+        error({ ...OK, budget: { maxIterations: "5", maxDurationMinutes: blank } }),
+        /time limit/,
+      );
+    }
+  });
+
+  it("still saves null as a limit that is off", () => {
+    const v = value({
+      ...OK,
+      budget: { maxIterations: "5", maxRunCostUSD: null, maxDurationMinutes: null },
+    });
+    assert.equal(v.budget.maxRunCostUSD, null);
+    assert.equal(v.budget.maxDurationMinutes, null);
+    assert.equal(v.budget.maxIterations, 5);
   });
 
   it("refuses an unrecognised enforcement mode rather than downgrading it", () => {
