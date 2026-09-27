@@ -2819,7 +2819,6 @@ export default function SettingsPage() {
         id="limits"
         lead
         title="Subscription limits"
-        lede="Where the percentages on the dashboard, and every window guard, come from."
       >
         <ListGroup className="mb-4">
           <SettingRow
@@ -2828,11 +2827,10 @@ export default function SettingsPage() {
             label="Read plan usage from Anthropic"
             description={
               <>
-                The figure <span className="mono">/usage</span> shows, for the
-                whole account rather than Claude Code alone, read with the
-                credential the CLI already keeps here. The one percentage on the
-                dashboard that is measured rather than estimated — the ceilings
-                below are what it falls back to
+                The account-wide figure <span className="mono">/usage</span>{" "}
+                shows, read with the credential the CLI already keeps here; the
+                only percentage on the dashboard that is measured rather than
+                estimated
               </>
             }
           >
@@ -2847,7 +2845,7 @@ export default function SettingsPage() {
             htmlFor="side"
             edited={isEdited("includeSidechains")}
             label="Count sub-agent turns in usage totals"
-            description="Sub-agent turns bill normally, so counting them is the accurate default. It moves the dashboard meters and what the scan below measures — exclude only to compare main-thread cost"
+            description="Sub-agent turns bill normally, so excluding them understates the dashboard meters and the scan below"
           >
             <Switch
               id="side"
@@ -2870,12 +2868,8 @@ export default function SettingsPage() {
           label="Cost ceilings"
           footnote={
             <>
-              Blank leaves that meter hatched rather than showing a percentage,
-              and a guard written as a fraction of it is refused rather than
-              ignored. Cost rather than raw tokens because a Claude Code
-              workload is mostly cache reads, which bill at 0.1× and would
-              otherwise dominate a token count without consuming a comparable
-              share of your plan
+              Blank leaves that meter hatched, and refuses any guard written as
+              a fraction of it
             </>
           }
         >
@@ -2949,8 +2943,8 @@ export default function SettingsPage() {
             description={
               <>
                 {effective.planUsageFromApi
-                  ? "Applies to the estimated ceilings only. The reading above already counts Cowork, Desktop and the web app, so nothing is held back from it — subtracting a reserve there would take the same allowance off twice"
-                  : "Cowork, Desktop and the web app share your limits and write no local transcripts, so this tool cannot see them — reserving headroom shrinks every ceiling so guards trip early"}
+                  ? "Applies to the estimated ceilings only; the reading above already counts Cowork, Desktop and the web app"
+                  : "Cowork, Desktop and the web app share your limits but write no transcripts here; this shrinks every ceiling so guards trip early"}
                 {effectiveCeilings(
                   effective.reservedHeadroomFraction,
                   effective.sessionCostLimit,
@@ -3144,9 +3138,9 @@ export default function SettingsPage() {
                   {resetTooFarAhead ? (
                     "No window can reset more than five hours from now — check the date"
                   ) : effective.planUsageFromApi ? (
-                    "Not needed while the reading above is on: Anthropic names the reset instant itself, and that wins over anything typed here"
+                    "Ignored while the reading above is on: Anthropic's own reset time wins"
                   ) : effective.sessionResetOverrideAt === null ? (
-                    "Blank is the normal state. Only needed after a tier change, which restarts the window with no trace in any transcript"
+                    "Only needed after a tier change, which restarts the window with no trace in any transcript"
                   ) : Date.now() < effective.sessionResetOverrideAt ? (
                     <>
                       In force until{" "}
@@ -3205,14 +3199,14 @@ export default function SettingsPage() {
           <ListGroup
             className={FOLD_BODY}
             label="Where a ceiling can come from"
-            footnote="Nothing publishes your limit, so the least-bad evidence is your own history: a 5-hour block that reached a figure without being cut off proves the ceiling is at least that"
+            footnote="A 5-hour block that reached a figure without being cut off proves the ceiling is at least that"
           >
             <SettingRow
-              label="Estimate from your own history"
+              label="Peak usage"
               description={
                 calBusy
                   ? "Reading every transcript on this disk…"
-                  : "Reports the highest 5-hour block and 7-day window it can find. Nothing is stored until you save"
+                  : "Highest 5-hour block and 7-day window on this disk"
               }
             >
               <Button
@@ -3341,9 +3335,12 @@ export default function SettingsPage() {
               </Notice>
 
               <Button variant="secondary" onClick={applySuggestion}>
-                Copy peaks into the fields above
+                Copy peaks
               </Button>
-              <Hint>Both metrics at once. Nothing is stored until you save</Hint>
+              <Hint>
+                Into the cost and token ceilings above; nothing is stored until
+                you save
+              </Hint>
             </div>
           )}
         </Disclosure>
