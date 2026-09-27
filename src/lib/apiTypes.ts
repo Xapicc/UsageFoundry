@@ -2556,7 +2556,7 @@ export interface DiffFileDTO {
   added: number | null;
   deleted: number | null;
   binary: boolean;
-  /** Null when the patch was withheld to stay inside the size budget. */
+  /** Null when the patch was left out, by the budget or by a read that failed. */
   patch: string | null;
   patchTruncated: boolean;
 }
@@ -2573,7 +2573,10 @@ export interface RunDiffDTO {
   filesChanged: number;
   added: number;
   deleted: number;
+  /** Files listed without a patch, for the budget or for a failed read. */
   omittedPatches: number;
+  /** Why no file has a patch when git could not give them; null when only the budget left files out. */
+  patchFailure: string | null;
   uncommitted: string[];
   caveat: string | null;
 }
@@ -2690,6 +2693,7 @@ export interface ResolutionChangeDTO {
   commit: string;
   files: DiffFileDTO[];
   omittedPatches: number;
+  patchFailure: string | null;
 }
 
 /** One `<<<<<<< … >>>>>>>` block, as the merge would leave it. */

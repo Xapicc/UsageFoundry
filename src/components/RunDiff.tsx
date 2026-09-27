@@ -150,8 +150,11 @@ export function RunDiff({ run }: { run: RunDTO }) {
                   {diff.omittedPatches} file{diff.omittedPatches === 1 ? "" : "s"} listed
                   without contents.
                 </strong>{" "}
-                The change is too large to render whole. Every changed file is still in
-                the list below.
+                {/* Size is one reason and a failed read is another. Blaming size
+                    for a read that failed tells the operator a small change was
+                    large and sends them nowhere near what went wrong. */}
+                {diff.patchFailure ?? "The change is too large to render whole"}. Every
+                changed file is still in the list below.
               </Notice>
             )}
 

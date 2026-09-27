@@ -561,7 +561,8 @@ export function RunLand({ run }: { run: RunDTO }) {
                     <Hint tone="warn">
                       {resolution.changed.omittedPatches} file
                       {resolution.changed.omittedPatches === 1 ? "" : "s"} listed
-                      without contents — too large to render here
+                      without contents —{" "}
+                      {resolution.changed.patchFailure ?? "too large to render here"}
                     </Hint>
                   )}
                   <Hint>

@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   diffAsText,
+  parseLsTreeSizes,
   parseNameStatus,
   parseNumstat,
   selectForPatch,
@@ -117,6 +118,41 @@ describe("splitPatches", () => {
   it("returns nothing for an empty diff", () => {
     assert.deepEqual(splitPatches(""), []);
   });
+
+  it("keeps a file that became a symlink as one chunk, as numstat counts it", () => {
+    // git 2.39.5's own output for `rm f; ln -s g f; echo y >> g`: numstat
+    // lists `f` and `g`, the patch writes `f` twice under one header. Split
+    // three ways, the count disagrees and every file loses its patch.
+    const typeChange = [
+      "diff --git a/f b/f",
+      "deleted file mode 100644",
+      "index 7898192..0000000",
+      "--- a/f",
+      "+++ /dev/null",
+      "@@ -1 +0,0 @@",
+      "-a",
+      "diff --git a/f b/f",
+      "new file mode 120000",
+      "index 0000000..7937c68",
+      "--- /dev/null",
+      "+++ b/f",
+      "@@ -0,0 +1 @@",
+      "+g",
+      "\\ No newline at end of file",
+      "diff --git a/g b/g",
+      "index 01058d8..b21bd8b 100644",
+      "--- a/g",
+      "+++ b/g",
+      "@@ -1 +1,2 @@",
+      " g",
+      "+y",
+    ].join("\n");
+    const chunks = splitPatches(typeChange);
+    assert.equal(chunks.length, 2);
+    assert.match(chunks[0], /^diff --git a\/f b\/f\ndeleted file mode/);
+    assert.match(chunks[0], /\nnew file mode 120000\n/);
+    assert.ok(chunks[1].startsWith("diff --git a/g b/g"));
+  });
 });
 
 /* ------------------------------------------------------------------ */
@@ -124,17 +160,19 @@ describe("splitPatches", () => {
 /* ------------------------------------------------------------------ */
 
 describe("selectForPatch", () => {
-  const file = (path: string, added: number, deleted = 0) => ({
+  const file = (path: string, added: number, deleted = 0, bytes: number | null = 100) => ({
     path,
     oldPath: null,
     added,
     deleted,
+    bytes,
   });
+  const limits = { maxFiles: 10, maxLines: 100, maxFileLines: 600, maxBytes: 1_000_000 };
 
   it("stops at the line budget and reports what it left out", () => {
     const { selected, omitted } = selectForPatch(
       [file("a", 40), file("b", 40), file("c", 40)],
-      { maxFiles: 10, maxLines: 100, maxFileLines: 600 },
+      limits,
     );
     assert.deepEqual(
       selected.map((e) => e.path),
@@ -152,8 +190,7 @@ describe("selectForPatch", () => {
     // so charging the budget its full size would push every later file out for
     // lines that are never shown.
     const { selected } = selectForPatch([file("lock", 100_000), file("src", 10)], {
-      maxFiles: 10,
-      maxLines: 100,
+      ...limits,
       maxFileLines: 50,
     });
     assert.deepEqual(
@@ -163,12 +200,94 @@ describe("selectForPatch", () => {
   });
 
   it("lets a binary file through without spending the budget", () => {
+    // Its blobs can be any size: git writes one "Binary files … differ" line
+    // for it, and that is all the read carries.
     const { selected, omitted } = selectForPatch(
-      [{ path: "logo.png", oldPath: null, added: null, deleted: null }],
-      { maxFiles: 10, maxLines: 0, maxFileLines: 600 },
+      [{ path: "logo.png", oldPath: null, added: null, deleted: null, bytes: 5_000_000 }],
+      { ...limits, maxLines: 0, maxBytes: 0 },
     );
     assert.equal(selected.length, 1);
     assert.equal(omitted.length, 0);
+  });
+
+  it("leaves out a one-line file of megabytes and keeps the small change beside it", () => {
+    // A minified bundle: one line, so no line budget notices it, and more
+    // bytes than the one read all the selected patches share. Selected, it
+    // failed that read and took `small.ts`'s patch with it.
+    const { selected, omitted } = selectForPatch(
+      [file("dist.min.js", 1, 0, 4_200_000), file("small.ts", 1, 0, 120)],
+      { ...limits, maxBytes: 3_000_000 },
+    );
+    assert.deepEqual(
+      selected.map((e) => e.path),
+      ["small.ts"],
+    );
+    assert.deepEqual(
+      omitted.map((e) => e.path),
+      ["dist.min.js"],
+    );
+  });
+
+  it("charges the byte budget across files, not per file", () => {
+    const { selected, omitted } = selectForPatch(
+      [file("a", 1, 0, 599), file("b", 1, 0, 599), file("c", 1, 0, 299)],
+      { ...limits, maxBytes: 1_000 },
+    );
+    assert.deepEqual(
+      selected.map((e) => e.path),
+      ["a", "c"],
+    );
+    assert.deepEqual(
+      omitted.map((e) => e.path),
+      ["b"],
+    );
+  });
+
+  it("charges a marker for every changed line on top of the content", () => {
+    // Two million blank lines are two megabytes of file and four of patch,
+    // since each line gains a "+". Charged the file alone it fits and then
+    // overflows the read.
+    // A line budget this file fits, so only the byte charge can leave it out.
+    const { omitted } = selectForPatch([file("blank.txt", 2_000_000, 0, 2_000_000)], {
+      ...limits,
+      maxLines: 4_000,
+      maxBytes: 3_000_000,
+    });
+    assert.deepEqual(
+      omitted.map((e) => e.path),
+      ["blank.txt"],
+    );
+  });
+
+  it("gives no patch to a text file whose size was never read", () => {
+    // Its cost is unknown, and the read it would join fails whole.
+    const { selected, omitted } = selectForPatch([file("a", 1, 0, null)], limits);
+    assert.equal(selected.length, 0);
+    assert.deepEqual(
+      omitted.map((e) => e.path),
+      ["a"],
+    );
+  });
+});
+
+describe("parseLsTreeSizes", () => {
+  it("reads padded sizes, keeps a path with a tab whole, and charges a submodule nothing", () => {
+    const raw = [
+      "100644 blob 1b4b06b233fd658b13575dad591777215d83326e       5\td/sub/we*ird.txt",
+      "120000 blob 7937c68fbcf7c484f2d5ce7801944416eedf0d2c       1\tf",
+      "100644 blob b21bd8ba4bd872f25b29543ac0db785a0442b8e8 4200000\ttab\there.js",
+      "160000 commit 8e9bedec455d8e3f153a17d9c401177a12efec7a       -\tvendor/lib",
+      "",
+    ].join("\0");
+    assert.deepEqual(
+      [...parseLsTreeSizes(raw)],
+      [
+        ["d/sub/we*ird.txt", 5],
+        ["f", 1],
+        ["tab\there.js", 4_200_000],
+        ["vendor/lib", 0],
+      ],
+    );
   });
 });
 
@@ -201,6 +320,7 @@ describe("diffAsText", () => {
     added: 0,
     deleted: 0,
     omittedPatches: 0,
+    patchFailure: null,
     uncommitted: [],
     caveat: null,
   });

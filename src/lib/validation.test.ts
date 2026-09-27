@@ -366,6 +366,7 @@ describe("buildValidationPrompt", () => {
     added: 40,
     deleted: 2,
     omittedPatches: 0,
+    patchFailure: null,
     uncommitted: [],
     caveat: null,
   };

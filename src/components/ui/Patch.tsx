@@ -181,10 +181,11 @@ export function DiffFileRow({ file }: { file: DiffFileDTO }) {
     >
       <div className="mt-2">
         {file.patch === null ? (
+          // No reason here: the row cannot tell a budget's omission from a read
+          // that failed, and the notice over the list says which it was.
           <Hint tone="warn">
-            This file&rsquo;s contents were left out — the change is too large to
-            render here. See it with <span className="mono">git diff</span> in the
-            repository
+            This file&rsquo;s contents are not shown here. See it with{" "}
+            <span className="mono">git diff</span> in the repository
           </Hint>
         ) : (
           <>

@@ -49,6 +49,7 @@ function diff(over: Partial<RunDiffDTO> = {}): RunDiffDTO {
     added: 0,
     deleted: 0,
     omittedPatches: 0,
+    patchFailure: null,
     uncommitted: [],
     caveat: null,
     ...over,
