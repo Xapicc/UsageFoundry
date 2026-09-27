@@ -35,7 +35,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * One page of the board: `?offset=`, `?limit=`, `?status=`, `?origin=`,
- * `?priority=`, `?mountId=`, `?folder=`.
+ * `?priority=`, `?mountId=`, `?folder=`, `?operatorOnly=true|false`.
  *
  * The narrowing happens in the query rather than in a reader over an
  * already-capped page, and an unknown `status`, `origin` or `priority` is a
@@ -86,6 +86,18 @@ export async function GET(req: Request) {
     );
   }
 
+  // The same rule as the three above for a flag: `operatorOnly=yes` answered
+  // with the whole board would read as the operator's lane holding everything.
+  const askedLane = params.get("operatorOnly");
+  const operatorOnly =
+    askedLane === "true" ? true : askedLane === "false" ? false : null;
+  if (askedLane && operatorOnly === null) {
+    return NextResponse.json(
+      { error: `operatorOnly must be true or false; got ${askedLane}` },
+      { status: 400 },
+    );
+  }
+
   const page = listTasks({
     offset: Number(params.get("offset") ?? 0),
     limit: Number(params.get("limit") ?? 0),
@@ -94,6 +106,7 @@ export async function GET(req: Request) {
     priority,
     mountId: params.get("mountId"),
     folder: params.get("folder"),
+    operatorOnly,
   });
 
   // One query for the whole page rather than one per row: the board polls

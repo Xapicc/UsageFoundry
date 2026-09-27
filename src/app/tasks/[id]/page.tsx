@@ -17,6 +17,8 @@ import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonLink, ButtonRow } from "@/components/ui/Button";
 import { Card, CardTitle, Empty, SkeletonText } from "@/components/ui/Card";
+import { Toggle } from "@/components/ui/Field";
+import { Hint } from "@/components/ui/Hint";
 import { Notice } from "@/components/ui/Notice";
 import { TaskDependencies } from "@/components/TaskDependencies";
 import { TaskEditor } from "@/components/TaskEditor";
@@ -80,6 +82,7 @@ export default function TaskDetail({
   // task, pressing Done lit Release and Drop as well, which reads as three
   // presses.
   const [moving, setMoving] = useState<TaskStatusDTO | null>(null);
+  const [marking, setMarking] = useState(false);
   // The instant the row on screen was read, which every relative phrase below
   // is measured against rather than against `Date.now()` — an age cannot change
   // without the row changing.
@@ -158,6 +161,38 @@ export default function TaskDetail({
     await load();
   }
 
+  /**
+   * Set or clear operator-only, at the press rather than with the form.
+   *
+   * Not a field of the editor's draft, and that is the point: the draft is
+   * seeded once and this page does not poll, so a run that released the task
+   * and marked it while the form was open would have its mark cleared by the
+   * next save of an unrelated field — a run started on work that run just said
+   * needs a Mac. Sent alone, from the row as last read, and re-read after.
+   */
+  async function markOperatorOnly(next: boolean) {
+    if (!task || marking) return;
+    setMarking(true);
+    setActionError(null);
+    const res = await jsonRequest<{ task: TaskDTO }>(`/api/tasks/${task.id}`, {
+      method: "PATCH",
+      body: { operatorOnly: next },
+    });
+    setMarking(false);
+
+    if (!res.ok) {
+      setActionError(actionFailureMessage(res, "Could not change who does the task."));
+      await load();
+      return;
+    }
+    setNote(
+      next
+        ? `“${res.data.task.title}” is operator only`
+        : `“${res.data.task.title}” is agent work again`,
+    );
+    await load();
+  }
+
   if (gone) {
     return (
       <Card emphasis="primary">
@@ -228,6 +263,7 @@ export default function TaskDetail({
           {task.title}
           <Badge tone={TASK_PRIORITY_TONE[task.priority]}>{task.priority}</Badge>
           <Badge tone={TASK_STATUS_TONE[task.status]}>{task.status}</Badge>
+          {task.operatorOnly && <Badge tone="neutral">operator only</Badge>}
         </h1>
         {/* The operator's own rows of the edge table, with no Claim among them:
             a claim names the run that will hold the task, and the operator is
@@ -287,6 +323,19 @@ export default function TaskDetail({
           {note}
         </Notice>
       )}
+
+      <div className="mb-5">
+        <Toggle
+          id="task-operator-only"
+          checked={task.operatorOnly}
+          onChange={(next) => void markOperatorOnly(next)}
+          disabled={marking}
+          label="Operator only"
+        />
+        <Hint>
+          No run may claim it while this is on
+        </Hint>
+      </div>
 
       <TaskEditor task={task} onSaved={() => void load()} />
 
