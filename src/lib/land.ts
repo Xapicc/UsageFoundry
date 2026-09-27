@@ -1069,8 +1069,9 @@ export type LandOutcome =
 /**
  * What `landRun` says once the process is going down, before anything moves.
  *
- * True at both places it is returned from: the only child either has run is
- * the operator's check, and that runs in the run's own checkout.
+ * True at both places it is returned from: before either, nothing has
+ * written to the operator's checkout. `landState` and the `rev-parse` only
+ * read it, and the operator's check runs in the run's own checkout.
  */
 const LAND_SHUTDOWN_REFUSAL =
   "The server is shutting down, so nothing was merged and your checkout is untouched. " +

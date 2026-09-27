@@ -12025,8 +12025,9 @@ const runLoops = ((globalThis as unknown as { __ufRunLoops?: Map<string, RunLoop
  * signal inside the grace it already gives the loops. Nothing it does signals
  * them, and nothing else here could: the `git merge` is a plain `git()` child
  * that no registry held, so a SIGTERM mid-land let the process exit as soon as
- * the cycles had settled, which under Docker takes the merge down with PID 1
- * and leaves `MERGE_HEAD` or `index.lock` in the operator's own checkout.
+ * the cycles had settled. Under Docker that takes the merge down with PID 1
+ * and can leave `MERGE_HEAD` or `index.lock` in the operator's own checkout;
+ * on a host the orphaned merge finishes and nothing records that it landed.
  *
  * The queue's row is held as well as the `landRun` inside it because a row
  * can be `landing` before `landRun` is reached, in `landState`, and
@@ -12245,9 +12246,9 @@ export async function shutdownRuns(
   for (const child of assists) interruptAssistChild(child);
 
   // The lands are waited on and never signalled. A merge part-way through is
-  // the one write here that is worse interrupted than left to finish, and the
-  // doors to one read the flag set above before they register, so this is
-  // every land that will write into a checkout before the process exits.
+  // the one write here that is worse interrupted than left to finish. Every
+  // door to one reads the flag set above before it registers, so a land this
+  // snapshot misses is one that never begins a merge.
   const lands = [...landsInFlight];
 
   // Waits for the children to go *and* for the loops behind them to write the
