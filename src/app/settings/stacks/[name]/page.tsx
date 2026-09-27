@@ -73,7 +73,7 @@ export default function StackDetailPage({ params }: Ctx) {
       <h1 className="mb-1 font-mono text-xl font-semibold tracking-tight">{name}</h1>
       <p className="mb-4 text-sm text-ink-muted">
         What the applier did with this stack on the last boot.{" "}
-        <Link href="/settings#tools">Back to Tools</Link> for every tool on this install.
+        <Link href="/settings#tools">Back to Tools</Link>
       </p>
 
       {error && (
@@ -157,11 +157,9 @@ function Removing({ detail }: { detail: StackDetailDTO }) {
           description={
             <>
               <span className="block break-all font-mono text-2xs">{detail.stateDir}</span>
-              <span className="block">
-                {detail.stateBytes === null
-                  ? "Nothing walked it, which is not the same as it being empty"
-                  : "A provider cache is a re-download; anything else is gone"}
-              </span>
+              {detail.stateBytes !== null && (
+                <span className="block">A provider cache is a re-download; anything else is gone</span>
+              )}
             </>
           }
         >
@@ -190,7 +188,7 @@ function Receipt({ receipt, detail }: { receipt: StackReceiptDTO; detail: StackD
             // makes the field act on rather than decorative: an operator who
             // edited stack.json and sees the same digest is looking at a boot
             // that did not read their edit.
-            "The digest is sha256 over the whole stack.json. A boot compares it with the one recorded here and reinstalls when they differ, so an unchanged digest after an edit means the file the container read is not the file you changed"
+            "sha256 of the whole stack.json, and a boot reinstalls when it changes. The same digest after an edit means the container did not read your edit"
           }
         >
           <ListRow label="Applied">
@@ -218,8 +216,7 @@ function Receipt({ receipt, detail }: { receipt: StackReceiptDTO; detail: StackD
           {receipt.error.bytes > receipt.error.text.length && (
             <p className="mt-1.5 text-xs text-ink-muted">
               The last {receipt.error.text.length.toLocaleString()} of{" "}
-              {receipt.error.bytes.toLocaleString()} bytes. The rest was in the boot log, which the
-              restart that wrote this receipt destroyed.
+              {receipt.error.bytes.toLocaleString()} bytes; the rest went with the boot log.
             </p>
           )}
         </Card>
@@ -229,11 +226,10 @@ function Receipt({ receipt, detail }: { receipt: StackReceiptDTO; detail: StackD
         <CardTitle>Install</CardTitle>
         {receipt.steps.length === 0 ? (
           <Empty>
-            No step ran. A stack refused at parse, one that lost a binary name to another stack, and
-            one the applier never reached all record the reason above rather than a step.
+            No step ran. The reason is recorded above.
           </Empty>
         ) : (
-          <ListGroup footnote="Steps run in the order they are written and the first failure ends the stack, so a step after a failed one did not run rather than passing">
+          <ListGroup footnote="Run in order, and the first failure ends the stack, so a later step did not run rather than passing">
             {receipt.steps.map((step, i) => (
               <ListRow
                 key={`${step.kind}:${i}`}
@@ -251,11 +247,10 @@ function Receipt({ receipt, detail }: { receipt: StackReceiptDTO; detail: StackD
         <CardTitle>What it put on PATH</CardTitle>
         {receipt.bin.length === 0 ? (
           <Empty>
-            Nothing is linked. No binary from a failed stack reaches PATH — the applier removes the
-            tree rather than leaving half of it there.
+            Nothing is linked: a failed stack puts nothing on PATH.
           </Empty>
         ) : (
-          <ListGroup footnote="Root-owned, in a directory no agent can write, which is why an agent cannot upgrade a stack tool: upgrading is an operator act and it is an edit to stack.json">
+          <ListGroup footnote="Root-owned and not writable by agents; upgrade a stack tool by editing stack.json">
             {receipt.bin.map((entry) => (
               <ListRow
                 key={entry.name}
@@ -273,11 +268,10 @@ function Receipt({ receipt, detail }: { receipt: StackReceiptDTO; detail: StackD
         <CardTitle>What a work cycle may not run</CardTitle>
         {receipt.deny.length === 0 ? (
           <Empty>
-            Nothing is denied. Every command of every binary above is granted, which is what a stack
-            with no <code>deny</code> asks for.
+            Nothing is denied: every command of every binary above is granted.
           </Empty>
         ) : (
-          <ListGroup footnote="A prefix, and deny beats every grant — so these refuse inside a tool call whatever mode the run is in. A stack may only deny commands of binaries it links, which is checked when the file is read">
+          <ListGroup footnote="Command prefixes, refused in every permission mode. A stack may deny only commands of binaries it links">
             {receipt.deny.map((entry) => (
               <ListRow key={entry} label={<span className="font-mono text-xs">{entry}</span>}>
                 <Badge tone="warn">denied</Badge>
@@ -293,7 +287,7 @@ function Receipt({ receipt, detail }: { receipt: StackReceiptDTO; detail: StackD
           {Object.keys(receipt.env).length > 0 && (
             <ListGroup
               label="Exported"
-              footnote="Merged into the server's environment at boot and copied into every agent child from there. Two stacks setting one key is not a merge: the first wins and the second is told so above"
+              footnote="Merged into the server's environment at boot and passed to every agent. When two stacks set one key the first wins, and the second says so above"
             >
               {Object.entries(receipt.env).map(([key, value]) => (
                 <ListRow key={key} label={<span className="font-mono text-xs">{key}</span>}>
@@ -308,9 +302,8 @@ function Receipt({ receipt, detail }: { receipt: StackReceiptDTO; detail: StackD
               label="Kept across a reinstall"
               footnote={
                 <>
-                  Agent-owned directories in the named volume. A version bump takes the package and
-                  leaves these, so a provider or module cache is not re-downloaded — removing the
-                  stack does not, and what that would cost is below
+                  A version bump keeps these, so a provider or module cache is not re-downloaded.
+                  Removing the stack deletes them
                   {detail.stateBytes === null ? "" : ` (${fmtBytes(detail.stateBytes)} today)`}.
                 </>
               }
