@@ -162,15 +162,26 @@ const MAX_EVIDENCE = 8;
  * switches the feature off, and one that is too loose reads a verdict out of
  * whatever the diff persuaded the model to write.
  *
- * **The last fenced block, not the first.** The prompt asks for exactly one at
- * the end, and the reasoning above it routinely quotes what it is judging —
- * including, on a diff that contains one, a JSON block that came out of the
- * repository. The model's own answer is the one after everything it read.
+ * **The last object that is a verdict, not the first and not merely the last.**
+ * The prompt asks for exactly one at the end, and the reasoning around it
+ * routinely quotes what it is judging — including, on a diff that contains one,
+ * a JSON block that came out of the repository. The model's own answer is the
+ * one after everything it read; but a quoted `package.json` after it, or a
+ * fenced quote above an answer whose fence was dropped, is not an answer, and
+ * reading it as one is no verdict, which closes a task that was just judged
+ * unfinished.
  */
 export function parseVerdict(text: string): ParsedVerdict | null {
-  const raw = lastJsonBlock(text);
-  if (!raw) return null;
+  const candidates = jsonCandidates(text);
+  for (let i = candidates.length - 1; i >= 0; i -= 1) {
+    const verdict = verdictFromJson(candidates[i]!);
+    if (verdict) return verdict;
+  }
+  return null;
+}
 
+/** One candidate object read as a verdict, or null when it is not one. */
+function verdictFromJson(raw: string): ParsedVerdict | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -198,22 +209,26 @@ export function parseVerdict(text: string): ParsedVerdict | null {
 }
 
 /**
- * The last ```json fence in a reply, or the last bare object that looks like
- * one.
+ * Every ```json fence in a reply and every bare object that looks like a
+ * verdict, in the order they appear.
  *
- * The bare fallback exists because the fence is a formatting instruction and
+ * The bare ones exist because the fence is a formatting instruction and
  * formatting instructions are the first thing a model drops under a long diff;
  * losing the verdict to a missing three backticks would fail open on exactly the
- * largest changes.
+ * largest changes. Both kinds go into one list rather than the bare ones being a
+ * fallback for no fence at all, because any fence — a quoted `package.json` —
+ * used to shut the fallback off. A fenced verdict is found by both patterns,
+ * which is harmless: the same text parses to the same answer.
  */
-function lastJsonBlock(text: string): string | null {
-  const fenced = [...text.matchAll(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/g)];
-  if (fenced.length > 0) return fenced[fenced.length - 1]![1]!;
-
-  const bare = [...text.matchAll(/\{[^{}]*"verdict"[\s\S]*?\}/g)];
-  if (bare.length > 0) return bare[bare.length - 1]![0];
-
-  return null;
+function jsonCandidates(text: string): string[] {
+  const found: { at: number; raw: string }[] = [];
+  for (const m of text.matchAll(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/g)) {
+    found.push({ at: m.index + m[0].indexOf("{"), raw: m[1]! });
+  }
+  for (const m of text.matchAll(/\{[^{}]*"verdict"[\s\S]*?\}/g)) {
+    found.push({ at: m.index, raw: m[0] });
+  }
+  return found.sort((a, b) => a.at - b.at).map((c) => c.raw);
 }
 
 /* ------------------------------------------------------------------ */

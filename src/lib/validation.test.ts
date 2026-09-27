@@ -94,6 +94,41 @@ describe("parseVerdict", () => {
     assert.equal(parseVerdict(reply)?.verdict, "not-finished");
   });
 
+  it("reads an unfenced verdict after a fenced quote that holds none", () => {
+    // The judge is shown a diff, and diffs carry JSON — `package.json`,
+    // fixtures, config. A reply that quotes one in a fence and then drops the
+    // fence on its own answer used to read the quote, find no verdict in it and
+    // answer null, which closes a task that was just judged unfinished.
+    const reply = [
+      "The diff changes the manifest:",
+      "```json",
+      '{ "name": "app", "version": "1.2.0" }',
+      "```",
+      "but the migration the task names is not there.",
+      "",
+      '{ "verdict": "not-finished", "reason": "no migration", "evidence": ["db.ts unchanged"] }',
+    ].join("\n");
+    const parsed = parseVerdict(reply);
+    assert.equal(parsed?.verdict, "not-finished");
+    assert.equal(parsed?.reason, "no migration");
+  });
+
+  it("reads a fenced verdict that is followed by a fenced non-verdict", () => {
+    // The last block that *is* a verdict, not the last block: a model that
+    // answers and then quotes one more thing from the diff underneath has
+    // still answered.
+    const reply = [
+      "```json",
+      '{ "verdict": "finished", "reason": "the route and its test are both there" }',
+      "```",
+      "For reference, the fixture it added:",
+      "```json",
+      '{ "id": 1, "title": "fixture" }',
+      "```",
+    ].join("\n");
+    assert.equal(parseVerdict(reply)?.verdict, "finished");
+  });
+
   it("reads a bare object when the fence is missing", () => {
     // The fence is a formatting instruction, and formatting instructions are
     // the first thing to go under a 60 kB diff. Losing the verdict to three
