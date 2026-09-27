@@ -747,7 +747,7 @@
    `static` anchors the frame as well as `relative` does. Unlayered, it beat
    the run inspector's `lg:sticky`, so under this skin the card scrolled away
    with a long tab, and its `lg:top-4` turned into a 16px relative nudge that
-   hung it past the foot of its own row — measured at 1920x963, card top 177
+   hung it past the foot of its own row. Measured at 1920x963: card top 177
    on a split starting at 161. */
 @layer components {
   :root[data-skin="ascii"] .uf-framed { position: relative; }
