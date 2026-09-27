@@ -96,8 +96,7 @@ export function TouchHeadline({
           call{touches === 1 ? "" : "s"}, {across}.
         </>
       )}{" "}
-      A call being recorded means it was <em>attempted</em>: this app stores a tool result
-      only when the tool failed, so nothing here says a read or a write succeeded.
+      Each recorded call is an <em>attempt</em>: nothing here says a read or a write succeeded.
     </p>
   );
 }
@@ -132,9 +131,8 @@ export function TouchSweptNotice({
 }) {
   return (
     <Notice tone="warn" quiet>
-      This run&apos;s tool events were removed on the {horizonDays}-day event horizon,
-      so nothing here can say what it touched. {CHANGES_AT[changesAt]} — a checkout is
-      kept on a different clock.
+      This run&apos;s tool events were removed on the {horizonDays}-day event horizon.{" "}
+      {CHANGES_AT[changesAt]}.
     </Notice>
   );
 }
@@ -155,8 +153,8 @@ export function TouchNoDiffNotice({
 }) {
   return (
     <Notice tone="warn" quiet>
-      {reason ?? "There is no diff for this run."} Without one, these files cannot be
-      reconciled against what changed — {RECONCILE_VERB[shows]}.
+      {reason ?? "There is no diff for this run."} These files are{" "}
+      {RECONCILE_VERB[shows]}, not checked against what changed.
     </Notice>
   );
 }
