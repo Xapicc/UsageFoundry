@@ -12,7 +12,7 @@ import {
 } from "./mergeQueue";
 import type { LandState } from "./land";
 import { evaluateInstallBudget } from "./budget";
-import { assistBudgetRefusal } from "./review";
+import { assistBudgetRefusal, SHUTDOWN_REFUSAL } from "./review";
 
 /**
  * Covers the queue's two pure decisions and nothing else.
@@ -373,6 +373,13 @@ describe("refusesEveryLaterResolution", () => {
 
   it("does not skip the queue on a full process budget, which clears in minutes", () => {
     assert.equal(refusesEveryLaterResolution(assistBudgetRefusal(2, 2) ?? ""), false);
+  });
+
+  it("skips the rest of the queue on a shutdown, which holds for every later item", () => {
+    // The sentence `assistRefusal` returns, not a copy, so rewording it fails
+    // here instead of costing each later branch a `landState` in a process that
+    // is exiting.
+    assert.equal(refusesEveryLaterResolution(SHUTDOWN_REFUSAL), true);
   });
 
   it("does not skip the queue on a refusal about this branch", () => {

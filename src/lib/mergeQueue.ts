@@ -916,13 +916,21 @@ async function processOne(
  * and the next. The process budget deliberately does not match — a full budget
  * is a slot somebody frees in minutes, so the item behind it asks again.
  *
+ * A shutdown (`SHUTDOWN_REFUSAL`) matches, because it too holds for every later
+ * item, and asking again only spends a `landState` per branch in a process that
+ * is exiting. Matching cannot park anything past the restart: what it sets is
+ * `resolutionsRefused`, which is this process's memory and dies with it, and
+ * the boot cancels every row still `queued` whatever this drain decided.
+ *
  * Pure and exported for a test, because both ways of getting it wrong are
  * silent: a sentence reworded out from under the match costs every later item a
  * fresh refusal, and a match too wide fails branches a free slot would have let
  * through.
  */
 export function refusesEveryLaterResolution(reason: string): boolean {
-  return /already at the ceiling|limit set in Settings for everything it runs/.test(reason);
+  return /already at the ceiling|limit set in Settings for everything it runs|is shutting down/.test(
+    reason,
+  );
 }
 
 interface ResolveOutcome {
