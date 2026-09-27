@@ -1310,6 +1310,16 @@ is `docs/agent/testing.md`; interface defects and their classes are
   place and the stub alive; the owner's own `SIGTERM` then reconciled the
   cycle as above. Caveat: a stub, not a real billed agent.
 
+- **An assist that passed its door before a shutdown spawns nothing,
+  2026-09-27**, `shutdown.test.ts` against its stubbed `spawn`: with
+  `shutdownRuns` already called, `startAssist` for a resolution at `45f85c2`
+  spawned the child and the row was still `running` when the 2s wait gave up;
+  at `39b06aa` nothing was spawned, `after` ran once with `SHUTDOWN_REFUSAL`,
+  and the row ended `failed` with that sentence. Caveat: the shutdown began
+  before `startAssist` rather than inside `reviewCwd` or a resolution's merge,
+  which is the state those awaits end in rather than the race itself, and no
+  built server was signalled.
+
 ### Isolation and landing
 
 - **Isolation, real repo with uncommitted work and a gitignored `.env`:** two
@@ -1380,6 +1390,15 @@ is `docs/agent/testing.md`; interface defects and their classes are
   Error` and an exit of its own. None hung; the longest of 161 `Bash` calls
   took 20.3s. `RESOLVE_SILENCE_MS`'s hour rests on this. Caveat: an entry
   stands in for a stdout line, and no long verify command was in the sample.
+
+- **A merge queue drain stops at the next row once a shutdown starts,
+  2026-09-27**, a scratch script over the compiled modules, two `queued` rows
+  in one repository whose runs have no branch. `shutdownRuns` called while the
+  first row was inside `landState`: `45f85c2` answered both rows, `4c8a20b`
+  answered the first and left the second `queued` for the boot. Called before
+  `startWorker`: `45f85c2` answered both, `4c8a20b` started no drain. With no
+  shutdown both answered both. Caveat: the rows fail at "no branch", so no
+  real `git merge` into a checkout ran, and the script is not in the tree.
 
 ### Git and review
 
