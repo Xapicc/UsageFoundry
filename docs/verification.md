@@ -1266,6 +1266,50 @@ is `docs/agent/testing.md`; interface defects and their classes are
   standalone bundle only, not `docker compose`, and no work cycle was in
   flight, where the same race would skip `reconcileInterruptedCycles`.
 
+- **A work cycle in flight at SIGTERM is reconciled once Next's handler is
+  off, 2026-09-27**, Next 15.5.24, standalone bundle at `8e4e847` and at
+  `25d9ca7`, stub `CLAUDE_BIN` that writes one $0.60 transcript turn
+  (100k in, 20k out, `claude-sonnet-4-5`), never prints `result` and ignores
+  `SIGINT`. Without the variable the server exited 0.02s after `SIGTERM`
+  with the run `running`, `spent_usd_est` 0, `active_started_at` still set,
+  `server.lock` left behind and the stub still alive. With
+  `NEXT_MANUAL_SIG_HANDLE=1` it exited at 3.04s, the `SIGTERM` rung: run
+  `stopped`, $0.60 and 120,000 tokens reconciled, the column cleared, the lock
+  released. A stub ignoring `SIGTERM` too was killed by the `SIGKILL` rung and
+  the server exited at 8.14s, reconciled; one exiting on `SIGINT`, as the CLI
+  does, at 0.13s; an idle server at once. The stub's environment held the
+  variable at `8e4e847` and not at `25d9ca7`, which deletes it after Next has
+  read it. Caveat: the loop settled every cycle itself, so
+  `reconcileInterruptedCycles` found nothing to do; not `docker compose`.
+
+- **A repeated signal no longer ends the shutdown, 2026-09-27**, same
+  harness: with the variable set, `8e4e847`'s `process.once` left a second
+  `SIGTERM` 10ms after the first to Node's default action, exit 143 at 0.02s
+  with nothing reconciled. At `25d9ca7` a second `SIGTERM`, or `SIGINT` then
+  `SIGTERM`, 1s apart, logged one "ignored" line and ended like the single
+  signal (3.08s, $0.60 reconciled), and the stub got one `SIGINT` where
+  `8e4e847` had sent it two from two shutdowns.
+
+- **`npm run dev` needs `NEXT_EXIT_TIMEOUT_MS` as well, 2026-09-27**, same
+  stub, `SIGINT` to the whole process group: `next dev`'s parent forwards the
+  signal and `SIGKILL`s its server 100ms later by default, so with
+  `NEXT_MANUAL_SIG_HANDLE=1` alone the server died at 0.13s, unreconciled.
+  Every Ctrl-C there also delivers `SIGINT` twice (the group's and the
+  parent's), and the handler logged the second as ignored. Through the
+  `dev` script at `25d9ca7` it exited at 3.10s with $0.60 reconciled, the
+  column cleared and the lock released, but the row was still `running` with
+  no stop reason: the shutdown stops waiting once the child is gone and
+  `active_started_at` is cleared, which can come before the loop writes the
+  run's ending. Caveat: one run each; the standalone runs above all won that
+  race.
+
+- **The shutdown gate with two live processes, 2026-09-27**, `25d9ca7`,
+  same harness: a second standalone server on the owner's `DATA_DIR` came
+  up read-only and exited 0.02s after `SIGTERM`, leaving the owner's run
+  `running` with its cycle open and `restart_closed` 0, the owner's lock in
+  place and the stub alive; the owner's own `SIGTERM` then reconciled the
+  cycle as above. Caveat: a stub, not a real billed agent.
+
 ### Isolation and landing
 
 - **Isolation, real repo with uncommitted work and a gitignored `.env`:** two
@@ -3949,12 +3993,17 @@ measurement under *Verified* and cut the item down to what is still open.
   nothing has been timed under 25 concurrent runs.
 
 - **The shutdown reconciling its cycles under a real `docker compose
-  restart`.** `shutdown.test.ts` fakes `spawn`; whether 30s of grace suffices
-  is unknown.
+  restart`.** The standalone bundle does, with a stub (Verified above).
+  Still open: that the image's `ENV NEXT_MANUAL_SIG_HANDLE=1` reaches the
+  server through tini and the entrypoint, the real CLI against the ladder, and
+  whether 30s suffices for many cycles at once. Settle: `docker compose stop
+  usagefoundry` with a cycle in flight, then `docker compose logs
+  usagefoundry | grep 'run(s) on SIGTERM'` should print the line the handler
+  writes only once it has finished, and the run's total should include the
+  interrupted cycle's spend.
 
-- **No two-process reproduction of the shutdown gate was run**, and no
-  container built; the second server is only worth watching against a real
-  billed agent in the first.
+- **The shutdown gate against a real billed agent**: the two-process
+  reproduction (Verified above) used a stub, and no container was built.
 
 - **A migration finding has not been seen on a real boot (2026-09-07).**
   Settle: set `user_version = 99` via `docker compose exec app node -e`, run
@@ -4085,8 +4134,8 @@ measurement under *Verified* and cut the item down to what is still open.
 - **No Codex device sign-in has been completed** (no OpenAI account): the
   exit-0 `auth.json` write, `loginError` on any failure and the poll
   converging are unmeasured; an unnoticed success reads `waiting for approval`.
-  `codex` is not in the `Dockerfile`, and `CODEX_HOME` (unmounted `~/.codex`
-  by default) lives in the container's writable layer, lost on a rebuild.
+  `CODEX_HOME` (unmounted `~/.codex` by default) lives in the container's
+  writable layer, lost on a rebuild.
 
 - **The image has not been rebuilt with Codex (2026-09-05)**: the amd64
   figures (~335 MB unpacked, 123 MB download) are registry metadata, no work

@@ -50,6 +50,18 @@ ENV NODE_ENV=production \
     CLAUDE_HOME=/home/node/.claude \
     CLAUDE_CONFIG_DIR=/home/node/.claude
 
+# Keeps Next's own SIGINT/SIGTERM handler off, so the server's shutdown gets the
+# grace it is built around. Without it `next/dist/server/lib/start-server.js`
+# closes the HTTP server and calls `process.exit(0)` about a tenth of a second
+# after `docker stop`'s SIGTERM, and `src/instrumentation.ts`'s handler never
+# gets past its first `await`: the work cycles in flight are left unreconciled,
+# their agents are never sent the SIGTERM or SIGKILL rungs, and the lock stays
+# behind for the next boot to wait out. `stop_grace_period` in compose is sized
+# against that handler, not against Next's. The server deletes the variable
+# from its own environment once Next has read it, so no agent inherits it.
+# `deployment.test.ts` pins it.
+ENV NEXT_MANUAL_SIG_HANDLE=1
+
 # What the agent needs on PATH to do the work, not just to be started.
 #
 #   git, ripgrep      — what it reaches for constantly; git additionally backs
