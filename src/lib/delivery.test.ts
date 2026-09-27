@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { openPullRequest, parseRemote, planDelivery } from "./delivery";
+import { openPullRequest, parseRemote, planDelivery, readDeliveryFields } from "./delivery";
 
 /**
  * The exit, and the three ways it could be wrong quietly.
@@ -14,6 +14,11 @@ import { openPullRequest, parseRemote, planDelivery } from "./delivery";
  * a plan that said yes without a token produces a push that fails half-way,
  * and a plan that did not notice head === base opens a pull request with no
  * commits in it.
+ *
+ * `readDeliveryFields` decides whether a press may start at all. The route used
+ * to cast its body, and `{"title": 5}` then threw at `.trim()` after `git push`
+ * had already published the branch: a 500, no record of the push, and the card
+ * offering it again.
  */
 describe("parseRemote reads both spellings and refuses the rest", () => {
   it("reads the HTTPS form, with and without .git", () => {
@@ -143,5 +148,39 @@ describe("openPullRequest reports GitHub's answer rather than its own", () => {
     });
     assert.equal(out.ok, false);
     assert.match(out.ok === false ? out.reason : "", /could not be reached/);
+  });
+});
+
+describe("readDeliveryFields refuses a body the press would throw on after pushing", () => {
+  it("reads the ordinary press, with or without a title and body", () => {
+    assert.deepEqual(readDeliveryFields({}), { ok: true, value: {} });
+    assert.deepEqual(readDeliveryFields({ title: "Fix it", body: "Why" }), {
+      ok: true,
+      value: { title: "Fix it", body: "Why" },
+    });
+    // An empty title is a string, and `pushAndOpen` falls back from it.
+    assert.deepEqual(readDeliveryFields({ title: "" }), { ok: true, value: { title: "" } });
+  });
+
+  it("ignores a key it does not know rather than forwarding it", () => {
+    assert.deepEqual(readDeliveryFields({ title: "t", draft: true }), {
+      ok: true,
+      value: { title: "t" },
+    });
+  });
+
+  it("refuses a title or body that is not a string, naming the field and what arrived", () => {
+    const cases: Array<[Record<string, unknown>, RegExp]> = [
+      [{ title: 5 }, /^"title" has to be a string when it is given; got a number\./],
+      [{ title: null }, /^"title" .* got null\./],
+      [{ body: ["a"] }, /^"body" .* got an array\./],
+      [{ title: "ok", body: { text: "x" } }, /^"body" .* got an object\./],
+    ];
+    for (const [raw, expected] of cases) {
+      const read = readDeliveryFields(raw);
+      assert.equal(read.ok, false, JSON.stringify(raw));
+      assert.match(read.ok ? "" : read.error, expected);
+      assert.match(read.ok ? "" : read.error, /Nothing was pushed\.$/);
+    }
   });
 });

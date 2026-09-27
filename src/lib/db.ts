@@ -1047,6 +1047,37 @@ function migrate(db: Database.Database) {
   // rather than a guess.
   addColumn(db, "runs", "landed_tip", "TEXT");
 
+  // The pull request Deliver opened, on the row for the reason `landed_*` is:
+  // the card withdraws its button on it, and the `deliver` event it used to be
+  // read from is swept after `eventRetentionDays`, after which the card offered
+  // the press again. Backfilled once, from the newest `deliver` event each run
+  // still has, so a run delivered before this column existed keeps its link
+  // past the next sweep. `json_valid` guards the reads because `json_extract`
+  // on a malformed payload is an error, and an error here refuses the boot.
+  // One transaction with the ALTERs, for `refusal_pauses`' reason above.
+  db.transaction(() => {
+    const added = addColumn(db, "runs", "delivered_pr_url", "TEXT");
+    addColumn(db, "runs", "delivered_pr_number", "INTEGER");
+    addColumn(db, "runs", "delivered_at", "INTEGER");
+    if (!added) return;
+    db.exec(`
+      UPDATE runs
+         SET delivered_pr_url = d.url, delivered_pr_number = d.number, delivered_at = d.ts
+        FROM (SELECT e.run_id, e.ts,
+                     CASE WHEN json_valid(e.payload)
+                          THEN json_extract(e.payload, '$.url') END AS url,
+                     CASE WHEN json_valid(e.payload)
+                          THEN json_extract(e.payload, '$.number') END AS number
+                FROM run_events e
+               WHERE e.kind = 'deliver'
+                 AND e.id = (SELECT MAX(id) FROM run_events
+                              WHERE run_id = e.run_id AND kind = 'deliver')) AS d
+       WHERE runs.id = d.run_id
+         AND typeof(d.url) = 'text' AND d.url <> ''
+         AND typeof(d.number) = 'integer'
+    `);
+  })();
+
   // The agent this run was started **as**, frozen as the whole definition
   // rather than as a reference to an `agents` row.
   //

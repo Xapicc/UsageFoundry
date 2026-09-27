@@ -2787,9 +2787,9 @@ export interface LandStateDTO {
 
 /**
  * The branch's other exit: pushed to `origin`, with a pull request opened on
- * it. Every refusal here is a standing condition rather than something a press
- * would discover, which is why the card can state it instead of offering a
- * button.
+ * it. Every refusal here is one the press would give, a standing condition of
+ * the install or a branch something can still commit to, which is why the card
+ * can state it instead of offering a button.
  */
 export interface DeliveryStateDTO {
   possible: boolean;
@@ -2799,7 +2799,7 @@ export interface DeliveryStateDTO {
   remote: string | null;
   head: string | null;
   base: string | null;
-  /** What a previous press opened, off the run's own `deliver` event. */
+  /** What a previous press on this branch opened. See `deliveredPullRequest`. */
   delivered: { url: string; number: number; at: number } | null;
 }
 

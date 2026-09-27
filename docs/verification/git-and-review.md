@@ -74,6 +74,13 @@
   the branch (the run was seeded), the verify gate (`landVerifyCommand` empty),
   a real run id in the PR body (the fixture's read `deliver-`).
 
+- **Deliver's run-state refusal, body check and per-branch link have not met
+  GitHub, 2026-09-27.** `deliverRun.test.ts` pushes to a local bare repository
+  and stubs `fetch`; unseen are a refused press on a real card and the link
+  surviving a real sweep. Settles on the smoke repository above: press on a
+  paused run (400, `git ls-remote` empty), then deliver, set
+  `eventRetentionDays` to 1 and wait a day past the sweep.
+
 - **A review or conflict resolution against the real CLI.** Review quality,
   `plan` mode in print mode and `acceptEdits` resolutions are unconfirmed.
 
