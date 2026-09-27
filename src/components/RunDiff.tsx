@@ -112,7 +112,7 @@ export function RunDiff({ run }: { run: RunDTO }) {
         {!diff && !error && !loading && (
           <Empty>
             {settled
-              ? "Nothing loaded — read it with the button above."
+              ? "Nothing loaded."
               : "This run is still working, so its changes are read on request."}
           </Empty>
         )}
@@ -165,8 +165,7 @@ export function RunDiff({ run }: { run: RunDTO }) {
                 {/* Size is one reason and a failed read is another. Blaming size
                     for a read that failed tells the operator a small change was
                     large and sends them nowhere near what went wrong. */}
-                {diff.patchFailure ?? "The change is too large to render whole"}. Every
-                changed file is still in the list below.
+                {diff.patchFailure ?? "The change is too large to render whole"}.
               </Notice>
             )}
 
