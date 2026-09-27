@@ -940,6 +940,13 @@ function shortest(candidates: readonly string[]): string {
  *    adding an alias to one note silently repoints every link to another.
  *
  * Ties inside a step go to the shortest path, which is Obsidian's own rule.
+ *
+ * A target with a non-note extension is tried as an attachment first, and a
+ * miss there falls through to the notes with the whole key as the name.
+ * `path.extname` cannot tell `diagram.png` from `Node.js HTTP Server
+ * Documentation`, whose "extension" is `.js http server documentation`, and
+ * stopping at the attachment miss is what made 705 of the 706 broken links on
+ * the operator's vault name notes that exist.
  */
 function resolveTarget(
   r: Resolver,
@@ -954,10 +961,9 @@ function resolveTarget(
     if (byName?.length) return { kind: "attachment", rel: shortest(byName) };
     const byPath = r.attachmentByPath.get(key);
     if (byPath?.length) return { kind: "attachment", rel: shortest(byPath) };
-    return null;
   }
 
-  const bare = ext ? key.slice(0, -ext.length) : key;
+  const bare = NOTE_EXTENSIONS.has(ext) ? key.slice(0, -ext.length) : key;
   const byName = r.byName.get(path.basename(bare));
   if (byName?.length) return { kind: "note", rel: shortest(byName) };
   const byPath = r.byPath.get(bare);
