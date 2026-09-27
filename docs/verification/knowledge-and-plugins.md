@@ -77,6 +77,17 @@
   and `uf_local` as `failed`, `source: user`. `docs/install.md` says the
   opposite.
 
+- **Broken links on the real 1,711-note vault, read-only, 2026-09-27, at
+  `17ae20f`:** 706 across 53 targets before the fix, 705 of them naming a
+  note that exists, and 1 after (`[[url]]`). The resolver read a dot in a
+  note's name as an attachment extension, so earlier counts of this vault's
+  broken links were taken with it.
+
+- **A note's Backlinks panel in Chromium, 2026-09-27, at `773f12c`:** on the
+  standalone build over a scratch vault where `Alpha.md` links `[[Beta]]`,
+  `Beta.md`'s row read "Alpha" and linked to `Alpha.md`, with no console
+  error. Seen at 1280px in the standard light skin only.
+
 ## Not yet verified by hand
 
 - **The MCP status has not been seen rendered.** The run log's "MCP servers"
