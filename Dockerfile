@@ -552,11 +552,11 @@ RUN set -eux; \
 # not to run it.
 #
 # **It arrives signed out, and that is deliberate rather than an oversight to
-# close.** `childEnv` and its four byte-identical siblings strip
-# `OPENAI_API_KEY` and `CODEX_API_KEY` from every child this app spawns, on
-# the reasoning in `docs/agent/security.md` — twenty-five unattended agents
-# with `Bash`, where `env` is a read-only command `acceptEdits` approves
-# without asking. `codex login` writes under `$HOME/.codex`, which is an image
+# close.** `childEnv` and its five byte-identical siblings strip
+# `OPENAI_API_KEY`, `CODEX_API_KEY` and `CODEX_ACCESS_TOKEN`, the Codex CLI's
+# three credential variables, from every child they build, on the reasoning
+# in `docs/agent/security.md`: twenty-five unattended agents with `Bash`,
+# where `env` is a read-only command `acceptEdits` approves without asking. `codex login` writes under `$HOME/.codex`, which is an image
 # layer and not one of the five named volumes, so it also lasts only until the
 # next rebuild. Making either persist is a mount plus a decision about who
 # holds the key, not a line in this file.

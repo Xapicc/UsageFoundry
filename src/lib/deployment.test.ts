@@ -2071,9 +2071,13 @@ describe("the rotation cost of every environment-sourced value is recorded", () 
 
   /**
    * The three this app never reads and still hands out, listed rather than
-   * derived because what puts them in the list is an *absence* — no strip in
-   * `childEnv` and its four siblings — and a test that greps for a missing line
-   * asserts nothing. They are the easiest ones to forget for the same reason.
+   * derived because what puts them in the list is an *absence*, and a test that
+   * greps for a missing line asserts nothing: `ANTHROPIC_API_KEY` is stripped by
+   * `gitEnv` alone, and `OPENAI_API_KEY` and `CODEX_API_KEY`, which all six
+   * strip-list copies drop, are kept by `codexAuthEnv` (`codexAuth.ts`, the
+   * Codex sign-in child), whose docblock says why. `CODEX_ACCESS_TOKEN` is not
+   * here because every child, that one included, strips it. They are the easiest
+   * ones to forget for the same reason.
    */
   it("names the credentials this app forwards but never reads itself", () => {
     for (const name of ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY"]) {
