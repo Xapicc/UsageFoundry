@@ -4401,7 +4401,7 @@ export default function SettingsPage() {
       <Section
         id="plugins"
         title="Plugins"
-        lede="Claude Code plugins found in your mounted folders. Switching one on adds it to every work cycle this app starts, from the next cycle onward — including runs already in flight. These are saved as you press them, not on Save."
+        lede="Switching one on adds it to every work cycle from the next one, including runs already in flight. Saved as you press it, not on Save."
       >
         {pluginsError && (
           <Notice tone="danger" className="mb-4">
@@ -4423,9 +4423,8 @@ export default function SettingsPage() {
           <Empty>Looking for plugins in the mounted folders…</Empty>
         ) : plugins && plugins.plugins.length === 0 ? (
           <Empty>
-            No plugins in the mounted folders. A plugin is any directory holding a{" "}
-            <code>.claude-plugin/plugin.json</code>; clone one into a mounted folder and it
-            appears here.
+            No plugins in the mounted folders. Any directory holding a{" "}
+            <code>.claude-plugin/plugin.json</code> is one.
           </Empty>
         ) : (
           <ListGroup
@@ -4474,17 +4473,13 @@ export default function SettingsPage() {
         title="Tools"
         lede={
           <>
-            What your agents can run beyond what the image ships. A badge is
-            four readings composed — declared, installed, still resolving on the
-            PATH a run gets, and actually invoked — and only <em>installed</em>{" "}
-            needs all four to agree.
+            What agents can run beyond the image. <em>Installed</em> means
+            declared, installed, on a run&rsquo;s PATH and actually invoked.
             {tools?.observedWindowDays != null && (
               <>
                 {" "}
                 Invocations are counted over the last {tools.observedWindowDays}{" "}
-                days, which is how long this install keeps run events — and, for
-                a stack, only since the boot that installed it, because a command
-                name outlives an install of it. Each row says which.
+                days, and for a stack only since the boot that installed it.
               </>
             )}
           </>
@@ -4496,20 +4491,19 @@ export default function SettingsPage() {
       <Section
         id="knowledge"
         title="Knowledge base"
-        lede="A folder of markdown notes, read as a graph of the links between them. It is one of the folders already mounted below — naming it here lets this app read it. Nothing on this page writes to it; the one thing in this app that can is Dreaming, below, and it is off until you turn it on."
+        lede="A folder of markdown notes, read as a graph of their links. Only Dreaming, below, writes to it."
       >
         <KnowledgeFigures report={knowledge} error={knowledgeError} />
 
         <ListGroup
           className="mt-4"
           label="Where the vault is"
-          footnote="Mounted folders come from your .env and are fixed when the container starts, so this picks one rather than adding one"
+          footnote="Mounted folders come from your .env and are fixed when the container starts"
         >
           <SettingRow
             htmlFor="kbmount"
             edited={isEdited("knowledgeBaseMountId")}
             label="Folder"
-            description="Which mounted folder holds the notes"
           >
             <div className="w-64">
               <Select
@@ -4543,7 +4537,7 @@ export default function SettingsPage() {
             htmlFor="kbsub"
             edited={isEdited("knowledgeBaseSubpath")}
             label="Folder inside it"
-            description="Leave blank for the whole folder. A vault is usually one directory in a mount, and walking its parent files every unrelated note beside it as an orphan"
+            description="Blank is the whole folder, which counts every unrelated note beside the vault as an orphan"
           >
             <div className="w-64">
               <Input
@@ -4565,7 +4559,7 @@ export default function SettingsPage() {
         <ListGroup
           className="mt-4"
           label="What runs may do with it"
-          footnote="The skill is handed to each work cycle as it starts, so switching it reaches runs already in flight. Saved as you press it, not on Save"
+          footnote="Reaches runs already in flight from their next work cycle. Saved as you press it, not on Save"
         >
           <SettingRow
             htmlFor="kbskill"
@@ -4573,16 +4567,16 @@ export default function SettingsPage() {
             description={
               <>
                 <span className="block">
-                  Every run this app starts can search these notes instead of answering
-                  from its own knowledge, and quotes each claim&rsquo;s confidence grade
-                  and note. Nothing gains write access to the vault.
+                  Every run can search these notes instead of answering from its own
+                  knowledge, citing each claim&rsquo;s note and confidence grade. It
+                  grants no write access.
                 </span>
                 <span className="block text-2xs text-ink-muted">
                   {!knowledge?.configured
-                    ? "Pick a folder above first — there is nothing for the skill to look in"
+                    ? "Pick a folder above first"
                     : knowledge.skillSearchScript
                       ? `Ranked search: ${knowledge.skillSearchScript}`
-                      : "No ranked search in this vault, so the skill greps — and says so in its answers"}
+                      : "No ranked search in this vault, so the skill greps and says so"}
                 </span>
               </>
             }
@@ -4603,25 +4597,24 @@ export default function SettingsPage() {
       <Section
         id="dreaming"
         title="Dreaming"
-        lede="Once a night, write down the failures that have happened on more than one day. This is the only thing in this app that writes into the vault above, and it is off until you turn it on."
+        lede="Once a night, writes the failures seen on more than one day into the vault above."
       >
         <Notice tone="warn" quiet>
-          The vault is not a git repository — no history, no author field, and nothing in a
-          note that marks it as machine-written. What makes a wrong note retractable is the
-          list this app keeps of what it wrote, on{" "}
+          The vault is not a git repository and nothing marks a note as machine-written, so
+          the only way to retract a wrong note is the list of what this app wrote, on{" "}
           <a href="/dreaming">Dreaming</a>. Read that page before turning this on.
         </Notice>
 
         <ListGroup
           className="mt-4"
           label="The nightly pass"
-          footnote="The readout on the Dreaming page needs none of this — it reads the same failures, writes nothing, and is always available"
+          footnote="The Dreaming page's readout needs none of this, and writes nothing"
         >
           <SettingRow
             htmlFor="dreamon"
             edited={isEdited("dreamingEnabled")}
             label="Write notes into the vault"
-            description="Starts one run a night, in the vault folder, told to read that vault's own conventions before writing anything"
+            description="Starts one run a night in the vault folder, told to read the vault's own conventions before writing"
           >
             <Switch
               id="dreamon"
@@ -4657,7 +4650,7 @@ export default function SettingsPage() {
             htmlFor="dreamtz"
             edited={isEdited("dreamingTimeZone")}
             label="Time zone"
-            description="Read twice: it sets when the pass fires and where a day begins. A failure seen either side of this boundary is a failure on two days"
+            description="Sets when the pass fires and where a day begins, so a failure either side of midnight counts on two days"
           >
             <div className="w-64">
               <Input
@@ -4698,7 +4691,7 @@ export default function SettingsPage() {
             htmlFor="dreammax"
             edited={isEdited("dreamingMaxPerNight")}
             label="Notes per night"
-            description="Each one is a note plus an edit to whatever links to it, so a night that wrote dozens would be a long run inside a store you have open"
+            description="Each is a note plus edits to what links to it, so dozens would be a long run inside a store you have open"
           >
             <div className="w-32">
               <Input
@@ -4716,8 +4709,8 @@ export default function SettingsPage() {
           <SettingRow
             htmlFor="dreamcost"
             edited={isEdited("dreamingMaxCostUSD")}
-            label="Cost ceiling"
-            description="There is no way to express no ceiling. This runs with nobody present, and every other press of Run has a person behind it who sees what the last one cost"
+            label="Spend limit"
+            description="Cannot be blank: this run starts with nobody there to see what the last one cost"
           >
             <div className="w-32">
               <Input
@@ -4738,7 +4731,6 @@ export default function SettingsPage() {
       <Section
         id="storage"
         title="Storage"
-        lede="Three stores grow with the work rather than with these settings. A run's own record — its spend, its cycles, how it ended — is never discarded; what a horizon below bounds is the evidence behind it."
       >
         <StorageFigures report={storage} error={storageError} />
 
@@ -4751,7 +4743,7 @@ export default function SettingsPage() {
             htmlFor="evret"
             edited={isEdited("eventRetentionDays")}
             label="Keep a finished run's log for"
-            description="Every tool call, every reply and every line of an agent's build output is a row. The run itself stays on the list with its spend and its stop reason — this discards the log behind it"
+            description="Every tool call, reply and line of build output. The run stays on the list with its spend and stop reason"
           >
             <div className="w-32">
               <Input
@@ -4775,7 +4767,7 @@ export default function SettingsPage() {
             htmlFor="coret"
             edited={isEdited("checkoutRetentionDays")}
             label="Reclaim an idle checkout after"
-            description="A finished run's worktree, once its branch is landed or has no commits of its own. The branch and its commits stay; what goes is the directory, which git rebuilds in seconds — with the installed dependencies that are most of its size"
+            description="A finished run's worktree, once its branch is landed or has no commits of its own. The branch stays; the directory and its installed dependencies go, and git rebuilds it in seconds"
           >
             <div className="w-32">
               <Input
@@ -4799,7 +4791,7 @@ export default function SettingsPage() {
             htmlFor="trret"
             edited={isEdited("transcriptRetentionDays")}
             label="Keep session transcripts for"
-            description="Claude Code writes one per session into your home directory, and nothing else prunes them. Pruning one ends any chance of resuming that conversation, and shortens the calendar history on the dashboard — which says which of its buckets are affected"
+            description="Nothing else prunes the ones Claude Code writes to your home directory. Pruning one ends any chance of resuming it, and shortens the dashboard's calendar history"
           >
             <div className="w-32">
               <Input
@@ -4824,7 +4816,7 @@ export default function SettingsPage() {
       <Section
         id="prompts"
         title="Prompts"
-        lede="What this app says to Claude, over and above the task you type. Emptying one keeps the stored text rather than clearing it."
+        lede="Emptying one keeps the stored text rather than clearing it."
       >
         <PromptFold
           label="Continuation prompt"
@@ -4892,10 +4884,9 @@ export default function SettingsPage() {
           onChange={(v) => patch({ continuedWorkPrompt: v })}
           hint={
             <>
-              Sent when a run picks up the branch the run before it was working
-              on. The branch, that run and the commands to read it are added
-              around this — what you write here is what to <em>do</em> with what
-              is already there
+              Sent when a run picks up the previous run&rsquo;s branch. The
+              branch, that run and how to read it are added around this, so write
+              only what to <em>do</em> with it
             </>
           }
         />
