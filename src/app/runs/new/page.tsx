@@ -1320,19 +1320,12 @@ export default function NewRunPage() {
     <>
       <div className="mb-5">
         <h1 className="mb-1 text-xl font-semibold tracking-tight">New run</h1>
-        <p className="max-w-[68ch] text-ink-muted">
-          One stretch of work is a{" "}
-          <strong className="font-semibold text-ink">cycle</strong>. If the
-          limits below allow, Claude is sent back into the same conversation for
-          another cycle — until it reports the task complete, or a limit stops
-          it. Nobody is watching while it works.
-        </p>
       </div>
 
       {noMountsUsable && (
         <Notice tone="warn">
-          <strong>No workspace is mounted.</strong> Nothing can run until one
-          is. Check <span className="mono">UF_WORKSPACE</span> in{" "}
+          <strong>No workspace is mounted.</strong> Check{" "}
+          <span className="mono">UF_WORKSPACE</span> in{" "}
           <span className="mono">.env</span> and the volumes in{" "}
           <span className="mono">docker-compose.yml</span>.
         </Notice>
@@ -1361,7 +1354,7 @@ export default function NewRunPage() {
             className="mb-4"
             footnote={
               folder === "" && folders.length > 0
-                ? "A run on the whole workspace takes the entire tree — no run in any folder inside it can start until this one finishes"
+                ? "No run in any folder of this workspace can start until this one finishes"
                 : undefined
             }
           >
@@ -1372,7 +1365,7 @@ export default function NewRunPage() {
                 description={
                   selectedTemplate
                     ? describeTemplate(selectedTemplate, agents)
-                    : "Fills in everything below; nothing starts until you press Start run"
+                    : "Fills in everything below"
                 }
               >
                 {/* The width is on a wrapper, never on the control: `Select`
@@ -1478,7 +1471,7 @@ export default function NewRunPage() {
               label="Folder"
               description={
                 folder === ""
-                  ? "The whole tree, and every folder inside it"
+                  ? undefined
                   : selectedFolder?.isGitRepo
                     ? "A git repository, so Claude can work on its own branch"
                     : "Not a git repository, so Claude works in it directly"
@@ -1531,7 +1524,7 @@ export default function NewRunPage() {
                     ) : selectedAgent ? (
                       selectedAgent.description
                     ) : (
-                      "A saved agent to start this run as — it changes who the run is, not what it may do"
+                      "Changes who the run is, not what it may do"
                     )}
                     {/* An agent's model is the session's now, not a delegated
                         turn's — so it only reaches a run that has no model of
@@ -1611,7 +1604,7 @@ export default function NewRunPage() {
               label="Model"
               description={
                 provider === "codex"
-                  ? "A model id this provider's CLI takes. Blank runs its own default"
+                  ? "A model id this provider's CLI takes; blank runs its default"
                   : "Blank takes the default in Settings, read when the run starts"
               }
             >
@@ -1696,7 +1689,6 @@ export default function NewRunPage() {
             <ListRow
               htmlFor="provider"
               label="Provider"
-              description="Which agent CLI runs the work cycles"
             >
               <div className="w-64 max-md:w-full">
                 <Select
@@ -1738,8 +1730,7 @@ export default function NewRunPage() {
                 <strong>
                   {RUN_PROVIDER_LABEL[provider]} runs with weaker guarantees
                   than Claude.
-                </strong>{" "}
-                Four of them are worth knowing before you start it.
+                </strong>
               </p>
               <p>
                 <strong>The process-kill denial is weaker.</strong> Claude
@@ -1825,7 +1816,7 @@ export default function NewRunPage() {
             htmlFor="prompt"
             hint={
               prompt.trim() === ""
-                ? "Say what to change and how Claude will know it worked — this text is sent verbatim as the first turn"
+                ? "Say what to change and how Claude will know it worked"
                 : "Sent verbatim as the first turn; the run ends when Claude replies DONE"
             }
             error={problemFor("prompt")?.message}
@@ -1860,8 +1851,7 @@ export default function NewRunPage() {
                 The template carries{" "}
                 <span className="mono">bypassPermissions</span>.
               </strong>{" "}
-              Claude can run any command in the folder without asking. Worth
-              choosing again rather than inheriting.
+              Claude can run any command in the folder without asking.
               <ButtonRow className="mt-2.5">
                 <Button
                   type="button"
@@ -1897,7 +1887,7 @@ export default function NewRunPage() {
                       An isolated run is also allowed{" "}
                       <span className="mono">git add</span> and{" "}
                       <span className="mono">git commit</span>, whatever is
-                      chosen above — that is how its work reaches its branch.
+                      chosen above.
                       {permissionMode === "bypassPermissions" ? " " : ""}
                     </>
                   )}
@@ -1905,8 +1895,7 @@ export default function NewRunPage() {
                     <>
                       <span className="mono">pkill</span> and{" "}
                       <span className="mono">killall</span> stay refused even
-                      here, because a name match reaches this server as readily
-                      as the agent&rsquo;s own processes.
+                      here.
                     </>
                   )}
                 </>
@@ -1921,7 +1910,7 @@ export default function NewRunPage() {
                 ) : folder === "" ? (
                   "A run on the whole workspace always works in place, and holds the entire tree until it finishes"
                 ) : (
-                  "This folder is not a git repository, so there is no branch to work on — Claude edits it in place and no other run can use it meanwhile"
+                  "No other run can use this folder until this one finishes"
                 )
               }
             >
@@ -2051,7 +2040,7 @@ export default function NewRunPage() {
             label="Stop conditions"
             footnote={
               liveSpendGuard
-                ? "This run switches on Claude Code's own per-request reporting so the spend can be read mid-cycle; those records land a second or two behind, and what a cut-short cycle cost is worked back out of your transcripts afterwards"
+                ? "This run switches on Claude Code's own per-request reporting so its spend can be read mid-cycle; those records land a second or two behind"
                 : undefined
             }
           >
@@ -2061,8 +2050,8 @@ export default function NewRunPage() {
               description={
                 <>
                   {iterationsCapped
-                    ? "Each cycle picks up the same conversation where the last one left off; 1 means one cycle and then stop"
-                    : "Needs the time limit below — the clock is the only limit that keeps advancing whether or not Claude reports what it spent"}
+                    ? "Each cycle picks up the same conversation where the last one left off"
+                    : "Needs the time limit below"}
                   {problemFor("iters") && (
                     <Toned tone="danger">
                       <span className="mt-0.5 block">
@@ -2236,7 +2225,7 @@ export default function NewRunPage() {
                     {usage
                       ? usage.snapshot.session.fraction != null
                         ? ` · now at ${fmtPct(usage.snapshot.session.fraction)}`
-                        : " · no ceiling set, so there is no percentage to show"
+                        : " · no ceiling set"
                       : ""}
                     {/* What "Stop, then resume" does with this field left
                         blank, said on the field rather than under the card. */}
@@ -2284,12 +2273,11 @@ export default function NewRunPage() {
                   </Toned>
                 ) : (
                   <>
-                    Always ends the run — a weekly window has no reset instant to
-                    wait for
+                    Always ends the run
                     {usage
                       ? usage.snapshot.weekly.fraction != null
                         ? ` · now at ${fmtPct(usage.snapshot.weekly.fraction)}`
-                        : " · no ceiling set, so there is no percentage to show"
+                        : " · no ceiling set"
                       : ""}
                   </>
                 )
@@ -2328,11 +2316,10 @@ export default function NewRunPage() {
                   <Toned tone="warn">
                     <span className="mt-1.5 block">
                       Your weekly window is set to{" "}
-                      <strong className="font-semibold">rolling 7 days</strong>,
-                      so it has no reset instant. That does not stop this mode —
-                      the run waits on the 5-hour window, which always rolls
-                      over — but a weekly percentage will only fall as old usage
-                      ages out, over days. Set your reset day in{" "}
+                      <strong className="font-semibold">rolling 7 days</strong>:
+                      this mode still waits on the 5-hour window, but a weekly
+                      percentage only falls as old usage ages out, over days.
+                      Set your reset day in{" "}
                       <Link href="/settings">Settings</Link> if you know it.
                     </span>
                   </Toned>
@@ -2421,7 +2408,7 @@ export default function NewRunPage() {
               label="Template name"
               description={
                 !prompt
-                  ? "Write the task above first — the prompt is the part worth saving"
+                  ? "Write the task above first"
                   : nameTaken
                     ? `Replaces the template already called “${templateName.trim()}”`
                     : // The model is on this list now that the form offers one:
@@ -2469,8 +2456,8 @@ export default function NewRunPage() {
               label="Remember the workspace and folder"
               description={
                 rememberFolder
-                  ? "The template pre-selects that folder. Right for a task about one project"
-                  : "The template asks for a folder each time. Right for a task that applies to any project"
+                  ? "The template pre-selects that folder"
+                  : "The template asks for a folder each time"
               }
             >
               <Switch
@@ -2529,8 +2516,7 @@ export default function NewRunPage() {
               ) : (
                 <>Started. </>
               )}
-              <Link href={`/runs/${started.id}`}>Open it</Link>, or start
-              another.
+              <Link href={`/runs/${started.id}`}>Open it</Link>.
             </Notice>
           </div>
         )}
@@ -2578,7 +2564,7 @@ export default function NewRunPage() {
               className="mr-auto min-h-5 basis-full text-xs leading-5 text-ink-faint sm:basis-auto"
             >
               {submitting
-                ? "Asking the orchestrator for a slot…"
+                ? "Starting…"
                 : occupant || rootOccupant
                   ? `Queues behind the run already working in ${folderLabel}`
                   : `Starts an unattended agent in ${folderLabel}`}
