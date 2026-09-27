@@ -302,6 +302,11 @@ export interface RunRow {
    */
   guard_refunds: number;
   /**
+   * Work cycles the context ceiling ended early and the loop refunded, which
+   * `MAX_EARLY_ENDS_PER_RUN` caps. Only ever increases.
+   */
+  early_ends: number;
+  /**
    * Parked milliseconds already closed off. Open parks are not in here — the
    * total at any instant is this plus `now - paused_at` while `paused_at` is
    * set. The duration guard subtracts it, because `maxDurationMinutes` caps
@@ -692,6 +697,13 @@ const contextWatches = ((globalThis as unknown as {
  * So it is bounded, `MAX_PAUSES_PER_RUN`'s arrangement and its number. Past
  * this, a crossing still prunes and still ends the cycle; it simply counts,
  * and `iterations` climbs monotonically again.
+ *
+ * Per run and not per segment, which is why the count is `runs.early_ends`:
+ * as a local of `startRun` it restarted at zero after every park, restart and
+ * pick-up, so a run whose every cycle crossed the ceiling had three more
+ * refunds each time it came back. Nothing resets it, `reopenRun` included — it
+ * corrects `iterations`, and a pick-up carries `iterations`, where
+ * `started_at` and `paused_ms`, which a pick-up does clear, are a clock.
  */
 export const MAX_EARLY_ENDS_PER_RUN = 3;
 
@@ -8791,9 +8803,9 @@ export async function startRun(id: string): Promise<void> {
     const carried = pendingForkFor(id, sessionId);
     if (carried && !pendingFork.has(id)) pendingFork.set(id, carried);
   }
-  // How many cycles the context ceiling has ended and refunded. See
-  // `MAX_EARLY_ENDS_PER_RUN`.
-  let earlyEnds = 0;
+  // How many cycles the context ceiling has ended and refunded, over the run's
+  // whole life. See `MAX_EARLY_ENDS_PER_RUN`.
+  let earlyEnds = run.early_ends ?? 0;
   // How many guard-cut cycles have been refunded, over the run's whole life
   // rather than this segment's: every cut ends a segment. See
   // `MAX_PAUSES_PER_RUN`.
@@ -9803,9 +9815,11 @@ export async function startRun(id: string): Promise<void> {
           // to the same number, so it never corrects at all. The visible effect
           // is a "Work cycles" bar that advances the moment the ceiling fires,
           // while the run is still working on the cycle it was refunded for.
+          // The count goes in the same statement, so a restart can never store
+          // the refund without the refund's cost against the bound.
           db()
-            .prepare("UPDATE runs SET iterations = ? WHERE id = ?")
-            .run(iterations, id);
+            .prepare("UPDATE runs SET iterations = ?, early_ends = ? WHERE id = ?")
+            .run(iterations, earlyEnds, id);
         }
 
         // Captured before the cut, because `adoptSession` reassigns `sessionId`

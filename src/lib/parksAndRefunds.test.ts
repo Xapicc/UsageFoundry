@@ -26,7 +26,8 @@ import type { Interrupt } from "./orchestrator";
  * frame that every cut ends, so a bound kept anywhere but the row is a bound
  * that resets at each park — and a run that is always cut, always refunded and
  * always parked never reaches its cycle cap. What that looks like from outside
- * is an ordinary parked run.
+ * is an ordinary parked run. The context ceiling's early end is the same refund
+ * on a count of its own, and it was held in exactly such a frame.
  *
  * `orchestrator.test.ts` cannot say either, because nothing there spawns: it
  * pins `CLAUDE_BIN` at a path that does not exist precisely so a regression
@@ -63,7 +64,7 @@ assert.equal(
     "run against the real database",
 );
 
-const { createRun, getRun, MAX_PAUSES_PER_RUN, resumeRun, stopRun } =
+const { createRun, getRun, MAX_EARLY_ENDS_PER_RUN, MAX_PAUSES_PER_RUN, resumeRun, stopRun } =
   require("./orchestrator") as typeof import("./orchestrator");
 
 /**
@@ -78,8 +79,12 @@ const { createRun, getRun, MAX_PAUSES_PER_RUN, resumeRun, stopRun } =
  *
  * `refusal` is the CLI's own account of the wall: a non-success `result` whose
  * text `isUsageLimit` matches, and a non-zero exit.
+ *
+ * `prune` is what `checkContextCeilings` leaves when a cycle crosses the context
+ * ceiling, for `guard-pause`'s reason: the `prune` interrupt, the one kind the
+ * loop carries on from.
  */
-type Cycle = "guard-pause" | "refusal";
+type Cycle = "guard-pause" | "refusal" | "prune";
 
 /** The cycles still to come, for the one run a case has in flight. */
 let script: Cycle[] = [];
@@ -111,6 +116,14 @@ function interruptFor(step: Cycle | undefined): Interrupt | null {
       // An hour out, so the sweeper never hands the run back on its own and
       // every un-park in a case is the one the case asked for.
       resumeAt: at + 3_600_000,
+      at,
+    };
+  }
+  if (step === "prune") {
+    return {
+      kind: "prune",
+      reason: "This work cycle was ended here to be pruned.",
+      pause: false,
       at,
     };
   }
@@ -289,5 +302,36 @@ describe("what bounds the refund of a cycle the live guard cut", () => {
     );
     assert.equal(row.iterations, 1, "the cut past the bound is the cycle the cap counted");
     assert.equal(row.guard_refunds, MAX_PAUSES_PER_RUN);
+  });
+});
+
+describe("what bounds the refund of a cycle the context ceiling ended", () => {
+  it("still counts the early ends a run had before it parked", async () => {
+    // Every early end the bound allows, then a park and an un-park — the
+    // segment boundary that used to restart the count at zero — then one more
+    // crossing, which is past the bound and must be charged.
+    const id = start(
+      "early-ends",
+      [...Array<Cycle>(MAX_EARLY_ENDS_PER_RUN).fill("prune"), "guard-pause", "prune"],
+      { maxIterations: 1, enforcement: "live-resume" },
+    );
+
+    await settled(id);
+    const parked = getRun(id)!;
+    assert.equal(parked.status, "paused", `the fixture never parked: ${parked.stop_reason}`);
+    assert.equal(parked.iterations, 0, "the early ends inside the bound, and the cut, were all refunded");
+    unpark(id);
+
+    await settled(id);
+    const row = getRun(id)!;
+    assert.match(
+      row.stop_reason ?? "",
+      /Used all 1 work cycle allowed/,
+      `the crossing after the park was refunded as though it were the first, so the ` +
+        `run carried on: ${row.status} after ${spawned} cycles, ${row.stop_reason}`,
+    );
+    assert.equal(spawned, MAX_EARLY_ENDS_PER_RUN + 2);
+    assert.equal(row.iterations, 1, "the crossing past the bound is the cycle the cap counted");
+    assert.equal(row.early_ends, MAX_EARLY_ENDS_PER_RUN);
   });
 });
