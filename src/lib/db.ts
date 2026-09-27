@@ -2617,6 +2617,20 @@ function migrate(db: Database.Database) {
   // question it asked — and only this workflow stops waiting on it.
   addColumn(db, "workflow_instance_runs", "left_behind_at", "INTEGER");
 
+  // The local provider's sign-in: one row or none. Here rather than in
+  // `settings` because `settings` is what `GET /api/settings` serves, and the
+  // token must never reach a page. `localProvider.ts` says why it is under
+  // /data at all, where Codex's credential is not.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS local_provider (
+      id            INTEGER PRIMARY KEY CHECK (id = 1),
+      base_url      TEXT NOT NULL,
+      token         TEXT,
+      model         TEXT NOT NULL,
+      signed_in_at  INTEGER NOT NULL
+    );
+  `);
+
   adoptModelsInUse(db);
   // After it, and never instead of it: the two answer different questions and an
   // install that needs adopting needs it done before there is a list to merge

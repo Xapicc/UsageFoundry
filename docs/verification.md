@@ -41,7 +41,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Isolation and landing | [isolation-and-landing.md](verification/isolation-and-landing.md) | 12 | 11 |
 | Git and review | [git-and-review.md](verification/git-and-review.md) | 11 | 8 |
 | Agents, templates and models | [agents-templates-and-models.md](verification/agents-templates-and-models.md) | 14 | 7 |
-| Other providers | [other-providers.md](verification/other-providers.md) | 6 | 3 |
+| Other providers | [other-providers.md](verification/other-providers.md) — Codex, and the local provider | 9 | 6 |
 | Knowledge and plugins | [knowledge-and-plugins.md](verification/knowledge-and-plugins.md) | 16 | 11 |
 | Dreaming | [dreaming.md](verification/dreaming.md) | 2 | 1 |
 | Retention | [retention.md](verification/retention.md) | 2 | 2 |

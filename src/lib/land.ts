@@ -10,8 +10,15 @@ import { commitDiff, type DiffFile } from "./diff";
 import { githubTokenFor } from "./config";
 import { getSettings } from "./settings";
 import {
+  certificationRefusal,
+  NOT_REQUIRED,
+  type CertificationState,
+} from "./localCertification";
+import { localRunsOnBranch } from "./localProvider";
+import {
   assistRefusal,
   assistRunning,
+  latestAssist,
   reviewPaths,
   startAssist,
   type ReviewRow,
@@ -229,6 +236,12 @@ export interface LandState {
   pending: PendingWork | null;
   /** Why landing is refused right now, or null when it is offered. */
   blocked: string | null;
+  /**
+   * Whether a frontier model has to approve this branch before it leaves, and
+   * how far it has got. Read by Deliver as well as Land, and set on every state
+   * past the branch-exists check — Deliver does not read `blocked`.
+   */
+  certification: CertificationState;
   landedAt: number | null;
   landedInto: string | null;
   landedStrategy: string | null;
@@ -528,6 +541,7 @@ export async function landState(
     checkout: null,
     pending: null,
     blocked: null,
+    certification: NOT_REQUIRED,
     landedAt: run.landed_at,
     landedInto: run.landed_into,
     landedStrategy: run.landed_strategy,
@@ -548,6 +562,11 @@ export async function landState(
   if (!exists.ok) {
     return { ...base, blocked: `Branch ${branch} no longer exists.` };
   }
+
+  const tip = (await git(repoRoot, ["rev-parse", branch], NO_CLOCK)).stdout;
+  // On `base` so every return below carries it, because the refusals below
+  // are Land's and Deliver asks this regardless of them.
+  base.certification = certificationOf(run, tip);
 
   const folder = repoPathFor(run.folder);
   const checkout = folder ? await checkoutStateOf(folder) : null;
@@ -609,7 +628,6 @@ export async function landState(
     await git(repoRoot, ["merge-base", "--is-ancestor", branch, target.branch], NO_CLOCK)
   ).ok;
 
-  const tip = (await git(repoRoot, ["rev-parse", branch], NO_CLOCK)).stdout;
   const landedUnchanged = !!run.landed_tip && run.landed_tip === tip;
 
   // Not previewed while the run can still commit: the answer would be stale
@@ -647,11 +665,43 @@ export async function landState(
   };
   return {
     ...state,
-    blocked: landRefusal({
-      ...state,
-      pendingCount: pending?.count ?? 0,
-      loopBlock: loopStillRepeating(state.chain, asker),
-    }),
+    // Last, so a branch that conflicts or a checkout that is dirty says so
+    // first: those change the tip or come before the merge, and a review taken
+    // ahead of them would have to be taken again.
+    blocked:
+      landRefusal({
+        ...state,
+        pendingCount: pending?.count ?? 0,
+        loopBlock: loopStillRepeating(state.chain, asker),
+      }) ?? certificationRefusal(state.certification, "land"),
+  };
+}
+
+/**
+ * What `certificationRefusal` is asked about this run's branch.
+ *
+ * The review read is this run's own latest, which is the right one because
+ * only the run that owns the branch may land it (`unsettledBranchRefusal`), and
+ * its diff runs from the chain's base — so its review covers every link.
+ */
+function certificationOf(run: RunRow, tip: string): CertificationState {
+  const localRuns =
+    run.repo_root && run.worktree_branch
+      ? localRunsOnBranch(run.repo_root, run.worktree_branch)
+      : [];
+  if (localRuns.length === 0) return NOT_REQUIRED;
+  const review = latestAssist(run.id, "review");
+  return {
+    required: true,
+    localRuns,
+    tip: tip || null,
+    review: review && {
+      id: review.id,
+      status: review.status,
+      verdict: review.verdict,
+      headSha: review.head_sha,
+      model: review.model,
+    },
   };
 }
 
@@ -3896,6 +3946,20 @@ export async function deliveryState(
     };
   }
 
+  // A pull request is a request to merge, so a local model's branch waits for
+  // the same approval Land does before it is offered one.
+  const uncertified = certificationRefusal(state.certification, "deliver");
+  if (uncertified) {
+    return {
+      possible: false,
+      reason: uncertified,
+      remote: null,
+      head: null,
+      base: null,
+      delivered,
+    };
+  }
+
   const folder = state.checkout?.path;
   const remoteUrl = folder
     ? (await git(folder, ["remote", "get-url", "origin"], NO_CLOCK)).stdout.trim()
@@ -4004,6 +4068,8 @@ export async function deliverRun(
 
   const state = await landState(runId);
   if (!state) return { ok: false, reason: "This run has no branch to deliver." };
+  const uncertified = certificationRefusal(state.certification, "deliver");
+  if (uncertified) return { ok: false, reason: uncertified };
 
   const folder = state.checkout?.path;
   if (!folder) return { ok: false, reason: "This run has no checkout to push from." };

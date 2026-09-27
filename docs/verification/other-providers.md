@@ -40,7 +40,56 @@
   and `CODEX_API_KEY` each left an empty home at `Not logged in`. No valid token
   was tried (no OpenAI account), so what a parsing one reports is unmeasured.
 
+- **The pinned CLI names every variable a local cycle sets, and ranks the
+  bearer token above the OAuth login, 2026-09-27**, `2.1.280`, read out of the
+  binary in the running container: all six model-role variables,
+  `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` and
+  `ANTHROPIC_CUSTOM_HEADERS` are present, and the CLI's own diagnostic reads
+  "ANTHROPIC_AUTH_TOKEN is set, so this session is using API-key auth". Read,
+  not exercised: no local cycle has run.
+
+- **Winnow reaches agents through `ANTHROPIC_BASE_URL` alone, 2026-09-27**, on
+  the live container: the Next server's environment carries
+  `ANTHROPIC_BASE_URL=http://127.0.0.1:8789` and no `HTTP(S)_PROXY`, so a local
+  cycle's override takes it out of the filter's path entirely. `HOME` is
+  `/home/node`, so `LOCAL_CLAUDE_CONFIG_DIR` resolves to
+  `/home/node/.claude-local`.
+
+- **The CLI runs headless on a local cycle's environment and sends nothing it
+  should not, 2026-09-27**, host `claude` 2.1.283 driven with `localCycleEnv`'s
+  output (a fake `ANTHROPIC_API_KEY` and a winnow-style base URL in the input)
+  against a stub Messages server that logged every request: exit 0, `DONE`, in
+  a fresh `CLAUDE_CONFIG_DIR` with no prompt. The stub saw a `HEAD /api/hello`
+  and a streamed `POST /v1/messages?beta=true` carrying `Bearer
+  local-token-123`, model `qwen-local` and no `x-api-key`; no
+  `count_tokens` call was made. The transcript went to the local config
+  directory and nothing to `~/.claude/projects`, and a second call with
+  `--resume` continued the session. The CLI reported `total_cost_usd` 0.000075
+  for a model it has no price for — the figure `providerReportsSpend` refuses.
+
 ## Not yet verified by hand
+
+- **No local-provider work cycle has run through this app or against a real
+  server (2026-09-27).** The CLI half is measured (above) against a stub on
+  the host's 2.1.283, not the image's 2.1.280, and not through `runIteration`.
+  Open: whether LM Studio's endpoint accepts the `?beta=true` query and answers
+  the `HEAD /api/hello` probe harmlessly, whether a real model's tool calls
+  stream back in a shape the CLI accepts, and whether the sandbox
+  (`UF_SANDBOX=1`) builds against a config directory that holds none of the
+  placeholders `ensureSandboxMountPoints` writes. Settles with a sign-in to
+  LM Studio and one two-cycle local run with the sandbox on and off.
+
+- **The sign-in has not been driven from the page against a real server.** The
+  probe is unit tested against stubs; the LAN address the operator named
+  (`192.168.0.190:1234`) answered `EHOSTUNREACH` from the host on 2026-09-27, so
+  nothing about reaching it from the container is known.
+
+- **No frontier review has certified a real local branch.** Whether the review
+  child follows the fourth heading closely enough for `parseCertificationVerdict`
+  — which reads only a bare `APPROVE` or `REJECT` — is untested against a real
+  reply; a reviewer that hedges leaves the branch unlandable, which fails
+  closed. Settles with one review of a local run's branch and the Land card read
+  before and after.
 
 - **No Codex device sign-in has been completed** (no OpenAI account): the
   exit-0 `auth.json` write, `loginError` on any failure and the poll

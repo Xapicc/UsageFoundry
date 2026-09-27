@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, describe, it } from "node:test";
@@ -49,6 +50,7 @@ let claudeLogout: typeof import("./claude-auth/logout/route");
 let codexApiKey: typeof import("./codex-auth/api-key/route");
 let codexLogin: typeof import("./codex-auth/login/route");
 let codexLogout: typeof import("./codex-auth/logout/route");
+let localProvider: typeof import("./local-provider/route");
 let dbMod: typeof import("../../lib/db");
 
 /**
@@ -162,6 +164,7 @@ before(async () => {
   codexApiKey = await import("./codex-auth/api-key/route");
   codexLogin = await import("./codex-auth/login/route");
   codexLogout = await import("./codex-auth/logout/route");
+  localProvider = await import("./local-provider/route");
   dbMod = await import("../../lib/db");
 });
 
@@ -398,5 +401,79 @@ describe("every one of the six leaves a request line", () => {
       assert.equal(row.status, 200);
       assert.equal(typeof row.duration_ms, "number");
     }
+  });
+});
+
+/**
+ * The local provider's sign-in, which is a seventh credential route with a
+ * difference: the credential is kept by this app rather than by a CLI, so it
+ * is also this app that could echo it back. A stub server stands in for the
+ * local endpoint, because the route probes it before it saves anything.
+ */
+describe("the local provider's sign-in", () => {
+  const TOKEN = "lm-studio-token-do-not-log";
+  let server: http.Server;
+  let baseUrl: string;
+  let answer = 200;
+  let sawAuth: string | undefined;
+
+  before(async () => {
+    server = http.createServer((req, res) => {
+      sawAuth = req.headers.authorization;
+      res.writeHead(answer, { "content-type": "application/json" });
+      res.end(answer === 200 ? JSON.stringify({ type: "message", content: [] }) : "{}");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as { port: number };
+    baseUrl = `http://127.0.0.1:${port}`;
+  });
+
+  after(() => server.close());
+
+  beforeEach(() => {
+    answer = 200;
+    dbMod.db().prepare("DELETE FROM local_provider").run();
+  });
+
+  it("records the host and the model, never the token, in either table or the answer", async () => {
+    const res = await localProvider.POST(
+      post("http://localhost/api/local-provider", { baseUrl, token: TOKEN, model: "qwen3" }),
+    );
+    assert.equal(res.status, 200);
+    const answerText = await res.text();
+    assert.equal(sawAuth, `Bearer ${TOKEN}`);
+
+    const row = onlyOps();
+    assert.equal(row.event, "auth.provider_signed_in");
+    assert.equal(row.detail.provider, "local");
+    assert.equal(row.detail.model, "qwen3");
+
+    const written = JSON.stringify(opsRows()) + JSON.stringify(requestRows()) + answerText;
+    assert.ok(!written.includes(TOKEN), `the token was written out: ${written}`);
+    assert.equal((JSON.parse(answerText) as { hasToken: boolean }).hasToken, true);
+  });
+
+  it("saves nothing and writes no durable row when the endpoint refuses", async () => {
+    answer = 404;
+    const res = await localProvider.POST(
+      post("http://localhost/api/local-provider", { baseUrl, token: TOKEN, model: "qwen3" }),
+    );
+    assert.equal(res.status, 502);
+    assert.deepEqual(opsRows(), []);
+    assert.equal(
+      (dbMod.db().prepare("SELECT COUNT(*) AS n FROM local_provider").get() as { n: number }).n,
+      0,
+    );
+  });
+
+  it("records a sign-out at warn", async () => {
+    const res = await localProvider.DELETE(
+      new Request("http://localhost/api/local-provider", { method: "DELETE" }),
+    );
+    assert.equal(res.status, 200);
+    const row = onlyOps();
+    assert.equal(row.event, "auth.provider_signed_out");
+    assert.equal(row.level, "warn");
+    assert.equal(row.detail.provider, "local");
   });
 });

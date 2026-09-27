@@ -50,6 +50,7 @@ const base: LandState = {
   checkout: { path: "/workspace/repo", headBranch: "main", dirty: false, readable: true },
   pending: null,
   blocked: null,
+  certification: { required: false },
   landedAt: null,
   landedInto: null,
   landedStrategy: null,

@@ -11,6 +11,11 @@ import { installBudgetRefusal } from "./installBudget";
 import { clipToolInput } from "./logLine";
 import { dataDirRefusal } from "./serverLock";
 import { getSettings } from "./settings";
+import {
+  CERTIFICATION_PROMPT_LINES,
+  parseCertificationVerdict,
+} from "./localCertification";
+import { localRunsOnBranch } from "./localProvider";
 import { stackGrants } from "./stacks";
 import {
   currentSnapshot,
@@ -308,6 +313,14 @@ export async function startReview(runId: string): Promise<ReviewOutcome> {
 
   const { text, shown, truncated } = diffAsText(diff, REVIEW_DIFF_BYTES);
 
+  // A branch any local-model run committed to cannot land without this
+  // review's approval (`localCertification.ts`), so the reviewer is asked for a
+  // verdict and the verdict is read back. Every other review is unchanged.
+  const certifying =
+    run.repo_root !== null &&
+    run.worktree_branch !== null &&
+    localRunsOnBranch(run.repo_root, run.worktree_branch).length > 0;
+
   return startAssist({
     run,
     kind: "review",
@@ -317,8 +330,18 @@ export async function startReview(runId: string): Promise<ReviewOutcome> {
     // upgrade: a deny list has to grow an entry for every new write tool, and it
     // fails *open* when it does not.
     permissionMode: "plan",
-    prompt: buildPrompt(run, diff, text),
+    prompt: buildPrompt(run, diff, text, certifying),
     counts: { files: diff.files.length, shown, truncated },
+    // What the reviewer was shown, so an approval certifies that commit and
+    // not whatever the branch has moved to since.
+    baseSha: diff.base,
+    headSha: diff.head,
+    after: certifying
+      ? async (result) =>
+          result.status === "completed"
+            ? { verdict: parseCertificationVerdict(result.text ?? null) ?? undefined }
+            : undefined
+      : undefined,
   });
 }
 
@@ -695,7 +718,12 @@ async function reviewCwd(run: RunRow): Promise<string | null> {
  * supply: without it there is no way to notice that the agent built something
  * else entirely.
  */
-function buildPrompt(run: RunRow, diff: RunDiff, diffText: string): string {
+function buildPrompt(
+  run: RunRow,
+  diff: RunDiff,
+  diffText: string,
+  certifying: boolean,
+): string {
   const ending = run.stop_reason
     ? `\nHow the run ended: ${run.stop_reason}\n`
     : "";
@@ -723,7 +751,7 @@ function buildPrompt(run: RunRow, diff: RunDiff, diffText: string): string {
     diffText,
     "</diff>",
     "",
-    "Write the review in markdown, under exactly these three headings and nothing else:",
+    `Write the review in markdown, under exactly these ${certifying ? "four" : "three"} headings and nothing else:`,
     "",
     "## Summary",
     "Two to four sentences. Say whether it actually addresses the task above.",
@@ -735,6 +763,7 @@ function buildPrompt(run: RunRow, diff: RunDiff, diffText: string): string {
     "## Risks",
     "Anything wrong, unfinished, unsafe, or untested. Be specific and name files.",
     "If nothing stands out, say so in one line rather than inventing something.",
+    ...(certifying ? CERTIFICATION_PROMPT_LINES : []),
   ].join("\n");
 }
 
@@ -935,7 +964,9 @@ export function assistModel(
   run: Pick<RunRow, "model" | "provider">,
   defaultModel: string | null,
 ): string | null {
-  return run.provider === "codex" ? defaultModel : run.model;
+  // A local run's model is an id only its own server knows, and its review is
+  // the frontier check its branch is held to — so never that id.
+  return run.provider === "codex" || run.provider === "local" ? defaultModel : run.model;
 }
 
 /** Spawn one, and record what it cost whatever happened. */

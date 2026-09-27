@@ -65,6 +65,7 @@ export async function GET(_req: Request, ctx: Ctx) {
           truncated: row.truncated === 1,
           paths: reviewPaths(row),
           changed: await resolutionChange(row),
+          verdict: row.verdict,
         }
       : null,
   });

@@ -1176,7 +1176,7 @@ export interface BootReconcileDTO {
  * rejects. Nothing in here is a server import, so the rule this file exists for
  * still holds.
  */
-export type RunProviderDTO = "claude" | "codex";
+export type RunProviderDTO = "claude" | "codex" | "local";
 
 /**
  * Why a queued run is not running — the one answer, derived in `walkQueue`.
@@ -1202,12 +1202,13 @@ export type QueueBlockerDTO =
   | { kind: "cap"; cap: number; running: number };
 
 /** Every provider the run form offers, in the order it offers them. */
-export const RUN_PROVIDERS: readonly RunProviderDTO[] = ["claude", "codex"];
+export const RUN_PROVIDERS: readonly RunProviderDTO[] = ["claude", "codex", "local"];
 
 /** What each one is called in the interface. */
 export const RUN_PROVIDER_LABEL: Record<RunProviderDTO, string> = {
   claude: "Claude Code",
   codex: "Codex",
+  local: "Local model",
 };
 
 /**
@@ -1223,11 +1224,27 @@ export const RUN_PROVIDER_LABEL: Record<RunProviderDTO, string> = {
  *
  * `null` is a row that predates the column, not a claim, and those rows are all
  * Claude runs by construction: nothing else could have produced them.
+ *
+ * A local run is Claude Code and does report `total_cost_usd` — but for a model
+ * it has no price for, so the figure is the CLI's guess rather than anything
+ * the local server charged. `localProvider.ts` has the rest.
  */
 export function providerReportsSpend(
   provider: RunProviderDTO | null,
 ): boolean {
-  return provider !== "codex";
+  return provider !== "codex" && provider !== "local";
+}
+
+/**
+ * The local provider's sign-in as the page may see it: never the token, only
+ * whether there is one.
+ */
+export interface LocalProviderDTO {
+  signedIn: boolean;
+  baseUrl: string | null;
+  model: string | null;
+  hasToken: boolean;
+  signedInAt: number | null;
 }
 
 /**
@@ -2692,6 +2709,12 @@ export interface RunReviewDTO {
   truncated: boolean;
   /** The files a resolution was handed. Empty for a review. */
   paths: string[];
+  /**
+   * `approve` or `reject` from a review of a branch a local model wrote on,
+   * which is the answer Land and Deliver wait for. Null for every other review,
+   * and for one that gave no clear answer.
+   */
+  verdict: string | null;
   /**
    * What a completed resolution changed on the branch, against the branch as it
    * stood before the merge. Null while it is running, when it failed, and for a

@@ -125,6 +125,28 @@ export const TRANSCRIPT_CACHE_MAX_ENTRIES = ((): number => {
 export const CLAUDE_CONFIG_DIR = env("CLAUDE_CONFIG_DIR", CLAUDE_HOME);
 
 /**
+ * The config directory a local-provider work cycle's Claude Code is given
+ * instead of `CLAUDE_CONFIG_DIR`.
+ *
+ * A sibling of it rather than anything inside it, because what has to be kept
+ * apart is its `projects/`: every meter here scans `PROJECTS_DIR`, and a local
+ * model's turns written there are an unpriced model to `guardCostOf`, which
+ * charges them the fallback rate against the plan's windows — so a run that
+ * spent nothing of the subscription would park the Claude runs that do.
+ * Inside `~/.claude` it would also be this app inventing a directory in the
+ * operator's own host tree, which `sandboxMountPoints.ts` refuses to do for
+ * anything outside a closed list.
+ *
+ * On a stock install it is `/home/node/.claude-local`, the container's writable
+ * layer — the same place `CODEX_HOME` lives, with the same cost: a parked local
+ * run's session does not survive `docker compose up --build`.
+ */
+export const LOCAL_CLAUDE_CONFIG_DIR = path.join(
+  path.dirname(CLAUDE_CONFIG_DIR),
+  ".claude-local",
+);
+
+/**
  * Base URL a spawned agent should push its OTLP telemetry to.
  *
  * Loopback by default because the agent runs in this same container — the

@@ -127,6 +127,12 @@ import { prepareReadGuard } from "./readGuard";
 // generated on disk for a cycle to pick up — and unlike it in the one way that
 // matters: an unavailable read guard logs, an unavailable denial refuses.
 import { prepareCodexRules } from "./codexRules";
+import {
+  ensureLocalConfigDir,
+  getLocalSignIn,
+  localCycleEnv,
+  type LocalSignIn,
+} from "./localProvider";
 import { prepareVaultSkill } from "./vaultSkill";
 import {
   noteLiveTick,
@@ -3938,7 +3944,10 @@ export function frozenRunModel(
   provider: RunProviderDTO | null | undefined,
   defaultModel: string | null,
 ): string | null {
-  return model ?? (provider === "codex" ? null : defaultModel);
+  // A local run is Claude Code, but a Claude id is exactly what its server has
+  // never heard of. The door freezes the sign-in's model onto it; a null that
+  // got past it spawns with the sign-in's model at the cycle instead.
+  return model ?? (provider === "codex" || provider === "local" ? null : defaultModel);
 }
 
 /**
@@ -6510,6 +6519,8 @@ const CODEX_ADAPTER: CycleAdapter = Object.freeze({
  * from nothing while reporting that it had resumed.
  */
 export function selectCycleAdapter(provider: RunProviderDTO | null): CycleAdapter {
+  // `local` takes the Claude adapter on purpose: it is Claude Code with a
+  // different environment, which `runIteration` applies, not a third CLI.
   return provider === "codex" ? CODEX_ADAPTER : CLAUDE_ADAPTER;
 }
 
@@ -6582,6 +6593,10 @@ export function runIteration(
   // survives a default: a call site that says nothing must get the narrowest
   // credential, never the widest. The run loop always passes one.
   githubToken: string = "",
+  // Set for a local-provider cycle, and the whole of what makes it one: the
+  // adapter is Claude's, so without this the cycle would go to Anthropic under
+  // a model id Anthropic does not have. `localProvider.ts` says what it changes.
+  local: { signIn: LocalSignIn; model: string } | null = null,
 ): Promise<IterationResult> {
   return new Promise((resolve) => {
     // Before the spawn and not before the run, because what has to be true is
@@ -6630,12 +6645,13 @@ export function runIteration(
 
     // No shell: arguments are passed as an array, so a prompt containing
     // quotes, backticks, or semicolons is inert rather than interpreted.
+    const env = childEnv({
+      ...telemetryEnv(runId, telemetryRequired),
+      ...agentGitEnv(githubToken, excludes.path),
+    });
     const child: AgentProcess = spawn(adapter.bin, args, {
       cwd,
-      env: childEnv({
-        ...telemetryEnv(runId, telemetryRequired),
-        ...agentGitEnv(githubToken, excludes.path),
-      }),
+      env: local ? localCycleEnv(env, local.signIn, local.model) : env,
       // The uid `childEnv`'s strip only means something against: same process,
       // one step down, so `/proc/<server>/environ` and `/data` stop being
       // readable by the thing whose prompt came out of a repository.
@@ -9072,6 +9088,18 @@ export async function startRun(id: string): Promise<void> {
       );
     }
 
+    // Once per segment for the Codex notice's reason: three things that differ
+    // from a Claude run and that nothing else on the run's log would mention.
+    if (run.provider === "local") {
+      const signIn = getLocalSignIn();
+      log(
+        id,
+        signIn
+          ? `This run's work cycles go to ${signIn.baseUrl} as ${run.model ?? signIn.model}, not to Anthropic. Winnow's intake filter and pruner do not see them, their spend is unknown rather than $0, and the branch cannot land or be delivered until a frontier model's review approves it.`
+          : "This run is a local-model run and the local provider is signed out, so its next work cycle will be refused. Sign in under Settings.",
+      );
+    }
+
     if (run.isolation === "worktree" && run.worktree_path && run.repo_root) {
       workDir = await ensureWorktree(run);
     }
@@ -9568,9 +9596,26 @@ export async function startRun(id: string): Promise<void> {
         }
       }
 
+      // Read per cycle, so a sign-out reaches a parked run before its next cycle
+      // rather than after it. Refused rather than degraded: without the sign-in
+      // the only thing this cycle could do is go to Anthropic under a model id
+      // Anthropic does not have, or under the operator's plan, which is the one
+      // thing a local run exists not to spend.
+      let local: { signIn: LocalSignIn; model: string } | null = null;
+      if (run.provider === "local") {
+        const signIn = getLocalSignIn();
+        if (!signIn) {
+          throw new Error(
+            "Refusing to spawn a local-model work cycle: the local provider is signed out. Sign in under Settings and reopen the run.",
+          );
+        }
+        ensureLocalConfigDir();
+        local = { signIn, model: run.model ?? signIn.model };
+      }
+
       const args = adapter.buildArgs({
         prompt,
-        model: run.model,
+        model: local ? local.model : run.model,
         permissionMode: budget.permissionMode ?? "acceptEdits",
         resumeSessionId: sessionId,
         pluginDirs: plugins.dirs,
@@ -9600,7 +9645,10 @@ export async function startRun(id: string): Promise<void> {
         // number, because `buildArgs` is where the subtraction is tested and
         // because the two halves have to be read together: this is the figure
         // the pre-cycle check compared a few lines up, not `runs.spent_usd`.
-        maxRunCostUSD: policy.maxRunCostUSD,
+        // Never on a local cycle: `--max-budget-usd` would be enforced against
+        // Claude Code's price for a model it cannot price, which ends a cycle
+        // on a figure nobody was charged.
+        maxRunCostUSD: local ? null : policy.maxRunCostUSD,
         spentGuardUSD: spentGuardBeforeCycle,
         // The run's own frozen copy, so every cycle — including one a restart
         // picks up hours later — opens as exactly the agent the operator started
@@ -9727,6 +9775,7 @@ export async function startRun(id: string): Promise<void> {
             adoptSession(sid);
           },
           github.token,
+          local,
         );
       } finally {
         liveGuards.delete(id);
@@ -10481,7 +10530,9 @@ export async function startRun(id: string): Promise<void> {
       // substitute for the other.
       stopReason = [
         stopReason,
-        `This run was spawned as ${RUN_PROVIDER_LABEL[run.provider ?? "claude"]}, which reports no cost, so its spend is unknown rather than $0. Its token count is measured.`,
+        run.provider === "local"
+          ? "This run went to a local model, which Claude Code has no price for, so its spend is unknown rather than $0. Its token count is measured."
+          : `This run was spawned as ${RUN_PROVIDER_LABEL[run.provider ?? "claude"]}, which reports no cost, so its spend is unknown rather than $0. Its token count is measured.`,
       ]
         .filter(Boolean)
         .join(" ");

@@ -16,6 +16,7 @@ import type {
   ClaudeAuthStateDTO,
   CodexAuthDTO,
   CodexAuthStateDTO,
+  LocalProviderDTO,
   KnowledgeStatusDTO,
   PluginDTO,
   PluginsReportDTO,
@@ -1956,6 +1957,202 @@ function CodexAccount() {
 }
 
 /**
+ * The local provider: a model behind an Anthropic-compatible API on a machine
+ * the operator runs, for runs started with the "Local model" provider.
+ *
+ * Signing in is a probe and a save: the server asks the endpoint for one token
+ * the way a work cycle will, and keeps nothing it could not get an answer from.
+ * The token is sent once and never read back — the row says whether there is
+ * one, not what it is.
+ */
+function LocalModelAccount() {
+  const [state, setState] = useState<LocalProviderDTO | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [confirmOut, setConfirmOut] = useState(false);
+  const [baseUrl, setBaseUrl] = useState("");
+  const [model, setModel] = useState("");
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [flowError, setFlowError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    const res = await jsonRequest<LocalProviderDTO>("/api/local-provider");
+    if (!res.ok) {
+      setLoadError(actionFailureMessage(res, "Could not read the local model sign-in."));
+      return;
+    }
+    setLoadError(null);
+    setState(res.data);
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  function begin() {
+    // Prefilled from the current sign-in so changing the model is one field,
+    // but never the token, which the page does not have.
+    setBaseUrl(state?.baseUrl ?? "");
+    setModel(state?.model ?? "");
+    setToken("");
+    setFlowError(null);
+    setOpen(true);
+  }
+
+  async function submit() {
+    setBusy(true);
+    setFlowError(null);
+    const res = await jsonRequest<LocalProviderDTO>("/api/local-provider", {
+      method: "POST",
+      body: { baseUrl, model, token },
+    });
+    setBusy(false);
+    if (!res.ok) {
+      setFlowError(actionFailureMessage(res, "That endpoint was not accepted."));
+      return;
+    }
+    setToken("");
+    setOpen(false);
+    setState(res.data);
+  }
+
+  async function out() {
+    setBusy(true);
+    const res = await jsonRequest<LocalProviderDTO>("/api/local-provider", {
+      method: "DELETE",
+    });
+    setBusy(false);
+    setConfirmOut(false);
+    if (!res.ok) {
+      setLoadError(actionFailureMessage(res, "Could not sign out."));
+      return;
+    }
+    setState(res.data);
+  }
+
+  return (
+    <EnvRow label="Local model">
+      {state === null && loadError === null ? (
+        <span>reading…</span>
+      ) : loadError ? (
+        <>
+          <Badge tone="danger">unavailable</Badge> <span>{loadError}</span>{" "}
+          <Button variant="secondary" onClick={() => void load()}>
+            Retry
+          </Button>
+        </>
+      ) : state?.signedIn ? (
+        <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1.5">
+          <Badge tone="ok">signed in</Badge>
+          <span className="mono break-all">
+            {state.model} · {state.baseUrl}
+            {state.hasToken ? " · token set" : ""}
+          </span>
+          <Button variant="secondary" onClick={begin}>
+            Change
+          </Button>
+          <Button variant="secondary" onClick={() => setConfirmOut(true)}>
+            Sign out
+          </Button>
+        </span>
+      ) : (
+        <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1.5">
+          {/* Neutral for Codex's reason: nothing needs a local model, so not
+              having one is an ordinary state rather than a fault. */}
+          <Badge tone="neutral">signed out</Badge>
+          <Button variant="secondary" onClick={begin}>
+            Sign in
+          </Button>
+        </span>
+      )}
+
+      {/* Inside the row for `ClaudeAccount`'s reason: `EnvRow` renders a `<dd>`. */}
+      <Sheet
+        open={open}
+        onDismiss={() => {
+          setOpen(false);
+          setToken("");
+          setFlowError(null);
+        }}
+        title="Sign in to a local model"
+        confirmLabel="Check and save"
+        confirmDisabled={baseUrl.trim() === "" || model.trim() === ""}
+        busy={busy}
+        onConfirm={() => void submit()}
+      >
+        <p>
+          Any server that speaks the Anthropic Messages API. Runs you start with
+          the Local model provider send their work cycles here instead of to
+          Anthropic, bypassing winnow, and their branches cannot land until a
+          frontier model&rsquo;s review approves them.
+        </p>
+        <p className="mt-2 text-ink-faint">
+          This app runs in a container, so <span className="mono">localhost</span>{" "}
+          is the container itself. Use the machine&rsquo;s LAN address, or{" "}
+          <span className="mono">host.docker.internal</span> for this host. Saving
+          sends it one short request, which may take a minute while the model
+          loads.
+        </p>
+        <Field className="mt-4" label="Base URL" htmlFor="local-base-url">
+          <Input
+            id="local-base-url"
+            type="url"
+            value={baseUrl}
+            placeholder="http://192.168.0.190:1234"
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(e) => setBaseUrl(e.target.value)}
+          />
+        </Field>
+        <Field className="mt-3" label="Model" htmlFor="local-model">
+          <Input
+            id="local-model"
+            type="text"
+            value={model}
+            placeholder="the id your server lists"
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(e) => setModel(e.target.value)}
+          />
+        </Field>
+        <Field
+          className="mt-3"
+          label="Token (optional)"
+          htmlFor="local-token"
+          error={flowError}
+        >
+          <Input
+            id="local-token"
+            type="password"
+            value={token}
+            placeholder={state?.hasToken ? "leave blank to send none" : ""}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(e) => setToken(e.target.value)}
+          />
+        </Field>
+      </Sheet>
+
+      <Sheet
+        open={confirmOut}
+        onDismiss={() => setConfirmOut(false)}
+        title="Sign out of the local model?"
+        confirmLabel="Sign out"
+        confirmVariant="danger"
+        busy={busy}
+        onConfirm={() => void out()}
+      >
+        <p>
+          Every local-model run&rsquo;s next work cycle will be refused until you
+          sign in again.
+        </p>
+      </Sheet>
+    </EnvRow>
+  );
+}
+
+/**
  * What confines a tool call, in the manner of the two rows above it: presence
  * rather than content, and the one fact that changes what an agent can reach.
  *
@@ -2677,6 +2874,7 @@ export default function SettingsPage() {
         </EnvRow>
         <ClaudeAccount />
         <CodexAccount />
+        <LocalModelAccount />
         <FailedSignIns summary={env.signIn} />
       </dl>
 

@@ -40,6 +40,10 @@ function ReviewBody({ review }: { review: RunReviewDTO }) {
         ) : (
           <Badge tone="ok">done</Badge>
         )}
+        {/* Only a review of a local model's branch asks for one, and it is what
+            opens Land — so it is drawn where the reader looks first. */}
+        {review.verdict === "approve" && <Badge tone="ok">approved for landing</Badge>}
+        {review.verdict === "reject" && <Badge tone="danger">rejected</Badge>}
         <span>
           {fmtUSD(review.costUSD)} · {review.model ?? "Claude Code's own default"}
         </span>

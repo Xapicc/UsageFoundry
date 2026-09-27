@@ -58,6 +58,7 @@ What follows is routing and nothing else: **if you are about to touch anything n
 - **`src/components/`, route handlers, `globals.css`** → `docs/agent/conventions.md` — the rules for variants, colours, polls and route handlers, and recording an interface defect.
 - **`dreaming.ts`, `dreamingLedger.ts`, `dreamingRun.ts`, `/dreaming`, `/api/dreaming`** → `docs/agent/dreaming.md` — which half writes notes, what corpus it reads, and how a note is retracted.
 - **`tasks.ts`, the `tasks` table, `/api/tasks`, `src/app/tasks/`, the board's MCP tools on all three subjects, `taskboardForRuns`, `runs.task_id`, `validation.ts` and every guard it touches** → `docs/agent/taskboard.md` — who moves a task where, what a run's token grants, and how closes are validated.
+- **`localProvider.ts`, `localCertification.ts`, `/api/local-provider`, the `local` provider in the run loop, `certificationOf` in `land.ts`** → `docs/agent/local-provider.md` — how a local cycle bypasses winnow and the meters, what it never carries, and what a local branch needs before it lands.
 - **`docker-compose.yml`, `.env`, `Dockerfile`, `config.ts`** → `docs/agent/environment.md` — which variable refuses the boot, which defaults stay gone, and what the relay never forwards.
 
 ## Always

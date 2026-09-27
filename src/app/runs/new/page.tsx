@@ -14,6 +14,7 @@ import type {
   AmbientAgentDTO,
   EnforcementModeDTO,
   FoldersResponse,
+  LocalProviderDTO,
   RunDTO,
   RunProviderDTO,
   RunTemplateDTO,
@@ -484,6 +485,18 @@ export default function NewRunPage() {
   // control whose every option is a claim. A reset offering to put back a
   // provider nothing ever named would be inventing provenance.
   const [provider, setProvider] = useState(DEFAULT_PROVIDER);
+  /**
+   * The local provider's sign-in, for whether it can be offered and what its
+   * model is. Null until read; a failed read leaves it null, which offers the
+   * option disabled — the door refuses a signed-out local run either way.
+   */
+  const [localSignIn, setLocalSignIn] = useState<LocalProviderDTO | null>(null);
+  useEffect(() => {
+    void (async () => {
+      const res = await jsonRequest<LocalProviderDTO>("/api/local-provider");
+      if (res.ok) setLocalSignIn(res.data);
+    })();
+  }, []);
   const [iterationsCapped, setIterationsCapped] = useState(
     DEFAULT_VALUES.iterationsCapped,
   );
@@ -853,7 +866,11 @@ export default function NewRunPage() {
    */
   const effectiveModel =
     model.trim() ||
-    (provider === "codex" ? null : (settings?.defaultModel ?? null));
+    (provider === "codex"
+      ? null
+      : provider === "local"
+        ? (localSignIn?.model ?? null)
+        : (settings?.defaultModel ?? null));
 
   const rowChanged = (row: RowId) =>
     ROW_FIELDS[row].some((k) => current[k] !== baseline.values[k]);
@@ -1598,12 +1615,22 @@ export default function NewRunPage() {
               description={
                 provider === "codex"
                   ? "A model id this provider's CLI takes; blank runs its default"
-                  : "Blank takes the default in Settings, read when the run starts"
+                  : provider === "local"
+                    ? "A model id your local server lists; blank takes the one you signed in with"
+                    : "Blank takes the default in Settings, read when the run starts"
               }
             >
               {mark("model")}
               <div className="w-64 max-md:w-full">
-                {provider === "codex" ? (
+                {provider === "local" ? (
+                  <Input
+                    id="model"
+                    type="text"
+                    value={model}
+                    placeholder={localSignIn?.model ?? "sign in under Settings"}
+                    onChange={(e) => setModel(e.target.value)}
+                  />
+                ) : provider === "codex" ? (
                   <Input
                     id="model"
                     type="text"
@@ -1691,11 +1718,19 @@ export default function NewRunPage() {
                     setProvider(e.target.value as RunProviderDTO)
                   }
                 >
-                  {RUN_PROVIDERS.map((p) => (
-                    <option key={p} value={p}>
-                      {RUN_PROVIDER_LABEL[p]}
-                    </option>
-                  ))}
+                  {RUN_PROVIDERS.map((p) =>
+                    // Offered disabled rather than hidden while signed out, so
+                    // the option says where it comes from.
+                    p === "local" && !localSignIn?.signedIn ? (
+                      <option key={p} value={p} disabled>
+                        {RUN_PROVIDER_LABEL[p]} — sign in under Settings
+                      </option>
+                    ) : (
+                      <option key={p} value={p}>
+                        {RUN_PROVIDER_LABEL[p]}
+                      </option>
+                    ),
+                  )}
                 </Select>
               </div>
             </ListRow>
@@ -1717,7 +1752,36 @@ export default function NewRunPage() {
               sign-in last because it is the one that merely fails loudly. What
               is deliberately not here is anything a Codex run does *better*;
               this is a price list, and a balanced one would bury the price. */}
-          {provider !== "claude" && (
+          {provider === "local" && (
+            <Hint tone="warn" className="mb-3.5 space-y-2">
+              <p>
+                <strong>
+                  This run&rsquo;s work cycles go to{" "}
+                  <span className="mono">{localSignIn?.baseUrl ?? "your local server"}</span>
+                  , not to Anthropic.
+                </strong>
+              </p>
+              <p>
+                <strong>Its branch cannot land until a frontier model approves it.</strong>{" "}
+                Press Review when it finishes: Land and Deliver stay closed until
+                a review of the branch as it stands says APPROVE, and any commit
+                after that needs another review.
+              </p>
+              <p>
+                <strong>Winnow is out of the path.</strong> Its intake filter and
+                pruner do not see this run, so nothing trims its context but
+                Claude Code&rsquo;s own compaction, which assumes a Claude-sized
+                window.
+              </p>
+              <p>
+                <strong>Spend reads as unknown, not $0,</strong> and nothing
+                reaches the usage windows, so this run needs a work-cycle limit
+                or a time limit.
+              </p>
+            </Hint>
+          )}
+
+          {provider === "codex" && (
             <Hint tone="warn" className="mb-3.5 space-y-2">
               <p>
                 <strong>

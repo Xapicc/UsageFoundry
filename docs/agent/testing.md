@@ -245,6 +245,14 @@ Units that are about no test file in the tree:
 
 - `rateLimitEvent.test.ts` is gone, with the module it covered: the provider's own utilisation off the `stream-json` stream fed one dashboard card and nothing else, and card and parser were removed …
 
+## [The local provider](testing/local-provider.md)
+
+| Test file | Also in |
+|---|---|
+| `localCertification.test.ts` |  |
+| `localLandGate.test.ts` | [harnesses] |
+| `localProvider.test.ts` |  |
+
 ## [Auth, credentials, config and the status routes](testing/auth-config-and-status-routes.md)
 
 | Test file | Also in |

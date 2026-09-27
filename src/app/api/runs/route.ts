@@ -33,6 +33,7 @@ import {
   type PermissionMode,
 } from "../../../lib/settings";
 import { modelRefusal } from "../../../lib/modelCatalogue";
+import { getLocalSignIn, parseLocalSignIn } from "../../../lib/localProvider";
 import { resolveAgentForRun, runAgentDTO } from "../../../lib/agents";
 import {
   ENFORCEMENT_MODES,
@@ -297,8 +298,27 @@ async function postHandler(req: Request) {
   // table of Anthropic prices and holds Claude Code's own id spellings; a Codex
   // run names something else entirely, and refusing it against this list would
   // be this build claiming to know a set it has never been told.
-  const model = body.model ? String(body.model).trim() || null : null;
-  if (provider !== "codex") {
+  let model = body.model ? String(body.model).trim() || null : null;
+  if (provider === "local") {
+    // Refused here rather than at the first cycle, which would refuse it too:
+    // a person is at this door, and a run admitted with no endpoint to go to is
+    // a prompt written for nothing.
+    const signIn = getLocalSignIn();
+    if (!signIn) {
+      return NextResponse.json(
+        { error: "The local provider is signed out. Sign in under Settings first." },
+        { status: 400 },
+      );
+    }
+    // Free text for Codex's reason — the catalogue holds Claude ids — but held
+    // to the sign-in's own argv rule, and frozen onto the row so the run keeps
+    // its model when the sign-in later names another.
+    if (model) {
+      const checked = parseLocalSignIn({ baseUrl: signIn.baseUrl, model });
+      if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: 400 });
+    }
+    model ??= signIn.model;
+  } else if (provider !== "codex") {
     const refusal = modelRefusal(getSettings().modelCatalogue, model);
     if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
   }

@@ -36,6 +36,7 @@ export async function GET(req: Request, ctx: Ctx) {
       // and a review changes nothing by construction.
       paths: [],
       changed: null,
+      verdict: r.verdict,
     })),
   });
 }

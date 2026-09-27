@@ -2035,6 +2035,14 @@ export default function RunDetail({
                     prompt rather than a system prompt.
                   </Hint>
                 )}
+                {run.provider === "local" && (
+                  <Hint tone="warn" className="mt-2.5">
+                    <strong>This run went to a local model.</strong> Its spend is
+                    unknown rather than $0 and nothing reached the usage windows.
+                    Its branch cannot land or be delivered until a frontier
+                    model&rsquo;s review of the branch as it stands says APPROVE.
+                  </Hint>
+                )}
               </Section>
 
               {run.agent && (
