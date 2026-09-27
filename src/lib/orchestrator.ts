@@ -1820,12 +1820,12 @@ const MAX_REFUSAL_WAIT_MS = 6 * 3_600_000;
  * live guard may cut short and have refunded. Two counts on two columns, and
  * the one number bounds each.
  *
- * Refusals are counted on `runs.refusal_pauses`, and not on `pause_count`. A refusal is
- * someone else's claim about someone else's counter, and a misread one must not
- * re-park forever. Only the refusal branch advances the count: a run that
- * stepped aside at its own 5-hour guard has not waited out a refusal, and
- * charging it one failed the run at its first real wall. `reopenRun` zeroes it,
- * because a run failed `pauses-spent` and picked up by hand is the fresh
+ * Refusals are counted on `runs.refusal_pauses`, and not on `pause_count`. A
+ * refusal is someone else's claim about someone else's counter, and a misread
+ * one must not re-park forever. Only the refusal branch advances the count: a
+ * run that stepped aside at its own 5-hour guard has not waited out a refusal,
+ * and charging it one failed the run at its first real wall. `reopenRun` zeroes
+ * it, because a run failed `pauses-spent` and picked up by hand is the fresh
  * attempt this cap was not meant to span — carried, the count failed it again
  * at the next wall without one wait.
  *
@@ -1834,8 +1834,8 @@ const MAX_REFUSAL_WAIT_MS = 6 * 3_600_000;
  * `maxIterations` from advancing: a run whose cycle is longer than the share of
  * a window its guard allows never completes one, so the cycle cap never ends
  * it and a run with no time limit parks for ever. Past this many a cut cycle
- * stays charged. Nothing resets the count, `reopenRun` included: it
- * corrects `iterations`, and a pick-up carries `iterations`.
+ * stays charged. Nothing resets the count, `reopenRun` included: it corrects
+ * `iterations`, and a pick-up carries `iterations`.
  *
  * `pause_count` counts every park of either kind and is never reset, because
  * `ensureWorktree` reads it as "this run has worked before".
@@ -8833,7 +8833,10 @@ export async function startRun(id: string): Promise<void> {
   let incompleteIteration = false;
   /** Set when the run is stepping aside rather than ending. */
   let pausedUntil: number | null = null;
-  /** Whether that park is waiting out a refusal, which is what `refusal_pauses` counts. */
+  /**
+   * Whether that park is waiting out a refusal, which is what `refusal_pauses`
+   * counts.
+   */
   let refusalPark = false;
   /** The next prompt should be the DONE pushback rather than the continuation. */
   let justRetriggered = false;

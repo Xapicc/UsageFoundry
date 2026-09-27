@@ -64,8 +64,14 @@ assert.equal(
     "run against the real database",
 );
 
-const { createRun, getRun, MAX_EARLY_ENDS_PER_RUN, MAX_PAUSES_PER_RUN, resumeRun, stopRun } =
-  require("./orchestrator") as typeof import("./orchestrator");
+const {
+  createRun,
+  getRun,
+  MAX_EARLY_ENDS_PER_RUN,
+  MAX_PAUSES_PER_RUN,
+  resumeRun,
+  stopRun,
+} = require("./orchestrator") as typeof import("./orchestrator");
 
 /**
  * What the stubbed child does on one work cycle.
@@ -319,7 +325,11 @@ describe("what bounds the refund of a cycle the context ceiling ended", () => {
     await settled(id);
     const parked = getRun(id)!;
     assert.equal(parked.status, "paused", `the fixture never parked: ${parked.stop_reason}`);
-    assert.equal(parked.iterations, 0, "the early ends inside the bound, and the cut, were all refunded");
+    assert.equal(
+      parked.iterations,
+      0,
+      "the early ends inside the bound, and the cut, were all refunded",
+    );
     unpark(id);
 
     await settled(id);
