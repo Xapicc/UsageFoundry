@@ -718,6 +718,115 @@ describe("three turns on one resumed session", () => {
   });
 });
 
+/**
+ * A turn's capability ends when a turn is decided over, not when its child is
+ * finally gone. Stop returns while the child has eight seconds of ladder left,
+ * and a `spawn` that throws never produces a child for `land` to be wired to —
+ * in both, the token stayed live, and a stopped turn could put proposals, tasks
+ * and questions into a thread the operator had stopped. Nothing throws and the
+ * page looks right, which is why it is asserted through `subjectForCapability`,
+ * the one thing `/api/mcp` asks.
+ */
+describe("a turn's capability ends when the turn is decided over", () => {
+  const realSpawn = childProcess.spawn;
+  const started: FakeChild[] = [];
+  let spawnThrows: Error | null = null;
+  const configsSeen: string[] = [];
+
+  /** The token a turn was given, read off the file its argv names. */
+  const tokenIn = (configPath: string): string => {
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+      mcpServers: { uf: { headers: { Authorization: string } } };
+    };
+    return config.mcpServers.uf.headers.Authorization.replace(/^Bearer /, "");
+  };
+  const tokensSeen: string[] = [];
+
+  before(() => {
+    childProcess.spawn = (_bin: string, args: string[]) => {
+      const configPath = args[args.indexOf("--mcp-config") + 1];
+      configsSeen.push(configPath);
+      tokensSeen.push(tokenIn(configPath));
+      if (spawnThrows) throw spawnThrows;
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        exitCode: null as number | null,
+        signalCode: null as NodeJS.Signals | null,
+        kill: () => true,
+      }) as FakeChild;
+      started.push(child);
+      return child;
+    };
+  });
+
+  after(() => {
+    childProcess.spawn = realSpawn;
+    for (const child of started) {
+      if (child.exitCode === null) {
+        child.exitCode = 0;
+        child.emit("close", 0);
+      }
+    }
+  });
+
+  it("is revoked by Stop, while the stopped child is still dying", async () => {
+    const row = chat.createChat();
+    const sent = await chat.sendChatMessage(row.id, "propose some work");
+    if (!sent.ok) assert.fail(`the turn did not start: ${sent.reason}`);
+    const token = tokensSeen[tokensSeen.length - 1];
+    assert.deepEqual(chat.subjectForCapability(token), { kind: "chat", chatId: row.id });
+
+    const stop = chat.cancelChatTurn(row.id);
+    assert.deepEqual(stop, { ok: true, outcome: "signalled" });
+    // The premise: nothing has exited, so `land` has not run.
+    assert.equal(started[started.length - 1].exitCode, null);
+    assert.equal(chat.subjectForCapability(token), null, "a stopped turn can still call tools");
+  });
+
+  it("is revoked, and its config directory removed, when spawn throws", async () => {
+    const row = chat.createChat();
+    // What an over-long argv element does — synchronously, before any child.
+    spawnThrows = Object.assign(new Error("spawn E2BIG"), { code: "E2BIG" });
+    try {
+      const sent = await chat.sendChatMessage(row.id, "propose some work");
+      assert.equal(sent.ok, false);
+      if (sent.ok) return;
+      assert.match(sent.reason, /E2BIG/);
+    } finally {
+      spawnThrows = null;
+    }
+
+    const token = tokensSeen[tokensSeen.length - 1];
+    const configPath = configsSeen[configsSeen.length - 1];
+    assert.equal(chat.subjectForCapability(token), null, "a turn that never spawned left a live token");
+    assert.equal(fs.existsSync(configPath), false, "the file holding the token is still on disk");
+    assert.equal(fs.existsSync(path.dirname(configPath)), false, "the per-turn directory is left behind");
+    assert.equal(chat.getChat(row.id)?.status, "failed");
+  });
+
+  it("is never minted for a message too long to pass as one argument", async () => {
+    // Refused before the claim, so none of the above has anything to release:
+    // no row moved, no message appended, no spawn.
+    const row = chat.createChat();
+    const spawnsBefore = configsSeen.length;
+    const text = "x".repeat(chat.MAX_CHAT_MESSAGE_BYTES + 1);
+    const sent = await chat.sendChatMessage(row.id, text);
+    assert.equal(sent.ok, false);
+    if (sent.ok) return;
+    assert.match(sent.reason, /at most 64 KB/);
+    assert.equal(configsSeen.length, spawnsBefore, "a refused message reached spawn");
+    const after = chat.getChat(row.id);
+    assert.equal(after?.status, row.status);
+    assert.equal(after?.turn_seq, row.turn_seq, "a refused message claimed a turn");
+    assert.equal(chat.listMessages(row.id).length, 0, "a refused message was appended");
+
+    // And the limit is not off by one in the other direction.
+    const fits = await chat.sendChatMessage(row.id, "x".repeat(chat.MAX_CHAT_MESSAGE_BYTES));
+    assert.equal(fits.ok, true);
+  });
+});
+
 describe("sendChatMessage when the turn cannot be started", () => {
   it("leaves the row failed, not thinking, and says why", async () => {
     const row = chat.createChat();

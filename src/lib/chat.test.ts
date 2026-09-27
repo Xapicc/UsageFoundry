@@ -141,6 +141,7 @@ process.env.UF_GITHUB_TOKEN = "ghp_" + "x".repeat(36);
 // `orchestrator.test.ts` does it.
 const {
   CHAT_IDLE_TIMEOUT_MS,
+  MAX_CHAT_MESSAGE_BYTES,
   MAX_QUESTION_CHOICES,
   STALE_TURN_MARGIN_MS,
   answerChatQuestions,
@@ -1041,6 +1042,20 @@ describe("chatPrompt", () => {
     const out = chatPrompt({ sessionId: null, history: long }, "and now?");
     assert.ok(out.includes("the recent bit"));
     assert.ok(!out.includes("x".repeat(25_000)));
+  });
+
+  it("fits one argv element with the longest message and the fullest replay", () => {
+    // The cap on a message and the replay budget are two constants apart, and
+    // what joins them is Linux's per-element limit: 128 KiB at 4 KiB pages,
+    // counting the NUL. Past it `spawn` throws E2BIG on the turn that lost its
+    // session. Three-byte characters, because the budget counts code units.
+    const history = Array.from({ length: 20 }, () => ({
+      role: "user" as const,
+      text: "€".repeat(994),
+    }));
+    const out = chatPrompt({ sessionId: null, history }, "x".repeat(MAX_CHAT_MESSAGE_BYTES));
+    assert.equal(out.split("\n").filter((l) => l.startsWith("user: ")).length, 20);
+    assert.ok(Buffer.byteLength(out, "utf8") + 1 <= 128 * 1024);
   });
 });
 

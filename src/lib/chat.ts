@@ -454,6 +454,21 @@ const THREAD_REPLAY_MESSAGES = 20;
 const THREAD_REPLAY_BYTES = 20_000;
 
 /**
+ * The longest message a turn will pass on, in UTF-8 bytes.
+ *
+ * The message reaches the CLI as the one argv element after `-p`, and Linux
+ * refuses any single element over `MAX_ARG_STRLEN` — 32 pages, 128 KiB at 4 KiB
+ * pages — with `E2BIG`, which `spawn` throws synchronously. Refused before the
+ * claim rather than met at the spawn, because "Could not start the turn: spawn
+ * E2BIG" is a sentence nobody can act on. Half of that rather than all of it:
+ * `chatPrompt` puts up to `THREAD_REPLAY_BYTES` code units of replayed thread in
+ * front of the message, up to three bytes each in UTF-8, and a limit that held
+ * only when there was a session to resume would fail on exactly the turn that
+ * had lost one.
+ */
+export const MAX_CHAT_MESSAGE_BYTES = 64 * 1024;
+
+/**
  * How long a turn may go **silent** before it is stopped. Not how long it may
  * run.
  *
@@ -2260,10 +2275,12 @@ const caps = ((globalThis as unknown as { __ufChatCaps?: Map<string, Capability>
  * written to avoid.
  *
  * What replaces the clock is that every ending revokes: `land` in
- * `runOrchestratorChild` runs on the spawn failure, on the exit and on the
- * kill, the idle timer revokes at the moment it decides the turn is over rather
- * than waiting for the corpse, and the map is in this process's memory, so it
- * dies with the process either way.
+ * `runOrchestratorChild` runs on a launch that fails, on the exit and on the
+ * kill; a setup or `spawn` that throws before there is a child revokes in the
+ * same function; the idle timer and `endTurn` — Stop, the sweeper, the install
+ * ceiling — revoke at the moment they decide the turn is over rather than
+ * waiting for the corpse; and the map is in this process's memory, so it dies
+ * with the process either way.
  */
 export function mintCapability(subject: CapabilitySubject): string {
   const token = randomBytes(32).toString("base64url");
@@ -2319,6 +2336,27 @@ export function mintRunCapability(runId: string): string {
 export function revokeRunCapabilities(runId: string): void {
   for (const [token, cap] of caps) {
     if (cap.subject.kind === "run" && cap.subject.runId === runId) caps.delete(token);
+  }
+}
+
+/**
+ * Called from `endTurn`, at the moment it decides a chat's turn is over.
+ *
+ * `land` revokes on every other ending, but it runs when the child is gone, and
+ * `endTurn` returns while the child it signalled still has eight seconds of
+ * ladder left — so after Stop, the sweeper or the install ceiling, a stopped
+ * turn could still propose runs, file tasks and ask questions into a thread the
+ * operator had stopped, while their retry was claiming the next turn. The idle
+ * timer's rule, applied to the other three endings.
+ *
+ * By chat rather than by token, which is `revokeRunCapabilities`' shape one
+ * function up: the turn being ended is the only one this chat may have live,
+ * and any other token under its id is a superseded child's that some earlier
+ * ending already decided was over.
+ */
+function revokeChatCapabilities(chatId: string): void {
+  for (const [token, cap] of caps) {
+    if (cap.subject.kind === "chat" && cap.subject.chatId === chatId) caps.delete(token);
   }
 }
 
@@ -2579,6 +2617,10 @@ function endTurn(chatId: string, error: string): boolean {
   // that never came.
   if (changed) appendMessage(chatId, "system", error);
 
+  // Before any signal, and whether or not there is a child left to send one
+  // to: the decision is what ends the credential, not the corpse.
+  revokeChatCapabilities(chatId);
+
   const child = turns.get(chatId);
   if (!child) return false;
 
@@ -2702,6 +2744,17 @@ export async function sendChatMessage(
 
   const text = message.trim();
   if (!text) return { ok: false, reason: "Nothing to send." };
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes > MAX_CHAT_MESSAGE_BYTES) {
+    return {
+      ok: false,
+      reason:
+        `That message is ${Math.ceil(bytes / 1024)} KB, and a chat message can be at most ` +
+        `${MAX_CHAT_MESSAGE_BYTES / 1024} KB because it is handed to the CLI as one ` +
+        "command-line argument. Shorten it, or save the long part to a file in a " +
+        "mounted folder and ask the chat to read it.",
+    };
+  }
 
   // The same gate a review passes: the operator's own configured ceiling is
   // already spent. A chat turn spends against the same window as everything
@@ -2901,34 +2954,27 @@ export interface OrchestratorChildOptions {
 }
 
 /**
- * Spawn one headless orchestrator turn.
- *
- * **The fourth kind of child process, invoked a second way — not a fifth kind.**
- * `review.ts` says adding a third was a decision rather than a detail, and the
- * chat says the same of the fourth. A workflow's orchestrator block is the same
- * child with the same argv, the same environment, the same capability token and
- * the same MCP config file; what differs is that there is no thread to resume
- * and nobody typing. That is why this function exists rather than a second
- * `spawn` call site: two of those would be two sets of flags to keep in step,
- * and the flags are what bound the child.
- *
- * Everything about *what* it may do is a caller's argument — the subject decides
- * its tool list, the system prompt states its role — and everything about how it
- * is contained is here and identical for both.
+ * What a launch has taken before there is a child to hand it to: the capability
+ * file on disk, and the tree the sandbox fill wrote placeholders into. Filled in
+ * as each is taken, so a throw part-way through releases exactly those.
  */
-export function runOrchestratorChild(o: OrchestratorChildOptions): void {
-  const token = mintCapability(o.subject);
-  let configPath: string;
-  try {
-    configPath = writeMcpConfig(token);
-  } catch (err) {
-    // `land` is the only thing that revokes, and it is inside the promise this
-    // never reaches — so a token minted for a turn that cannot start would
-    // stay live in memory until it expired, an hour later. The caller records
-    // the failure on the row; this releases what the failed setup took.
-    revokeCapability(token);
-    throw err;
-  }
+interface LaunchTaken {
+  configPath?: string;
+  cwd?: string;
+}
+
+/**
+ * Everything from the capability file to a running child, and nothing after —
+ * its own function so that one `catch` in `runOrchestratorChild` covers all of
+ * it. `land` releases a turn, and `land` is wired to a child.
+ */
+function launchOrchestratorChild(
+  o: OrchestratorChildOptions,
+  token: string,
+  taken: LaunchTaken,
+): { child: ChatProcess; configPath: string; cwd: string } {
+  const configPath = writeMcpConfig(token);
+  taken.configPath = configPath;
 
   const settings = getSettings();
   const args = [
@@ -3039,6 +3085,7 @@ export function runOrchestratorChild(o: OrchestratorChildOptions): void {
   // answer differently, and a sweep aimed at the other answer silently leaves
   // the placeholders where they fell.
   const cwd = o.cwd && fs.existsSync(o.cwd) ? o.cwd : chatCwd();
+  taken.cwd = cwd;
 
   /**
    * The same sandbox preparation a work cycle gets, minus the git half — and
@@ -3099,6 +3146,49 @@ export function runOrchestratorChild(o: OrchestratorChildOptions): void {
     stdio: ["ignore", "pipe", "pipe"],
     detached: settings.killProcessGroup && process.platform !== "win32",
   });
+  return { child, configPath, cwd };
+}
+
+/**
+ * Spawn one headless orchestrator turn.
+ *
+ * **The fourth kind of child process, invoked a second way — not a fifth kind.**
+ * `review.ts` says adding a third was a decision rather than a detail, and the
+ * chat says the same of the fourth. A workflow's orchestrator block is the same
+ * child with the same argv, the same environment, the same capability token and
+ * the same MCP config file; what differs is that there is no thread to resume
+ * and nobody typing. That is why this function exists rather than a second
+ * `spawn` call site: two of those would be two sets of flags to keep in step,
+ * and the flags are what bound the child.
+ *
+ * Everything about *what* it may do is a caller's argument — the subject decides
+ * its tool list, the system prompt states its role — and everything about how it
+ * is contained is here and identical for both.
+ */
+export function runOrchestratorChild(o: OrchestratorChildOptions): void {
+  const token = mintCapability(o.subject);
+  const taken: LaunchTaken = {};
+  let launched: ReturnType<typeof launchOrchestratorChild>;
+  try {
+    launched = launchOrchestratorChild(o, token, taken);
+  } catch (err) {
+    // Nothing reaches `land` from here, so what the launch took is given back
+    // here or never: a token live in memory until restart, a file on disk
+    // holding it as `Bearer`, and placeholders in a tree the operator works
+    // in. Reachable by an operator rather than only by a full disk — a message
+    // longer than one argv element makes `spawn` throw `E2BIG` synchronously,
+    // which `sendChatMessage` now refuses before the claim but a workflow
+    // block's prompt does not. The caller records the failure on the row.
+    revokeCapability(token);
+    if (taken.configPath) removeMcpConfig(taken.configPath);
+    if (taken.cwd) {
+      for (const problem of sweepSandboxTreeRoot(taken.cwd).problems) {
+        opsLog("warn", "chat.sandbox_sweep_failed", { message: problem });
+      }
+    }
+    throw err;
+  }
+  const { child, configPath, cwd } = launched;
 
   // A worse OOM victim than the server, like every other long-lived child. A
   // turn that dies ends one turn, with a person in front of it to say so.
