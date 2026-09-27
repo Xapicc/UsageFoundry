@@ -44,6 +44,7 @@ import {
   type RunProgress,
   LIVE_ENFORCEABLE_CODES,
   RESUME_MARGIN_MS,
+  cycleCapReason,
   enforceableForRun,
   evaluateBudget,
   normalizePolicy,
@@ -8956,6 +8957,14 @@ export async function startRun(id: string): Promise<void> {
         );
       }
 
+      // Off the row on every pass rather than hydrated once, because the grant
+      // is written there at the boundary below and the cycle it pays for is
+      // the next pass — and off the row at all so a restart meets the cap the
+      // run was already under. Held for the pass: the post-cycle cap check and
+      // the live guard judge this cycle against the same figure that admitted
+      // it, and nothing writes the column between here and that check.
+      const grantedCycles = getRun(id)?.validation_cycles ?? 0;
+
       const verdict: BudgetVerdict = evaluateBudget(
         policy,
         snapshot,
@@ -8970,6 +8979,7 @@ export async function startRun(id: string): Promise<void> {
           // What this task has cost before. Read here rather than inside the
           // guard so `evaluateBudget` stays a pure function of numbers.
           costBaseline: costBaselineFor(run),
+          grantedCycles,
         },
         Date.now(),
       );
@@ -9485,6 +9495,11 @@ export async function startRun(id: string): Promise<void> {
               spentGuardTokens: spentTokens + spentEstTokens + inFlight.tokens,
               startedAt,
               pausedMs,
+              // Without it a granted cycle reads as over its cap, and since
+              // `iterations` is checked first and is not live-enforceable, the
+              // tick would skip the run — leaving that cycle's spend and time
+              // unguarded mid-flight.
+              grantedCycles,
             };
           },
         });
@@ -10169,11 +10184,9 @@ export async function startRun(id: string): Promise<void> {
       if (
         !heldBack &&
         policy.maxIterations !== null &&
-        iterations >= policy.maxIterations
+        iterations >= policy.maxIterations + grantedCycles
       ) {
-        stopReason = `Used all ${policy.maxIterations} work ${
-          policy.maxIterations === 1 ? "cycle" : "cycles"
-        } allowed for this run.`;
+        stopReason = cycleCapReason(policy.maxIterations, grantedCycles);
         finalStatus = "completed";
         break;
       }
@@ -11400,6 +11413,10 @@ export async function sweepPaused(): Promise<void> {
           // waiting to resume — which is the whole shape this accumulator
           // exists to stop.
           pausedMs: pausedMsAt(run, now),
+          // A run can park at the pre-cycle guard of a cycle a task check
+          // granted, and this is that guard's re-reading: without the grant it
+          // ends on the cap the loop had just widened, instead of resuming.
+          grantedCycles: run.validation_cycles,
         },
         now,
       );

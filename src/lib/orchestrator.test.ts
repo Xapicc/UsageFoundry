@@ -6224,6 +6224,40 @@ describe("applying the sweeper's decision", () => {
     assert.equal(row.status, "queued");
   });
 
+  it("resumes a run parked at the start of a cycle a task check granted", async () => {
+    // Its cap is 1 and it has used 1: the pre-cycle guard admitted a second
+    // cycle only because the check granted one, and then parked on the window.
+    // Read without the grant, this tick ends it on the cap the loop had just
+    // widened — the grant spent, the task still claimed.
+    const parkedAt = async (grants: number) => {
+      saveSettings({ maxConcurrentRuns: 1 });
+      insertRun({ status: "running", workDir: `${ws}/blocker-${seq}` });
+      const id = insertRun({
+        status: "paused",
+        workDir: `${ws}/parked-granted-${grants}`,
+        budget: '{"maxIterations":1,"maxDurationMinutes":600}',
+      });
+      db()
+        .prepare(
+          "UPDATE runs SET iterations = 1, max_iterations = 1, validation_cycles = ? WHERE id = ?",
+        )
+        .run(grants, id);
+      try {
+        await sweepPaused();
+        return getRun(id)!;
+      } finally {
+        saveSettings({ maxConcurrentRuns: null });
+      }
+    };
+
+    assert.equal((await parkedAt(1)).status, "queued");
+    // The control: the same row with nothing granted is at its cap, so the
+    // fixture does reach the cycle check rather than passing by missing it.
+    const capped = await parkedAt(0);
+    assert.equal(capped.status, "stopped");
+    assert.equal(capped.stop_reason, "Used all 1 work cycle allowed for this run.");
+  });
+
   it("closes the park when the operator stops a parked run", async () => {
     const now = Date.now();
     const parked = insertRun({

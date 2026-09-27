@@ -165,6 +165,19 @@ export interface RunProgress {
    * letting it run the clock backwards would turn the terminus off.
    */
   pausedMs?: number;
+  /**
+   * Work cycles a task check has granted this run past `maxIterations` —
+   * `runs.validation_cycles`, read off the row by the caller for
+   * `costBaseline`'s reason.
+   *
+   * It widens the `iterations` check and nothing else. A grant is permission to
+   * *ask* for another cycle, so duration, run spend, both windows and the order
+   * they are read in stay exactly what they are without one — and the widened
+   * cap is still a terminus, because `maxValidationCycles` ceilings the column
+   * and the column only ever goes up. Optional and defaulting to zero, so a
+   * caller with no grant to report reads exactly as it did.
+   */
+  grantedCycles?: number;
 }
 
 export type BudgetMeter = {
@@ -490,6 +503,23 @@ export function providerTerminusRefusal(
   );
 }
 
+/**
+ * Why a run ended at its cycle cap, shared by the pre-cycle guard and the
+ * loop's post-cycle check so the two cannot say different things.
+ *
+ * A granted cycle is named rather than folded into the total: a run that ends
+ * on a cap the operator never typed has to say where the rest of it came from,
+ * or "used all 2" beside a limit of 1 reads as a guard that miscounted.
+ */
+export function cycleCapReason(maxIterations: number, granted: number): string {
+  if (granted <= 0) {
+    return `Used all ${maxIterations} work ${
+      maxIterations === 1 ? "cycle" : "cycles"
+    } allowed for this run.`;
+  }
+  return `Used all ${maxIterations + granted} work cycles allowed for this run: the ${maxIterations} it was given and ${granted} more the check on its task granted.`;
+}
+
 export function evaluateBudget(
   policy: BudgetPolicy,
   snapshot: UsageSnapshot,
@@ -518,12 +548,13 @@ export function evaluateBudget(
   // the guard decided on.
   const spentUSD = progress.spentGuardUSD ?? progress.spentUSD;
   const spentTokens = progress.spentGuardTokens ?? progress.spentTokens;
+  const granted = progress.grantedCycles ?? 0;
 
   if (policy.maxIterations !== null) {
     meters.push({
       label: "Work cycles used",
       value: progress.iterations,
-      limit: policy.maxIterations,
+      limit: policy.maxIterations + granted,
       unit: "count",
     });
   }
@@ -605,14 +636,9 @@ export function evaluateBudget(
 
   if (
     policy.maxIterations !== null &&
-    progress.iterations >= policy.maxIterations
+    progress.iterations >= policy.maxIterations + granted
   ) {
-    return block(
-      "iterations",
-      `Used all ${policy.maxIterations} work ${
-        policy.maxIterations === 1 ? "cycle" : "cycles"
-      } allowed for this run.`,
-    );
+    return block("iterations", cycleCapReason(policy.maxIterations, granted));
   }
 
   if (
