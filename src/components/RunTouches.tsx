@@ -2,7 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { RunDTO, RunDiffDTO, RunTouchedDTO } from "@/lib/apiTypes";
-import { reconcileTouches, type TouchedFile } from "@/lib/runTouches";
+import {
+  changedSetOf,
+  reconcileTouches,
+  type TouchReport,
+  type TouchedFile,
+} from "@/lib/runTouches";
 import { ButtonLink } from "@/components/ui/Button";
 import { Card, CardTitle, Empty } from "@/components/ui/Card";
 import { Disclosure } from "@/components/ui/Disclosure";
@@ -31,7 +36,7 @@ import { Table, TBody, THead, Th, Td, Tr } from "@/components/ui/Table";
  */
 
 /**
- * The four groups, in the order they are read.
+ * The five groups, in the order they are read.
  *
  * `changedNotTouched` leads because it is the one an operator would not have
  * guessed at and the only one with no surface anywhere else in the app. The
@@ -55,6 +60,14 @@ const GROUPS = [
     fold: true,
   },
   {
+    key: "touchedUncommitted",
+    label: "Named, and left uncommitted",
+    footnote:
+      "Changed in the checkout but never committed, so landing will not bring " +
+      "them over.",
+    fold: false,
+  },
+  {
     key: "touchedNotChanged",
     label: "Named, and not changed",
     footnote: "Read and never written, or edited and then reverted.",
@@ -73,13 +86,13 @@ const GROUPS = [
 /**
  * The same rows when there is no diff to reconcile against.
  *
- * A run whose branch was deleted has a changed set that is *unknown* rather
- * than empty, and the four labels above all make a claim about it — "named, and
- * not changed" over a file nobody can say was not changed is the reconciliation
- * asserting the thing it was built to check. So the two groups whose labels
- * survive without a diff are kept, and `outsideCheckout` is one of them because
- * being outside the checkout is a property of the path rather than of the
- * branch.
+ * A run whose branch was deleted, or that worked in the operator's own
+ * checkout, has a changed set that is *unknown* rather than empty, and the
+ * labels above all make a claim about it — "named, and not changed" over a file
+ * nobody can say was not changed is the reconciliation asserting the thing it
+ * was built to check. So the two groups whose labels survive without a diff are
+ * kept, and `outsideCheckout` is one of them because being outside the checkout
+ * is a property of the path rather than of the branch.
  */
 const GROUPS_WITHOUT_DIFF = [
   {
@@ -98,7 +111,7 @@ const GROUPS_WITHOUT_DIFF = [
 ] as const satisfies readonly TouchGroup[];
 
 interface TouchGroup {
-  key: "changedNotTouched" | "touchedNotChanged" | "outsideCheckout" | "touchedAndChanged";
+  key: Exclude<keyof TouchReport, "distinctTouched">;
   label: string;
   footnote: string | null;
   fold: boolean;
@@ -133,23 +146,19 @@ export function RunTouches({ run, diff }: { run: RunDTO; diff: RunDiffDTO }) {
     };
   }, [run.id]);
 
-  // With `kind: "none"` the changed set is unknown rather than empty — the
-  // branch is gone, or the run never had one — so the groups that make a claim
-  // about it are not offered. The header's two figures and the three empty
-  // states are unaffected: they are facts about the events, not about the diff,
-  // and an old run whose branch was deleted is exactly the one whose events are
-  // most likely to have been swept.
-  const reconcilable = diff.kind !== "none";
-
-  // `path` alone, not `oldPath`: a rename's old name is a path no tool call
-  // would have named, and listing it would put a file in "changed, never named"
-  // that was never there under that name.
-  const changed = useMemo(() => diff.files.map((f) => f.path), [diff.files]);
-  const report = useMemo(
-    () =>
-      touched?.kind === "report" ? reconcileTouches(touched.touches, changed) : null,
-    [touched, changed],
-  );
+  // Without a branch diff the changed set is unknown rather than empty — the
+  // branch is gone, the run never had one, or it worked in the operator's own
+  // checkout — so the groups that make a claim about it are not offered. The
+  // header's two figures and the three empty states are unaffected: they are
+  // facts about the events, not about the diff, and an old run whose branch was
+  // deleted is exactly the one whose events are most likely to have been swept.
+  const changedSet = useMemo(() => changedSetOf(diff), [diff]);
+  const report = useMemo(() => {
+    if (touched?.kind !== "report") return null;
+    return changedSet.known
+      ? reconcileTouches(touched.touches, changedSet.changed, changedSet.uncommitted)
+      : reconcileTouches(touched.touches, [], []);
+  }, [touched, changedSet]);
 
   return (
     <Card className="mt-4">
@@ -194,10 +203,12 @@ export function RunTouches({ run, diff }: { run: RunDTO; diff: RunDiffDTO }) {
         </Empty>
       )}
 
-      {report && !reconcilable && <TouchNoDiffNotice reason={diff.reason} shows="listed" />}
+      {report && !changedSet.known && (
+        <TouchNoDiffNotice reason={changedSet.reason} shows="listed" />
+      )}
 
       {report &&
-        (reconcilable ? GROUPS : GROUPS_WITHOUT_DIFF).map(({ key, label, footnote, fold }) => {
+        (changedSet.known ? GROUPS : GROUPS_WITHOUT_DIFF).map(({ key, label, footnote, fold }) => {
           const rows = report[key];
           if (rows.length === 0) return null;
           const table = (
