@@ -160,3 +160,10 @@
   on a real install with a saved, budgeted workflow, ask the chat to "run the
   sweep every Monday morning" and to "fix the bwrap failures", and read the
   turn's tool calls and cost.
+
+- **No model has proposed a run with a provider (2026-09-28).** `propose_run`
+  gained `provider`, pinned in `route.test.ts` and `chat.test.ts` against the
+  refusals and the row; no real turn has been shown the field, and no card
+  carrying one has been approved in a browser. Settles by asking the chat for
+  a Codex run in a folder whose template has a work-cycle limit, then
+  approving it and reading `runs.provider`.

@@ -53,6 +53,8 @@ import {
   sweepSandboxTreeRoot,
 } from "./sandboxMountPoints";
 import { getTemplate, type RunTemplate } from "./templates";
+import type { RunProviderDTO } from "./apiTypes";
+import { providerTerminusRefusal } from "./budget";
 import {
   agentDefinition,
   agentKnowledgeOf,
@@ -285,6 +287,17 @@ export interface ChatProposalRow {
    * one precedence, resolved in `planProposal`.
    */
   model: string | null;
+  /**
+   * Which agent CLI the run is spawned as, or null for the ordinary Claude run.
+   *
+   * On the work side beside the model, and not a guard: it sets no budget, no
+   * permission mode and no isolation choice. What it does change is which of
+   * the Claude path's guarantees the run keeps, which is why the card states it
+   * with the new-run form's warning rather than leaving it in a label — the
+   * form's reason for keeping the choice with a person is that the person has
+   * to be told the price, and the card is where this person is told it.
+   */
+  provider: RunProviderDTO | null;
   /**
    * JSON `string[]`: the tasks on the board this proposal is for, or null.
    * Read through `proposalTaskIds`.
@@ -1082,6 +1095,8 @@ export interface ProposalInput {
    * about what the run may do. See the column note in `db.ts`.
    */
   model?: string | null;
+  /** Which agent CLI the run is spawned as. Null is the ordinary Claude run. */
+  provider?: RunProviderDTO | null;
   /**
    * The tasks on the board this run is for, by id. Empty is work nobody wrote
    * down first, which is the ordinary proposal.
@@ -1134,10 +1149,10 @@ function insertProposal(
   db()
     .prepare(
       `INSERT INTO chat_proposals
-         (id, chat_id, created_at, kind, template_id, agent_id, model, task_ids,
-          title, task, prompt_override, mount_id, folder, spec_id, depends_on,
-          graph, schedule, guards_json, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+         (id, chat_id, created_at, kind, template_id, agent_id, model, provider,
+          task_ids, title, task, prompt_override, mount_id, folder, spec_id,
+          depends_on, graph, schedule, guards_json, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
     )
     .run(
       id,
@@ -1151,6 +1166,7 @@ function insertProposal(
       // model decides what this run costs and a guard set decides what it may
       // do, so only one of them is a thing a model may name.
       input.model ?? null,
+      input.provider ?? null,
       // The board rows this run came off, recorded here and read live at the
       // click. It is not a third thing beside the two above: a model and a guard
       // set decide what the run costs and what it may do, and this decides
@@ -1404,6 +1420,7 @@ export function planProposal(
     | "template_id"
     | "agent_id"
     | "model"
+    | "provider"
     | "prompt_override"
   >,
   template: RunTemplate | null,
@@ -1478,6 +1495,16 @@ export function planProposal(
       }
     : defaults;
 
+  // Asked of the guards the run will actually start under, at the click as
+  // well as at the tool, because a templated proposal's guards are read live:
+  // a template whose work-cycle limit was cleared since would otherwise start a
+  // Codex run that nothing ends. `POST /api/runs` asks the same function.
+  // Truthy for `agent_id`'s reason: a row from before the column reads
+  // `undefined` on an install that has not restarted.
+  const provider = proposal.provider || null;
+  const terminus = providerTerminusRefusal(provider, guards.budget);
+  if (terminus) return { ok: false, reason: terminus };
+
   return {
     ok: true,
     input: {
@@ -1509,7 +1536,19 @@ export function planProposal(
       // the template also decided, so the proposal's answer is the later of two
       // answers to one question. A model is a price, and the chat is the
       // surface that knows what this particular job is worth paying for.
-      model: proposal.model?.trim() || template?.model || null,
+      //
+      // Never for a Codex run: every id this could hold is a Claude id — the
+      // tool offers the catalogue and a template's model came from the same
+      // place — and `codex exec -m claude-…` is a spawn that fails. Null runs
+      // Codex's own default, `frozenRunModel`'s reading.
+      model:
+        provider === "codex"
+          ? null
+          : proposal.model?.trim() || template?.model || null,
+      // Null stays null — "not recorded", the ordinary Claude run — rather than
+      // becoming `'claude'`, which would be this app answering for every chat
+      // run a question the chat never asked.
+      provider,
     },
   };
 }

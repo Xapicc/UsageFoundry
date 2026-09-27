@@ -500,6 +500,74 @@ test("propose_run refuses a mount with no folder, and a folder with no mount", a
 });
 
 /**
+ * The chat can name the provider a proposed run is spawned as, which it could
+ * not before: the tool had no field for it, so the orchestrator told the
+ * operator it could not choose one. Pinned on what it must refuse, because each
+ * refusal stands for a card that would otherwise say something false — a Codex
+ * run nothing ends, a Codex card promising a Claude model, or one promising a
+ * saved agent whose prompt never reaches it — and on the value reaching the row
+ * the approval reads.
+ */
+test("propose_run carries a provider, and refuses a Codex card it could not honour", async () => {
+  const { chatId, token, proposals } = proposingChat();
+  const template = (budget: string) => {
+    const id = randomUUID();
+    db()
+      .prepare(
+        `INSERT INTO run_templates (id, name, prompt, mount_id, folder, permission_mode,
+           isolate, budget, created_at, updated_at)
+         VALUES (?, ?, 'p', ?, 'RepoOne', 'plan', 0, ?, 0, 0)`,
+      )
+      .run(id, `Template ${id}`, MOUNT, budget);
+    return id;
+  };
+  const endless = template(JSON.stringify({ maxIterations: null }));
+  const bounded = template(JSON.stringify({ maxIterations: 3 }));
+  const propose = (over: Record<string, unknown>) =>
+    callTool(token, "propose_run", {
+      title: `Codex ${randomUUID()}`,
+      task: "Do a thing.",
+      ...over,
+    });
+
+  const unknown = await propose({ templateId: bounded, provider: "gemini" });
+  assert.equal(unknown.isError, true);
+  assert.match(unknown.text, /Unknown provider "gemini"/);
+
+  const noEnd = await propose({ templateId: endless, provider: "codex" });
+  assert.equal(noEnd.isError, true);
+  assert.match(noEnd.text, /needs a work-cycle limit or a time limit/);
+
+  const agentId = randomUUID();
+  db()
+    .prepare(
+      `INSERT INTO agents (id, name, description, prompt, created_at, updated_at)
+       VALUES (?, ?, 'Reviews things.', 'You review.', 0, 0)`,
+    )
+    .run(agentId, `Agent ${agentId.slice(0, 8)}`);
+  const asAgent = await propose({ templateId: bounded, provider: "codex", agentId });
+  assert.equal(asAgent.isError, true);
+  assert.match(asAgent.text, /cannot be started as a saved agent/);
+
+  assert.equal(proposals(), 0, "no refusal wrote a card");
+
+  const ok = await propose({ templateId: bounded, provider: "codex" });
+  assert.equal(ok.isError, false, ok.text);
+  assert.match(ok.text, /spawned as Codex/);
+  const plain = await propose({ templateId: bounded });
+  assert.equal(plain.isError, false, plain.text);
+
+  const rows = db()
+    .prepare("SELECT provider FROM chat_proposals WHERE chat_id = ? ORDER BY created_at")
+    .all(chatId) as { provider: string | null }[];
+  assert.deepEqual(
+    rows.map((r) => r.provider),
+    ["codex", null],
+    "a named provider reaches the row, and an omitted one stays the ordinary run",
+  );
+});
+
+/**
  * A body that is no JSON-RPC message at all. `null` used to throw on its first
  * property read, which was answered and audited as a 500 by the one door a
  * capability holder reaches; `5`, `"x"` and `[]` read as notifications and got

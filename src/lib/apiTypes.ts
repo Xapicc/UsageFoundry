@@ -3575,6 +3575,12 @@ export interface ChatProposalDTO {
    * model bounds nothing, so a figure under the shield would claim it did.
    */
   model: string | null;
+  /**
+   * The agent CLI the run is spawned as, or null for the ordinary Claude run.
+   * The card states anything else with the new-run form's warning, because the
+   * person approving it is the person being told its price.
+   */
+  provider: RunProviderDTO | null;
   title: string;
   task: string;
   /**

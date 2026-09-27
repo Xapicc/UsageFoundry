@@ -274,8 +274,8 @@ async function postHandler(req: Request) {
   // reason the mode above is: this decides which binary runs unattended over the
   // operator's files, and a value nothing recognises must not become a run that
   // quietly spawned Claude Code instead. Absent is "not recorded" and stays
-  // null on the row — every caller of `createRun` other than this one has no
-  // provider to name, and only a person who picked may write one.
+  // null on the row — only a person who picked may write one, which is this
+  // door and an approved chat proposal whose card named it.
   let provider: RunProviderDTO | undefined;
   if (body.provider !== undefined && body.provider !== null) {
     const candidate = String(body.provider);
