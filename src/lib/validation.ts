@@ -601,7 +601,9 @@ export async function completeTaskWithValidation(
     }),
     counts: { files: diff.files.length, shown: diff.files.length, truncated },
     taskId: task.id,
-    baseSha: diff.base,
+    // What the child was shown was measured from here, which after a merge
+    // of the target is not the run's base.
+    baseSha: diff.measuredFrom?.commit ?? diff.base,
     headSha: diff.head,
     // The one spender in this app that only ever starts itself, so it must not
     // be able to run away: nothing presses anything here.

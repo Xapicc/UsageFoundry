@@ -1847,8 +1847,10 @@ export interface ResolutionChange {
   /** The merge commit it made on the run's branch. */
   commit: string;
   files: DiffFile[];
-  /** Files whose patch was withheld for size. */
+  /** Files listed without a patch, for the budget or for a failed read. */
   omittedPatches: number;
+  /** Why no file has a patch when git could not give them. */
+  patchFailure: string | null;
 }
 
 /**
