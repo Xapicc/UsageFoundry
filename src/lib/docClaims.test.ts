@@ -372,17 +372,27 @@ describe("docs/agent/conventions.md's pane list", () => {
 
 describe("docs/agent/security.md's environment scrubs", () => {
   const doc = "docs/agent/security.md";
+  const security = read(doc);
 
-  // The sentence beside this one is "**A sixth spawn site adds a sixth copy; it
-  // does not add a shared module.**" — the doc anticipates the decay and says
-  // what to do about it, and this is what tells anybody that the sixth has
-  // arrived. Test files are excluded because the claim is about spawn sites,
+  // security.md anticipates this count decaying and says what to do when it
+  // does: the next spawn site adds another copy of the denylist, not a shared
+  // module. This case is what tells anybody that one has arrived, in either
+  // shape. A copy that strips all three variables moves the count the doc
+  // spells out; one that strips the access token alone must be a copy the doc
+  // names as deliberately different. The ordinal is paraphrased rather than
+  // quoted because it moves with every new copy, and the one quoted here fell
+  // two behind. Test files are excluded because the claim is about spawn sites,
   // and a test asserting on the name is not one.
   it("counts the copies that strip a second provider's credential", () => {
     const claim = claimIn(
       doc,
-      read(doc),
+      security,
       /`OPENAI_API_KEY`, `CODEX_API_KEY` and `CODEX_ACCESS_TOKEN` are on all ([a-z]+) and reach none of them/,
+    );
+    const differing = claimIn(
+      doc,
+      security,
+      /A [a-z]+, `\w+` \(`([\w.]+)`[^)]*\), is a copy of `\w+` that is deliberately \*not\* byte-identical/,
     );
     const scrubs = (variable: string) =>
       sources
@@ -395,6 +405,20 @@ describe("docs/agent/security.md's environment scrubs", () => {
     // and keeps the two keys, and `codexAuth.ts` says why.
     const access = scrubs("CODEX_ACCESS_TOKEN");
     const accessMissing = openai.filter((rel) => !access.includes(rel));
+    const accessOnly = access.filter((rel) => !openai.includes(rel));
+
+    // The count below cannot see this one, since it keeps the two keys the
+    // count is taken over: `codexAuthEnv` arrived as a seventh copy and the doc
+    // did not name it until somebody happened to read the paragraph.
+    assert.deepEqual(
+      accessOnly.map((rel) => path.basename(rel)),
+      [differing[1]],
+      stale(
+        doc,
+        `the one copy that differs is in \`${differing[1]}\``,
+        `${accessOnly.length} strip \`CODEX_ACCESS_TOKEN\` but not the two keys: ${accessOnly.join(", ")}`,
+      ),
+    );
 
     assert.deepEqual(
       accessMissing,
