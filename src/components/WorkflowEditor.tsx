@@ -30,6 +30,7 @@ import {
   draftToGraph,
   linkKey,
   linksOfGraph,
+  linksWithKind,
   linksWithMember,
   linksWithoutMember,
   resolveLayout,
@@ -610,9 +611,21 @@ export function WorkflowEditor({
     [defaultMount],
   );
 
-  const updateBlock = useCallback((id: string, patch: Partial<BlockDraft>) => {
-    setBlocks((prev) => prev.map((b) => (b.id === id ? { ...b, ...patch } : b)));
-  }, []);
+  const updateBlock = useCallback(
+    (id: string, patch: Partial<BlockDraft>) => {
+      setBlocks((prev) =>
+        prev.map((b) => (b.id === id ? { ...b, ...patch } : b)),
+      );
+      // A kind is the one field that decides whether a block may hold a
+      // branch, and a section's links carry theirs with no switch on the panel
+      // to take it off — see `linksWithKind`.
+      const { kind } = patch;
+      if (kind !== undefined) {
+        setLinks((prev) => linksWithKind(id, kind, blocks, prev));
+      }
+    },
+    [blocks],
+  );
 
   const removeBlock = useCallback((id: string) => {
     setBlocks((prev) => prev.filter((b) => b.id !== id));
@@ -984,6 +997,14 @@ export function WorkflowEditor({
     selection?.kind === "link"
       ? links.find((l) => l.from === selection.from && l.to === selection.to)
       : undefined;
+  const selectedCarrier =
+    selectedLink &&
+    links.find(
+      (l) =>
+        l.to === selectedLink.to &&
+        l.from !== selectedLink.from &&
+        l.continueBranch,
+    );
 
   const nameOf = useCallback(
     (id: string) => {
@@ -1113,6 +1134,11 @@ export function WorkflowEditor({
                 fromName={nameOf(selectedLink.from)}
                 toName={nameOf(selectedLink.to)}
                 insideSection={sections.get(selectedLink.from)}
+                carriedFrom={
+                  selectedCarrier === undefined
+                    ? undefined
+                    : nameOf(selectedCarrier.from)
+                }
                 onChange={(patch) =>
                   updateLink(selectedLink.from, selectedLink.to, patch)
                 }
@@ -2455,6 +2481,7 @@ function LinkPanel({
   fromName,
   toName,
   insideSection,
+  carriedFrom,
   onChange,
   onRemove,
 }: {
@@ -2463,6 +2490,11 @@ function LinkPanel({
   toName: string;
   /** The loop that repeats both ends of this link, or undefined. */
   insideSection: string | undefined;
+  /**
+   * The block whose branch the target carries on through another link, or
+   * undefined: a run holds one ref, so a fan-in hands only one branch on.
+   */
+  carriedFrom: string | undefined;
   onChange: (patch: Partial<LinkDraft>) => void;
   onRemove: () => void;
 }) {
@@ -2489,7 +2521,9 @@ function LinkPanel({
           repeats, only if it completes.{" "}
           {link.continueBranch
             ? `${toName} commits onto ${fromName}'s branch.`
-            : `${toName} cuts its own branch, and the section's merge block lands it.`}
+            : carriedFrom !== undefined
+              ? `${toName} carries on ${carriedFrom}'s branch, not ${fromName}'s.`
+              : `${toName} cuts its own branch, and the section's merge block lands it.`}
           {!conforms && (
             <span className="text-warn">
               {" "}

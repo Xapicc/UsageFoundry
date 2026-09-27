@@ -791,10 +791,13 @@ export function blockLabel(
  *
  * Inside a section the condition is not a choice: a pass has to land what it
  * produced, so a member that did not finish is not something the rest of the
- * section carries on from. The branch is the *second* link's question — two
- * links carrying one block's branch is refused at Save by name, so the first
- * way out of a block carries its branch and each later one cuts its own and
- * leaves it for the section's merge block, which is what a fork means.
+ * section carries on from. The branch is the *second* link's question at both
+ * ends, because a run holds one ref. Two links carrying one block's branch is
+ * refused at Save by name, so the first way out of a block carries its branch
+ * and each later one cuts its own and leaves it for the section's merge block,
+ * which is what a fork means. A block carrying two branches is refused the same
+ * way, so the first way *in* carries one and each later one hands nothing on,
+ * which is what two halves meeting again at one run means.
  *
  * **Only a run block has a branch at either end.** The other three are refused
  * by name — an orchestrator decides and spends nothing on disk, a merge block
@@ -822,8 +825,45 @@ export function sectionLink(
     continueBranch:
       runs(from) &&
       runs(to) &&
-      !links.some((l) => l.from === from && l.continueBranch),
+      !links.some(
+        (l) => (l.from === from || l.to === to) && l.continueBranch,
+      ),
   };
+}
+
+/**
+ * The links once a block's kind has changed.
+ *
+ * `sectionLink` tests the kind at both ends when it mints a link, and a kind
+ * picked afterwards has to be answered the same way: a branch carried into or
+ * out of a block that is no longer a run is refused at Save by name, and inside
+ * a section the panel offers no switch to take it off. So a block that stops
+ * being a run stops carrying a branch on every link of a section it is in.
+ *
+ * Outside a section the branch is left exactly as it was. There the panel shows
+ * the switch the operator set it with, and the refusal names the block, so they
+ * can turn it off where they turned it on; clearing it here would rewrite a
+ * choice they were shown, and would not give it back if the kind went back.
+ */
+export function linksWithKind(
+  blockId: string,
+  kind: WorkflowNodeKind,
+  blocks: readonly { id: string; kind: WorkflowNodeKind }[],
+  links: readonly LinkDraft[],
+): LinkDraft[] {
+  if (kind === "run") return [...links];
+  const members = new Set(
+    blocks
+      .filter((b) => b.kind === "loop")
+      .flatMap((b) => sectionOf(b.id, blocks, links)),
+  );
+  return links.map((l) =>
+    l.continueBranch &&
+    (l.from === blockId || l.to === blockId) &&
+    members.has(l.from)
+      ? { ...l, continueBranch: false }
+      : l,
+  );
 }
 
 /**
