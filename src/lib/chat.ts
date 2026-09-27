@@ -201,7 +201,7 @@ export interface ChatRow {
    */
   partial_text: string | null;
   partial_at: number | null;
-  /** Usage the CLI reported this turn — measured, and summed across requests. */
+  /** Usage the CLI reported this turn — measured, counted once per response. */
   turn_tokens: number;
   /**
    * This app's own price for those tokens: a **guard** figure, never shown
