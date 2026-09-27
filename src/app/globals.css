@@ -740,8 +740,18 @@
    on every card in the app would move whatever a page has absolutely
    positioned inside one, and there are twenty-two pages of them.
    `border-color` rather than `border-width`, so a box keeps its 1px and
-   nothing reflows when the skin changes. */
-:root[data-skin="ascii"] .uf-framed { position: relative; }
+   nothing reflows when the skin changes.
+
+   `position` sits in a layer below the utilities, unlike everything else
+   here, so a host that states its own position keeps it: every position but
+   `static` anchors the frame as well as `relative` does. Unlayered, it beat
+   the run inspector's `lg:sticky`, so under this skin the card scrolled away
+   with a long tab, and its `lg:top-4` turned into a 16px relative nudge that
+   hung it past the foot of its own row — measured at 1920x963, card top 177
+   on a split starting at 161. */
+@layer components {
+  :root[data-skin="ascii"] .uf-framed { position: relative; }
+}
 :root[data-skin="ascii"] .uf-unboxed { border-color: transparent; }
 
 /* The 1px the rule above keeps is still 1px of *layout*, and an absolutely
