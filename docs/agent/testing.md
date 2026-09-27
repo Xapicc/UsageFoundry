@@ -122,6 +122,7 @@ Seventeen are renderings rather than functions — every `*.test.tsx` in the tre
 | `format.test.ts` | [tasks], [stacks] |
 | `haltedMembers.test.ts` |  |
 | `instanceReading.test.ts` |  |
+| `scheduleFire.test.ts` |  |
 | `schedulePut.test.ts` |  |
 | `src/app/api/workflows/[id]/route.test.ts` |  |
 
