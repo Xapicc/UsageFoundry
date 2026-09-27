@@ -274,9 +274,9 @@ const PRUNE_TIER_OPTIONS: readonly SegmentedOption<PruneTier>[] = [
  */
 const PRUNE_TIER_CONSEQUENCE: Record<PruneTier, string> = {
   standard:
-    "Trims long tool output, old file reads superseded by later edits, thinking blocks and repeated system reminders. On one real transcript this removed 28% of what the agent was carrying",
+    "Trims long tool output, file reads superseded by later edits, thinking blocks and repeated system reminders; 28% of one real transcript",
   aggressive:
-    "Everything Standard does, plus collapsing repeated errors and polling, deduplicating large documents, trimming any block over 32KB and dropping older images. Removes more, and more of what it removes is content the agent might have re-read",
+    "Standard, plus collapsing repeated errors and polling, deduplicating large documents, trimming any block over 32KB and dropping older images. More of what it removes is content the agent might have re-read",
 };
 
 type PruneEngine = "legacy" | "winnow";
@@ -309,9 +309,9 @@ const PRUNE_ENGINE_OPTIONS: readonly SegmentedOption<PruneEngine>[] = [
  */
 const PRUNE_ENGINE_CONSEQUENCE: Record<PruneEngine, string> = {
   legacy:
-    "Rewrites the conversation where it stands, keeping the same session. This is what this app has always done, and it is the engine the savings card reports against by name when it has nothing else to say. It typically finds about half of a long conversation, and a cut that size is worth ending a work cycle for",
+    "Rewrites the conversation in place, keeping the same session. It typically finds about half of a long conversation, a cut worth ending a work cycle early for",
   winnow:
-    "Writes a new conversation with the removed output replaced by recoverable pointers, and moves the run onto it. The original is never touched and stays the way back. Nothing has yet proved a forked conversation resumes, so if one does not, the run returns to the conversation it had and the failure is recorded — that check is also how the evidence gets collected. Does nothing until you lower the quiet period below. It is far more selective than the other engine — a few percent of a long conversation — so a run will rarely have a cycle ended early to make one",
+    "Writes a new conversation with removed output replaced by recoverable pointers and moves the run onto it; the untouched original is the way back. Nothing has yet proved a forked conversation resumes: if one does not, the run returns to the original and the failure is recorded. Does nothing until you lower the quiet period below. It finds only a few percent of a long conversation, so it rarely ends a cycle early",
 };
 
 const LAND_CONSEQUENCE: Record<LandStrategy, string> = {
@@ -4025,7 +4025,6 @@ export default function SettingsPage() {
       <Section
         id="unattended"
         title="Unattended runs"
-        lede="What happens while nobody is watching — mid-cycle checks, leftover processes, and a restart."
       >
         {/* This was the kit's reference conversion and the rest of the page now
             follows it. The edited rail still lands in the card's gutter:
@@ -4036,7 +4035,7 @@ export default function SettingsPage() {
             htmlFor="livechk"
             edited={isEdited("liveGuardIntervalSeconds")}
             label="Live limit check"
-            description="How often a run set to stop mid-cycle re-reads usage. It cannot beat one model turn however low this goes, because usage comes from transcripts written as each turn completes"
+            description="How often a run set to stop mid-cycle re-reads usage; never faster than one model turn, because usage is written as each turn completes"
           >
             <div className="w-36">
               <Input
@@ -4057,7 +4056,7 @@ export default function SettingsPage() {
             htmlFor="silence"
             edited={isEdited("maxCycleSilenceMinutes")}
             label="Silent cycle limit"
-            description="A work cycle that has printed nothing for this long is ended, so a wedged agent gives its folder and its slot back without a restart. Counted from the last line Claude Code printed, not from the start of the cycle, and one tool call can be silent for a long time"
+            description="A work cycle silent this long is ended, giving its folder and slot back. Counted from the last line printed, and one tool call can be silent for a long time"
           >
             <div className="w-36">
               <Input
@@ -4078,7 +4077,7 @@ export default function SettingsPage() {
             htmlFor="killgroup"
             edited={isEdited("killProcessGroup")}
             label="Stopping a run also stops everything it started"
-            description="Builds, test runners and servers the agent launched otherwise hold the working directory open and keep writing into a folder the next run is about to use"
+            description="Off, builds, test runners and servers it launched keep writing into a folder the next run is about to use"
           >
             <Switch
               id="killgroup"
@@ -4114,11 +4113,10 @@ export default function SettingsPage() {
             label="Let agents report per-request cost over OpenTelemetry"
             description={
               <>
-                The only record of what a work cycle killed mid-flight actually
-                cost. Off by default because it changes the child
-                process&rsquo;s behaviour, and it never feeds the meters. One
-                exception: a run whose own spending limit needs it switches it
-                on for itself
+                The only record of what a work cycle killed mid-flight cost; it
+                never feeds the meters. Off by default because it changes the
+                child process&rsquo;s behaviour, though a run whose spending
+                limit needs it turns it on for itself
               </>
             }
           >
@@ -4141,12 +4139,12 @@ export default function SettingsPage() {
             label="Let runs use the taskboard"
             description={
               <>
-                A run can list the task it was started for, mark that one
-                complete, and file a new task for something it found and should
-                not fix itself. It cannot complete a task it was not given,
-                start anything, or see the rest of the board. Off by default
-                because it is a write into this app&rsquo;s own database from an
-                agent nobody is watching
+                A run can read its own task and what is open in its folder,
+                complete its own task, and file a new one for something it
+                should not fix itself. It cannot complete a task it was not
+                given, start anything, or see other folders. Off by default: it
+                writes into this app&rsquo;s own database from an agent nobody
+                is watching
               </>
             }
           >
@@ -4169,15 +4167,13 @@ export default function SettingsPage() {
             label="Check a task before a run closes it"
             description={
               <>
-                When a run marks its task complete, what it committed to its
-                branch is read against what the task asks for, and the task
-                closes only if that reading finds the work there. If something
+                When a run marks its task complete, its branch is read against
+                the task, which closes only if the work is found. If something
                 is missing the task stays open and the run gets another work
-                cycle to finish it. Anything else &mdash; a run without its own
-                branch, no slot free, a check that fails, or a reading that
-                cannot tell &mdash; closes the task exactly as it does today.
-                Off by default: it is the one child this app starts without
-                being asked
+                cycle. Anything else (no branch of its own, no free slot, a
+                failed check, an unclear reading) closes the task as if this
+                were off. Off by default: it is the one child this app starts
+                without being asked
               </>
             }
           >
@@ -4192,7 +4188,7 @@ export default function SettingsPage() {
             htmlFor="validatebudget"
             edited={isEdited("validationBudgetUSD")}
             label="Limit per check"
-            description="A hard stop inside the CLI, and the only money bound on a check — it fires by itself, so it cannot be left to the window guard that is read once at the door. Measured at about 12c a check on an upper bound. Blank removes it"
+            description="A hard stop, and the only money bound on a check, which starts by itself. Measured at about 12c a check as an upper bound. Blank removes it"
           >
             <div className="w-36">
               <Input
@@ -4216,7 +4212,7 @@ export default function SettingsPage() {
             htmlFor="validatecycles"
             edited={isEdited("maxValidationCycles")}
             label="Extra work cycles a check may buy"
-            description="How many further cycles one run may be given when a check finds something missing, past the cycle limit it was started with. Every other limit still ends it — time, run spend, both windows and the daily ceiling — so this extends one bound and not the rest. Zero means the task is still held open and you are still told why, and nothing is bought. There is no blank: a limit that could be removed would be a run nothing ends"
+            description="Past the run's own work-cycle limit, when a check finds something missing. Its time and spend limits, both window guards and the install limit still end it. Zero still holds the task open and says why, but buys nothing"
           >
             <div className="w-36">
               <Input
@@ -4245,14 +4241,13 @@ export default function SettingsPage() {
       <Section
         id="tokens"
         title="Token use"
-        lede="Most of what a run costs is carrying what it has already read, not writing anything new. These three try to carry less — the first also decides what happens when a single work cycle gets long, so read that one before leaving it off."
       >
         <ListGroup>
           <SettingRow
             htmlFor="ctxprune"
             edited={isEdited("contextPruning")}
             label="Prune the conversation between work cycles"
-            description="Each work cycle carries the last one's whole conversation, and most of that is tool output nobody will read again. This removes it at the moment between cycles, where it is free — the next cycle was going to re-send everything anyway. It also ends a cycle early once its conversation gets long, prunes it, and carries on. That early ending is now the only thing stopping a single long cycle from growing without limit, so switching this off leaves nothing doing that job"
+            description="Removes old tool output between work cycles, where it is free. It also ends a cycle early once its conversation gets long, and nothing else does: off, a single cycle can grow without limit"
           >
             <Switch
               id="ctxprune"
@@ -4297,23 +4292,12 @@ export default function SettingsPage() {
               label="Quiet period a conversation needs before forking it"
               description={
                 <>
-                  The tool will not cut a conversation whose last request is
-                  newer than this, because the answer may still be cached and
-                  the cut would then cost more than it saves. Read on before
-                  setting it, because it does not behave like a dial: a fork can
-                  only happen in the moment between two work cycles, and there
-                  the last request is always a fraction of a second old. So{" "}
-                  <strong>
-                    0 forks and every other value never forks
-                  </strong>{" "}
-                  — blank included, which falls back to the tool&rsquo;s own
-                  hour. It ships at 0 on the argument that the handover is the
-                  one moment the edit is free, because the next cycle rewrites
-                  the conversation anyway. That is argued and not yet measured
-                  here, and raising this is how you disagree — but raise it
-                  meaning &ldquo;off&rdquo;, not meaning &ldquo;later&rdquo;.
-                  Whatever is in force is recorded against every fork, so the
-                  bet is on the record rather than in someone&rsquo;s memory
+                  <strong>0 forks and every other value never forks</strong>,
+                  blank included (the tool&rsquo;s own hour): a fork happens only
+                  between work cycles, when the last request is a fraction of a
+                  second old. That 0 is free because the next cycle rewrites the
+                  conversation anyway is argued, not measured; raise it to mean
+                  off. The value in force is recorded against every fork
                 </>
               }
             >
@@ -4342,7 +4326,7 @@ export default function SettingsPage() {
             htmlFor="readguard"
             edited={isEdited("readGuard")}
             label="Refuse a file the agent has already read"
-            description="A file read once is charged again on every later turn of the same work cycle, so reading it twice is paid for twice over. This stops a second identical read of a file nothing has changed since, and tells the agent to use what it has. It can always read a part of the file — offset and limit are never refused — so nothing it needs goes out of reach"
+            description="Only an identical re-read of an unchanged file, which would be paid for again on every later turn. Reading part of a file is never refused"
           >
             <Switch
               id="readguard"
@@ -4357,12 +4341,10 @@ export default function SettingsPage() {
             label="Largest file an agent may read whole"
             description={
               <>
-                Past this, the agent is told to search the file or read the part
-                it wants instead. Only applies while the setting above is on,
-                and only below about {CLI_MAX_READ_TOKENS / 1000}k — Claude Code
-                already refuses a whole read past that on its own, so a larger
-                number here changes nothing. Blank leaves file size alone and
-                keeps only the repeat check
+                Past this, the agent is told to search the file or read part of
+                it. Needs the setting above, and only a value under about{" "}
+                {CLI_MAX_READ_TOKENS / 1000}k does anything: Claude Code refuses
+                larger whole reads itself. Blank keeps only the repeat check
               </>
             }
           >
@@ -4391,7 +4373,7 @@ export default function SettingsPage() {
             htmlFor="freshstart"
             edited={isEdited("freshStartContextTokens")}
             label="Start a work cycle over once the conversation gets this long"
-            description="Normally each work cycle carries on the last one's conversation, so a long run pays for everything said so far on every turn it takes. Past this, the next cycle starts a new conversation: it is sent the task again and pointed at the work already on disk. The saving is real and so is the cost — the agent has to work out again what it had just decided, and this app cannot tell you which was bigger. Blank keeps today's behaviour"
+            description="The next cycle gets a new conversation holding the task and a pointer to the work on disk. It stops paying for the old conversation, at the cost of the agent re-deciding what it had just decided, and this app cannot tell you which is bigger. Blank never starts over"
           >
             <div className="w-36">
               <Input
