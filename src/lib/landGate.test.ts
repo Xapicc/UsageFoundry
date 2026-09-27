@@ -263,6 +263,7 @@ describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
         slotPath: "/workspace/.uf-worktrees/acme-1",
         checkedOutBranch: "uf/task-a",
         runBranch: "uf/task-a",
+        uncommitted: [],
       }),
       { ok: true, path: "/workspace/.uf-worktrees/acme-1" },
     );
@@ -276,6 +277,7 @@ describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
       slotPath: "/workspace/.uf-worktrees/acme-1",
       checkedOutBranch: "uf/task-b",
       runBranch: "uf/task-a",
+      uncommitted: [],
     });
     assert.equal(v.ok, false);
     assert.match(v.ok ? "" : v.reason, /no longer holds uf\/task-a/);
@@ -287,6 +289,7 @@ describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
       slotPath: null,
       checkedOutBranch: null,
       runBranch: "uf/task-a",
+      uncommitted: [],
     });
     assert.equal(v.ok, false);
     assert.match(v.ok ? "" : v.reason, /no checkout of its own/);
@@ -300,7 +303,51 @@ describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
       slotPath: "/workspace/.uf-worktrees/acme-1",
       checkedOutBranch: null,
       runBranch: null,
+      uncommitted: [],
     });
     assert.equal(v.ok, false);
+  });
+
+  it("refuses a slot with uncommitted work, naming it", () => {
+    // The command runs against the files on disk and the land carries only the
+    // commits, so it can pass *because of* what is not on the branch — an
+    // agent's fix to a failing test that never got committed. `landRefusal`
+    // lets this through whenever the branch has commits of its own.
+    const v = verifyTreeVerdict({
+      slotPath: "/workspace/.uf-worktrees/acme-1",
+      checkedOutBranch: "uf/task-a",
+      runBranch: "uf/task-a",
+      uncommitted: ["src/fix.ts", "test/fix.test.ts"],
+    });
+    assert.equal(v.ok, false);
+    const reason = v.ok ? "" : v.reason;
+    assert.match(reason, /2 path\(s\)/);
+    assert.match(reason, /src\/fix\.ts, test\/fix\.test\.ts/);
+    assert.match(reason, /Commit 2/);
+    assert.match(reason, /nothing was landed/);
+  });
+
+  it("names five uncommitted paths and counts the rest", () => {
+    const uncommitted = Array.from({ length: 7 }, (_, i) => `f${i}.txt`);
+    const v = verifyTreeVerdict({
+      slotPath: "/workspace/.uf-worktrees/acme-1",
+      checkedOutBranch: "uf/task-a",
+      runBranch: "uf/task-a",
+      uncommitted,
+    });
+    const reason = v.ok ? "" : v.reason;
+    assert.match(reason, /f0\.txt, f1\.txt, f2\.txt, f3\.txt, f4\.txt, and 2 more/);
+    assert.doesNotMatch(reason, /f5\.txt/);
+  });
+
+  it("refuses a slot whose status could not be read rather than reading it as clean", () => {
+    const v = verifyTreeVerdict({
+      slotPath: "/workspace/.uf-worktrees/acme-1",
+      checkedOutBranch: "uf/task-a",
+      runBranch: "uf/task-a",
+      uncommitted: null,
+    });
+    assert.equal(v.ok, false);
+    assert.match(v.ok ? "" : v.reason, /could not read the status/);
   });
 });

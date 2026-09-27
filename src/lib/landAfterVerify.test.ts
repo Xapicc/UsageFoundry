@@ -32,6 +32,7 @@ let dbMod: typeof import("./db");
 let settings: typeof import("./settings");
 let orchestrator: typeof import("./orchestrator");
 let root: string;
+let mountId: string;
 
 const MOUNT_DIR = "land-verify-mount";
 
@@ -100,10 +101,15 @@ before(async () => {
     "config was already loaded by another test file in this process — refusing " +
       "to run against the real database",
   );
+  mountId = config.WORKSPACE_MOUNTS[0].id;
   dbMod = await import("./db");
   land = await import("./land");
   settings = await import("./settings");
   orchestrator = await import("./orchestrator");
+  // One run at a time, so a run created during a check stays `queued` behind
+  // the one `parkRun` sits there — holding its slot, as allocation does,
+  // without spawning anything.
+  settings.saveSettings({ maxConcurrentRuns: 1 });
 });
 
 after(() => {
@@ -258,5 +264,77 @@ describe("landRun re-proves the checkout after the verify command", () => {
     assert.equal(landed.ok, false);
     assert.match(landed.ok ? "" : landed.reason, /Run run-intr is working in this folder/);
     assert.equal(contains(s.repo, "main", s.branch), false);
+  });
+});
+
+/**
+ * A running run somewhere that is not any scene's repository, holding the one
+ * concurrency slot so that a run created during a check is only admitted.
+ */
+function parkRun(): void {
+  const hold = path.join(root, MOUNT_DIR, "hold");
+  fs.mkdirSync(hold, { recursive: true });
+  dbMod
+    .db()
+    .prepare(
+      `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                         created_at, isolation)
+       VALUES ('run-parked', ?, 'x', 'running', '{}', 1, 0, ?, 'none')`,
+    )
+    .run(hold, Date.now());
+}
+
+describe("the check runs against what the land would carry", () => {
+  it("refuses before the command runs while the run's checkout holds uncommitted work", async () => {
+    const s = scene("uncommitted");
+    // Committed work on the branch *and* more beside it: the case `landRefusal`
+    // lets through, because it refuses on uncommitted paths only when there
+    // are no commits at all.
+    fs.writeFileSync(path.join(s.slot, "stray.txt"), "never committed\n");
+    verifyWith("mark", s.signals);
+
+    const landed = await land.landRun(s.runId, "merge");
+
+    assert.equal(landed.ok, false);
+    assert.match(landed.ok ? "" : landed.reason, /1 path\(s\) in .* are not committed to uf\/uncommitted: stray\.txt/);
+    assert.equal(fs.existsSync(path.join(s.signals, "ran")), false, "the command ran anyway");
+    assert.equal(contains(s.repo, "main", s.branch), false);
+  });
+
+  it("changes nothing when no command is configured", async () => {
+    const s = scene("ungated");
+    fs.writeFileSync(path.join(s.slot, "stray.txt"), "never committed\n");
+
+    const landed = await land.landRun(s.runId, "merge");
+
+    assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
+    assert.ok(contains(s.repo, "main", s.branch));
+  });
+
+  it("keeps the run's checkout from a run started during the check", async () => {
+    const s = scene("held");
+    parkRun();
+    verifyWith("wait", s.signals);
+
+    const landing = land.landRun(s.runId, "merge");
+    await until(path.join(s.signals, "started"));
+    const started = orchestrator.createRun({
+      folder: "held",
+      mountId,
+      prompt: "something else in the same repository",
+      budget: { maxIterations: 1 },
+      origin: "form",
+    });
+    fs.writeFileSync(path.join(s.signals, "go"), "");
+    const landed = await landing;
+
+    assert.equal(started.status, "queued");
+    assert.ok(started.worktree_path, "the new run was given no checkout at all");
+    assert.notEqual(
+      started.worktree_path,
+      s.slot,
+      "the new run was given the checkout the check was running in",
+    );
+    assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
   });
 });

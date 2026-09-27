@@ -27,6 +27,7 @@ import {
   forgetSlotVerdict,
   getRun,
   githubEnv,
+  holdSlot,
   isShuttingDown,
   overlaps,
   repoSlug,
@@ -1178,7 +1179,7 @@ export async function landRun(
     if (verifyCommand.trim()) {
       const tree = await verifyTree(run);
       if (!tree.ok) return { ok: false, reason: tree.reason };
-      const verify = await runVerify(tree.path, verifyCommand);
+      const verify = await verifyInSlot(run, tree.path, verifyCommand);
       if (!verify.passed) return { ok: false, reason: verify.reason };
     }
 
@@ -2031,6 +2032,11 @@ export function verifyTreeVerdict(s: {
   checkedOutBranch: string | null;
   /** The branch recorded for this run. */
   runBranch: string | null;
+  /**
+   * Uncommitted paths in that checkout, or null when its status could not be
+   * read — which is not the same as clean.
+   */
+  uncommitted: readonly string[] | null;
 }): VerifyTree {
   if (!s.slotPath) {
     return {
@@ -2053,6 +2059,35 @@ export function verifyTreeVerdict(s: {
         `without a check.`,
     };
   }
+  // The command runs against the files on disk and the land carries only the
+  // commits, so with anything uncommitted the tree checked is not the tree
+  // landed — and it can pass *because of* the difference, an agent's fix to a
+  // failing test that never got committed being the ordinary case.
+  // `landRefusal` does not catch this: it refuses on uncommitted paths only
+  // when there are no commits at all.
+  if (s.uncommitted === null) {
+    return {
+      ok: false,
+      reason:
+        `A verify command is configured, but git could not read the status of ` +
+        `${s.slotPath}, so there is no telling whether the check would run ` +
+        `against ${s.runBranch}'s commits or against edits that are not on it. ` +
+        `Nothing was landed. Check that checkout by hand.`,
+    };
+  }
+  if (s.uncommitted.length > 0) {
+    const n = s.uncommitted.length;
+    const named = s.uncommitted.slice(0, 5).join(", ");
+    return {
+      ok: false,
+      reason:
+        `A verify command is configured, but ${n} path(s) in ${s.slotPath} are ` +
+        `not committed to ${s.runBranch}: ${named}${n > 5 ? `, and ${n - 5} more` : ""}. ` +
+        `The check would run against them and the land would carry only the ` +
+        `commits, so nothing was landed. Commit them first — "Commit ${n}" under ` +
+        `"Uncommitted in the checkout" on this card — or discard them.`,
+    };
+  }
   return { ok: true, path: s.slotPath };
 }
 
@@ -2063,7 +2098,42 @@ async function verifyTree(run: RunRow): Promise<VerifyTree> {
     slotPath: slot.path,
     checkedOutBranch: slot.checkedOutBranch,
     runBranch: run.worktree_branch,
+    uncommitted: slot.readable ? slot.files.map((f) => f.path) : null,
   });
+}
+
+/**
+ * `runVerify` in the run's own checkout, with that checkout kept out of
+ * `allocateSlotPath` until the command returns.
+ *
+ * The run being landed is terminal, so nothing else keeps its slot from a run
+ * started in the same repository during the check — which would `checkout -b`
+ * its own branch underneath the command, and have the command's writes land in
+ * its tree. Refused rather than run when a run already holds the slot: one can
+ * have been given it after `verifyTree` read the branch and before its
+ * `checkout -b`, and the check would then run in a tree about to change hands.
+ */
+async function verifyInSlot(
+  run: RunRow,
+  slot: string,
+  command: string,
+): Promise<{ passed: boolean; reason: string }> {
+  const release = holdSlot(slot);
+  if (!release) {
+    return {
+      passed: false,
+      reason:
+        `A verify command is configured, but a later run has just been given ` +
+        `${slot}, where ${run.worktree_branch ?? "this run's branch"} is checked ` +
+        `out, so there is nowhere to run the check against this work. Nothing ` +
+        `was landed. Clear the command in Settings to land without a check.`,
+    };
+  }
+  try {
+    return await runVerify(slot, command);
+  } finally {
+    release();
+  }
 }
 
 /**
@@ -3474,7 +3544,7 @@ async function pushAndOpen(a: {
   if (verifyCommand.trim()) {
     const tree = await verifyTree(run);
     if (!tree.ok) return { ok: false, reason: tree.reason };
-    const verify = await runVerify(tree.path, verifyCommand);
+    const verify = await verifyInSlot(run, tree.path, verifyCommand);
     if (!verify.passed) return { ok: false, reason: verify.reason };
   }
 

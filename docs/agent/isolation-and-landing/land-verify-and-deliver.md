@@ -38,7 +38,25 @@ build output, so `npm test` there fails for a reason that is not the work, and
 a gate that reported a missing dependency tree as "your branch is bad" would be
 worse than no gate because an operator would believe it. Resolving the tree at
 all is gated on the command being set, so an install that configures none pays
-nothing.
+nothing. **The tree must also be the one the land
+carries.** The command runs against the files on disk and the land takes only
+the commits, so a slot holding uncommitted work is checked as a tree that is
+not the one landed — and can pass *because of* the difference, an agent's fix to
+a failing test that never got committed being the ordinary case. `landRefusal`
+does not catch it: it refuses on uncommitted paths only when the branch has no
+commits at all. So `verifyTreeVerdict` refuses while the slot holds any
+uncommitted path, naming them and pointing at the card's Commit button, and
+refuses a status it could not read rather than reading it as clean; with no
+command configured none of this is asked. **And the slot is held for as long as
+the command runs.** The run being landed is terminal, so `activeRuns()` alone
+let `allocateSlotPath` hand its slot to a run started in the same repository
+during the check, which would `checkout -b` underneath the command. The call
+goes through `verifyInSlot`, which takes `holdSlot` around `runVerify`:
+synchronous, refusing when an active run was given the slot between
+`verifyTree`'s read and the hold, and counted so that one release can never end
+another's hold. `allocateSlotPath` skips a held slot as it skips an occupied
+one. A continuation of the run being landed inherits its slot without going
+through `allocateSlotPath` and is not covered by the hold.
 
 **The other exit.** `deliverRun` pushes a run's branch and opens a pull request
 on the checkout's GitHub remote. It is reached from one endpoint on one press

@@ -2690,6 +2690,40 @@ export function forgetSlotVerdict(slotPath: string | null | undefined): void {
 }
 
 /**
+ * Slots a land's or a delivery's verify command is running in, with how many
+ * holds each has.
+ *
+ * Counted rather than a set so that one holder's release can never end
+ * another's hold — the `landing` claim should make a second holder impossible,
+ * and if it ever does not, a silently lost hold is the defect this exists for.
+ * `globalThis` for the reason `slotVerdicts` gives.
+ */
+const slotsUnderCheck = ((globalThis as unknown as {
+  __ufSlotsUnderCheck?: Map<string, number>;
+}).__ufSlotsUnderCheck ??= new Map<string, number>());
+
+/**
+ * Keep `slotPath` out of `allocateSlotPath` until the returned release is
+ * called, or return null when an active run already holds it.
+ *
+ * Synchronous, and the test and the claim are one step, for `createRun`'s
+ * reason: allocation is itself synchronous, so nothing can be given this slot
+ * between the `activeRuns()` read here and the hold being visible to it.
+ */
+export function holdSlot(slotPath: string): (() => void) | null {
+  if (activeRuns().some((r) => r.worktree_path === slotPath)) return null;
+  slotsUnderCheck.set(slotPath, (slotsUnderCheck.get(slotPath) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const left = (slotsUnderCheck.get(slotPath) ?? 1) - 1;
+    if (left > 0) slotsUnderCheck.set(slotPath, left);
+    else slotsUnderCheck.delete(slotPath);
+  };
+}
+
+/**
  * Create or reuse this run's checkout and return the directory to work in.
  *
  * Reuse is what keeps isolation practical. A slot is reusable only when
@@ -3423,11 +3457,14 @@ function allocateSlotPath(repoRoot: string): SlotAllocation {
   // directory and break isolation for the second one permanently. That is also
   // why the name carries a digest rather than a slug: see `worktreeSlug`.
   const slug = repoSlug(repoRoot);
-  const taken = new Set(
-    activeRuns()
+  // A slot a land's verify command is running in counts as held: its run is
+  // terminal, so `activeRuns()` alone would hand it out mid-check. See `holdSlot`.
+  const taken = new Set([
+    ...activeRuns()
       .map((r) => r.worktree_path)
       .filter((p): p is string => !!p),
-  );
+    ...slotsUnderCheck.keys(),
+  ]);
 
   const census: SlotCensus = {
     ceiling: MAX_WORKTREE_SLOTS,
