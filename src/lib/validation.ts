@@ -7,6 +7,7 @@ import {
   assistRefusal,
   assistRunning,
   latestAssist,
+  listReviews,
   startAssist,
   type AssistResult,
   type ReviewRow,
@@ -62,11 +63,12 @@ import {
  *    `MAX_EARLY_ENDS_PER_RUN` is the same shape for the context ceiling's
  *    refund and is the precedent.
  * 3. **Every way of having no verdict closes the task.** A refusal, a crash, a
- *    timeout, a run with no readable diff, a `unjudgeable` verdict: all of them
- *    close. This is the asymmetry the whole design rests on — a gate that fails
- *    closed converts a shortage of assist slots, or a model's shrug, into
- *    billed work nobody asked for, which is the failure this feature is
- *    supposed to prevent rather than a stricter version of preventing it.
+ *    timeout, a restart mid-check, a run with no readable diff, a `unjudgeable`
+ *    verdict: all of them close. This is the asymmetry the whole design rests
+ *    on — a gate that fails closed converts a shortage of assist slots, or a
+ *    model's shrug, into billed work nobody asked for, which is the failure
+ *    this feature is supposed to prevent rather than a stricter version of
+ *    preventing it.
  *
  * ## What the literature says about the shape, and what it does not
  *
@@ -162,15 +164,26 @@ const MAX_EVIDENCE = 8;
  * switches the feature off, and one that is too loose reads a verdict out of
  * whatever the diff persuaded the model to write.
  *
- * **The last fenced block, not the first.** The prompt asks for exactly one at
- * the end, and the reasoning above it routinely quotes what it is judging —
- * including, on a diff that contains one, a JSON block that came out of the
- * repository. The model's own answer is the one after everything it read.
+ * **The last object that is a verdict, not the first and not merely the last.**
+ * The prompt asks for exactly one at the end, and the reasoning around it
+ * routinely quotes what it is judging — including, on a diff that contains one,
+ * a JSON block that came out of the repository. The model's own answer is the
+ * one after everything it read; but a quoted `package.json` after it, or a
+ * fenced quote above an answer whose fence was dropped, is not an answer, and
+ * reading it as one is no verdict, which closes a task that was just judged
+ * unfinished.
  */
 export function parseVerdict(text: string): ParsedVerdict | null {
-  const raw = lastJsonBlock(text);
-  if (!raw) return null;
+  const candidates = jsonCandidates(text);
+  for (let i = candidates.length - 1; i >= 0; i -= 1) {
+    const verdict = verdictFromJson(candidates[i]!);
+    if (verdict) return verdict;
+  }
+  return null;
+}
 
+/** One candidate object read as a verdict, or null when it is not one. */
+function verdictFromJson(raw: string): ParsedVerdict | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -198,22 +211,26 @@ export function parseVerdict(text: string): ParsedVerdict | null {
 }
 
 /**
- * The last ```json fence in a reply, or the last bare object that looks like
- * one.
+ * Every ```json fence in a reply and every bare object that looks like a
+ * verdict, in the order they appear.
  *
- * The bare fallback exists because the fence is a formatting instruction and
+ * The bare ones exist because the fence is a formatting instruction and
  * formatting instructions are the first thing a model drops under a long diff;
  * losing the verdict to a missing three backticks would fail open on exactly the
- * largest changes.
+ * largest changes. Both kinds go into one list rather than the bare ones being a
+ * fallback for no fence at all, because any fence — a quoted `package.json` —
+ * used to shut the fallback off. A fenced verdict is found by both patterns,
+ * which is harmless: the same text parses to the same answer.
  */
-function lastJsonBlock(text: string): string | null {
-  const fenced = [...text.matchAll(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/g)];
-  if (fenced.length > 0) return fenced[fenced.length - 1]![1]!;
-
-  const bare = [...text.matchAll(/\{[^{}]*"verdict"[\s\S]*?\}/g)];
-  if (bare.length > 0) return bare[bare.length - 1]![0];
-
-  return null;
+function jsonCandidates(text: string): string[] {
+  const found: { at: number; raw: string }[] = [];
+  for (const m of text.matchAll(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/g)) {
+    found.push({ at: m.index + m[0].indexOf("{"), raw: m[1]! });
+  }
+  for (const m of text.matchAll(/\{[^{}]*"verdict"[\s\S]*?\}/g)) {
+    found.push({ at: m.index, raw: m[0] });
+  }
+  return found.sort((a, b) => a.at - b.at).map((c) => c.raw);
 }
 
 /* ------------------------------------------------------------------ */
@@ -719,6 +736,31 @@ function closeAfterVerdict(taskId: string, runId: string, note: string): void {
   logRun(runId, done.ok ? note : `The task was not closed: ${done.error ?? "it is gone."}`);
 }
 
+/**
+ * Close the task of every check a restart cut off, as its settle would have.
+ *
+ * Handed what `reconcileReviewsOnBoot` just failed. A restart is one more way of
+ * having no verdict, and every one of those closes the task — but the only
+ * thing that closes one is `settleValidation`, reached through the assist's
+ * `after`, which died with the process that would have run it. Without this the
+ * task stayed claimed for good by a run that believed the check was handling
+ * it, and the operator's only way out was a Done or a Release by hand.
+ *
+ * Through `closeAfterVerdict`, so the run is the actor and
+ * `taskTransitionRefusal` still decides: a task the operator has since moved is
+ * left where they put it.
+ */
+export function closeStrandedValidations(rows: readonly ReviewRow[]): void {
+  for (const row of rows) {
+    if (row.kind !== "validate" || !row.task_id) continue;
+    closeAfterVerdict(
+      row.task_id,
+      row.run_id,
+      "The server restarted while this task was being checked, so it is closed on the run's own word.",
+    );
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* What the run loop reads                                             */
 /* ------------------------------------------------------------------ */
@@ -741,20 +783,42 @@ function runningValidation(runId: string): ReviewRow | null {
 }
 
 /**
- * The standing verdict on a run, if the last validation returned one.
+ * The validations a cycle boundary acts on: one per task, oldest first.
  *
- * The **latest** row and not "any row with a verdict": a run whose first attempt
- * was judged unfinished and whose second was judged finished is a run that
- * finished, and reading the older row would send it back into a cycle for work
- * it has since done.
+ * Pure and unit-tested, because what it gets wrong ends a run wrongly and says
+ * nothing. A run may hold several tasks, and reading the run's newest row — as
+ * this once did — let a second task's check hide the first one's `not-finished`:
+ * no pushback, no cycle, no line saying the grants were spent, and a run that
+ * ended `completed` with a task still claimed by it.
+ *
+ * So the unit is the **task**, and each task is read at its own newest row: a
+ * task judged unfinished and then re-checked is answered by the second reading,
+ * whether that says `finished`, says nothing, or is still out — sending the run
+ * back on the first would be a pushback against a reading already superseded.
+ * The other two tests are the ones the run-wide read already had: the verdict
+ * finished inside the cycle that just ran (`since`), so it buys a cycle once;
+ * and the task is still claimed by this run, so an operator who took it back,
+ * dropped it or closed it meanwhile outranks the verdict.
  */
-export function latestVerdict(runId: string): {
-  row: ReviewRow;
-  verdict: Verdict;
-} | null {
-  const row = latestAssist(runId, "validate");
-  if (!row || !isVerdict(row.verdict)) return null;
-  return { row, verdict: row.verdict };
+export function verdictsToActOn<
+  T extends Pick<ReviewRow, "task_id" | "created_at" | "finished_at" | "verdict">,
+>(rows: readonly T[], since: number, heldTaskIds: ReadonlySet<string>): T[] {
+  const newestPerTask = new Map<string, T>();
+  for (const row of rows) {
+    if (!row.task_id) continue;
+    const seen = newestPerTask.get(row.task_id);
+    if (!seen || row.created_at > seen.created_at) newestPerTask.set(row.task_id, row);
+  }
+  return [...newestPerTask]
+    .filter(
+      ([taskId, row]) =>
+        row.verdict === "not-finished" &&
+        row.finished_at !== null &&
+        row.finished_at >= since &&
+        heldTaskIds.has(taskId),
+    )
+    .map(([, row]) => row)
+    .sort((a, b) => a.created_at - b.created_at);
 }
 
 /**
@@ -830,7 +894,7 @@ export function validationPushback(o: {
  * the row settled rather than because this gave up. Reaching it at all means
  * something outside this module stopped writing the row — a killed server that
  * `reconcileReviewsOnBoot` has not swept yet — and the answer then is no verdict,
- * which closes the task.
+ * which closes the task: `closeStrandedValidations` does it at the next boot.
  */
 const VERDICT_WAIT_MS = 11 * 60_000;
 
@@ -883,10 +947,23 @@ export async function validationAtBoundary(
     await new Promise((resolve) => setTimeout(resolve, VERDICT_POLL_MS));
   }
 
-  const latest = latestVerdict(runId);
-  if (!latest) return null;
-  if ((latest.row.finished_at ?? 0) < since) return null;
-  if (latest.verdict !== "not-finished") return null;
+  const rows = listReviews(runId, "validate");
+  // A task that went while it was being judged — the operator dropped it,
+  // closed it, or took it back — is not held, and their decision outranks the
+  // verdict: there is nothing left to send the run back for.
+  const held = new Map<string, Task>();
+  for (const taskId of new Set(rows.map((row) => row.task_id))) {
+    const task = taskId ? getTask(taskId) : null;
+    if (task && task.status === "claimed" && task.claimedByRunId === runId) {
+      held.set(task.id, task);
+    }
+  }
+  const findings = verdictsToActOn(rows, since, new Set(held.keys())).flatMap((row) => {
+    const task = row.task_id ? held.get(row.task_id) : undefined;
+    const parsed = row.text ? parseVerdict(row.text) : null;
+    return task && parsed ? [{ task, parsed }] : [];
+  });
+  if (findings.length === 0) return null;
 
   // Re-read rather than trusting the row the caller holds: this function has
   // just spent minutes awaiting, and `validation_cycles` is written straight to
@@ -894,9 +971,12 @@ export async function validationAtBoundary(
   const run = getRun(runId);
   if (!run) return null;
 
+  // One grant for the boundary however many tasks it names. `maxValidationCycles`
+  // is a bound on the run's cycles, and a grant per task would let a run holding
+  // twenty tasks buy twenty cycles at one boundary with a ceiling of one.
   if (
     !grantsAnotherCycle({
-      verdict: latest.verdict,
+      verdict: "not-finished",
       granted: validationCyclesUsed(run),
       maxGrants: settings.maxValidationCycles,
     })
@@ -906,33 +986,44 @@ export async function validationAtBoundary(
     // with a task still open and claimed, and the only other record is a log
     // line from cycles ago saying something was missing. Which of the two
     // reasons it was matters — a ceiling of zero is the operator's own setting
-    // working, and a ceiling reached is the run having tried.
+    // working, and a ceiling reached is the run having tried. Every task is
+    // named, because the line is the one record of which were left open.
+    const one = findings.length === 1;
+    const named = namedTasks(findings.map(({ task }) => task.title));
+    const checked = `${one ? `The task ${named} was` : `The tasks ${named} were`} checked and something ${one ? "it" : "each"} asks for is`;
+    const stays = `${one ? "It stays" : "They stay"} open and claimed by this run.`;
     logRun(
       runId,
       settings.maxValidationCycles === 0
-        ? `The task this run holds was checked and something the task asks for is missing, and this install does not give a run extra work cycles for that. The task stays open and claimed by this run.`
-        : `The task this run holds was checked and something the task asks for is still missing, but this run has used all ${settings.maxValidationCycles} extra work ${settings.maxValidationCycles === 1 ? "cycle" : "cycles"} a check may buy. The task stays open and claimed by this run.`,
+        ? `${checked} missing, and this install does not give a run extra work cycles for that. ${stays}`
+        : `${checked} still missing, but this run has used all ${settings.maxValidationCycles} extra work ${settings.maxValidationCycles === 1 ? "cycle" : "cycles"} a check may buy. ${stays}`,
     );
     return null;
   }
 
-  const parsed = latest.row.text ? parseVerdict(latest.row.text) : null;
-  if (!parsed) return null;
-
-  const task = latest.row.task_id ? getTask(latest.row.task_id) : null;
-  // The task went while this was being judged — the operator dropped it, closed
-  // it, or took it back. Their decision outranks the verdict, and there is
-  // nothing left to send the run back for.
-  if (!task || task.status !== "claimed" || task.claimedByRunId !== runId) return null;
-
   return {
-    pushback: validationPushback({
-      taskTitle: task.title,
-      reason: parsed.reason,
-      evidence: parsed.evidence,
-    }),
-    reason: parsed.reason,
+    pushback: findings
+      .map(({ task, parsed }) =>
+        validationPushback({
+          taskTitle: task.title,
+          reason: parsed.reason,
+          evidence: parsed.evidence,
+        }),
+      )
+      .join("\n\n"),
+    reason:
+      findings.length === 1
+        ? findings[0]!.parsed.reason
+        : findings.map(({ task, parsed }) => `“${task.title}”: ${parsed.reason}`).join("; "),
   };
+}
+
+/** “A”, “A” and “B”, “A”, “B” and “C”. */
+function namedTasks(titles: string[]): string {
+  const quoted = titles.map((title) => `“${title}”`);
+  return quoted.length <= 1
+    ? (quoted[0] ?? "")
+    : `${quoted.slice(0, -1).join(", ")} and ${quoted[quoted.length - 1]}`;
 }
 
 /**

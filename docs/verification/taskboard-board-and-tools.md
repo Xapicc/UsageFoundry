@@ -69,6 +69,15 @@
   `GET /api/tasks?operatorOnly=yes` and a `PATCH` sending `"false"` were both
   400s. `npm run smoke-pages` 92/92 on the same build.
 
+- **A restart mid-check closes the task, 2026-09-27**, standalone build of
+  `7d9449c` on a scratch `DATA_DIR` seeded as a server killed mid-check: a
+  `running` run holding two claimed tasks, each with a `running` validate row,
+  one then released by the operator. After boot the held task was `done` with
+  `completed_by_run_id` the run, the released one stayed `open`, both rows were
+  `failed` with a null verdict, and the run's log said which was closed and why
+  the other was not. Caveat: no child was spawned; the rows were written by
+  hand, not left by a real validation.
+
 ## Not yet verified by hand
 
 - **No model has called the board tools over stdio**; that needs a billed run.
