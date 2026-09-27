@@ -87,7 +87,9 @@ const REVIEW_TIMEOUT_MS = 10 * 60_000;
  *
  * A resolution is unbounded on purpose — see above. The escapes it leaves are
  * the ones that already exist and are somebody's decision rather than a
- * timer's: stopping the queue's batch, and the process ending.
+ * timer's: stopping the queue's batch, and the process ending. Its *spend* is
+ * bounded all the same, by `resolutionBudgetUSD` inside the CLI, which is the
+ * half of a clock's job a clock could not do without ending large merges.
  */
 const assistTimeoutMs = (kind: AssistKind): number =>
   // A validation is bounded for the review's reason and more sharply: a run is

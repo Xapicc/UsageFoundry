@@ -3159,6 +3159,8 @@ export interface SettingsDTO {
    * Empty means none, which is what it had before this existed.
    */
   resolveAllowedTools: string[];
+  /** Hard ceiling on one conflict resolution. Null means no cap. */
+  resolutionBudgetUSD: number | null;
   /** argv that must exit 0 before Land merges. Empty is no check, not a pass. */
   landVerifyCommand: string;
   isolationPreamble: string;

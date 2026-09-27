@@ -426,6 +426,26 @@ export interface Settings {
    */
   resolveAllowedTools: string[];
   /**
+   * Hard ceiling on what one conflict resolution may spend. Null removes it.
+   *
+   * `validationBudgetUSD`'s shape and its reason, arrived at from the other
+   * end: a resolution has **no clock** — the landing path's rule, because a
+   * clock was ending large merges — and nothing reaches its child once it is
+   * spawned, so without this the only bound on one was that it exits. The merge
+   * queue starts one per conflicting branch of a batch queued with auto-resolve,
+   * a workflow's merge block included, with nobody present; the install ceiling
+   * is read once at the door, so a resolution admitted just under it could
+   * spend without limit. It covers the Resolve button too, because a person
+   * watching the row has no control that stops it either.
+   *
+   * 59 completed resolutions on this install averaged $4.04 (their spread was
+   * not recorded), and 8 in a throwaway checkout priced at $0.36 to $3.18 at
+   * list rates, so $20 is about five times the mean: a runaway bound rather
+   * than a budget. One that trips is rolled back like any failed resolution and
+   * its row says `error_max_budget_usd`.
+   */
+  resolutionBudgetUSD: number | null;
+  /**
    * A command that must exit 0 before Land will merge a run's branch.
    *
    * Empty is off, and off is the default: an empty command is not a check that
@@ -1016,6 +1036,7 @@ export const DEFAULTS: Settings = {
   maxConcurrentRuns: 4,
   maxConcurrentAssists: 2,
   resolveAllowedTools: [],
+  resolutionBudgetUSD: 20,
   landVerifyCommand: "",
   isolationCopyGlobs: [".env", ".env.*", "!.env.example"],
   isolationCopyGlobsByRepo: {},
