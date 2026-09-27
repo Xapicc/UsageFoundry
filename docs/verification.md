@@ -25,7 +25,7 @@ measurement under *Verified* and cut the item down to what is still open.
 
 | Area | File | Verified | Not yet verified |
 |---|---|--:|--:|
-| Metering and cost | [metering-and-cost.md](verification/metering-and-cost.md) | 21 | 10 |
+| Metering and cost | [metering-and-cost.md](verification/metering-and-cost.md) | 22 | 11 |
 | Budgets and guards | [budgets-and-guards.md](verification/budgets-and-guards.md) | 7 | 4 |
 | Run lifecycle | [run-lifecycle.md](verification/run-lifecycle.md) | 21 | 27 |
 | Context control | [context-control-pruning.md](verification/context-control-pruning.md) — pruning, compaction and the context ceiling | 20 | 11 |

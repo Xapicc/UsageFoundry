@@ -95,6 +95,11 @@ import type { RegistryAgent } from "./agents";
  *    mid-answer; wrong in the other it never fires, and the bound quietly stops
  *    existing — a thread that says "Thinking…" for ever, refusing every
  *    message, with nothing short of a server restart able to clear it.
+ *  - `turnCostOf` decides what a resumed turn is charged, and the CLI's figure
+ *    is the session's running total rather than the turn's. Banked whole it
+ *    charged turn N for turns 1..N into the table the install's ceiling sums;
+ *    subtracted wrongly it charges nothing. Neither throws, and the first
+ *    closes every door in the app.
  *  - The three about questions to the operator earn their place together,
  *    because each of them fails as a *question* rather than as an error. A
  *    choices list that arrived holding a null is a button reading "null" that
@@ -176,6 +181,7 @@ const {
   settleQuestions,
   staleTurn,
   subjectForCapability,
+  turnCostOf,
   writeMcpConfig,
   MCP_CONFIG_BASE,
 } = require("./chat") as typeof import("./chat");
@@ -1997,6 +2003,44 @@ describe("sendChatMessage", () => {
     assert.equal(spawnCount - before, 0);
 
     await settle();
+  });
+});
+
+describe("turnCostOf", () => {
+  it("banks the increase when the same session reports a running total", () => {
+    // Three $0.25 turns on one resumed session, reported the way the pinned
+    // CLI reports them. Banked whole they came to $1.50 for $0.75 of work.
+    let previous: number | null = null;
+    const banked = [0.25, 0.5, 0.75].map((reported) => {
+      const cost = turnCostOf(previous, reported, previous !== null);
+      previous = reported;
+      return cost;
+    });
+    assert.deepEqual(banked, [0.25, 0.25, 0.25]);
+  });
+
+  it("banks the whole figure when there is nothing to subtract", () => {
+    // The first turn, and a thread whose row predates the column.
+    assert.equal(turnCostOf(null, 0.4, true), 0.4);
+    assert.equal(turnCostOf(null, 0.4, false), 0.4);
+  });
+
+  it("banks the whole figure when the session id changed", () => {
+    // `--resume` against a session the CLI no longer has starts a new one,
+    // whose ledger starts at zero: subtracting the old session's total from it
+    // would charge a real turn nothing.
+    assert.equal(turnCostOf(0.75, 0.3, false), 0.3);
+    assert.equal(turnCostOf(0.2, 0.3, false), 0.3);
+  });
+
+  it("banks the whole figure when the running total went down", () => {
+    // A ledger that is only ever added to goes down only when it was not
+    // restored, so the figure is this invocation's own.
+    assert.equal(turnCostOf(0.75, 0.3, true), 0.3);
+  });
+
+  it("banks nothing when the same session reports no increase", () => {
+    assert.equal(turnCostOf(0.5, 0.5, true), 0);
   });
 });
 

@@ -216,6 +216,11 @@ export interface ChatRow {
    */
   cost_usd_est: number;
   /**
+   * The CLI's last cumulative `total_cost_usd` under `session_id`, or null —
+   * what the next resumed turn's figure is measured from. See `turnCostOf`.
+   */
+  session_cost_usd: number | null;
+  /**
    * When the turn in flight began, and null when none is. Deliberately not
    * `updated_at`: the chat's own `save_template` tool writes a system message
    * mid-turn, which moves that column and would push the timeout out by
@@ -2802,9 +2807,14 @@ export interface TurnResult {
   text?: string;
   error?: string;
   /**
-   * What the CLI itself said the turn cost. **Absent means it never said** —
-   * the child died before its `result` event — not that the turn was free, and
-   * a caller that banks `costUSD ?? 0` has written a measurement nobody made.
+   * The CLI's own `total_cost_usd`. **Absent means it never said** — the child
+   * died before its `result` event — not that the turn was free, and a caller
+   * that banks `costUSD ?? 0` has written a measurement nobody made.
+   *
+   * It is the *session's* total rather than this invocation's: the pinned CLI
+   * restores its cost ledger on `--resume`. A one-shot child's figure is
+   * therefore its own cost, and a resumed chat turn's is not until
+   * `finishTurn` has subtracted what the session had already reported.
    */
   costUSD?: number;
   tokens?: number;
@@ -3469,9 +3479,11 @@ export function settleOnExit(
  * Read the CLI's `--output-format json` object.
  *
  * Same contract `parseReviewOutput` reads, from the same pinned build:
- * `total_cost_usd` is authoritative per invocation and is never re-derived from
- * tokens. `permission_denials` is read as well and surfaced, because a chat
- * that quietly could not run `gh` reads as a chat that found no issues.
+ * `total_cost_usd` is authoritative and is never re-derived from tokens — but
+ * it is the session's running total, which only a one-shot child can bank as
+ * it stands; see `turnCostOf`. `permission_denials` is read as well and
+ * surfaced, because a chat that quietly could not run `gh` reads as a chat that
+ * found no issues.
  */
 export function parseTurnOutput(
   stdout: string,
@@ -3568,6 +3580,38 @@ export function turnResultOf(
 }
 
 /**
+ * What one turn cost, given the session's running total before it and the one
+ * the CLI reported at its end.
+ *
+ * The pinned CLI's `total_cost_usd` is the session's rather than the
+ * invocation's: a `--resume`d child restores the ledger the last one saved —
+ * the `cost-state` record in the transcript — and reports the running total.
+ * Banked whole, turn N carried the cost of turns 1..N, so a thread's `cost_usd`
+ * grew quadratically and `chat_turn_spend`, which the install's ceiling reads,
+ * over-reported by the same amount until it closed every door in the app on
+ * money nobody spent.
+ *
+ * The whole figure when there is nothing to subtract: no earlier report, or a
+ * different session — `--resume` against a session the CLI no longer has
+ * starts a new one, whose ledger starts at zero. And the whole figure when the
+ * total went *down*, which a ledger that is only ever added to does only when
+ * it was not restored at all: the difference would bank nothing for a turn
+ * that certainly cost something, and a ceiling must not fail in that direction.
+ *
+ * Pure and unit-tested because both ways of getting it wrong are silent: too
+ * much closes the install's ceiling, too little lets it be overrun.
+ */
+export function turnCostOf(
+  previousCumulative: number | null,
+  reported: number,
+  sameSession: boolean,
+): number {
+  if (!sameSession || previousCumulative === null) return reported;
+  if (reported < previousCumulative) return reported;
+  return reported - previousCumulative;
+}
+
+/**
  * Settle the turn this result belongs to, and nothing else.
  *
  * `turnSeq` is the identity, and it is what makes the latch a latch. Status
@@ -3596,11 +3640,12 @@ export function turnResultOf(
  */
 function finishTurn(chatId: string, turnSeq: number, r: TurnResult): void {
   const now = Date.now();
-  const prior = getChat(chatId)?.session_id ?? null;
+  const row = getChat(chatId);
+  const prior = row?.session_id ?? null;
 
   // Read before the UPDATE clears it: this is the turn's own running estimate,
   // and it is the only figure there is if the CLI never reported a cost.
-  const estimate = getChat(chatId)?.turn_cost_est ?? 0;
+  const estimate = row?.turn_cost_est ?? 0;
 
   // And what it had said, for the same reason one line up. `keepPartialTurn`
   // does this for the three endings that go through `endTurn`; this is the
@@ -3608,7 +3653,24 @@ function finishTurn(chatId: string, turnSeq: number, r: TurnResult): void {
   // lands *here* rather than there, and the UPDATE below clears `partial_text`
   // with nobody having read it. Fourteen minutes of work discarded because the
   // fifteenth was quiet is the failure this whole change is about.
-  const partial = (getChat(chatId)?.partial_text ?? "").trim();
+  const partial = (row?.partial_text ?? "").trim();
+
+  // What this turn cost, as against what its session has cost so far. `prior`
+  // is the session the turn resumed: nothing but this turn's own settle can
+  // move it, and a superseded child's settle is refused below.
+  const sameSession = !!r.sessionId && r.sessionId === prior;
+  const banked =
+    r.costUSD === undefined
+      ? 0
+      : turnCostOf(row?.session_cost_usd ?? null, r.costUSD, sameSession);
+  // And what the next turn will subtract from: the figure just reported, under
+  // the session it was reported for. Nothing rather than a figure for another
+  // session when the id moved without one, and nothing when a figure came with
+  // no id to pin it to — both bank the next turn whole, which over-counts one
+  // turn rather than under-counting every one after it.
+  let sessionCost: number | null = null;
+  if (r.costUSD !== undefined) sessionCost = r.sessionId ? r.costUSD : null;
+  else if (sameSession || !r.sessionId) sessionCost = row?.session_cost_usd ?? null;
 
   const changed =
     db()
@@ -3616,7 +3678,7 @@ function finishTurn(chatId: string, turnSeq: number, r: TurnResult): void {
         `UPDATE chat_sessions
             SET status=?, error=?, updated_at=?, turn_started_at=NULL,
                 cost_usd = cost_usd + ?, tokens = tokens + ?,
-                session_id = COALESCE(?, session_id),
+                session_id = COALESCE(?, session_id), session_cost_usd = ?,
                 partial_text=NULL, partial_at=NULL,
                 turn_tokens=0, turn_cost_est=0
           WHERE id=? AND status='thinking' AND turn_seq=?`,
@@ -3625,9 +3687,10 @@ function finishTurn(chatId: string, turnSeq: number, r: TurnResult): void {
         r.status,
         r.error ?? null,
         now,
-        r.costUSD ?? 0,
+        banked,
         r.tokens ?? 0,
         r.sessionId,
+        sessionCost,
         chatId,
         turnSeq,
       ).changes > 0;
@@ -3642,12 +3705,14 @@ function finishTurn(chatId: string, turnSeq: number, r: TurnResult): void {
   // charged a thread's whole history to whichever 24 hours its last message
   // fell in — see `chat_turn_spend` in db.ts. Written after the latch above
   // rather than beside it, so a late settle that changed no total adds no row.
-  if ((r.costUSD ?? 0) > 0) {
+  // The increase and never the session's running total, for `turnCostOf`'s
+  // reason: this is the table the install's ceiling sums.
+  if (banked > 0) {
     db()
       .prepare(
         "INSERT INTO chat_turn_spend (chat_id, ts, cost_usd) VALUES (?, ?, ?)",
       )
-      .run(chatId, now, r.costUSD ?? 0);
+      .run(chatId, now, banked);
   } else if (estimate > 0) {
     // A turn that settled without the CLI reporting a cost — a child killed
     // after it had worked, a `result` that never arrived. The money was spent
