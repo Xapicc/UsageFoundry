@@ -5522,7 +5522,9 @@ const SANDBOX_GLOB_CHARS = /[*?[\]{}!]/;
  * named or the build fails inside a tool call the run loop does not read —
  * `docs/verification.md` names these two by name as the ones the set left out.
  * npm's cache is `$HOME/.npm` and Go's is under `GOPATH`, which the image points
- * at a named volume so it survives a container it is meant to outlive.
+ * at a named volume so it survives a container it is meant to outlive. The XDG
+ * cache has no volume and lives in the writable layer, so a rebuild empties it:
+ * that costs a re-download, and a directory the sandbox refuses costs the build.
  *
  * Read off the *environment* rather than written as literals, because the uid
  * that owns them is not the one asking: the server runs as root under compose
@@ -5537,6 +5539,15 @@ const SANDBOX_GLOB_CHARS = /[*?[\]{}!]/;
 const BUILD_CACHE_DIRS = [
   path.join(os.homedir(), ".npm"),
   process.env.GOPATH || path.join(os.homedir(), "go"),
+  // The XDG cache, which is where the toolchains that are neither npm nor Go
+  // default to — uv, pip, node-gyp, and the clang module cache every `swiftc`
+  // has to populate before it compiles anything. Left out, each of those fails
+  // on EROFS inside a tool call: measured over this install's `run_events` to
+  // 2026-09-27, 20 runs hit it, and a `swiftc` of a two-line file cannot build
+  // `SwiftShims`. One entry for the directory rather than one per tool, for
+  // the reason `state/` below is one tree: the next tool that caches here is
+  // otherwise the next silent failure.
+  process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"),
   // Where every stack's tool keeps its own cache, plugins and config. One
   // entry for the mechanism and not one per stack, which is the reason
   // `state/` is one tree rather than a path each stack chooses. Reading and
