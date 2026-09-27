@@ -331,7 +331,7 @@ test("a caption with nothing to say renders nothing at all", () => {
   );
   assert.match(
     html,
-    /What the window is made of is taken on the guard tick/,
+    /What the window is made of is paced by how far the conversation has grown/,
     "and the one paragraph that is there is the stack's",
   );
   // What the panel is for is untouched by that.
@@ -346,7 +346,7 @@ test("the first clause that renders opens the paragraph", () => {
   // space indents the paragraph against every other block in the region, and a
   // missing one runs two sentences together.
   const held = render(heldSeries());
-  assert.match(held, /leading-snug text-ink-muted">Nothing has moved it for/);
+  assert.match(held, /leading-snug text-ink-muted">The figure is current/);
 
   const context = series({ sampleCount: 900 });
   const two = render({
@@ -357,7 +357,7 @@ test("the first clause that renders opens the paragraph", () => {
       { ...context.samples[2], basis: "transcript" },
     ],
   });
-  assert.match(two, /text-ink-muted">This last reading had no usage frame/);
+  assert.match(two, /text-ink-muted">This last reading is a byte estimate/);
   assert.match(two, /the series is not in\. Drawn from the newest 3 of 900/);
 });
 
@@ -402,10 +402,10 @@ test("a fallback as the newest reading qualifies the headline figure itself", ()
       { ...context.samples[2], basis: "transcript" },
     ],
   });
-  assert.match(html, /This last reading had no usage frame to read/);
+  assert.match(html, /This last reading is a byte estimate from the transcript/);
   assert.match(
     html,
-    /the percentage above is against a quantity the rest of[\s\S]*the series is not in/,
+    /The percentage above is against a quantity the rest of[\s\S]*the series is not in/,
   );
 });
 
@@ -428,20 +428,17 @@ test("a complete series claims no tail", () => {
   assert.doesNotMatch(html, /Drawn from the newest/);
 });
 
-test("the dots stand down on a long run, and the caption says they have", () => {
+test("the dots stand down on a long run", () => {
   const many = Array.from({ length: 80 }, (_, i) =>
     sample({ ts: NOW - (79 - i) * 1_000, tokens: 30_000 + i * 100 }),
   );
   const html = render(series({ samples: many, sampleCount: 80 }));
   // One dot: the newest reading, which is the point the indicator above names.
   assert.equal(html.match(/<circle/g)?.length, 1);
-  assert.match(html, /the per-point dots stand down/);
-  assert.match(html, /still passes through every one of them/);
 
-  // And a short run draws them all, so the clause above is not always true.
+  // And a short run draws them all, so the cap is not always in force.
   const short = render(series());
   assert.equal(short.match(/<circle/g)?.length, 3);
-  assert.doesNotMatch(short, /dots stand down/);
 });
 
 test("the series is not sighted-only", () => {
