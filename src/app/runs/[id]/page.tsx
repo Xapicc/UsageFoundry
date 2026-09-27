@@ -537,10 +537,16 @@ function guardBars(run: RunDTO, now: number) {
  * squeezed to one word a line. Under the cap it wraps inside its own column and
  * the label keeps the rest; every value this page writes itself is well short
  * of it, so those rows do not move.
+ *
+ * The cap is `lg:` only, because that is the one width where the inspector is a
+ * fixed 21rem column. Below `md` the row already wraps and lets its control
+ * shrink, so the break alone fits the value to the line — capped there it wrapped
+ * at 192px on a line with nothing else on it — and between the two the card is
+ * the pane's width and a long value fits beside its label.
  */
 function GuardValue({ children }: { children: ReactNode }) {
   return (
-    <span className="max-w-48 text-right text-sm tabular-nums text-ink [overflow-wrap:anywhere]">
+    <span className="text-right text-sm tabular-nums text-ink [overflow-wrap:anywhere] lg:max-w-48">
       {children}
     </span>
   );
