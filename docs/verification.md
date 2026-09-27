@@ -846,6 +846,31 @@ is `docs/agent/testing.md`; interface defects and their classes are
   and one skin for this block, and `smoke-pages`' own seed carries no notes, so
   its pass says nothing about it.
 
+- **Operator-only and `release_task` through the real MCP route, in-process,
+  2026-09-27**: `route.ts` and `src/lib` compiled with `tsc` to a scratch
+  `outDir`, `POST` called directly with tokens from `mintRunCapability` and
+  `mintCapability` against seeded `runs` rows, **21/21 assertions**.
+  `release_task` is on the run's list and `complete_task`'s description points
+  at it; `list_my_tasks` marks the operator-only row in `openInFolder` and says
+  nothing on an unmarked `held` row; a string `operatorOnly`, a blank reason,
+  another run and an unknown id are each refused with nothing written; the
+  holder's release left the task open, unclaimed and marked with its reason as
+  a note from that run, after which `complete_task` and a second release were
+  refused; a run's `create_task` filed a task marked; a chat calling
+  `release_task` got its own sentence; chat `list_tasks` narrowed on the flag
+  both ways and refused `"yes"`; `get_task` returned it. Caveat: no `claude`
+  child was spawned, so what a model does with the descriptions is unmeasured.
+
+- **Operator-only on the board, 2026-09-27**, standalone build on a scratch
+  `DATA_DIR`, three tasks seeded through `POST /api/tasks`, Chromium at 1280px
+  and 390px: the badge drew under the marked row's title, the "Who does it"
+  filter left one row on Operator only at 1280px (the 390px pass ran after the
+  flag was cleared and showed none, as it should), the task page's toggle cleared the
+  flag through its own `PATCH` (read back `false`), the new-task toggle drew
+  below Folder, no console error and no sideways scroll at either width.
+  `GET /api/tasks?operatorOnly=yes` and a `PATCH` sending `"false"` were both
+  400s. `npm run smoke-pages` 92/92 on the same build.
+
 ### Workflows and schedules
 
 - **A loop as a region, 2026-09-21** (production standalone build from this
@@ -3968,6 +3993,15 @@ measurement under *Verified* and cut the item down to what is still open.
   and `docs/taskboard.md` describes the feature as it will read once it does.
   `npm run smoke-pages` was deliberately not re-run, because no page changed.
   Settle it with the run that draws it.
+
+- **No model has called `release_task`, and the judgement it asks for is
+  unmeasured.** The write is covered in `tasks.test.ts` and through the route
+  in process; what is not is whether a cycle that cannot finish reaches for it
+  rather than stopping with the task held, and whether it keeps `operatorOnly`
+  for blockers outside the container rather than for work that was merely
+  hard. Settle it after `docker compose up --build` with *Let runs use the
+  taskboard* on: start a run from a task that needs a Mac, and read whether
+  the task comes back open, marked, with a reason naming the blocker.
 
 ### Workflows and schedules
 

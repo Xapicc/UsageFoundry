@@ -2492,6 +2492,11 @@ export function countBoardCondition(
     mountId: resolved.mountId,
     folder: resolved.folder,
     includeSubfolders: condition.includeSubfolders,
+    // Agent work only. An operator-only task is `open` and no run may claim
+    // it, so no pass can bring it down: counted, a loop told to run until at
+    // most N are open would run for ever — or to its pass cap, spending every
+    // pass — once the operator's own lane held more than N.
+    operatorOnly: false,
     // The count is the whole answer; the smallest page keeps the rows this
     // never reads off the wire.
     limit: 1,
@@ -6919,6 +6924,8 @@ function blockSystemPrompt(
     "  each task.",
     "- A run that works board tasks lists every one of them in taskIds: it can",
     "  close only those, and a task named in its text but left out is refused.",
+    "  A task marked operatorOnly needs the operator and no run may claim it:",
+    "  it goes in relatedTaskIds if the brief mentions it, never in taskIds.",
     "- Runs with no dependsOn link between them start in parallel.",
     "- Emitting nothing is a real answer when there is nothing worth doing — say",
     "  so plainly, and know that any block set to start after this one will be",

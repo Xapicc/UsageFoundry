@@ -251,6 +251,27 @@ describe("loopBoardCount — counting a project's board from a node", () => {
     assert.equal(count({}), before);
   });
 
+  it("does not count a task marked operator-only, in the total or by priority", () => {
+    // No run may claim one, so no pass can bring the count down: counted, a
+    // loop told to stop at "at most N open" would run every pass it has once
+    // the operator's own lane held more than N — and it would say nothing,
+    // because every pass would look like it did its work.
+    const before = counts({})!;
+    const id = fileTask("backlog", "urgent");
+    assert.equal(counts({})!.total, before.total + 1, "agent work is counted");
+
+    const marked = tasks.updateTask(id, { operatorOnly: true }, OPERATOR);
+    assert.equal(marked.ok, true, marked.ok ? "" : marked.error);
+    const after = counts({})!;
+    assert.equal(after.total, before.total, "the marked task left the total");
+    assert.equal(after.byPriority.urgent, before.byPriority.urgent);
+
+    // And cleared by the operator, it is agent work again and counted again.
+    const cleared = tasks.updateTask(id, { operatorOnly: false }, OPERATOR);
+    assert.equal(cleared.ok, true, cleared.ok ? "" : cleared.error);
+    assert.equal(counts({})!.total, before.total + 1);
+  });
+
   it("reads null, and touches the board at all, only for a loop that set one", () => {
     const reading = workflows.loopBoardCount(loopNode(null));
     assert.equal(reading.ok && reading.counts, null);

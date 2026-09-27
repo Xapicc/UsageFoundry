@@ -255,6 +255,7 @@ describe("buildValidationPrompt", () => {
     claimedByRunId: "r-1",
     completedByRunId: null,
     parentTaskId: null,
+    operatorOnly: false,
     createdAt: 1,
     updatedAt: 2,
     closedAt: null,
@@ -359,6 +360,9 @@ describe("validationPushback", () => {
     // somewhere to say so other than closing the task again.
     assert.match(text, /commit/);
     assert.match(text, /say so in your reply/);
+    // And a task it cannot finish is given back rather than left held by a run
+    // that is about to end.
+    assert.match(text, /release_task/);
   });
 
   it("stands up with no evidence to quote", () => {

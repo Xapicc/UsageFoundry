@@ -85,7 +85,9 @@ import {
  * the board draws, so the select can never offer a project the board cannot
  * show or hide one it can; drawn from anywhere else they would need a mount
  * root joined to a relative path in the browser, which is the second, looser
- * resolver `docs/agent/taskboard.md` exists to prevent.
+ * resolver `docs/agent/taskboard.md` exists to prevent. The operator-only filter
+ * sits beside it and follows it: in the browser, over the same rows, and not
+ * kept in the URL, because the project filter is not.
  */
 
 /**
@@ -194,6 +196,25 @@ async function readBoard(): Promise<BoardRead> {
  */
 const EVERY_PROJECT = "";
 const NO_PROJECT = "unassigned";
+
+/**
+ * Whose work a row is: the operator-only filter's three values.
+ *
+ * `operatorOnly` is a flag rather than a status, so this narrows across every
+ * status group rather than being one — an operator-only task is still open.
+ */
+type Lane = "all" | "agent" | "operator";
+
+const LANE_OPTIONS: ReadonlyArray<{ value: Lane; label: string; noun: string }> = [
+  { value: "all", label: "All work", noun: "tasks" },
+  { value: "agent", label: "Agent work", noun: "agent work" },
+  { value: "operator", label: "Operator only", noun: "operator-only tasks" },
+];
+
+function inLane(task: TaskListItemDTO, lane: Lane): boolean {
+  if (lane === "all") return true;
+  return task.operatorOnly === (lane === "operator");
+}
 
 /**
  * One project, as a `<select>` value.
@@ -346,6 +367,7 @@ export default function TasksPage() {
     key: EVERY_PROJECT,
     label: "",
   });
+  const [lane, setLane] = useState<Lane>("all");
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -384,12 +406,17 @@ export default function TasksPage() {
 
   const unassignedCount = tasks.filter((t) => t.folder === null).length;
 
-  const visible = useMemo(
+  const inPlace = useMemo(
     () =>
       place.key === EVERY_PROJECT
         ? tasks
         : tasks.filter((t) => placeKey(t) === place.key),
     [tasks, place],
+  );
+
+  const visible = useMemo(
+    () => inPlace.filter((t) => inLane(t, lane)),
+    [inPlace, lane],
   );
 
   const byStatus = useCallback(
@@ -440,6 +467,13 @@ export default function TasksPage() {
   const filterMatchedNone =
     !unreadable && loaded && tasks.length > 0 && visible.length === 0;
 
+  /** What the empty state says was asked for, in the words the filters use. */
+  const laneNoun = LANE_OPTIONS.find((option) => option.value === lane)!.noun;
+  const nothingMatched =
+    place.key === EVERY_PROJECT
+      ? `No ${laneNoun} on the board`
+      : `No ${lane === "all" ? "tasks" : laneNoun} in ${place.label}`;
+
   /** What the select's options are, so a press can keep the label it chose. */
   function pick(key: string) {
     if (key === EVERY_PROJECT) return setPlace({ key, label: "" });
@@ -469,6 +503,16 @@ export default function TasksPage() {
             >
               {task.title}
             </Link>
+            {/* Under the title rather than in the Priority cell beside the
+                other badges: that cell is labelled "Priority" when the table
+                stacks, and this is not a priority. Neutral, the rule
+                `TASK_PRIORITY_TONE` states — told apart by the word, so the
+                board does not gain a colour that competes with urgent. */}
+            {task.operatorOnly && (
+              <span className="mt-1 block">
+                <Badge tone="neutral">operator only</Badge>
+              </span>
+            )}
             {/* No brief here at all, which is a measurement rather than a
                 preference. This cell is `w-full` over a table whose other six
                 columns are min-widths, so it is whatever they leave: about
@@ -724,33 +768,56 @@ export default function TasksPage() {
       )}
       {loaded && !unreadable && tasks.length > 0 && (
         <Card emphasis="quiet" className="mb-6">
-          <Field
-            label="Project"
-            htmlFor="task-place"
-            hint="Every mount by default"
-          >
-            <div className="w-80">
-              <Select
-                id="task-place"
-                value={place.key}
-                onChange={(e) => pick(e.target.value)}
-              >
-                <option value={EVERY_PROJECT}>
-                  Every project ({tasks.length})
-                </option>
-                {unassignedCount > 0 && (
-                  <option value={NO_PROJECT}>
-                    Unassigned ({unassignedCount})
+          <div className="flex flex-wrap gap-x-4">
+            <Field
+              label="Project"
+              htmlFor="task-place"
+              hint="Every mount by default"
+            >
+              <div className="w-80">
+                <Select
+                  id="task-place"
+                  value={place.key}
+                  onChange={(e) => pick(e.target.value)}
+                >
+                  <option value={EVERY_PROJECT}>
+                    Every project ({tasks.length})
                   </option>
-                )}
-                {places.map(([key, label]) => (
-                  <option key={key} value={key}>
-                    {label}
-                  </option>
-                ))}
-              </Select>
-            </div>
-          </Field>
+                  {unassignedCount > 0 && (
+                    <option value={NO_PROJECT}>
+                      Unassigned ({unassignedCount})
+                    </option>
+                  )}
+                  {places.map(([key, label]) => (
+                    <option key={key} value={key}>
+                      {label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </Field>
+            <Field
+              label="Who does it"
+              htmlFor="task-lane"
+              hint="Operator only is work no run here can do"
+            >
+              <div className="w-56">
+                <Select
+                  id="task-lane"
+                  value={lane}
+                  onChange={(e) => setLane(e.target.value as Lane)}
+                >
+                  {/* Counted within the chosen project, because that is the
+                      set this select narrows. */}
+                  {LANE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {`${option.label} (${inPlace.filter((t) => inLane(t, option.value)).length})`}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </Field>
+          </div>
           {/* The list is replaced without anything moving focus, so the count
               is announced rather than only drawn. */}
           <span className="sr-only" aria-live="polite">
@@ -805,7 +872,7 @@ export default function TasksPage() {
       ) : filterMatchedNone ? (
         <Card emphasis="primary">
           <Empty>
-            <div className="font-medium text-ink">No tasks in {place.label}</div>
+            <div className="font-medium text-ink">{nothingMatched}</div>
             <div className="mx-auto mt-1 max-w-[52ch]">
               The board holds {tasks.length}, and this filter matched none of
               them.
@@ -813,9 +880,12 @@ export default function TasksPage() {
             <div className="mt-3">
               <Button
                 variant="secondary"
-                onClick={() => pick(EVERY_PROJECT)}
+                onClick={() => {
+                  pick(EVERY_PROJECT);
+                  setLane("all");
+                }}
               >
-                Show every project
+                Show every task
               </Button>
             </div>
           </Empty>

@@ -146,6 +146,12 @@ export interface Task {
   completedByRunId: string | null;
   /** Set when a run filed this while working another. */
   parentTaskId: string | null;
+  /**
+   * Work no run in this container can do, left on the board for the operator.
+   * Not a status: an operator-only task is still `open`. See
+   * `operatorOnlyRefusal` for who may set and clear it.
+   */
+  operatorOnly: boolean;
   createdAt: number;
   updatedAt: number;
   /** When it reached `done` or `dropped`, and null again if it left. */
@@ -162,6 +168,7 @@ export interface TaskInput {
   folder: string | null;
   createdByRunId: string | null;
   parentTaskId: string | null;
+  operatorOnly: boolean;
 }
 
 /**
@@ -209,6 +216,12 @@ export interface TaskTransition {
   claimedByRunId: string | null;
   /** The run that will hold it. Required when `to` is `claimed`. */
   claimRunId?: string | null;
+  /**
+   * `operator_only` as it will stand after the write this move is part of.
+   * Absent reads as agent work; `updateTask`, the one writer of `status`,
+   * always passes it.
+   */
+  operatorOnly?: boolean;
 }
 
 const COMPLETION_BELONGS_TO =
@@ -226,7 +239,8 @@ const COMPLETION_BELONGS_TO =
  *
  * The edges are few enough to state, and every absent edge is refused:
  *
- *   - `open → claimed`     any actor, and the claim names the run that holds it
+ *   - `open → claimed`     any actor, and the claim names the run that holds it;
+ *                          nobody, while the task is operator-only
  *   - `open → done`        operator only; a run claims first
  *   - `open → dropped`     operator only
  *   - `claimed → open`     operator, or the run that holds it (releasing)
@@ -259,6 +273,14 @@ const COMPLETION_BELONGS_TO =
  * already has changes nothing and is allowed for any actor; it is the caller's
  * job not to apply a move's effects when nothing moved, which `updateTask`
  * does by only calling this when the status actually differs.
+ *
+ * **Nothing claims an operator-only task, the operator included.** A claim
+ * names the run that will hold it, and the flag says no run here can do the
+ * work — so a claim on one is a run spending its budget on something the
+ * operator already said needs a Mac, a GUI or a hand. The operator's way round
+ * is to clear the flag first, which is a statement that the blocker is gone
+ * rather than a claim made past it. A task already claimed when the flag is set
+ * keeps its claim: the claim is a record, and taking it off is a release.
  */
 export function taskTransitionRefusal(transition: TaskTransition): string | null {
   const { from, to, actor, claimedByRunId } = transition;
@@ -295,6 +317,13 @@ export function taskTransitionRefusal(transition: TaskTransition): string | null
   }
 
   if (to === "claimed") {
+    if (transition.operatorOnly) {
+      return (
+        "This task is marked operator-only: it needs something no run in this " +
+        "container has, so no run may claim it. The operator clears the mark on " +
+        "the board if a run should take it after all."
+      );
+    }
     const claimRunId = (transition.claimRunId ?? "").trim();
     if (!claimRunId) {
       return (
@@ -356,6 +385,94 @@ function holderRefusal(
   );
 }
 
+/** A proposed change to `operator_only`, in the terms `operatorOnlyRefusal` decides on. */
+export interface OperatorOnlyChange {
+  actor: TaskActor;
+  /** The flag as the row holds it, or null when the task is being filed. */
+  from: boolean | null;
+  to: boolean;
+  /**
+   * The status move the same write makes, read off the row — null at a create.
+   * A run may set the flag only in the write that releases its claim, and this
+   * is how the rule sees that write rather than taking a caller's word for it.
+   */
+  move: { from: TaskStatus; to: TaskStatus; claimedByRunId: string | null } | null;
+}
+
+/**
+ * Why this actor may not set or clear `operator_only` here, or null when it may.
+ *
+ * `taskTransitionRefusal`'s shape and the same kind of rule: pure, total, one
+ * wording for every door. It sits beside that function rather than inside it
+ * because the flag is not a status, and it answers for every door that writes
+ * the flag — `createTask` and `updateTask` both ask it before they write.
+ *
+ *   - the operator sets and clears it on any task, at a create and at an edit.
+ *   - a chat or a run may file a new task already marked.
+ *   - a run may mark a task it holds, and only in the write that releases it —
+ *     `release_task`. The holder check is `taskTransitionRefusal`'s own, asked
+ *     here for the release the write makes, so there is one of it.
+ *   - a block may do neither: it has no door that files a task, and nobody
+ *     reads its turn to weigh the claim that a blocker is outside this box.
+ *   - **only the operator clears it.** A model may move work into the
+ *     operator's lane and never out of it — the board's "may put work on, never
+ *     take it off" applied to this flag. Cleared by a model, it is a run started
+ *     on something the operator was told needed them.
+ *
+ * Why a chat may file one marked and may not mark one already there: a chat
+ * filing a task is writing down what it was just told, with the operator at the
+ * keyboard; marking an existing task is a judgement that the work cannot be done
+ * here, and the only actor that has earned it is the run that tried.
+ */
+export function operatorOnlyRefusal(change: OperatorOnlyChange): string | null {
+  const { actor, from, to } = change;
+
+  if (from === to || (from === null && !to)) return null;
+  if (actor.kind === "operator") return null;
+
+  if (!to) {
+    return (
+      `Only the operator clears operator-only. A ${actor.kind} may move work ` +
+      `into the operator's lane and never out of it — if a run could do this ` +
+      `after all, say so in a comment and let the operator decide.`
+    );
+  }
+
+  if (actor.kind === "block") {
+    return (
+      "An orchestrator block cannot mark a task operator-only. Nobody is " +
+      "reading this workflow to weigh the claim that the work cannot be done " +
+      "here — say so in the block's output and let the operator decide."
+    );
+  }
+
+  if (from === null) return null;
+
+  if (actor.kind === "chat") {
+    return (
+      "A chat cannot mark an existing task operator-only: that the work cannot " +
+      "be done in this container is for the run that tried or for the " +
+      "operator to say. Write what you know on the task with comment_on_task."
+    );
+  }
+
+  const move = change.move;
+  if (!move || move.from !== "claimed" || move.to !== "open") {
+    return (
+      "A run marks a task operator-only only as it releases it: call " +
+      "release_task on the task you hold, with operatorOnly set and the reason " +
+      "the blocker is outside this container."
+    );
+  }
+  return taskTransitionRefusal({
+    from: move.from,
+    to: move.to,
+    actor,
+    claimedByRunId: move.claimedByRunId,
+    operatorOnly: from,
+  });
+}
+
 /**
  * Why this actor may not delete a task, or null when it may.
  *
@@ -394,6 +511,8 @@ function short(id: string): string {
 export interface TaskFacts {
   title: string;
   status: TaskStatus;
+  /** Refused in `taskIds`: a run linked to it would claim it. */
+  operatorOnly: boolean;
 }
 
 /**
@@ -545,6 +664,24 @@ export function readTaskLinks(
     if (problem) return { ok: false, reason: problem };
   }
 
+  // Refused here rather than left to the claim, which would refuse it too: a
+  // claim refusal is a log line on a run that has already started, so the run
+  // would be spent on work the operator marked as theirs. `relatedTaskIds` is
+  // the way out, and the mention check below still holds a brief that names
+  // one to account for it.
+  const reserved = taskIds.ids.find((id) => knowledge.get(id)?.operatorOnly);
+  if (reserved) {
+    return {
+      ok: false,
+      reason:
+        `“${knowledge.get(reserved)?.title ?? reserved}” (${reserved}) is ` +
+        "marked operator-only: it needs something no run in this container " +
+        "has, so no run may claim it. Take it out of taskIds. If the brief " +
+        "only mentions it, put it in relatedTaskIds; if a run should work it " +
+        "after all, the operator clears the mark on the board first.",
+    };
+  }
+
   const both = taskIds.ids.find((id) => related.ids.includes(id));
   if (both) {
     return {
@@ -596,14 +733,15 @@ function idList(
  */
 export function currentTaskKnowledge(): Map<string, TaskFacts> {
   const rows = db()
-    .prepare("SELECT id, title, status FROM tasks")
-    .all() as Array<{ id: string; title: string; status: string }>;
+    .prepare("SELECT id, title, status, operator_only FROM tasks")
+    .all() as Array<{ id: string; title: string; status: string; operator_only: number }>;
   return new Map(
     rows.map((row) => [
       row.id,
       {
         title: row.title,
         status: isTaskStatus(row.status) ? row.status : ("open" as TaskStatus),
+        operatorOnly: row.operator_only === 1,
       },
     ]),
   );
@@ -784,6 +922,15 @@ export function normalizeTaskInput(
       ? null
       : String(o.parentTaskId).trim() || null;
 
+  // Absent is agent work, which is what every task filed before the flag
+  // existed was. Who may file one marked is `operatorOnlyRefusal`, asked by
+  // `createTask` so the rule is not a property of this door alone.
+  const operatorOnly =
+    o.operatorOnly === undefined || o.operatorOnly === null ? false : o.operatorOnly;
+  if (typeof operatorOnly !== "boolean") {
+    return { ok: false, error: notAFlag(operatorOnly) };
+  }
+
   return {
     ok: true,
     value: {
@@ -795,8 +942,17 @@ export function normalizeTaskInput(
       folder: folder.folder,
       createdByRunId: creation.createdByRunId,
       parentTaskId,
+      operatorOnly,
     },
   };
+}
+
+/**
+ * Refused rather than coerced: `"false"` is truthy, so a coercion would mark a
+ * task operator-only when the caller said the opposite.
+ */
+function notAFlag(seen: unknown): string {
+  return `operatorOnly must be true or false; got ${JSON.stringify(seen)}.`;
 }
 
 /** Why a field that is recorded rather than claimed cannot be sent. */
@@ -888,6 +1044,13 @@ export function normalizeTaskPatch(
     patch.parentTaskId = o.parentTaskId === null ? null : String(o.parentTaskId);
   }
 
+  if (o.operatorOnly !== undefined) {
+    if (typeof o.operatorOnly !== "boolean") {
+      return { ok: false, error: notAFlag(o.operatorOnly) };
+    }
+    patch.operatorOnly = o.operatorOnly;
+  }
+
   return { ok: true, value: patch };
 }
 
@@ -913,6 +1076,8 @@ export interface TaskListQuery {
   mountId?: string | null;
   /** A canonical absolute folder, matched exactly against the column. */
   folder?: string | null;
+  /** Only operator-only tasks, only agent work, or null for both. */
+  operatorOnly?: boolean | null;
   /**
    * Whether `folder` also matches everything filed under it.
    *
@@ -933,6 +1098,7 @@ export interface TaskListFilters {
   priority: TaskPriority | null;
   mountId: string | null;
   folder: string | null;
+  operatorOnly: boolean | null;
   includeSubfolders: boolean;
 }
 
@@ -985,6 +1151,7 @@ export function normalizeTaskListQuery(query: TaskListQuery = {}): TaskListFilte
     priority: query.priority ?? null,
     mountId: mountId || null,
     folder: folder || null,
+    operatorOnly: typeof query.operatorOnly === "boolean" ? query.operatorOnly : null,
     // `=== true` rather than truthiness: a stored condition written before the
     // field existed carries `undefined` here, and the exact match is what it
     // meant.
@@ -1019,6 +1186,7 @@ interface TaskRow {
   claimed_by_run_id: string | null;
   completed_by_run_id: string | null;
   parent_task_id: string | null;
+  operator_only: number;
   created_at: number;
   updated_at: number;
   closed_at: number | null;
@@ -1026,7 +1194,7 @@ interface TaskRow {
 
 const COLUMNS = `id, title, body, status, priority, origin, mount_id, folder,
   created_by_run_id, claimed_by_run_id, completed_by_run_id, parent_task_id,
-  created_at, updated_at, closed_at`;
+  operator_only, created_at, updated_at, closed_at`;
 
 /**
  * A stored row as the rest of the app sees it.
@@ -1054,6 +1222,7 @@ export function rowToTask(row: TaskRow): Task {
     claimedByRunId: row.claimed_by_run_id,
     completedByRunId: row.completed_by_run_id,
     parentTaskId: row.parent_task_id,
+    operatorOnly: row.operator_only === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     closedAt: row.closed_at,
@@ -1117,6 +1286,10 @@ export function listTasks(query: TaskListQuery = {}): TaskListPage {
   if (filters.mountId) {
     where.push("mount_id = ?");
     args.push(filters.mountId);
+  }
+  if (filters.operatorOnly !== null) {
+    where.push("operator_only = ?");
+    args.push(filters.operatorOnly ? 1 : 0);
   }
   if (filters.folder) {
     if (filters.includeSubfolders) {
@@ -1232,6 +1405,14 @@ export function tasksForRun(runId: string, folder: string | null): RunTasks {
  * there is worse than none.
  */
 export function createTask(input: TaskInput): TaskWriteResult {
+  const flagRefusal = operatorOnlyRefusal({
+    actor: filedBy(input),
+    from: null,
+    to: input.operatorOnly,
+    move: null,
+  });
+  if (flagRefusal) return { ok: false, kind: "refused", error: flagRefusal };
+
   if (input.parentTaskId && !getTask(input.parentTaskId)) {
     return {
       ok: false,
@@ -1247,8 +1428,8 @@ export function createTask(input: TaskInput): TaskWriteResult {
       `INSERT INTO tasks
          (id, title, body, status, priority, origin, mount_id, folder,
           created_by_run_id, claimed_by_run_id, completed_by_run_id,
-          parent_task_id, created_at, updated_at, closed_at)
-       VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, NULL)`,
+          parent_task_id, operator_only, created_at, updated_at, closed_at)
+       VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, NULL)`,
     )
     .run(
       id,
@@ -1260,10 +1441,24 @@ export function createTask(input: TaskInput): TaskWriteResult {
       input.folder,
       input.createdByRunId,
       input.parentTaskId,
+      input.operatorOnly ? 1 : 0,
       now,
       now,
     );
   return { ok: true, task: getTask(id)! };
+}
+
+/**
+ * Who is filing, as the actor the flag's rule is written against.
+ *
+ * Read off the origin rather than taken as a separate argument, because the
+ * origin already *is* who filed it — recorded from the door, never off the
+ * wire — and a second parameter would be a second answer that could disagree.
+ */
+function filedBy(input: TaskInput): TaskActor {
+  return input.origin === "run"
+    ? { kind: "run", runId: input.createdByRunId ?? "" }
+    : { kind: input.origin };
 }
 
 /**
@@ -1284,6 +1479,8 @@ export interface TaskPatch {
   status?: TaskStatus;
   /** The run that will hold it. Required when `status` moves to `claimed`. */
   claimRunId?: string | null;
+  /** Who may change it is `operatorOnlyRefusal`, asked against the row. */
+  operatorOnly?: boolean;
 }
 
 /**
@@ -1357,6 +1554,23 @@ export function updateTask(
     next.parentTaskId = parent;
   }
 
+  // Before the status, because the claim rule reads the flag as this write
+  // leaves it: an operator clearing the mark and claiming in one press is a
+  // claim on agent work, and one setting it and claiming is refused.
+  if (patch.operatorOnly !== undefined) {
+    const refusal = operatorOnlyRefusal({
+      actor,
+      from: task.operatorOnly,
+      to: patch.operatorOnly,
+      move:
+        patch.status === undefined
+          ? null
+          : { from: task.status, to: patch.status, claimedByRunId: task.claimedByRunId },
+    });
+    if (refusal) return { ok: false, kind: "refused", error: refusal };
+    next.operatorOnly = patch.operatorOnly;
+  }
+
   const now = Date.now();
 
   if (patch.status !== undefined && patch.status !== task.status) {
@@ -1372,6 +1586,7 @@ export function updateTask(
       actor,
       claimedByRunId: task.claimedByRunId,
       claimRunId,
+      operatorOnly: next.operatorOnly,
     });
     if (refusal) return { ok: false, kind: "refused", error: refusal };
 
@@ -1397,7 +1612,8 @@ export function updateTask(
       `UPDATE tasks
           SET title = ?, body = ?, status = ?, priority = ?, mount_id = ?,
               folder = ?, claimed_by_run_id = ?, completed_by_run_id = ?,
-              parent_task_id = ?, updated_at = ?, closed_at = ?
+              parent_task_id = ?, operator_only = ?, updated_at = ?,
+              closed_at = ?
         WHERE id = ?`,
     )
     .run(
@@ -1410,6 +1626,7 @@ export function updateTask(
       next.claimedByRunId,
       next.completedByRunId,
       next.parentTaskId,
+      next.operatorOnly ? 1 : 0,
       now,
       next.closedAt,
       id,
@@ -1610,6 +1827,7 @@ export function taskDTO(
     claimedByRunId: task.claimedByRunId,
     completedByRunId: task.completedByRunId,
     parentTaskId: task.parentTaskId,
+    operatorOnly: task.operatorOnly,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
     closedAt: task.closedAt,

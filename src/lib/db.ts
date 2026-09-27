@@ -2500,6 +2500,20 @@ function migrate(db: Database.Database) {
     INSERT OR IGNORE INTO run_tasks (run_id, task_id, position)
       SELECT id, task_id, 0 FROM runs WHERE task_id IS NOT NULL;
   `);
+  // Whether the work needs the operator rather than a run: a Mac, a GUI,
+  // hardware, credentials only they hold, a physical action. A flag rather than
+  // a fifth status, because it says who may do the work and not where the task
+  // is — an operator-only task is still `open` to every count and every group
+  // that reads the status. `taskTransitionRefusal` refuses a claim on one and
+  // `operatorOnlyRefusal` decides who may set and clear it; see
+  // docs/agent/taskboard.md.
+  //
+  // `NOT NULL DEFAULT 0` rather than nullable, unlike `runs.provider` above: a
+  // row that predates the column was filed as agent work, because there was no
+  // other kind, so the default is what those rows always meant rather than a
+  // claim nothing recorded. Additive, so no version bump.
+  addColumn(db, "tasks", "operator_only", "INTEGER NOT NULL DEFAULT 0");
+
   // JSON `string[]`, read through `proposalTaskIds`, for `depends_on`'s reason:
   // nothing queries a proposal by task, so a table would be a join for no read.
   addColumn(db, "chat_proposals", "task_ids", "TEXT");
