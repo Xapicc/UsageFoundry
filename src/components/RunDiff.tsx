@@ -141,6 +141,18 @@ export function RunDiff({ run }: { run: RunDTO }) {
                     <span className="text-danger">−{diff.deleted}</span>
                   </>
                 )}
+                {/* Said because the count above is not base-to-branch, and a
+                    reader comparing it with `git diff <base>` in their own
+                    shell would otherwise take one of the two for wrong. */}
+                {diff.measuredFrom && (
+                  <Hint>
+                    Measured from {diff.measuredFrom.target} at{" "}
+                    <span className="mono">{diff.measuredFrom.commit.slice(0, 7)}</span>,
+                    merged in by{" "}
+                    <span className="mono">{diff.measuredFrom.merge.slice(0, 7)}</span>, so{" "}
+                    {diff.measuredFrom.target}&rsquo;s own changes are not counted
+                  </Hint>
+                )}
               </div>
             )}
 
@@ -150,8 +162,11 @@ export function RunDiff({ run }: { run: RunDTO }) {
                   {diff.omittedPatches} file{diff.omittedPatches === 1 ? "" : "s"} listed
                   without contents.
                 </strong>{" "}
-                The change is too large to render whole. Every changed file is still in
-                the list below.
+                {/* Size is one reason and a failed read is another. Blaming size
+                    for a read that failed tells the operator a small change was
+                    large and sends them nowhere near what went wrong. */}
+                {diff.patchFailure ?? "The change is too large to render whole"}. Every
+                changed file is still in the list below.
               </Notice>
             )}
 

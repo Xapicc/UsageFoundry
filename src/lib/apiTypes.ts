@@ -2556,7 +2556,7 @@ export interface DiffFileDTO {
   added: number | null;
   deleted: number | null;
   binary: boolean;
-  /** Null when the patch was withheld to stay inside the size budget. */
+  /** Null when the patch was left out, by the budget or by a read that failed. */
   patch: string | null;
   patchTruncated: boolean;
 }
@@ -2567,13 +2567,22 @@ export interface RunDiffDTO {
   reason: string | null;
   base: string | null;
   branch: string | null;
+  /**
+   * Set when the diff is measured from the target commit a merge brought into
+   * the branch rather than from `base`, so the target's own changes are not
+   * counted as the run's.
+   */
+  measuredFrom: { merge: string; commit: string; target: string } | null;
   /** The commit `branch` pointed at when the diff was taken; null without a range. */
   head: string | null;
   files: DiffFileDTO[];
   filesChanged: number;
   added: number;
   deleted: number;
+  /** Files listed without a patch, for the budget or for a failed read. */
   omittedPatches: number;
+  /** Why no file has a patch when git could not give them; null when only the budget left files out. */
+  patchFailure: string | null;
   uncommitted: string[];
   caveat: string | null;
 }
@@ -2690,6 +2699,7 @@ export interface ResolutionChangeDTO {
   commit: string;
   files: DiffFileDTO[];
   omittedPatches: number;
+  patchFailure: string | null;
 }
 
 /** One `<<<<<<< … >>>>>>>` block, as the merge would leave it. */
@@ -2753,7 +2763,8 @@ export interface LandStateDTO {
   /** True when the target was deduced from the base commit, not recorded. */
   targetInferred: boolean;
   branchExists: boolean;
-  ahead: number;
+  /** Null when git could not count them — never the same as none. */
+  ahead: number | null;
   behind: number;
   merged: boolean;
   /** Landed by this tool and unchanged since — how a squash reads as done. */
@@ -2874,7 +2885,8 @@ export interface BranchSummaryDTO {
   repoRoot: string;
   repoLabel: string;
   createdAt: number;
-  ahead: number;
+  /** Null when git could not count them — never the same as none. */
+  ahead: number | null;
   merged: boolean;
   landedUnchanged: boolean;
   /**

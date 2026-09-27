@@ -148,3 +148,11 @@
   a run whose slot still holds its branch, `docker compose restart` while the
   child works, then confirm the boot log's "Rolled back the merge" line, a clean
   `git status` in the slot, and no Commit on the card.
+
+- **The uncounted Purge, the moved-since-landed Land card and the kept
+  strategy pick have not been rendered** (2026-09-27, `b69e36c`, `b44df6c`,
+  `4418cba`). Each decision is unit-tested in `landView.test.ts` and
+  `land.test.ts`; no browser drew them. Settle by driving `/runs/[id]` per the
+  run-page-states recipe with a `GET /api/runs/<id>/land` of `ahead: null` and
+  of `landedAt` set with `merged: false`, and on `/branches` pick Squash, press
+  a row's Commit, then read the queue POST body for `strategy: "squash"`.

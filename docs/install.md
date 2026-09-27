@@ -708,19 +708,28 @@ nothing is changed at all and the boot log names the entry, the owner it wanted
 and the owner it saw.
 
 **Turn it on in this order.** Sign in, and let one real work cycle finish, before
-you set the variable. A root-owned `~/.claude` is one the CLI cannot create
-anything new in, so every directory it needs has to exist first. The boot
-refuses outright if `projects/` is missing, and names the others it did not find
-so you can decide whether you need them.
+you set the variable. The boot recognises the lock, on the way back off, by
+`~/.claude` being root's while `projects/` inside it is yours, so it refuses
+outright if `projects/` is missing rather than take a lock that clearing the
+variable could not undo. It names the other entries it did not find so you can
+decide whether you need them.
+
+Your login keeps renewing while this is on. An earlier version of the lock left
+`~/.claude` unwritable by the agents, and Claude Code cannot refresh an expired
+OAuth token or save a credential in a directory it cannot write, so the install
+quietly stopped authenticating once the access token expired. The directory is
+now group-writable and sticky: the CLI can renew the login it owns, and a run
+still cannot touch the `settings.json` root holds.
 
 **What changes on your host.** On Linux this is your own `~/.claude`, and the
 ownership change is real:
 
 - your own Claude Code keeps working — transcripts, sessions and history are all
   entries that stayed yours;
-- you can no longer create anything at the top level of `~/.claude`, and you can
-  no longer edit `~/.claude/settings.json`, including through `/config`, without
-  `sudo`;
+- you can no longer edit `~/.claude/settings.json`, including through `/config`,
+  or delete anything root now owns at the top level of `~/.claude`, without
+  `sudo`; you can still create new entries there, which is what lets the login
+  renew;
 - clearing the variable and restarting undoes it — the container hands the
   directory back on the first boot with it off — and by hand it is two paths
   and no `-R`, since nothing below them was ever taken:
