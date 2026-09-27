@@ -1907,8 +1907,7 @@ function CodexAccount() {
         </p>
         <p className="mono mt-4 text-lg">{pending?.code}</p>
         <p className="mt-3 text-ink-faint">
-          Waiting for approval. This page notices on its own; Done just puts it
-          away.
+          Waiting for approval. Done closes this without cancelling the sign-in.
         </p>
       </Sheet>
 
@@ -1925,10 +1924,7 @@ function CodexAccount() {
         busy={busy}
         onConfirm={() => void submitKey()}
       >
-        <p>
-          The fallback for an install with no ChatGPT subscription. It is billed
-          per token rather than against a plan.
-        </p>
+        <p>Billed per token rather than against a plan.</p>
         <Field
           className="mt-4"
           label="API key"
@@ -2695,11 +2691,7 @@ export default function SettingsPage() {
           here collapses, reorders or hides a section: the search is a route to
           a field, not a second arrangement of the page. */}
       <div className="mb-4 max-w-[32rem]">
-        <Field
-          label="Find a setting"
-          htmlFor="settings-search"
-          hint="Matches names and descriptions, never the values in them"
-        >
+        <Field label="Find a setting" htmlFor="settings-search">
           <Input
             id="settings-search"
             type="search"
@@ -2721,13 +2713,13 @@ export default function SettingsPage() {
         {fieldQuery.trim() !== "" &&
           (fieldHits.length === 0 ? (
             <p className="px-1 text-xs text-ink-faint">
-              No field’s name or description matches that.
+              No setting matches.
             </p>
           ) : (
             <ListGroup
               footnote={
                 fieldHits.length > MAX_FIELD_HITS
-                  ? `${MAX_FIELD_HITS} of ${fieldHits.length} matches — add a word to narrow it`
+                  ? `${MAX_FIELD_HITS} of ${fieldHits.length} matches`
                   : undefined
               }
             >
