@@ -7,11 +7,11 @@ import type { RunDiff } from "./diff";
 import type { Task } from "./tasks";
 
 /**
- * The four pure decisions the external validator is made of.
+ * The five pure decisions the external validator is made of.
  *
  * This is the one feature in the app where a model's opinion can spend money
  * without anybody pressing anything, so the bar `docs/agent/testing.md` records
- * — a pure function whose failure mode is silent — is met by all four, and each
+ * — a pure function whose failure mode is silent — is met by all five, and each
  * fails silently in a *different direction*:
  *
  *  - `parseVerdict` decides whether there is a verdict at all, and no verdict
@@ -22,6 +22,9 @@ import type { Task } from "./tasks";
  *    agent's word is the last word again, which is the app as it was; wrong the
  *    other and `maxIterations` no longer ends a run — the failure
  *    `budgets-and-guards.md` names as the one that must be impossible.
+ *  - `verdictsToActOn` decides which verdicts reach `grantsAnotherCycle` at
+ *    all. A run may hold several tasks, and one dropped here is a run that
+ *    ends `completed` with a task judged unfinished still claimed by it.
  *  - `validationSkipReason` decides whether a claim can be checked at all, and
  *    **every branch of it has to fail open**. A branch that returned a refusal
  *    instead of a reason-to-close would convert a shortage of assist slots into
@@ -51,6 +54,7 @@ const {
   parseVerdict,
   validationPushback,
   validationSkipReason,
+  verdictsToActOn,
 } = require("./validation") as typeof import("./validation");
 
 const answer = (body: string) => `Some reasoning about the diff.\n\n${body}`;
@@ -233,6 +237,61 @@ describe("grantsAnotherCycle", () => {
       grantsAnotherCycle({ verdict: "not-finished", granted: 0, maxGrants: 0 }),
       false,
     );
+  });
+});
+
+describe("verdictsToActOn", () => {
+  // The boundary's own selection, and silent in the direction that ends a run
+  // wrongly: a task judged unfinished and dropped here is a run that ends
+  // `completed` with that task still claimed by it and nothing anywhere saying
+  // why.
+  const row = (
+    task_id: string | null,
+    created_at: number,
+    finished_at: number | null,
+    verdict: string | null,
+  ) => ({ task_id, created_at, finished_at, verdict });
+  const since = 100;
+
+  it("acts on a task judged unfinished after another task was checked", () => {
+    // The run holds A and B. A was judged unfinished and stays claimed; B's
+    // check came back later in the same cycle and closed B. Reading the run's
+    // newest row saw only B's and dropped A.
+    const a = row("A", 110, 120, "not-finished");
+    for (const b of [row("B", 130, 140, "finished"), row("B", 130, 140, null)]) {
+      assert.deepEqual(verdictsToActOn([b, a], since, new Set(["A"])), [a]);
+    }
+  });
+
+  it("names every held task judged unfinished this cycle, oldest first", () => {
+    const a = row("A", 110, 120, "not-finished");
+    const b = row("B", 130, 140, "not-finished");
+    assert.deepEqual(verdictsToActOn([b, a], since, new Set(["A", "B"])), [a, b]);
+  });
+
+  it("reads each task's newest check, not its newest unfinished one", () => {
+    // A was judged unfinished, the run went back to it, and the second reading
+    // is still out or came back with nothing. Sending the run back on the
+    // first would be a pushback against a reading already superseded.
+    const first = row("A", 110, 120, "not-finished");
+    for (const second of [row("A", 130, null, null), row("A", 130, 140, null)]) {
+      assert.deepEqual(verdictsToActOn([second, first], since, new Set(["A"])), []);
+    }
+  });
+
+  it("leaves a verdict from an earlier cycle alone", () => {
+    // A verdict buys a cycle once. The standing row from before `since` is the
+    // one a granted cycle that never re-asked would otherwise buy another with.
+    const stale = row("A", 80, 90, "not-finished");
+    assert.deepEqual(verdictsToActOn([stale], since, new Set(["A"])), []);
+  });
+
+  it("leaves a task that is no longer this run's", () => {
+    // The operator took it back, dropped it or closed it while it was read.
+    // Their decision outranks the verdict.
+    const a = row("A", 110, 120, "not-finished");
+    assert.deepEqual(verdictsToActOn([a], since, new Set()), []);
+    assert.deepEqual(verdictsToActOn([row(null, 110, 120, "not-finished")], since, new Set(["A"])), []);
   });
 });
 

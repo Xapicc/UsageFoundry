@@ -171,6 +171,7 @@ Units that are about no test file in the tree:
 | `taskDepGraph.test.ts` |  |
 | `taskDeps.test.ts` |  |
 | `validation.test.ts` |  |
+| `validationSettle.test.ts` |  |
 
 ## [Landing, conflict resolution and the merge queue](testing/landing-and-merge-queue.md)
 
