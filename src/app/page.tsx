@@ -556,15 +556,18 @@ export default function Dashboard() {
   const liveTelemetryPlacement = hasContextControl
     ? "lg:order-last lg:col-span-2 xl:order-none xl:col-span-1"
     : "";
-  // The exhaustion projection is the one thing here that still needs a number
-  // rather than a percentage — it extrapolates dollars and tokens per hour —
-  // so it stays unavailable on a provider reading alone, and has to say so in
-  // its own terms rather than borrowing `noCeilings`.
-  const noConfiguredCeilings =
+  // The exhaustion projection extrapolates dollars and tokens per hour, so it
+  // needs an allowance to run them into: a configured ceiling, or a provider
+  // percentage, which implies one from what the window had spent when it was
+  // read. With neither it has to say so in its own terms rather than borrowing
+  // `noCeilings`.
+  const nothingToProjectAgainst =
     meta.configuredCeilings.sessionCost === null &&
     meta.configuredCeilings.weeklyCost === null &&
     meta.configuredCeilings.sessionTokens === null &&
-    meta.configuredCeilings.weeklyTokens === null;
+    meta.configuredCeilings.weeklyTokens === null &&
+    s.session.planFraction === null &&
+    s.weekly.planFraction === null;
   const cacheShare =
     s.weekly.tokens > 0 ? s.weekly.agg.tokens.cacheRead / s.weekly.tokens : null;
   // Read off the two windows the meters draw rather than off the scan, so the
@@ -1024,7 +1027,7 @@ export default function Dashboard() {
                     At this burn rate, around{" "}
                     {fmtDateTime(s.projectedExhaustionAt)}
                   </span>
-                ) : noConfiguredCeilings ? (
+                ) : nothingToProjectAgainst ? (
                   "Needs a configured ceiling"
                 ) : (
                   "Not projected to run out"

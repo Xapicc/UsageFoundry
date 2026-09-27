@@ -828,6 +828,27 @@ function planFractionCarriedForward(
 }
 
 /**
+ * The whole allowance a provider reading implies, in the guard's dollars, or
+ * null when the reading gives nothing to scale from.
+ *
+ * The same rate `planFractionCarriedForward` converts at — this window's spend
+ * at fetch over the percentage the provider called it — so a projection built
+ * on it runs out exactly where that carried-forward reading reaches 100%. It is
+ * a denominator for the exhaustion projection and nothing else: the percentage
+ * behind it must never reach `costUSD`, and no guard reads this.
+ */
+function allowanceImpliedBy(
+  planFraction: number | null,
+  windowCostGuardUSD: number,
+  sinceFetchCostGuardUSD: number,
+): number | null {
+  if (planFraction === null || planFraction <= 0) return null;
+  const atFetch = windowCostGuardUSD - sinceFetchCostGuardUSD;
+  if (atFetch <= 0) return null;
+  return atFetch / planFraction;
+}
+
+/**
  * One meter, from this app's arithmetic and whatever the provider said about
  * the same window.
  *
@@ -1131,11 +1152,14 @@ export function buildSnapshot(
   const recentAgg = aggregate(recent);
   const burnTokensPerHour = totalTokens(recentAgg.tokens);
   const burnCostPerHour = recentAgg.costUSD;
+  // The rate a provider-backed window is projected at, in the units of the
+  // allowance `allowanceImpliedBy` measures it against.
+  const burnGuardPerHour = recentAgg.costGuardUSD;
 
-  // Project against every configured ceiling and report the earliest. Each
-  // metric is projected with its own burn rate — projecting a cost ceiling
-  // from a token rate (or vice versa) would be meaningless for a workload
-  // whose token/cost ratio moves with cache-read volume.
+  // Project against every ceiling a window is measured by and report the
+  // earliest. Each metric is projected with its own burn rate — projecting a
+  // cost ceiling from a token rate (or vice versa) would be meaningless for a
+  // workload whose token/cost ratio moves with cache-read volume.
   //
   // Each candidate is bounded by its own window's reset, because past that
   // instant the window it was computed from no longer exists: the consumed
@@ -1147,7 +1171,7 @@ export function buildSnapshot(
   // always wins, that understates headroom rather than overstating it. A
   // candidate past its horizon is dropped rather than clamped to it: the
   // window is not projected to run out, which is a different statement from
-  // "it runs out exactly at the reset". All four dropped is `null`, which the
+  // "it runs out exactly at the reset". Every one dropped is `null`, which the
   // dashboard already renders as no projection.
   const etaFor = (
     consumed: number,
@@ -1163,21 +1187,50 @@ export function buildSnapshot(
     return resetsAt !== null && at > resetsAt ? null : at;
   };
 
+  // A window whose meter is the provider's percentage is projected against the
+  // allowance that reading implies, and its typed ceilings are not consulted:
+  // they are a guess at the denominator the provider has just answered for, so
+  // a projection from them described a different figure from the bar above it
+  // — a 92% meter over "Not projected to run out", because $100 typed put the
+  // end 8h out where $20 at 92% puts it ten minutes out. A model-scoped wall
+  // offers nothing here (`planFraction` is null when one stands alone), since
+  // its percentage is of Opus-only spend and the burn rate is all-model.
+  const candidatesFor = (
+    w: WindowState,
+    costLimit: number | null,
+    tokenLimit: number | null,
+    sinceFetchCostGuardUSD: number,
+    resetsAt: number | null,
+  ): Array<number | null> =>
+    w.fractionMetric === "plan"
+      ? [
+          etaFor(
+            w.agg.costGuardUSD,
+            allowanceImpliedBy(w.planFraction, w.agg.costGuardUSD, sinceFetchCostGuardUSD),
+            burnGuardPerHour,
+            resetsAt,
+          ),
+        ]
+      : [
+          etaFor(w.costUSD, costLimit, burnCostPerHour, resetsAt),
+          etaFor(w.tokens, tokenLimit, burnTokensPerHour, resetsAt),
+        ];
+
   const candidates = [
-    etaFor(
-      session.costUSD,
+    ...candidatesFor(
+      session,
       limits.sessionCostLimit,
-      burnCostPerHour,
-      session.endsAt,
-    ),
-    etaFor(weekly.costUSD, limits.weeklyCostLimit, burnCostPerHour, weeklyResetsAt),
-    etaFor(
-      session.tokens,
       limits.sessionTokenLimit,
-      burnTokensPerHour,
+      sessionSinceFetch,
       session.endsAt,
     ),
-    etaFor(weekly.tokens, limits.weeklyTokenLimit, burnTokensPerHour, weeklyResetsAt),
+    ...candidatesFor(
+      weekly,
+      limits.weeklyCostLimit,
+      limits.weeklyTokenLimit,
+      weeklySinceFetch,
+      weeklyResetsAt,
+    ),
   ].filter((v): v is number => v !== null);
 
   const projectedExhaustionAt = candidates.length ? Math.min(...candidates) : null;

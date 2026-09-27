@@ -735,6 +735,8 @@ describe("projected exhaustion", () => {
   });
 
   it("keeps a weekly projection that lands inside the week", () => {
+    // Projected from the reading rather than the typed $200: $11 at fetch was
+    // 25%, so $33 of a $44 allowance is left, 3.3h out at $10/h.
     const snap = buildSnapshot(
       burning,
       { ...NO_LIMITS, weeklyCostLimit: 200 },
@@ -742,7 +744,7 @@ describe("projected exhaustion", () => {
       null,
       planWeek(now + 3 * 24 * HOUR),
     );
-    assert.equal(snap.projectedExhaustionAt, now + 18.9 * HOUR);
+    assert.equal(snap.projectedExhaustionAt, now + 3.3 * HOUR);
   });
 
   it("still projects a trailing 7-day window, which has no reset to drop it at", () => {
@@ -756,15 +758,62 @@ describe("projected exhaustion", () => {
   });
 
   it("reports no projection rather than a zero when every candidate is dropped", () => {
-    // Both windows reset before the burn could exhaust either. The card reads
-    // "—" off a null; a 0 or an Infinity here would print a date instead.
+    // Both windows reset before the burn could exhaust either: the session
+    // 8.9h out against a reset in 1h, the week 3.3h out at its reading's rate
+    // against a reset in 2h. The card reads "—" off a null; a 0 or an Infinity
+    // here would print a date instead.
     const snap = buildSnapshot(
       burning,
       { ...NO_LIMITS, sessionCostLimit: 100, weeklyCostLimit: 200 },
       now,
       null,
-      planWeek(now + 6 * HOUR),
+      planWeek(now + 2 * HOUR),
     );
+    assert.equal(snap.projectedExhaustionAt, null);
+  });
+
+  // The meter under a provider reading shows the provider's percentage, so a
+  // projection against the typed ceiling measures a different denominator from
+  // the bar directly above it — the one `metering.md` records reading 1.3%
+  // where the provider said 5.0%.
+  const planSession = (utilization: number, fetchedAt: number) => ({
+    session: { utilization, resetsAt: now + 2 * HOUR },
+    weekly: null,
+    scopedWeekly: [],
+    fetchedAt,
+  });
+  const sessionSpend = [entry(now - 2.5 * HOUR, 10), entry(now - 30 * 60_000, 10)];
+
+  it("projects a provider-reported window at the rate its own reading implies", () => {
+    // Against the typed $100 this is $80 at $10/h, 8h out and past a reset in
+    // 2h, so a 92% meter printed "Not projected to run out". The reading says
+    // $20 was 92% of the allowance: $1.74 of it left at $10/h is ~10.4 minutes.
+    const snap = buildSnapshot(
+      sessionSpend,
+      { ...NO_LIMITS, sessionCostLimit: 100 },
+      now,
+      null,
+      planSession(0.92, now),
+    );
+    assert.equal(snap.session.fraction, 0.92);
+    assert.equal(snap.session.endsAt, now + 2 * HOUR);
+    assert.equal(snap.burnCostPerHour, 10);
+    assert.notEqual(snap.projectedExhaustionAt, null);
+    const minutes = ((snap.projectedExhaustionAt ?? 0) - now) / 60_000;
+    assert.ok(Math.abs(minutes - 10.43) < 0.01, `projected ${minutes} minutes out`);
+  });
+
+  it("offers no fallback to the typed ceiling when the reading has no spend to scale", () => {
+    // Fetched before any of this window's turns, so there is no rate to read
+    // off it. $15 typed would have said "now"; the meter says 50%.
+    const snap = buildSnapshot(
+      sessionSpend,
+      { ...NO_LIMITS, sessionCostLimit: 15 },
+      now,
+      null,
+      planSession(0.5, now - 3 * HOUR),
+    );
+    assert.equal(snap.session.fractionMetric, "plan");
     assert.equal(snap.projectedExhaustionAt, null);
   });
 });

@@ -45,6 +45,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - A calendar period is history, so its percentage is a pace and never a guard.
 - Calendar buckets are cut in the browser's zone, and a bucket's end is the next one's start.
 - A projection is bounded by the window it was computed from, and a candidate past that horizon is dropped rather than clamped to it.
+- A window the provider reported is projected at the rate its own reading implies, never against a typed ceiling.
 
 ## [A run's spend and the other spend readings](metering/run-spend-readings.md)
 
