@@ -2567,6 +2567,12 @@ export interface RunDiffDTO {
   reason: string | null;
   base: string | null;
   branch: string | null;
+  /**
+   * Set when the diff is measured from the target commit a merge brought into
+   * the branch rather than from `base`, so the target's own changes are not
+   * counted as the run's.
+   */
+  measuredFrom: { merge: string; commit: string; target: string } | null;
   /** The commit `branch` pointed at when the diff was taken; null without a range. */
   head: string | null;
   files: DiffFileDTO[];

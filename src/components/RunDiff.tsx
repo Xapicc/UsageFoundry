@@ -141,6 +141,18 @@ export function RunDiff({ run }: { run: RunDTO }) {
                     <span className="text-danger">−{diff.deleted}</span>
                   </>
                 )}
+                {/* Said because the count above is not base-to-branch, and a
+                    reader comparing it with `git diff <base>` in their own
+                    shell would otherwise take one of the two for wrong. */}
+                {diff.measuredFrom && (
+                  <Hint>
+                    Measured from {diff.measuredFrom.target} at{" "}
+                    <span className="mono">{diff.measuredFrom.commit.slice(0, 7)}</span>,
+                    merged in by{" "}
+                    <span className="mono">{diff.measuredFrom.merge.slice(0, 7)}</span>, so{" "}
+                    {diff.measuredFrom.target}&rsquo;s own changes are not counted
+                  </Hint>
+                )}
               </div>
             )}
 

@@ -16,7 +16,9 @@ import {
  *
  * Two shapes, and the difference is not cosmetic. An isolated run owns a branch
  * and a base commit, so `<base>...<branch>` is exactly its work and nothing
- * else. A run that worked directly in the operator's folder has no such range:
+ * else — until the target is merged into the branch, which is what resolving a
+ * conflict does, and `diffRange` moves the left side for that. A run that
+ * worked directly in the operator's folder has no such range:
  * whatever is in that tree is the run's edits *and* the operator's, mixed, with
  * nothing recording where one ends. That case reports a file list and says so,
  * rather than presenting a confident diff of the wrong thing.
@@ -59,8 +61,15 @@ export interface RunDiff {
    */
   kind: "range" | "worktree" | "none";
   reason: string | null;
+  /** The commit the run branched from, `runs.worktree_base`. */
   base: string | null;
   branch: string | null;
+  /**
+   * Set when the diff is measured from somewhere other than `base`: the target
+   * commit that `merge` brought into the branch. From `base`, everything the
+   * target gained before that merge would be counted as the run's work.
+   */
+  measuredFrom: TargetMerge | null;
   /**
    * The commit `branch` resolved to when this diff was taken, and the one every
    * patch here was read from. Null for a run with no range and for a branch
@@ -275,6 +284,50 @@ export function splitPatches(text: string): string[] {
   return chunks.map((chunk) => chunk.join("\n"));
 }
 
+/** A merge of the run's target into its branch. */
+export interface TargetMerge {
+  /** The merge commit, on the branch's first-parent line. */
+  merge: string;
+  /** Its second parent: the target as it stood when it was merged in. */
+  commit: string;
+  /** The branch it was merged from. */
+  target: string;
+}
+
+/**
+ * Read the newest merge off `git rev-list --first-parent --merges --parents
+ * -n1`, which prints `<merge> <first parent> <second parent>…` or nothing.
+ *
+ * The second parent and never the first: the first is the branch before the
+ * merge, and measured from there the run's own commits vanish from its diff.
+ */
+export function parseNewestMerge(
+  revList: string,
+): Pick<TargetMerge, "merge" | "commit"> | null {
+  const [merge, , commit] = revList.trim().split(/\s+/);
+  return merge && commit ? { merge, commit } : null;
+}
+
+/**
+ * The range an isolated run's diff is measured over.
+ *
+ * From `base` unless the target was merged into the branch, which a conflict
+ * resolution does and an agent may do itself. Then `base...head` holds every
+ * commit the target gained before that merge — other people's files in "What
+ * changed", in the review a person pays for, and in the Files tab as changes
+ * no tool call named. The merged-in commit is the target as the branch now
+ * contains it, so from there the diff is the run's work and its resolution
+ * and nothing that arrived with the target.
+ */
+export function diffRange(
+  base: string,
+  head: string,
+  targetMerge: TargetMerge | null,
+): { from: string; range: string } {
+  const from = targetMerge?.commit ?? base;
+  return { from, range: `${from}...${head}` };
+}
+
 /** Keep the head of a patch, and say when the tail was dropped. */
 export function truncatePatch(
   patch: string,
@@ -390,6 +443,7 @@ function repoPathFor(dir: string): string | null {
 const EMPTY: Omit<RunDiff, "kind" | "reason"> = {
   base: null,
   branch: null,
+  measuredFrom: null,
   head: null,
   files: [],
   filesChanged: 0,
@@ -454,7 +508,8 @@ async function rangeDiff(run: RunRow): Promise<RunDiff> {
   // between the calls below, and a diff whose numstat, statuses and patches
   // were read from three different tips is one no recorded sha describes.
   const head = resolved.stdout;
-  const range = `${base}...${head}`;
+  const measuredFrom = await targetMergeOn(repoRoot, run.worktree_base_branch, base, head);
+  const { from, range } = diffRange(base, head, measuredFrom);
   const numstat = await git(repoRoot, ["diff", ...DIFF_FLAGS, "--numstat", "-z", range], {
     maxBytes: MAX_DIFF_BYTES,
   });
@@ -464,6 +519,7 @@ async function rangeDiff(run: RunRow): Promise<RunDiff> {
       kind: "none",
       base,
       branch,
+      measuredFrom,
       head,
       reason: numstat.overflowed
         ? "This change is too large to summarise."
@@ -478,8 +534,11 @@ async function rangeDiff(run: RunRow): Promise<RunDiff> {
       kind: "range",
       base,
       branch,
+      measuredFrom,
       head,
-      reason: "The agent committed nothing to this branch.",
+      reason: measuredFrom
+        ? `Nothing on this branch differs from ${measuredFrom.target} as it was merged in.`
+        : "The agent committed nothing to this branch.",
       uncommitted: await uncommittedIn(run),
     };
   }
@@ -488,7 +547,7 @@ async function rangeDiff(run: RunRow): Promise<RunDiff> {
   // deletions come from and so what the byte budget has to size.
   const [nameStatus, mergeBase] = await Promise.all([
     git(repoRoot, ["diff", ...DIFF_FLAGS, "--name-status", "-z", range]),
-    git(repoRoot, ["merge-base", base, head]),
+    git(repoRoot, ["merge-base", from, head]),
   ]);
   const statuses = parseNameStatus(nameStatus.stdout);
   const contents = mergeBase.ok
@@ -500,6 +559,7 @@ async function rangeDiff(run: RunRow): Promise<RunDiff> {
     reason: null,
     base,
     branch,
+    measuredFrom,
     head,
     ...contents,
     filesChanged: entries.length,
@@ -508,6 +568,38 @@ async function rangeDiff(run: RunRow): Promise<RunDiff> {
     uncommitted: await uncommittedIn(run),
     caveat: null,
   };
+}
+
+/**
+ * The newest merge of `target` into the branch between `base` and `head`.
+ *
+ * Only the newest, and only along the first-parent line: that is the branch's
+ * own history, and a later merge of the target carries everything an earlier
+ * one did. Its second parent must be on the target: another branch's tip can
+ * stand where the target never was, and a diff from there is not what landing
+ * this branch would bring. Anything git cannot answer here leaves the diff
+ * measured from `base`, which is what the card then says it is.
+ */
+async function targetMergeOn(
+  repoRoot: string,
+  target: string | null,
+  base: string,
+  head: string,
+): Promise<TargetMerge | null> {
+  if (!target) return null;
+  const merges = await git(repoRoot, [
+    "rev-list",
+    "--first-parent",
+    "--merges",
+    "--parents",
+    "-n1",
+    `${base}..${head}`,
+  ]);
+  const newest = merges.ok ? parseNewestMerge(merges.stdout) : null;
+  if (!newest) return null;
+
+  const onTarget = await git(repoRoot, ["merge-base", "--is-ancestor", newest.commit, target]);
+  return onTarget.ok ? { ...newest, target } : null;
 }
 
 /**

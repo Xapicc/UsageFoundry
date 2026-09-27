@@ -3,8 +3,10 @@ import { describe, it } from "node:test";
 
 import {
   diffAsText,
+  diffRange,
   parseLsTreeSizes,
   parseNameStatus,
+  parseNewestMerge,
   parseNumstat,
   selectForPatch,
   splitPatches,
@@ -152,6 +154,51 @@ describe("splitPatches", () => {
     assert.match(chunks[0], /^diff --git a\/f b\/f\ndeleted file mode/);
     assert.match(chunks[0], /\nnew file mode 120000\n/);
     assert.ok(chunks[1].startsWith("diff --git a/g b/g"));
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Where a run's diff is measured from                                 */
+/* ------------------------------------------------------------------ */
+
+describe("diffRange", () => {
+  const base = "b".repeat(40);
+  const head = "h".repeat(40);
+  // `git rev-list --first-parent --merges --parents -n1 base..head` after
+  // `git merge main` on the run's branch, on git 2.39.5: the merge, then the
+  // branch before it, then main as it was merged in.
+  const revList =
+    "8e9bedec455d8e3f153a17d9c401177a12efec7a " +
+    "88a8db805816d2306dcff41679d70c25d2a3ec2c " +
+    "bd820da6100d630ec3a530cdd61d7595c7dda54d\n";
+
+  it("measures from what a merge of the target brought in, not from the base", () => {
+    // From the base, every commit the target gained before the merge is in
+    // the range: measured on that repository, `base...head` listed main's two
+    // files as the run's and doubled its count on the file both touched.
+    const merge = parseNewestMerge(revList);
+    assert.ok(merge);
+    assert.deepEqual(diffRange(base, head, { ...merge, target: "main" }), {
+      from: "bd820da6100d630ec3a530cdd61d7595c7dda54d",
+      range: `bd820da6100d630ec3a530cdd61d7595c7dda54d...${head}`,
+    });
+  });
+
+  it("reads the merged-in side as the second parent, never the first", () => {
+    // The first parent is the branch before the merge; measured from there
+    // the run's own commits disappear from its diff.
+    assert.deepEqual(parseNewestMerge(revList), {
+      merge: "8e9bedec455d8e3f153a17d9c401177a12efec7a",
+      commit: "bd820da6100d630ec3a530cdd61d7595c7dda54d",
+    });
+  });
+
+  it("measures from the base when the branch has no merge", () => {
+    assert.equal(parseNewestMerge(""), null);
+    assert.deepEqual(diffRange(base, head, null), {
+      from: base,
+      range: `${base}...${head}`,
+    });
   });
 });
 
@@ -314,6 +361,7 @@ describe("diffAsText", () => {
     reason: null,
     base: "abc",
     branch: "uf/x-1",
+    measuredFrom: null,
     head: "0123456789abcdef0123456789abcdef01234567",
     files,
     filesChanged: files.length,
