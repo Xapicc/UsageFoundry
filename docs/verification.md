@@ -1342,6 +1342,20 @@ is `docs/agent/testing.md`; interface defects and their classes are
   which is the state those awaits end in rather than the race itself, and no
   built server was signalled.
 
+- **The shutdown waits for a merge the queue has in flight, 2026-09-27**,
+  Next 15.5.24, standalone bundle on the host, `c3df39d` against `14d68c9`
+  with only `land.ts`, `mergeQueue.ts` and `orchestrator.ts` swapped. A
+  `GIT_BIN` stub held the queue's `git merge` until a release file appeared;
+  SIGTERM while it was held, the release 1s later. At `14d68c9` 5 of 5 exited
+  at 0.00s with the row `landing` and `landed_at` unset, and the orphaned
+  merge then finished: the branch was in `main` with nothing recording it. At
+  `c3df39d` 5 of 5 exited 0.08s to 0.16s after the release with the row
+  `landed` and `landed_at` set. Never released, `c3df39d` exited at 10.05s
+  and left the row `landing` for the boot. Caveat: not `docker compose`, so
+  a merge killed part-way with PID 1 was not seen; the stub holds before git
+  starts, so no half-written `MERGE_HEAD` was produced; the harness is not in
+  the tree.
+
 ### Isolation and landing
 
 - **Isolation, real repo with uncommitted work and a gitignored `.env`:** two
@@ -4070,6 +4084,13 @@ measurement under *Verified* and cut the item down to what is still open.
 
 - **The shutdown gate against a real billed agent**: the two-process
   reproduction (Verified above) used a stub, and no container was built.
+
+- **A land in flight at a real `docker compose stop`.** The standalone
+  bundle waits for it (Verified above); what a merge cut off by PID 1's exit
+  leaves in the operator's checkout, when the grace runs out first, has not
+  been seen. Settle: hold `git merge` with a `GIT_BIN` stub mounted into the
+  container, `docker compose stop usagefoundry` without releasing it, then
+  `git status` and `ls .git/MERGE_HEAD .git/index.lock` in the checkout.
 
 - **A migration finding has not been seen on a real boot (2026-09-07).**
   Settle: set `user_version = 99` via `docker compose exec app node -e`, run

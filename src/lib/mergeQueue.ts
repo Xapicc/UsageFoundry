@@ -10,7 +10,7 @@ import {
 } from "./land";
 import { getAssist } from "./review";
 import { dataDirRefusal, mayWriteDataDir } from "./serverLock";
-import { getRun, isShuttingDown, type RunRow } from "./orchestrator";
+import { getRun, isShuttingDown, trackLand, type RunRow } from "./orchestrator";
 
 /**
  * Landing several branches, one after another.
@@ -790,11 +790,24 @@ export function startWorker(): void {
  * through any of them and leave a row for the boot to call uncertain. The rows
  * it does not take stay `queued`, and `reconcileMergeQueueOnBoot` cancels them:
  * a queue never merges into somebody's checkout by itself, and the grace before
- * a restart is no more the operator's say-so than the boot after it. The row
- * already `landing` or `resolving` is left alone, because nothing on the
- * landing path has a clock on its duration and a shutdown is not a reason to
- * abort a merge part-way; if the process exits first, the boot fails it with
- * the sentence it gives any row caught mid-merge.
+ * a restart is no more the operator's say-so than the boot after it.
+ *
+ * **The row already `landing` or `resolving` is waited for, and never
+ * signalled.** Nothing on the landing path has a clock on its duration, and a
+ * shutdown is not a reason to abort a merge part-way. But nothing waited for it
+ * either: the shutdown's grace ended once the work cycles had settled, so a
+ * SIGTERM mid-merge let the process exit under it, which under Docker kills the
+ * `git merge` with PID 1 and can leave `MERGE_HEAD` in the operator's checkout.
+ * The row is now held in `trackLand`'s set from the moment it is taken until
+ * its status is written, and `shutdownRuns` waits for it inside the grace it
+ * gives the loops, so it ends here in the normal way: a merge already running
+ * finishes and lands, a `landRun` that had not yet begun its merge refuses
+ * with the checkout untouched, and a resolution the ladder interrupts fails as
+ * it would for any other reason. That grace is not a clock on the merge: it
+ * signals nothing and fails nothing, and the process was exiting at that
+ * signal whatever the merge was doing. Only a grace that runs out first leaves
+ * the row for the boot, which fails it with the sentence it gives any row
+ * caught mid-merge.
  */
 async function drainRepo(repo: string): Promise<void> {
   /** Why this repository was given up on, if it was. */
@@ -817,6 +830,11 @@ async function drainRepo(repo: string): Promise<void> {
         continue;
       }
 
+      // Taken in the same synchronous stretch as the flag read at the top of
+      // this pass, so a row taken before a shutdown began is one it waits for,
+      // and given up after the row's own ending is written, whichever branch
+      // wrote it.
+      const untrack = trackLand();
       try {
         setStatus(row.id, "landing");
         const outcome = await processOne(row, {
@@ -847,6 +865,8 @@ async function drainRepo(repo: string): Promise<void> {
             err instanceof Error ? err.message : String(err)
           }. Check the branch before queueing it again.`,
         });
+      } finally {
+        untrack();
       }
     }
   } finally {
