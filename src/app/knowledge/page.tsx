@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  KnowledgeBacklinkDTO,
   KnowledgeBrokenLinkDTO,
   KnowledgeBrowseDTO,
   KnowledgeEdgeDTO,
@@ -502,11 +503,13 @@ export default function KnowledgePage() {
               <div>
                 <LinkList
                   title="Links out"
+                  direction="out"
                   edges={note.outgoing}
                   empty="This note links to nothing."
                 />
                 <LinkList
                   title="Backlinks"
+                  direction="in"
                   edges={note.incoming}
                   empty="Nothing links here."
                   className="mt-4"
@@ -967,65 +970,96 @@ function NoteRefTable({ notes }: { notes: KnowledgeNoteRefDTO[] }) {
  */
 const LINK_ROWS = 100;
 
-function LinkList({
-  title,
-  edges,
-  empty,
-  className = "",
-}: {
+type LinkListProps = {
   title: string;
-  edges: KnowledgeEdgeDTO[];
   empty: string;
   className?: string;
-}) {
+} & (
+  | { direction: "out"; edges: KnowledgeEdgeDTO[] }
+  | { direction: "in"; edges: KnowledgeBacklinkDTO[] }
+);
+
+function LinkList(props: LinkListProps) {
+  const { title, empty, className = "" } = props;
+  const total = props.edges.length;
+  const rows =
+    props.direction === "in"
+      ? props.edges
+          .slice(0, LINK_ROWS)
+          .map((edge) => ({ edge, content: <BacklinkSource edge={edge} /> }))
+      : props.edges
+          .slice(0, LINK_ROWS)
+          .map((edge) => ({ edge, content: <LinkTarget edge={edge} /> }));
+
   return (
     <div className={className}>
       <CardTitle>
         {title}
-        {edges.length > 0 && <Badge tone="neutral">{edges.length}</Badge>}
+        {total > 0 && <Badge tone="neutral">{total}</Badge>}
       </CardTitle>
       <Card emphasis="quiet">
-        {edges.length === 0 ? (
+        {total === 0 ? (
           <Empty>{empty}</Empty>
         ) : (
           <ListView box="capped">
             <ul className="flex flex-col gap-1.5 p-2 text-sm">
-              {edges.slice(0, LINK_ROWS).map((edge, i) => (
+              {rows.map(({ edge, content }, i) => (
                 // The index is in the key because nothing else is unique: a
                 // note may write the same link twice on one line, and this
                 // list never reorders — it is rebuilt whole per note.
                 <li key={`${edge.from}:${edge.target}:${edge.line}:${i}`} className="min-w-0">
-                  {edge.toNotePath ? (
-                    <a href={noteHref(edge.toNotePath)} className={NOTE_LINK}>
-                      {edge.label ?? edge.target}
-                    </a>
-                  ) : (
-                    <span
-                      className={
-                        edge.resolved
-                          ? "text-ink-muted [overflow-wrap:anywhere]"
-                          : "text-warn underline decoration-dotted decoration-warn underline-offset-2 [overflow-wrap:anywhere]"
-                      }
-                    >
-                      {edge.label ?? edge.target}
-                      {!edge.resolved && <span className="sr-only"> — broken link</span>}
-                    </span>
-                  )}
-                  {edge.heading && (
-                    <span className="text-ink-muted"> › {edge.heading}</span>
-                  )}
+                  {content}
                 </li>
               ))}
             </ul>
           </ListView>
         )}
-        {edges.length > LINK_ROWS && (
+        {total > LINK_ROWS && (
           <Hint className="mt-2">
-            Showing the first {LINK_ROWS} of {edges.length}
+            Showing the first {LINK_ROWS} of {total}
           </Hint>
         )}
       </Card>
     </div>
+  );
+}
+
+/** Where a link out of the open note goes. */
+function LinkTarget({ edge }: { edge: KnowledgeEdgeDTO }) {
+  return (
+    <>
+      {edge.toNotePath ? (
+        <a href={noteHref(edge.toNotePath)} className={NOTE_LINK}>
+          {edge.label ?? edge.target}
+        </a>
+      ) : (
+        <span
+          className={
+            edge.resolved
+              ? "text-ink-muted [overflow-wrap:anywhere]"
+              : "text-warn underline decoration-dotted decoration-warn underline-offset-2 [overflow-wrap:anywhere]"
+          }
+        >
+          {edge.label ?? edge.target}
+          {!edge.resolved && <span className="sr-only"> — broken link</span>}
+        </span>
+      )}
+      {edge.heading && <span className="text-ink-muted"> › {edge.heading}</span>}
+    </>
+  );
+}
+
+/**
+ * The note a link into the open note was written in.
+ *
+ * The edge's `heading` is left off: it names a section of the open note, and
+ * printed after the linking note's title it would read as one of that note's.
+ */
+function BacklinkSource({ edge }: { edge: KnowledgeBacklinkDTO }) {
+  return (
+    <a href={noteHref(edge.fromNotePath)} className={NOTE_LINK}>
+      {edge.fromTitle}
+    </a>
   );
 }
 
