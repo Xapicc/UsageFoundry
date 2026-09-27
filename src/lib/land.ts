@@ -1882,6 +1882,92 @@ async function startResolution(
     : { ok: false, reason: outcome.reason };
 }
 
+/**
+ * Close the merges resolutions left open when a restart cut them off, as each
+ * one's `after` would have.
+ *
+ * `after` is the only thing that finishes or rolls back a resolution's merge,
+ * and it dies with the process: `reconcileReviewsOnBoot` and
+ * `reconcileMergeQueueOnBoot` only rewrite rows. So the run's own slot stayed
+ * mid-merge with the conflicted files still marked, the Land card offered
+ * Commit on them, and Commit followed by Land put the markers on the target.
+ * Handed the runs those two reconcilers caught resolving, the way
+ * `closeStrandedValidations` is handed what the first one failed.
+ *
+ * Only the two checkouts a resolution of the run can have used, never the
+ * operator's: its own slot, while that is still a directory in this
+ * repository's store holding the run's branch, and its `resolve-<id8>`
+ * checkout, which is removed as `discardCheckout` would have removed it. Nothing
+ * is live at boot, so nothing is aborted under a working agent.
+ */
+export async function abortInterruptedResolutions(runIds: readonly string[]): Promise<void> {
+  await Promise.all([...new Set(runIds)].map(abortInterruptedResolution));
+}
+
+async function abortInterruptedResolution(runId: string): Promise<void> {
+  const run = getRun(runId);
+  if (run?.isolation !== "worktree" || !run.repo_root || !run.worktree_branch) return;
+  const repoRoot = repoPathFor(run.repo_root);
+  const store = repoRoot ? worktreeStore(repoRoot) : null;
+  if (!repoRoot || !store) {
+    console.warn(
+      `[usagefoundry] Run ${short(run.id)}'s repository is no longer inside a workspace ` +
+        "mount, so the merge a conflict resolution left open in its checkout was not rolled back.",
+    );
+    return;
+  }
+
+  const checkouts: ResolveCheckout[] = [];
+  const own = run.worktree_path;
+  if (own && path.dirname(own) === store && fs.existsSync(own)) {
+    const head = await git(own, ["rev-parse", "--abbrev-ref", "HEAD"], NO_CLOCK);
+    if (head.ok && head.stdout === run.worktree_branch) {
+      checkouts.push({ path: own, temporary: false });
+    }
+  }
+  try {
+    const aux = auxWorktreePath(repoRoot, `resolve-${short(run.id)}`);
+    if (fs.existsSync(aux)) checkouts.push({ path: aux, temporary: true });
+  } catch {
+    // The store is not a real directory inside the mount any more, so there is
+    // no aux checkout this app could have made there.
+  }
+
+  await Promise.all(checkouts.map((checkout) => closeInterruptedMerge(repoRoot, run.id, checkout)));
+}
+
+/** `merge --abort` where a merge is open, then the aux checkout removed. */
+async function closeInterruptedMerge(
+  repoRoot: string,
+  runId: string,
+  checkout: ResolveCheckout,
+): Promise<void> {
+  const open = await mergeHeadIn(checkout.path);
+  if (open === true) {
+    const abort = await git(checkout.path, ["merge", "--abort"], NO_CLOCK);
+    if (abort.ok) {
+      console.warn(
+        `[usagefoundry] Rolled back the merge a conflict resolution of run ${short(runId)} ` +
+          `left open in ${checkout.path} when the server stopped.`,
+      );
+    } else {
+      console.error(
+        `[usagefoundry] Could not roll back the merge a conflict resolution of run ` +
+          `${short(runId)} left open in ${checkout.path}: ` +
+          `${gitFailureLine(abort.stderr) || "unknown error"}. Commit refuses it until ` +
+          "`git merge --abort` is run there.",
+      );
+    }
+  } else if (open === null && !checkout.temporary) {
+    console.error(
+      `[usagefoundry] Could not tell whether ${checkout.path} still has a conflict ` +
+        `resolution's merge open for run ${short(runId)}; Commit refuses it until its ` +
+        "state can be read.",
+    );
+  }
+  await discardCheckout(repoRoot, checkout);
+}
+
 /** What a resolution actually did, as a diff. */
 export interface ResolutionChange {
   /** The merge commit it made on the run's branch. */
