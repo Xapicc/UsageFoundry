@@ -5,311 +5,103 @@
 > whose violation is silent — nothing throws, nothing fails to typecheck.
 > **Read before editing src/lib/windows.ts, transcripts.ts, pricing.ts, planUsage.ts, repoSpend.ts, otlp.ts.**
 
-**Unknown must not render as zero.** Anthropic publishes no numeric value for a Pro/Max limit, so ceilings default to `null`. A `null` fraction renders as a hatched indeterminate meter ("no ceiling set"), never an empty 0% bar. Do not add default numeric ceilings to `DEFAULTS` in `settings.ts`.
-
-**…but the *percentage* is readable, and it outranks anything derived from a ceiling.** `planUsage.ts` reads `GET /api/oauth/usage` with the OAuth token in `.credentials.json` — the same figure `claude /usage` and claude.ai print, for the whole account rather than for the transcripts on this disk. `WindowState.fraction` prefers it, then the cost ceiling, then tokens; its reset instants outrank both `sessionResetOverrideAt` and `weeklyAnchor`, which exist only as hand-corrections for a boundary that could not be observed. This is not a fourth cost source and can never be summed with the other three: it carries percentages and reset instants, no money and no tokens, and it must never reach `costUSD` or `runs.spent_usd`. What it fixed was not arithmetic — 4,995 turns cross-checked against OTLP put `pricing.ts` within 0.8% in aggregate, and the derived 5-hour boundary landed 53s off the provider's — but a denominator: a hand-typed $650 ceiling read 1.3% where the provider said 5.0%. Three properties shape the client and none is optional: it is rate limited (a handful of requests a minute earns a `429`), so it is cached on the CLI's own cadence (`fe_`/`pe_` in the shipped binary: refresh at 5 min, discard at 1 h) and a failure re-serves the last good reading; the body reports **percent** where the equivalent response headers carry a **0–1 fraction**, and reading one as the other is a 100x error in the one number this exists to get right; and the token is never refreshed from here, because that file belongs to the CLI. A reading is live only until the instant it names: `buildSnapshot` drops a `seven_day` percentage, a `weekly_scoped` wall and a `five_hour` percentage whose reset has passed, because the cache above re-serves the last good value on age alone and the minutes after a rollover otherwise print a closed window's utilisation over a window that has spent nothing — while `evaluateBudget` refuses runs on the same figure. The weekly *instant* is rolled forward by whole weeks rather than dropped, or the fallback would put the whole of the old week back in the total. Everything degrades to the derived reading — `settings.planUsageFromApi` off, an expired login, an unreachable host, a reading past an hour — so a missing answer costs the old behaviour, never a zero.
-
-**And a percentage the provider volunteers mid-cycle is deliberately ignored.** Claude Code writes a top-level `rate_limit_event` on the `stream-json` stream — measured on 2.1.266: a `status`, a `rateLimitType`, an overage verdict, and `unifiedWindows.five_hour`/`seven_day` as `{utilization, resetsAt}`, that `utilization` a 0–1 fraction where `planUsage.ts`'s is a percentage. It was parsed into an in-memory reading and drawn beside the meters under its own heading and its own instant until 2026-09-12, when the card was removed: it was a fourth channel on a quantity the two readings above already carry, it fed neither a meter nor the graph nor a guard, and a second number with no effect reads to an operator as a duplicate. What survives is one branch in `handleStreamLine` that names the type and returns. That branch is load-bearing and its failure is silent: the provider emits this event on most turns, so without it every run falls through to `noteUnknownStreamEvent` and files a routine event as a vocabulary this app has lost. **If it is ever read again, no guard may read it.** The CLI's own schema says the field is absent until a response carrying `anthropic-ratelimit-unified-*` headers has been seen, and is *always* absent on API-key, Bedrock and Vertex sessions — so null is a healthy install rather than a fault, and a guard reading null as 0% would run an account straight through its ceiling.
-
-**A fraction guard with nothing to read is refused at the door, and never acted on afterwards.** `evaluateBudget` returns `code: "no_ceiling"` when `maxWeeklyFraction`/`maxSessionFraction` is set but the window has no reading, because silently passing would leave the user believing a guard is active — but *what is done with that verdict* is `RUN_ENFORCEABLE_CODES`, and it is the one code not on it. This is `INSTANCE_ENFORCEABLE_CODES`' argument one level down, word for word, and every clause of it is about a run: ceilings ship `null` by design, so on a stock install the reading is the provider's own percentage, and `planUsage.ts` discards that after an hour without a fresh answer. Acted on in the pre-cycle guard it ended every running fraction-guarded run at its next cycle boundary, blocked every queued one — cascading `blocked` down every chain behind it — and let `sweepPaused` end every parked one, so one endpoint's outage stopped the whole fleet with one manual reopen per run to recover. So it is refused where there is a person and an error channel — `POST /api/runs` and the reopen route, both through the one `windowGuardRefusal`, which reads the same `readWindowGuard` the guard does so the two cannot disagree about whether a window has a reading — and recorded rather than acted on everywhere else, the answer this app already gives an unreadable instance limit and a live spending limit whose telemetry never arrived. Recorded once per cycle and not once per segment, because the record is now true per cycle: the `budget` event carries `enforceable`, the feed row reads "could not be read, run carried on" in a neutral tone rather than "stop" in a warning one, and stdout gets `run.guard_unreadable` at `info` rather than `run.guard_tripped` at `warn`. The latched run-log sentence that used to compensate for those two lying is gone with them. The refusal sentence names both causes, because there are two and they call for different actions. `no_terminus` stays enforceable: it says nothing would ever end the run. **And because nothing acts on it, it must not be returned where it is found** — doing so ended the check order early and disabled every guard below it, which is `budgets-and-guards.md`'s check-order invariant and is where the held verdict is argued out.
-
-**Cost is the primary metric; raw tokens are the fallback.** A Claude Code workload is ~98% cache reads (0.1× of input on every model but the 5.1 pair at 0.025× and Claude Opus 5.5 at 0.05× — see the cache read bullet below), so a token-denominated ceiling tracks conversation length rather than work. `WindowState` exposes both `costFraction` and `tokenFraction`, but `fraction`/`limitMetric` prefer cost whenever a cost ceiling exists.
-
-**Unpriced models contribute $0 to everything displayed, and are named.** `resolvePrice` returns `null` for unknown models rather than guessing; `costOf(t, null)` is `0`; `scanUsage` collects `unpricedModels` and the dashboard banners them. Dollar totals are a documented floor.
-
-**…but the guard charges them a fallback rate, because a floor is not a guard.** A window made entirely of an unpriced model has `costUSD === 0`, so `costFraction` is exactly `0` and no threshold can ever be crossed — the guard would silently stop existing the week a new model ships. `guardCostOf()` charges `UNKNOWN_MODEL_PRICE` ($10/$50, the priciest *current-generation* rate, so an unknown can never look cheaper than a known model), which flows through `Aggregate.costGuardUSD` → `WindowState.guardFraction` → the threshold comparisons in `evaluateBudget`. Keep the split absolute: `costUSD`/`fraction` are what the user is shown, `costGuardUSD`/`guardFraction` are what the guard acts on, and the two are identical whenever every model is priced, **every cache write declared its class** *and* the window's reading is derived. The second of those is the same trade on a different unknown — see `cacheWriteUnattributed` below — and it is why `guardCostOf` is no longer `costOf` with a substituted price: it adds the 0.75× it would have cost had the unattributed volume been billed at the 1h class. When the provider answered, `fraction` is its percentage alone while `guardFraction` is the worst of that **carried forward** (`planFractionCarriedForward`) and every model-scoped weekly wall. **There is one case where a wall reaches `fraction` as well, and it exists because dropping it stopped the weekly guard existing.** A payload carrying `five_hour` and a `limits[]` wall but no `seven_day` is one `parsePlanUsage` accepts, and the window then has no top-level figure for the meter to report — so falling through to the derived reading took an Opus week at 95% back to `no-ceiling`, on exactly the account the weekly guard was written for. The wall now stands on its own at `fraction`, `guardFraction` and `fractionMetric`, with `limit` null because the provider names a percentage rather than a ceiling, and **`planFraction` stays null**: the provider named no all-model figure for the window this meter is labelled with, and the DTO must not claim it did. It goes in as it stands and is deliberately *not* carried forward, because `planFractionCarriedForward` scales a reading by this window's own spend and an Opus-only percentage against all-model spend is the mixed-denominator error one branch down. Null rather than 0 is what lets it stand alone at all: a 0 there would report an unread window as an empty one. The carry-forward exists because that percentage is cached for five minutes and served for up to an hour under a refusal, so a window can be walked from under the guard to over it while every cycle reads the same frozen number; locally observed spend is the only current evidence there is. But it may only add the spend the reading has **not already counted** — turns newer than `plan.fetchedAt` — and it converts them at the rate the reading itself implies (`$ at fetch / percent`), never against a configured ceiling. **Do not put `derived.guardFraction` back into that maximum.** It was there until it was measured against a live Max account mid-window: $2,388 of derived weekly spend the provider called 70%, so a typed $1,000 weekly ceiling made `guardFraction` 238.8% and `Meter` drew everything from 70% to 238.8% as a hatched band. Two separate errors, both silent — the terms are fractions of *different denominators* (the real allowance, which Anthropic publishes no number for, versus a ceiling the operator guessed, which is the exact substitution this whole module exists to end), and the derived term re-counts from the window's start spend the provider's percentage already includes. It can raise the reading and never lower it. `Meter`'s `upperFraction` renders the gap as a hatched band — do not drop it, or a run gets refused at a threshold the visible bar has not reached. The `no_ceiling` refusal still reads `fraction`: a missing ceiling is a configuration fact, not a pricing one.
-
-**Canonicalise model IDs, never truncate them.** `canonicalModelId()` strips region and vendor prefixes (`us.anthropic.`) and normalises `@date` to `-date`, so Bedrock and Agent Platform IDs resolve to the same rates as first-party ones. Do **not** add short catch-all keys like `claude-opus-4` — a future `claude-opus-4-9` would then be priced at a confident wrong number instead of surfacing as unknown, turning a loud failure into a quiet one.
-
-**Naming the plan is not setting a ceiling.** `account.ts` reads Claude Code's own `.credentials.json` / `.claude.json` to *name* the subscription ("Claude Max 20x"). A tier maps to no published number, so this must never become a ceiling, never populate `DEFAULTS`, and never suppress the indeterminate meter. Both files are undocumented internals of another program — written lazily, mode 0600, possibly replaced by the macOS Keychain — so every read is try/catch to `null`, misses are cached only briefly, and the profile is projected to plan strings before it reaches `apiTypes.ts` (the source objects carry email, display name, and UUIDs). The legacy `~/.claude.json` is consulted only while `CLAUDE_CONFIG_DIR` is still the default: once it is redirected, that file describes whoever is logged in on the host rather than the account whose transcripts are being scanned, and a confident wrong plan name is worse than none.
-
-**A block opens at its first turn, and nothing rounds that off.** The provider issues the reset instant itself — Claude Code reads `anthropic-ratelimit-unified-reset` off each response, and its own renderer prints the minutes whenever they are non-zero, so windows plainly do not begin on the hour. Nothing writes that instant to disk: it is on no transcript record, in no config file, and in none of the OTLP metrics the CLI exports, which is why this stays derived. `buildSessionBlocks` therefore anchors on the entry, and the error left is the opening turn's latency (seconds — the block is anchored on the response we can see, not the request that opened the window). Flooring to the hour, which this used to do, was not a rounding error: each block opens where the last one closed, so the offset carried down the entire chain, and a window rolled over up to an hour early reads as a *fresh, empty* session while the provider is still counting the old one — which is what the meter shows and what `evaluateBudget` acts on. There is deliberately no separate idle-gap rule: `blockStart <= lastActivityAt` always holds, so five quiet hours have already carried the next entry past the window, and reinstating one would assert that going quiet ends a window early, which the provider does not do.
-
-**The 5-hour window is derived, except when the provider resets it.** `settings.sessionResetOverrideAt` is the one number a user supplies about a window rather than about a ceiling, because a tier change restarts the window with no trace in any transcript. `buildSessionBlocks` **splits** at `resetAt - 5h` rather than filtering: the pre-reset block is closed there (so it stops being active) and the next one starts at the reset instead of at its own first entry, which keeps that work in history where it did happen and did count. It is inert once `now >= resetAt` — a stale value keeps splitting history but must never re-open a finished window — and it never touches the weekly rollup. `PUT /api/settings` refuses a value more than 5h in the future with a 400, not a clamp: no window can reset that late, so it is a typo that would blank the session meter when its anchor arrived.
-
-**A calendar period is history, and its percentage is a pace rather than an allowance.** `buildPeriods` cuts spend into days, weeks and months for the dashboard's period card, and it is the one rollup here that measures against a ceiling nobody published for the span it covers: Anthropic enforces a 5-hour window and a weekly one and nothing in between, so a day and a month are compared with `weeklyCostLimit` spread evenly over their own length. That is derived from a number the operator typed, which is what separates it from the ceilings `DEFAULTS` refuses to carry — but it is still not a limit, so `PeriodSeries.limitBasis` travels beside every fraction and the card says "pace, not an allowance" in words. It comes off the same computation that produced the fraction precisely so the sentence cannot drift from the arithmetic. Nothing here reaches `evaluateBudget`, and nothing should: a guard that trips on a calendar month is a threshold nobody set. It calls the same `buildWindow` the two live windows do, so the cost-over-tokens preference and the `costUSD`/`costGuardUSD` split are decided once — a bucket carries `guardFraction` for the same reason a window does. It is deliberately **not** folded into `buildSnapshot`: the orchestrator calls that before every work cycle and again on every live tick, and none of this feeds a decision, so only `/api/usage` pays for it. It takes the provider's weekly reading as an argument rather than reading one, for the reason `agentNames` is an argument: nothing in `windows.ts` fetches, and the one caller that renders this has already fetched it for `buildSnapshot`.
-
-**Calendar buckets are cut in the browser's zone, and a bucket's end is the next one's start.** The container runs in UTC, so a 22:30 turn in CEST is already tomorrow to the reader and yesterday to the server — a day cut in the wrong zone is wrong at every edge. `/api/usage?tz=` carries the zone the page is displaying in and `resolveTimeZone` refuses anything ICU does not know, falling back to the server's rather than throwing. `zonedMidnight` solves the local boundary in two passes because the offset depends on the instant being solved for; on a spring-forward day whose local midnight does not exist it lands an hour to one side, which is harmless only because `periodBoundaries` returns a single contiguous list and each bucket takes its end from the next bucket's start. Never compute an `endsAt` independently — a gap between two buckets silently drops the spend that falls in it, and a table of plausible dollar figures says nothing about the ones missing from it. Weekly buckets are cut on the instant the weekly meter is bounded by, both of them through `effectiveWeeklyReset`: the provider's reset first, and `settings.weeklyAnchor` only where nothing named one. `periodBoundaries` consulted the anchor alone until this was measured, and `settings.ts` ships that as null — so a stock install drew ISO-Monday buckets under a meter bounded by `resets_at - 7d`, two different seven-day totals on one page, both labelled "week" and neither of them looking wrong. Across a rollover the reading outlived, the instant rolls forward by whole weeks and both surfaces follow it, the arithmetic the plan-usage paragraph above turns on. With nothing naming an instant the buckets stay on ISO Mondays, the meter says "Trailing 7 days" and each bucket prints its own dates, so neither claims to be the enforced window.
-
-**One aggregation per burst, because the scan was coalesced and the aggregation was not.** `scanUsage` shares one *file read* between concurrent callers and everything after it was per caller: a filter and a full allocation, then `buildSessionBlocks` plus two more filters plus five `groupBy` rollups, over every entry the process has ever parsed — and the transcript cache never evicts, so that is the whole history rather than the windows being measured. `liveGuardTick` states the property in as many words and works around it by taking one snapshot for all of its guards; the *pre-cycle* guard is the path every run takes, so N runs reaching a cycle boundary together did N full-history aggregations back to back on the one event loop, which at 25 runs is the second route past `serverLock`'s `STALE_MS` and a stall in every agent's stdout draining and every SSE stream while it lasts. `currentSnapshot` now shares its in-flight promise, the shape `__ufScanInflight` already uses. **In-flight rather than a time window**, and that is the only shape whose staleness is no larger than what `scanUsage` already accepts: a caller that joins reads as of the moment that aggregation started, which is exactly "at most one refresh stale", where a fixed cache age is a number nobody measured. It is also self-scaling — the slower the aggregation, the wider the window in which arrivals join it — so it costs nothing on a history small enough not to need it and shares almost everything on one large enough that a run is waiting. The snapshot object is shared, so it must stay read-only; nothing has ever written to one, and `evaluateBudget` and `evaluateInstanceBudget` are pure. Measured over a synthetic 30-day history: at 100,000 entries, 25 concurrent callers went from 25 aggregations and 551 ms of blocked loop to 1 and 42 ms; at 400,000, from 25 and 3,224 ms to 1 and 247 ms. Nothing about *what* a guard decides moves — `buildPeriods` stays out of `buildSnapshot` for its own reason, and `/api/usage` still calls `buildSnapshot` directly, because it passes an agent-origin index the guard path deliberately does not.
-
-**Reserved headroom is applied in exactly one place.** `limitConfig()` subtracts it so meters, guards, and the exhaustion projection all agree. Raw configured values stay on `Settings` for display. Capped at 0.95.
-
-**A projection is bounded by the window it was computed from, and a candidate past that horizon is dropped rather than clamped to it.** `etaFor` extrapolates each metric's remaining headroom at its own burn rate and `Math.min` takes the earliest of the four, so a candidate for a window that resets several times before it arrives wins on the strength of a window that will not exist by then — measured live at 33h 26m against a 5-hour session resetting in 3h 47m, and again where a session 1.2h from resetting projected 8.8h out and beat a weekly candidate 32.6h away: the dashboard named an instant 7.6h after the window it measures had already reset. Because the earliest candidate always wins, that understates headroom rather than overstating it, which is the safe direction and is still a figure nobody can act on. Each candidate now carries its own reset instant. Dropped rather than clamped, because "this window is not projected to run out" is a different statement from "it runs out exactly at the reset", and all four dropped is `null`, which the dashboard already renders as no projection. The **trailing** 7-day window (no `weeklyAnchor`, no provider reset) gets no horizon at all and deliberately: it decays turn by turn as the oldest entries fall out rather than zeroing, so there is no moment past which a projection stops describing the window it came from — and `wkEnd` there is `now`, which as a bound would drop every candidate.
-
-**Per-iteration spend comes from the CLI's own `result` event** (`total_cost_usd`), not re-derived from tokens. The transcript-derived cost math in `pricing.ts` serves the dashboard; the two are independent on purpose. **A cycle can see more than one `result`, and that event's two figures are not the same kind of number.** `total_cost_usd` is the *session's* running total, so a second one already contains the first and `cycleCostAfterResult` takes the larger rather than adding; `usage` beside it is only that stretch's own and is still summed. One child emits two whenever a turn ends while a background sub-agent is still running and the same session is woken again when it answers — measured on run `075f7959`, where $7.025419 and $9.330155 arrived in the same millisecond and were stored as their sum, 75% above the $9.330155 telemetry recorded across all 110 of that session's requests, on the figure `maxRunCostUSD` is compared against. A **restart** is the other shape and must keep summing: a cycle that died at `error_during_execution` and resumed gets a second child whose CLI accumulator starts at zero, which is why those runs already reconciled to the cent. Which is why the fold is scoped to one `IterationResult` and the run loop's `+=` across children is left alone. **`result.usage` is main-thread-only**, so `spent_tokens` understates a delegating cycle by whatever its sub-agents burned — 5,915,907 against telemetry's 8,481,166 on that same run, where three `Explore` sub-agents made 54 of the 110 requests. Not corrected from telemetry, on the rule one table up: that would make `runs.spent_tokens` a mixture of two sources. It is reported beside, never folded in.
-
-**A killed cycle's spend is reconciled, into its own column.** A cycle interrupted mid-flight never emits `result`, so it contributes $0 to `spent_usd`. `reconcileKilledCycle` recovers an estimate from the transcript pipeline — same dedupe key, same price table, same cache-TTL weighting — bounded by session id *and* the cycle's time range, because a resumed session copies earlier turns forward with their original timestamps. It lands in `spent_usd_est`/`spent_tokens_est` and **never** in `spent_usd`, which stays a floor of what the CLI itself measured; `RunProgress.spentGuardUSD` is the sum, and only the guard reads it. This is the same display-vs-guard split `costUSD`/`costGuardUSD` already makes for windows. The kill ladder tries `SIGINT` first for the same reason — a CLI that handles it may still print `result`, which is the difference between measured and estimated.
-
-**The cycle in flight is on the row, in its own column, and it is not a count.** `iterations` is written only when a cycle *returns*, because that is what the guard counts — so for the whole of cycle 1, routinely tens of minutes, a working run read `0/N` and `$0.00`, which is bit-for-bit what a run that was marked running and never started reads. `runs.active_iteration` is the same number one tick earlier: stamped beside the `iteration` event at the spawn, cleared in the post-cycle UPDATE and again in `startRun`'s `finally`, so between cycles it is null rather than naming one that has already returned. It is display only — nothing derives a limit from it and `evaluateBudget` is passed exactly what it was before, including the live guard's deliberate `iterations - 1`. `fmtCycleInFlight` is the single reader and it refuses the column on any status but `running`, because nothing clears the row when the container dies mid-cycle and a finished run claiming an open cycle is the same lie pointing the other way. The wording is "cycle N of M **in flight**" for the reason `spent_usd_est` is a separate column: a reading that could be added to the completed count would be worse than no reading. `spent_usd` is untouched by this — it stays a floor of what the CLI measured, and the figure that moves during a cycle is still telemetry's.
-
-**Attribution comes from the transcript, not from telemetry.** `effort`, `attributionAgent`, and `attributionSkill` are on the assistant record already, so `byEffort`/`byAgent`/`bySkill` cover full history with no collector, no config, and no second source to reconcile. Before adding a breakdown, check whether the field is already on the record — `agentId`, `gitBranch`, `usage.server_tool_use`, and `message.stop_reason` are all still unread. All five rollups go through one `groupBy()` in `windows.ts`, and every turn must land in a bucket (`MAIN_THREAD_BUCKET`, `(no skill)`, `(unspecified)`) so each column reconciles to the window total rather than silently omitting a remainder. **`byTool` sits beside them and deliberately does *not* reconcile to that total, and its type is what stops it being mistaken for one that does.** A `tool_result` is not a billable turn: it carries no `usage` block, no model, no `requestId` and no price, and the tokens it costs are billed on the *next* assistant turn, mixed in with the system prompt, the conversation so far and every other result placed beside it, with nothing in the format saying which of them contributed what. So it cannot become a sixth `groupBy` without breaking the rule above, and it is a second reader over the same files instead — `parseCompactionBoundary`'s shape, with its own record type, its own dedupe key (`tool_use.id`, resolved by keeping the copy that saw a result), its own array on the scan result, and never a member of `entries`, every consumer of which treats what it holds as billable. It is denominated in **characters of tool output**, its rows carry no money at all, and any figure here added to `costUSD`, to `runs.spent_usd` or to telemetry is arithmetic over two different units. What it reconciles to is *itself*: every call in exactly one row and the shares summing to 1, with a call whose result never arrived counted in `unansweredCalls` and in no share, so the call total and the character total cannot silently describe different sets. `ToolComposition` is an object with `rows` rather than an array of `{…, agg}` for the same reason, so anything written to walk one of the five fails to compile against it instead of quietly reporting characters as dollars. Measured over one weekly window: 29,707 tool calls placing 97,970,351 characters, `Read` 57.1% and `Bash` 38.2%, the two together 95.3% of everything tools put into a context. The three placement figures beside the rows are **rates rather than totals** and no row carries a share of them — tokens placed counted once (`input`, both cache writes and `output`; never `cacheRead`, which is the same token read again), the re-read ratio over that, and the window's whole bill divided by it: 114,686,394 tokens placed, re-read 30.6 times on average, $26.53 per million placed against Opus's $5/M list input. Each is a **floor**, because a rewritten prefix is written again and counted twice in the denominator. The field is empty when the caller supplies no tool calls, which the orchestrator's guard path does: nothing here reaches a budget verdict, and re-rolling it before every work cycle would be paid for by the run being guarded. The agent column now also says which of its buckets this install has a definition for — see the invariant below, and note what it does *not* do: nothing about the registry moves a turn between buckets.
-
-**An agent bucket is annotated, never moved, and "nobody checked" is not "no such agent".** `byAgent`'s key stays whatever `attributionAgent` recorded — the same `groupBy()`, the same reconciliation to the window total — and `AgentOrigin` rides beside it saying where *this install* found a definition for that name: `registry`, `ambient`, `both`, `unknown`, or `main` for the bucket that is not an agent at all. That distinction is the point: an agent the operator wrote down and a name that came from somewhere else were indistinguishable on the card, and renaming a saved agent must move no spend between rows — it only stops the annotation matching, which is the truth. `both` exists rather than a winner because CLAUDE.md already records the saved-versus-ambient collision as **unverified**, so claiming the operator's own agent did work a file on disk may have done would be exactly the confident wrongness the registry exists to end. `agentOriginIndex` case-folds for `idx_agents_name`'s reason. The lookup is an **argument** to `buildSnapshot` rather than a read inside it, `normalizeWorkflowInput`'s shape: `windows.ts` knows nothing about SQLite or the filesystem, and the orchestrator — which calls that function before every work cycle and again on every live tick — passes nothing, so its guard path costs neither a query nor a directory walk and its rows carry `origin: null`. Null is "nobody asked" and must never collapse into `unknown`. Only the **user** scope of the ambient set is consulted, `GET /api/agents`' rule: the project scope depends on a cwd and this column covers every transcript on the machine, so a repository's own `.claude/agents` reads as `unknown` — which is why unmarked is the ordinary case and the card states in a footnote what it means rather than chipping most of the column. Starting a run *as* an agent moves nothing here either, and it is worth saying which part of that is measured: this app never infers a bucket, so whatever the CLI writes to `attributionAgent` is what the column says. Whether a session started with `--agent` records that agent's name on its own turns or leaves them in `MAIN_THREAD_BUCKET` has **not** been measured, and no code branches on the answer — the row will read whichever way the CLI writes it, and the annotation beside it is a fact about the registry either way. **What did have to move is the word.** The column was labelled *Sub-agent*, which was the same statement as the bucket key while the only route to a name was a turn the main thread handed off and is a claim the arithmetic never made once a run can *be* one; it is *Agent*, and the footnote says `(main thread)` is a turn carrying no agent name rather than a turn no agent produced. Same `groupBy`, same buckets, same reconciliation — a rename of what the card asserts and of nothing it computes, which is the only kind of change an unmeasured question permits. `agentOriginBadge`'s reason for chipping `main` with nothing narrows with it: there is no name to look up, which is true under either answer. The setting one row over is deliberately untouched, because it is about something else — `includeSidechains` filters on the record's own `isSidechain`, a genuinely delegated turn, which is orthogonal to which name `attributionAgent` carries. **A counterfactual now rides beside each of those buckets, and it is a fourth thing that is not a cost source.** `counterfactualUSD` reprices exactly the turns that happened — the same input, output, cache-read and cache-write counts — at another model's rate **on the day each turn ran**, and `counterfactualModel` says which, or is null when the caller asked for none, as the guard path does and so pays for nothing. It exists because the lever has never been pulled on this install and no page said what pulling it would be worth: every one of its runs is Opus, and an agent already carries a model that becomes the session's when it is selected, so what was missing was the evidence rather than a mechanism. Measured over one weekly window, $3,043.09 reprices to $1,241.30 at sonnet-5's rates — 0.408x. That measurement was taken while $2/$10 was still called introductory pricing and this table carried the scheduled rise to $3/$15 that would have implied 0.60x; Anthropic has since cancelled the rise, so today's flat table implies 0.40x and the figure now agrees with it by arithmetic rather than by the per-day pricing that produced it. The per-day pricing is still the rule — each turn is priced at the rate in force when it ran, which is what "these turns would have cost" means — it just has no dated rate to exercise it at present. It is **not a forecast** and every surface that renders it has to say so: a smaller model may take more turns, longer conversations or more retries to reach the same place, and this figure does not know that. Two artefacts to expect rather than be surprised by. A turn that already ran on something cheaper reprices *upwards*, which is why the actual figure stays beside it rather than being replaced. And a turn on a model `pricing.ts` cannot place contributes $0 to the actual under the standing floor rule while contributing a real number here, so a window full of unpriced turns reads as an increase — the dashboard's unpriced-model banner is what says why. It reaches no meter, no `runs.spent_usd` and no verdict, and it is priced in its own pass rather than inside `groupBy`, which four columns share and none of which may pay for one.
-
-**A run's agent split is the transcript source scoped to one session, and it is display only.** `agentSpend` is `byAgent` for one run: the same `groupBy`, the same `(main thread)` bucket, so the rows add up to the run's own transcript-derived total with nothing omitted. It answers the one question `runs.spent_usd` and telemetry structurally cannot — neither records *who* produced a turn — and it is not a new source: it is the same price table over the same transcripts that `reconcileKilledCycle` already reads for `spent_usd_est`, bounded by session id **and** by time for that function's reason, a resumed session copying earlier turns forward with their original timestamps. `created_at` rather than `started_at` is the bound, because `reopenRun` clears the latter and a run picked up by hand would otherwise report only what it spent since the pick-up under a heading that says it describes the run. It never reaches `runs.spent_usd`, never `buildSnapshot()`, never a budget verdict, and is never added to either of the other two readings — three routes to the same work, so any sum double-counts it. `costGuardUSD` travels beside `costUSD` here as everywhere, drawn as the hatched band past the fill; no session id is `spend: null` on the wire and the hatched *indeterminate* bar on the page, because a run whose agents spent nothing and a run nobody could measure must not look alike. Its own route and its own 30s poll rather than a field on `/api/runs/[id]`: that one is polled every three seconds against an agent competing for the same CPU, which is the reason the dashboard's own poll stops at 60s. What a run started *as* an agent puts in these rows is the unmeasured question the invariant above states, and it is the same answer: the split is whatever the transcript recorded, and a one-row card reading `(main thread)` for a run whose page says it is the reviewer is the CLI's bookkeeping showing through rather than this app disagreeing with itself. So the card is **told what the run was started as** — `startedAs`, read for one sentence at its foot and by nothing else — and says that the rows may sit wholly under that name or wholly under `(main thread)`. That is the whole of what a card can honestly do while the question is open, and it is worth the prop: both readings are *correct* under the new flag and both read as a bug to somebody expecting the old split, which is a defect that costs an operator an afternoon and shows up as a support question rather than as an error. The meter's own label was moved off the same claim one commit earlier — "Outside the main thread" rather than "handed to a specialist" — and `AgentSpend.delegatedCostUSD` keeps its name, because it is on the wire and its arithmetic was never the reading its name implied: it is every row that is not `MAIN_THREAD_BUCKET`, which is what the doc on the field says and what the test asserts.
-
-**What each repository cost is a fifth reading, and it is a report rather than a source.** Every spend figure here was scoped to a run, a workflow instance, a chat, or a time window over the whole account — never to the thing an operator organises work by. With fifteen repositories on one subscription, a weekly window at 80% named nothing that could be acted on, and work done for more than one owner had no basis for apportioning what it cost. `repoSpend` groups `runs.spent_usd` by repository over a span and does nothing else. It is **not** a new cost source: it is the CLI's own `total_cost_usd` per cycle, the same figure the run page already shows, so it must never be added to the transcript-derived meters or to telemetry — three routes to overlapping work, and any sum double-counts. It reaches `buildSnapshot()` nowhere, no window meter reads it and `evaluateBudget` has no argument that could carry it; a threshold on a repository is a limit nobody set, which is `buildPeriods`' reason one card over. The figure is a **floor** and the card says so in words: a cycle in flight has emitted no `result` and contributes nothing for its whole duration, and `spent_usd_est` rides in its own column rather than being summed in, the same display-versus-guard split `costUSD`/`costGuardUSD` makes. Identity is `conflictKey`'s and not the stored string, because compose defaults `UF_WORKSPACE_2..4` to `${UF_WORKSPACE}` — so `/workspace/repo` and `/workspace3/repo` are routinely one directory and would otherwise be two rows with half the money each — and segments are case-folded for `overlaps`' reason. A run that was not in a git repository lands in an explicit `(not a repository)` bucket rather than being dropped, which is `groupBy()`'s rule with `(main thread)`/`(no skill)`: the columns have to add to the total over the same span or the table cannot apportion anything, and a page of plausible dollar figures says nothing about the ones missing from it. The span is bounded by `created_at`, `agentSpend`'s bound and for its reason — it is the one instant on a run that never moves, so a run is counted once and in one span — and the cost of that is stated rather than absorbed: a run created before the span and still spending inside it is not in the report, because `runs.spent_usd` is one running total with no per-cycle timestamps behind it and a report that apportioned it would be inventing a figure. Its own route and its own load rather than a field on `/api/usage`, `agentSpend`'s precedent: that one is the dashboard's heartbeat and re-aggregates the whole history every ten seconds.
-
-**A sub-agent's words are in the log and are never the run's own report.** This is about a turn the session *delegated*, which since the move to `--agent` is a different thing from the agent the session *is*: nothing in this branch reads the run's own agent, it keys on `parent_tool_use_id`, so it describes whatever the session hands off whatever the session was started as. Whether a `--agent` session delegates at all was not measured, and it changes no code here — if it never does, this machinery goes quiet rather than wrong, and it still covers the ambient definitions that reach every child regardless. `settings.forwardSubAgentText` (on by default) carries `--forward-subagent-text`, verified present on the pin (2.1.226) and gated by the CLI on `--print` and `--output-format=stream-json`, which `buildArgs` supplies unconditionally. Without it a delegation is a `Task` call followed by silence for as long as the sub-agent takes. What makes it safe is that the new shape is handled **by name** rather than falling through: `handleStreamLine` reads `parent_tool_use_id` — off the envelope, with the message as a fallback, so a key that moved fails *towards* treating a delegated turn as delegated — and routes it to its own `subagent` event kind. Three things it must never touch, each silent: `finalText`, which the `DONE` test is matched against **per line**, so a sub-agent reporting `DONE` would end a run whose main thread had not finished; `apiError`, latched on first sight, so a sub-agent that met a wall would park a run whose cycle then completed; and the `assistant` kind, which `cycleOutputs` takes the last of as the cycle's report — a report that silently interleaves two voices is worse than one that omits the second. `cycleOutputs` checks the kind *and* `parentToolUseId`, so the two readers cannot disagree. `thinking` blocks are dropped by name for the same reason they are named at all: a shape that arrives and is silently ignored is indistinguishable from one that never arrived. A forwarded `user` turn is dropped the same way *except* for a `tool_result` that failed, which is the invariant below — and that branch is bound by this one, because a tool's outcome is not the run's own report either. The `Task` call's `subagent_type` is kept per cycle so a forwarded line can say who is speaking; a sub-agent's tool calls stay `voice: "tool"` and are attributed in the label, because a `Grep` between two of the main thread's lines otherwise reads as the main thread's. The setting is the escape hatch and it is a real one: the CLI rejects a flag it does not know, so a pin that moves past this flag fails every run at the spawn — loud rather than quiet, which is the right direction, but it wants a switch that needs no rebuild.
-
-**A tool call that failed is on the log; one that worked is not.** `handleStreamLine` recorded that a tool was *called* and nothing about what it returned, and the outcome arrives on a later event — a `tool_result` block on a `user` turn — so the whole of it was dropped. A `git push` or `gh pr create` that the one `UF_GITHUB_TOKEN` does not reach answers 403 *inside* the tool call: the agent carries on, the cycle emits `result`, the run is written `completed`, and the run page shows a `tool` row saying the command was attempted with nothing after it. At one repository the operator finds that out on the first run; at fifteen, a token covering fourteen of them makes the fifteenth's runs indistinguishable on every page in this app from runs that pushed. `toolResultFailures` is the branch and it is pure and unit-tested for `permissionDenials`' reason — a shape captured from one build, every field of it optional here. Four rules on it. **Errors only**: `run_events` already grows without bound, and this branch sees every tool result in the cycle, so `is_error === true` is tested rather than truthiness — a renamed field costs the failures, where a truthiness test on a field that changed meaning costs the whole log. **The command comes from the call**, kept per cycle in `IterationResult.toolCalls` as the tool's name and `toolArgs`' one clipped line — never the input itself, which for a `Write` is the whole file — because a `tool_result` carries the id of its call and no name, and "tool failed — Permission denied" does not say which command it was. **It is its own kind**, `subagent`'s rule: a call and its outcome are two statements, and it touches none of the three things a forwarded turn is kept out of — `finalText`, `apiError`, and the `assistant` kind `cycleOutputs` reads. And **a sub-agent's failure stays the sub-agent's**, routed by the same `parentToolUseId` off the envelope with the message as a fallback. What this does *not* do is check the credential against the repository before the first cycle, which is the other half of issue #71 and still open.
-
-**A default agent is `settings.defaultAgentId`, and a form seed is not a naming.** `settings.defaultModel`'s precedent — one place for that kind of default — and an **id**, `run_templates.agent_id`'s rule, so fixing a reviewer's prompt reaches the next run. It carries no capability (an agent holds no tool list and no permission mode), so the two routes to `--permission-mode` stay two. `PUT /api/settings` refuses one that names no usable agent through the same `agentRefusal` every other door uses, which is `normalizeTemplateInput`'s rule: refuse where the person is. The one place this reads differently from the registry's "never fall back to none" is a default whose agent is deleted *afterwards* — the new-run form then starts as no agent and **says so**, because that rule is about a run whose operator named one, a pre-filled field nobody has looked at is not a naming, and the alternative is a new-run page that refuses every run until somebody visits Settings. The cost of that is on the Settings page rather than absorbed, and it is deliberate: one Save commits every field, so a default whose agent has been deleted refuses **any** settings edit until the picker is changed — the option stays on the list reading "Agent no longer in the registry" rather than reverting to none, so the refusal names something the operator can see and fix without leaving the page. Refusing where the person is, with the control in front of them, is the whole of `normalizeTemplateInput`'s rule; silently reverting the stored value would be the same page saying the setting had never been made. Nothing downstream changes: `POST /api/runs` still refuses a named agent that is gone, by name. The Settings row declares the ambient set beside itself through the same `describeAmbientAgents` the run form and the canvas use, because the registry is a part of the set and not the whole of it.
-
-**A calendar period is history, so its percentage is a pace and never a guard.** `buildPeriods` cuts the same entries into days, weeks and months for the dashboard's period card, and it is deliberately *not* part of `buildSnapshot`: the orchestrator calls that before every work cycle and again on every live tick, and none of this feeds a decision. Anthropic enforces a 5-hour window and a weekly one and nothing in between, so the weekly ceiling is the only configured number a bucket can be measured against — a week uses it as it stands, a day and a month get it spread evenly over their own length, and `PeriodSeries.limitBasis` carries which of the two it was so the card's sentence cannot drift from the arithmetic that produced the fraction. Pro-rating is legal here for the reason `DEFAULTS` still refuses a numeric ceiling: this is derived from a number the operator typed, not invented from a plan name, and no guard reads it. The rest is the same rules as everywhere else — a missing ceiling is `null`, never `0`, and `guardFraction` rides alongside so an unpriced model widens the meter rather than understating it. Boundaries are cut in the **browser's** zone (`/api/usage?tz=`, validated by `resolveTimeZone`, falling back to the server's), because the container runs in UTC and a day cut there files an evening's work under the wrong date; a bucket's `endsAt` is taken from the next bucket's `startsAt` rather than computed, so DST cannot open a gap that silently drops spend. Weekly buckets follow `settings.weeklyAnchor` when it is set, or the local Monday when it is not — a calendar week under the same word as the weekly meter, showing a different total, is the disagreement this alignment exists to prevent.
-
-**What a run is spending *now* is a third reading on the dashboard, never a correction to the meters.** A cycle's spend lands on `runs.spent_usd` only when the CLI emits `result`, so a cycle in flight contributes $0 there for its whole duration and the page can say nothing about which run is responsible or what it has cost so far. `telemetryWindow(since)` groups `otlp_requests` by `run_id` over the *snapshot's own* `session.startsAt`, so the card covers the same five hours as the meter above it — and the two are still never added, because one is Claude Code's per-request cost for agents this app spawned and the other is our price table over every transcript on the machine, covering overlapping work. Rows with a null `run_id` are excluded: the orchestrator stamps one onto every agent it spawns, so an unattributed record is something else pointed at the ingest route, and the card claims to describe runs. The listed runs are capped at the heaviest few while `runCount` reports the whole set, for the same reason a shortened diff says so. The poll drops from 120s to 60s **only** while `workingRunCount > 0` — `buildSnapshot` re-aggregates the full history on every request and the agent is competing for the same CPU, so a permanently faster dashboard would be paid for by the run it is watching.
-
-**A compaction record is read out of the same files and is not a reading of anything.** `parseCompactionBoundary`/`readCompactions` sit in `transcripts.ts` because that is where the format lives, but they are deliberately **not** on `scanUsage`'s path and must never join it. `parseLine` returns `UsageEntry | null` and drops everything that is not `type: "assistant"`, and every consumer of that array treats a member as a billable turn — so a `type: "system"` record reaching it would be counted by `buildSnapshot`, by `agentSpend` and by the guard, which is the whole three-cost-sources rule broken from inside the one source that is ours. `preTokens`/`postTokens` are the closest thing here to a temptation and they are not spend: they are a count of what a summariser discarded, already paid for on the turns that put them there, and adding them to anything would double-count the entire pre-compaction window. So the reader takes its own pass over one session's file, returns its own type, and the only thing it feeds is a line on a run's log. A fourth *reading* of the transcript source, never a fourth source.
-
-**Transcript parsing details that materially change the numbers:**
-- Dedupe key is `${message.id}:${requestId}`, applied across files (a resumed session copies earlier turns forward). Naive summing over-reports by ~3×.
-- **The records sharing that key are not all identical, so the resolution rule is highest `output` wins, never first-seen.** Claude Code also writes one line per content block *within* a turn, repeating the whole usage object on each, and every line before the last carries a streaming placeholder in the output field alone — a turn that emitted 40,199 output tokens is written three times, twice as `output_tokens: 4`. Input, cache read and cache creation are identical on every line, so only output is at risk, and output is priced at 5× input. First-seen understated corpus output by 16% on CLI 2.1.226 and 75% on 2.1.238 — silently, worse with each release, and in the direction that lets the weekly and session guards admit a run they should have refused. `runs.spent_usd` is unaffected: that comes from the CLI's own `result` event, not from this pipeline.
-- Files are read from a cached byte offset; the bytes after the final `\n` are left unconsumed so a partially-flushed line is re-read next pass. A shrinking file means rotation → re-parse from 0.
-- **The directory walk overlaps its levels and its output order is byte-for-byte the serial walk's**, which is a fact about the numbers rather than about tidiness: the resolution rule above keeps the record with the most output, so file order decides which copy survives a tie, and `Array.prototype.sort` is stable, so it also decides where two turns sharing a millisecond land. The obvious reading of "run each level concurrently" emits every root-level transcript before any nested one — a different list inside the same order-insensitive-looking wrapper, with every dollar figure still plausible — so the levels assemble into a tree rather than appending as they finish. It has a concurrency constant of its own (`WALK_CONCURRENCY`, 16) rather than `SCAN_CONCURRENCY`'s, because a `readdir` holds a directory handle where that one bounds a descriptor and a whole-remainder buffer. Measured on this install's tree: 105-121 ms serial against 49 ms level-parallel, out of a 165 ms `/api/usage` whose other stages are trivial beside it — 1,174 stats at 9 ms, the dedupe 8, the sort 3.
-- **The parsed cache holds a second array now, and the bound counts both.** `TRANSCRIPT_CACHE_MAX_ENTRIES` bounds a heap rather than a kind of record, and the composition reading puts about 60% as many tool-call records as turns into every cache entry on this corpus — measuring only turns would have left the bound reading the same number while the memory behind it grew, which is exactly the silent loosening the bound exists to prevent. The two counts stay separate on `TranscriptCacheStats` so an operator can still see which array is growing. The cache also took a **new `globalThis` key**, `__ufTranscriptCacheV2`, rather than reusing the old one — `conventions.md`'s rule, because `??=` only initialises when the key is absent, so a pre-upgrade entry would survive a dev hot reload and every pass over it would throw on a `toolCalls` array that is not there. The cost is one full re-read of the tree after an upgrade, which every container restart already pays.
-- `cache_creation` splits into 5m (1.25×) and 1h (2×). **A record that declares neither goes in `TokenCounts.cacheWriteUnattributed` and in neither class**, which is not the same thing as the cheaper bucket it used to be folded into: putting all of an unknown volume in one class *is* a distribution, chosen for its direction, and it took 37.5% off the term measured at 48% of the bill on every transcript written before the split shipped or copied from a machine whose CLI predates it. Kept as its own member, the ambiguity survives `addTokens` and gets the same asymmetry `UNKNOWN_MODEL_PRICE` gives an unpriced model — `costOf` prices it at 1.25×, the floor, because that is what a person is shown; `guardCostOf` prices it at 2.00×, the ceiling, because a guard bounded from below is not a guard. The gap between them is drawn by the hatched span the unpriced case already uses, and the dashboard names the volume in a banner beside the unpriced-models one, because a hatch says a guard is charging more and cannot say why. Every sum over a `TokenCounts` must go through `cacheWriteTokens`/`totalTokens`/`billableWeightedTokens` rather than naming the two declared classes, or it drops 100% of a pre-split file's write volume.
-- **The cache read multiplier is a property of the model, and `cacheReadMultiplierOf` is the only thing that may read it.** It was 0.1× everywhere until Claude Fable 5.1 and Claude Mythos 5.1 shipped at 0.025× — $0.25/MTok against their $10 input — and Claude Opus 5.5 is the second departure, at 0.05× ($0.20/MTok against a $4 input). The error either produces is not small on this workload: cache reads are ~98% of the tokens and 60.7% of the bill, so pricing a 5.1 run at 0.1× overstates it by close to 4× and refuses it against a ceiling it never reached. Two things make it silent. The pair's *visible* columns are identical to Claude Fable 5's ($10 input, $50 output), so an entry that fell through to the shorter prefix would be right on both figures a person can check; and the multiplier is consumed in four places, not one — `costOf` here, plus the two counterfactuals in `contextPruning.ts` (`cacheSavedUSD`, and the pre-prune read `boundaryInvalidation` prices) and one in `intakeFilter.ts` (`cacheReadAvoidedUSD`), each of which held the constant directly and would have gone on being wrong after the table was right. They take the rate from the price they already resolved. `UNKNOWN_MODEL_PRICE` deliberately does **not** inherit the discount, for `guardCostOf`'s reason: the unknown rate must be the dearest plausible shape, and 0.1× on a $10 input is dearer than 0.025× on one. The **write** multipliers are still module constants because no model has departed from them; the first one that does takes this shape rather than a second mechanism.
-- Pricing changes over time: `resolvePrice(model, {at, speed})` is speed-aware (`speed: "fast"` has its own table, which *replaces* the base entry rather than overlaying it — so a fast-mode row inherits no `cacheReadMultiplier` and has to repeat one, as the Opus 5.5 row does: caching multipliers stack on top of fast-mode pricing, and the multiplier is the model's own) and takes an instant that **no entry reads today**. Sonnet 5's introductory $2/$10 was the one dated rate, and Anthropic cancelled the scheduled rise to $3/$15 rather than letting it land, so the ramp is deleted and every entry is flat in time. `at` stays on the signature because the callers that pass one are repricing turns that already ran, and "what did this cost" is a question about the day it happened. Keep a new dated rate in that shape rather than flattening it, and keep its turnover on a UTC midnight — `windows.ts` memoises the counterfactual per UTC day on the strength of it, and a rate turning over anywhere else makes that memo wrong for the turns either side.
-
-
-**Where a bill went, and why a token chart does not show it.** `costSplitOf`
-breaks `costOf` into its four terms - input, output, cache read, cache write -
-and `costSharesOf` turns those into shares. It exists because the multipliers
-are 0.1x and 2.0x, a twentyfold ratio that no token count reveals: MEASURED
-across 90 deduplicated frames on one install, cache **writes** were 48.1% of
-the bill from 7% of the tokens, while reads were 92% of the tokens and 31.6% of
-the bill. An operator reading a token chart is looking at the volume that costs
-a third and cannot see the term that decides their bill. `total` delegates to
-`costOf` rather than re-summing the four - the same arithmetic, once, so a
-receipt cannot disagree with the guard even in the last bits of a float.
-
-
-**Why cache writes are half the bill, and why that is not a defect.** MEASURED
-across 90 deduplicated frames: the median request writes **434** tokens and
-reads **22,286** - writes are 7.6% of the context they sit on, and exactly one
-request of ninety wrote more than 20k, which was the session's first. The
-prefix is not churning; those writes are the delta of one turn being cached so
-the next turn can read it.
-
-The cost follows from the multipliers rather than from any waste. A token
-admitted to the conversation is written once at 2.0x and then read at 0.1x on
-every later turn, so one 434-token write costs what 8,680 read tokens cost.
-That is why writes can be 7% of tokens and 48% of the bill while nothing is
-going wrong.
-
-**The lever this identifies is intake, not pruning.** Preventing a token from
-entering the conversation avoids the 2.0x write entirely; removing it after the
-fact pays an invalidation to do so, which is `1.9*S - 2*D` once against `0.1*D`
-per later turn. Measured from this direction, that is the same conclusion
-winnow reaches from its own corpus - its intake filter is worth more than its
-pruner and is positive in every session rather than 58% of them - and on this
-install `WINNOW_FILTER` is blank by default, so the mechanism that avoids the
-dearer term is the one an operator has to go and find.
-
-
-**And the lever, priced.** MEASURED on a corpus whose tool results are large
-enough for the rules to fire - 12 files of ~8.4 KB, 8 work cycles, $1.2497 -
-with `WINNOW_FILTER=1`: 24 filtered requests, 264 tool results seen, **12,096
-bytes kept off the wire**, 0 requests inflated. Priced with the table in
-`pricing.ts`: the avoided cache **write** is $0.0302, deterministic and paid
-once per token; the avoided **reads** are $0.0174, summed per event over the
-requests that followed it. The run would have cost $1.2973, so the saving is
-**3.67%** - against winnow's independently derived +3.76%, reached on a
-different install with a different method, agreeing to within 0.09 points.
-
-The write term needs no assumptions and is the floor: **2.3% of the run**. The
-read term models each kept-out byte as read on every later request, which is an
-upper bound. `bytes / 4` is SPEC 6's token estimate and is flagged wherever it
-is used. One run, so this is a reading rather than a rate.
-
-
-**The fixed cost of starting a run, and what it is made of.** MEASURED over 12
-sessions: the first request is a median **16%** of a whole session's cost, and
-on short ones it is far more - one five-request session spent **55%** of its
-money before doing any work, and another 50%. Two sessions paid nothing at all,
-because they resumed into a warm cache.
-
-What that first request buys is the cached prefix, written once at 2.0x.
-winnow's prefix ledger names its parts: system **13,145 B**, tools **30,923 B**
-across 14 definitions. **The tool definitions are 70% of the prefix** - roughly
-7,730 tokens, about $0.077 at `claude-opus-5` input pricing, paid again on
-every fresh session before an agent has read a line of code.
-
-Two things follow, and neither is about pruning. Fewer, longer runs amortise a
-cost that short runs pay in full - the shape `docs/agent/run-lifecycle.md`
-already prefers for other reasons, now with a figure on it. And an agent's tool
-list is a per-run bill: `agents.ts` gives an agent a role, and the tools that
-ride with it are re-cached at 2.0x every time it starts. A leaner tool set is
-not a tidiness preference; it is the cheapest lever in this file, because it is
-paid on every run whether the run uses those tools or not.
-
-
-**And what all of that is worth, against the alternative — not yet known.**
-The same task, corpus and cycle count was run once through this engine and once
-through what it replaces, a scripted `claude -p` loop starting a fresh session
-each cycle. Priced by the model's own reported cost, per module completed so
-the two are comparable when one finishes more:
-
-| | cost | done | per module |
-|---|---:|---:|---:|
-| naive `claude -p`, fresh each cycle | $1.1090 | 8 / 12 | $0.1386 |
-| this engine, 4 cycles | $0.5380 | 12 / 12 | $0.0448 |
-| this engine, 8 cycles | $1.2497 | 8 / 12 | $0.1562 |
-
-**Two runs of this engine on one corpus differ by 3.48x**, and the naive loop
-falls between them. So the honest reading of these three runs is a gap of
-**0.89x to 3.09x** - a range that straddles one, and therefore does not
-establish that either is cheaper. It is a demonstration that the comparison is
-runnable and that the per-module figure is the right unit; it is not a result.
-
-Resolving it needs replication against a within-arm spread of 3.48x, which is
-the same wall the intake filter's A/B hit and the reason that mechanism was
-priced from its ledger instead. The deterministic parts of the gap - resume
-paying one cold start rather than four, at a median 16% of a session - can be
-priced the same way and are the honest thing to quote until then.
-
-
-**What can be said without replication.** The comparison above cannot resolve a
-gap of this size at one run per arm, but part of it does not need a comparison
-at all - the same reasoning that let the intake filter be priced from its
-ledger. A naive loop starts a session per cycle and pays a cold start each
-time; a resumed loop pays one.
-
-MEASURED on the four naive sessions: cold starts of $0.0761, $0.0875, $0.0169
-and $0.0168, totalling **$0.1973**, against **$0.0493** for a single session.
-The deterministic difference is **$0.1480, or 13.3%** of that run, and 13,746
-prefix tokens re-cached at 2.0x that a resumed loop writes once.
-
-Two of those four sessions wrote **no prefix at all**, which is worth knowing
-before assuming the naive loop pays full price every time: the API's prefix
-cache outlives a session, so back-to-back invocations inside the TTL inherit a
-warm one. The penalty is real but smaller than the arithmetic suggests, and it
-is a penalty on *cadence* rather than on starting a session as such.
-
-So the defensible statement about this engine against that loop is the sum of
-what has been priced rather than compared: **resume is worth about 13.3% here,
-the intake filter 3.67-8.76%**, and the rest is inside a noise floor these runs
-cannot see through.
-
-
-**What one tool costs.** From the same prefix observation - tools 30,923 B
-across 14 definitions - a tool definition averages **2,209 bytes, about 552
-tokens**. Written at 2.0x on every fresh session that is **$0.0055 per tool per
-run**, and $0.0773 for all fourteen.
-
-It is paid whether the run uses the tool or not, because the definition is in
-the prefix before the agent has read anything. Dropping five tools from an
-agent that does not need them saves $0.0276 a run - **$2.76 per hundred runs** -
-with no effect on what the agent can do with the ones it kept.
-
-That makes `agents.ts` a metering surface as well as a permissions one. An
-agent carries a role and its tools ride with it; this is what they cost to
-carry. It is the only lever in this file paid on **every** run rather than in
-proportion to the work, which is why it is the cheapest one here even though it
-is the smallest.
-
-
-**Why every figure above was priced rather than compared.** The six
-identical-task runs give a coefficient of variation of **0.296**. Putting that
-through a two-sample power calculation says how many runs an A/B needs to see
-an effect of a given size at 80% power:
-
-| effect | runs per arm |
-|---:|---:|
-| 10% | 151 |
-| 13.3% | 88 |
-| 20% | 42 |
-| 30% | 20 |
-| 50% | 9 |
-
-The resume effect is 13.3%, so **seeing it by comparison needs about 88 runs
-per arm** - at roughly $0.55 a run that is over $95 for one number. Pricing it
-from the cold starts in the ledger took a single run and no comparison at all.
-
-That asymmetry is the argument for the method used throughout this section, and
-it is a property of the workload rather than of anyone's patience: agent runs
-vary by 2.28x to 3.48x on identical input, so any mechanism worth less than
-about 30% is invisible to an A/B at any budget an operator would accept. The
-mechanisms in this app are worth 3-13%. **They can only be measured
-deterministically.**
-
-The corollary is worth stating too: a *large* effect is cheap to measure. If
-this engine really were 3x the loop it replaces, nine runs per arm would show
-it - about $15. That experiment is affordable and has not been run; the earlier
-0.89x-3.09x range is what one run per arm buys.
-
-
-**The comparison, run properly.** The power table above says a large effect is
-cheap to measure, so it was measured. Five pairs, alternating, same task, same
-twelve-file corpus, four cycles each, both priced by the model's own reported
-cost:
-
-| | mean | range | completed | per module |
-|---|---:|---:|---:|---:|
-| this engine | $0.5688 | $0.5173-$0.6378 | **12/12 every run** | **$0.0474** |
-| naive `claude -p` | $1.6847 | $1.3763-$1.8574 | 8/12 every run | $0.2106 |
-
-**4.44x cheaper per unit of work, and the distributions do not overlap** - the
-engine's worst run is 3.2x better than the naive loop's best. The exact
-two-tailed probability of complete separation at n=5,5 is **0.0079**. The
-engine finished the work in every run; the naive loop finished two thirds of it
-in every run.
-
-Within-arm spread here is 1.23x and 1.35x, far tighter than the 2.28x-3.48x
-measured on the other corpus, which is why five pairs settle it: the task is
-bounded by a cycle cap and by twelve files rather than by the agent's
-judgement. That is worth knowing when designing any further comparison here -
-the noise floor is a property of the task, not of the loop.
-
-This supersedes the earlier one-run reading of 0.89x-3.09x, which is what a
-single pair bought and was correctly refused as a result.
-
-
-**The same comparison against a competent script.** A loop that never resumes
-is a weak opponent, and beating it proves mostly that resuming works. So the
-arm was run again as somebody who knew what they were doing would write it -
-`claude -p --continue`, five runs, same task and corpus:
-
-| arm | n | mean | completed | per module |
-|---|---:|---:|---:|---:|
-| this engine | 5 | $0.5688 | **12/12 every run** | **$0.0474** |
-| script, `--continue` | 5 | $0.7861 | 8/12 every run | $0.0983 |
-| script, no resume | 5 | $1.6847 | 8/12 every run | $0.2106 |
-
-Resuming closes about half the gap, exactly as the cold-start figure predicts.
-The engine is still **2.07x cheaper per unit of work than the competent
-script**, the distributions still do not overlap ($0.0431-$0.0531 against
-$0.0878-$0.1170), and the exact two-tailed probability of that separation at
-n=5,5 is again **0.0079**.
-
-The clearest way to state it: the engine did **50% more work for 28% less
-money**. Both scripts stopped at eight of twelve modules in every single run;
-the engine finished twelve in every single run. What separates them is not the
-per-token price of anything - it is that the cycle contract keeps going until
-the work is done, and the loop is what makes that cheap rather than expensive.
-
-
-**What could not be compared, and why that is a fact rather than a caveat.**
-The arms above are the two things a person does instead of using this app: a
-`claude -p` loop, and the same loop written competently with `--continue`. They
-are not the whole field - aider, OpenHands and the rest exist - and none of
-them was measured here. The reason is structural rather than editorial.
-
-This install authenticates with a **subscription OAuth credential**
-(`claudeAiOauth`: an access token, a refresh token and a `subscriptionType`).
-There is no `ANTHROPIC_API_KEY` and no admin key. Every third-party harness
-authenticates with an API key, which is a different billing rail and a separate
-commercial relationship. So the comparison space reachable from a subscription
-install is exactly the tools built on the Claude Code CLI - which is the space
-measured above, and measured completely.
-
-That boundary is worth stating in a metering document because it is the same
-boundary an operator of this app is standing behind. An install running on a
-Max subscription cannot benchmark itself against an API-key tool without
-opening an API account, and the figures here are therefore about **what this
-app costs against the alternatives available to the same credential**, not
-about the field. Anyone wanting the wider comparison needs an API key, a second
-budget, and a protocol that prices two billing models against each other -
-which is a study, not a paragraph.
+This file is an index. Each line below is the lead claim of one paragraph, and the paragraph itself is in the topic file its heading links to.
+
+## [Unknown readings, the provider's percentage and fraction guards](metering/unknown-and-percentages.md)
+
+- Unknown must not render as zero.
+- …but the *percentage* is readable, and it outranks anything derived from a ceiling.
+- And a percentage the provider volunteers mid-cycle is deliberately ignored.
+- A fraction guard with nothing to read is refused at the door, and never acted on afterwards.
+- Cost is the primary metric; raw tokens are the fallback.
+- Naming the plan is not setting a ceiling.
+- Reserved headroom is applied in exactly one place.
+
+## [Pricing, unpriced models and cache multipliers](metering/pricing.md)
+
+- Unpriced models contribute $0 to everything displayed, and are named.
+- …but the guard charges them a fallback rate, because a floor is not a guard.
+- Canonicalise model IDs, never truncate them.
+- `cache_creation` splits into 5m (1.25×) and 1h (2×).
+- The cache read multiplier is a property of the model, and `cacheReadMultiplierOf` is the only thing that may read it.
+- Pricing changes over time: `resolvePrice(model, {at, speed})` is speed-aware (`speed: "fast"` has its own table, which *replaces* the base entry rather than overlaying it — so a fast-mode row …
+
+## [Transcript parsing and the usage scan](metering/transcripts.md)
+
+- Transcript parsing details that materially change the numbers:
+- Dedupe key is `${message.id}:${requestId}`, applied across files (a resumed session copies earlier turns forward).
+- The records sharing that key are not all identical, so the resolution rule is highest `output` wins, never first-seen.
+- Files are read from a cached byte offset; the bytes after the final `\n` are left unconsumed so a partially-flushed line is re-read next pass.
+- The directory walk overlaps its levels and its output order is byte-for-byte the serial walk's
+- The parsed cache holds a second array now, and the bound counts both.
+- One aggregation per burst, because the scan was coalesced and the aggregation was not.
+- A compaction record is read out of the same files and is not a reading of anything.
+
+## [5-hour blocks, calendar periods and projections](metering/windows-and-periods.md)
+
+- A block opens at its first turn, and nothing rounds that off.
+- The 5-hour window is derived, except when the provider resets it.
+- A calendar period is history, and its percentage is a pace rather than an allowance.
+- A calendar period is history, so its percentage is a pace and never a guard.
+- Calendar buckets are cut in the browser's zone, and a bucket's end is the next one's start.
+- A projection is bounded by the window it was computed from, and a candidate past that horizon is dropped rather than clamped to it.
+
+## [A run's spend and the other spend readings](metering/run-spend-readings.md)
+
+- Per-iteration spend comes from the CLI's own `result` event
+- A killed cycle's spend is reconciled, into its own column.
+- The cycle in flight is on the row, in its own column, and it is not a count.
+- What a run is spending *now* is a third reading on the dashboard, never a correction to the meters.
+- What each repository cost is a fifth reading, and it is a report rather than a source.
+
+## [Attribution by effort, agent and skill](metering/attribution.md)
+
+- Attribution comes from the transcript, not from telemetry.
+- An agent bucket is annotated, never moved, and "nobody checked" is not "no such agent".
+- A run's agent split is the transcript source scoped to one session, and it is display only.
+- A default agent is `settings.defaultAgentId`, and a form seed is not a naming.
+
+## [What the stream log records](metering/stream-log.md)
+
+- A sub-agent's words are in the log and are never the run's own report.
+- A tool call that failed is on the log; one that worked is not.
+
+## [Where the bill goes, and this engine against a script loop](metering/cost-measurements.md)
+
+- Where a bill went, and why a token chart does not show it.
+- Why cache writes are half the bill, and why that is not a defect.
+- The cost follows from the multipliers rather than from any waste.
+- The lever this identifies is intake, not pruning.
+- And the lever, priced.
+- The write term needs no assumptions and is the floor: **2.3% of the run**.
+- The fixed cost of starting a run, and what it is made of.
+- What that first request buys is the cached prefix, written once at 2.0x.
+- Two things follow, and neither is about pruning.
+- And what all of that is worth, against the alternative — not yet known.
+- Table: cost, done, per module.
+- Two runs of this engine on one corpus differ by 3.48x
+- Resolving it needs replication against a within-arm spread of 3.48x, which is the same wall the intake filter's A/B hit and the reason that mechanism was priced from its ledger instead.
+- What can be said without replication.
+- MEASURED on the four naive sessions: cold starts of $0.0761, $0.0875, $0.0169 and $0.0168, totalling **$0.1973**, against **$0.0493** for a single session.
+- Two of those four sessions wrote **no prefix at all**, which is worth knowing before assuming the naive loop pays full price every time: the API's prefix cache outlives a session, so back-to-back …
+- So the defensible statement about this engine against that loop is the sum of what has been priced rather than compared: **resume is worth about 13.3% here, the intake filter 3.67-8.76%**, and the …
+- What one tool costs.
+- It is paid whether the run uses the tool or not, because the definition is in the prefix before the agent has read anything.
+- That makes `agents.ts` a metering surface as well as a permissions one.
+- Why every figure above was priced rather than compared.
+- Table: effect, runs per arm.
+- The resume effect is 13.3%, so **seeing it by comparison needs about 88 runs per arm** - at roughly $0.55 a run that is over $95 for one number.
+- That asymmetry is the argument for the method used throughout this section, and it is a property of the workload rather than of anyone's patience: agent runs vary by 2.28x to 3.48x on identical …
+- The corollary is worth stating too: a *large* effect is cheap to measure.
+- The comparison, run properly.
+- Table: mean, range, completed, per module.
+- 4.44x cheaper per unit of work, and the distributions do not overlap
+- Within-arm spread here is 1.23x and 1.35x, far tighter than the 2.28x-3.48x measured on the other corpus, which is why five pairs settle it: the task is bounded by a cycle cap and by twelve files …
+- This supersedes the earlier one-run reading of 0.89x-3.09x, which is what a single pair bought and was correctly refused as a result.
+- The same comparison against a competent script.
+- Table: arm, n, mean, completed, per module.
+- Resuming closes about half the gap, exactly as the cold-start figure predicts.
+- The clearest way to state it: the engine did **50% more work for 28% less money**.
+- What could not be compared, and why that is a fact rather than a caveat.
+- This install authenticates with a **subscription OAuth credential** (`claudeAiOauth`: an access token, a refresh token and a `subscriptionType`).
+- That boundary is worth stating in a metering document because it is the same boundary an operator of this app is standing behind.
