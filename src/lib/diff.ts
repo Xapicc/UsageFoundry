@@ -16,7 +16,9 @@ import {
  *
  * Two shapes, and the difference is not cosmetic. An isolated run owns a branch
  * and a base commit, so `<base>...<branch>` is exactly its work and nothing
- * else. A run that worked directly in the operator's folder has no such range:
+ * else — until the target is merged into the branch, which is what resolving a
+ * conflict does, and `diffRange` moves the left side for that. A run that
+ * worked directly in the operator's folder has no such range:
  * whatever is in that tree is the run's edits *and* the operator's, mixed, with
  * nothing recording where one ends. That case reports a file list and says so,
  * rather than presenting a confident diff of the wrong thing.
@@ -44,7 +46,7 @@ export interface DiffFile {
   added: number | null;
   deleted: number | null;
   binary: boolean;
-  /** Null when this file's patch was left out to stay inside the size budget. */
+  /** Null when this file's patch was left out, by the budget or by a read that failed. */
   patch: string | null;
   /** True when `patch` holds only the first `MAX_FILE_PATCH_LINES` lines. */
   patchTruncated: boolean;
@@ -59,8 +61,15 @@ export interface RunDiff {
    */
   kind: "range" | "worktree" | "none";
   reason: string | null;
+  /** The commit the run branched from, `runs.worktree_base`. */
   base: string | null;
   branch: string | null;
+  /**
+   * Set when the diff is measured from somewhere other than `base`: the target
+   * commit that `merge` brought into the branch. From `base`, everything the
+   * target gained before that merge would be counted as the run's work.
+   */
+  measuredFrom: TargetMerge | null;
   /**
    * The commit `branch` resolved to when this diff was taken, and the one every
    * patch here was read from. Null for a run with no range and for a branch
@@ -73,8 +82,15 @@ export interface RunDiff {
   filesChanged: number;
   added: number;
   deleted: number;
-  /** Files whose patch was withheld for size, newest budget first. */
+  /** Files listed without a patch, whether the budget or a failed read left them out. */
   omittedPatches: number;
+  /**
+   * Why no file has a patch, when git could not give them, as a clause with no
+   * full stop so the card and the Land card can each finish the sentence. Null
+   * when every omission is the budget's — and the difference is what the card
+   * says: a read that failed is not a change that was too large.
+   */
+  patchFailure: string | null;
   /** Uncommitted paths still sitting in the run's checkout. */
   uncommitted: string[];
   /** Present when the run worked in the operator's own folder. */
@@ -89,6 +105,27 @@ const MAX_PATCH_LINES = 4_000;
 const MAX_FILE_PATCH_LINES = 600;
 /** Hard stop on what is read from `git diff` at all. */
 const MAX_DIFF_BYTES = 4_000_000;
+/**
+ * Bytes of patch the selected files may cost between them. Below
+ * `MAX_DIFF_BYTES` because the cost leaves out context lines' markers and each
+ * file's headers, and the patches are one read that fails whole at the cap, so
+ * the budget has to land under it.
+ */
+const MAX_PATCH_BYTES = 3_000_000;
+/**
+ * Files whose blob sizes are read for the byte budget. Past this a file goes
+ * unsized and so without a patch; reaching it needs 160 files left out before
+ * 40 are picked, and sizing every file of a change with thousands would put
+ * thousands of pathspecs on one argv.
+ */
+const MAX_SIZED_FILES = 200;
+
+const PATCH_LIMITS = {
+  maxFiles: MAX_PATCH_FILES,
+  maxLines: MAX_PATCH_LINES,
+  maxFileLines: MAX_FILE_PATCH_LINES,
+  maxBytes: MAX_PATCH_BYTES,
+};
 
 /* ------------------------------------------------------------------ */
 /* Parsing — pure, and tested                                          */
@@ -99,6 +136,15 @@ export interface NumstatEntry {
   oldPath: string | null;
   added: number | null;
   deleted: number | null;
+}
+
+export interface SizedEntry extends NumstatEntry {
+  /**
+   * Both sides' blob sizes added together, which bounds the patch's content,
+   * or null when it was not sized. A bound rather than a measurement: a
+   * one-line edit to a large file is charged the whole file.
+   */
+  bytes: number | null;
 }
 
 /**
@@ -210,23 +256,76 @@ export function parseNameStatus(raw: string): Map<string, DiffFileStatus> {
  * Chunks are matched to files by position, not by parsing the header path:
  * `--numstat` and the patch come off the same diff queue in the same order, and
  * the header is the one part of git's output that re-quotes odd filenames.
+ *
+ * The one place the two lists part is a type change — a file that became a
+ * symlink, or the reverse — which numstat counts once and the patch writes as
+ * a deletion followed by an addition under the same header. So a chunk whose
+ * header repeats the one before it is folded into it: no two files share a
+ * header, and a count thrown off by one would cost every file its patch.
  */
 export function splitPatches(text: string): string[] {
   if (!text) return [];
   const lines = text.split("\n");
-  const chunks: string[] = [];
+  const chunks: string[][] = [];
   let current: string[] | null = null;
 
   for (const line of lines) {
     if (line.startsWith("diff --git ")) {
-      if (current) chunks.push(current.join("\n"));
+      if (current?.[0] === line) {
+        current.push(line);
+        continue;
+      }
       current = [line];
+      chunks.push(current);
       continue;
     }
-    if (current) current.push(line);
+    current?.push(line);
   }
-  if (current) chunks.push(current.join("\n"));
-  return chunks;
+  return chunks.map((chunk) => chunk.join("\n"));
+}
+
+/** A merge of the run's target into its branch. */
+export interface TargetMerge {
+  /** The merge commit, on the branch's first-parent line. */
+  merge: string;
+  /** Its second parent: the target as it stood when it was merged in. */
+  commit: string;
+  /** The branch it was merged from. */
+  target: string;
+}
+
+/**
+ * Read the newest merge off `git rev-list --first-parent --merges --parents
+ * -n1`, which prints `<merge> <first parent> <second parent>…` or nothing.
+ *
+ * The second parent and never the first: the first is the branch before the
+ * merge, and measured from there the run's own commits vanish from its diff.
+ */
+export function parseNewestMerge(
+  revList: string,
+): Pick<TargetMerge, "merge" | "commit"> | null {
+  const [merge, , commit] = revList.trim().split(/\s+/);
+  return merge && commit ? { merge, commit } : null;
+}
+
+/**
+ * The range an isolated run's diff is measured over.
+ *
+ * From `base` unless the target was merged into the branch, which a conflict
+ * resolution does and an agent may do itself. Then `base...head` holds every
+ * commit the target gained before that merge — other people's files in "What
+ * changed", in the review a person pays for, and in the Files tab as changes
+ * no tool call named. The merged-in commit is the target as the branch now
+ * contains it, so from there the diff is the run's work and its resolution
+ * and nothing that arrived with the target.
+ */
+export function diffRange(
+  base: string,
+  head: string,
+  targetMerge: TargetMerge | null,
+): { from: string; range: string } {
+  const from = targetMerge?.commit ?? base;
+  return { from, range: `${from}...${head}` };
 }
 
 /** Keep the head of a patch, and say when the tail was dropped. */
@@ -252,32 +351,71 @@ export function truncatePatch(
  * operator the shape of the change. Bodies are budgeted, and what the budget
  * leaves out is counted rather than quietly dropped: a diff view that shows
  * twelve of forty files without saying so reads as a run that touched twelve.
+ *
+ * Budgeted in bytes as well as lines, because the lines are what is shown and
+ * the bytes are what is read. A minified bundle is one line of megabytes: it
+ * fits any line budget, and the one read every selected file shares fails
+ * whole at `MAX_DIFF_BYTES` — so without this, that one file takes every other
+ * file's patch with it.
  */
 export function selectForPatch(
-  entries: readonly NumstatEntry[],
-  limits = {
-    maxFiles: MAX_PATCH_FILES,
-    maxLines: MAX_PATCH_LINES,
-    maxFileLines: MAX_FILE_PATCH_LINES,
-  },
-): { selected: NumstatEntry[]; omitted: NumstatEntry[] } {
-  const selected: NumstatEntry[] = [];
-  const omitted: NumstatEntry[] = [];
+  entries: readonly SizedEntry[],
+  limits = PATCH_LIMITS,
+): { selected: SizedEntry[]; omitted: SizedEntry[] } {
+  const selected: SizedEntry[] = [];
+  const omitted: SizedEntry[] = [];
   let lines = 0;
+  let bytes = 0;
 
   for (const e of entries) {
     // A binary file costs nothing: git emits one "Binary files … differ" line
     // for it rather than a patch, so it never eats the line budget a text file
-    // would.
-    const cost = Math.min((e.added ?? 0) + (e.deleted ?? 0), limits.maxFileLines);
-    if (selected.length >= limits.maxFiles || lines + cost > limits.maxLines) {
+    // would, nor the byte budget however large its blobs are.
+    const binary = e.added === null && e.deleted === null;
+    const lineCost = Math.min((e.added ?? 0) + (e.deleted ?? 0), limits.maxFileLines);
+    // The content plus one marker per changed line, which is what doubles a
+    // file of short lines. Not truncated like the line cost: `truncatePatch`
+    // cuts after the read, and the read is what the byte budget protects.
+    const byteCost = binary
+      ? 0
+      : e.bytes === null
+        ? null
+        : e.bytes + (e.added ?? 0) + (e.deleted ?? 0);
+    if (
+      byteCost === null ||
+      selected.length >= limits.maxFiles ||
+      lines + lineCost > limits.maxLines ||
+      bytes + byteCost > limits.maxBytes
+    ) {
       omitted.push(e);
       continue;
     }
     selected.push(e);
-    lines += cost;
+    lines += lineCost;
+    bytes += byteCost;
   }
   return { selected, omitted };
+}
+
+/**
+ * Parse `git ls-tree -l -z` into `path -> size`.
+ *
+ * Records are `mode SP type SP object SP+ size TAB path NUL`, the size padded
+ * on the left. Only the first tab separates, for `parseNumstat`'s reason. A
+ * submodule or a directory has `-` for a size and costs nothing here: a
+ * submodule's patch is one line, and a directory's files are entries of their
+ * own.
+ */
+export function parseLsTreeSizes(raw: string): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const record of raw.split("\0")) {
+    const tab = record.indexOf("\t");
+    if (tab === -1) continue;
+    const size = record.slice(0, tab).trim().split(/\s+/).at(-1);
+    const bytes = Number(size);
+    out.set(record.slice(tab + 1), Number.isFinite(bytes) ? bytes : 0);
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------ */
@@ -305,12 +443,14 @@ function repoPathFor(dir: string): string | null {
 const EMPTY: Omit<RunDiff, "kind" | "reason"> = {
   base: null,
   branch: null,
+  measuredFrom: null,
   head: null,
   files: [],
   filesChanged: 0,
   added: 0,
   deleted: 0,
   omittedPatches: 0,
+  patchFailure: null,
   uncommitted: [],
   caveat: null,
 };
@@ -368,7 +508,8 @@ async function rangeDiff(run: RunRow): Promise<RunDiff> {
   // between the calls below, and a diff whose numstat, statuses and patches
   // were read from three different tips is one no recorded sha describes.
   const head = resolved.stdout;
-  const range = `${base}...${head}`;
+  const measuredFrom = await targetMergeOn(repoRoot, run.worktree_base_branch, base, head);
+  const { from, range } = diffRange(base, head, measuredFrom);
   const numstat = await git(repoRoot, ["diff", ...DIFF_FLAGS, "--numstat", "-z", range], {
     maxBytes: MAX_DIFF_BYTES,
   });
@@ -378,6 +519,7 @@ async function rangeDiff(run: RunRow): Promise<RunDiff> {
       kind: "none",
       base,
       branch,
+      measuredFrom,
       head,
       reason: numstat.overflowed
         ? "This change is too large to summarise."
@@ -392,33 +534,72 @@ async function rangeDiff(run: RunRow): Promise<RunDiff> {
       kind: "range",
       base,
       branch,
+      measuredFrom,
       head,
-      reason: "The agent committed nothing to this branch.",
+      reason: measuredFrom
+        ? `Nothing on this branch differs from ${measuredFrom.target} as it was merged in.`
+        : "The agent committed nothing to this branch.",
       uncommitted: await uncommittedIn(run),
     };
   }
 
-  const statuses = parseNameStatus(
-    (await git(repoRoot, ["diff", ...DIFF_FLAGS, "--name-status", "-z", range])).stdout,
-  );
-
-  const { selected, omitted } = selectForPatch(entries);
-  const patches = await patchesFor(repoRoot, range, selected);
+  // The side a three-dot range compares against, which is what the patch's
+  // deletions come from and so what the byte budget has to size.
+  const [nameStatus, mergeBase] = await Promise.all([
+    git(repoRoot, ["diff", ...DIFF_FLAGS, "--name-status", "-z", range]),
+    git(repoRoot, ["merge-base", from, head]),
+  ]);
+  const statuses = parseNameStatus(nameStatus.stdout);
+  const contents = mergeBase.ok
+    ? await filesWithPatches(repoRoot, range, { from: mergeBase.stdout, to: head }, entries, statuses)
+    : unreadContents(entries, statuses, `git found no common commit for ${range}: ${mergeBase.stderr || "unknown error"}`);
 
   return {
     kind: "range",
     reason: null,
     base,
     branch,
+    measuredFrom,
     head,
-    files: buildFiles(entries, statuses, selected, patches),
+    ...contents,
     filesChanged: entries.length,
     added: entries.reduce((n, e) => n + (e.added ?? 0), 0),
     deleted: entries.reduce((n, e) => n + (e.deleted ?? 0), 0),
-    omittedPatches: omitted.length,
     uncommitted: await uncommittedIn(run),
     caveat: null,
   };
+}
+
+/**
+ * The newest merge of `target` into the branch between `base` and `head`.
+ *
+ * Only the newest, and only along the first-parent line: that is the branch's
+ * own history, and a later merge of the target carries everything an earlier
+ * one did. Its second parent must be on the target: another branch's tip can
+ * stand where the target never was, and a diff from there is not what landing
+ * this branch would bring. Anything git cannot answer here leaves the diff
+ * measured from `base`, which is what the card then says it is.
+ */
+async function targetMergeOn(
+  repoRoot: string,
+  target: string | null,
+  base: string,
+  head: string,
+): Promise<TargetMerge | null> {
+  if (!target) return null;
+  const merges = await git(repoRoot, [
+    "rev-list",
+    "--first-parent",
+    "--merges",
+    "--parents",
+    "-n1",
+    `${base}..${head}`,
+  ]);
+  const newest = merges.ok ? parseNewestMerge(merges.stdout) : null;
+  if (!newest) return null;
+
+  const onTarget = await git(repoRoot, ["merge-base", "--is-ancestor", newest.commit, target]);
+  return onTarget.ok ? { ...newest, target } : null;
 }
 
 /**
@@ -436,7 +617,7 @@ export async function commitDiff(
   repoRoot: string,
   commit: string,
   paths: readonly string[],
-): Promise<{ files: DiffFile[]; omittedPatches: number } | null> {
+): Promise<FileContents | null> {
   const range = `${commit}^1..${commit}`;
   // Pinned for the same reason `patchesFor` pins them: these came out of git
   // and go back in as pathspecs, where `*` in a filename is a glob.
@@ -450,7 +631,7 @@ export async function commitDiff(
   if (!numstat.ok) return null;
 
   const entries = parseNumstat(numstat.stdout);
-  if (entries.length === 0) return { files: [], omittedPatches: 0 };
+  if (entries.length === 0) return { files: [], omittedPatches: 0, patchFailure: null };
 
   const statuses = parseNameStatus(
     (
@@ -466,12 +647,7 @@ export async function commitDiff(
     ).stdout,
   );
 
-  const { selected, omitted } = selectForPatch(entries);
-  const patches = await patchesFor(repoRoot, range, selected);
-  return {
-    files: buildFiles(entries, statuses, selected, patches),
-    omittedPatches: omitted.length,
-  };
+  return filesWithPatches(repoRoot, range, { from: `${commit}^1`, to: commit }, entries, statuses);
 }
 
 /**
@@ -533,6 +709,107 @@ async function uncommittedIn(run: RunRow): Promise<string[]> {
   return st.ok ? st.stdout.split("\n").filter(Boolean) : [];
 }
 
+/** The file list with whatever patches could be read, and what could not. */
+interface FileContents {
+  files: DiffFile[];
+  omittedPatches: number;
+  patchFailure: string | null;
+}
+
+type Read<T> = { ok: true; value: T } | { ok: false; reason: string };
+
+/**
+ * Size, budget and read the patches for a diff's files.
+ *
+ * `from` and `to` are the two commits the patch compares, which for a
+ * three-dot range is the merge base and not the left-hand name.
+ */
+async function filesWithPatches(
+  repoRoot: string,
+  range: string,
+  sides: { from: string; to: string },
+  entries: readonly NumstatEntry[],
+  statuses: Map<string, DiffFileStatus>,
+): Promise<FileContents> {
+  const sized = await sizeEntries(repoRoot, sides, entries);
+  if (!sized.ok) return unreadContents(entries, statuses, sized.reason);
+
+  const { selected, omitted } = selectForPatch(sized.value);
+  const patches = await patchesFor(repoRoot, range, selected);
+  if (!patches.ok) return unreadContents(entries, statuses, patches.reason);
+
+  return {
+    files: buildFiles(entries, statuses, selected, patches.value),
+    omittedPatches: omitted.length,
+    patchFailure: null,
+  };
+}
+
+/**
+ * Every file listed and none with contents, saying why. Counted as omitted
+ * whether or not the budget picked it: the card's count is of files shown
+ * without contents, and a count of zero over a list of empty rows is the
+ * failure this exists to name.
+ */
+function unreadContents(
+  entries: readonly NumstatEntry[],
+  statuses: Map<string, DiffFileStatus>,
+  reason: string,
+): FileContents {
+  return {
+    files: buildFiles(entries, statuses, [], []),
+    omittedPatches: entries.length,
+    patchFailure: reason,
+  };
+}
+
+const literalPath = (p: string) => `:(top,literal)${p}`;
+
+/**
+ * Each entry with the blob sizes of both sides, for the byte budget.
+ *
+ * One `ls-tree` per side rather than a `cat-file` per blob. A path absent from
+ * a side — an added file's old side, a deleted file's new one — costs nothing
+ * there, which is what its patch holds from that side.
+ */
+async function sizeEntries(
+  repoRoot: string,
+  sides: { from: string; to: string },
+  entries: readonly NumstatEntry[],
+): Promise<Read<SizedEntry[]>> {
+  const sizable = entries.slice(0, MAX_SIZED_FILES);
+  if (sizable.length === 0) return { ok: true, value: [] };
+
+  const lsTree = (commit: string, paths: string[]) =>
+    git(repoRoot, ["ls-tree", "-l", "-z", commit, "--", ...paths.map(literalPath)], {
+      maxBytes: MAX_DIFF_BYTES,
+    });
+  const [before, after] = await Promise.all([
+    lsTree(sides.from, sizable.map((e) => e.oldPath ?? e.path)),
+    lsTree(sides.to, sizable.map((e) => e.path)),
+  ]);
+  const failed = [before, after].find((res) => !res.ok);
+  if (failed) {
+    return {
+      ok: false,
+      reason: `git could not read the files' sizes: ${failed.stderr || "unknown error"}`,
+    };
+  }
+
+  const oldSizes = parseLsTreeSizes(before.stdout);
+  const newSizes = parseLsTreeSizes(after.stdout);
+  return {
+    ok: true,
+    value: entries.map((e, i) => ({
+      ...e,
+      bytes:
+        i < sizable.length
+          ? (oldSizes.get(e.oldPath ?? e.path) ?? 0) + (newSizes.get(e.path) ?? 0)
+          : null,
+    })),
+  };
+}
+
 /**
  * Patch bodies for the selected files, in one call.
  *
@@ -544,11 +821,11 @@ async function patchesFor(
   repoRoot: string,
   range: string,
   selected: readonly NumstatEntry[],
-): Promise<string[] | null> {
-  if (selected.length === 0) return [];
+): Promise<Read<string[]>> {
+  if (selected.length === 0) return { ok: true, value: [] };
 
   const pathspecs = selected.flatMap((e) =>
-    e.oldPath ? [`:(top,literal)${e.oldPath}`, `:(top,literal)${e.path}`] : [`:(top,literal)${e.path}`],
+    e.oldPath ? [literalPath(e.oldPath), literalPath(e.path)] : [literalPath(e.path)],
   );
 
   const res = await git(
@@ -556,26 +833,43 @@ async function patchesFor(
     ["diff", ...DIFF_FLAGS, range, "--", ...pathspecs],
     { maxBytes: MAX_DIFF_BYTES, timeoutMs: 60_000 },
   );
-  if (!res.ok) return null;
+  if (res.overflowed) {
+    return {
+      ok: false,
+      reason: `git's patches for these files came to more than ${MAX_DIFF_BYTES / 1_000_000} MB, the most one read takes`,
+    };
+  }
+  if (!res.ok) {
+    return {
+      ok: false,
+      reason: `git could not read the files' contents: ${res.stderr || "unknown error"}`,
+    };
+  }
 
   const chunks = splitPatches(res.stdout);
   // Positional matching is only sound while the counts agree. They should
   // always agree — same diff queue, same order — so a mismatch means an
   // assumption here is wrong, and the honest response is no patches at all
   // rather than hunks filed under the wrong filename.
-  return chunks.length === selected.length ? chunks : null;
+  if (chunks.length !== selected.length) {
+    return {
+      ok: false,
+      reason:
+        `git's patch came in ${chunks.length} parts for ${selected.length} files, ` +
+        "so none is shown rather than one under another file's name",
+    };
+  }
+  return { ok: true, value: chunks };
 }
 
 function buildFiles(
   entries: readonly NumstatEntry[],
   statuses: Map<string, DiffFileStatus>,
   selected: readonly NumstatEntry[],
-  patches: string[] | null,
+  patches: readonly string[],
 ): DiffFile[] {
   const patchByPath = new Map<string, string>();
-  if (patches) {
-    selected.forEach((e, i) => patchByPath.set(e.path, patches[i] ?? ""));
-  }
+  selected.forEach((e, i) => patchByPath.set(e.path, patches[i] ?? ""));
 
   return entries.map((e) => {
     const raw = patchByPath.get(e.path);

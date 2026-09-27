@@ -42,6 +42,7 @@ import type Database from "better-sqlite3";
  */
 
 let mergeQueue: typeof import("./mergeQueue");
+let land: typeof import("./land");
 let dbMod: typeof import("./db");
 let orchestrator: typeof import("./orchestrator");
 let root: string;
@@ -144,6 +145,7 @@ before(async () => {
   git(otherRepo, "commit", "-q", "-m", "first");
 
   mergeQueue = await import("./mergeQueue");
+  land = await import("./land");
   dbMod = await import("./db");
   orchestrator = await import("./orchestrator");
 });
@@ -268,6 +270,94 @@ describe("the merge worker", () => {
 
     const rows = await settle(queued.batchId);
     assert.equal(rows[0].status, "landed", rows[0].message ?? "");
+  });
+});
+
+/**
+ * A restart that cut off a conflict resolution in the run's own checkout.
+ *
+ * `after` is the only thing that closes a resolution's merge, and it died with
+ * the process, so the slot came back mid-merge: `MERGE_HEAD` present and the
+ * conflicted file `UU` with its markers in it. Both boot reconcilers rewrote
+ * rows and nothing else, the Land card listed the marked file under
+ * "Uncommitted in the checkout", and Commit followed by Land (each passing
+ * every check it had) put the markers on `main` as a fast-forward. Executed
+ * end to end before the fix, which is why this is one case through the app's
+ * own doors rather than three assertions about their refusals.
+ *
+ * The stranded state is built by hand rather than by killing a resolution:
+ * what a restart leaves is a queue row saying `resolving` and a checkout
+ * mid-merge, and nothing about how the process died is visible to the boot.
+ */
+describe("the boot after a resolution was cut off", () => {
+  it("closes its merge in the run's checkout, and nothing lands the markers", async () => {
+    const runId = "kkkkkkkk";
+    const branch = `uf/repo-${runId}`;
+    const base = git(repo, "rev-parse", "main").trim();
+    git(repo, "checkout", "-q", "-b", branch);
+    fs.writeFileSync(path.join(repo, "a.txt"), "branch side\n");
+    git(repo, "commit", "-q", "-am", "branch side");
+    git(repo, "checkout", "-q", "main");
+    fs.writeFileSync(path.join(repo, "a.txt"), "main side\n");
+    git(repo, "commit", "-q", "-am", "main side");
+    const mainBefore = git(repo, "rev-parse", "main").trim();
+    const branchBefore = git(repo, "rev-parse", branch).trim();
+
+    // The run's own slot, where `resolveCheckout` merges when the slot still
+    // holds the branch, left exactly as the merge left it.
+    const store = orchestrator.worktreeStore(repo);
+    assert.ok(store, "the fixture repository is not inside a mount");
+    fs.mkdirSync(store, { recursive: true });
+    const slot = path.join(store, `repo-${runId}`);
+    git(repo, "worktree", "add", "-q", slot, branch);
+    assert.throws(() => git(slot, "merge", "--no-edit", "main"), "the fixture merge did not conflict");
+    assert.match(git(slot, "status", "--porcelain"), /^UU a\.txt/m);
+
+    dbMod
+      .db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                           created_at, isolation, repo_root, worktree_branch, worktree_base,
+                           worktree_base_branch, worktree_path)
+         VALUES (?, ?, 'task', 'completed', '{}', 1, 1, ?, 'worktree', ?, ?, ?, 'main', ?)`,
+      )
+      .run(runId, repo, Date.now(), repo, branch, base, slot);
+    dbMod
+      .db()
+      .prepare(
+        `INSERT INTO merge_queue (id, batch_id, run_id, position, strategy, auto_resolve,
+                                  status, created_at, started_at)
+         VALUES ('stranded-row', 'stranded-batch', ?, 0, 'merge', 1, 'resolving', ?, ?)`,
+      )
+      .run(runId, Date.now(), Date.now());
+
+    await mergeQueue.reconcileMergeQueueOnBoot();
+
+    const [row] = mergeQueue.batchRows("stranded-batch");
+    assert.equal(row.status, "failed", `left on ${row.status}`);
+    // The half this case is for: without it, the markers wait in the slot for
+    // the next press of Commit.
+    assert.throws(
+      () => git(slot, "rev-parse", "-q", "--verify", "MERGE_HEAD"),
+      "the boot left the resolution's merge open in the run's checkout",
+    );
+    assert.equal(fs.readFileSync(path.join(slot, "a.txt"), "utf8"), "branch side\n");
+    assert.equal(git(slot, "status", "--porcelain"), "");
+    assert.equal(git(repo, "rev-parse", branch).trim(), branchBefore);
+
+    // And every door the card offers after it: nothing to commit, and a land
+    // that is still the conflict it was.
+    const committed = await land.commitPending(runId);
+    assert.equal(committed.ok, false, "Commit made a commit out of the resolution's leftovers");
+    const landed = await land.landRun(runId, "merge");
+    assert.equal(landed.ok, false, "the branch landed as if the conflict were resolved");
+
+    assert.equal(git(repo, "rev-parse", "main").trim(), mainBefore);
+    assert.doesNotMatch(git(repo, "show", "main:a.txt"), /^(<<<<<<<|>>>>>>>)/m);
+    assert.doesNotMatch(git(repo, "show", `${branch}:a.txt`), /^(<<<<<<<|>>>>>>>)/m);
+    // The operator's checkout was never the one the boot touched.
+    assert.equal(git(repo, "symbolic-ref", "--short", "HEAD").trim(), "main");
+    assert.equal(git(repo, "status", "--porcelain"), "");
   });
 });
 

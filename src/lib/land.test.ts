@@ -2,19 +2,23 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  aheadRangeFor,
   commitRefusal,
   conflictRegions,
   gitFailureLine,
   hasConflictMarkers,
   landRecheck,
   landRefusal,
+  parseCount,
   parseMergeTree,
   parseStatusZ,
+  purgedMessage,
   purgeRefusal,
   selectBranchCandidates,
   selectProbeTargets,
   trackedDirt,
   unresolvedFiles,
+  unsettledBranchRefusal,
   type CheckoutState,
   type ConflictFile,
 } from "./land";
@@ -292,6 +296,76 @@ describe("landRefusal", () => {
   it("refuses a branch that is gone", () => {
     assert.match(landRefusal({ ...landable, branchExists: false }) ?? "", /no longer exists/);
   });
+
+  it("refuses a branch whose commits could not be counted, rather than reading it as some", () => {
+    const refusal = landRefusal({ ...landable, ahead: null });
+    assert.match(refusal ?? "", /Could not count/);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Counting what a branch holds                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Purge is the one door that destroys committed work, and its confirmation
+ * states the count these produce as what goes. Every way of not having a count
+ * used to become 0 — no recorded target, a target renamed away, a `rev-list`
+ * that failed — so the sheet said "Purge 0 commits" over a branch with work on
+ * it. Unknown and none have to stay two answers all the way to the sentence.
+ */
+describe("aheadRangeFor", () => {
+  it("counts against the target when there is one", () => {
+    assert.equal(
+      aheadRangeFor({ target: "main", base: "abc123", branch: "uf/x" }),
+      "main..uf/x",
+    );
+  });
+
+  it("counts against the base commit when no target was recorded", () => {
+    // A run isolated from a detached HEAD records no target by design, and
+    // still has committed work; this range used to be null, and so a 0.
+    assert.equal(
+      aheadRangeFor({ target: null, base: "abc123", branch: "uf/x" }),
+      "abc123..uf/x",
+    );
+  });
+
+  it("has nothing to count against with neither", () => {
+    assert.equal(aheadRangeFor({ target: null, base: null, branch: "uf/x" }), null);
+  });
+});
+
+describe("parseCount", () => {
+  it("reads git's count", () => {
+    assert.equal(parseCount("3"), 3);
+    assert.equal(parseCount("0\n"), 0);
+  });
+
+  it("is null when git gave no count, never 0", () => {
+    // A range naming a renamed-away target exits 128 with an empty stdout,
+    // which `Number("") || 0` read as a branch with nothing on it.
+    assert.equal(parseCount(null), null);
+    assert.equal(parseCount(""), null);
+    assert.equal(parseCount("fatal: bad revision"), null);
+  });
+});
+
+describe("purgedMessage", () => {
+  it("says what went", () => {
+    assert.equal(
+      purgedMessage("uf/x", 3, 2),
+      "Purged uf/x. 3 commits and 2 uncommitted paths went with it.",
+    );
+    assert.equal(purgedMessage("uf/x", 0, 0), "Purged uf/x.");
+  });
+
+  it("says a count could not be taken instead of leaving it out", () => {
+    const message = purgedMessage("uf/x", null, 2);
+    assert.match(message, /2 uncommitted paths went with it/);
+    assert.match(message, /commits .*could not be counted/);
+    assert.match(purgedMessage("uf/x", 1, null), /uncommitted .*could not be read/);
+  });
 });
 
 /* ------------------------------------------------------------------ */
@@ -428,6 +502,111 @@ describe("landRefusal for a branch a chain shares", () => {
 });
 
 /**
+ * The run half of `landRefusal`, asked by Deliver too. Deliver pushed the
+ * branch of a running run, of a link with a successor still to commit, and of
+ * a live loop pass, and opened a pull request on part of the work, because it
+ * asked none of these. One decision for both exits is what keeps them agreeing.
+ */
+describe("unsettledBranchRefusal holds both exits while the branch can still move", () => {
+  const member = (
+    runId: string,
+    status: import("./land").ChainMember["status"],
+    iterations = 1,
+  ) => ({ runId, status, iterations });
+  const alone = [member("aaaaaaaa", "completed")];
+
+  it("refuses to deliver while the run can still commit", () => {
+    for (const runStatus of ["running", "queued", "paused"] as const) {
+      assert.equal(
+        unsettledBranchRefusal(
+          { runId: "aaaaaaaa", runStatus, chain: [member("aaaaaaaa", runStatus)] },
+          "deliver",
+        ),
+        "This run is still active. It can commit again at any moment, so anything " +
+          "delivered now would be half its work.",
+        runStatus,
+      );
+    }
+  });
+
+  it("delivers a settled run, a run that asked for review included", () => {
+    // `needs-review` for `landRefusal`'s reason: it cannot commit again unless
+    // somebody reopens it, and its partial work may be worth publishing.
+    for (const runStatus of ["completed", "stopped", "failed", "needs-review"] as const) {
+      assert.equal(
+        unsettledBranchRefusal({ runId: "aaaaaaaa", runStatus, chain: alone }, "deliver"),
+        null,
+        runStatus,
+      );
+    }
+  });
+
+  it("refuses to deliver while a link further along can still commit, naming it", () => {
+    for (const status of ["waiting", "queued", "running", "paused"] as const) {
+      const chain = [member("aaaaaaaa", "completed"), member("bbbbbbbb", status, 0)];
+      const refusal =
+        unsettledBranchRefusal({ runId: "aaaaaaaa", runStatus: "completed", chain }, "deliver") ??
+        "";
+      assert.match(refusal, /^Run bbbbbbbb /, `${status} should hold the branch`);
+      assert.match(refusal, /delivers it|delivered now/);
+    }
+  });
+
+  it("refuses to deliver while a pass of a loop holds the branch, naming the pass", () => {
+    const refusal = unsettledBranchRefusal(
+      {
+        runId: "aaaaaaaa",
+        runStatus: "completed",
+        chain: alone,
+        loopBlock: { blockName: "Iterate", pass: 3 },
+      },
+      "deliver",
+    );
+    assert.match(refusal ?? "", /^Pass 3 of the workflow block “Iterate”/);
+    assert.match(refusal ?? "", /anything delivered now/);
+  });
+
+  it("is the decision landRefusal gives, word for word, when asked for Land", () => {
+    // The drift this split exists to prevent: if Land's copy of the rule ever
+    // stops being this one, the two doors can disagree about the same branch.
+    const settled = {
+      branchExists: true,
+      target: "main",
+      merged: false,
+      landedUnchanged: false,
+      ahead: 1,
+      pendingCount: 0,
+      preview: { outcome: "clean" as const },
+      checkout: { path: "/r", headBranch: "main", dirty: false, readable: true },
+    };
+    const cases = [
+      { runId: "aaaaaaaa", runStatus: "running" as const, chain: alone },
+      {
+        runId: "aaaaaaaa",
+        runStatus: "completed" as const,
+        chain: [member("aaaaaaaa", "completed"), member("bbbbbbbb", "waiting", 0)],
+      },
+      {
+        runId: "bbbbbbbb",
+        runStatus: "completed" as const,
+        chain: [member("aaaaaaaa", "queued"), member("bbbbbbbb", "completed")],
+      },
+      {
+        runId: "aaaaaaaa",
+        runStatus: "completed" as const,
+        chain: alone,
+        loopBlock: { blockName: "Iterate", pass: null },
+      },
+    ];
+    for (const c of cases) {
+      const expected = unsettledBranchRefusal(c, "land");
+      assert.notEqual(expected, null);
+      assert.equal(landRefusal({ ...settled, ...c }), expected);
+    }
+  });
+});
+
+/**
  * The same checkout questions again, asked after the operator's verify command
  * and immediately before the merge. `landRefusal` answered them up to fifteen
  * minutes earlier, and in that window a squash met an edit the operator made
@@ -543,7 +722,14 @@ describe("commitRefusal", () => {
     branch: "uf/repo-1234abcd",
     checkedOutBranch: "uf/repo-1234abcd",
     readable: true,
-    pendingCount: 4,
+    pending: [
+      { path: "src/parser.ts", code: " M" },
+      { path: "src/lexer.ts", code: "A " },
+      { path: "docs/parser.md", code: "??" },
+      { path: "src/old.ts", code: " D" },
+    ],
+    mergeInProgress: false,
+    resolutionRunning: false,
     message: "Add the parser",
   };
 
@@ -590,9 +776,64 @@ describe("commitRefusal", () => {
 
   it("refuses when there is nothing to commit", () => {
     assert.match(
-      commitRefusal({ ...committable, pendingCount: 0 }) ?? "",
+      commitRefusal({ ...committable, pending: [] }) ?? "",
       /nothing uncommitted/,
     );
+  });
+
+  it("refuses while a conflict resolution holds the branch", () => {
+    // The run is terminal, so the active-run refusal above says nothing, and the
+    // resolution's merge is open in this very checkout with its conflicted files
+    // still marked. `add -A` and a commit put the markers on the branch as a
+    // merge commit, which then lands as a fast-forward.
+    const refusal = commitRefusal({ ...committable, resolutionRunning: true });
+    assert.match(refusal ?? "", /resolving a conflict on uf\/repo-1234abcd/);
+    assert.match(refusal ?? "", /conflict markers/);
+  });
+
+  it("refuses a checkout a cut-off resolution left mid-merge", () => {
+    // The same merge with nobody left to finish or roll it back: a restart while
+    // the resolution ran. Nothing records that it is running any more, so the
+    // status letters are the evidence.
+    const refusal = commitRefusal({
+      ...committable,
+      pending: [...committable.pending, { path: "src/parser.ts", code: "UU" }],
+    });
+    assert.match(refusal ?? "", /middle of a merge/);
+    assert.match(refusal ?? "", /src\/parser\.ts is still unmerged/);
+    assert.match(refusal ?? "", /git merge --abort/);
+  });
+
+  it("counts every unmerged state git reports, and only those", () => {
+    for (const code of ["UU", "AU", "UA", "DU", "UD", "AA", "DD"]) {
+      assert.match(
+        commitRefusal({ ...committable, pending: [{ path: "f.txt", code }] }) ?? "",
+        /middle of a merge/,
+        `${code} is unmerged`,
+      );
+    }
+    // The control: every ordinary state in the fixture, renames and copies
+    // included, is still committable, so the refusal above is about the letters.
+    for (const code of ["M ", "MM", "AM", "R ", "C ", "D ", "??"]) {
+      assert.equal(
+        commitRefusal({ ...committable, pending: [{ path: "f.txt", code }] }),
+        null,
+        `${code} is not unmerged`,
+      );
+    }
+  });
+
+  it("refuses a merge still open once every conflicted file is staged", () => {
+    // `git add` marks a file resolved whatever is still in it, so a merge with
+    // no unmerged path left can hold markers all the same. `MERGE_HEAD` is what
+    // says a merge is open.
+    const refusal = commitRefusal({
+      ...committable,
+      pending: [{ path: "src/parser.ts", code: "M " }],
+      mergeInProgress: true,
+    });
+    assert.match(refusal ?? "", /middle of a merge/);
+    assert.doesNotMatch(refusal ?? "", /still unmerged/);
   });
 
   it("refuses a message that was given and then emptied", () => {
@@ -621,6 +862,7 @@ describe("purgeRefusal", () => {
     branchExists: true,
     confirmBranch: "uf/repo-1234abcd",
     chain: [{ runId: "aaaaaaaa", status: "failed" as const, iterations: 1 }],
+    resolutionRunning: false,
   };
 
   it("allows an unmerged branch, which is the whole point of it", () => {
@@ -649,6 +891,15 @@ describe("purgeRefusal", () => {
         `${runStatus} should not be purgeable`,
       );
     }
+  });
+
+  it("refuses while a conflict resolution holds the branch", () => {
+    // `activeRuns()` does not see a resolution, so the purge force-removed the
+    // checkout its billed agent was editing, and its `after` then had no merge
+    // to roll back.
+    const refusal = purgeRefusal({ ...purgeable, resolutionRunning: true });
+    assert.match(refusal ?? "", /resolving a conflict on uf\/repo-1234abcd/);
+    assert.match(refusal ?? "", /Wait for the resolution to finish/);
   });
 
   it("says so when the branch is already gone", () => {

@@ -2561,7 +2561,7 @@ export interface DiffFileDTO {
   added: number | null;
   deleted: number | null;
   binary: boolean;
-  /** Null when the patch was withheld to stay inside the size budget. */
+  /** Null when the patch was left out, by the budget or by a read that failed. */
   patch: string | null;
   patchTruncated: boolean;
 }
@@ -2572,13 +2572,22 @@ export interface RunDiffDTO {
   reason: string | null;
   base: string | null;
   branch: string | null;
+  /**
+   * Set when the diff is measured from the target commit a merge brought into
+   * the branch rather than from `base`, so the target's own changes are not
+   * counted as the run's.
+   */
+  measuredFrom: { merge: string; commit: string; target: string } | null;
   /** The commit `branch` pointed at when the diff was taken; null without a range. */
   head: string | null;
   files: DiffFileDTO[];
   filesChanged: number;
   added: number;
   deleted: number;
+  /** Files listed without a patch, for the budget or for a failed read. */
   omittedPatches: number;
+  /** Why no file has a patch when git could not give them; null when only the budget left files out. */
+  patchFailure: string | null;
   uncommitted: string[];
   caveat: string | null;
 }
@@ -2695,6 +2704,7 @@ export interface ResolutionChangeDTO {
   commit: string;
   files: DiffFileDTO[];
   omittedPatches: number;
+  patchFailure: string | null;
 }
 
 /** One `<<<<<<< … >>>>>>>` block, as the merge would leave it. */
@@ -2744,6 +2754,8 @@ export interface PendingWorkDTO {
   files: PendingChangeDTO[];
   /** False when `git status` failed, so `files` says nothing about this checkout. */
   readable: boolean;
+  /** Mid-merge, so the listed paths are a resolution's half-done work and never committed. */
+  merging: boolean;
   /** The run's task as a commit subject, offered as the default. */
   suggestedMessage: string;
 }
@@ -2756,7 +2768,8 @@ export interface LandStateDTO {
   /** True when the target was deduced from the base commit, not recorded. */
   targetInferred: boolean;
   branchExists: boolean;
-  ahead: number;
+  /** Null when git could not count them — never the same as none. */
+  ahead: number | null;
   behind: number;
   merged: boolean;
   /** Landed by this tool and unchanged since — how a squash reads as done. */
@@ -2779,9 +2792,9 @@ export interface LandStateDTO {
 
 /**
  * The branch's other exit: pushed to `origin`, with a pull request opened on
- * it. Every refusal here is a standing condition rather than something a press
- * would discover, which is why the card can state it instead of offering a
- * button.
+ * it. Every refusal here is one the press would give, a standing condition of
+ * the install or a branch something can still commit to, which is why the card
+ * can state it instead of offering a button.
  */
 export interface DeliveryStateDTO {
   possible: boolean;
@@ -2791,7 +2804,7 @@ export interface DeliveryStateDTO {
   remote: string | null;
   head: string | null;
   base: string | null;
-  /** What a previous press opened, off the run's own `deliver` event. */
+  /** What a previous press on this branch opened. See `deliveredPullRequest`. */
   delivered: { url: string; number: number; at: number } | null;
 }
 
@@ -2877,7 +2890,8 @@ export interface BranchSummaryDTO {
   repoRoot: string;
   repoLabel: string;
   createdAt: number;
-  ahead: number;
+  /** Null when git could not count them — never the same as none. */
+  ahead: number | null;
   merged: boolean;
   landedUnchanged: boolean;
   /**

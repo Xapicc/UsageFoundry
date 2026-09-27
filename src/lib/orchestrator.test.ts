@@ -5911,6 +5911,86 @@ describe("the terminus a picked-up run must have", () => {
 });
 
 /**
+ * Covers the holders of a branch that are not runs, at the pick-up's door.
+ *
+ * A conflict resolution and a merge-queue land both hold a finished run's
+ * branch, and neither is in `activeRuns()`, so the slot check above them said
+ * nothing and `reopenRun` answered `ok`. Executed against a queue row held at
+ * `landing`, the run went `running` in the slot the resolution child was
+ * editing: a work cycle is granted `git add` and `git commit`, and the tree it
+ * was handed was a merge with its conflict markers still in it. Silent in this
+ * file's sense: the row reads `queued`, the page looks right, and the markers
+ * surface on the branch a cycle later.
+ *
+ * So the assertion is the refusal *and* the untouched status, as for the
+ * terminus pair, with a settled resolution and a landed row as the control that
+ * the refusal is about the live ones.
+ */
+describe("picking up a run whose branch something else holds", () => {
+  let seq = 0;
+
+  /** A stopped isolated run, with the folder occupied so a pick-up starts nothing. */
+  function stoppedRun(): string {
+    const id = `held-${++seq}`;
+    const insert = db().prepare(
+      `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                         created_at, finished_at, work_dir, isolation, worktree_branch)
+       VALUES (?, ?, 'do the thing', ?, '{"maxIterations":1}', 1, 0, ?, ?, ?, 'worktree', ?)`,
+    );
+    insert.run(id, `${ws}/Other`, "stopped", Date.now(), Date.now(), `${ws}/Other`, `uf/held-${seq}`);
+    insert.run(`${id}-busy`, `${ws}/Other`, "running", Date.now(), null, `${ws}/Other`, null);
+    return id;
+  }
+
+  function resolution(runId: string, status: "running" | "completed"): void {
+    db()
+      .prepare(
+        "INSERT INTO run_reviews (id, run_id, kind, created_at, status) VALUES (?, ?, 'resolve', ?, ?)",
+      )
+      .run(`${runId}-resolve-${status}`, runId, Date.now(), status);
+  }
+
+  function queueRow(runId: string, status: "landing" | "resolving" | "landed"): void {
+    db()
+      .prepare(
+        `INSERT INTO merge_queue (id, batch_id, run_id, position, strategy, status, created_at)
+         VALUES (?, ?, ?, 0, 'merge', ?, ?)`,
+      )
+      .run(`${runId}-queue-${status}`, `${runId}-batch`, runId, status, Date.now());
+  }
+
+  const PICK_UP = { maxIterations: 5, maxDurationMinutes: 60 };
+
+  for (const [what, hold, expected] of [
+    ["a conflict resolution is running", (id: string) => resolution(id, "running"), /resolving a conflict/],
+    ["the merge queue is resolving it", (id: string) => queueRow(id, "resolving"), /resolving a conflict/],
+    ["the merge queue is landing it", (id: string) => queueRow(id, "landing"), /landing its branch/],
+  ] as const) {
+    it(`refuses while ${what}, and leaves the row alone`, () => {
+      const id = stoppedRun();
+      hold(id);
+
+      const outcome = reopenRun(id, PICK_UP);
+
+      assert.equal(outcome.ok, false, "picked up into a checkout something else holds");
+      assert.match(outcome.ok ? "" : outcome.reason, expected);
+      assert.equal(getRun(id)!.status, "stopped");
+    });
+  }
+
+  it("picks it up once the resolution and the land have finished", () => {
+    const id = stoppedRun();
+    resolution(id, "completed");
+    queueRow(id, "landed");
+
+    const outcome = reopenRun(id, PICK_UP);
+
+    assert.equal(outcome.ok, true, outcome.ok ? "" : `refused: ${outcome.reason}`);
+    assert.equal(getRun(id)!.status, "queued");
+  });
+});
+
+/**
  * Covers what the sweeper does with one parked run.
  *
  * It earns a test on exactly the grounds `selectPromotable` and

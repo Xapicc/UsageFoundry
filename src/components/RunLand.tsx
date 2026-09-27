@@ -12,6 +12,7 @@ import type {
 } from "@/lib/apiTypes";
 import { fmtDateTime, fmtUSD, pollFailureMessage } from "@/lib/format";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
+import { landCardLine, purgeLabel, purgeSheetText } from "@/lib/landView";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonRow } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
@@ -120,12 +121,15 @@ function ConflictFile({ file }: { file: ConflictFileDTO }) {
  */
 function PendingWork({
   pending,
+  resolving,
   busy,
   message,
   onMessage,
   onCommit,
 }: {
   pending: NonNullable<LandStateDTO["pending"]>;
+  /** A conflict resolution is working, and what is listed is its open merge. */
+  resolving: boolean;
   busy: boolean;
   message: string;
   onMessage: (value: string) => void;
@@ -164,22 +168,41 @@ function PendingWork({
             <Hint>{hidden} further path{hidden === 1 ? "" : "s"} not listed</Hint>
           )}
 
-          <ButtonRow className="mt-2.5">
-            <Input
-              className="min-w-0 flex-1"
-              value={message}
-              onChange={(e) => onMessage(e.target.value)}
-              placeholder={pending.suggestedMessage}
-              aria-label="Commit message"
-            />
-            <Button variant="secondary" onClick={onCommit} disabled={busy}>
-              {busy ? "Committing…" : `Commit ${pending.count}`}
-            </Button>
-          </ButtonRow>
-          <Hint>
-            Commits everything above onto the branch and frees the checkout slot
-            for the next run
-          </Hint>
+          {/* Neither is work to commit. Offering Commit here is how a
+              resolution's conflict markers reached the branch and then the
+              target, so the button is not drawn rather than drawn to be
+              refused; `commitRefusal` refuses both all the same. */}
+          {resolving ? (
+            <Hint>
+              Claude is resolving conflicts in this checkout, so nothing is
+              offered until it finishes
+            </Hint>
+          ) : pending.merging ? (
+            <Hint tone="warn">
+              A conflict resolution was cut off here mid-merge, so nothing is
+              offered: run <span className="mono whitespace-nowrap">git merge --abort</span> in
+              this checkout, then resolve again
+            </Hint>
+          ) : (
+            <>
+              <ButtonRow className="mt-2.5">
+                <Input
+                  className="min-w-0 flex-1"
+                  value={message}
+                  onChange={(e) => onMessage(e.target.value)}
+                  placeholder={pending.suggestedMessage}
+                  aria-label="Commit message"
+                />
+                <Button variant="secondary" onClick={onCommit} disabled={busy}>
+                  {busy ? "Committing…" : `Commit ${pending.count}`}
+                </Button>
+              </ButtonRow>
+              <Hint>
+                Commits everything above onto the branch and frees the checkout
+                slot for the next run
+              </Hint>
+            </>
+          )}
         </>
       )}
     </div>
@@ -336,6 +359,7 @@ export function RunLand({ run }: { run: RunDTO }) {
   }
 
   const canLand = state.blocked === null;
+  const line = landCardLine(state);
   // A negative list, unlike `RunDiff`'s, so a new terminal status reads settled
   // with no edit here — which is right for `needs-review` and is worth stating,
   // because the two components spell the same idea opposite ways round.
@@ -352,7 +376,9 @@ export function RunLand({ run }: { run: RunDTO }) {
   // offered beside Delete: when git can see the work is safe, that is the
   // button, and two destructive controls side by side is how the wrong one
   // gets pressed.
-  const canPurge = state.branchExists && settled && !canDelete;
+  // Not while a resolution works: its checkout is what a purge force-removes,
+  // with a billed agent editing files inside it.
+  const canPurge = state.branchExists && settled && !canDelete && !resolving;
   // The other exit, and the only one here that leaves the machine. Offered once
   // per pull request: a second press would push again — updating the pull
   // request — and then be refused by GitHub's "already exists", so what it
@@ -370,7 +396,7 @@ export function RunLand({ run }: { run: RunDTO }) {
     <Card emphasis={canLand || canResolve ? "primary" : "default"}>
       <CardTitle>
         Land this work
-        {state.landedAt && <Badge tone="ok">landed</Badge>}
+        {line.kind === "landed" && <Badge tone="ok">landed</Badge>}
       </CardTitle>
 
       <div className="text-sm tabular-nums text-ink-muted">
@@ -386,7 +412,7 @@ export function RunLand({ run }: { run: RunDTO }) {
         {state.branchExists && (
           <>
             {" · "}
-            {state.ahead} commit{state.ahead === 1 ? "" : "s"} ahead
+            {state.ahead ?? "—"} commit{state.ahead === 1 ? "" : "s"} ahead
             {state.behind > 0 && `, ${state.behind} behind`}
             {" · "}
             <span
@@ -440,6 +466,13 @@ export function RunLand({ run }: { run: RunDTO }) {
           a card that stacks them reads as three separate things happening — so
           the outcome of the last action, above, replaces this while it stands.
 
+          The same fact only while the landed work is still the whole branch.
+          A landed run can be reopened and commit again, and the landed line
+          used to win regardless: Land withheld with nothing saying why, and
+          Purge offered under a notice that the work was merged. So once the
+          branch has moved, `landCardLine` puts the refusal first and the land
+          below it as history.
+
           The refusal is that line whenever there is one, and the conflict list
           below is its elaboration rather than a rival statement. It used to be
           the other way round: a conflict replaced the refusal outright, and
@@ -452,19 +485,22 @@ export function RunLand({ run }: { run: RunDTO }) {
           question. */}
       {!error && !note && (
         <>
-          {state.landedAt ? (
+          {line.kind === "landed" && (
             <Notice tone="info" quiet className="mt-3">
-              Merged into <span className="mono">{state.landedInto}</span> on{" "}
-              {fmtDateTime(state.landedAt)} ({state.landedStrategy}). Reopening
-              this run can put new commits on the branch, so this describes a
-              moment, not a permanent state.
+              Merged into <span className="mono">{line.landed.into}</span> on{" "}
+              {fmtDateTime(line.landed.at)} ({line.landed.strategy}).
             </Notice>
-          ) : (
-            state.blocked && (
-              <Notice tone={state.merged ? "info" : "warn"} className="mt-3">
-                {state.blocked}
-              </Notice>
-            )
+          )}
+          {(line.kind === "refusal" || line.kind === "moved") && line.refusal && (
+            <Notice tone={state.merged ? "info" : "warn"} className="mt-3">
+              {line.refusal}
+            </Notice>
+          )}
+          {line.kind === "moved" && (
+            <Hint>
+              Last landed into <span className="mono">{line.landed.into}</span> on{" "}
+              {fmtDateTime(line.landed.at)} ({line.landed.strategy})
+            </Hint>
           )}
 
           {state.preview.outcome === "conflict" && (
@@ -497,6 +533,7 @@ export function RunLand({ run }: { run: RunDTO }) {
       {state.pending && (
         <PendingWork
           pending={state.pending}
+          resolving={resolving}
           busy={busy}
           message={message}
           onMessage={setMessage}
@@ -561,7 +598,8 @@ export function RunLand({ run }: { run: RunDTO }) {
                     <Hint tone="warn">
                       {resolution.changed.omittedPatches} file
                       {resolution.changed.omittedPatches === 1 ? "" : "s"} listed
-                      without contents — too large to render here
+                      without contents —{" "}
+                      {resolution.changed.patchFailure ?? "too large to render here"}
                     </Hint>
                   )}
                   <Hint>
@@ -754,19 +792,12 @@ export function RunLand({ run }: { run: RunDTO }) {
           </>
         }
         confirmVariant="danger"
-        confirmLabel={`Purge ${state.ahead} commit${state.ahead === 1 ? "" : "s"}`}
+        confirmLabel={purgeLabel(state.ahead)}
         onConfirm={() => void act("purge")}
         cancelLabel="Keep it"
         busy={busy}
       >
-        This deletes the branch, its {state.ahead} commit
-        {state.ahead === 1 ? "" : "s"}
-        {state.pending
-          ? ` and ${state.pending.count} uncommitted path${
-              state.pending.count === 1 ? "" : "s"
-            }`
-          : ""}
-        , and its checkout. None of it is recoverable from here.
+        {purgeSheetText(state.ahead, state.pending)}
       </Sheet>
     </Card>
   );

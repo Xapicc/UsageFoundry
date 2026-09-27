@@ -696,13 +696,52 @@ function setCursor(id: string, at: number): void {
 }
 
 /**
+ * Move the cursor to `cursorAt`, but only on the row the decision was made
+ * from. False when a Pause, Remove or Change landed after the tick read it.
+ *
+ * The row the tick holds is older than every earlier schedule's snapshot and
+ * start in the same tick, which is seconds when several share "every day at
+ * 09:00". The check is in the UPDATE itself, so checking and claiming are one
+ * statement. Pause, Resume and Change all write `updated_at`, Remove takes the
+ * row, and none of the tick's own writes touches that stamp, so an unchanged
+ * one means nobody has pressed anything since.
+ */
+function claimWindow(schedule: WorkflowSchedule, cursorAt: number): boolean {
+  return (
+    db()
+      .prepare(
+        `UPDATE workflow_schedules SET cursor_at=?
+          WHERE id=? AND paused=0 AND updated_at=?`,
+      )
+      .run(cursorAt, schedule.id, schedule.updatedAt).changes > 0
+  );
+}
+
+/** The row still exists, is still running and has not been edited since it was read. */
+function isUnchangedSince(schedule: WorkflowSchedule): boolean {
+  const current = getSchedule(schedule.workflowId);
+  return (
+    current !== null &&
+    current.id === schedule.id &&
+    !current.paused &&
+    current.updatedAt === schedule.updatedAt
+  );
+}
+
+/**
  * Record what a fire decision came to, collapsing a repeat into one state.
+ * False, recording nothing, when the row was paused, removed or edited since
+ * `schedule` was read.
  *
  * The streak keys on the *code* and not on the sentence, which is what makes it
  * collapse the case it exists for: an hourly schedule firing into a workflow
  * whose previous instance never finishes produces a reason whose run count moves
  * every hour, and a streak that broke on that would be the fifty identical rows
  * again with a counter stuck at one.
+ *
+ * Conditional for `claimWindow`'s reason: an edit resets `last_*` because the
+ * new recurrence has no history, and an outcome of the old one written over
+ * that reset puts the replaced schedule's record on the new one's card.
  */
 function recordOutcome(
   schedule: WorkflowSchedule,
@@ -711,14 +750,14 @@ function recordOutcome(
   fireAt: number,
   instanceId: string | null,
   now: number,
-): void {
+): boolean {
   const continues = schedule.lastCode === code;
-  db()
+  const written = db()
     .prepare(
       `UPDATE workflow_schedules
           SET last_code=?, last_reason=?, last_at=?, last_fire_at=?,
               last_instance_id=?, streak=?, streak_since=?
-        WHERE id=?`,
+        WHERE id=? AND paused=0 AND updated_at=?`,
     )
     .run(
       code,
@@ -729,12 +768,15 @@ function recordOutcome(
       continues ? schedule.streak + 1 : 1,
       continues ? (schedule.streakSince ?? now) : now,
       schedule.id,
+      schedule.updatedAt,
     );
+  if (written.changes === 0) return false;
   // The caller may record twice in one tick (missed, then what happened to the
   // newest window), and the second record has to see what the first wrote.
   schedule.lastCode = code;
   schedule.streak = continues ? schedule.streak + 1 : 1;
   schedule.streakSince = continues ? (schedule.streakSince ?? now) : now;
+  return true;
 }
 
 function missedSentence(missed: number[], timeZone: string): string {
@@ -829,7 +871,7 @@ export async function tickSchedules(): Promise<void> {
         // Loud rather than swallowed: this is the only surface the operator
         // has, and a schedule that has quietly stopped deciding looks exactly
         // like one that is between occurrences.
-        recordOutcome(
+        const recorded = recordOutcome(
           schedule,
           "refused",
           err instanceof Error ? err.message : String(err),
@@ -837,6 +879,11 @@ export async function tickSchedules(): Promise<void> {
           null,
           now,
         );
+        // The row was paused, removed or edited mid-fire, so the card no longer
+        // has a place for this failure and the log is the only one left.
+        if (!recorded) {
+          console.error(`[usagefoundry] Schedule ${schedule.id} failed mid-fire:`, err);
+        }
       }
     }
   } catch (err) {
@@ -858,6 +905,16 @@ export async function tickSchedules(): Promise<void> {
  * overruns cannot decide the same window twice. The cost is that a process dying
  * between the two loses that window with nothing recorded — the safe direction,
  * and the same one `reconcileSchedulesOnBoot` takes.
+ *
+ * `schedule` is the row as the tick read it, and it can be stale twice over:
+ * before the claim, by every earlier schedule's snapshot and start in the same
+ * tick, and after it, by this one's own snapshot. A Pause, Remove or Change the
+ * operator pressed in either gap has to win, because the card already shows it
+ * and this is the one start with nobody present to see otherwise. So the window
+ * is claimed only off an unchanged row, the row is read again once the snapshot
+ * is in, and a fire the operator overtook starts nothing and records nothing.
+ * That loses the window rather than retrying it, which is the direction every
+ * other rule here takes.
  */
 async function fireIfDue(schedule: WorkflowSchedule, now: number): Promise<void> {
   const workflow = getWorkflow(schedule.workflowId);
@@ -872,13 +929,20 @@ async function fireIfDue(schedule: WorkflowSchedule, now: number): Promise<void>
     // already means "do not fire, and do not make the window up afterwards" —
     // the cursor stays put, so clearing the hold records the windows that
     // passed as missed rather than pressing Run for each of them. A schedule's
-    // own pause never gets here: `activeSchedules` filters those out in SQL.
+    // own pause is not this argument: `activeSchedules` filters those out in
+    // SQL, and `claimWindow` below refuses one pressed since that read.
     paused: newWorkPaused(),
     lastFireAt: schedule.cursorAt,
     liveCount:
       liveRunsOf(schedule.workflowId).length + liveBlocksOf(schedule.workflowId),
     now,
   });
+
+  // An idle tick or the install-wide hold: nothing was decided about, so there
+  // is no window to claim and nothing to record. Every answer that records or
+  // fires moves the cursor, since `nextOccurrence` is strictly after it.
+  if (decision.cursorAt === null || decision.cursorAt === schedule.cursorAt) return;
+  if (!claimWindow(schedule, decision.cursorAt)) return;
 
   if (decision.missed.length > 0) {
     recordOutcome(
@@ -889,9 +953,6 @@ async function fireIfDue(schedule: WorkflowSchedule, now: number): Promise<void>
       null,
       now,
     );
-  }
-  if (decision.cursorAt !== null && decision.cursorAt !== schedule.cursorAt) {
-    setCursor(schedule.id, decision.cursorAt);
   }
 
   const action = decision.action;
@@ -910,10 +971,13 @@ async function fireIfDue(schedule: WorkflowSchedule, now: number): Promise<void>
     return;
   }
 
+  const snapshot = await currentSnapshot();
+  if (!isUnchangedSince(schedule)) return;
+
   // Named as the schedule's, so the runs this fire creates are distinguishable
   // from the same graph started by hand. This is the one press of Run with
   // nobody present at all, which is exactly the case an audit column exists for.
-  const outcome = startWorkflow(schedule.workflowId, await currentSnapshot(), {
+  const outcome = startWorkflow(schedule.workflowId, snapshot, {
     kind: "schedule",
     scheduleId: schedule.id,
   });

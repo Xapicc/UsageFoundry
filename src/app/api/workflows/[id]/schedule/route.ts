@@ -7,8 +7,9 @@ import {
   putSchedule,
   scheduleRefusal,
   scheduleView,
-} from "@/lib/schedules";
-import { getWorkflow } from "@/lib/workflows";
+} from "../../../../../lib/schedules";
+import { readJsonObject } from "../../../../../lib/http";
+import { getWorkflow } from "../../../../../lib/workflows";
 import { scheduleDTO } from "../../dto";
 import { auditMutation } from "../../../../../lib/requestLog";
 
@@ -63,11 +64,24 @@ async function patchHandler(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-  // `=== true` rather than `Boolean(...)`, the rule `continueAfterDone` follows:
-  // this decides whether unattended agents start, so a string off the wire must
-  // fail towards not starting them.
-  const paused = body.paused === true;
+  const read = await readJsonObject(req);
+  if (!read.ok) return read.response;
+  // A boolean or a 400, and no reading of anything else either way. This is a
+  // two-way switch and `false` is **resume**, the direction that starts
+  // unattended agents: `=== true` read `"true"`, `1`, a missing field and a body
+  // that did not parse all as a resume, with a 200. Reading them as a pause
+  // instead would answer a garbled resume with a success it never had.
+  const paused = read.body.paused;
+  if (typeof paused !== "boolean") {
+    return NextResponse.json(
+      {
+        error:
+          `Send "paused": true or false; got ${JSON.stringify(paused) ?? "no \"paused\" field"}. ` +
+          "The schedule was left as it was.",
+      },
+      { status: 400 },
+    );
+  }
   if (!paused && scheduleRefusal(workflow)) {
     return NextResponse.json(
       { error: scheduleRefusal(workflow) },

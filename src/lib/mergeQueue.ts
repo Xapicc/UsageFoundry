@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { db } from "./db";
 import {
+  abortInterruptedResolutions,
   landRun,
   landState,
   resolveConflicts,
@@ -569,9 +570,21 @@ export function cancelQueuedFor(
  * happened. The merge either completed or was rolled back, and `landState` will
  * say which from git the next time anyone asks — inventing an answer here would
  * be a claim about a write this process did not see finish.
+ *
+ * A row caught `resolving` is the exception on the git side, not on the row's:
+ * its merge is in the run's own checkout, not the operator's, and it is open
+ * rather than part-written, because only the resolution's `after` finishes it
+ * and that died with the process. Left there, Commit followed by Land put its
+ * conflict markers on the target. So that merge is aborted, as `after` would
+ * have aborted it; one caught `landing` is in the operator's checkout and is
+ * left for them.
  */
-export function reconcileMergeQueueOnBoot(): void {
+export async function reconcileMergeQueueOnBoot(): Promise<void> {
   const now = Date.now();
+  // Read before the update below rewrites the status it is read by.
+  const resolving = db()
+    .prepare("SELECT DISTINCT run_id FROM merge_queue WHERE status = 'resolving'")
+    .all() as { run_id: string }[];
   db()
     .prepare(
       "UPDATE merge_queue SET status='failed', message=?, finished_at=?" +
@@ -587,6 +600,7 @@ export function reconcileMergeQueueOnBoot(): void {
         " WHERE status = 'queued'",
     )
     .run("The server restarted. Queued merges are never resumed on their own.", now);
+  await abortInterruptedResolutions(resolving.map((row) => row.run_id));
 }
 
 /* ------------------------------------------------------------------ */

@@ -488,7 +488,13 @@ function FileFacts({ file, changedKnown }: { file: MapFile; changedKnown: boolea
           Outside the checkout, so the diff can say nothing about it
         </Fact>
       ) : changedKnown ? (
-        <Fact label="Diff">{file.inDiff ? "Listed by the branch diff" : "Not changed"}</Fact>
+        <Fact label="Diff">
+          {file.inDiff
+            ? "Listed by the branch diff"
+            : file.uncommitted
+              ? "Uncommitted in the checkout, so not on the branch"
+              : "Not changed"}
+        </Fact>
       ) : (
         // With no diff the changed set is unknown, and "not changed" over a file
         // nobody can speak for is the claim this whole reconciliation exists to

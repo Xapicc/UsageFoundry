@@ -234,7 +234,12 @@ is not only about the sandbox. `UF_LOCK_CLAUDE_HOME=1` closes it by giving
 the entries the CLI writes — `projects/` first, because that is the metering
 path every window and every guard reads. Both halves are load-bearing: a
 root-owned file inside a directory the agents own is a file they can delete and
-replace. It is off by default and it is a separate switch from `UF_SANDBOX` in
+replace. The directory root takes is left group-writable and **sticky** (mode
+`1770`), not read-only: Claude Code cannot refresh an expired login or save a
+credential in a directory it cannot write, so a read-only one would quietly stop
+the install authenticating, while the sticky bit is what still refuses a run the
+unlink or rename over root's `settings.json` that group-write would otherwise
+allow. It is off by default and it is a separate switch from `UF_SANDBOX` in
 both directions, because each is worth having without the other. What it costs:
 it changes a directory on your **host** that you also use outside this
 container, and `docs/install.md` says exactly what you lose and how to undo it.

@@ -183,13 +183,21 @@ export async function register() {
       const { closeStrandedValidations } = await import("./lib/validation");
       closeStrandedValidations(strandedAssists);
 
+      // And a resolution among them left its merge open in a checkout, since
+      // its `after` is the only thing that closes one. Left open, the Land card
+      // offered to commit the conflict markers onto the branch.
+      const { abortInterruptedResolutions } = await import("./lib/land");
+      await abortInterruptedResolutions(
+        strandedAssists.filter((row) => row.kind === "resolve").map((row) => row.run_id),
+      );
+
       // And once more for the merge queue, where the rule is stricter than for
       // either of those: a queued merge is *cancelled*, never resumed. It writes
       // into the operator's own checkout, and a server coming back up and merging
       // four branches into the tree someone is working in is the one thing a
       // queue must never do by itself.
       const { reconcileMergeQueueOnBoot } = await import("./lib/mergeQueue");
-      reconcileMergeQueueOnBoot();
+      await reconcileMergeQueueOnBoot();
 
       // The fourth child process, and the same rule as the first three: the chat
       // turn died with the process, so the row says so. Nothing is re-asked — a

@@ -82,6 +82,16 @@
   shutdown both answered both. Caveat: the rows fail at "no branch", so no
   real `git merge` into a checkout ran, and the script is not in the tree.
 
+- **The Land card offers no Commit on a checkout a resolution holds or left
+  mid-merge, 2026-09-27**, a standalone build of this change served against a
+  scratch `DATA_DIR`, one seeded run, and `GET /api/runs/<id>` and `/land`
+  intercepted by Playwright at 390px and 1280px. An ordinary pending path drew
+  Commit and Purge; a `UU` path with `merging` drew a warn hint and Purge but
+  no Commit; a `running` resolution drew neither, with the hint in Commit's
+  place. No console error, no sideways scroll. Caveat: the DTOs were written
+  by hand, so this is the render and not `landState` producing them, and
+  neither skin but the standard light one was looked at.
+
 ## Not yet verified by hand
 
 - **The Land verify field was never saved**, so its check covers the form, not
@@ -130,3 +140,19 @@
   a listener that accepts and never answers (`nc -lk 127.0.0.1 9999`), then
   reading the `run_reviews` row and `git worktree list` after the hour. The CLI
   may give up by itself first, which is worth knowing too.
+
+- **No real restart has been taken during a real resolution.** The boot's
+  `abortInterruptedResolutions` is driven by `mergeQueueDrain.test.ts` over a
+  slot stranded by hand, and Commit and Purge refusing a live one are pure
+  tests plus the render above. Settle in the container: Resolve with Claude on
+  a run whose slot still holds its branch, `docker compose restart` while the
+  child works, then confirm the boot log's "Rolled back the merge" line, a clean
+  `git status` in the slot, and no Commit on the card.
+
+- **The uncounted Purge, the moved-since-landed Land card and the kept
+  strategy pick have not been rendered** (2026-09-27, `b69e36c`, `b44df6c`,
+  `4418cba`). Each decision is unit-tested in `landView.test.ts` and
+  `land.test.ts`; no browser drew them. Settle by driving `/runs/[id]` per the
+  run-page-states recipe with a `GET /api/runs/<id>/land` of `ahead: null` and
+  of `landedAt` set with `merged: false`, and on `/branches` pick Squash, press
+  a row's Commit, then read the queue POST body for `strategy: "squash"`.

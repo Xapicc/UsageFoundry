@@ -485,3 +485,31 @@ describe("parkTrigger — which of the two parks put a run where it is", () => {
     assert.equal(parkTrigger([]), null);
   });
 });
+
+/**
+ * A purge row is the run's only record of what was destroyed. `purgeBranch`
+ * writes either count as null when git would not give it, and a row that
+ * printed that as "null commits" — or as 0, which is what the counts used to be
+ * — says the one irreversible press cost nothing.
+ */
+describe("describeEvent — a purge whose counts could not be taken", () => {
+  const purgeEvent = (payload: Record<string, unknown>): RunEventDTO => ({
+    id: 3,
+    runId: "r",
+    ts: 0,
+    kind: "land",
+    payload: { branch: "uf/x", deleted: true, purged: true, ...payload },
+  });
+
+  it("states the counts it has", () => {
+    const entry = describeEvent(purgeEvent({ commits: 3, discarded: 1 }));
+    assert.equal(entry?.text, "uf/x — 3 commits and 1 uncommitted path gone");
+  });
+
+  it("says a count is missing rather than printing it", () => {
+    const entry = describeEvent(purgeEvent({ commits: null, discarded: null }));
+    assert.ok(entry);
+    assert.doesNotMatch(entry.text, /null|\d/);
+    assert.match(entry.text, /uncounted commits/);
+  });
+});

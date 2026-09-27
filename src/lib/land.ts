@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { runVerify } from "./landGate";
-import { openPullRequest, planDelivery } from "./delivery";
+import { openPullRequest, planDelivery, type DeliveryRequest } from "./delivery";
 import path from "node:path";
 import { git } from "./git";
 import { withRepoAdmin } from "./repoLock";
@@ -164,6 +164,12 @@ export interface PendingWork {
   files: PendingChange[];
   /** False when `git status` failed, so `files` says nothing about this checkout. */
   readable: boolean;
+  /**
+   * The checkout is in the middle of a merge (`MERGE_HEAD`, or a path git left
+   * unmerged), so what is listed is a conflict resolution's half-done work,
+   * markers and all, and `commitRefusal` will not commit it.
+   */
+  merging: boolean;
   /** The run's task as a commit subject, offered as the default. */
   suggestedMessage: string;
 }
@@ -199,7 +205,13 @@ export interface LandState {
    */
   targetInferred: boolean;
   branchExists: boolean;
-  ahead: number;
+  /**
+   * Commits on the branch that are not in the target — or, with no target to
+   * count against, not in the commit the run started from. Null when git could
+   * not count them, which is never the same as none: Purge reads this out as
+   * what it is about to destroy.
+   */
+  ahead: number | null;
   behind: number;
   merged: boolean;
   /**
@@ -420,6 +432,49 @@ async function targetOf(
   return descends.ok ? { branch: head, inferred: true } : null;
 }
 
+/**
+ * The range a branch's own commits are counted over, or null when there is
+ * nothing to count them against.
+ *
+ * The target when there is one, because that is what "ahead" means everywhere
+ * a branch is offered for landing. Without one, the commit the run started
+ * from: `worktree_base` is recorded for every isolated run, so a run isolated
+ * from a detached HEAD — which records no target by design — still has a count,
+ * where it used to get a placeholder 0 that the Purge confirmation then read
+ * out as "nothing to lose".
+ */
+export function aheadRangeFor(s: {
+  target: string | null;
+  base: string | null;
+  branch: string;
+}): string | null {
+  const from = s.target ?? s.base;
+  return from ? `${from}..${s.branch}` : null;
+}
+
+/**
+ * One number out of `rev-list --count`, or null when git did not give one.
+ *
+ * The old reading was `Number(stdout) || 0`, and a call git refused has an
+ * empty stdout — so a range naming a target that had since been renamed away
+ * read as a branch with no commits on it.
+ */
+export function parseCount(text: string | null): number | null {
+  if (text === null) return null;
+  const trimmed = text.trim();
+  return /^\d+$/.test(trimmed) ? Number(trimmed) : null;
+}
+
+async function countAhead(
+  repoRoot: string,
+  range: string | null,
+  opts: { timeoutMs?: number } = {},
+): Promise<number | null> {
+  if (!range) return null;
+  const res = await git(repoRoot, ["rev-list", "--count", range], opts);
+  return parseCount(res.ok ? res.stdout : null);
+}
+
 async function checkoutStateOf(folder: string): Promise<CheckoutState> {
   const head = await git(folder, ["rev-parse", "--abbrev-ref", "HEAD"], NO_CLOCK);
   const status = await git(folder, ["status", "--porcelain"], NO_CLOCK);
@@ -465,7 +520,7 @@ export async function landState(
     target: null,
     targetInferred: false,
     branchExists: false,
-    ahead: 0,
+    ahead: null,
     behind: 0,
     merged: false,
     landedUnchanged: false,
@@ -501,11 +556,21 @@ export async function landState(
   // state this answers, and the card has to be able to say so.
   const pending = await pendingWork(run);
   const target = await targetOf(run, repoRoot, checkout);
+  // Both refusals below still leave the branch purgeable, and the Purge sheet
+  // states this figure as what goes — so it is counted from where the run
+  // started rather than left at the placeholder.
+  const aheadOfBase = () =>
+    countAhead(
+      repoRoot,
+      aheadRangeFor({ target: null, base: run.worktree_base, branch }),
+      NO_CLOCK,
+    );
 
   if (!target) {
     return {
       ...base,
       branchExists: true,
+      ahead: await aheadOfBase(),
       checkout,
       pending,
       blocked:
@@ -524,6 +589,7 @@ export async function landState(
     return {
       ...base,
       branchExists: true,
+      ahead: await aheadOfBase(),
       checkout,
       pending,
       target: target.branch,
@@ -537,7 +603,7 @@ export async function landState(
     ["rev-list", "--left-right", "--count", `${target.branch}...${branch}`],
     NO_CLOCK,
   );
-  const [behind = "0", ahead = "0"] = counts.stdout.split(/\s+/);
+  const [behind = "0", ahead = null] = counts.ok ? counts.stdout.split(/\s+/) : [];
 
   const merged = (
     await git(repoRoot, ["merge-base", "--is-ancestor", branch, target.branch], NO_CLOCK)
@@ -571,7 +637,7 @@ export async function landState(
     branchExists: true,
     target: target.branch,
     targetInferred: target.inferred,
-    ahead: Number(ahead) || 0,
+    ahead: parseCount(ahead),
     behind: Number(behind) || 0,
     merged,
     landedUnchanged,
@@ -931,6 +997,91 @@ function loopRefusal(
   );
 }
 
+/** The two ways a branch leaves its run: into the checkout, or off the machine. */
+export type BranchExit = "land" | "deliver";
+
+/** How `unsettledBranchRefusal`'s sentences name the exit they refuse. */
+const EXIT_WORDS: Record<BranchExit, { done: string; does: string; doing: string }> = {
+  land: { done: "landed", does: "lands", doing: "Landing" },
+  deliver: { done: "delivered", does: "delivers", doing: "Delivering" },
+};
+
+/**
+ * Why this branch may not leave by `exit` yet because something can still
+ * commit to it, or null when nothing can.
+ *
+ * The half of `landRefusal` that is about the *run* rather than about git or
+ * the operator's checkout, split out so that `deliverRun` asks the same
+ * question in the same words. Deliver arrived without it: it pushed the branch
+ * of a running, queued or paused run, of a chain link with a successor still
+ * committing, and of a live loop pass, and opened a pull request on half the
+ * work. One function for both exits is what keeps the two doors from drifting
+ * apart again.
+ */
+export function unsettledBranchRefusal(
+  s: {
+    runId: string;
+    runStatus: RunRow["status"];
+    /** Every run on this branch, oldest first. See `ChainMember`. */
+    chain: readonly ChainMember[];
+    /** A live pass of a loop that owns this branch. See `loopStillRepeating`. */
+    loopBlock?: { blockName: string; pass: number | null } | null;
+  },
+  exit: BranchExit,
+): string | null {
+  const words = EXIT_WORDS[exit];
+
+  // `needs-review` is deliberately absent, and it looks like an omission. A run
+  // that asked for review cannot commit again unless somebody reopens it —
+  // exactly like `completed`, `stopped` and `failed`, all three of which are
+  // landable today — and an operator who has read the reason may well decide the
+  // partial work is worth having. Taking the button away would leave them with a
+  // branch and no route to it.
+  if (s.runStatus === "running" || s.runStatus === "queued" || s.runStatus === "paused") {
+    return (
+      "This run is still active. It can commit again at any moment, so anything " +
+      `${words.done} now would be half its work.`
+    );
+  }
+
+  // Before the chain tests rather than inside them: a loop on its first pass is
+  // a chain of one, so the whole block below is skipped and the branch would
+  // read as a finished run's.
+  if (s.loopBlock) {
+    return loopRefusal(
+      s.loopBlock,
+      `anything ${words.done} now would be what it has done so far rather than all of it`,
+    );
+  }
+
+  // One branch, one Land button. Three runs extending each other's work share a
+  // ref, so without this every one of them offers to land it: the operator
+  // merges the first, the second still reads unmerged because the branch has
+  // moved since, and the merge queue would take the same branch three times.
+  // The last link is the one that has all of it. Both refusals name a run,
+  // because "this cannot be landed" with no address is a dead end on a page
+  // whose whole purpose is to get the work merged.
+  if (s.chain.length > 1) {
+    const owner = branchOwner(s.chain);
+    if (owner && owner !== s.runId) {
+      const last = s.chain.find((m) => m.runId === owner)!;
+      return (
+        `Run ${short(owner)} carries this branch on from here and is the one that ${words.does} it ` +
+        `(it is ${last.status}). ${words.doing} from this run would take the same branch a second time, ` +
+        "not a smaller part of it — the whole chain is on one ref."
+      );
+    }
+    const busy = chainBlocker(s.runId, s.chain);
+    if (busy) {
+      return (
+        `Run ${short(busy.runId)} is ${busy.status} on this same branch and can still commit to it, ` +
+        `so anything ${words.done} now would be part of the chain rather than all of it.`
+      );
+    }
+  }
+  return null;
+}
+
 /**
  * Why this branch cannot be landed right now, or null when it can.
  *
@@ -947,7 +1098,8 @@ export function landRefusal(s: {
   target: string | null;
   merged: boolean;
   landedUnchanged: boolean;
-  ahead: number;
+  /** Null when git could not count the branch's commits. */
+  ahead: number | null;
   /** Uncommitted paths in the run's own checkout. */
   pendingCount: number;
   preview: MergePreview;
@@ -963,54 +1115,8 @@ export function landRefusal(s: {
   if (!s.branchExists) return "This branch no longer exists.";
   if (!s.target) return "There is no recorded branch for this work to land into.";
 
-  // `needs-review` is deliberately absent, and it looks like an omission. A run
-  // that asked for review cannot commit again unless somebody reopens it —
-  // exactly like `completed`, `stopped` and `failed`, all three of which are
-  // landable today — and an operator who has read the reason may well decide the
-  // partial work is worth having. Taking the button away would leave them with a
-  // branch and no route to it.
-  if (s.runStatus === "running" || s.runStatus === "queued" || s.runStatus === "paused") {
-    return (
-      "This run is still active. It can commit again at any moment, so anything " +
-      "landed now would be half its work."
-    );
-  }
-
-  // Before the chain tests rather than inside them: a loop on its first pass is
-  // a chain of one, so the whole block below is skipped and the branch would
-  // read as a finished run's.
-  if (s.loopBlock) {
-    return loopRefusal(
-      s.loopBlock,
-      "anything landed now would be what it has done so far rather than all of it",
-    );
-  }
-
-  // One branch, one Land button. Three runs extending each other's work share a
-  // ref, so without this every one of them offers to land it: the operator
-  // merges the first, the second still reads unmerged because the branch has
-  // moved since, and the merge queue would take the same branch three times.
-  // The last link is the one that has all of it. Both refusals name a run,
-  // because "this cannot be landed" with no address is a dead end on a page
-  // whose whole purpose is to get the work merged.
-  if (s.chain.length > 1) {
-    const owner = branchOwner(s.chain);
-    if (owner && owner !== s.runId) {
-      const last = s.chain.find((m) => m.runId === owner)!;
-      return (
-        `Run ${short(owner)} carries this branch on from here and is the one that lands it ` +
-        `(it is ${last.status}). Landing from this run would take the same branch a second time, ` +
-        "not a smaller part of it — the whole chain is on one ref."
-      );
-    }
-    const busy = chainBlocker(s.runId, s.chain);
-    if (busy) {
-      return (
-        `Run ${short(busy.runId)} is ${busy.status} on this same branch and can still commit to it, ` +
-        "so anything landed now would be part of the chain rather than all of it."
-      );
-    }
-  }
+  const unsettled = unsettledBranchRefusal(s, "land");
+  if (unsettled) return unsettled;
 
   if (s.merged) return `Already in ${s.target} — there is nothing left to land.`;
   // A squash leaves no ancestry to find, so without this the branch reads as
@@ -1027,6 +1133,11 @@ export function landRefusal(s: {
     return s.pendingCount > 0
       ? `This branch has no commits of its own, but ${s.pendingCount} path(s) are uncommitted in its checkout. Commit them first.`
       : "This branch has no commits of its own.";
+  }
+  // Not read as "something to land": a count git refused is a repository this
+  // app cannot see clearly, which is the wrong moment to write into a checkout.
+  if (s.ahead === null) {
+    return `Could not count this branch's commits against ${s.target}, so nothing is offered. Check it by hand.`;
   }
 
   if (s.preview.outcome === "conflict") {
@@ -1463,11 +1574,26 @@ export async function resolveCheckout(
       // — falling through on a dirty slot was a guaranteed failure wearing a
       // fallback's clothes, and it reported itself as `Preparing worktree`.
       // The choice here is reuse or refuse, never a second checkout.
-      const status = await git(own, ["status", "--porcelain"], NO_CLOCK);
-      if (!status.ok) {
+      const [status, merging] = await Promise.all([
+        git(own, ["status", "--porcelain"], NO_CLOCK),
+        mergeHeadIn(own),
+      ]);
+      if (!status.ok || merging === null) {
         throw new Error(
           `${branch} is checked out in ${path.basename(own)}, whose state could not be read: ` +
             `${gitFailureLine(status.stderr) || "unknown error"}`,
+        );
+      }
+      // Its own sentence rather than the dirt below, which tells the operator to
+      // commit: committing this is exactly how a resolution's markers reach the
+      // branch, and then the target. `resolveConflicts` holds its claim here, so
+      // no resolution of this run is live, and this is one that was cut off.
+      if (merging || status.stdout.split("\n").some((line) => isUnmerged(line.slice(0, 2)))) {
+        throw new Error(
+          `${branch} is checked out in ${path.basename(own)}, which is in the middle of a ` +
+            "merge. That is what a conflict resolution leaves when it is cut off before it " +
+            "can finish or roll back. Do not commit it: run `git merge --abort` in that " +
+            "checkout, then resolve again.",
         );
       }
       const dirt = trackedDirt(status.stdout);
@@ -1526,6 +1652,67 @@ async function discardCheckout(
   await git(repoRoot, ["worktree", "remove", "--force", checkout.path], NO_CLOCK);
 }
 
+/** What undoing a resolution's merge left true, as the sentence a row carries. */
+interface Rollback {
+  /** The branch is where the resolution found it and no merge is left open. */
+  clean: boolean;
+  sentence: string;
+}
+
+/**
+ * Undo a resolution's merge, and say what is true afterwards.
+ *
+ * "Rolled back; the branch is unchanged" used to follow a `merge --abort` whose
+ * result nobody read. The case that proved it false: a Commit pressed on the
+ * Land card while the agent worked committed the open merge, markers and all,
+ * so the abort had nothing left to abort and failed, and the row reported an
+ * untouched branch whose target had just become its ancestor. The claim is
+ * therefore checked against the branch tip taken before the merge, and against
+ * the checkout, rather than inferred from having tried.
+ */
+async function rollBackResolution(
+  repoRoot: string,
+  checkout: ResolveCheckout,
+  branch: string,
+  tipBefore: string,
+): Promise<Rollback> {
+  const abort = await git(checkout.path, ["merge", "--abort"], NO_CLOCK);
+  await discardCheckout(repoRoot, checkout);
+
+  const tip = await git(repoRoot, ["rev-parse", "--verify", `refs/heads/${branch}`], NO_CLOCK);
+  if (!tip.ok) {
+    return {
+      clean: false,
+      sentence:
+        `Whether ${branch} is as the resolution found it could not be read ` +
+        `(${gitFailureLine(tip.stderr) || "unknown error"}). Check it before landing.`,
+    };
+  }
+  if (tip.stdout !== tipBefore) {
+    return {
+      clean: false,
+      sentence:
+        `Nothing was rolled back: ${branch} moved from ${tipBefore.slice(0, 8)} to ` +
+        `${tip.stdout.slice(0, 8)} while the merge was open, so something committed in ` +
+        "that checkout. Check what is on the branch before landing it.",
+    };
+  }
+  // A temporary checkout is gone with its merge, so only a slot can still be
+  // holding one.
+  const stillOpen = fs.existsSync(checkout.path) && (await mergeHeadIn(checkout.path)) !== false;
+  if (!abort.ok && stillOpen) {
+    return {
+      clean: false,
+      sentence:
+        `${branch} is unchanged, but its merge could not be rolled back ` +
+        `(${gitFailureLine(abort.stderr) || "unknown error"}), so ` +
+        `${path.basename(checkout.path)} is still in the middle of it. Run ` +
+        "`git merge --abort` there.",
+    };
+  }
+  return { clean: true, sentence: `The merge was rolled back; ${branch} is unchanged.` };
+}
+
 /**
  * Runs whose resolution is being set up.
  *
@@ -1539,6 +1726,19 @@ async function discardCheckout(
  */
 const resolving = ((globalThis as unknown as { __ufResolving?: Set<string> })
   .__ufResolving ??= new Set<string>());
+
+/**
+ * Whether a conflict resolution holds this run's branch right now.
+ *
+ * Both halves, because each covers a stretch the other does not: the claim
+ * from entry until `startAssist` writes the row, which is where the merge is
+ * made, and the row from then until `after` has finished or rolled it back.
+ * While either holds, the run's own checkout can be mid-merge with a billed
+ * agent editing the conflicted files, and nothing else may write to it.
+ */
+function resolutionHolds(runId: string): boolean {
+  return resolving.has(runId) || assistRunning(runId, "resolve");
+}
 
 /**
  * Merge the target *into* the run's branch, and have Claude resolve what git
@@ -1652,6 +1852,17 @@ async function startResolution(
     return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   }
 
+  // What every rollback below is checked against. Without it "unchanged" is a
+  // guess, and refusing here costs nothing: no merge has been made yet.
+  const tipBefore = await git(repoRoot, ["rev-parse", "--verify", `refs/heads/${branch}`], NO_CLOCK);
+  if (!tipBefore.ok) {
+    await discardCheckout(repoRoot, checkout);
+    return {
+      ok: false,
+      reason: `Could not read where ${branch} stands: ${gitFailureLine(tipBefore.stderr) || "unknown error"}`,
+    };
+  }
+
   const merge = await git(checkout.path, ["merge", "--no-edit", target], NO_CLOCK);
   if (merge.ok) {
     // The preview was stale — the branches agree after all. The merge commit is
@@ -1706,20 +1917,22 @@ async function startResolution(
       // keep its own error: reporting "markers are still in f.txt" would be
       // true and useless, because the agent never ran.
       if (result.status === "failed") {
-        await git(checkout.path, ["merge", "--abort"], NO_CLOCK);
-        await discardCheckout(repoRoot, checkout);
-        return;
+        const rollback = await rollBackResolution(repoRoot, checkout, branch, tipBefore.stdout);
+        if (rollback.clean) return;
+        return {
+          status: "failed" as const,
+          error: `${result.error ?? "The resolution failed."} ${rollback.sentence}`,
+        };
       }
 
       const left = unresolvedFiles(
         conflicted.map((p) => ({ path: p, text: readIfPossible(path.join(checkout.path, p)) })),
       );
       if (left.length > 0) {
-        await git(checkout.path, ["merge", "--abort"], NO_CLOCK);
-        await discardCheckout(repoRoot, checkout);
+        const rollback = await rollBackResolution(repoRoot, checkout, branch, tipBefore.stdout);
         return {
           status: "failed" as const,
-          error: `Conflict markers are still in ${left.join(", ")}. The merge was rolled back; ${branch} is unchanged.`,
+          error: `Conflict markers are still in ${left.join(", ")}. ${rollback.sentence}`,
         };
       }
 
@@ -1730,21 +1943,19 @@ async function startResolution(
       );
       const unmerged = await git(checkout.path, ["ls-files", "-u"], NO_CLOCK);
       if (!staged.ok || !unmerged.ok || unmerged.stdout !== "") {
-        await git(checkout.path, ["merge", "--abort"], NO_CLOCK);
-        await discardCheckout(repoRoot, checkout);
+        const rollback = await rollBackResolution(repoRoot, checkout, branch, tipBefore.stdout);
         return {
           status: "failed" as const,
-          error: `The resolution could not be staged, so the merge was rolled back and ${branch} is unchanged.`,
+          error: `The resolution could not be staged. ${rollback.sentence}`,
         };
       }
 
       const commit = await git(checkout.path, ["commit", "--no-edit"], NO_CLOCK);
       if (!commit.ok) {
-        await git(checkout.path, ["merge", "--abort"], NO_CLOCK);
-        await discardCheckout(repoRoot, checkout);
+        const rollback = await rollBackResolution(repoRoot, checkout, branch, tipBefore.stdout);
         return {
           status: "failed" as const,
-          error: `The merge could not be committed and was rolled back: ${commit.stderr.split("\n")[0] || "unknown error"}`,
+          error: `The merge could not be committed (${commit.stderr.split("\n")[0] || "unknown error"}). ${rollback.sentence}`,
         };
       }
 
@@ -1776,13 +1987,101 @@ async function startResolution(
     : { ok: false, reason: outcome.reason };
 }
 
+/**
+ * Close the merges resolutions left open when a restart cut them off, as each
+ * one's `after` would have.
+ *
+ * `after` is the only thing that finishes or rolls back a resolution's merge,
+ * and it dies with the process: `reconcileReviewsOnBoot` and
+ * `reconcileMergeQueueOnBoot` only rewrite rows. So the run's own slot stayed
+ * mid-merge with the conflicted files still marked, the Land card offered
+ * Commit on them, and Commit followed by Land put the markers on the target.
+ * Handed the runs those two reconcilers caught resolving, the way
+ * `closeStrandedValidations` is handed what the first one failed.
+ *
+ * Only the two checkouts a resolution of the run can have used, never the
+ * operator's: its own slot, while that is still a directory in this
+ * repository's store holding the run's branch, and its `resolve-<id8>`
+ * checkout, which is removed as `discardCheckout` would have removed it. Nothing
+ * is live at boot, so nothing is aborted under a working agent.
+ */
+export async function abortInterruptedResolutions(runIds: readonly string[]): Promise<void> {
+  await Promise.all([...new Set(runIds)].map(abortInterruptedResolution));
+}
+
+async function abortInterruptedResolution(runId: string): Promise<void> {
+  const run = getRun(runId);
+  if (run?.isolation !== "worktree" || !run.repo_root || !run.worktree_branch) return;
+  const repoRoot = repoPathFor(run.repo_root);
+  const store = repoRoot ? worktreeStore(repoRoot) : null;
+  if (!repoRoot || !store) {
+    console.warn(
+      `[usagefoundry] Run ${short(run.id)}'s repository is no longer inside a workspace ` +
+        "mount, so the merge a conflict resolution left open in its checkout was not rolled back.",
+    );
+    return;
+  }
+
+  const checkouts: ResolveCheckout[] = [];
+  const own = run.worktree_path;
+  if (own && path.dirname(own) === store && fs.existsSync(own)) {
+    const head = await git(own, ["rev-parse", "--abbrev-ref", "HEAD"], NO_CLOCK);
+    if (head.ok && head.stdout === run.worktree_branch) {
+      checkouts.push({ path: own, temporary: false });
+    }
+  }
+  try {
+    const aux = auxWorktreePath(repoRoot, `resolve-${short(run.id)}`);
+    if (fs.existsSync(aux)) checkouts.push({ path: aux, temporary: true });
+  } catch {
+    // The store is not a real directory inside the mount any more, so there is
+    // no aux checkout this app could have made there.
+  }
+
+  await Promise.all(checkouts.map((checkout) => closeInterruptedMerge(repoRoot, run.id, checkout)));
+}
+
+/** `merge --abort` where a merge is open, then the aux checkout removed. */
+async function closeInterruptedMerge(
+  repoRoot: string,
+  runId: string,
+  checkout: ResolveCheckout,
+): Promise<void> {
+  const open = await mergeHeadIn(checkout.path);
+  if (open === true) {
+    const abort = await git(checkout.path, ["merge", "--abort"], NO_CLOCK);
+    if (abort.ok) {
+      console.warn(
+        `[usagefoundry] Rolled back the merge a conflict resolution of run ${short(runId)} ` +
+          `left open in ${checkout.path} when the server stopped.`,
+      );
+    } else {
+      console.error(
+        `[usagefoundry] Could not roll back the merge a conflict resolution of run ` +
+          `${short(runId)} left open in ${checkout.path}: ` +
+          `${gitFailureLine(abort.stderr) || "unknown error"}. Commit refuses it until ` +
+          "`git merge --abort` is run there.",
+      );
+    }
+  } else if (open === null && !checkout.temporary) {
+    console.error(
+      `[usagefoundry] Could not tell whether ${checkout.path} still has a conflict ` +
+        `resolution's merge open for run ${short(runId)}; Commit refuses it until its ` +
+        "state can be read.",
+    );
+  }
+  await discardCheckout(repoRoot, checkout);
+}
+
 /** What a resolution actually did, as a diff. */
 export interface ResolutionChange {
   /** The merge commit it made on the run's branch. */
   commit: string;
   files: DiffFile[];
-  /** Files whose patch was withheld for size. */
+  /** Files listed without a patch, for the budget or for a failed read. */
   omittedPatches: number;
+  /** Why no file has a patch when git could not give them. */
+  patchFailure: string | null;
 }
 
 /**
@@ -1940,12 +2239,44 @@ interface SlotState {
   /** False when `git status` failed — which is not the same as clean. */
   readable: boolean;
   files: PendingChange[];
+  /** `MERGE_HEAD` exists there. Always false when `readable` is. */
+  mergeInProgress: boolean;
+}
+
+/**
+ * Whether git's two status letters mark a path it could not merge.
+ *
+ * `U` in either column, or both sides adding or both deleting: the seven
+ * unmerged states `git status` documents. A path in one holds a conflict
+ * nobody has settled, usually with its markers still in it.
+ */
+function isUnmerged(code: string): boolean {
+  return code.includes("U") || code === "AA" || code === "DD";
+}
+
+/**
+ * Whether a checkout has a merge open, or null when git could not say.
+ *
+ * `rev-parse -q --verify` answers a missing ref with exit 1 and nothing on
+ * stderr, and that is the only reading taken as "no merge": anything else is
+ * git failing, and a guard that took it as absent would commit on a guess.
+ */
+async function mergeHeadIn(dir: string): Promise<boolean | null> {
+  const head = await git(dir, ["rev-parse", "-q", "--verify", "MERGE_HEAD"], NO_CLOCK);
+  if (head.ok) return true;
+  return head.code === 1 && head.stderr === "" ? false : null;
 }
 
 async function slotState(run: RunRow): Promise<SlotState> {
   const slot = run.worktree_path;
   if (!slot || !fs.existsSync(slot)) {
-    return { path: slot ?? null, checkedOutBranch: null, readable: false, files: [] };
+    return {
+      path: slot ?? null,
+      checkedOutBranch: null,
+      readable: false,
+      files: [],
+      mergeInProgress: false,
+    };
   }
 
   const head = await git(slot, ["rev-parse", "--abbrev-ref", "HEAD"], NO_CLOCK);
@@ -1954,18 +2285,26 @@ async function slotState(run: RunRow): Promise<SlotState> {
   // branch. Anything uncommitted under a different branch is a later run's, and
   // reporting it here would offer to commit one run's work onto another's.
   if (!checkedOutBranch || checkedOutBranch !== run.worktree_branch) {
-    return { path: slot, checkedOutBranch, readable: head.ok, files: [] };
+    return {
+      path: slot,
+      checkedOutBranch,
+      readable: head.ok,
+      files: [],
+      mergeInProgress: false,
+    };
   }
 
-  const status = await git(slot, ["status", "--porcelain", "-z"], {
-    ...NO_CLOCK,
-    trim: false,
-  });
+  const [status, merging] = await Promise.all([
+    git(slot, ["status", "--porcelain", "-z"], { ...NO_CLOCK, trim: false }),
+    mergeHeadIn(slot),
+  ]);
+  const readable = status.ok && merging !== null;
   return {
     path: slot,
     checkedOutBranch,
-    readable: status.ok,
+    readable,
     files: status.ok ? parseStatusZ(status.stdout) : [],
+    mergeInProgress: readable && merging === true,
   };
 }
 
@@ -1982,6 +2321,9 @@ async function pendingWork(run: RunRow): Promise<PendingWork | null> {
     count: slot.files.length,
     files: slot.files.slice(0, MAX_PENDING_FILES),
     readable: slot.readable,
+    // Over every path rather than the listed ones: an unmerged file past
+    // `MAX_PENDING_FILES` is still in what a Commit would stage.
+    merging: slot.mergeInProgress || slot.files.some((f) => isUnmerged(f.code)),
     suggestedMessage: taskSubject(run),
   };
 }
@@ -2152,7 +2494,15 @@ export function commitRefusal(s: {
   /** The branch its checkout holds now — not necessarily the same one. */
   checkedOutBranch: string | null;
   readable: boolean;
-  pendingCount: number;
+  /** Every uncommitted path in that checkout, with git's status letters. */
+  pending: readonly Pick<PendingChange, "path" | "code">[];
+  /** `MERGE_HEAD` exists in that checkout. */
+  mergeInProgress: boolean;
+  /**
+   * A conflict resolution holds this run's branch: being set up, or its agent
+   * working. See `resolutionHolds`.
+   */
+  resolutionRunning: boolean;
   message: string;
 }): string | null {
   if (!s.isolated) {
@@ -2164,6 +2514,18 @@ export function commitRefusal(s: {
     return (
       "This run is still active. It can write to that checkout at any moment, so a " +
       "commit now would catch a change half-written."
+    );
+  }
+  // The run is terminal, and the resolution's agent is the one writing. Its
+  // merge is open in that checkout with the conflicted files still marked, so
+  // `add -A` and a commit would put the markers on the branch as a merge commit,
+  // which then lands as a fast-forward, and its `after` would find no merge
+  // left to finish or roll back.
+  if (s.resolutionRunning) {
+    return (
+      `Claude is resolving a conflict on ${s.branch}, and its merge is half-done in ` +
+      "that checkout. A commit now would put the conflict markers on the branch. " +
+      "Wait for the resolution to finish."
     );
   }
 
@@ -2182,7 +2544,27 @@ export function commitRefusal(s: {
   if (!s.readable) {
     return "Could not read that checkout's status, so nothing is offered. Check it by hand.";
   }
-  if (s.pendingCount === 0) return "There is nothing uncommitted in that checkout.";
+  // The same half-done merge with nobody finishing it: a resolution cut off by
+  // a restart, or by anything else that kept its `after` from running. Refused
+  // on either sign, because each is enough: a merge whose files were all
+  // staged still has a `MERGE_HEAD` and no unmerged path, and `git add` marks a
+  // file resolved whatever is still in it.
+  const unmerged = s.pending.filter((p) => isUnmerged(p.code)).map((p) => p.path);
+  if (s.mergeInProgress || unmerged.length > 0) {
+    const rest = unmerged.length - DIRT_NAMED;
+    const named =
+      unmerged.length > 0
+        ? ` ${unmerged.slice(0, DIRT_NAMED).join(", ")}${rest > 0 ? ` and ${rest} more` : ""} ` +
+          `${unmerged.length === 1 ? "is" : "are"} still unmerged.`
+        : "";
+    return (
+      "That checkout is in the middle of a merge, which is what a conflict resolution " +
+      `leaves when it is cut off before it can finish or roll back.${named} Committing ` +
+      `it would put a half-done merge on ${s.branch}, conflict markers included. Run ` +
+      "`git merge --abort` in that checkout, then resolve again."
+    );
+  }
+  if (s.pending.length === 0) return "There is nothing uncommitted in that checkout.";
 
   const message = s.message.trim();
   if (message === "") return "A commit message is required.";
@@ -2221,7 +2603,11 @@ export async function commitPending(
     branch: run.worktree_branch,
     checkedOutBranch: slot.checkedOutBranch,
     readable: slot.readable,
-    pendingCount: slot.files.length,
+    pending: slot.files,
+    mergeInProgress: slot.mergeInProgress,
+    // Read after the slot, so a resolution that began while it was being read
+    // is still seen.
+    resolutionRunning: resolutionHolds(run.id),
     message: resolved,
   });
   if (refusal) return { ok: false, reason: refusal };
@@ -2356,7 +2742,7 @@ export async function deleteBranch(runId: string): Promise<LandOutcome> {
       ok: false,
       reason: run.landed_at
         ? `${state.branch} has gained commits since it was landed. Land those too, or delete it by hand.`
-        : `${state.branch} has ${state.ahead} commit(s) that are not in ${state.target ?? "any branch"}. Deleting it would be the only unrecoverable thing here.`,
+        : `${state.branch} has ${state.ahead ?? "uncounted"} commit(s) that are not in ${state.target ?? "any branch"}. Deleting it would be the only unrecoverable thing here.`,
     };
   }
 
@@ -2541,11 +2927,22 @@ export function purgeRefusal(s: {
   chain: readonly ChainMember[];
   /** A live pass of a loop that owns it. See `loopStillRepeating`. */
   loopBlock?: { blockName: string; pass: number | null } | null;
+  /** A conflict resolution holds the branch. See `resolutionHolds`. */
+  resolutionRunning: boolean;
 }): string | null {
   if (!s.branch) return "This run has no branch.";
   if (!s.branchExists) return `${s.branch} is already gone.`;
   if (["running", "queued", "paused"].includes(s.runStatus)) {
     return "This run is still active. Stop it before purging the branch it is working on.";
+  }
+  // The run is terminal and `activeRuns()` does not see the resolution, whose
+  // child is a billed agent editing files in the checkout this would
+  // force-remove, and whose `after` would then have nothing to roll back.
+  if (s.resolutionRunning) {
+    return (
+      `Claude is resolving a conflict on ${s.branch}, and purging now would delete ` +
+      "the checkout it is editing. Wait for the resolution to finish."
+    );
   }
   // "Not an active run" stopped meaning "nobody is using this branch" the day a
   // second run could be told to carry it on. Purging here would destroy the
@@ -2606,15 +3003,19 @@ export async function purgeBranch(
     // Always a person, for `deleteBranch`'s reason: purging is a button and
     // nothing else reaches it.
     loopBlock: loopStillRepeating(chain, null),
+    resolutionRunning: resolutionHolds(run.id),
   });
   if (refusal) return { ok: false, reason: refusal };
 
-  // A run with no recorded base has no range to count against, and a count is
-  // left out rather than guessed at.
-  const from = run.worktree_base_branch ?? run.worktree_base;
-  const ahead = from
-    ? Number((await git(repoRoot, ["rev-list", "--count", `${from}..${branch}`])).stdout) || 0
-    : 0;
+  // Against the target, and against the base commit when the target has been
+  // renamed away — which is what the Land card counted for the sheet this press
+  // came from. Anything git will not count is null and said to be, never 0.
+  const ahead =
+    (await countAhead(
+      repoRoot,
+      aheadRangeFor({ target: run.worktree_base_branch, base: run.worktree_base, branch }),
+    )) ??
+    (await countAhead(repoRoot, aheadRangeFor({ target: null, base: run.worktree_base, branch })));
 
   // The registry read and both writes in one claim, for `deleteBranch`'s
   // reason: the run loop prunes and adds against this registry at every
@@ -2624,10 +3025,10 @@ export async function purgeBranch(
   const purged = await withRepoAdmin(
     repoRoot,
     async (): Promise<
-      { ok: true; slot: string | null; discarded: number } | { ok: false; reason: string }
+      { ok: true; slot: string | null; discarded: number | null } | { ok: false; reason: string }
     > => {
       const held = await worktreeHolding(repoRoot, branch);
-      let lost = 0;
+      let lost: number | null = 0;
       if (held) {
         const holder = activeRuns().find((r) => r.worktree_path === held);
         if (holder) {
@@ -2638,7 +3039,7 @@ export async function purgeBranch(
         }
 
         const status = await git(held, ["status", "--porcelain", "-z"], { trim: false });
-        lost = status.ok ? parseStatusZ(status.stdout).length : 0;
+        lost = status.ok ? parseStatusZ(status.stdout).length : null;
 
         // `--force` is the whole difference from `deleteBranch`, which leaves a
         // checkout with work in it alone. Here that work is what is being purged.
@@ -2682,17 +3083,32 @@ export async function purgeBranch(
     },
   });
 
+  return { ok: true, message: purgedMessage(branch, ahead, discarded) };
+}
+
+/**
+ * The sentence a purge answers with. Null is a count git would not give, and
+ * it is said as that: this is the only account the operator gets of what was
+ * destroyed, and a sentence that left it out read as nothing having gone.
+ */
+export function purgedMessage(
+  branch: string,
+  commits: number | null,
+  discarded: number | null,
+): string {
   const lost = [
-    ahead > 0 ? `${ahead} commit${ahead === 1 ? "" : "s"}` : null,
-    discarded > 0 ? `${discarded} uncommitted path${discarded === 1 ? "" : "s"}` : null,
+    commits ? `${commits} commit${commits === 1 ? "" : "s"}` : null,
+    discarded ? `${discarded} uncommitted path${discarded === 1 ? "" : "s"}` : null,
   ].filter(Boolean);
 
-  return {
-    ok: true,
-    message: lost.length
-      ? `Purged ${branch}. ${lost.join(" and ")} went with it.`
-      : `Purged ${branch}.`,
-  };
+  return [
+    `Purged ${branch}.`,
+    lost.length ? `${lost.join(" and ")} went with it.` : null,
+    commits === null ? "How many commits went with it could not be counted." : null,
+    discarded === null ? "What was uncommitted in its checkout could not be read." : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 /* ------------------------------------------------------------------ */
@@ -2707,7 +3123,8 @@ export interface BranchSummary {
   repoRoot: string;
   repoLabel: string;
   createdAt: number;
-  ahead: number;
+  /** See `LandState.ahead`: null is "could not count", never "none". */
+  ahead: number | null;
   merged: boolean;
   /** Landed by this tool and unchanged since — how a squash shows as done. */
   landedUnchanged: boolean;
@@ -3204,7 +3621,7 @@ async function mapWithLimit<T, R>(
 interface PendingBranch extends ProbeCandidate {
   summary: Omit<BranchSummary, "ahead" | "uncommitted" | "heldByCheckout">;
   repoRoot: string;
-  /** `<target>..<branch>`, or null when there is nothing to count. */
+  /** See `aheadRangeFor`; null when there is nothing to count. */
   aheadRange: string | null;
 }
 
@@ -3298,7 +3715,9 @@ export async function branchInventory(
 
       pending.push({
         repoRoot,
-        aheadRange: exists && target ? `${target}..${branch}` : null,
+        aheadRange: exists
+          ? aheadRangeFor({ target, base: run.worktree_base, branch })
+          : null,
         slot: (exists ? heldBy.get(branch) : undefined) ?? null,
         summary: {
           runId: run.id,
@@ -3329,13 +3748,10 @@ export async function branchInventory(
   // says why that has to happen before the first one is dispatched.
   const probeTargets = selectProbeTargets(pending, MAX_PENDING_PROBES);
   const [aheads, probed] = await Promise.all([
-    mapWithLimit(pending, BRANCH_GIT_CONCURRENCY, async (p) =>
-      p.aheadRange === null
-        ? 0
-        : Number(
-            (await git(p.repoRoot, ["rev-list", "--count", p.aheadRange])).stdout,
-          ) || 0,
-    ),
+    // One call per row whatever it answers — `MAX_INVENTORY` bounds these — so
+    // a target renamed away is a null here. The Land card, with one branch to
+    // pay for, counts that case against the base instead.
+    mapWithLimit(pending, BRANCH_GIT_CONCURRENCY, (p) => countAhead(p.repoRoot, p.aheadRange)),
     mapWithLimit(probeTargets, BRANCH_GIT_CONCURRENCY, async (i) => {
       // Non-null: `selectProbeTargets` picks only rows a checkout holds.
       const status = await git(pending[i].slot!, ["status", "--porcelain", "-z"], {
@@ -3414,17 +3830,20 @@ export async function branchInventory(
  * What a Deliver press would do, decided before it is offered.
  *
  * The card's rule is refuse-and-explain rather than show-and-caveat, and every
- * refusal here is a *standing* condition of the install rather than of the
- * press: no GitHub credential for this repository, a remote that is not
- * GitHub, no branch, or a branch that is already the target. All four are
- * decided at boot or by the row, so asking the operator to find out by pressing
- * would be asking them to spend a round trip on an answer this route already
- * has.
+ * refusal here is one the press would give before touching the remote. Most are
+ * *standing* conditions of the install rather than of the press: no GitHub
+ * credential for this repository, a remote that is not GitHub, no branch, or a
+ * branch that is already the target. All four are decided at boot or by the
+ * row, so asking the operator to find out by pressing would be asking them to
+ * spend a round trip on an answer this route already has. The other is
+ * `unsettledBranchRefusal`: a branch its run, a later link or a live loop pass
+ * can still commit to, which lifts when that settles.
  *
- * `planDelivery` decides it, so the button and the endpoint cannot disagree
- * about whether delivery is possible or about why it is not. What it does not
- * pre-empt is the verify gate and the push itself, which are about this
- * branch's state now and belong to the press.
+ * `planDelivery` and `deliverHold` decide it, the same two the press asks, so
+ * the button and the endpoint cannot disagree about whether delivery is
+ * possible or about why it is not. What it does not pre-empt is the verify gate
+ * and the push itself, which are about this branch's state now and belong to
+ * the press.
  */
 export async function deliveryState(
   runId: string,
@@ -3450,6 +3869,26 @@ export async function deliveryState(
     return {
       possible: false,
       reason: "This run has no branch to deliver.",
+      remote: null,
+      head: null,
+      base: null,
+      delivered,
+    };
+  }
+
+  // Asked here as well as at the press, and in the same order the press asks
+  // it, so the card states the refusal the endpoint would give rather than
+  // offering a button that is then refused. Not a standing condition like the
+  // ones below: it lifts when the run or its chain settles.
+  const unsettled = deliverHold({
+    runId,
+    runStatus: state.runStatus,
+    chain: state.chain,
+  });
+  if (unsettled) {
+    return {
+      possible: false,
+      reason: unsettled,
       remote: null,
       head: null,
       base: null,
@@ -3488,44 +3927,80 @@ export async function deliveryState(
 }
 
 /**
- * The pull request a previous delivery opened, from the run's own timeline.
+ * The pull request a previous delivery opened for this run's **branch**.
  *
- * Read off the `deliver` event rather than a column, because the event is what
- * `deliverRun` writes and a second store for the same fact is a second thing to
- * keep in step. Newest wins: a branch pushed again after a pull request was
- * closed opens a new one, and the old number is history.
+ * Read off the `runs.delivered_pr_*` columns rather than the `deliver` event,
+ * which is what it used to be read from and is still written beside them for
+ * the timeline. The event is evidence with a horizon: `sweepRunEvents` deletes
+ * a settled run's events after `eventRetentionDays`, and a card that forgot the
+ * pull request offered "Open pull request" again, whose press pushed and was
+ * then refused by GitHub's "already exists". A run's row is permanent, which is
+ * what `retention.md` says it is for.
+ *
+ * Keyed on the branch rather than on this run, because a chain's links share
+ * one ref and so one pull request: read per run, a pull request opened from
+ * one link was invisible on the card of the link that carried the branch on,
+ * which offered it again. Newest wins: a branch pushed again after a pull
+ * request was closed opens a new one, and the old number is history.
  */
 export function deliveredPullRequest(
   runId: string,
 ): { url: string; number: number; at: number } | null {
+  const run = getRun(runId);
+  // No branch, nothing delivered: `deliverRun` refuses a run without one.
+  if (!run?.worktree_branch || !run.repo_root) return null;
   const row = db()
     .prepare(
-      "SELECT ts, payload FROM run_events WHERE run_id = ? AND kind = 'deliver'" +
-        " ORDER BY id DESC LIMIT 1",
+      `SELECT delivered_pr_url AS url, delivered_pr_number AS number, delivered_at AS at
+         FROM runs
+        WHERE repo_root = ? AND worktree_branch = ? AND delivered_pr_url IS NOT NULL
+        ORDER BY delivered_at DESC
+        LIMIT 1`,
     )
-    .get(runId) as { ts: number; payload: string } | undefined;
-  if (!row) return null;
-  try {
-    const payload = JSON.parse(row.payload) as { url?: string; number?: number };
-    if (!payload.url || typeof payload.number !== "number") return null;
-    return { url: payload.url, number: payload.number, at: row.ts };
-  } catch {
-    // A payload this app wrote and cannot read back is a bug, not a state to
-    // render: reporting "never delivered" is the safe half of being wrong,
-    // since the operator can press and be told the pull request exists.
-    return null;
-  }
+    .get(run.repo_root, run.worktree_branch) as
+    | { url: string; number: number; at: number }
+    | undefined;
+  return row ?? null;
+}
+
+/**
+ * `unsettledBranchRefusal` for the Deliver exit, asked as a person.
+ *
+ * `null` for the asker in as many words, `LandAsker`'s rule: nothing in the run
+ * loop reaches Deliver, so no merge block can be the one asking and no live
+ * pass is ever exempt here.
+ */
+function deliverHold(s: {
+  runId: string;
+  runStatus: RunRow["status"];
+  chain: readonly ChainMember[];
+}): string | null {
+  return unsettledBranchRefusal(
+    { ...s, loopBlock: loopStillRepeating(s.chain, null) },
+    "deliver",
+  );
+}
+
+/** `deliverHold` from a fresh read of the run and of its chain. */
+function deliverHoldNow(run: RunRow): string | null {
+  return deliverHold({ runId: run.id, runStatus: run.status, chain: branchChain(run) });
 }
 
 export async function deliverRun(
   runId: string,
-  o: { title?: string; body?: string } = {},
+  o: DeliveryRequest = {},
 ): Promise<
   | { ok: true; url: string; number: number }
   | { ok: false; reason: string }
 > {
   const run = getRun(runId);
   if (!run) return { ok: false, reason: "No such run." };
+
+  // Ahead of `landState`, so a refused press has run no git at all. The card
+  // is not polled and may have been open across a Reopen, so its own reading
+  // of the run's status decides nothing here.
+  const unsettled = deliverHoldNow(run);
+  if (unsettled) return { ok: false, reason: unsettled };
 
   const state = await landState(runId);
   if (!state) return { ok: false, reason: "This run has no branch to deliver." };
@@ -3572,7 +4047,7 @@ async function pushAndOpen(a: {
   run: NonNullable<ReturnType<typeof getRun>>;
   state: NonNullable<Awaited<ReturnType<typeof landState>>>;
   folder: string;
-  o: { title?: string; body?: string };
+  o: DeliveryRequest;
 }): Promise<
   { ok: true; url: string; number: number } | { ok: false; reason: string }
 > {
@@ -3611,6 +4086,15 @@ async function pushAndOpen(a: {
     if (!verify.passed) return { ok: false, reason: verify.reason };
   }
 
+  // Asked again because the verify command above may have run for
+  // `VERIFY_TIMEOUT_MS`, long enough for the run to be reopened or a
+  // continuation started on its branch. Synchronous, and nothing is awaited
+  // between it and the push's spawn, so what it read is what is pushed.
+  const current = getRun(runId);
+  if (!current) return { ok: false, reason: "No such run." };
+  const unsettled = deliverHoldNow(current);
+  if (unsettled) return { ok: false, reason: unsettled };
+
   // Never `--force`, and the upstream is set so a second press is an ordinary
   // fast-forward rather than a new branch.
   //
@@ -3648,11 +4132,21 @@ async function pushAndOpen(a: {
   });
   if (!opened.ok) return { ok: false, reason: opened.reason };
 
+  // On the row as well as the timeline, for `deliveredPullRequest`'s reason:
+  // the event is swept after `eventRetentionDays`, and the row is what the card
+  // reads to withdraw the button.
+  const deliveredAt = Date.now();
+  db()
+    .prepare(
+      "UPDATE runs SET delivered_pr_url = ?, delivered_pr_number = ?, delivered_at = ? WHERE id = ?",
+    )
+    .run(opened.pr.url, opened.pr.number, deliveredAt, runId);
+
   // On the run's own timeline, the way a land is: this is the other exit, and
   // the question "where did this work go" is asked on the run's page.
   emitRunEvent({
     runId,
-    ts: Date.now(),
+    ts: deliveredAt,
     kind: "deliver",
     payload: {
       branch: plan.head,

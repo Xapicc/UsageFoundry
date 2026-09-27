@@ -43,12 +43,14 @@ function diff(over: Partial<RunDiffDTO> = {}): RunDiffDTO {
     reason: null,
     base: "main",
     branch: "uf/x",
+    measuredFrom: null,
     head: null,
     files: [],
     filesChanged: 0,
     added: 0,
     deleted: 0,
     omittedPatches: 0,
+    patchFailure: null,
     uncommitted: [],
     caveat: null,
     ...over,
@@ -69,7 +71,7 @@ const changedFiles = (paths: string[]): RunDiffDTO["files"] =>
 
 /** A tree over `paths`, all read once, with nothing in the diff. */
 function treeOf(paths: string[]) {
-  return buildTouchTree(reconcileTouches(paths.map((path) => touch({ path })), []));
+  return buildTouchTree(reconcileTouches(paths.map((path) => touch({ path })), [], []));
 }
 
 describe("path arithmetic", () => {
@@ -131,6 +133,7 @@ describe("buildTouchTree", () => {
       reconcileTouches(
         [touch({ path: "src/a.ts" }), touch({ path: "/tmp/scratch.txt", outside: true })],
         [],
+        [],
       ),
     );
 
@@ -154,6 +157,7 @@ describe("buildTouchTree", () => {
         touch({ path: "src/both.ts", tool: "Edit" }),
       ],
       ["src/wrote.ts", "src/both.ts", "src/bashed.ts"],
+      [],
     );
     const tree = buildTouchTree(report);
     const state = (path: string) => tree.files.find((f) => f.path === path);
@@ -346,6 +350,57 @@ describe("touchedMapView", () => {
     assert.equal(
       view.report.touchedNotChanged.every((f) => !f.inDiff),
       true,
+    );
+  });
+
+  it("treats a run that worked in the operator's checkout as an unknown changed set", () => {
+    // `worktreeDiff` answers every non-isolated run with `files: []` always, so
+    // reading that as known put every file such a run edited under "not
+    // changed", the same false claim `kind: "none"` is kept out of, for a
+    // different reason that gets its own sentence.
+    const view = touchedMapView(
+      { kind: "report", touches: [touch({ path: "src/app.ts", tool: "Edit", calls: 3 })], cycles: 1 },
+      diff({
+        kind: "worktree",
+        base: null,
+        branch: null,
+        uncommitted: [" M src/app.ts"],
+        caveat: "This run worked directly in your checkout.",
+      }),
+    );
+
+    assert.equal(view.kind, "map");
+    if (view.kind !== "map") return;
+    assert.equal(view.changedKnown, false);
+    assert.match(view.diffReason ?? "", /worked directly in your checkout/);
+    assert.equal(
+      view.report.touchedNotChanged.every((f) => !f.inDiff),
+      true,
+    );
+  });
+
+  it("never calls a file left uncommitted in the run's checkout not changed", () => {
+    // An isolated run's diff lists only what it committed; what it left in the
+    // checkout is on the same card as "Uncommitted in the checkout". A file
+    // there differs from the branch, so "not changed" over it is false.
+    const view = touchedMapView(
+      {
+        kind: "report",
+        touches: [
+          touch({ path: "src/left.ts", tool: "Edit" }),
+          touch({ path: "src/read.ts" }),
+        ],
+        cycles: 1,
+      },
+      diff({ uncommitted: [" M src/left.ts"] }),
+    );
+
+    assert.equal(view.kind, "map");
+    if (view.kind !== "map") return;
+    assert.equal(view.changedKnown, true);
+    assert.deepEqual(
+      view.report.touchedNotChanged.map((f) => f.path),
+      ["src/read.ts"],
     );
   });
 
