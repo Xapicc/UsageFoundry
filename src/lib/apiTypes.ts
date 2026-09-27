@@ -169,6 +169,11 @@ export interface SnapshotDTO {
   totalCostUSD: number;
   /** The provider's own reading, when it answered. Never a cost. */
   plan: PlanUsageDTO | null;
+  /**
+   * The part of `plan` still in force, which is what the meters were built
+   * from. Read this for anything said about the windows on screen.
+   */
+  currentPlan: PlanUsageDTO | null;
 }
 
 export type PeriodGranularityDTO = "day" | "week" | "month";

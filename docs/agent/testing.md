@@ -315,6 +315,7 @@ Units that are about no test file in the tree:
 | `RunHandoff.test.tsx` |  |
 | `RunPruning.test.tsx` |  |
 | `UsagePeriods.test.tsx` | [ui-kit] |
+| `windowCardNotes.test.ts` |  |
 
 ## [Stacks, the tool inventory and the end of the function list](testing/stacks-and-tool-inventory.md)
 

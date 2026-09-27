@@ -20,6 +20,7 @@ import { ListGroup, ListRow } from "@/components/ui/List";
 import { ListView, STICKY_HEAD } from "@/components/ui/ListView";
 import { Notice } from "@/components/ui/Notice";
 import { prunerLine } from "@/lib/pruneStatement";
+import { windowCardNotes } from "@/lib/windowCardNotes";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { TBody, THead, Table, Td, Th, Tr } from "@/components/ui/Table";
 import { PERIOD_OPTIONS, UsagePeriods } from "@/components/UsagePeriods";
@@ -591,6 +592,7 @@ export default function Dashboard() {
   // `wkEnd` is `now` itself unless a weekly anchor is configured, so this is a
   // reading of the window rather than a guess about the setting behind it.
   const weeklyResets = s.weekly.endsAt > s.now;
+  const cardNotes = windowCardNotes(s, meta.sessionResetOverrideAt);
 
   const header = (
     <PageHeader>
@@ -756,13 +758,12 @@ export default function Dashboard() {
                 derived one that can sit minutes off `/usage`. Saying nothing
                 makes the third read as a bug rather than as the estimate it
                 is — and makes the first read as an estimate when it is not. */}
-            {s.plan?.session?.resetsAt ? (
+            {cardNotes.sessionResetSource === "provider" ? (
               <div>
                 Reset instant reported by Anthropic, so it matches{" "}
                 <span className="mono">/usage</span> exactly.
               </div>
-            ) : meta.sessionResetOverrideAt !== null &&
-              meta.sessionResetOverrideAt > s.now ? (
+            ) : cardNotes.sessionResetSource === "pinned" ? (
               <div>
                 Window start taken from a{" "}
                 <Link href="/settings">manual reset</Link>, not from the
@@ -852,15 +853,8 @@ export default function Dashboard() {
                   be full while the all-model window reads a quarter. The guard
                   stops on the worst of them, so name them rather than letting a
                   refusal arrive with nothing on screen behind it. */}
-              {s.plan && s.plan.scopedWeekly.length > 0 && (
-                <div className="tabular-nums">
-                  Per-model weekly:{" "}
-                  {s.plan.scopedWeekly
-                    .map((x) => `${x.label} ${fmtPct(x.window.utilization)}`)
-                    .join(" · ")}
-                  . The bar above is the all-model window; a guard stops on
-                  whichever is highest.
-                </div>
+              {cardNotes.modelWallLine !== null && (
+                <div className="tabular-nums">{cardNotes.modelWallLine}</div>
               )}
             </div>
           </div>

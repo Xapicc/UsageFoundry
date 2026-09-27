@@ -341,6 +341,45 @@ export function effectiveWeeklyReset(
   return named + (Math.floor((now - named) / WEEK_MS) + 1) * WEEK_MS;
 }
 
+/**
+ * The part of a provider reading that still describes a window open at `now`.
+ *
+ * A reading is live only until the instant it names. `planUsage` re-serves the
+ * last good one on an age test alone, so a reading fetched at 05:58 naming
+ * 06:00 is still served at 06:03 with no provider failure anywhere, and past
+ * that instant it describes a window that has closed. Re-served against the one
+ * that opened there it reports a nearly-full allowance on a window that has
+ * spent nothing, and `evaluateBudget` refuses runs on the same figure while the
+ * card shows it.
+ *
+ * One function because every surface that reads the percentage has to drop the
+ * same readings: `buildSnapshot` for its meters and guards, the dashboard card
+ * for the sentences under them, and the calibrate route for the ceiling it
+ * divides by the percentage.
+ *
+ * - The 5-hour reading is retired by the test that retires the window it
+ *   anchors: it describes the five hours ending at the instant it names.
+ * - The weekly reading, and each model-scoped wall, which rolls over with the
+ *   week it scopes. Only the percentage is dropped here. The weekly *instant*
+ *   still names where the current week opened, and `effectiveWeeklyReset`
+ *   rolls it forward.
+ * - A reading that named no instant at all is an absence, not a rollover, and
+ *   it stands: this source exists to see the surfaces that share the allowance
+ *   and write nothing to this disk.
+ */
+export function currentPlanReading(plan: PlanUsage, now: number): PlanUsage {
+  const isCurrentWeekly = (w: PlanWindow) => w.resetsAt === null || w.resetsAt > now;
+  const isCurrentSession = (w: PlanWindow) =>
+    w.resetsAt === null ||
+    (w.resetsAt - FIVE_HOURS_MS <= now && now < w.resetsAt);
+  return {
+    session: plan.session && isCurrentSession(plan.session) ? plan.session : null,
+    weekly: plan.weekly && isCurrentWeekly(plan.weekly) ? plan.weekly : null,
+    scopedWeekly: plan.scopedWeekly.filter((s) => isCurrentWeekly(s.window)),
+    fetchedAt: plan.fetchedAt,
+  };
+}
+
 export interface LimitConfig {
   /** Primary: cost ceiling (USD) for one 5-hour block. */
   sessionCostLimit: number | null;
@@ -774,6 +813,17 @@ export interface UsageSnapshot {
    * percentages and reset instants, no money and no tokens.
    */
   plan: PlanUsage | null;
+  /**
+   * The readings from `plan` that the meters and guards were built from:
+   * `currentPlanReading`'s, with every window whose reset has passed dropped.
+   *
+   * Anything that states a fact about the windows on screen reads this rather
+   * than `plan`. The raw copy is still re-served for up to an hour after a
+   * rollover, so a card reading it named a closed week's Opus wall and called a
+   * derived reset "reported by Anthropic" after the snapshot had dropped both.
+   * `plan` stays for its age, which the two share.
+   */
+  currentPlan: PlanUsage | null;
 }
 
 /**
@@ -1041,38 +1091,15 @@ export function buildSnapshot(
   const weekEntries = entries.filter((e) => e.ts >= wkStart);
 
   // The reset instant rolls forward across a rollover; the percentage beside it
-  // does not. It describes the week that ended at `resetsAt`, so re-serving it
-  // against the week that opened there reports a nearly-full allowance on a
-  // window that has spent nothing — and `evaluateBudget` refuses runs on that
-  // same figure while the card shows it. `planUsage`'s cache makes this the
-  // ordinary case rather than a rare one: it re-serves the last good reading on
-  // an age test alone, so a reading fetched at 05:58 naming 06:00 is still
-  // served at 06:03 with no provider failure anywhere.
-  //
-  // A reading that named no instant at all is a different thing — an absence,
-  // not a rollover — and it stands: the whole point of this source is that it
-  // sees the surfaces that share the allowance and write nothing to this disk.
-  const isCurrentWeekly = (w: PlanWindow) =>
-    w.resetsAt === null || w.resetsAt > now;
-  const planWeekly = plan?.weekly && isCurrentWeekly(plan.weekly) ? plan.weekly : null;
-  // Same rule for the model-scoped walls, which roll over with the week they
-  // scope: `makeWindow` stands the worst of them up as `fraction` when the
-  // provider named no top-level figure, so a stale one left unfiltered would
-  // put a closed week's percentage back on the meter by the other door.
-  const scopedWeekly = (plan?.scopedWeekly ?? []).filter((s) =>
-    isCurrentWeekly(s.window),
-  );
-
-  // The 5-hour reading is retired by the test that already retires
-  // `sessionStart`: it describes the window ending at the instant it names, and
-  // past that instant the window being reported is a different one — one that
-  // starts now and has spent nothing, which is where a stale 88% used to land.
-  // `anchorIsCurrent` is false for a reading that named no instant too, so only
-  // a named one may retire a reading, on `isCurrentWeekly`'s reasoning.
-  const planSession =
-    plan?.session && (plan.session.resetsAt === null || anchorIsCurrent)
-      ? plan.session
-      : null;
+  // does not (see `currentPlanReading`). The model-scoped walls have to be
+  // filtered as well as the top-level figure: `makeWindow` stands the worst of
+  // them up as `fraction` when the provider named no top-level figure, so a
+  // stale one left in would put a closed week's percentage back on the meter by
+  // the other door.
+  const currentPlan = plan ? currentPlanReading(plan, now) : null;
+  const planWeekly = currentPlan?.weekly ?? null;
+  const scopedWeekly = currentPlan?.scopedWeekly ?? [];
+  const planSession = currentPlan?.session ?? null;
   const weeklyAgg = aggregate(weekEntries);
 
   // What each window has spent since the provider's reading was taken. Each
@@ -1302,6 +1329,7 @@ export function buildSnapshot(
     ),
     totalCostUSD: entries.reduce((s, e) => s + e.costUSD, 0),
     plan,
+    currentPlan,
   };
 }
 
