@@ -1393,6 +1393,44 @@ is `docs/agent/testing.md`; interface defects and their classes are
   not measured, and the file's current mtime (2026-09-26 22:27Z) postdates the
   failure, so the question cannot be settled from what is on disk now.
 
+- **That failure is a delete-and-recreate race, not a rename, measured
+  2026-09-27 against bwrap 0.8.0 and CLI 2.1.280.** bwrap looks its bind target
+  up in `/proc/self/mountinfo` right after binding it. The message means the
+  path's directory entry was replaced in between, which detaches the bind. A
+  nested `bwrap --ro-bind f f` reproduced it word for word: 462 of 1,000 starts
+  against a rename-over loop, 155 of 400 on the `~/.claude` virtiofs share, and
+  357 of 1,000 against unlink-then-recreate. It failed 0 times in 1,400 against
+  in-place writes, 0 in 1,000 each against sibling churn and a `stat` loop on
+  the share, and 0 in 300 with no writer. Only unlink-then-recreate also gives
+  "Can't get type of source: No such file". This install's transcripts show
+  that wording on the file twice (2026-09-20, 09-26), alongside the three
+  mount-table-family events and "Can't create file" as late as 09-25, so the
+  file keeps vanishing. Neither 2.1.260 nor 2.1.280 renames it: both write it
+  in place (`open(…, "w")`). It is deleted by the auth-change cache clear and
+  by the sandbox's placeholder cleanup, which unlinks any zero-byte file at a
+  path its process covered with `/dev/null`. It is recreated by bwrap's
+  placeholder create or by the CLI's first write. `~/.claude` is listed twice
+  in a sandbox's mount table, but so is `/workspace2`, so that is the
+  read-only root bind with the write allowlist's bind on top, not the share.
+  The race also fails on overlay, where nothing is stacked. Nothing in this app
+  can prevent it. Pre-creating the file is refused in
+  `SANDBOX_CONFIG_DIR_REFUSED`, and an empty file there is exactly what that
+  cleanup deletes. The cost is one tool call, and the file has been stable
+  since it regained content (inode and mtime unchanged 07:57 to 08:17Z). Caveat:
+  which deleter fired at each event is inferred. Logging
+  `stat -c '%i %s %Y' ~/.claude/remote-settings.json` through the next spell
+  when it is missing would settle that.
+
+- **A replacement also strips the read-only bind from sandboxes already
+  running, measured 2026-09-27 on bwrap 0.8.0.** A nested sandbox binding a
+  file read-only under a read-write bind of its directory could not write the
+  file until something outside renamed over it. After that the bind was gone
+  from its mount table and the write succeeded. It happened live at 08:08:44Z:
+  this session's own Bash sandbox lost its bind on `~/.claude/.config.json`,
+  whose mtime is that same second. Caveat: the writer was not identified, the
+  deny list is the CLI's and not this app's, and nothing here was changed for
+  it.
+
 - **`--agent` / `--agents`, seven probes on CLI 2.1.226:** `--agent` selects a
   definition passed on the same argv, exits 1 on an unregistrable one, keeps
   `--append-system-prompt`, survives `--resume`, and yields to the run's
