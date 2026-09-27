@@ -2790,6 +2790,24 @@ describe("planEmission — which specs become runs", () => {
     );
   });
 
+  it("refuses a dependsOn that is not a list rather than starting the run at once", () => {
+    // The list sent as a JSON string is the shape a model's array arguments
+    // arrive in, and read as "no dependency" it was a run started at once on
+    // top of the one it was told to wait for, with nobody reading the emission.
+    const asString = JSON.stringify([{ id: "a", edge: "on-success" }]);
+    for (const dependsOn of [asString, { id: "a", edge: "on-success" }]) {
+      assert.match(
+        refused([spec("a"), spec("b", { dependsOn })]),
+        /“B” has a dependsOn that is not a list/,
+      );
+    }
+    // Absent still means none.
+    assert.deepEqual(
+      emitted([spec("a", { dependsOn: null }), spec("b")]).map((s) => s.dependsOn),
+      [[], []],
+    );
+  });
+
   /* ---------------------------------------------------------------- */
   /* …and who each of them is started as                              */
   /* ---------------------------------------------------------------- */

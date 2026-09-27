@@ -25,6 +25,11 @@ import type { Task } from "../../../lib/tasks";
  * in `callTool` is a membership test against the same `toolsFor` — a tool added
  * to the wrong list is reachable, not merely visible.
  *
+ * `list_tasks`' folder filter is pinned here too, from a chat token: the schema
+ * asks for a folder within the mount and the board stores the resolved absolute
+ * path, and the two compared as sent answered zero for every project — the
+ * reading that says a backlog is clear — with nothing thrown anywhere.
+ *
  * `DATA_DIR`, `WORKSPACE_ROOTS` and the Claude paths are read at module load,
  * so they are set before anything is imported; the assertion in `before` is
  * what makes a change to that fail loudly rather than write into the
@@ -54,6 +59,7 @@ let route: typeof import("./route");
 let tasks: typeof import("../../../lib/tasks");
 let chat: typeof import("../../../lib/chat");
 let comments: typeof import("../../../lib/taskComments");
+let taskDeps: typeof import("../../../lib/taskDeps");
 let db: typeof import("../../../lib/db").db;
 
 before(async () => {
@@ -67,6 +73,7 @@ before(async () => {
   tasks = await import("../../../lib/tasks");
   chat = await import("../../../lib/chat");
   comments = await import("../../../lib/taskComments");
+  taskDeps = await import("../../../lib/taskDeps");
   db = (await import("../../../lib/db")).db;
   route = await import("./route");
 });
@@ -140,6 +147,7 @@ test("a work cycle is handed get_my_task, and neither orchestrator subject is", 
   assert.deepEqual(await toolNames(token), [
     "list_my_tasks",
     "complete_task",
+    "release_task",
     "create_task",
     "comment_on_task",
     "add_task_dependency",
@@ -296,4 +304,197 @@ test("a work cycle asking for get_task is pointed at get_my_task", async () => {
   assert.equal(refused.isError, true);
   assert.match(refused.text, /get_my_task/);
   assert.match(refused.text, /list_my_tasks/);
+});
+
+test("list_tasks narrows to a project by the folder within its mount", async () => {
+  // `tasks.folder` holds the resolved absolute path and the schema asks for the
+  // path within the mount; compared as sent, every project read back as an
+  // empty backlog, which is the one answer that stops a loop and tells a chat
+  // the work is done.
+  const chatToken = chat.mintCapability({ kind: "chat", chatId: randomUUID() });
+  const project = path.join(ws, "RepoThree");
+  fs.mkdirSync(project);
+  const waiting = file(project, { title: "Waits for the other" });
+  const first = file(project, { title: "Goes first" });
+  file(HERE, { title: "Another project's task" });
+  assert.ok(taskDeps.addTaskDep(waiting.id, first.id).ok);
+
+  const list = async (folder: string) =>
+    JSON.parse((await callTool(chatToken, "list_tasks", { mountId: MOUNT, folder })).text);
+
+  // `get_task`'s refs name a folder within the mount and `list_tasks`' rows name
+  // the absolute one; a model sending either back reaches the same rows.
+  const ref = JSON.parse((await callTool(chatToken, "get_task", { taskId: waiting.id })).text)
+    .dependsOn[0];
+  assert.equal(ref.folder, "RepoThree");
+  const byRef = await list(ref.folder);
+  const byRow = await list(byRef.tasks[0].folder);
+  for (const [shape, listed] of [
+    ["within the mount", byRef],
+    ["absolute", byRow],
+  ] as const) {
+    assert.equal(listed.totalMatching, 2, `a ${shape} folder finds the project's tasks`);
+    assert.deepEqual(
+      listed.tasks.map((t: { taskId: string }) => t.taskId).sort(),
+      [waiting.id, first.id].sort(),
+    );
+    assert.equal(listed.matchedFolder, project, "and says which path it compared");
+    assert.equal(listed.matchedFolderNote, undefined);
+  }
+});
+
+test("list_tasks still finds a folder that no longer resolves, and says so", async () => {
+  const chatToken = chat.mintCapability({ kind: "chat", chatId: randomUUID() });
+  const gone = path.join(ws, "RepoGone");
+  fs.mkdirSync(gone);
+  const filed = file(gone);
+  fs.rmdirSync(gone);
+
+  const listed = JSON.parse(
+    (await callTool(chatToken, "list_tasks", { mountId: MOUNT, folder: "RepoGone" })).text,
+  );
+  assert.deepEqual(
+    listed.tasks.map((t: { taskId: string }) => t.taskId),
+    [filed.id],
+  );
+  assert.equal(listed.matchedFolder, gone);
+  assert.match(listed.matchedFolderNote, /No such folder/);
+});
+
+test("list_tasks refuses a folder within a mount it has no root for", async () => {
+  const chatToken = chat.mintCapability({ kind: "chat", chatId: randomUUID() });
+  const refused = await callTool(chatToken, "list_tasks", {
+    mountId: "no-such-mount",
+    folder: "RepoOne",
+  });
+  assert.equal(refused.isError, true, "an unknown is not a clear backlog");
+  assert.match(refused.text, /list_folders/);
+});
+
+/**
+ * A chat to propose into, and a count of the rows it holds, because what the
+ * proposal refusals below pin is that nothing reached the operator's panel:
+ * a card a person approves is the only door these arguments have to a run.
+ */
+function proposingChat(): { chatId: string; token: string; proposals: () => number } {
+  const chatId = chat.createChat().id;
+  return {
+    chatId,
+    token: chat.mintCapability({ kind: "chat", chatId }),
+    proposals: () =>
+      (
+        db()
+          .prepare("SELECT COUNT(*) AS n FROM chat_proposals WHERE chat_id = ?")
+          .get(chatId) as { n: number }
+      ).n,
+  };
+}
+
+test("a dependsOn that is not a list is refused by name and proposes nothing", async () => {
+  // The list sent as a JSON string is the shape a model's array arguments
+  // arrive in. Read as "no dependency", it was a card with no "starts after"
+  // line and a run started on top of the one it was told to wait for.
+  const { token, proposals } = proposingChat();
+  const first = await callTool(token, "propose_run", {
+    mountId: MOUNT,
+    folder: "RepoOne",
+    id: "first",
+    title: "First",
+    task: "Do the first thing.",
+  });
+  assert.equal(first.isError, false, first.text);
+  const asString = JSON.stringify([{ id: "first", edge: "on-success" }]);
+
+  const run = await callTool(token, "propose_run", {
+    mountId: MOUNT,
+    folder: "RepoOne",
+    title: "Second",
+    task: "Do the second thing, after the first.",
+    dependsOn: asString,
+  });
+  assert.equal(run.isError, true, "propose_run refuses it");
+  assert.match(run.text, /dependsOn is not a list/);
+
+  const block = (id: string, over: Record<string, unknown> = {}) => ({
+    id,
+    name: id.toUpperCase(),
+    mountId: MOUNT,
+    folder: "RepoOne",
+    task: `Step ${id}.`,
+    ...over,
+  });
+  const workflow = await callTool(token, "propose_workflow", {
+    name: `Two steps ${randomUUID()}`,
+    blocks: [
+      block("a"),
+      block("b", { dependsOn: JSON.stringify([{ id: "a", edge: "on-success" }]) }),
+    ],
+  });
+  assert.equal(workflow.isError, true, "propose_workflow refuses it");
+  assert.match(workflow.text, /“B” has a dependsOn that is not a list/);
+
+  assert.equal(proposals(), 1, "only the first proposal was written");
+
+  // Absent and null still mean "starts at once".
+  const unordered = await callTool(token, "propose_run", {
+    mountId: MOUNT,
+    folder: "RepoOne",
+    title: "Third",
+    task: "Do the third thing whenever.",
+    dependsOn: null,
+  });
+  assert.equal(unordered.isError, false, unordered.text);
+});
+
+test("propose_run refuses a mount with no folder, and a folder with no mount", async () => {
+  const { token, proposals } = proposingChat();
+
+  // An omitted folder is not `""`, and read as one it proposed the whole
+  // mount — the folder claim that blocks every other run under it.
+  const noFolder = await callTool(token, "propose_run", {
+    mountId: MOUNT,
+    title: "Somewhere",
+    task: "Do a thing somewhere.",
+  });
+  assert.equal(noFolder.isError, true);
+  assert.match(noFolder.text, /names a mount and no folder/);
+  assert.match(noFolder.text, /list_folders/);
+
+  // With a template naming its own folder, a folder sent without its mount was
+  // dropped and the run proposed in the template's folder instead, under a
+  // reply that never said so.
+  const templateId = randomUUID();
+  db()
+    .prepare(
+      `INSERT INTO run_templates (id, name, prompt, mount_id, folder, permission_mode,
+         isolate, budget, created_at, updated_at)
+       VALUES (?, ?, 'p', ?, 'RepoOne', 'plan', 0, '{}', 0, 0)`,
+    )
+    .run(templateId, `Template ${templateId}`, MOUNT);
+  const noMount = await callTool(token, "propose_run", {
+    templateId,
+    folder: "RepoTwo",
+    title: "Elsewhere",
+    task: "Do a thing in the other repository.",
+  });
+  assert.equal(noMount.isError, true);
+  assert.match(noMount.text, /needs mountId beside it/);
+  assert.match(noMount.text, /list_folders/);
+
+  assert.equal(proposals(), 0, "neither wrote a card");
+
+  // The mount root is still a real answer, and the template's folder is still
+  // what a proposal naming neither gets.
+  for (const args of [
+    { mountId: MOUNT, folder: "" },
+    { templateId },
+  ]) {
+    const ok = await callTool(token, "propose_run", {
+      ...args,
+      title: `Fine ${randomUUID()}`,
+      task: "Do a thing.",
+    });
+    assert.equal(ok.isError, false, ok.text);
+  }
+  assert.equal(proposals(), 2);
 });

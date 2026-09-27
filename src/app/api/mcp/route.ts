@@ -65,6 +65,7 @@ import {
   listTasks,
   normalizeTaskInput,
   readTaskLinks,
+  resolveTaskFolder,
   runLinksForTasks,
   taskListItemDTO,
   tasksLinkedToRun,
@@ -394,8 +395,10 @@ const SHARED_TOOLS = [
         folder: {
           type: "string",
           description:
-            "Only tasks filed against this folder within that mount. Needs " +
-            "mountId beside it; alone it narrows nothing.",
+            "Only tasks filed against this folder within that mount, as " +
+            "list_folders gives it; the absolute folder a list_tasks row " +
+            "carries works too. Needs mountId beside it; alone it narrows " +
+            "nothing. The reply's matchedFolder is the path compared.",
         },
         origin: {
           type: "string",
@@ -1192,7 +1195,8 @@ const CHAT_TOOLS = [
           type: "string",
           description:
             "Path within the mount, exactly as list_folders gives it. Required " +
-            "when mountId is given; \"\" means the mount root.",
+            "when mountId is given, and refused without it; \"\" means the " +
+            "mount root.",
         },
         id: {
           type: "string",
@@ -2665,6 +2669,17 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
       );
     }
 
+    // Absent is "starts at once" and anything else that is not a list is
+    // refused, `planEmission`'s rule: read as absent, the list sent as a JSON
+    // string saves a graph with the edge missing, and a card with no "after".
+    if (b.dependsOn !== undefined && b.dependsOn !== null && !Array.isArray(b.dependsOn)) {
+      return text(
+        `“${String(b.name ?? to)}” has a dependsOn that is not a list. It has ` +
+          "to be a list of {id, edge} objects naming other blocks, or left out " +
+          "for a block that starts at once.",
+        true,
+      );
+    }
     for (const raw of Array.isArray(b.dependsOn) ? b.dependsOn : []) {
       const d = (raw ?? {}) as Record<string, unknown>;
       edges.push({
@@ -3165,6 +3180,8 @@ function listTasksTool(args: Record<string, unknown>) {
       true,
     );
   }
+  const matched = mountId && folder ? taskListFolder(mountId, folder) : null;
+  if (matched && !matched.ok) return text(matched.error, true);
 
   // Checked by name for the closed sets' reason above: `listTasks` reads
   // anything but a boolean as "both", and a model that sent "true" would read
@@ -3182,7 +3199,7 @@ function listTasksTool(args: Record<string, unknown>) {
     status: (args.status as TaskStatus | undefined) ?? null,
     origin: (args.origin as TaskOrigin | undefined) ?? null,
     mountId,
-    folder,
+    folder: matched?.folder ?? null,
     operatorOnly,
     offset: Number(args.offset) || 0,
   });
@@ -3250,11 +3267,67 @@ function listTasksTool(args: Record<string, unknown>) {
         offset: page.offset,
         returned: page.tasks.length,
         totalMatching: page.total,
+        // The path the rows were compared against, because the folder a model
+        // sent is not it: a zero beside the path that was actually matched is
+        // one a model can check, where a zero beside its own words is not.
+        ...(matched
+          ? { matchedFolder: matched.folder, matchedFolderNote: matched.note ?? undefined }
+          : {}),
       },
       null,
       1,
     ),
   );
+}
+
+/**
+ * The folder `list_tasks` narrows on, in the shape the board stored it.
+ *
+ * `tasks.folder` holds the canonical absolute path `resolveTaskFolder` returned
+ * when the task was filed, and `listTasks` matches it exactly — but the schema
+ * asks for the path *within* the mount, which is what `list_folders` and
+ * `get_task`'s refs hand a model. Passed straight through, `UsageFoundry` is
+ * compared against `/workspace/UsageFoundry` and every project reads back as an
+ * empty backlog: a chat tells the operator the work is done and a block emits
+ * nothing. `countBoardCondition` records the same failure for loop blocks and
+ * fixes it the same way, through the board's own resolver rather than a second
+ * one, so both sides of the comparison went through one door — a mount reached
+ * through a symlink is stored by its real path, and only the resolver knows it.
+ * An absolute folder, the shape `list_tasks`' own rows carry, resolves too.
+ *
+ * The lexical join is the fallback rather than the rule because a read must not
+ * stop answering while a mount is briefly unavailable, and a folder deleted
+ * since its tasks were filed still has tasks. What it cannot do is join a
+ * relative folder to a mount this app has no root for, and that is refused
+ * rather than answered: zero is "the backlog is clear", which is the one thing
+ * an unknown must never read as.
+ */
+function taskListFolder(
+  mountId: string,
+  folder: string,
+): { ok: true; folder: string; note: string | null } | { ok: false; error: string } {
+  const resolved = resolveTaskFolder(mountId, folder);
+  if (resolved.ok && resolved.folder) return { ok: true, folder: resolved.folder, note: null };
+  const why = (resolved.ok ? `"${folder}" did not resolve` : resolved.error).replace(/\.$/, "");
+
+  const mount = mountById(mountId);
+  if (!mount && !path.isAbsolute(folder)) {
+    return {
+      ok: false,
+      error:
+        `${why}. A folder within a mount can only be matched once the mount ` +
+        "is known. Call list_folders for both, or send the absolute folder a " +
+        "list_tasks row carries.",
+    };
+  }
+  const joined = mount ? path.resolve(mount.path, folder) : path.resolve(folder);
+  return {
+    ok: true,
+    folder: joined,
+    note:
+      `${why}. Matched against ${joined} as written, without checking it on ` +
+      "disk, so a task filed while the path resolved elsewhere is not counted.",
+  };
 }
 
 /**
@@ -4304,7 +4377,20 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
         true,
       );
     }
-    folder = String(args.folder ?? "");
+    // `propose_workflow`'s rule, for its reason: `""` is the mount root and a
+    // real answer, where an omitted folder is not that answer, and reading one as
+    // the other puts the run on the whole mount — the one folder claim that
+    // blocks every other run under it, approved in a batch as a card that looks
+    // like any other.
+    if (args.folder === undefined || args.folder === null) {
+      return text(
+        "This names a mount and no folder. Pass the folder exactly as " +
+          'list_folders gives it, or "" if you really mean the whole ' +
+          "workspace, which blocks every other run under it.",
+        true,
+      );
+    }
+    folder = String(args.folder);
     try {
       resolveWorkspaceFolder(folder, mountId);
     } catch (err) {
@@ -4314,6 +4400,17 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
         true,
       );
     }
+  } else if (String(args.folder ?? "").trim() !== "") {
+    // Refused rather than dropped, `list_tasks`' reason: a folder path alone
+    // does not say which mount it is on, and a templated proposal would
+    // otherwise run in the template's folder under a reply that never says the
+    // one the model named was ignored.
+    return text(
+      `folder "${String(args.folder)}" needs mountId beside it — a folder path ` +
+        "alone does not say which mount it is on. Call list_folders for both, " +
+        "or leave both out to run where the template says.",
+      true,
+    );
   } else if (!template) {
     return text(
       "A proposal with no template has to name where it runs. Pass mountId " +
@@ -4401,6 +4498,18 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
   // need to know the label before the row exists.
   const specId = ownSpecId ?? superseded?.spec_id ?? null;
 
+  // Absent is "starts at once" and anything else that is not a list is
+  // refused, `planEmission`'s rule: the list sent as a JSON string, read as
+  // absent, is a card with no "starts after" line and a run started on top of
+  // the one it was told to wait for.
+  if (args.dependsOn !== undefined && args.dependsOn !== null && !Array.isArray(args.dependsOn)) {
+    return text(
+      "dependsOn is not a list. It has to be a list of {id, edge} objects " +
+        "naming other proposals in this chat, or left out for a run that " +
+        "starts once approved.",
+      true,
+    );
+  }
   const dependsOn: ProposalDependency[] = [];
   for (const raw of Array.isArray(args.dependsOn) ? args.dependsOn : []) {
     const d = (raw ?? {}) as Record<string, unknown>;
