@@ -602,7 +602,7 @@ export async function completeTaskWithValidation(
     counts: { files: diff.files.length, shown: diff.files.length, truncated },
     taskId: task.id,
     baseSha: diff.base,
-    headSha: diff.branch,
+    headSha: diff.head,
     // The one spender in this app that only ever starts itself, so it must not
     // be able to run away: nothing presses anything here.
     maxBudgetUSD: settings.validationBudgetUSD,

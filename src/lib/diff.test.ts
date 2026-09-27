@@ -195,6 +195,7 @@ describe("diffAsText", () => {
     reason: null,
     base: "abc",
     branch: "uf/x-1",
+    head: "0123456789abcdef0123456789abcdef01234567",
     files,
     filesChanged: files.length,
     added: 0,
