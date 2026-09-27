@@ -47,9 +47,8 @@ function Lede() {
   return (
     <div className="mb-5 max-w-[70ch] space-y-2 text-ink-muted">
       <p>
-        Read straight from Anthropic&apos;s Admin API: what your organization
-        was billed, and the rate limits it is configured with. These numbers are
-        authoritative.
+        Read from Anthropic&apos;s Admin API, so these figures are
+        authoritative rather than estimated.
       </p>
       {/* Folded, and this is the one paragraph on the page that may be: it is
           read once, it explains why something is *not* here, and no decision on
@@ -60,12 +59,10 @@ function Lede() {
           state where the sentence is load-bearing. */}
       <Disclosure summary="Why a Pro or Max subscription is not shown here">
         <p className="mt-2 text-xs leading-relaxed">
-          A Pro or Max subscription is invisible here — Anthropic publishes no
-          endpoint for one, and no numeric value for its limits. That is why the
-          dashboard estimates from local transcripts instead, and why the
-          ceilings under Settings have to be calibrated from your own history
-          rather than read from an account. The two views are never added
-          together.
+          Anthropic publishes no endpoint for a subscription and no numeric
+          value for its limits, so the dashboard estimates from local
+          transcripts and the ceilings under Settings are calibrated from your
+          own history. The two views are never added together.
         </p>
       </Disclosure>
     </div>
@@ -151,13 +148,12 @@ export default function AccountPage() {
           <CardTitle>Not configured</CardTitle>
           <p className="mb-3 max-w-[70ch] text-sm text-ink-muted">
             {data?.reason ??
-              "No Admin API key is set, so there is nothing to read."}
+              "No Admin API key is set."}
           </p>
           <p className="max-w-[70ch] text-xs leading-relaxed text-ink-faint">
             Set <span className="mono">ANTHROPIC_ADMIN_KEY</span> and restart
-            the container — process configuration is read once at boot. If you
-            only have a Pro or Max subscription there is no such key to set, and
-            this page will stay as it is: the dashboard is your view.
+            the container. A Pro or Max subscription has no such key; the
+            dashboard is your view.
           </p>
         </Card>
       </Page>
@@ -172,10 +168,9 @@ export default function AccountPage() {
             <strong>The Admin API refused the request.</strong> {data.error}
           </Notice>
           <p className="mb-3 max-w-[70ch] text-xs leading-relaxed text-ink-muted">
-            This surface needs an organization Admin key (
-            <span className="mono">sk-ant-admin01-…</span>), which is a
-            different credential from a regular API key and is unavailable to
-            individual accounts.
+            This needs an organization Admin key (
+            <span className="mono">sk-ant-admin01-…</span>), not a regular API
+            key; individual accounts have none.
           </p>
           <Button variant="secondary" onClick={() => void load()}>
             Try again
