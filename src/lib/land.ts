@@ -2373,7 +2373,7 @@ export async function deleteBranch(runId: string): Promise<LandOutcome> {
       if (!read.ok) {
         return {
           ok: false,
-          reason: `Could not read ${state.branch}: ${read.stderr.split("\n")[0]} Nothing was deleted.`,
+          reason: `Could not read ${state.branch} (${read.stderr.split("\n")[0]}), so nothing was deleted.`,
         };
       }
       const tip = read.stdout;
@@ -2468,9 +2468,13 @@ export async function deleteBranch(runId: string): Promise<LandOutcome> {
 async function dropBranchConfig(repoRoot: string, branch: string): Promise<string | null> {
   const keys = await git(repoRoot, ["config", "--local", "--name-only", "--list"]);
   if (!keys.ok) return keys.stderr.split("\n")[0];
-  if (!keys.stdout.split("\n").some((key) => key.startsWith(`branch.${branch}.`))) {
-    return null;
-  }
+  // A variable name holds no dot, so anything after one more belongs to a
+  // different branch whose name merely starts with this one's and a dot.
+  const prefix = `branch.${branch}.`;
+  const tracked = keys.stdout
+    .split("\n")
+    .some((key) => key.startsWith(prefix) && !key.slice(prefix.length).includes("."));
+  if (!tracked) return null;
   const removed = await git(repoRoot, [
     "config",
     "--local",
