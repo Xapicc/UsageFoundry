@@ -162,7 +162,7 @@ export function WorkflowSchedule({
   const minutes = draft.kind === "everyHours" ? null : minutesOf(draft.time);
   const timeError =
     draft.kind !== "everyHours" && minutes === null
-      ? "A schedule needs a time of day. 00:00 is a time; blank is not."
+      ? "A schedule needs a time of day"
       : null;
 
   function save() {
@@ -214,7 +214,7 @@ export function WorkflowSchedule({
                 label="Repeats"
                 description={
                   schedule.spec.kind === "everyHours"
-                    ? "counted from when it was saved, so it does not move when the clocks do"
+                    ? "counted from when it was saved"
                     : `read in ${schedule.timeZone}`
                 }
               >
@@ -314,9 +314,8 @@ export function WorkflowSchedule({
         {editing && (
           <div className="max-w-lg">
             <Notice tone="warn">
-              A schedule presses Run with nobody watching. Every block still runs
-              under the guards its template names, and this workflow&rsquo;s own
-              limits still stop the whole graph — nothing here changes either.
+              A schedule presses Run with nobody watching. Every block keeps its
+              guards, and this workflow&rsquo;s limits still stop the whole graph.
             </Notice>
 
             {/* `max-md:w-full` on the two rows whose content has no length a
@@ -430,7 +429,7 @@ export function WorkflowSchedule({
                 <ListRow
                   label="Timezone"
                   htmlFor="sched-tz"
-                  description="an IANA name — the server runs in UTC and reads this time in the zone you name"
+                  description="an IANA name"
                 >
                   <div className="w-52 max-md:w-full">
                     <Input
