@@ -204,9 +204,7 @@ function describeQueued(run: RunDTO): RunState {
       headline: "New work is held",
       detail: (
         <>
-          Nothing starts while the hold is on, whatever its folder and the
-          concurrency limit are doing. Lift it with{" "}
-          <Link href="/runs">Resume new work</Link>.
+          Lift it with <Link href="/runs">Resume new work</Link>.
         </>
       ),
     };
@@ -218,8 +216,7 @@ function describeQueued(run: RunDTO): RunState {
       headline: "Waiting for a run slot",
       detail: (
         <>
-          {blocker.running} of {blocker.cap} running. Its folder is free — it
-          starts as soon as a slot frees, and the ceiling is{" "}
+          {blocker.running} of {blocker.cap} running. The cap is{" "}
           <Link href="/settings#runs">Runs at the same time</Link>.
         </>
       ),
@@ -232,7 +229,7 @@ function describeQueued(run: RunDTO): RunState {
     headline: "Waiting for its folder",
     detail:
       ahead === 0
-        ? "Next in line — it starts as soon as the run ahead of it finishes."
+        ? "Next in line."
         : `${ahead} other run${ahead === 1 ? " is" : "s are"} ahead of it.`,
   };
 }
@@ -266,8 +263,7 @@ function describeRun(
             ) : (
               `all ${pending.length} runs it was told to start after have finished`
             )}
-            . It holds no folder and no checkout meanwhile, so nothing else is
-            waiting on it.
+            . It holds no folder or checkout meanwhile.
           </>
         ),
       };
@@ -297,7 +293,7 @@ function describeRun(
                 replaced — every park blamed a guard a stock install cannot
                 fire. */}
             {ctx.parkedBy === "guard" &&
-              "Your 5-hour window reached the percentage this run was told to step aside at. "}
+              "Your 5-hour window reached this run's guard. "}
             {ctx.parkedBy === "refusal" &&
               `${run.provider ? RUN_PROVIDER_LABEL[run.provider] : "The provider"} refused a work cycle because the account's 5-hour allowance ran out. `}
             {run.resume_at ? (
@@ -358,8 +354,7 @@ function describeRun(
         ? {
             tone: "neutral",
             headline: "Stopped by one of your limits",
-            detail:
-              "Nothing went wrong — a limit you set was reached. Resume it with more room to carry on.",
+            detail: "Resume it with more room to carry on.",
           }
         : {
             tone: "neutral",
@@ -386,8 +381,7 @@ function describeRun(
         headline: "Needs review",
         detail: (
           <>
-            Nothing failed. It reached something it could not get past on its
-            own, and said so rather than spending more work cycles against it.{" "}
+            It hit something it could not get past on its own.{" "}
             {run.provider
               ? `${RUN_PROVIDER_LABEL[run.provider]} produced what is here.`
               : "Which agent CLI produced what is here was not recorded."}
@@ -400,8 +394,7 @@ function describeRun(
         return {
           tone: "ok",
           headline: "Reported the task complete",
-          detail:
-            "The agent judged the task done. Read what changed before you land it.",
+          detail: "Read what changed before you land it.",
         };
       }
       // `completed` is also what a run that used up its cycle cap is written
@@ -1171,7 +1164,7 @@ export default function RunDetail({
     // that its agent is going, not only that a list will skip it.
     setStopNote(
       !aside
-        ? "Back among the others. Picking up runs in bulk includes this one again."
+        ? "Bulk pick-ups include this run again."
         : res.data.stopped === "signalled"
           ? "Stopping the current work cycle, and set aside — no bulk pick-up will start it."
           : res.data.stopped === "cancelled"
@@ -1506,8 +1499,8 @@ export default function RunDetail({
                 which press it changes — and the answer is not this page's. */}
             {setAsideAt && (
               <p className="mt-1 text-xs text-ink-muted">
-                Set aside {fmtRelative(setAsideAt, nowTick)}. Picking up runs in
-                bulk skips this one; Resume here still works and puts it back.
+                Set aside {fmtRelative(setAsideAt, nowTick)}. Bulk pick-ups skip
+                it; Resume here still works and puts it back.
               </p>
             )}
 
@@ -1604,12 +1597,12 @@ export default function RunDetail({
                         ? // The one fact this run's operator needs and no other
                           // branch carries: nothing here overrides the guard that
                           // refused it, and a window percentage is not on this form.
-                          "It never started, so it begins its original task with this added to the end. Its guards are checked again before it spawns — raise whatever refused it, or it stops here again"
+                          "Added to its original task; its guards are checked again first, so raise whatever refused it or it stops again"
                         : !run.session_id
-                          ? "This run never reported a session to resume, so it starts the original task again with this added to the end"
+                          ? "Starts the original task again with this added to the end"
                           : saidDone
-                            ? "Sent verbatim as the next turn of the same conversation. Blank asks it to re-check the original task, run the tests and fix what fails"
-                            : "Sent verbatim as the next turn of the same conversation. Blank just tells it to continue"}
+                            ? "Blank asks it to re-check the original task, run the tests and fix what fails"
+                            : "Blank just tells it to continue"}
                   </Hint>
                 </Field>
 
@@ -1628,8 +1621,8 @@ export default function RunDetail({
                     </span>
                   </div>
                   <Hint>
-                    Counts the {run.iterations} it has already had. Blank means no
-                    cycle limit, which needs a time limit
+                    Includes the {run.iterations} it has had; blank means no cycle
+                    limit, which needs a time limit
                   </Hint>
                 </Field>
 
@@ -1654,14 +1647,14 @@ export default function RunDetail({
                       ceiling this run's loop will never test. */}
                   {reportsSpend ? (
                     <Hint>
-                      Counts the {fmtUSD(run.spent_usd + (run.spent_usd_est ?? 0))}{" "}
-                      already spent. Blank means no limit
+                      Includes the {fmtUSD(run.spent_usd + (run.spent_usd_est ?? 0))}{" "}
+                      already spent; blank means no limit
                     </Hint>
                   ) : (
                     <Hint tone="warn">
                       Not enforced:{" "}
                       {RUN_PROVIDER_LABEL[run.provider ?? "claude"]} reports no
-                      cost, so nothing measures against it
+                      cost
                     </Hint>
                   )}
                 </Field>
@@ -1680,15 +1673,13 @@ export default function RunDetail({
                       minutes
                     </span>
                   </div>
-                  <Hint>Runs from when it starts again. Blank means no limit</Hint>
+                  <Hint>Counts from when it starts again; blank means no limit</Hint>
                 </Field>
 
                 <Hint>
-                  Everything else carries over: the window percentages, how the
-                  limits are enforced, what happens after DONE, the permission
-                  mode
-                  {run.agent ? `, and the ${run.agent.name} agent` : ""}. It keeps
-                  its folder
+                  Everything else carries over: the window guards, how limits are
+                  enforced, what happens after DONE, the permission mode
+                  {run.agent ? `, the ${run.agent.name} agent` : ""}, its folder
                   {isolated ? ` and its checkout on ${run.worktree_branch}` : ""}
                 </Hint>
 
@@ -1789,10 +1780,9 @@ export default function RunDetail({
                 this level.** Any sum of two of them double-counts: `spent_usd` is
                 what a work cycle's own `result` event reported, `Agent work` is
                 this app's price table over the transcripts, and telemetry is
-                Claude Code's own per-request cost. Each keeps its own footnote
-                saying so, because adjacency is not permission — and a subtotal
-                here would break a correctness invariant that will not throw and
-                will not fail a typecheck. */}
+                Claude Code's own per-request cost. A subtotal here would break a
+                correctness invariant that will not throw and will not fail a
+                typecheck. */}
             <Region title="What it has spent">
               {/* The two figures that belong to the run itself: both come from what
                   Claude Code reported for a finished work cycle. Telemetry is a
@@ -1908,13 +1898,9 @@ export default function RunDetail({
                       {fmtTokens(telemetry.tokens)} tokens
                     </div>
                   </div>
-                  {/* Shortened, but never to nothing: this line is one of the two
-                      places the three cost readings say in user-visible copy that
-                      they must not be added, and the region's whole purpose is
-                      that prohibition. */}
+                  {/* The source, which the heading only calls first-party. */}
                   <p className="mt-2 text-xs leading-snug text-ink-muted">
-                    Claude Code&rsquo;s own per-request cost, never added to the
-                    figures above.
+                    Claude Code&rsquo;s own per-request cost.
                   </p>
                 </Section>
               )}
@@ -1922,8 +1908,7 @@ export default function RunDetail({
               {/* A fourth reading in this region, and the only one that is not
                   money that moved: it is what the run did *not* pay because its
                   conversation was pruned between cycles. Never added to the three
-                  above — the copy says so, on the same grounds the telemetry line
-                  does. */}
+                  above. */}
               {/* Rendered when the run has either cuts or boundary decisions.
                   Absent now genuinely means nothing happened: every boundary an
                   install with pruning on reaches writes a decision row, so the
@@ -2042,16 +2027,12 @@ export default function RunDetail({
                 {run.provider === "codex" && (
                   <Hint tone="warn" className="mt-2.5">
                     <strong>This run reports no cost.</strong> Codex sends token
-                    counts and no money, so nothing was added to this run&rsquo;s
-                    spend and nothing reached the usage windows. Its dollar
-                    figures are unknown rather than zero, and its token count is
-                    measured. Two other guarantees are weaker here than on a
-                    Claude run: the denial that stops an agent killing the server
-                    supervising it is a rules file rather than a flag, so it is
-                    install-wide and does not cover a command written with
-                    substitution or a wildcard; and the notices about what this
-                    agent is running inside rode the prompt rather than a system
-                    prompt.
+                    counts and no money, so nothing reached this run&rsquo;s
+                    spend or the usage windows. Two guarantees are weaker than on
+                    a Claude run. The denial that stops the agent killing its
+                    supervising server misses commands written with substitution
+                    or a wildcard, and the notices about where it runs rode the
+                    prompt rather than a system prompt.
                   </Hint>
                 )}
               </Section>
