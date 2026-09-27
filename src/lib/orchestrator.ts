@@ -3786,6 +3786,26 @@ function admitDependencies(
 }
 
 /**
+ * The model `createRun` freezes onto `runs.model`.
+ *
+ * `settings.defaultModel` is picked from a catalogue seeded from Anthropic's
+ * price table, so it is a Claude id by construction and a fallback for the
+ * Claude provider only. Handed to a Codex run it became `codex exec -m
+ * claude-…`, a model that CLI has never heard of. A Codex run that named none
+ * is left null instead, which `buildCodexArgs` turns into no `-m` at all, so
+ * Codex runs its own default. Not refused: blank has a true meaning for that
+ * CLI, and the door already declines to validate a Codex id against a list it
+ * was never told.
+ */
+export function frozenRunModel(
+  model: string | null | undefined,
+  provider: RunProviderDTO | null | undefined,
+  defaultModel: string | null,
+): string | null {
+  return model ?? (provider === "codex" ? null : defaultModel);
+}
+
+/**
  * Admit a run, or park it behind whatever is already in its folder.
  *
  * Everything from here to the INSERT is synchronous — `resolveWorkspaceFolder`,
@@ -3901,9 +3921,10 @@ export function createRun(input: CreateRunInput): RunRow {
         id,
         folder,
         prompt,
-        input.model ?? settings.defaultModel,
+        frozenRunModel(input.model, input.provider, settings.defaultModel),
         // No `?? "claude"`, unlike the model above: the model has a settings
-        // default to fall back to, and a provider nobody named is a question
+        // default to fall back to (for Claude; `frozenRunModel` says why a
+        // Codex run gets none), and a provider nobody named is a question
         // that was never put to anybody. Null here is what the run page renders
         // as "not recorded".
         input.provider ?? null,

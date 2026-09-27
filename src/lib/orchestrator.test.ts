@@ -73,6 +73,7 @@ fs.mkdirSync(process.env.TMPDIR, { recursive: true });
 const {
   buildArgs,
   buildCodexArgs,
+  frozenRunModel,
   codexPromptPreamble,
   childEnv,
   clampRunOffset,
@@ -3557,6 +3558,28 @@ describe("buildCodexArgs", () => {
     // the other's parser reports nothing, which every page renders as a cycle
     // that had nothing to say.
     assert.notEqual(selectCycleAdapter(null).parseLine, codex.parseLine);
+  });
+
+  /**
+   * `settings.defaultModel` is a Claude id by construction, and `createRun`
+   * used to freeze it onto every run that named none, so a Codex run left
+   * blank on the form spawned `codex exec -m claude-…`, with the form's own
+   * placeholder showing that id as though it were meant. Asserted through the
+   * argv rather than on the frozen value alone, because no `-m` at all is the
+   * whole of what "Codex's own default" means to this builder.
+   */
+  it("leaves a Codex run that named no model on Codex's own default", () => {
+    const frozen = frozenRunModel(null, "codex", "claude-opus-5-5");
+    assert.equal(frozen, null);
+    const args = buildCodexArgs({ ...base, model: frozen, workDir: "/w/repo" });
+    assert.equal(args.includes("-m"), false, `argv carried -m: ${args.join(" ")}`);
+    // A Codex run that named a model still gets it, and the Claude side still
+    // falls back to the setting. A null provider is a row from before the
+    // column and is Claude, `selectCycleAdapter`'s reading.
+    assert.equal(frozenRunModel("gpt-5-codex", "codex", "claude-opus-5-5"), "gpt-5-codex");
+    assert.equal(frozenRunModel(null, "claude", "claude-opus-5-5"), "claude-opus-5-5");
+    assert.equal(frozenRunModel(null, null, "claude-opus-5-5"), "claude-opus-5-5");
+    assert.equal(frozenRunModel(undefined, undefined, "claude-opus-5-5"), "claude-opus-5-5");
   });
 });
 

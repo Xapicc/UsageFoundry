@@ -893,14 +893,16 @@ export default function NewRunPage() {
 
   /**
    * The model this run will actually be started with, as far as the page can
-   * tell, or null for Claude Code's own default.
+   * tell, or null for the provider CLI's own default.
    *
    * For display only — `modelFromForm` is what goes on the wire, and it sends
    * nothing at all when the field is blank so that the fallback stays
    * `createRun`'s to apply. Reading it here would post a default that was true
    * when the page loaded rather than when Start was pressed.
    */
-  const effectiveModel = model.trim() || (settings?.defaultModel ?? null);
+  const effectiveModel =
+    model.trim() ||
+    (provider === "codex" ? null : (settings?.defaultModel ?? null));
 
   const rowChanged = (row: RowId) =>
     ROW_FIELDS[row].some((k) => current[k] !== baseline.values[k]);
@@ -1622,7 +1624,7 @@ export default function NewRunPage() {
               label="Model"
               description={
                 provider === "codex"
-                  ? "A model id this provider's CLI takes. Blank takes the default in Settings, read when the run starts"
+                  ? "A model id this provider's CLI takes. Blank runs its own default"
                   : "Blank takes the default in Settings, read when the run starts"
               }
             >
@@ -1634,15 +1636,11 @@ export default function NewRunPage() {
                     type="text"
                     value={model}
                     // What blank resolves to, shown rather than filled in: a
-                    // value in the box is a value that gets posted, and a posted
-                    // one is frozen onto `runs.model` where it stops following
-                    // Settings. Empty until the read lands, so it cannot say
-                    // "Claude Code's own" about an install that named a default.
-                    placeholder={
-                      settings === null
-                        ? ""
-                        : (settings.defaultModel ?? "Claude Code's own default")
-                    }
+                    // value in the box is a value that gets posted. Never
+                    // `settings.defaultModel`, which is a Claude id that
+                    // `createRun` no longer hands a Codex run, so this would
+                    // show a model the spawn does not pass.
+                    placeholder="Codex's own default"
                     onChange={(e) => setModel(e.target.value)}
                   />
                 ) : (

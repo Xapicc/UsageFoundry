@@ -5,11 +5,18 @@ import os from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 
-import { assistToolUses, parseReviewOutput, reviewEnv, settleOnExit } from "./review";
+import {
+  assistModel,
+  assistToolUses,
+  parseReviewOutput,
+  reviewEnv,
+  settleOnExit,
+} from "./review";
 
 /**
- * Covers the two readings of an assist's output — the CLI's own result object
- * and the tool calls on the way to it — and `settleOnExit`, and only those.
+ * Covers the two readings of an assist's output (the CLI's own result object
+ * and the tool calls on the way to it), `settleOnExit` and `assistModel`, and
+ * only those.
  *
  * `parseReviewOutput`'s failure mode is the same one `spent_usd` guards against
  * elsewhere: a review that was billed and recorded at $0. Cost is read from
@@ -282,5 +289,32 @@ describe("reviewEnv — the PATH the reviewer's tools are resolved on", () => {
       TOOLBOX,
       "a directory prepended to the server's PATH did not reach the reviewer first",
     );
+  });
+});
+
+/**
+ * Every assist spawns `CLAUDE_BIN`, whatever provider did the run's work, and
+ * the spawn used to pass `run.model` straight through: a review or a conflict
+ * resolution on a Codex run started `claude --model gpt-…`, an id that CLI does
+ * not take. The failure is a refused spawn billed to nobody at best, and the
+ * run page files it under the assist rather than under the model that caused it.
+ */
+describe("assistModel", () => {
+  it("never hands a Codex run's model to claude", () => {
+    const codexRun = { model: "gpt-5-codex", provider: "codex" as const };
+    assert.equal(assistModel(codexRun, "claude-opus-5-5"), "claude-opus-5-5");
+    // With no default in Settings the child takes the CLI's own, which is no
+    // `--model` at all rather than the Codex id.
+    assert.equal(assistModel(codexRun, null), null);
+  });
+
+  it("keeps a Claude run's own frozen model", () => {
+    // Null provider is a row from before the column, and is Claude.
+    for (const provider of ["claude", null] as const) {
+      assert.equal(
+        assistModel({ model: "claude-sonnet-5", provider }, "claude-opus-5-5"),
+        "claude-sonnet-5",
+      );
+    }
   });
 });
