@@ -140,6 +140,7 @@ test("a work cycle is handed get_my_task, and neither orchestrator subject is", 
   assert.deepEqual(await toolNames(token), [
     "list_my_tasks",
     "complete_task",
+    "release_task",
     "create_task",
     "comment_on_task",
     "add_task_dependency",
