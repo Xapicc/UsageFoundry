@@ -199,9 +199,8 @@ export default function AgentsPage() {
         <div>
           <h1 className="mb-1 text-xl font-semibold tracking-tight">Agents</h1>
           <p className="max-w-[68ch] text-ink-muted">
-            A saved <strong className="font-semibold text-ink">agent</strong> is a
-            specialist a run’s Claude may hand a subtask to. Naming one changes
-            who does part of the work; it never changes what the run may do.
+            Specialists a run’s Claude may hand a subtask to. Naming one changes
+            who does part of the work, never what the run may do.
           </p>
         </div>
         {!editing && (
@@ -230,12 +229,7 @@ export default function AgentsPage() {
               </Hint>
             )}
 
-            <Field
-              label="Name"
-              htmlFor="agent-name"
-              hint="What Claude calls this agent when it delegates"
-              hintTone={clash ? "warn" : "neutral"}
-            >
+            <Field label="Name" htmlFor="agent-name">
               <Input
                 id="agent-name"
                 value={draft.name}
@@ -259,9 +253,8 @@ export default function AgentsPage() {
               // bottom margin for it to lose to.
               <div className="-mt-2">
                 <Hint tone="warn" className="mb-3.5">
-                  Your own {shortPath(clash.path)} already defines an agent called “
-                  {clash.name}”. Both reach the same run and which one Claude Code
-                  uses is not something this app can determine
+                  Your own {shortPath(clash.path)} already defines “{clash.name}”;
+                  both reach the run, and which one Claude Code uses is unknown
                 </Hint>
               </div>
             )}
@@ -269,7 +262,7 @@ export default function AgentsPage() {
             <Field
               label="Description"
               htmlFor="agent-description"
-              hint="The only thing Claude reads when it decides whether to hand this agent a subtask — and it is carried for the whole session, so it is paid for on every request the run makes"
+              hint="All Claude reads when deciding to delegate, and paid for on every request the run makes"
             >
               <Textarea
                 id="agent-description"
@@ -283,7 +276,7 @@ export default function AgentsPage() {
             <Field
               label="Prompt"
               htmlFor="agent-prompt"
-              hint="The agent’s own system prompt: the whole of what makes it different from the Claude that would have done the work anyway"
+              hint="The agent’s system prompt"
             >
               <Textarea
                 id="agent-prompt"
@@ -296,7 +289,7 @@ export default function AgentsPage() {
             <Field
               label="Model"
               htmlFor="agent-model"
-              hint="What the delegated turn runs on. Inherit takes the run’s own. It moves cost, not capability: the spend lands on the run like any other turn"
+              hint="Inherit takes the run’s model; the spend lands on the run either way"
             >
               {enabledModels.length === 0 ? (
                 <Input
@@ -375,8 +368,7 @@ export default function AgentsPage() {
             <div className="font-medium text-ink">No agents yet</div>
             <div className="mx-auto mt-1 max-w-[52ch] text-ink-muted">
               A run, a template, a workflow block and the orchestrator chat can
-              each name one. Until there is an agent here, every one of those
-              pickers has nothing to offer.
+              each name one.
             </div>
             <div className="mt-3">
               <Button variant="secondary" onClick={openNew}>
@@ -549,13 +541,13 @@ export default function AgentsPage() {
         onConfirm={remove}
       >
         <p>
-          The prompt goes with it and there is no undo. A run already in flight
-          keeps its own copy of the definition, so nothing running is affected.
+          There is no undo. A run already in flight keeps its own copy, so
+          nothing running is affected.
         </p>
         <p className="mt-2">
-          Anything that <em>names</em> this agent — a template, a workflow block, a
-          chat proposal, the Settings default — refuses to start rather than
-          quietly starting without a specialist, so check those before deleting.
+          Anything that <em>names</em> this agent (a template, a workflow block, a
+          chat proposal, the Settings default) will refuse to start, so check
+          those first.
         </p>
       </Sheet>
     </>
