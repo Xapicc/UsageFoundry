@@ -262,11 +262,6 @@ function RunRows({
                   {n.run.stopReason}
                 </div>
               )}
-              {!n.run && (
-                <div className="mt-0.5 text-ink-muted">
-                  The run row is no longer there.
-                </div>
-              )}
             </Td>
             <Td
               num
@@ -425,7 +420,7 @@ const PICK_UP_SHEET: Record<
     title: (name) => `Continue without “${name}”?`,
     confirm: "Continue without it",
     body:
-      "The workflow stops waiting on this run and carries on now: a merge behind it lands the other branches without this one, and if it is in a loop, the next pass starts once this one has landed. The run keeps its status and its branch, for you to handle from its own page.",
+      "The workflow carries on now without this run: a merge behind it lands the other branches, and in a loop the next pass starts once this pass has landed. The run keeps its status and its branch.",
   },
   merge: {
     title: (name) => `Retry “${name}”?`,
@@ -520,7 +515,7 @@ function PickUpCard({
                   </Link>
                 }
                 description={
-                  p.leaveBehindRefusal ?? `Ended ${p.status} — nothing behind it will start until you pick it up`
+                  p.leaveBehindRefusal ?? `Ended ${p.status}`
                 }
               >
                 <div className="flex flex-wrap justify-end gap-2">
@@ -581,9 +576,8 @@ function PickUpCard({
         </ListGroup>
         {pickUps.some((p) => p.kind === "run") && (
           <Hint>
-            Resuming a run carries the workflow on once it completes. Continuing
-            without it leaves the run as it is, with its branch unlanded, for
-            you to pick up from its own page later
+            Resume carries the workflow on once the run completes; Continue
+            without it leaves its branch unlanded
           </Hint>
         )}
       </Card>
@@ -769,9 +763,7 @@ function LoopCard({
       )}
 
       <Hint>
-        Each pass runs the section&rsquo;s blocks as its own links say and lands
-        what they produced, and the next pass starts fresh from that landing. It
-        stops when every run of a pass reports the work complete, a pass does
+        Stops when every run of a pass reports the work complete, a pass does
         not complete or does not land, or one of its limits is reached
       </Hint>
     </Card>
@@ -1030,11 +1022,6 @@ export default function WorkflowInstancePage() {
    * next time a kind is added.
    */
   const blockKindNotes = [
-    <Hint key="approval">
-      What a deciding block starts is created without an approval — the folder,
-      the guards and the most runs it may start were fixed when the workflow was
-      saved
-    </Hint>,
     <Hint key="spend">
       A deciding block&rsquo;s own spend is counted against this workflow&rsquo;s
       limit and never against a run
@@ -1043,7 +1030,7 @@ export default function WorkflowInstancePage() {
       ? [
           <Hint key="merge">
             A merge block&rsquo;s branches are in the merge queue on Branches,
-            one row each, with git&rsquo;s own answer for every one
+            with git&rsquo;s answer for each
           </Hint>,
         ]
       : []),
@@ -1217,24 +1204,19 @@ export default function WorkflowInstancePage() {
           </ListRow>
         </ListGroup>
 
-        <Hint>
-          {noLimits
-            ? "Nothing bounds this workflow as a whole — each block is bounded only by its own guards"
-            : WORKFLOW_LIMIT_TIMING_NOTE}
-        </Hint>
+        {!noLimits && <Hint>{WORKFLOW_LIMIT_TIMING_NOTE}</Hint>}
         {instance.liveRunCount > 0 && (
           <Hint>
-            {instance.liveRunCount} block(s) working — a cycle in flight reports
-            nothing until it ends, so the measured figure is a floor and the
-            guard&rsquo;s is what telemetry has seen so far
+            {instance.liveRunCount} block(s) working: until their cycles end,
+            the measured figure is a floor and the guard&rsquo;s is what
+            telemetry has seen
           </Hint>
         )}
         {instance.spentUnmeasured > 0 && (
           <Hint>
             Money covers {instance.spentSubjects - instance.spentUnmeasured} of{" "}
-            {instance.spentSubjects} block(s) — the rest reported no cost, because a turn
-            died before the CLI could say or the provider never says, so what
-            they spent is unknown rather than nothing
+            {instance.spentSubjects} block(s); the rest reported no cost, so
+            what they spent is unknown rather than nothing
           </Hint>
         )}
       </Card>
@@ -1331,8 +1313,7 @@ export default function WorkflowInstancePage() {
                 </TBody>
               </Table>
             </TableWrap>
-            {/* The words are unchanged and every one of them is still on this
-                page — see `blockKindNotes` for why a fold is allowed here. */}
+            {/* See `blockKindNotes` for why a fold is allowed here. */}
             <Disclosure
               className="mt-3"
               summaryClassName="text-xs font-medium text-ink-muted"
