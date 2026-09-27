@@ -58,6 +58,7 @@ const {
   reconcileOnBoot,
   runEvents,
   shutdownRuns,
+  startRun,
   trackAssistChild,
 } =
   require("./orchestrator") as typeof import("./orchestrator");
@@ -180,6 +181,10 @@ describe("shutting down with a work cycle in flight", () => {
 
     const outcome = await shutdownRuns("SIGTERM");
     assert.equal(outcome.closed, 1, "the run must have been stopped by the shutdown");
+    // The loop recovered this one itself, inside the grace, so the mop-up found
+    // nothing. The handler's log line is built from this count, and it read 0
+    // while the row below carried the recovered spend.
+    assert.equal(outcome.recovered, 1, "a cycle the loop recovered must be counted");
 
     const settled = getRun(run.id)!;
 
@@ -212,6 +217,44 @@ describe("shutting down with a work cycle in flight", () => {
     // as measured spend is the one thing worse than a missing one, which is why
     // it lives in its own column and its own sentence.
     assert.match(settled.stop_reason ?? "", /reconciled from transcripts/);
+  });
+
+  it("does not return before the loops it interrupted have written their endings", async () => {
+    // The wait used to end on a reading of the row: no child left, and no
+    // cycle claiming to be in flight. Neither says the loop has written the
+    // run's ending. After a killed cycle the post-cycle UPDATE clears
+    // `active_started_at` a transcript read before the status write, and under
+    // `npm run dev` the handler's `process.exit(0)` landed in that gap and left
+    // the row `running` for the next boot to fail. A run caught in its
+    // pre-cycle scan is the same gap with no clock in it: it has no child and
+    // no open cycle, so the old wait did not wait at all.
+    const run = createRun({
+      folder: "project",
+      mountId: null,
+      prompt: "do the other thing",
+      budget: { maxIterations: 1 },
+      origin: "form",
+    });
+    // The case above has already shut down, so `promoteQueued` refuses and the
+    // loop is started here instead. It runs as far as its pre-cycle transcript
+    // scan, its first `await`, before this line returns.
+    void startRun(run.id);
+    const before = getRun(run.id)!;
+    assert.equal(before.status, "running");
+    assert.equal(before.active_started_at, null, "the fixture must be between cycles");
+    const spawnedBefore = spawned;
+
+    const outcome = await shutdownRuns("SIGINT");
+    assert.equal(outcome.closed, 1);
+
+    const settled = getRun(run.id)!;
+    assert.equal(
+      settled.status,
+      "stopped",
+      "the shutdown returned before the loop had written the run's ending",
+    );
+    assert.match(settled.stop_reason ?? "", /server shut down \(SIGINT\)/);
+    assert.equal(spawned, spawnedBefore, "no work cycle may start on the way out");
   });
 
   it("mops up a cycle whose loop never got to finish", async () => {

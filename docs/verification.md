@@ -1310,6 +1310,28 @@ is `docs/agent/testing.md`; interface defects and their classes are
   place and the stub alive; the owner's own `SIGTERM` then reconciled the
   cycle as above. Caveat: a stub, not a real billed agent.
 
+- **The shutdown waits for each interrupted loop to write its ending,
+  2026-09-27**, Next 15.5.24, `bb20fc5` against its parent `45f85c2`, the
+  stub above with 150 MB of `user` lines appended to its transcript, so the
+  transcript read between the post-cycle UPDATE and the status write
+  outlasts the wait's 100ms poll. At `45f85c2` every run lost the race:
+  through the `dev` script with `SIGINT` to the group, 6 of 6 exited at 3.2s
+  with $0.60 reconciled and the row `running` with no stop reason, and on
+  the standalone bundle with `SIGTERM`, 4 of 4. At `bb20fc5`, which waits on
+  the loop rather than on the row, 6 of 6 and 4 of 4 exited at 3.3s
+  `stopped` with the shutdown's stop reason. Unpadded, both wrote `stopped`
+  (6 of 6 dev at `45f85c2`; 6 dev and 9 standalone at `bb20fc5`). Caveat: a
+  stub, not `docker compose`; the padding widens the gap rather than finding
+  it, and a run caught before its cycle began is pinned by
+  `shutdown.test.ts`, not measured here.
+
+- **The shutdown's log line counts the cycles the loop recovered,
+  2026-09-27**, same harness and pins: at `45f85c2` the line read "recovered
+  the spend of 0 interrupted work cycle(s)" in all 16 runs above, each row
+  carrying the $0.60 its own loop had reconciled; at `bb20fc5` it read 1 in
+  all 25. Caveat: one cycle per shutdown, and never one the mop-up
+  recovered, so a sum of the two paths was not measured.
+
 ### Isolation and landing
 
 - **Isolation, real repo with uncommitted work and a gitignored `.env`:** two

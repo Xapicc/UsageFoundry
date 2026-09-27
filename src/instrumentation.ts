@@ -302,6 +302,10 @@ export async function register() {
       void (async () => {
         try {
           const { closed, recovered } = await shutdownRuns(sig);
+          // `recovered` counts both paths: a loop reconciling its own killed
+          // cycle inside the grace, which is the ordinary case, and the
+          // mop-up after it. Counting the mop-up alone printed 0 beside a
+          // row that carried the recovered spend.
           if (closed > 0) {
             console.warn(
               `[usagefoundry] Stopped ${closed} run(s) on ${sig}; recovered the ` +

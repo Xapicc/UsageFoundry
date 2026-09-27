@@ -8806,6 +8806,12 @@ export async function startRun(id: string): Promise<void> {
     pausedUntil = outcome.resumeAt;
   };
 
+  // Registered on the line before the `try`, so its `finally` is what takes it
+  // off again: a shutdown waits on this entry, and one left behind holds a
+  // later shutdown for its whole grace.
+  const loop: RunLoop = { reconciled: 0 };
+  runLoops.set(id, loop);
+
   // Everything that can throw belongs inside the try. Parsing the budget blob
   // outside it used to leave the row stuck at 'running' with the finally never
   // reached — which, now that a live row holds its folder, would block that
@@ -9621,6 +9627,7 @@ export async function startRun(id: string): Promise<void> {
           spentEstUSD += recovered.costUSD;
           spentGuardEstUSD += recovered.costGuardUSD;
           spentEstTokens += recovered.tokens;
+          loop.reconciled += 1;
         }
       }
 
@@ -10265,24 +10272,31 @@ export async function startRun(id: string): Promise<void> {
       active_started_at: null,
     };
 
-    if (finalStatus === "paused") {
-      // A parked run is not finished. `finished_at` and `exit_code` stay unset
-      // so nothing reports a run that is about to spend more money as over, and
-      // it keeps its folder, branch and session for the resume.
-      setStatus(id, "paused", {
-        ...carried,
-        resume_at: pausedUntil,
-        paused_at: Date.now(),
-        pause_count: (run.pause_count ?? 0) + 1,
-      });
-      startSweeper();
-    } else {
-      setStatus(id, finalStatus, {
-        ...carried,
-        finished_at: Date.now(),
-        exit_code: lastExit,
-        resume_at: null,
-      });
+    try {
+      if (finalStatus === "paused") {
+        // A parked run is not finished. `finished_at` and `exit_code` stay unset
+        // so nothing reports a run that is about to spend more money as over, and
+        // it keeps its folder, branch and session for the resume.
+        setStatus(id, "paused", {
+          ...carried,
+          resume_at: pausedUntil,
+          paused_at: Date.now(),
+          pause_count: (run.pause_count ?? 0) + 1,
+        });
+        startSweeper();
+      } else {
+        setStatus(id, finalStatus, {
+          ...carried,
+          finished_at: Date.now(),
+          exit_code: lastExit,
+          resume_at: null,
+        });
+      }
+    } finally {
+      // The last write a shutdown waits for, landed or thrown. Everything after
+      // it in this block is synchronous or deliberately not awaited, so no poll
+      // can observe the loop between here and its return.
+      runLoops.delete(id);
     }
 
     // The workflow-wide guard's other boundary, and the only one that can see
@@ -11966,7 +11980,7 @@ function interruptAssistChild(child: SignalTarget): void {
  */
 export const SHUTDOWN_GRACE_MS = 10_000;
 
-/** How often the wait below re-asks. Cheap: one map size and one COUNT. */
+/** How often the wait below re-asks. Cheap: map lookups, and no query. */
 const SHUTDOWN_POLL_MS = 100;
 
 /**
@@ -11981,6 +11995,26 @@ const shutdown = ((globalThis as unknown as { __ufShutdown?: { active: boolean }
   .__ufShutdown ??= { active: false });
 
 export const isShuttingDown = (): boolean => shutdown.active;
+
+/**
+ * Every `startRun` loop in this process that has not yet written its run's
+ * ending, and how many killed cycles each has reconciled itself.
+ *
+ * `shutdownRuns` is the reader. Its wait used to end on a reading of the row,
+ * no cycle in flight, and the loop's post-cycle UPDATE clears
+ * `active_started_at` a transcript read before the status and the stop reason
+ * are written: under `npm run dev` the process exited in that gap and left the
+ * row `running` with no reason, for the next boot to fail. Only the loop knows
+ * when it is done with the row, so it says so here, in its `finally`.
+ *
+ * The count is for the shutdown's log line. A loop that settles inside the
+ * grace recovers its own cycle, which is the ordinary case, and leaves the
+ * mop-up nothing to find, so a line counting the mop-up alone said 0 beside a
+ * row carrying the recovered spend.
+ */
+type RunLoop = { reconciled: number };
+const runLoops = ((globalThis as unknown as { __ufRunLoops?: Map<string, RunLoop> })
+  .__ufRunLoops ??= new Map<string, RunLoop>());
 
 /**
  * Rows whose cycle was in flight when everything stopped.
@@ -12091,7 +12125,7 @@ export async function reconcileInterruptedCycles(): Promise<number> {
  *     `Claude Code exited with code -1`. Every child in `assistProcs` gets the
  *     same ladder, since no run's Stop path reaches it.
  *  3. **The loops are given their grace**, bounded, and return early the moment
- *     nothing is left in flight.
+ *     every loop it interrupted has written its run's ending.
  *  4. **Whatever they did not finish is mopped up**, then anything still alive
  *     is killed outright.
  *
@@ -12134,6 +12168,12 @@ export async function shutdownRuns(
   const pending = db()
     .prepare("SELECT id FROM runs WHERE status = 'running'")
     .all() as { id: string }[];
+  // The loops behind those rows, as they stand before anything is signalled,
+  // so what each reconciles from here on is what this shutdown interrupted.
+  const loops = pending.flatMap(({ id }) => {
+    const loop = runLoops.get(id);
+    return loop ? [{ id, loop, reconciledBefore: loop.reconciled }] : [];
+  });
 
   // Every `running` row, not only the ones holding a child: a run in its
   // pre-cycle transcript scan has no process to signal and is very much about
@@ -12161,24 +12201,36 @@ export async function shutdownRuns(
   const assists = [...assistProcs];
   for (const child of assists) interruptAssistChild(child);
 
-  // Waits for the children to go *and* for the loops behind them to write what
-  // the cycle cost — that write is the whole point, and it happens a tick after
-  // the child exits, not with it. Bounded by the runs that actually had a child
-  // rather than by every row claiming a cycle: a row left over from a crash has
-  // no loop coming for it, and waiting the full grace out for one would make
-  // every shutdown as slow as the worst one. The mop-up below covers it.
-  const signalled = new Set(live);
+  // Waits for the children to go *and* for the loops behind them to write the
+  // run's ending: what the cycle cost, then the status and the stop reason.
+  // Asked of the loop rather than read off the row, because the post-cycle
+  // UPDATE clears `active_started_at` a transcript read before the status
+  // write, and a run caught in its pre-cycle scan never had the column set at
+  // all. Bounded by the loops this process is running rather than by every
+  // row claiming a cycle: a row left over from a crash has no loop coming for
+  // it, and waiting the full grace out for one would make every shutdown as
+  // slow as the worst one. The mop-up below covers it.
   const stillSettling = () =>
     procs.size > 0 ||
     assists.some((child) => assistProcs.has(child)) ||
-    cyclesInFlight().some((r) => signalled.has(r.id));
+    loops.some(({ id, loop }) => runLoops.get(id) === loop);
 
   const until = Date.now() + SHUTDOWN_GRACE_MS;
   while (Date.now() < until && stillSettling()) {
     await new Promise((r) => setTimeout(r, SHUTDOWN_POLL_MS));
   }
 
-  const recovered = await reconcileInterruptedCycles();
+  // Counted before the mop-up, not after it. A loop bumps its count and clears
+  // `active_started_at` in one synchronous stretch, so a cycle counted here is
+  // one the mop-up cannot select, and a loop still reconciling now is left to
+  // the mop-up's count: no cycle is reported by both. The price is a loop whose
+  // write lands during the mop-up's own read being reported by neither, which
+  // takes a grace that ran out mid-read.
+  const recoveredByLoops = loops.reduce(
+    (n, { loop, reconciledBefore }) => n + loop.reconciled - reconciledBefore,
+    0,
+  );
+  const recovered = recoveredByLoops + (await reconcileInterruptedCycles());
 
   // Nothing may outlive this process: an agent detached from the terminal's
   // foreground group survives a Ctrl-C on its own, and under Docker a child
