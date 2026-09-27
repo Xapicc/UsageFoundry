@@ -117,6 +117,13 @@ const DOORS: {
     id: () => taskId,
   },
   {
+    name: "PATCH /api/tasks/[id]",
+    method: "PATCH",
+    load: async () => (await import("./tasks/[id]/route")).PATCH,
+    url: () => `/api/tasks/${taskId}`,
+    id: () => taskId,
+  },
+  {
     name: "DELETE /api/tasks/[id]/deps",
     method: "DELETE",
     load: async () => (await import("./tasks/[id]/deps/route")).DELETE,
@@ -134,3 +141,13 @@ for (const door of DOORS) {
     assert.match(String(reply.error), /has to be a JSON object; got null/);
   });
 }
+
+// `{}` is "change nothing" on this route and answers 200, so a garbled body read
+// as one told the operator an edit had landed.
+test("PATCH /api/tasks/[id] refuses a body that does not parse rather than reading it as {}", async () => {
+  const { PATCH } = await import("./tasks/[id]/route");
+  const reply = await send(PATCH, "PATCH", `/api/tasks/${taskId}`, taskId, "{not json");
+
+  assert.equal(reply.status, 400);
+  assert.match(String(reply.error), /has to be a JSON object; this one did not parse/);
+});

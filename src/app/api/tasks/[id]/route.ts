@@ -12,6 +12,7 @@ import {
 import { commentCountsForTasks } from "../../../../lib/taskComments";
 import { depsForTask } from "../../../../lib/taskDeps";
 import { auditMutation } from "../../../../lib/requestLog";
+import { readJsonObject } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -72,12 +73,17 @@ function withLinks(task: Task) {
  * rather than this route's: `missing` is a row that is not there, `refused` is
  * a request the rule declined, and both arrive as a sentence naming something
  * the operator can change.
+ *
+ * A body that is not a JSON object is a third 400 rather than an empty patch:
+ * `{}` is "change nothing" and answers 200, so reading a garbled body as one
+ * told the operator an edit had landed when none had.
  */
 async function patchHandler(req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const read = await readJsonObject(req);
+  if (!read.ok) return read.response;
 
-  const parsed = normalizeTaskPatch(body);
+  const parsed = normalizeTaskPatch(read.body);
   if (!parsed.ok) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }

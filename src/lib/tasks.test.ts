@@ -622,6 +622,40 @@ test("a refused move writes nothing", () => {
   assert.deepEqual(after, before);
 });
 
+/**
+ * `updated_at` is the board's record that a task moved — `idx_tasks_board` and
+ * `listTasks` sort on it — so a write that changes nothing must not stamp it.
+ * Backdated first, so an assertion cannot pass by landing in the millisecond
+ * the fixture was written in.
+ */
+const LONG_AGO = 1_000;
+
+function backdate(...ids: string[]): void {
+  for (const id of ids) {
+    db().prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").run(LONG_AGO, id);
+  }
+}
+
+test("a patch that changes nothing leaves updated_at where it was", () => {
+  const task = claimedBy(HOLDER, { title: "Unchanged" });
+  backdate(task.id);
+
+  const reclaimed = updateTask(task.id, { status: "claimed" }, { kind: "run", runId: HOLDER });
+  assert.equal(reclaimed.ok, true);
+  assert.equal(getTask(task.id)?.updatedAt, LONG_AGO, "a re-claim by the holder is not a move");
+
+  const restated = updateTask(
+    task.id,
+    { title: "  Unchanged ", priority: "normal" },
+    { kind: "operator" },
+  );
+  assert.equal(restated.ok && restated.task.updatedAt, LONG_AGO);
+  assert.equal(getTask(task.id)?.updatedAt, LONG_AGO, "restating the title is not a move");
+
+  const renamed = updateTask(task.id, { title: "Renamed" }, { kind: "operator" });
+  assert.ok(renamed.ok && renamed.task.updatedAt > LONG_AGO, "an edit that changes a field is");
+});
+
 test("a missing task is told apart from a refused one", () => {
   const missing = updateTask("no-such-id", { title: "x" }, { kind: "operator" });
   assert.equal(missing.ok, false);
@@ -1343,6 +1377,23 @@ test("a run started for an operator-only task logs the refused claim and carries
     status: string;
   };
   assert.equal(status.status, "queued", "a refused claim is a log line, never a failure");
+});
+
+test("a run picked up again re-claims without reordering the board", () => {
+  const run = seedRun("run-picked-up-again");
+  const mine = file({ title: "Held by this run" });
+  const theirs = claimedBy(STRANGER, { title: "Held by another run" });
+  recordRunTasks(run, [mine.id, theirs.id]);
+  claimTasksForRun(run);
+  assert.equal(getTask(mine.id)?.claimedByRunId, run);
+  backdate(mine.id, theirs.id);
+
+  // What every pick-up, resume and restart of the run does.
+  claimTasksForRun(run);
+
+  assert.equal(getTask(mine.id)?.updatedAt, LONG_AGO, "the holder's own re-claim");
+  assert.equal(getTask(theirs.id)?.updatedAt, LONG_AGO, "a task this run never claimed");
+  assert.equal(getTask(theirs.id)?.claimedByRunId, STRANGER);
 });
 
 /**
