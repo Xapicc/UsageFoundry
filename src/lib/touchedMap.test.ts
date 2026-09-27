@@ -354,7 +354,7 @@ describe("touchedMapView", () => {
   it("treats a run that worked in the operator's checkout as an unknown changed set", () => {
     // `worktreeDiff` answers every non-isolated run with `files: []` always, so
     // reading that as known put every file such a run edited under "not
-    // changed" — the same false claim `kind: "none"` is kept out of, for a
+    // changed", the same false claim `kind: "none"` is kept out of, for a
     // different reason that gets its own sentence.
     const view = touchedMapView(
       { kind: "report", touches: [touch({ path: "src/app.ts", tool: "Edit", calls: 3 })], cycles: 1 },

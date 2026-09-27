@@ -225,7 +225,7 @@ describe("changedSetOf", () => {
 
   it("gives a run that worked in the operator's checkout its own sentence", () => {
     // `worktreeDiff`'s `reason` says whether the folder is clean, which is no
-    // answer to why nothing can be reconciled — and its `files` are empty by
+    // answer to why nothing can be reconciled, and its `files` are empty by
     // construction, which is what read as "nothing changed".
     const set = changedSetOf(
       diff({ kind: "worktree", reason: "Nothing is uncommitted in this folder." }),

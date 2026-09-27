@@ -146,9 +146,9 @@ export function RunTouches({ run, diff }: { run: RunDTO; diff: RunDiffDTO }) {
     };
   }, [run.id]);
 
-  // Without a branch diff the changed set is unknown rather than empty — the
+  // Without a branch diff the changed set is unknown rather than empty (the
   // branch is gone, the run never had one, or it worked in the operator's own
-  // checkout — so the groups that make a claim about it are not offered. The
+  // checkout), so the groups that make a claim about it are not offered. The
   // header's two figures and the three empty states are unaffected: they are
   // facts about the events, not about the diff, and an old run whose branch was
   // deleted is exactly the one whose events are most likely to have been swept.

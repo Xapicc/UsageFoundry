@@ -129,8 +129,8 @@ export function touchActor(row: Pick<RunTouchDTO, "subagent" | "parentToolUseId"
 /**
  * What a run's diff can say about what it changed.
  *
- * Only a `range` can say anything. `none` has no diff at all, and `worktree` —
- * the answer for every run that was not isolated — is the operator's folder as
+ * Only a `range` can say anything. `none` has no diff at all, and `worktree`,
+ * the answer for every run that was not isolated, is the operator's folder as
  * it stands now, with `files` empty by construction and the operator's own
  * edits mixed into its uncommitted lines. Reading it as a known changed set
  * filed every edit such a run made under "named, and not changed", which is the
@@ -156,7 +156,7 @@ export type ChangedSet =
  * Why a run that worked in the operator's folder has no changed set.
  *
  * Its own sentence rather than the diff route's `reason`, which for this kind
- * says whether the folder is clean — true, and no answer to why nothing here
+ * says whether the folder is clean: true, and no answer to why nothing here
  * can be reconciled.
  */
 const WORKED_IN_CHECKOUT =
@@ -184,8 +184,7 @@ export function changedSetOf(diff: RunDiffDTO | null): ChangedSet {
  *
  * The diff route passes these lines on as git printed them, because the
  * Changes tab renders them verbatim, and two things about that format decide
- * whether a file matches at all — both failing by leaving it under "not
- * changed". A path holding a space or a non-ASCII byte is printed as a quoted C
+ * whether a file matches at all. Both fail by leaving it under "not changed". A path holding a space or a non-ASCII byte is printed as a quoted C
  * string with octal escapes (`"\303\274.txt"` for `ü.txt`), so a quoted field is
  * decoded. An untracked directory is printed once as `dir/` rather than file by
  * file, so the trailing `/` is kept and means everything under it.
@@ -196,7 +195,7 @@ export function changedSetOf(diff: RunDiffDTO | null): ChangedSet {
  */
 export function uncommittedPaths(lines: readonly string[]): string[] {
   return lines.flatMap((line) => {
-    // `XY ` and at least one character of path — `parseStatusZ`'s own guard.
+    // `XY ` and at least one character of path: `parseStatusZ`'s own guard.
     if (line.length < 4 || line[2] !== " ") return [];
     const first = readStatusField(line.slice(3));
     if (!first) return [];

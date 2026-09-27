@@ -213,8 +213,8 @@ export const planTouchedMap: (tree: TouchedTree, options: PlanOptions) => MapPla
  * The same rule the card below the diff obeys and for the same reason: swept,
  * named-no-file and no-such-run are three different facts that all render as a
  * blank canvas, and a blank canvas is read as a run that touched nothing.
- * `changedKnown` is the fourth: with no branch diff — none at all, or a run
- * that worked in the operator's own checkout — the changed set is *unknown*
+ * `changedKnown` is the fourth: with no branch diff (none at all, or a run
+ * that worked in the operator's own checkout) the changed set is *unknown*
  * rather than empty, so nothing on the map may draw the "in the diff" mark or
  * claim a file was not changed.
  */
