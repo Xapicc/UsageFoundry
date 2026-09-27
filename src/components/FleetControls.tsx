@@ -166,14 +166,12 @@ export function FleetControls({
       >
         <p>
           {state ? describeCounts(state) : ""}. Every workflow run is halted
-          whole, and every run outside one is stopped where it stands — a run
-          with a child in flight gets the same signal ladder its own Stop button
-          uses, so a cycle that can report what it spent still does.
+          whole and every other run is stopped where it stands; a cycle in
+          flight still gets to report what it spent.
         </p>
         <p className="mt-3 text-ink-muted">
-          This does not hold new work. A queued run that is released afterwards
-          starts as usual; press Hold new work as well if you want the queue to
-          stay still.
+          This does not hold new work: anything queued afterwards starts as
+          usual unless you also press Hold new work.
         </p>
       </Sheet>
 
@@ -201,12 +199,9 @@ export function FleetControls({
         <p className="mb-4">
           The {reopenable.length} failed or stopped run
           {reopenable.length === 1 ? "" : "s"} listed on this page, each
-          continuing its own session. The two limits below apply to all of them
-          and every other limit each run was started with is kept; a run that
-          has already used more than they allow is refused by name and left
-          alone. Two kinds are not in this list at all: one that reported the
-          task done, and one you set aside — both are a decision per run, on its
-          own page.
+          continuing its own session. The two limits below apply to all of them;
+          every other limit each run started with is kept. A run already past
+          them is refused and left alone.
         </p>
         <Field
           label="Work cycles"
