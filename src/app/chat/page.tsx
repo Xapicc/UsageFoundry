@@ -158,6 +158,9 @@ const PROVIDER_CARD_WARNING: Partial<Record<RunProviderDTO, string>> = {
     "Runs as Codex: spend is unknown rather than measured, it gets no plugins, " +
     "agent role or taskboard, its process-kill denial is weaker, and it needs " +
     "its own sign-in under Settings.",
+  local:
+    "Runs on your local model, not Anthropic: spend is unknown, winnow is out " +
+    "of the path, and its branch cannot land until a frontier review approves it.",
 };
 
 const GUARD_TONE: Record<"missing" | "set", string> = {

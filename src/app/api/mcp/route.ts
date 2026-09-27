@@ -91,6 +91,7 @@ import { releaseTask } from "../../../lib/taskRelease";
 import type { RunProviderDTO, TaskDepRefDTO } from "../../../lib/apiTypes";
 import { RUN_PROVIDER_LABEL, RUN_PROVIDERS } from "../../../lib/apiTypes";
 import { providerTerminusRefusal } from "../../../lib/budget";
+import { getLocalSignIn } from "../../../lib/localProvider";
 import { completeTaskWithValidation } from "../../../lib/validation";
 import {
   createTemplate,
@@ -1191,7 +1192,11 @@ const CHAT_TOOLS = [
             "work-cycle or time limit — a template or default set without one " +
             "is refused. It takes no model from the list above: omit model and " +
             "it runs Codex's own default. It also needs its own sign-in in " +
-            "Settings. Like the model, it is not a guard and widens nothing.",
+            "Settings. \"local\" runs Claude Code against the operator's own " +
+            "model server, signed in under Settings: it too takes no model from " +
+            "the list (it runs the signed-in model), needs a work-cycle or time " +
+            "limit, and its branch cannot land until a frontier review approves " +
+            "it. Like the model, it is not a guard and widens nothing.",
         },
         title: {
           type: "string",
@@ -4730,6 +4735,23 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
     return text(
       "A Codex run cannot be started as a saved agent — the agent's prompt " +
         "reaches Claude Code only. Drop agentId, or drop provider.",
+      true,
+    );
+  }
+  // Refused at the tool rather than left to the click, which refuses it too:
+  // a card for a provider nobody is signed into is discovered by a person
+  // pressing Approve.
+  if (provider === "local" && !getLocalSignIn()) {
+    return text(
+      "The local provider is signed out, so a local run could not start. Ask " +
+        "the operator to sign in under Settings, or drop provider.",
+      true,
+    );
+  }
+  if (provider === "local" && model) {
+    return text(
+      `A local run cannot take ${model}: its server knows none of the listed ` +
+        "ids, and it runs the model the operator signed in with. Omit model.",
       true,
     );
   }

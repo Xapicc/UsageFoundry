@@ -337,6 +337,11 @@ describe("planProposal", () => {
 
     const ordinary = planProposal(proposal(), template, defaults, null);
     assert.equal(ordinary.ok && ordinary.input.provider, null, "none named stays not recorded");
+
+    // A local server knows no Claude id either; the approval freezes the
+    // sign-in's model in its place.
+    const local = planProposal(proposal({ provider: "local" }), template, defaults, null);
+    assert.equal(local.ok && local.input.model, null);
   });
 
   it("refuses a Codex proposal whose guards would never end it", () => {

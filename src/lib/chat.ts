@@ -55,6 +55,7 @@ import {
 import { getTemplate, type RunTemplate } from "./templates";
 import type { RunProviderDTO } from "./apiTypes";
 import { providerTerminusRefusal } from "./budget";
+import { getLocalSignIn } from "./localProvider";
 import {
   agentDefinition,
   agentKnowledgeOf,
@@ -1541,8 +1542,12 @@ export function planProposal(
       // tool offers the catalogue and a template's model came from the same
       // place — and `codex exec -m claude-…` is a spawn that fails. Null runs
       // Codex's own default, `frozenRunModel`'s reading.
+      //
+      // Nor for a local run, for the same reason from the other side: its
+      // server knows none of these ids. `approveProposal` freezes the
+      // sign-in's model onto it, as the run form's door does.
       model:
-        provider === "codex"
+        provider === "codex" || provider === "local"
           ? null
           : proposal.model?.trim() || template?.model || null,
       // Null stays null — "not recorded", the ordinary Claude run — rather than
@@ -1940,9 +1945,26 @@ export function approveProposal(
   const transient = transientRefusal();
   if (transient) return { ok: false, reason: transient };
 
+  // Read at the click, and refused without burning the proposal, for
+  // `transientRefusal`'s reason: a sign-out is something the operator can undo
+  // and then press Approve again. Frozen onto the run here as the run form's
+  // door freezes it, so a later sign-in naming another model does not move it.
+  let localModel: string | null = null;
+  if (plan.input.provider === "local") {
+    const signIn = getLocalSignIn();
+    if (!signIn) {
+      return {
+        ok: false,
+        reason: "The local provider is signed out. Sign in under Settings and approve it again.",
+      };
+    }
+    localModel = signIn.model;
+  }
+
   try {
     const run = createRun({
       ...plan.input,
+      ...(localModel ? { model: localModel } : {}),
       dependsOn: [...dependsOn],
       // The proposal rather than the chat: a thread holds many proposals and
       // only one of them authorised this run. A plain id, so it keeps reading

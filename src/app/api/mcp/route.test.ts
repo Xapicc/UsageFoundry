@@ -565,6 +565,22 @@ test("propose_run carries a provider, and refuses a Codex card it could not hono
     ["codex", null],
     "a named provider reaches the row, and an omitted one stays the ordinary run",
   );
+
+  // The local provider: refused while nobody is signed in, and refused a model
+  // off the list, which is Claude ids its server has never heard of.
+  const signedOut = await propose({ templateId: bounded, provider: "local" });
+  assert.equal(signedOut.isError, true);
+  assert.match(signedOut.text, /local provider is signed out/);
+  db()
+    .prepare(
+      `INSERT INTO local_provider (id, base_url, token, model, signed_in_at)
+       VALUES (1, 'http://192.168.0.190:1234', NULL, 'qwen3', 0)`,
+    )
+    .run();
+  const local = await propose({ templateId: bounded, provider: "local" });
+  assert.equal(local.isError, false, local.text);
+  assert.match(local.text, /spawned as Local model/);
+  db().prepare("DELETE FROM local_provider").run();
 });
 
 /**
