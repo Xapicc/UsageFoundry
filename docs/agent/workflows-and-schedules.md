@@ -56,7 +56,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - A loop's exit conditions are four, and the first of them is what the agents said rather than what a row says.
 - A pass that reported it could not finish ends the loop, and the rung above it is why that works at all.
 - A loop's two caps are termini, not guards, and that is why they are allowed on a node at all.
-- A loop's board condition is a third terminus and the only one that is not a fact about a pass, which is why it alone is read before the first one.
+- A loop's board condition is a third terminus and the only one that is not a fact about a pass, which is why it alone is read before the first pass and never while one is still working.
 - The condition's numbers are an `or`, its project is one folder unless told otherwise, and a condition saved as one number is read in exactly one place.
 
 ## [Loop passes: scheduling, run counts, members and `looping`](workflows-and-schedules/loop-passes.md)
