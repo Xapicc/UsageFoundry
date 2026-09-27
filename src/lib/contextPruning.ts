@@ -4175,6 +4175,36 @@ export function readCleanProbes(span: {
 }
 
 /**
+ * The control every cut is priced against, whichever cuts are being priced.
+ *
+ * It used to start at the earliest cut in the batch it was handed, which made a
+ * cut's price depend on which other cuts shared its batch. Measured 2026-09-27:
+ * the dashboard's batch started 2026-08-28 and saw all six clean probes, the
+ * runs list's started 2026-09-26 and saw one, so one boundary prune was charged
+ * $1.09 on the dashboard and settled at nothing on the runs list and its own
+ * page — a session net of −$0.95 beside two rows that were both positive.
+ *
+ * Bounded below at the transcript horizon rather than reading the whole table,
+ * because what a plain resume does is a property of an install's configuration
+ * and a period well before this one may have been running a different one — and
+ * a probe older than the horizon has lost the transcript it is classified from
+ * anyway. Open above, because a clean boundary after the last cut is still
+ * evidence about the same install, and the gate in `orchestrator.ts` produces
+ * its controls by declining prunes — so the newest rows are exactly the ones
+ * that make an indeterminate cut determinable.
+ */
+function installResumeControl(
+  mainThread: readonly UsageEntry[],
+  now: number,
+): ResumeControl {
+  // `retentionCutoff`'s arithmetic rather than an import of it: `retention.ts`
+  // imports `orchestrator.ts`, which imports this module.
+  const days = getSettings().transcriptRetentionDays;
+  const from = days !== null && days > 0 ? now - days * 86_400_000 : 0;
+  return resumeControl(readCleanProbes({ from, to: now }), mainThread);
+}
+
+/**
  * Price one receipt.
  *
  * ## What a boundary prune pays, and why that stopped being a constant
@@ -4556,20 +4586,7 @@ export async function priceReceipts(
   // never touched. Same split `transcripts.ts` makes everywhere else.
   const mainThread = entries.filter((e) => !e.isSidechain);
 
-  // The control, from the earliest receipt in hand to now.
-  //
-  // Bounded below rather than reading the whole table, because what a plain
-  // resume does is a property of an install's configuration and a period before
-  // this one may have been running a different one. Open above, because a clean
-  // boundary that happened *after* the last prune is still evidence about the
-  // same install, and the gate in `orchestrator.ts` produces its controls by
-  // declining prunes — so the newest rows are exactly the ones that make an
-  // indeterminate receipt determinable.
-  const from = receipts.reduce((min, r) => Math.min(min, r.ts), receipts[0].ts);
-  const control = resumeControl(
-    readCleanProbes({ from, to: Date.now() }),
-    mainThread,
-  );
+  const control = installResumeControl(mainThread, Date.now());
   // Per receipt, and it was walking every turn on the machine each time. The
   // sort below is unchanged and still what fixes the order this relies on.
   const bySession = indexBySession(mainThread);
@@ -4835,11 +4852,7 @@ async function priceForks(
   const { entries } = await scanUsage();
   const mainThread = entries.filter((e) => !e.isSidechain);
 
-  const from = forks.reduce((min, f) => Math.min(min, f.cut.ts), forks[0].cut.ts);
-  const control = resumeControl(
-    readCleanProbes({ from, to: Date.now() }),
-    mainThread,
-  );
+  const control = installResumeControl(mainThread, Date.now());
   // Both reads below are per fork and both were walking every turn on the
   // machine to find one session's. Same grouping `resumeControl` makes, for the
   // same reason; only `following.length` is read, so nothing here depends on an

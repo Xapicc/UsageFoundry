@@ -325,3 +325,106 @@ describe("recordForkAttempt", () => {
     );
   });
 });
+
+describe("pricing a cut beside other cuts", () => {
+  it("prices a boundary prune the same on the runs list, its page and the dashboard", async () => {
+    // Here rather than in the pure suite because the defect was in which
+    // probes were read, not in any arithmetic: the control group started at
+    // the earliest cut in whatever batch was being priced. The dashboard's
+    // batch reached back past an older run's cut and saw five clean probes;
+    // the runs list and the run's own page started at this cut and saw none.
+    // One boundary prune, charged on one screen and free on the other two —
+    // measured on this install as a session net of −$0.95 beside two runs
+    // that both read positive.
+    const { pruneSavingsByRun, pruneSavings, pricedCuts, sumPruneSavings } =
+      await import("./contextPruning.js");
+    const { db } = await import("./db.js");
+
+    const now = Date.now();
+    const HOUR = 3_600_000;
+    const older = now - 10 * HOUR;
+    const cutAt = now - HOUR;
+    const projectDir = path.join(TMP, "claude", "projects", "-workspace-ctl");
+    fs.mkdirSync(projectDir, { recursive: true });
+    const turn = (
+      sessionId: string,
+      ts: number,
+      cacheRead: number,
+      cacheWrite1h: number,
+    ) =>
+      JSON.stringify({
+        type: "assistant",
+        uuid: `u-${sessionId}-${ts}`,
+        requestId: `req_${sessionId}_${ts}`,
+        timestamp: new Date(ts).toISOString(),
+        sessionId,
+        cwd: "/workspace/ctl",
+        message: {
+          id: `msg_${sessionId}_${ts}`,
+          model: "claude-opus-5",
+          usage: {
+            input_tokens: 10,
+            output_tokens: 200,
+            cache_read_input_tokens: cacheRead,
+            cache_creation_input_tokens: cacheWrite1h,
+            cache_creation: { ephemeral_1h_input_tokens: cacheWrite1h },
+          },
+        },
+      });
+    const writeSession = (sessionId: string, lines: string[]) =>
+      fs.writeFileSync(
+        path.join(projectDir, `${sessionId}.jsonl`),
+        `${lines.join("\n")}\n`,
+      );
+
+    // Five clean boundaries, all before the cut, and every one resumed warm:
+    // on this install the prefix outlives a boundary, so a cold resume after a
+    // prune is the prune's doing.
+    for (let k = 1; k <= 5; k++) {
+      const probeAt = older + k * HOUR;
+      db()
+        .prepare(
+          "INSERT INTO resume_probes (ts, run_id, session_id, pruned, tokens_before) VALUES (?,?,?,0,?)",
+        )
+        .run(probeAt, `run-probe-${k}`, `s-probe-${k}`, 100_000);
+      writeSession(`s-probe-${k}`, [turn(`s-probe-${k}`, probeAt + 60_000, 100_000, 1_000)]);
+    }
+
+    // The cut under test, and the resume after it that came back cold.
+    db()
+      .prepare(
+        "INSERT OR REPLACE INTO runs (id, folder, prompt, status, budget, created_at, model, session_id) VALUES (?,?,?,?,?,?,?,?)",
+      )
+      .run("run-ctl", "/x", "t", "completed", 10, cutAt - HOUR, "claude-opus-5", "s-ctl");
+    const receipt = db().prepare(
+      `INSERT INTO prune_receipts (ts, run_id, trigger, tier, tokens_before, tokens_after, tokens_removed, model)
+       VALUES (?,?,?,?,?,?,?,?)`,
+    );
+    receipt.run(cutAt, "run-ctl", "boundary", "standard", 120_000, 70_000, 50_000, "claude-opus-5");
+    writeSession("s-ctl", [
+      turn("s-ctl", cutAt + 60_000, 16_000, 90_000),
+      turn("s-ctl", cutAt + 120_000, 106_000, 0),
+    ]);
+    // Another run's older cut, which is all it took to widen the dashboard's
+    // batch past the probes.
+    receipt.run(older, "run-ctl-older", "early-end", "standard", 80_000, 40_000, 40_000, "claude-opus-5");
+
+    const runsList = (await pruneSavingsByRun(["run-ctl"])).get("run-ctl");
+    const runPage = await pruneSavings({ runId: "run-ctl" });
+    const dashboard = sumPruneSavings(
+      (await pricedCuts({ from: older, to: now })).filter(
+        (p) => p.row.runId === "run-ctl",
+      ),
+    );
+
+    assert.equal(
+      runsList?.unsettledPrunes,
+      0,
+      "clean probes from before the cut are evidence about this install, " +
+        "whichever other cuts are priced beside it",
+    );
+    assert.ok(dashboard.netUSD < 0, "the fixture is a prune that lost money");
+    assert.equal(runsList?.netUSD, dashboard.netUSD);
+    assert.equal(runPage.netUSD, dashboard.netUSD);
+  });
+});
