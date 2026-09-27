@@ -34,6 +34,19 @@ Only you can drop a task, delete one, or re-open a closed one. A re-open clears
 the record of which run had claimed and completed it, because a task that is
 open while naming the run that finished it is a row contradicting itself.
 
+## Operator only
+
+Some work no run in this container can do: it needs a Mac or a GUI, hardware,
+credentials only you hold, or a physical action. Mark such a task **Operator
+only** — on the new-task form, or with the toggle on the task's page — and no
+run will claim it; it stays open on the board for you. It is not a status: the
+task is still open, and you close or drop it the ordinary way.
+
+A run that gave a task back because of a blocker like that can mark it for you,
+and so can the orchestrator chat when it files a new task. Only you can clear
+the mark. A loop that repeats until the board is down to N open tasks does not
+count operator-only ones, since no pass can bring them down.
+
 ## Comments
 
 A task carries a thread of notes. You write one, the orchestrator chat can write
@@ -104,7 +117,8 @@ Three kinds of agent, each with a different half of the board.
 
 **The orchestrator chat** reads the board, files tasks, writes notes on them,
 records that one task has to happen before another, and can name a task on a run
-it proposes to you. It cannot close anything and cannot remove a dependency.
+it proposes to you. It cannot close anything and cannot remove a dependency. It
+may file a task as operator-only, but never names one as a run's work.
 
 **A workflow block** reads the board and can name a task on a run it emits. It
 cannot file one, cannot write a note and cannot draw a dependency: a block runs
@@ -117,6 +131,9 @@ you meet already full of an agent's own idea of the work.
 - list the task it was started for and what else is open in the folder it is
   working in;
 - mark **that** task complete, and only that one;
+- give that task back when it cannot finish it, with the reason written on the
+  task as a note — and mark it operator-only if the blocker is something this
+  container cannot remove;
 - file a new task for something it found and should not fix itself;
 - write a note on a task, including one merely open in the folder it is working
   in — and read the notes you have written on the task it holds;
@@ -181,6 +198,7 @@ the change is *present*, never that it works, and it is wrong in both directions
 
 ## Filtering
 
-The board draws every status group at once and filters by project in the
-browser, so switching projects does not re-request. If your backlog outgrows one
+The board draws every status group at once and filters by project, and by who
+does the work (all, agent work, operator only), in the browser, so switching
+either does not re-request. If your backlog outgrows one
 page the board says so above the rows rather than quietly showing you part of it.
