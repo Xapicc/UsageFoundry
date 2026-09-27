@@ -229,8 +229,7 @@ export function RunTouchReplay({
           {step === null ? (
             <>
               At rest — <span className="tabular-nums">{total}</span> tool call
-              {total === 1 ? "" : "s"} named a file, in this order. The map above stands at
-              the end of the run.
+              {total === 1 ? "" : "s"} named a file, in this order.
             </>
           ) : (
             <>

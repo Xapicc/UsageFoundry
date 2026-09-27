@@ -65,7 +65,7 @@ export function runFormProblems(v: RunFormState): Problem[] {
     problems.push({
       focus: "mount",
       message: v.noMountsUsable
-        ? "No workspace is mounted, so there is nowhere for a run to work."
+        ? "No workspace is mounted."
         : "Choose the workspace this run should work in.",
       immediate: false,
     });
@@ -85,14 +85,14 @@ export function runFormProblems(v: RunFormState): Problem[] {
     problems.push({
       focus: "agent",
       message:
-        "That agent is not in the registry any more, so this run cannot start. Pick another one, or start with none.",
+        "That agent is not in the registry any more. Pick another one, or start with none.",
       immediate: true,
     });
   }
   if (v.selectedAgent && !v.selectedAgent.usable) {
     problems.push({
       focus: "agent",
-      message: `“${v.selectedAgent.name}” is missing its description or its prompt, and Claude Code will not register an agent like that — the run would fail the moment it spawned. Fix it, or start with none.`,
+      message: `“${v.selectedAgent.name}” is missing its description or its prompt. Fix it, or start with none.`,
       immediate: true,
     });
   }
@@ -156,16 +156,14 @@ export function limitProblems(v: LimitState): Problem[] {
   if (v.costLimited && v.effCost === null) {
     problems.push({
       focus: "cost",
-      message:
-        "Enter an amount above $0, or switch the spending limit off — a blank box starts a run with no spending limit at all.",
+      message: "Enter an amount above $0, or switch the spending limit off.",
       immediate: false,
     });
   }
   if (v.timeLimited && v.effMinutes === null) {
     problems.push({
       focus: "dur",
-      message:
-        "Enter a number of minutes, or switch the time limit off — a blank box starts a run with no time limit at all.",
+      message: "Enter a number of minutes, or switch the time limit off.",
       immediate: false,
     });
   }
@@ -176,7 +174,7 @@ export function limitProblems(v: LimitState): Problem[] {
       // where the number input only exists in one of them.
       focus: "cycles-on",
       message:
-        "Set a time limit, or cap the work cycles. Nothing else here only moves one way, so without one of them nothing would ever end this run.",
+        "Nothing would end this run. Set a time limit, or cap the work cycles.",
       immediate: true,
     });
   }

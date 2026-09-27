@@ -104,8 +104,8 @@ export function RestartClosed({ onReopened }: { onReopened: () => void }) {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <span>
             {count} run{count === 1 ? " was" : "s were"} closed out when the
-            server last restarted. Nothing of theirs was lost — each carries on
-            from the session it left off in.
+            server last restarted and can resume where{" "}
+            {count === 1 ? "it" : "they"} left off.
           </span>
           <Button onClick={() => setConfirming(true)} disabled={busy}>
             Pick up {count}

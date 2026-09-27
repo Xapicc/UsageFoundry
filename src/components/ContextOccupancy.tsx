@@ -134,18 +134,12 @@ export function ContextOccupancy({
             fraction={null}
             unknownHint="not measured yet"
           />
-          <p className="mt-2 max-w-[68ch] text-xs leading-snug text-ink-muted">
-            Readings are taken on the live-guard tick, so a run that has not been
-            ticked yet — or one that finished before this series existed — has
-            nothing to show.{" "}
-            {pruneCount > 0 && (
-              <>
-                Its {pruneCount} {pruneCount === 1 ? "prune is" : "prunes are"}{" "}
-                recorded, with no series to mark{" "}
-                {pruneCount === 1 ? "it" : "them"} on.
-              </>
-            )}
-          </p>
+          {pruneCount > 0 && (
+            <p className="mt-2 max-w-[68ch] text-xs leading-snug text-ink-muted">
+              {pruneCount} {pruneCount === 1 ? "prune is" : "prunes are"} recorded,
+              with no series to mark {pruneCount === 1 ? "it" : "them"} on.
+            </p>
+          )}
         </>
       ) : (
         <>
@@ -694,15 +688,13 @@ function CompositionStack({
       <p className="mt-2 max-w-[68ch] text-xs leading-snug text-ink-muted">
         {absence === "off" ? (
           <>
-            What the window is made of is not read: it costs a winnow
-            subprocess, and context pruning is switched off, so nothing here
-            runs winnow against this conversation.
+            What the window is made of is not read while context pruning is
+            switched off.
           </>
         ) : (
           <>
-            What the window is made of is taken on the guard tick, paced by
-            how far the conversation has grown rather than by the clock — so a
-            run that has not moved much yet has nothing to show.
+            What the window is made of is paced by how far the conversation has
+            grown, and this one has not grown enough yet.
           </>
         )}
       </p>
@@ -1235,8 +1227,7 @@ function CompositionDetail({
             </>
           ) : !readingHasTree ? (
             <>
-              This reading carries nothing below the top level — not{" "}
-              {slice.label} and not any other band.
+              This reading carries no breakdown for any band.
             </>
           ) : (
             <>Nothing below {slice.label} came back in this reading.</>
@@ -1310,7 +1301,7 @@ function DetailRows({
  * What this drawing is doing that the picture alone does not say.
  *
  * Every clause is conditional, so the ordinary case — an api-basis series that
- * is complete, current and short — renders **nothing**, and this returns `null`
+ * is complete and current — renders **nothing**, and this returns `null`
  * rather than an empty `<p>`, whose bottom margin would otherwise sit under the
  * chart with no text in it. The standing prose that used to open it, naming the
  * two token currencies and the one-turn lag, was removed at the operator's ask:
@@ -1347,13 +1338,9 @@ function Caption({
       key: "held",
       node: (
         <>
-          Nothing has moved it for {fmtDuration(held)} and it is still being
-          read: the series only gains a point when this run&rsquo;s{" "}
-          <em>main thread</em> finishes another request, and a long tool call or
-          a sub-agent adds nothing to that — a sub-agent&rsquo;s turns are not
-          this conversation&rsquo;s context and do not enter it until its result
-          comes back. The figure is current; it is the conversation that is
-          waiting.
+          The figure is current. It moves only when the <em>main thread</em>{" "}
+          finishes another request, and a long tool call or a sub-agent adds
+          nothing until it returns.
         </>
       ),
     });
@@ -1364,10 +1351,9 @@ function Caption({
       key: "latest-fallback",
       node: (
         <>
-          This last reading had no usage frame to read and fell back to the
-          transcript&rsquo;s byte estimate — a different measure rather than a
-          rougher one, so the percentage above is against a quantity the rest of
-          the series is not in.
+          This last reading is a byte estimate from the transcript, a different
+          measure rather than a rougher one. The percentage above is against a
+          quantity the rest of the series is not in.
         </>
       ),
     });
@@ -1378,10 +1364,9 @@ function Caption({
       key: "earlier-fallbacks",
       node: (
         <>
-          {fallbacks} earlier {fallbacks === 1 ? "reading" : "readings"} fell
-          back to the transcript&rsquo;s byte estimate with no usage frame to
-          read; those are drawn hollow, and are a different measure rather than a
-          rougher one.
+          {fallbacks} earlier{" "}
+          {fallbacks === 1 ? "reading is a byte estimate" : "readings are byte estimates"}{" "}
+          from the transcript, a different measure rather than a rougher one.
         </>
       ),
     });
@@ -1392,20 +1377,8 @@ function Caption({
       key: "tail",
       node: (
         <>
-          Drawn from the newest {samples.length} of {sampleCount} readings — the
-          end of the series, not a thinning of it. Every point returned is drawn.
-        </>
-      ),
-    });
-  }
-
-  if (samples.length > DOT_LIMIT) {
-    clauses.push({
-      key: "dots",
-      node: (
-        <>
-          Past {DOT_LIMIT} readings the per-point dots stand down and the line is
-          drawn alone — it still passes through every one of them.
+          Drawn from the newest {samples.length} of {sampleCount} readings: the
+          end of the series, not a thinning of it.
         </>
       ),
     });

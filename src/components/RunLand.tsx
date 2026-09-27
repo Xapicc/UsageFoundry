@@ -101,7 +101,7 @@ function ConflictFile({ file }: { file: ConflictFileDTO }) {
           </Hint>
         )}
         {!file.regionsRead && (
-          <Hint>Its merged content was not read, so nothing is shown here</Hint>
+          <Hint>Its merged content was not read</Hint>
         )}
         {file.regionsRead && total === 0 && !file.message && (
           <Hint>git left no conflict markers in this file</Hint>
@@ -147,8 +147,8 @@ function PendingWork({
 
       {!pending.readable ? (
         <Hint tone="warn">
-          Could not read <span className="mono">{pending.path}</span>, so nothing is
-          offered — check it by hand
+          Could not read <span className="mono">{pending.path}</span>; check it by
+          hand
         </Hint>
       ) : (
         <>
@@ -173,14 +173,11 @@ function PendingWork({
               target, so the button is not drawn rather than drawn to be
               refused; `commitRefusal` refuses both all the same. */}
           {resolving ? (
-            <Hint>
-              Claude is resolving conflicts in this checkout, so nothing is
-              offered until it finishes
-            </Hint>
+            <Hint>Claude is resolving conflicts in this checkout</Hint>
           ) : pending.merging ? (
             <Hint tone="warn">
-              A conflict resolution was cut off here mid-merge, so nothing is
-              offered: run <span className="mono whitespace-nowrap">git merge --abort</span> in
+              A conflict resolution was cut off here mid-merge: run{" "}
+              <span className="mono whitespace-nowrap">git merge --abort</span> in
               this checkout, then resolve again
             </Hint>
           ) : (
@@ -513,12 +510,10 @@ export function RunLand({ run }: { run: RunDTO }) {
                   spatial question an ordered list of paths cannot answer. One
                   link, here and nowhere else, for `RunTouches`' reason. */}
               <p className="mt-2 max-w-[70ch] text-xs leading-snug text-ink-muted">
-                Nothing was written to find that out — the merge was tried in
-                memory, and what is below is how it would land.{" "}
+                Nothing was written to find that out.{" "}
                 <Link href={`/runs/${run.id}/conflicts`}>
                   Where they are in the tree
-                </Link>{" "}
-                lays the same files out by directory.
+                </Link>
               </p>
               <div className="mt-2">
                 {state.preview.files.map((f) => (
@@ -645,8 +640,8 @@ export function RunLand({ run }: { run: RunDTO }) {
               Pushes <span className="mono">{delivery?.head}</span> to{" "}
               <span className="mono">{delivery?.remote}</span> and opens a pull
               request against <span className="mono">{delivery?.base}</span>. Never
-              forced, and nothing is merged: the push runs from your checkout but
-              leaves what is in it alone. The check Land takes applies here too.
+              forced; nothing is merged and your checkout&rsquo;s files are left
+              alone. Land&rsquo;s check applies too.
             </p>
           )}
 

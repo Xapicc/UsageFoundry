@@ -140,8 +140,8 @@ export function RunReview({ run }: { run: RunDTO }) {
       {/* Beside the button whether or not a review already exists: "Review
           again" spends exactly as much as the first one did. */}
       <Hint>
-        Runs Claude once against this run&rsquo;s diff. It is billed and spends
-        against the same 5-hour window your runs do
+        Each press is billed and spends against the same 5-hour window as your
+        runs
       </Hint>
 
       {!latest && <Empty>No review yet.</Empty>}

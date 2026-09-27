@@ -72,14 +72,11 @@ export function RunPruning({
           </div>
           <p className="mt-2 text-xs leading-snug text-ink-muted">
             What later turns did not have to re-read, less what the edits cost.
-            Not spend, and never added to the figures above.
           </p>
           {savings.unsettledPrunes > 0 && (
             <p className="mt-2 text-xs leading-snug text-ink-muted">
-              A prune at a cycle boundary pays nothing only if a plain resume
-              would have rewritten its prefix anyway, and that is decided by
-              resumes with no prune before them. Until enough of those have been
-              seen, the net above is a ceiling.
+              What cycle-boundary prunes cost stays unsettled until more plain
+              resumes have been seen.
             </p>
           )}
           {savings.pricedPrunes < savings.prunes && (

@@ -166,9 +166,8 @@ export default function RunTouchedPage({ params }: Ctx) {
     <>
       <h1 className="mb-1 text-xl font-semibold tracking-tight">What it touched</h1>
       <p className="mb-4 text-sm text-ink-muted">
-        Every file this run named, positioned by where it sits in the repository.{" "}
-        <Link href={`/runs/${id}`}>Back to the run</Link> for the same files as an
-        ordered, searchable table.
+        <Link href={`/runs/${id}`}>Back to the run</Link> for the same files as a
+        searchable table.
       </p>
 
       {error && <Notice tone="danger">{error}</Notice>}
@@ -227,8 +226,7 @@ export default function RunTouchedPage({ params }: Ctx) {
                 {view.report.changedNotTouched.length}
               </strong>{" "}
               of them changed without any tool call naming{" "}
-              {view.report.changedNotTouched.length === 1 ? "it" : "them"} — drawn
-              hollow, and written by something that names no file.
+              {view.report.changedNotTouched.length === 1 ? "it" : "them"}.
             </p>
           )}
 
@@ -236,9 +234,7 @@ export default function RunTouchedPage({ params }: Ctx) {
 
           {view.unnamedOnly && (
             <Notice tone="warn" quiet>
-              {TOUCH_IDLE_SENTENCE} Every file drawn here comes from the branch diff, so
-              the map says where this run&apos;s changes landed and nothing at all about
-              what it read.
+              {TOUCH_IDLE_SENTENCE} Every file drawn here comes from the branch diff.
             </Notice>
           )}
 
@@ -248,16 +244,14 @@ export default function RunTouchedPage({ params }: Ctx) {
                 {plan.foldedFiles} file{plan.foldedFiles === 1 ? "" : "s"}
               </strong>{" "}
               {plan.foldedFiles === 1 ? "is" : "are"} behind {plan.folded.length} folded
-              director{plan.folded.length === 1 ? "y" : "ies"}, drawn as one node each
-              with the count on it. Nothing has been dropped — click a folded node to
-              open it.
+              director{plan.folded.length === 1 ? "y" : "ies"}.
             </Notice>
           )}
 
           {sequence === null && (
             <Notice tone="warn" quiet>
-              The order this run named files in could not be read, so there is no replay
-              below — the map still shows every file it named.
+              The order this run named files in could not be read, so there is no
+              replay.
             </Notice>
           )}
 
@@ -304,12 +298,8 @@ export default function RunTouchedPage({ params }: Ctx) {
           </div>
 
           <p className="mt-3 max-w-[70ch] text-xs leading-snug text-ink-muted">
-            A line means <em>is in</em> — the path hierarchy, not a tool call. Which tools
-            named a file is on the file, because tool&nbsp;→&nbsp;file is a star: a dozen
-            hubs with nearly everything hanging off <span className="mono">Read</span>,
-            drawing one fact the count above already states. The replay steps the same
-            nodes in the order the calls were made; a call on a file behind a folded
-            directory lands on the fold, and opening it moves the playhead onto the file.
+            A line means <em>is in</em> — the path hierarchy, not a tool call. In the
+            replay, a call on a file inside a folded directory lands on the fold.
           </p>
         </Card>
       )}
@@ -387,7 +377,7 @@ function Legend({
           A folded directory, sized by what is behind it
         </LegendRow>
         <LegendRow swatch={<span className="block size-3 rounded-full border border-ink-faint bg-surface" />}>
-          A directory, holding the files under it
+          A directory
         </LegendRow>
         {replaying && (
           <>
@@ -403,15 +393,13 @@ function Legend({
             <LegendRow
               swatch={<span className="block size-3 rounded-full bg-ink-muted opacity-20" />}
             >
-              Faded: the replay has not reached it. A file the diff lists and no call
-              named is never reached, which is what its hollow already says.
+              Faded: the replay has not reached it. A hollow file never is.
             </LegendRow>
           </>
         )}
       </ul>
       <p className="mb-4 max-w-[42ch] text-xs leading-snug text-ink-muted">
-        A file&apos;s size is how many calls named it. Drag to pan, scroll to zoom, drag a
-        node to arrange it.
+        A file&apos;s size is how many calls named it.
       </p>
     </>
   );

@@ -62,9 +62,7 @@ const GROUPS = [
   {
     key: "touchedUncommitted",
     label: "Named, and left uncommitted",
-    footnote:
-      "Changed in the checkout but never committed, so landing will not bring " +
-      "them over.",
+    footnote: "Landing will not bring these over.",
     fold: false,
   },
   {
@@ -76,9 +74,7 @@ const GROUPS = [
   {
     key: "outsideCheckout",
     label: "Named outside the checkout",
-    footnote:
-      "Matched neither this run's working directory nor its folder, so the " +
-      "diff can say nothing about them.",
+    footnote: "The diff can say nothing about these.",
     fold: false,
   },
 ] as const satisfies readonly TouchGroup[];
@@ -104,8 +100,7 @@ const GROUPS_WITHOUT_DIFF = [
   {
     key: "outsideCheckout",
     label: "Named outside the checkout",
-    footnote:
-      "Matched neither this run's working directory nor its folder.",
+    footnote: null,
     fold: false,
   },
 ] as const satisfies readonly TouchGroup[];
