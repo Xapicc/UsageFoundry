@@ -70,6 +70,7 @@ Seventeen are renderings rather than functions — every `*.test.tsx` in the tre
 | `formProblems.test.ts` |  |
 | `installSpend.test.ts` | [chat], [harnesses] |
 | `instanceBudget.test.ts` |  |
+| `parksAndRefunds.test.ts` |  |
 
 ## [Pricing, the model catalogue and model choice](testing/pricing-and-models.md)
 

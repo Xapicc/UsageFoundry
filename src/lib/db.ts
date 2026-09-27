@@ -952,6 +952,19 @@ function migrate(db: Database.Database) {
   addColumn(db, "runs", "resume_at", "INTEGER");
   addColumn(db, "runs", "paused_at", "INTEGER");
   addColumn(db, "runs", "pause_count", "INTEGER NOT NULL DEFAULT 0");
+  // The refusal parks alone, which is what `MAX_PAUSES_PER_RUN` bounds.
+  // `pause_count` counts guard parks as well and is never reset, so a run that
+  // had stepped aside at its own 5-hour guard was failed `pauses-spent` at its
+  // first real refusal. Backfilled from `pause_count` because an existing row
+  // cannot say which of its parks were refusals, and counting them all keeps
+  // exactly the allowance those rows had before this column. In one transaction
+  // with the ALTER so a crash between the two cannot leave the column added and
+  // the backfill never run.
+  db.transaction(() => {
+    if (addColumn(db, "runs", "refusal_pauses", "INTEGER NOT NULL DEFAULT 0")) {
+      db.exec("UPDATE runs SET refusal_pauses = pause_count");
+    }
+  })();
   // Milliseconds this run has spent parked, closed off every time it leaves a
   // park. `maxDurationMinutes` is a cap on *worked* minutes, so the guard
   // subtracts this from the wall clock since `started_at`; without it a run that
@@ -2898,13 +2911,13 @@ function addColumn(
   table: string,
   col: string,
   decl: string,
-) {
+): boolean {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all() as {
     name: string;
   }[];
-  if (!cols.some((c) => c.name === col)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${decl}`);
-  }
+  if (cols.some((c) => c.name === col)) return false;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${decl}`);
+  return true;
 }
 
 export function db(): Database.Database {

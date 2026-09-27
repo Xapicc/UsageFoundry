@@ -288,7 +288,14 @@ export interface RunRow {
   /** Paused runs: when to look again. A hint, not a promise — see sweepPaused. */
   resume_at: number | null;
   paused_at: number | null;
+  /** Every park this run has taken, of either kind. Never reset. */
   pause_count: number;
+  /**
+   * Refusals this run has parked to wait out, which is what
+   * `MAX_PAUSES_PER_RUN` caps. A subset of `pause_count`, and unlike it zeroed
+   * by `reopenRun` — see that constant.
+   */
+  refusal_pauses: number;
   /**
    * Parked milliseconds already closed off. Open parks are not in here — the
    * total at any instant is this plus `now - paused_at` while `paused_at` is
@@ -1794,9 +1801,17 @@ const MAX_REFUSAL_WAIT_MS = 6 * 3_600_000;
 /**
  * How many times one run may wait out a refusal.
  *
- * The guard path needs no such cap — wall clock is checked ahead of the window
- * and terminates the run — but a refusal is someone else's claim about someone
- * else's counter, and a misread one must not re-park forever.
+ * Counted on `runs.refusal_pauses`, and not on `pause_count`. A refusal is
+ * someone else's claim about someone else's counter, and a misread one must not
+ * re-park forever. Only the refusal branch advances the count: a run that
+ * stepped aside at its own 5-hour guard has not waited out a refusal, and
+ * charging it one failed the run at its first real wall. `reopenRun` zeroes it,
+ * because a run failed `pauses-spent` and picked up by hand is the fresh
+ * attempt this cap was not meant to span — carried, the count failed it again
+ * at the next wall without one wait.
+ *
+ * `pause_count` counts every park of either kind and is never reset, because
+ * `ensureWorktree` reads it as "this run has worked before".
  */
 export const MAX_PAUSES_PER_RUN = 3;
 
@@ -8787,6 +8802,8 @@ export async function startRun(id: string): Promise<void> {
   let incompleteIteration = false;
   /** Set when the run is stepping aside rather than ending. */
   let pausedUntil: number | null = null;
+  /** Whether that park is waiting out a refusal, which is what `refusal_pauses` counts. */
+  let refusalPark = false;
   /** The next prompt should be the DONE pushback rather than the continuation. */
   let justRetriggered = false;
   /**
@@ -9910,7 +9927,9 @@ export async function startRun(id: string): Promise<void> {
         const limited = kind === "allowance";
         const plan = refusalDisposition({
           kind,
-          pauseCount: run.pause_count ?? 0,
+          // Not `pause_count`, which counts guard parks too — see
+          // `MAX_PAUSES_PER_RUN`.
+          pauseCount: run.refusal_pauses ?? 0,
           transientRetries,
         });
         const retrying = plan.action === "retry";
@@ -9963,15 +9982,18 @@ export async function startRun(id: string): Promise<void> {
           // boundary and was refused again scans a tree that already holds the
           // previous refusal's zero-token record, and that record opens a block
           // of its own reading as a window five hours out.
+          // The ladder is the refusal count's too: a guard park between two
+          // refusals is not a second refusal in a row.
           pausedUntil = refusalResumeAt({
             boundary: lastSpendingWindowEnd(snapshot),
-            pauseCount: run.pause_count ?? 0,
+            pauseCount: run.refusal_pauses ?? 0,
             now: Date.now(),
           });
           stopReason =
             "Claude refused the work cycle: the subscription allowance is used up. " +
             "Waiting for it to refill.";
           finalStatus = "paused";
+          refusalPark = true;
           // Refunded for the same reason a guard-interrupted cycle is, and with
           // more force: the provider refused before any work happened at all.
           iterations -= 1;
@@ -10003,8 +10025,9 @@ export async function startRun(id: string): Promise<void> {
         // row. It deliberately no longer also requires the earlier segment to
         // have ended in a *pause* — a truncated session is a truncated session
         // whether a guard parked the run or a crash ended it, and a run picked
-        // up by hand has `pause_count === 0`, so that condition excluded the
-        // one case an operator is watching.
+        // up by hand after a crash may never have parked at all — a pick-up
+        // neither adds to `pause_count` nor clears it — so that condition
+        // excluded the one case an operator is watching.
         // "This cycle did no work at all", split out because two callers need
         // it and only one of them wants the segment-position term.
         const didNoWork = !res.sawResult && res.finalText === "";
@@ -10310,6 +10333,7 @@ export async function startRun(id: string): Promise<void> {
           resume_at: pausedUntil,
           paused_at: Date.now(),
           pause_count: (run.pause_count ?? 0) + 1,
+          ...(refusalPark ? { refusal_pauses: (run.refusal_pauses ?? 0) + 1 } : {}),
         });
         startSweeper();
       } else {
@@ -11882,9 +11906,16 @@ export function reopenRun(
       // duration cap it has not spent a minute of. `paused_at=NULL` for the same
       // reason — a row reopened from `stopped` may still carry the park it was
       // stopped in on a database written before that was closed off.
+      //
+      // `refusal_pauses=0` and not `pause_count=0`. The refusal allowance is
+      // the one `MAX_PAUSES_PER_RUN` bounds, and a run it ended `pauses-spent`
+      // would otherwise fail again at the next wall without waiting once.
+      // `pause_count` stays because `ensureWorktree` reads it as "has worked
+      // before", and zeroing it would send a run parked in its first cycle
+      // past the orphaned-branch guard.
       `UPDATE runs SET status=?, budget=?, max_iterations=?, follow_up=?, reopened_at=?,
          started_at=NULL, finished_at=NULL, exit_code=NULL, stop_reason=NULL,
-         needs_review_reason=NULL, paused_ms=0, paused_at=NULL,
+         needs_review_reason=NULL, paused_ms=0, paused_at=NULL, refusal_pauses=0,
          resume_at=NULL, restart_closed=0, set_aside_at=NULL WHERE id=? AND status=?`,
     )
     .run(

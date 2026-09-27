@@ -5713,6 +5713,38 @@ describe("picking up a blocked run", () => {
     assert.equal(row.paused_ms, 0, "and so does what is subtracted from it");
     assert.equal(row.paused_at, null);
   });
+
+  it("gives a run that ran out of waits its refusal allowance back, and nothing else", () => {
+    // The row `pauses-spent` leaves: failed, having waited out every refusal
+    // the cap allows. Carried into the pick-up, the count failed the run again
+    // at its next wall without a single wait, saying it "had already waited out
+    // 3 windows" in a segment where it waited none.
+    const spent = insertRun({ status: "failed", workDir: `${ws}/RepoOne` });
+    db()
+      .prepare("UPDATE runs SET pause_count=?, refusal_pauses=? WHERE id=?")
+      .run(MAX_PAUSES_PER_RUN, MAX_PAUSES_PER_RUN, spent);
+    // Something else in that folder, so the promotion at the end starts nothing.
+    insertRun({ status: "running", workDir: `${ws}/RepoOne` });
+
+    assert.equal(reopenRun(spent, RAISED).ok, true);
+
+    const row = getRun(spent)!;
+    assert.deepEqual(
+      refusalDisposition({
+        kind: "allowance",
+        pauseCount: row.refusal_pauses,
+        transientRetries: 0,
+      }),
+      { action: "park" },
+      "the operator's pick-up is the fresh attempt the cap was not meant to span",
+    );
+    assert.equal(
+      row.pause_count,
+      MAX_PAUSES_PER_RUN,
+      "`ensureWorktree` reads this as \"has worked before\"; zeroed, a run parked " +
+        "in its first cycle would be sent past the orphaned-branch guard",
+    );
+  });
 });
 
 /**
