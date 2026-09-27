@@ -22,6 +22,57 @@ export function jsonNoStore(body: unknown, init?: ResponseInit): Response {
   return Response.json(body, { ...init, headers });
 }
 
+/** A parsed JSON value that fields can be read off: not null, not an array. */
+export function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** What a body that is not a JSON object parsed to, for the refusal's sentence. */
+function jsonKind(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "an array";
+  return `a ${typeof value}`;
+}
+
+/**
+ * A request body that is a JSON object, or the 400 refusing it.
+ *
+ * The pattern this replaces, `(await req.json().catch(() => ({}))) as
+ * Record<string, unknown>`, covered a body that does not parse and not one
+ * that parses to something other than an object. The literal body `null`
+ * resolves to `null`, the next property read throws, and the route answers —
+ * and audits — a 500 for what was the caller's mistake. A body that does not
+ * parse is refused here too rather than read as `{}`, because `{}` is a real
+ * request on some routes: on `PATCH /api/tasks/[id]` it is "change nothing",
+ * so a garbled body there answered 200 as though the edit had landed.
+ */
+export async function readJsonObject(
+  request: Request,
+): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false; response: Response }> {
+  let parsed: unknown;
+  try {
+    parsed = await request.json();
+  } catch {
+    return {
+      ok: false,
+      response: Response.json(
+        { error: "The body has to be a JSON object; this one did not parse as JSON." },
+        { status: 400 },
+      ),
+    };
+  }
+  if (!isJsonObject(parsed)) {
+    return {
+      ok: false,
+      response: Response.json(
+        { error: `The body has to be a JSON object; got ${jsonKind(parsed)}.` },
+        { status: 400 },
+      ),
+    };
+  }
+  return { ok: true, body: parsed };
+}
+
 const gzipAsync = promisify(gzip);
 
 /**

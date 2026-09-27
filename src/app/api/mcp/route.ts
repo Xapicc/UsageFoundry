@@ -127,6 +127,7 @@ import {
 } from "../../../lib/workspace";
 import { mountById } from "../../../lib/config";
 import { fmtUSD } from "../../../lib/format";
+import { isJsonObject } from "../../../lib/http";
 import { auditMutation, sourceAddress } from "../../../lib/requestLog";
 import { opsLog } from "../../../lib/ops";
 
@@ -1886,9 +1887,9 @@ export async function POST(req: Request) {
 }
 
 async function postHandler(req: Request, subject: CapabilitySubject) {
-  let body: JsonRpcRequest | JsonRpcRequest[];
+  let body: unknown;
   try {
-    body = (await req.json()) as JsonRpcRequest | JsonRpcRequest[];
+    body = await req.json();
   } catch {
     return NextResponse.json(
       { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } },
@@ -1896,11 +1897,26 @@ async function postHandler(req: Request, subject: CapabilitySubject) {
     );
   }
 
-  // A batch is legal on the wire even though the CLI does not send one.
-  const batch = Array.isArray(body) ? body : [body];
+  // A body that is no message at all — `null`, `5`, `"x"`, an empty batch — is
+  // refused whole with the parse error's status. Handed on, `null` threw on its
+  // first property read and was answered and audited as a 500, and the others
+  // read as notifications and got an empty 202, which tells the caller its
+  // request was accepted.
+  if (Array.isArray(body) ? body.length === 0 : !isJsonObject(body)) {
+    return NextResponse.json(invalidRequest(), { status: 400 });
+  }
+
+  // A batch is legal on the wire even though the CLI does not send one. A
+  // member that is not an object is answered in its own slot, so one bad entry
+  // does not cost the rest of the batch their replies.
+  const batch: unknown[] = Array.isArray(body) ? body : [body];
   const replies = [];
   for (const msg of batch) {
-    const reply = await handle(msg, subject);
+    // Cast from any JSON object: `handle` reads every field through `??`,
+    // `?.` or `String()`, so only a non-object could throw there.
+    const reply = isJsonObject(msg)
+      ? await handle(msg as JsonRpcRequest, subject)
+      : invalidRequest();
     if (reply) replies.push(reply);
   }
 
@@ -1930,6 +1946,15 @@ export async function GET() {
 
 export async function DELETE() {
   return new Response(null, { status: 405 });
+}
+
+/** JSON-RPC's `-32600`, with the null id the spec gives a message whose id cannot be read. */
+function invalidRequest() {
+  return {
+    jsonrpc: "2.0",
+    id: null,
+    error: { code: -32600, message: "Invalid Request: a message has to be a JSON object." },
+  };
 }
 
 async function handle(

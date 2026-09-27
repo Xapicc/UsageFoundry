@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+// Relative, not "@/…", so `jsonObjectBody.test.ts` can load this handler —
+// `../route.ts` gives the reason.
 import {
   appendMessage,
   approveRunBatch,
@@ -8,10 +10,11 @@ import {
   pendingProposals,
   rejectProposal,
   type DecisionTally,
-} from "@/lib/chat";
-import { approveWorkflowProposal } from "@/lib/workflows";
-import { approveScheduleProposal } from "@/lib/schedules";
-import { promoteQueued } from "@/lib/orchestrator";
+} from "../../../../../lib/chat";
+import { approveWorkflowProposal } from "../../../../../lib/workflows";
+import { approveScheduleProposal } from "../../../../../lib/schedules";
+import { promoteQueued } from "../../../../../lib/orchestrator";
+import { readJsonObject } from "../../../../../lib/http";
 import { chatDTO } from "../../dto";
 import { auditMutation } from "../../../../../lib/requestLog";
 
@@ -60,7 +63,9 @@ async function postHandler(req: Request, ctx: Ctx) {
   const chat = getChat(id);
   if (!chat) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const read = await readJsonObject(req);
+  if (!read.ok) return read.response;
+  const body = read.body;
   const action = String(body.action ?? "");
   if (action !== "approve" && action !== "reject") {
     return NextResponse.json(
