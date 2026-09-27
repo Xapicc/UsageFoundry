@@ -1354,6 +1354,45 @@ is `docs/agent/testing.md`; interface defects and their classes are
   (`uname -m` → `aarch64`); the amd64 build of the same version was not read,
   and the pin in `Dockerfile` is the version rather than the arch.
 
+- **The sandbox's config-directory binds re-read on the pinned 2.1.280,
+  2026-09-27, and the bound set is not identical: one name was added.**
+  `sandboxMountPoints.test.ts` threw at "the config-directory bind loop" against
+  the installed `claude.exe` (`claude --version` → 2.1.280). The loop is still
+  there in the same shape; the test hard-coded two minified names (`tl`, `SN`)
+  and 2.1.280 renamed all five the loop uses. `Gy`/`jy`/`tf`/`zy`, which the
+  board task suspected, are not the sandbox. They are byte-identical in 2.1.260
+  and belong to the Bash script-path classifier, where `zy` marks a dotfile,
+  `tf` a dot-directory other than `.claude*/` or `.config/` (`private_dotdir`)
+  and `jy` a path under one of `Gy`'s five data directories. None of them binds
+  anything. With every identifier now discovered, the extraction run over
+  `npm pack @anthropic-ai/claude-code-linux-arm64@2.1.260` and over 2.1.280
+  differs by one name, `policy-limits.json.stamp.json`. It is a file, named by a
+  third sidecar function (`${e}.stamp.json`) spread into the list. Every name
+  2.1.260 bound is unchanged, file or directory. The stamp went onto
+  `SANDBOX_CONFIG_DIR_REFUSED`, because 2.1.280 reads an empty stamp as
+  `unusable` rather than `absent` and marks the policy cache's HIPAA history
+  incomplete. The test was watched to fail four ways: against 2.1.260, with the
+  stamp dropped from the list, against a copy of 2.1.280 with the loop's bytes
+  altered, and against a copy naming an undefined sidecar function. Caveat: this
+  is arm64 only. The twelve project-`.claude` names are still outside the
+  test's extraction, so the claim that they are unchanged rests on reading both
+  binaries by eye.
+
+- **The `remote-settings.json` "Unable to find … in mount table" failure is not
+  a missing mount point, read 2026-09-27.** The transcripts under
+  `~/.claude/projects` hold two real events, both solo `Bash` calls in a dockrac
+  worktree: 2026-09-20T18:06Z on 2.1.260 and 2026-09-26T17:02Z on 2.1.280. In
+  both the bind source is `/oldroot/home/node/.claude/remote-settings.json`, the
+  file itself, so the CLI found it present and emitted the self-mount form, and
+  bwrap failed after the bind rather than on a create. The code that binds it is
+  the same in both versions. So it does not follow from 2.1.280, and
+  pre-creating in `sandboxMountPoints.ts` cannot touch it. The same wording also
+  appears on tree-root dotfiles (`/workspace2/.zprofile`) and on
+  `config.worktree`. Caveat: the cause was not established. A rewrite of the
+  file between bwrap's bind and its mount-table lookup fits the message but was
+  not measured, and the file's current mtime (2026-09-26 22:27Z) postdates the
+  failure, so the question cannot be settled from what is on disk now.
+
 - **`--agent` / `--agents`, seven probes on CLI 2.1.226:** `--agent` selects a
   definition passed on the same argv, exits 1 on an unregistrable one, keeps
   `--append-system-prompt`, survives `--resume`, and yields to the run's
