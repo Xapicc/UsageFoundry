@@ -138,12 +138,8 @@ export function PruneSavingsRows({
             <Tr>
               <Td className="text-ink-muted" colSpan={2}>
                 {unsettledPrunes} of {pricedPrunes}{" "}
-                {pricedPrunes === 1 ? "prune has" : "prunes have"} an
-                invalidation cost that has not been settled — a boundary prune
-                pays nothing only if a plain resume would have rewritten its
-                prefix anyway, and that is decided by resumes with no prune
-                before them. Until enough of those have been seen, the net above
-                is a ceiling.
+                {pricedPrunes === 1 ? "prune has" : "prunes have"} an unsettled
+                invalidation cost, so the net above is a ceiling.
               </Td>
             </Tr>
           )}
