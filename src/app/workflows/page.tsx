@@ -60,11 +60,6 @@ export default function WorkflowsPage() {
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="mb-1 text-xl font-semibold tracking-tight">Workflows</h1>
-          <p className="max-w-[68ch] text-ink-muted">
-            A <strong className="font-semibold text-ink">workflow</strong> is a
-            saved graph of blocks. Running it starts one run per block, each
-            waiting for the blocks it was told to follow.
-          </p>
         </div>
         {/* `ButtonLink`, not a hand-rolled anchor: this one was drawn in
             --accent with a white label, and --accent is the *text* blue — the
@@ -90,8 +85,8 @@ export default function WorkflowsPage() {
           <Empty>
             <div className="font-medium text-ink">No workflows yet</div>
             <div className="mx-auto mt-1 max-w-[46ch] text-ink-muted">
-              A workflow saves the blocks of a job and how they follow each
-              other, so the whole thing is one press of Run.
+              One press of Run starts a run for every block, each after the
+              blocks it follows.
             </div>
             <div className="mt-3">
               <Link href="/workflows/new">Create one</Link>
