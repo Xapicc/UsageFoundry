@@ -21,6 +21,7 @@ import {
   resolveRepeat,
   sectionExit,
   sectionLink,
+  sectionLinkStatement,
   sectionOf,
   worstCaseRuns,
   type BlockDraft,
@@ -1180,6 +1181,54 @@ test("a kind change leaves a branch the operator set outside a frame alone", () 
   const blocks = [block("a"), block("b", { kind: "orchestrator" })];
   const links = [link("a", "b", { edge: "on-success", continueBranch: true })];
   assert.deepEqual(linksWithKind("b", "orchestrator", blocks, links), links);
+});
+
+/**
+ * The in-section link panel offers no control, so this sentence is the whole of
+ * what an operator learns about the link — and they act on it. It used to call
+ * an “either way” link refused and say to draw it again, and a link drawn again
+ * is minted *only if it completes*: following the advice blocked the member
+ * whenever the one before it failed, which is what the link was drawn to avoid.
+ */
+test("an either-way link inside a section is stated as drawn, not refused", () => {
+  const names = { from: "a", to: "b", carriedFrom: undefined };
+  const either = sectionLinkStatement(
+    link("a", "b", { edge: "on-finish" }),
+    names,
+  );
+  assert.match(either.clause, /either way/);
+  assert.doesNotMatch(either.clause, /only if it completes/);
+  assert.equal(either.refusal, null);
+  // The server's side of the same claim, so the panel is not merely agreeing
+  // with itself.
+  const blocks = [loop("l"), block("a"), block("b"), block("m", { kind: "merge" })];
+  const result = saved({
+    blocks,
+    links: [
+      repeats("l", "a"),
+      link("a", "b", { edge: "on-finish", continueBranch: true }),
+      link("b", "m", { edge: "on-success" }),
+    ],
+  });
+  assert.ok(result.ok, result.ok ? "" : result.error);
+
+  const minted = sectionLinkStatement(link("a", "b", { edge: "on-success" }), names);
+  assert.match(minted.clause, /only if it completes/);
+  assert.equal(minted.refusal, null);
+  // Only a link nobody gave a condition is refused, and redrawing it
+  // overwrites no choice.
+  const unanswered = sectionLinkStatement(link("a", "b"), names);
+  assert.match(unanswered.refusal ?? "", /refused/);
+});
+
+test("a fan-in's second link names the branch its target carries instead", () => {
+  const second = sectionLinkStatement(link("c", "b", { edge: "on-success" }), {
+    from: "c",
+    to: "b",
+    carriedFrom: "a",
+  });
+  assert.match(second.branch, /carries on a's branch, not c's/);
+  assert.doesNotMatch(second.branch, /cuts its own/);
 });
 
 test("a block put in an empty frame becomes what each pass starts at", () => {

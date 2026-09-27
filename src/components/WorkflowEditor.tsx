@@ -26,6 +26,7 @@ import {
   boardThresholds,
 } from "@/lib/apiTypes";
 import {
+  conditionClause,
   draftSignature,
   draftToGraph,
   linkKey,
@@ -36,6 +37,7 @@ import {
   resolveLayout,
   sectionExit,
   sectionLink,
+  sectionLinkStatement,
   sectionOf,
   worstCaseRuns,
   type BlockDraft,
@@ -2500,17 +2502,14 @@ function LinkPanel({
 }) {
   const id = linkKey(link).replace(/[^A-Za-z0-9_-]/g, "-");
 
-  // Inside a section the condition is not a choice, and this panel states it
-  // rather than offering a control something downstream overrules: a pass has
-  // to land what it produced, so a member that did not finish is not something
-  // the rest of the section carries on from.
-  //
-  // The branch is not stated, because it is not the same for every link: a
-  // section may fork, and two links carrying one block's branch is refused at
-  // Save. `connect` gives the first way out of a block its branch and each
-  // later one its own, so what this says is what that link actually does.
+  // Inside a section this panel offers no controls and states what the link
+  // does, in the words `sectionLinkStatement` decides.
   if (insideSection !== undefined) {
-    const conforms = link.edge === "on-success";
+    const statement = sectionLinkStatement(link, {
+      from: fromName,
+      to: toName,
+      carriedFrom,
+    });
     return (
       <>
         <p className="mb-3.5 text-sm leading-normal text-ink-muted">
@@ -2518,18 +2517,9 @@ function LinkPanel({
           after <strong className="font-semibold text-ink">{fromName}</strong>{" "}
           inside the section{" "}
           <strong className="font-semibold text-ink">{insideSection}</strong>{" "}
-          repeats, only if it completes.{" "}
-          {link.continueBranch
-            ? `${toName} commits onto ${fromName}'s branch.`
-            : carriedFrom !== undefined
-              ? `${toName} carries on ${carriedFrom}'s branch, not ${fromName}'s.`
-              : `${toName} cuts its own branch, and the section's merge block lands it.`}
-          {!conforms && (
-            <span className="text-warn">
-              {" "}
-              This one says otherwise, so the graph is refused. Remove it and
-              draw it again.
-            </span>
+          repeats{statement.clause} {statement.branch}
+          {statement.refusal !== null && (
+            <span className="text-warn"> {statement.refusal}</span>
           )}
         </p>
         <RemoveLinkRow onRemove={onRemove} />
@@ -2542,11 +2532,7 @@ function LinkPanel({
       <p className="mb-3.5 text-sm leading-normal text-ink-muted">
         <strong className="font-semibold text-ink">{toName}</strong> starts after{" "}
         <strong className="font-semibold text-ink">{fromName}</strong>
-        {link.edge === ""
-          ? ", once you have said when."
-          : link.edge === "on-success"
-            ? ", only if it completes."
-            : ", once it finishes either way."}
+        {conditionClause(link.edge) ?? ", once you have said when."}
         {link.continueBranch &&
           ` ${toName} commits onto ${fromName}'s branch rather than cutting its own.`}
       </p>
