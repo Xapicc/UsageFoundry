@@ -3161,6 +3161,33 @@ fixed.
   the stroke measures; and the static shell carries no `next/font`, so the
   glyphs were painted in the fallback face rather than in SF.
 
+- **The run inspector's polish pass, 2026-09-27**, standalone server, Chromium
+  at **1920x963 DPR 2 and 390x844 DPR 2**, both skins, both themes, 48 page loads
+  per build. Six run rows (completed with a board task and a checkout, running,
+  paused, queued, `needs-review` with a 42-character Bedrock model id, and a
+  failed, set-aside Codex run) were served by intercepting `GET /api/runs/<id>`
+  over one run seeded through the API, so both builds read identical rows;
+  before is `35b8164`, after `da450be`. Before, under the ascii skin at 1920:
+  the card was its own scroll container and its frame box (1559.5 to 1906.5)
+  lay round a padding box of 1567 to 1899, so no edge of the frame drew; the
+  3px state edge was transparent; and the long id ran to x=1887 against a
+  content edge of 1883, over its own label. In both skins every region led by
+  a `Section` drew two hairlines round its heading, and the headline sat 12px
+  above its detail against 4px between every other header line. After: the
+  scroll box is exactly the card's padding box (332x877), the frame box is
+  unchanged and does not move when the box is scrolled to its end, the left
+  edge's six device columns read the tone at every column (the frame's stroke
+  used to grey two of them), and every state's scroll height is 58px shorter,
+  which is the 8px headline gap and 25px from each of the two regions and
+  nothing else. No console error in any of the 96 loads, and no content past
+  the card's edge in any of the after build's 48. Gate on `da450be`: `npm run typecheck` exit 0; `npm test`
+  **3033 tests, 3033 pass**, exit 0, beside the `sandboxMountPoints` suite
+  that throws during construction against CLI 2.1.280 (already on the board);
+  `npm run smoke-pages` against `.next/standalone/server.js`, **92/92**. Shots
+  and both probes' readings are in `scratch/run-inspector-polish/`. Caveat: one
+  engine, and the run rows are crafted rather than written by the
+  orchestrator, so a field combination no real run reaches may be among them.
+
 ## Not yet verified by hand
 
 - **The graph at a size no hand-drawn ordering reaches.** Every reading above is

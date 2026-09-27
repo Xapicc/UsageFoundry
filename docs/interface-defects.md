@@ -172,3 +172,43 @@ nothing about it.
   box change needs an engine to *happen*, but the defect is that a
   `ResizeObserver` callback resizes the backing store and does not refit, which a
   DOM with a stub observer would catch.
+- **2026-09-27, `133effc`, class B, arguably D.** The run inspector drew no
+  ascii frame at any width that has the split. The card was both `uf-framed`
+  and its own `overflow-y-auto` scroll container, and a scroll container clips
+  at its padding box while `AsciiFrame` lays its stroke on the border just
+  outside it: at 1920x963 the frame box ran 1559.5 to 1906.5 around a padding
+  box of 1567 to 1899, and not one of the four edges survived. B because the
+  two classes on one element in the emitted markup are the whole of it. Found
+  in Chromium during the polish pass a VisualEdit review of that card asked
+  for; fixed by keeping the cap on
+  the card and scrolling an inner box stretched over its padding
+  (`INSPECTOR_SCROLL` in `src/app/runs/[id]/page.tsx`).
+- **2026-09-27, `79a37db`, class B.** Every inspector region whose first block
+  is a `Section` opened on two hairlines with its heading between them.
+  `Section`'s `first:mt-0 first:border-t-0 first:pt-0` is what drops the rule
+  over a region's leading block, but `Region` rendered its own `<h2>` as the
+  first child, so no block was ever `:first-child`. Visible in the static
+  markup. Found in Chromium at 1920 in both skins; fixed by giving `Region`'s
+  blocks a box of their own.
+- **2026-09-27, `d4ad741`, class A.** The inspector's state headline stood 12px
+  off its detail line while every other line of the header block stood 4px off
+  the next: the headline set no bottom margin, so the legacy layer's
+  `h2 { margin: 0 0 12px }` beat the detail's `mt-1`. Two declared values in the
+  source. Found by measuring child offsets in Chromium; fixed by stating `mb-1`,
+  as `/settings` does for its lede.
+- **2026-09-27, `77b4d21`, class D.** A 42-character Bedrock model id drew 4px
+  past the inspector's content edge under the ascii skin and printed over its
+  own label, squeezed to one word a line. `ListRow` keeps its control side
+  `shrink-0` above the breakpoint, and the id's length is not this app's. Found
+  with a seeded long id in Chromium; fixed by letting the inspector's
+  `GuardValue` break anywhere, right-aligned, under a `max-w-48` that
+  `da450be` narrowed to `lg:` after the first cut wrapped a 390px line at
+  192px with nothing else on it.
+- **2026-09-27, `b02b7f0`, class A, arguably B.** Under the ascii skin the run
+  inspector lost its state tone. `uf-unboxed`'s unlayered
+  `border-color: transparent` outranks any layered `border-l-*` utility, so the
+  3px edge went with the box and a working run and a refused one wore the same
+  card. The cascade decides it from the source alone. Found in Chromium; fixed
+  with a `uf-state-edge` hook that reverts the left colour to the layers, as
+  `.uf-notice` keeps its bar, and a clip that takes the frame's own left column
+  off that host, since its 1px inset put the stroke inside the 3px band.
