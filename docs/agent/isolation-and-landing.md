@@ -35,6 +35,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - What conflicts comes from the stage records; why comes from the messages, and only the first is trusted. (was line 28)
 - The map at `/runs/[id]/conflicts` draws the preview the land card already fetched, and is allowed to claim less than the list beside it, never more. (was line 30)
 - A conflict is resolved on the run's branch, never in the operator's checkout. (was line 66)
+- While a resolution holds the run's checkout nothing else writes to it, and a restart does not hand it back open.
 - A resolution is shown as what it did, not only as what it said. (was line 32)
 
 ## [Clocks on the landing path](isolation-and-landing/landing-timeouts.md)
