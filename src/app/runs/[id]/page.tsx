@@ -390,10 +390,11 @@ function Section({
   return (
     // The `first:` half is what makes a block sit directly under the heading of
     // the region it opens rather than under a hairline drawn a line below one.
-    // It is a `:first-child` rule rather than a prop because three of the four
-    // regions have a *conditional* first block — `Agent` and `Checkout` are
-    // both gated — so which one opens the region is not knowable where the
-    // region is written.
+    // It is a `:first-child` rule rather than a prop so that it follows
+    // whichever block leads, gated ones included, without the region saying
+    // which — and it only fires because `Region` puts its blocks in a box of
+    // their own. With the region's `<h2>` as their first sibling it never did,
+    // and every region opened on two hairlines with its heading between them.
     <div className="mt-4 border-t border-line pt-4 first:mt-0 first:border-t-0 first:pt-0">
       <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold text-ink">
         {title}
@@ -423,7 +424,9 @@ function Region({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="mt-5 border-t border-line pt-4">
       <h2 className="mb-2 text-sm font-semibold text-ink">{title}</h2>
-      {children}
+      {/* A box of their own so the first block is a `:first-child` — see
+          `Section`, whose opening hairline depends on it. */}
+      <div>{children}</div>
     </div>
   );
 }
