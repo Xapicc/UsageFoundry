@@ -10,7 +10,12 @@ import {
   type PathTree,
   type PlanOptions,
 } from "./pathMap";
-import { reconcileTouches, type TouchReport, type TouchedFile } from "./runTouches";
+import {
+  changedSetOf,
+  reconcileTouches,
+  type TouchReport,
+  type TouchedFile,
+} from "./runTouches";
 
 /**
  * What a run touched, arranged by where in the repository it sits.
@@ -68,6 +73,8 @@ export interface TouchFacts {
   state: TouchState;
   /** Listed by the branch diff. Always false when the changed set is unknown. */
   inDiff: boolean;
+  /** Left uncommitted in the run's checkout. Always false when the changed set is unknown. */
+  uncommitted: boolean;
   /** Matched neither `runs.work_dir` nor `runs.folder`. */
   outside: boolean;
   tools: string[];
@@ -145,7 +152,7 @@ function summariseTouches(files: readonly TouchFacts[]): TouchRollup {
 }
 
 /**
- * A `TouchReport`'s four groups as one tree, keyed on where each file sits.
+ * A `TouchReport`'s five groups as one tree, keyed on where each file sits.
  *
  * The groups are disjoint by construction upstream, so this concatenates them
  * rather than merging: a path appearing twice here would be a bug in
@@ -161,6 +168,7 @@ export function buildTouchTree(report: TouchReport): TouchedTree {
   for (const group of [
     report.changedNotTouched,
     report.touchedAndChanged,
+    report.touchedUncommitted,
     report.touchedNotChanged,
     report.outsideCheckout,
   ]) {
@@ -173,6 +181,7 @@ export function buildTouchTree(report: TouchReport): TouchedTree {
           calls: file.reads + file.writes,
           state: stateOf(file),
           inDiff: file.inDiff,
+          uncommitted: file.uncommitted,
           outside: file.outside,
           tools: file.tools,
           by: file.by,
@@ -204,9 +213,10 @@ export const planTouchedMap: (tree: TouchedTree, options: PlanOptions) => MapPla
  * The same rule the card below the diff obeys and for the same reason: swept,
  * named-no-file and no-such-run are three different facts that all render as a
  * blank canvas, and a blank canvas is read as a run that touched nothing.
- * `changedKnown` is the fourth: with no diff the changed set is *unknown* rather
- * than empty, so nothing on the map may draw the "in the diff" mark or claim a
- * file was not changed.
+ * `changedKnown` is the fourth: with no branch diff (none at all, or a run
+ * that worked in the operator's own checkout) the changed set is *unknown*
+ * rather than empty, so nothing on the map may draw the "in the diff" mark or
+ * claim a file was not changed.
  */
 export type TouchedMapView =
   | { kind: "swept"; horizonDays: number }
@@ -217,7 +227,7 @@ export type TouchedMapView =
       report: TouchReport;
       cycles: number;
       changedKnown: boolean;
-      /** The diff route's own sentence, when there is no diff to reconcile against. */
+      /** Why there is no diff to reconcile against, from `changedSetOf`. */
       diffReason: string | null;
       /** Every node came from the diff: no tool call in this run named a file. */
       unnamedOnly: boolean;
@@ -245,17 +255,15 @@ export function touchedMapView(
   if (touched.kind === "swept") return { kind: "swept", horizonDays: touched.horizonDays };
   if (touched.kind === "none") return { kind: "gone", reason: touched.reason };
 
-  const changedKnown = diff !== null && diff.kind !== "none";
-  // `path` alone and never `oldPath`, for the table's own reason: a rename's old
-  // name is a path no tool call would have named, and listing it would put a
-  // file on the map that was never there under that name.
-  const changed = changedKnown ? diff.files.map((f) => f.path) : [];
+  const changedSet = changedSetOf(diff);
+  const changed = changedSet.known ? changedSet.changed : [];
+  const uncommitted = changedSet.known ? changedSet.uncommitted : [];
 
   if (touched.kind === "empty") {
     if (changed.length === 0) return { kind: "idle", cycles: touched.cycles };
     return {
       kind: "map",
-      report: reconcileTouches([], changed),
+      report: reconcileTouches([], changed, uncommitted),
       cycles: touched.cycles,
       changedKnown: true,
       diffReason: null,
@@ -265,10 +273,10 @@ export function touchedMapView(
 
   return {
     kind: "map",
-    report: reconcileTouches(touched.touches, changed),
+    report: reconcileTouches(touched.touches, changed, uncommitted),
     cycles: touched.cycles,
-    changedKnown,
-    diffReason: changedKnown ? null : (diff?.reason ?? null),
+    changedKnown: changedSet.known,
+    diffReason: changedSet.known ? null : changedSet.reason,
     unnamedOnly: false,
   };
 }
