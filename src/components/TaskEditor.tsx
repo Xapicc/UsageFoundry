@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type {
   FoldersResponse,
@@ -9,6 +9,7 @@ import type {
   WorkspaceFolderDTO,
   WorkspaceMountDTO,
 } from "@/lib/apiTypes";
+import { pollFailureMessage, storedFolderState } from "@/lib/format";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
 import { Button, ButtonRow } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -84,6 +85,17 @@ function draftFrom(task: TaskDTO | null): TaskDraft {
   };
 }
 
+/**
+ * The picker's list as far as this form knows it. Three states rather than a
+ * pair of arrays that start empty, because an empty list is an answer — "no
+ * mount holds this folder" — and the scan that would give it has not been
+ * read yet, or could not be.
+ */
+type WorkspaceRead =
+  | { state: "loading" }
+  | { state: "ok"; mounts: WorkspaceMountDTO[]; folders: WorkspaceFolderDTO[] }
+  | { state: "failed"; error: string };
+
 /** The pair travels together, which is what the door refuses half of. */
 function projectPayload(draft: TaskDraft) {
   return draft.mountId && draft.folder
@@ -110,34 +122,62 @@ export function TaskEditor({
   // an effect syncing this back would throw away whatever is being typed the
   // moment one of those landed.
   const [draft, setDraft] = useState<TaskDraft>(() => draftFrom(task));
-  const [mounts, setMounts] = useState<WorkspaceMountDTO[]>([]);
-  const [folders, setFolders] = useState<WorkspaceFolderDTO[]>([]);
+  const [workspace, setWorkspace] = useState<WorkspaceRead>({
+    state: "loading",
+  });
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  // The picker's own list, read once: a mount going away does not move a task,
-  // and a form that stopped offering folders because a mount is briefly
-  // unavailable is the failure the list route refuses on the same grounds.
-  useEffect(() => {
-    void (async () => {
-      const res = await jsonRequest<FoldersResponse>("/api/folders");
-      if (!res.ok) return;
-      setMounts(res.data.mounts ?? []);
-      setFolders(res.data.folders ?? []);
-    })();
+  // The picker's own list, read once and again only on a retry: a mount going
+  // away does not move a task, and a form that stopped offering folders because
+  // a mount is briefly unavailable is the failure the list route refuses on the
+  // same grounds.
+  const loadWorkspace = useCallback(async () => {
+    const res = await jsonRequest<FoldersResponse>("/api/folders");
+    if (!res.ok) {
+      setWorkspace({
+        state: "failed",
+        error: pollFailureMessage(res.status, res.error),
+      });
+      return;
+    }
+    setWorkspace({
+      state: "ok",
+      mounts: res.data.mounts ?? [],
+      folders: res.data.folders ?? [],
+    });
   }, []);
 
-  const folderOptions = folders.filter((f) => f.mountId === draft.mountId);
-  // A stored folder the scan no longer offers — a deleted directory, a mount
-  // that is not there today — would otherwise be dropped by the select on the
-  // next render and saved away without anybody pressing anything.
-  const folderMissing =
-    draft.mountId !== "" &&
-    draft.folder !== "" &&
-    !folderOptions.some((f) => f.path === draft.folder);
+  useEffect(() => {
+    void loadWorkspace();
+  }, [loadWorkspace]);
+
+  function retryWorkspace() {
+    setWorkspace({ state: "loading" });
+    void loadWorkspace();
+  }
+
+  const mounts = workspace.state === "ok" ? workspace.mounts : [];
+  const folders = workspace.state === "ok" ? workspace.folders : null;
+  const folderOptions = (folders ?? []).filter(
+    (f) => f.mountId === draft.mountId,
+  );
+  // A stored folder the scan does not offer — a deleted directory, a mount that
+  // is not there today, or a scan not yet read — would otherwise be dropped by
+  // the select on the next render and saved away without anybody pressing
+  // anything. Only a scan that answered without it is worth a warning.
+  const folderState = storedFolderState(draft.mountId, draft.folder, folders);
+  const keepStoredFolder = folderState === "unread" || folderState === "absent";
+  // The same guard one select up, keyed on the task rather than the draft so
+  // that choosing "no project" before the list is in can be taken back. Without
+  // it the select draws "— no project —" over a draft that still holds a mount.
+  const storedMount =
+    task?.mountId && !mounts.some((m) => m.id === task.mountId)
+      ? { id: task.mountId, label: task.mountLabel ?? task.mountId }
+      : null;
 
   async function save() {
     if (saving) return;
@@ -262,7 +302,11 @@ export function TaskEditor({
         <Field
           label="Workspace"
           htmlFor="task-mount"
-          hint="A mount and a folder together, or neither"
+          hint={
+            workspace.state === "loading"
+              ? "Reading the workspace list…"
+              : "A mount and a folder together, or neither"
+          }
         >
           <div className="w-64">
             <Select
@@ -273,6 +317,9 @@ export function TaskEditor({
               }
             >
               <option value="">— no project —</option>
+              {storedMount && (
+                <option value={storedMount.id}>{storedMount.label}</option>
+              )}
               {mounts.map((mount) => (
                 <option key={mount.id} value={mount.id}>
                   {mount.label}
@@ -303,7 +350,7 @@ export function TaskEditor({
               {/* A stored folder the scan does not offer stays selectable, or
                   the select would silently resolve to the first option and an
                   unrelated save would move the task to it. */}
-              {folderMissing && (
+              {keepStoredFolder && (
                 <option value={draft.folder}>{draft.folder}</option>
               )}
               {folderOptions.map((folder) => (
@@ -315,7 +362,7 @@ export function TaskEditor({
             </Select>
           </div>
         </Field>
-        {folderMissing && (
+        {folderState === "absent" && (
           // On a wrapper, because `Hint` states its own `mt-1.5` and Tailwind
           // emits a numeric utility ascending — a `-mt-2` on the component
           // itself loses to the larger value it wrote.
@@ -327,6 +374,25 @@ export function TaskEditor({
             </Hint>
           </div>
         )}
+        <div role="alert">
+          {workspace.state === "failed" && (
+            // Never the empty picker: a failed read drawn as one says there is
+            // no mount to put this task in, and on a task that has a project
+            // it says the project has gone.
+            <Notice tone="warn">
+              <strong>The workspace list could not be read.</strong>{" "}
+              {workspace.error} This is a failed request rather than an empty
+              workspace — nothing here says which mounts or folders exist.
+              {task?.mountId &&
+                " The task’s project is kept, and saving still proves it against the mount."}
+              <ButtonRow className="mt-2.5">
+                <Button variant="secondary" onClick={retryWorkspace}>
+                  Try again
+                </Button>
+              </ButtonRow>
+            </Notice>
+          )}
+        </div>
 
         {!task && (
           <div className="mb-3.5">

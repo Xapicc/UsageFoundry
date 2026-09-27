@@ -132,7 +132,7 @@ Seventeen are renderings rather than functions — every `*.test.tsx` in the tre
 | `loopBoardCount.test.ts` |  |
 | `loopMergeOwnership.test.ts` |  |
 | `loopSection.test.ts` |  |
-| `workflows.test.ts` | [argv], [pricing] |
+| `workflows.test.ts` | [argv], [pricing], [workflows] |
 
 Units that are about no test file in the tree:
 
@@ -181,6 +181,7 @@ Units that are about no test file in the tree:
 | Test file | Also in |
 |---|---|
 | `conflictedPaths.test.ts` |  |
+| `deleteBranch.test.ts` |  |
 | `delivery.test.ts` |  |
 | `git.test.ts` |  |
 | `landGate.test.ts` |  |
@@ -255,6 +256,7 @@ Units that are about no test file in the tree:
 | `requestLog.test.ts` |  |
 | `sessionToken.test.ts` |  |
 | `settings.test.ts` |  |
+| `src/app/api/jsonObjectBody.test.ts` |  |
 | `src/app/api/health/route.test.ts` |  |
 | `src/app/api/login/route.test.ts` |  |
 | `src/app/api/runs/[id]/stream/route.test.ts` |  |

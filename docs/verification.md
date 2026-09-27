@@ -28,7 +28,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Metering and cost | [metering-and-cost.md](verification/metering-and-cost.md) | 22 | 11 |
 | Budgets and guards | [budgets-and-guards.md](verification/budgets-and-guards.md) | 7 | 4 |
 | Run lifecycle | [run-lifecycle.md](verification/run-lifecycle.md) | 21 | 27 |
-| Context control | [context-control-pruning.md](verification/context-control-pruning.md) — pruning, compaction and the context ceiling | 20 | 11 |
+| Context control | [context-control-pruning.md](verification/context-control-pruning.md) — pruning, compaction and the context ceiling | 21 | 12 |
 | Context control | [context-control-intake-filter.md](verification/context-control-intake-filter.md) — the intake filter and its ledger | 8 | 4 |
 | Context control | [context-control-occupancy-and-composition.md](verification/context-control-occupancy-and-composition.md) — the occupancy and composition series | 8 | 5 |
 | Orchestrator chat | [orchestrator-chat.md](verification/orchestrator-chat.md) | 12 | 21 |

@@ -789,12 +789,16 @@ export function blockLabel(
  * A link between two blocks of one section, with the two answers it may not be
  * asked for.
  *
- * Inside a section the condition is not a choice: a pass has to land what it
- * produced, so a member that did not finish is not something the rest of the
- * section carries on from. The branch is the *second* link's question — two
- * links carrying one block's branch is refused at Save by name, so the first
- * way out of a block carries its branch and each later one cuts its own and
- * leaves it for the section's merge block, which is what a fork means.
+ * Inside a section a link is drawn *only if it completes*: a pass has to land
+ * what it produced, so a member that did not finish is not something the rest
+ * of the section carries on from. (One drawn before the frame keeps its own,
+ * which the server honours — see `sectionLinkStatement`.) The branch is the *second* link's question at both
+ * ends, because a run holds one ref. Two links carrying one block's branch is
+ * refused at Save by name, so the first way out of a block carries its branch
+ * and each later one cuts its own and leaves it for the section's merge block,
+ * which is what a fork means. A block carrying two branches is refused the same
+ * way, so the first way *in* carries one and each later one hands nothing on,
+ * which is what two halves meeting again at one run means.
  *
  * **Only a run block has a branch at either end.** The other three are refused
  * by name — an orchestrator decides and spends nothing on disk, a merge block
@@ -822,7 +826,101 @@ export function sectionLink(
     continueBranch:
       runs(from) &&
       runs(to) &&
-      !links.some((l) => l.from === from && l.continueBranch),
+      !links.some(
+        (l) => (l.from === from || l.to === to) && l.continueBranch,
+      ),
+  };
+}
+
+/**
+ * The links once a block's kind has changed.
+ *
+ * `sectionLink` tests the kind at both ends when it mints a link, and a kind
+ * picked afterwards has to be answered the same way: a branch carried into or
+ * out of a block that is no longer a run is refused at Save by name, and inside
+ * a section the panel offers no switch to take it off. So a block that stops
+ * being a run stops carrying a branch on every link of a section it is in.
+ *
+ * Outside a section the branch is left exactly as it was. There the panel shows
+ * the switch the operator set it with, and the refusal names the block, so they
+ * can turn it off where they turned it on; clearing it here would rewrite a
+ * choice they were shown, and would not give it back if the kind went back.
+ */
+export function linksWithKind(
+  blockId: string,
+  kind: WorkflowNodeKind,
+  blocks: readonly { id: string; kind: WorkflowNodeKind }[],
+  links: readonly LinkDraft[],
+): LinkDraft[] {
+  if (kind === "run") return [...links];
+  const members = new Set(
+    blocks
+      .filter((b) => b.kind === "loop")
+      .flatMap((b) => sectionOf(b.id, blocks, links)),
+  );
+  return links.map((l) =>
+    l.continueBranch &&
+    (l.from === blockId || l.to === blockId) &&
+    members.has(l.from)
+      ? { ...l, continueBranch: false }
+      : l,
+  );
+}
+
+/**
+ * How a link panel's first sentence ends for the condition drawn, or null while
+ * the link has none. Read inside a sentence, so its own words rather than
+ * `EDGE_OPTION_LABEL`'s, and one table for a link inside a section and outside
+ * one, so the two are described alike.
+ */
+export function conditionClause(edge: LinkDraft["edge"]): string | null {
+  if (edge === "on-success") return ", only if it completes.";
+  if (edge === "on-finish") return ", once it finishes either way.";
+  return null;
+}
+
+/** What the panel for a link inside a section says after its opening words. */
+export interface SectionLinkStatement {
+  /** Ends the sentence that names both blocks and the section. */
+  clause: string;
+  branch: string;
+  refusal: string | null;
+}
+
+/**
+ * What the panel for a link inside a section says about it, where it offers no
+ * control to change it.
+ *
+ * **The condition drawn, not the one `sectionLink` mints.** A link drawn before
+ * its blocks were framed, or saved that way, keeps its own, and the server
+ * honours an *either way* link inside a section as drawn. The panel used to
+ * state *only if it completes* for every one and call anything else refused,
+ * with the advice to redraw it — and a redrawn link is minted *only if it
+ * completes*, so the advice replaced the operator's choice in silence. Only a
+ * link with no condition is refused, and redrawing that overwrites nothing.
+ *
+ * The branch is per link, because a run holds one ref: `sectionLink` hands the
+ * first way out of a block its branch and the first way into one the branch it
+ * carries. Where the target carries another link's, saying it cuts its own
+ * would tell the operator this link's work is somewhere it is not.
+ */
+export function sectionLinkStatement(
+  link: Pick<LinkDraft, "edge" | "continueBranch">,
+  names: { from: string; to: string; carriedFrom: string | undefined },
+): SectionLinkStatement {
+  const clause = conditionClause(link.edge);
+  const { from, to, carriedFrom } = names;
+  return {
+    clause: clause ?? ".",
+    branch: link.continueBranch
+      ? `${to} commits onto ${from}'s branch.`
+      : carriedFrom !== undefined
+        ? `${to} carries on ${carriedFrom}'s branch, not ${from}'s.`
+        : `${to} cuts its own branch, and the section's merge block lands it.`,
+    refusal:
+      clause === null
+        ? "This link has no condition, so the graph is refused. Remove it and draw it again."
+        : null,
   };
 }
 

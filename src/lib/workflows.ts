@@ -1186,6 +1186,14 @@ function memberSettled(member: LoopPassMember): boolean {
 }
 
 /**
+ * `planLoopPass`'s first rung, on its own because `advanceLoop` asks it before
+ * it reads anything else the decision needs — see there.
+ */
+function passSettled(pass: LoopPass): boolean {
+  return pass.members.every(memberSettled);
+}
+
+/**
  * Whether one member did the thing it was created to do.
  *
  * The runs an orchestrator member emitted are deliberately **not** read here.
@@ -1214,7 +1222,7 @@ export function planLoopPass(input: LoopPassInput): LoopDecision {
   const last = input.passes.at(-1);
 
   if (last) {
-    if (!last.members.every(memberSettled)) return { kind: "wait" };
+    if (!passSettled(last)) return { kind: "wait" };
 
     if (last.members.length === 0) {
       return {
@@ -1973,6 +1981,47 @@ export function updateWorkflow(
 }
 
 /**
+ * The name a copy of `sourceName` is saved under: `"<name> copy"`, then
+ * `"<name> copy 2"`, …, the first that none of `takenNames` already holds.
+ *
+ * The name is bounded, and the suffix pushes a long one over the limit. The
+ * original is trimmed to make room rather than the copy refused — a duplicate
+ * that cannot be made because the name is long is a dead end on a button with
+ * one job — and it is trimmed *before* the candidate is tested, because a name
+ * cut after the test is never tested: an 80-character workflow's copy came out
+ * as the original's own name, and a 77-character one's second copy as its first.
+ */
+export function pickDuplicateName(
+  sourceName: string,
+  takenNames: readonly string[],
+): string {
+  // The unique index on `workflows.name` is `COLLATE NOCASE`, which folds the
+  // 26 ASCII capitals and nothing else. A wider fold only skips names the
+  // index would accept; a locale-dependent one (Turkish "I") would pass a name
+  // it refuses.
+  const fold = (name: string) =>
+    name.replace(/[A-Z]/g, (c) => c.toLowerCase());
+  const taken = new Set(takenNames.map(fold));
+  for (let n = 1; ; n++) {
+    const suffix = n === 1 ? " copy" : ` copy ${n}`;
+    const candidate =
+      trimForSuffix(sourceName, MAX_WORKFLOW_NAME - suffix.length) + suffix;
+    if (!taken.has(fold(candidate))) return candidate;
+  }
+}
+
+function trimForSuffix(name: string, room: number): string {
+  let cut = name.slice(0, room);
+  // Half a surrogate pair is written to SQLite as replacement characters, so
+  // the stored name would differ from the candidate tested here, and the next
+  // copy would pass the test and collide.
+  const last = cut.charCodeAt(cut.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  // A cut that lands just after a space would otherwise read "…x  copy".
+  return cut.trimEnd();
+}
+
+/**
  * A copy, named so it can be saved beside the original.
  *
  * Node ids are kept: they are unique within a graph and nothing outside one
@@ -1983,22 +2032,11 @@ export function duplicateWorkflow(id: string): Workflow | null {
   const source = getWorkflow(id);
   if (!source) return null;
 
-  const taken = new Set(
-    listWorkflows().map((w) => w.name.toLocaleLowerCase()),
-  );
-  let name = `${source.name} copy`;
-  for (let n = 2; taken.has(name.toLocaleLowerCase()); n++) {
-    name = `${source.name} copy ${n}`;
-  }
-  // The name is bounded, and "copy" pushes a long one over the limit. Trimmed
-  // from the original rather than refused: a duplicate that cannot be made
-  // because the name is long is a dead end on a button with one job.
-  if (name.length > MAX_WORKFLOW_NAME) {
-    name = name.slice(0, MAX_WORKFLOW_NAME);
-  }
-
   return createWorkflow({
-    name,
+    name: pickDuplicateName(
+      source.name,
+      listWorkflows().map((w) => w.name),
+    ),
     graph: source.graph,
     instanceBudget: source.instanceBudget,
   });
@@ -2821,9 +2859,28 @@ function rowToInstance(row: InstanceRow): WorkflowInstance {
   };
 }
 
-const INSTANCE_COLUMNS =
-  "id, workflow_id, workflow_name, graph, created_at, status, error," +
-  " stopped_at, stop_cause, stop_reason, instance_budget";
+// Keyed on `InstanceRow` so a column the row type declares and the SELECT
+// leaves out fails to typecheck: the `as InstanceRow` casts that read these
+// rows cannot see it, and the column then reads as null. For `origin` that is
+// silent — every run a scheduled instance creates after it started would be
+// recorded as a press of Run.
+const INSTANCE_COLUMN_NAMES: Record<keyof InstanceRow, true> = {
+  id: true,
+  workflow_id: true,
+  workflow_name: true,
+  graph: true,
+  created_at: true,
+  status: true,
+  error: true,
+  stopped_at: true,
+  stop_cause: true,
+  stop_reason: true,
+  instance_budget: true,
+  origin: true,
+  origin_ref: true,
+};
+
+const INSTANCE_COLUMNS = Object.keys(INSTANCE_COLUMN_NAMES).join(", ");
 
 /** Statuses a run has not finished in — it will spend, or is waiting to. */
 const LIVE_STATUSES: readonly RunStatus[] = [
@@ -4383,10 +4440,11 @@ function loopPassRefusal(
       "the loop cannot take more passes in front of it."
     );
   }
-  // Asked here because `advanceLoop` asks it before it steps a pass, and a
-  // board it cannot count settles the loop `failed` there with the pass just
-  // reopened underneath it — members back at `waiting` that nothing will ever
-  // step again, holding the instance open for good.
+  // Asked here because a pick-up is for letting the loop carry on, and one
+  // whose board cannot be counted cannot: `advanceLoop` would carry the
+  // reopened pass to its landing and then fail the loop again on this same
+  // sentence. Refused up front, the operator is told what to fix before a pass
+  // is billed rather than after.
   const node = instance.graph.nodes.find((n) => n.id === loopNodeId);
   if (node?.kind === "loop") {
     const board = loopBoardCount(node);
@@ -5379,11 +5437,7 @@ function advanceLoop(
   if (!instance || instance.status !== "started") return;
 
   const node = instance.graph.nodes.find((n) => n.id === nodeId);
-  // `typeof` rather than `!== null`, and that is the difference between a loop
-  // that ends and one that does not: an instance blob written before this
-  // column existed, or by anything but `normalizeWorkflowInput`, carries
-  // `undefined` here — and `passes.length >= undefined` is false for ever.
-  if (!node || node.kind !== "loop" || typeof node.maxPasses !== "number") {
+  if (!node || node.kind !== "loop") {
     settleLoop(
       instanceId,
       nodeId,
@@ -5398,23 +5452,52 @@ function advanceLoop(
   // this loop repeats half way through.
   const section = loopSection(instance.graph, node);
 
-  // Read before the decision and before any pass, including the first. A
-  // condition this app cannot count for ends the loop `failed` rather than
-  // being treated as a clear board: zero is the answer that stops it, and a
-  // mount that has gone is not a finished project.
-  const board = loopBoardCount(node);
-  if (!board.ok) {
-    settleLoop(
-      instanceId,
-      nodeId,
-      "failed",
-      `Its tasks could not be counted: ${board.error}`,
-    );
-    return;
-  }
-
   for (let step = 0; step < MAX_LOOP_STEPS; step += 1) {
     const passes = loopPasses(instanceId, nodeId);
+    const latest = passes.at(-1);
+
+    // A pass still working is carried on before anything only the decision
+    // reads is looked at: the pass cap and the board below can each end the
+    // loop, and ending it now would end it mid-pass. The block behind it would
+    // be decided on a loop whose runs are still in its folders, and the members
+    // not yet released would stay `waiting` with nothing ever to step them — a
+    // pass that never lands, holding the instance open until somebody stops
+    // it. `planLoopPass` asks the same question first; asking it here too keeps
+    // a failed read from ever being acted on ahead of that rung.
+    if (latest && !passSettled(latest)) {
+      if (!stepPass(instance, node, section, latest.pass, [])) return;
+      continue;
+    }
+
+    // `typeof` rather than `!== null`, and that is the difference between a
+    // loop that ends and one that does not: an instance blob written before
+    // this column existed, or by anything but `normalizeWorkflowInput`, carries
+    // `undefined` here — and `passes.length >= undefined` is false for ever.
+    if (typeof node.maxPasses !== "number") {
+      settleLoop(
+        instanceId,
+        nodeId,
+        "failed",
+        "This block is no longer in the workflow this run was started from.",
+      );
+      return;
+    }
+
+    // Read before every decision, including the one in front of the first
+    // pass. A condition this app cannot count for ends the loop `failed` rather
+    // than being treated as a clear board: zero is the answer that stops it,
+    // and a mount that has gone is not a finished project.
+    const board = loopBoardCount(node);
+    if (!board.ok) {
+      settleLoop(
+        instanceId,
+        nodeId,
+        "failed",
+        `Its tasks could not be counted: ${board.error}`,
+      );
+      return;
+    }
+
     const decision = planLoopPass({
       blockName: node.name,
       passes,
@@ -5435,6 +5518,8 @@ function advanceLoop(
       return;
     }
 
+    // `wait` needs no branch: an unsettled pass is stepped above, so this
+    // decision is only ever asked about a settled one or about none.
     if (decision.kind === "pass") {
       // A loop that repeats nothing cannot take another pass. Not reachable
       // from a graph saved today — `resolveSections` refuses a loop with no
@@ -5484,10 +5569,7 @@ function advanceLoop(
       ) {
         return;
       }
-      continue;
     }
-
-    if (!stepPass(instance, node, section, passes.at(-1)!.pass, [])) return;
   }
 
   settleLoop(

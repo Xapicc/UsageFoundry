@@ -12,6 +12,7 @@ import {
   layoutBounds,
   linkRefusal,
   linksOfGraph,
+  linksWithKind,
   linksWithMember,
   linksWithoutMember,
   markedAfterPress,
@@ -19,6 +20,8 @@ import {
   resolveLinkRelease,
   resolveRepeat,
   sectionExit,
+  sectionLink,
+  sectionLinkStatement,
   sectionOf,
   worstCaseRuns,
   type BlockDraft,
@@ -1062,6 +1065,171 @@ test("a link into a member that holds no branch never carries one", () => {
     next.find((x) => x.from === "d" && x.to === "m")?.continueBranch,
     false,
   );
+});
+
+/**
+ * The server's answer to a drawn graph, where every block's guards isolate.
+ *
+ * The branch cases below assert this rather than the flag on one link, because
+ * the defect is a refusal: the in-section panel offers no switch for the
+ * branch, so a link the editor mints carrying one the server will not accept is
+ * a graph the operator cannot save and cannot see why.
+ */
+function saved(draft: CanvasDraft) {
+  return normalizeWorkflowInput(
+    { name: "Nightly maintenance", graph: draftToGraph(draft) },
+    {
+      templates: new Map(),
+      mountIds: ["main"],
+      defaultIsolate: true,
+      agents: new Map(),
+    },
+  );
+}
+
+/** What the Link tool writes for each drag inside a frame, one after another. */
+function drawnInside(
+  blocks: readonly BlockDraft[],
+  links: LinkDraft[],
+  drags: ReadonlyArray<readonly [string, string]>,
+): LinkDraft[] {
+  return drags.reduce(
+    (prev, [from, to]) => [...prev, sectionLink(from, to, prev, blocks)],
+    links,
+  );
+}
+
+test("a fan-in drawn inside a frame carries one branch into the block it meets at", () => {
+  const blocks = [
+    loop("l"),
+    block("e"),
+    block("a"),
+    block("b"),
+    block("j"),
+    block("m", { kind: "merge" }),
+  ];
+  const links = drawnInside(blocks, [repeats("l", "e")], [
+    ["e", "a"],
+    ["e", "b"],
+    ["a", "j"],
+    ["b", "j"],
+    ["j", "m"],
+  ]);
+  // A run can continue one branch. Carrying both is refused at Save as “j is
+  // set to carry on two branches”, over a switch this panel does not show.
+  assert.equal(links.filter((l) => l.to === "j" && l.continueBranch).length, 1);
+  const result = saved({ blocks, links });
+  assert.ok(result.ok, result.ok ? "" : result.error);
+});
+
+test("taking out the block two branches met at leaves one branch carried", () => {
+  const blocks = [
+    loop("l"),
+    block("e"),
+    block("a"),
+    block("b"),
+    block("x"),
+    block("y"),
+    block("m", { kind: "merge" }),
+  ];
+  const links = drawnInside(blocks, [repeats("l", "e")], [
+    ["e", "a"],
+    ["e", "b"],
+    ["a", "x"],
+    ["b", "x"],
+    ["x", "y"],
+    ["y", "m"],
+  ]);
+  const next = linksWithoutMember("l", "x", blocks, links);
+  assert.ok(next !== null);
+  // The splice links both predecessors to what followed, and only the first
+  // of them may hand its branch on.
+  assert.equal(next.filter((l) => l.to === "y" && l.continueBranch).length, 1);
+  const result = saved({ blocks, links: next });
+  assert.ok(result.ok, result.ok ? "" : result.error);
+});
+
+test("a member switched away from a run block stops carrying a branch", () => {
+  const blocks = [
+    loop("l"),
+    block("e"),
+    block("b"),
+    block("c"),
+    block("m", { kind: "merge" }),
+  ];
+  const links = drawnInside(blocks, [repeats("l", "e")], [
+    ["e", "b"],
+    ["b", "c"],
+    ["c", "m"],
+  ]);
+  for (const kind of ["orchestrator", "merge"] as const) {
+    const switched = blocks.map((b) => (b.id === "b" ? { ...b, kind } : b));
+    // What the kind picker used to leave behind: “b” has no checkout, so a
+    // branch handed to it is refused by name.
+    assert.equal(saved({ blocks: switched, links }).ok, false);
+
+    const next = linksWithKind("b", kind, switched, links);
+    assert.equal(next.some((l) => l.continueBranch), false);
+    const result = saved({ blocks: switched, links: next });
+    assert.ok(result.ok, `${kind}: ${result.ok ? "" : result.error}`);
+  }
+});
+
+test("a kind change leaves a branch the operator set outside a frame alone", () => {
+  // Outside a section the panel shows the switch, so a branch that no longer
+  // fits is refused at Save by name and the operator turns it off where they
+  // turned it on — clearing it here would rewrite a choice they were shown.
+  const blocks = [block("a"), block("b", { kind: "orchestrator" })];
+  const links = [link("a", "b", { edge: "on-success", continueBranch: true })];
+  assert.deepEqual(linksWithKind("b", "orchestrator", blocks, links), links);
+});
+
+/**
+ * The in-section link panel offers no control, so this sentence is the whole of
+ * what an operator learns about the link — and they act on it. It used to call
+ * an “either way” link refused and say to draw it again, and a link drawn again
+ * is minted *only if it completes*: following the advice blocked the member
+ * whenever the one before it failed, which is what the link was drawn to avoid.
+ */
+test("an either-way link inside a section is stated as drawn, not refused", () => {
+  const names = { from: "a", to: "b", carriedFrom: undefined };
+  const either = sectionLinkStatement(
+    link("a", "b", { edge: "on-finish" }),
+    names,
+  );
+  assert.match(either.clause, /either way/);
+  assert.doesNotMatch(either.clause, /only if it completes/);
+  assert.equal(either.refusal, null);
+  // The server's side of the same claim, so the panel is not merely agreeing
+  // with itself.
+  const blocks = [loop("l"), block("a"), block("b"), block("m", { kind: "merge" })];
+  const result = saved({
+    blocks,
+    links: [
+      repeats("l", "a"),
+      link("a", "b", { edge: "on-finish", continueBranch: true }),
+      link("b", "m", { edge: "on-success" }),
+    ],
+  });
+  assert.ok(result.ok, result.ok ? "" : result.error);
+
+  const minted = sectionLinkStatement(link("a", "b", { edge: "on-success" }), names);
+  assert.match(minted.clause, /only if it completes/);
+  assert.equal(minted.refusal, null);
+  // Only a link nobody gave a condition is refused, and redrawing it
+  // overwrites no choice.
+  const unanswered = sectionLinkStatement(link("a", "b"), names);
+  assert.match(unanswered.refusal ?? "", /refused/);
+});
+
+test("a fan-in's second link names the branch its target carries instead", () => {
+  const second = sectionLinkStatement(link("c", "b", { edge: "on-success" }), {
+    from: "c",
+    to: "b",
+    carriedFrom: "a",
+  });
+  assert.match(second.branch, /carries on a's branch, not c's/);
+  assert.doesNotMatch(second.branch, /cuts its own/);
 });
 
 test("a block put in an empty frame becomes what each pass starts at", () => {

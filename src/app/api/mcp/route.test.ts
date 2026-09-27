@@ -498,3 +498,50 @@ test("propose_run refuses a mount with no folder, and a folder with no mount", a
   }
   assert.equal(proposals(), 2);
 });
+
+/**
+ * A body that is no JSON-RPC message at all. `null` used to throw on its first
+ * property read, which was answered and audited as a 500 by the one door a
+ * capability holder reaches; `5`, `"x"` and `[]` read as notifications and got
+ * an empty 202, which tells the caller its request was accepted.
+ */
+type RpcError = { id: unknown; error: { code: number } };
+
+async function postRaw(token: string, body: string): Promise<Response> {
+  return route.POST(
+    new Request("http://localhost/api/mcp", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body,
+    }),
+  );
+}
+
+test("a body that is not a message is an Invalid Request, not a 500 or an empty 202", async () => {
+  const { token } = seedRun(HERE);
+
+  for (const body of ["null", "[null]", "5", '"x"', "[]"]) {
+    const res = await postRaw(token, body);
+    const reply = (await res.json()) as RpcError | RpcError[];
+    const replies = Array.isArray(reply) ? reply : [reply];
+
+    // A batch keeps its envelope; anything that is not one is refused whole.
+    assert.equal(res.status, body === "[null]" ? 200 : 400, `status for ${body}`);
+    assert.equal(replies.length, 1, `one reply for ${body}`);
+    assert.equal(replies[0].error.code, -32600, `${body} is an Invalid Request`);
+    assert.equal(replies[0].id, null, `the id of ${body} cannot be read`);
+  }
+});
+
+test("a batch answers a member that is not an object in its slot and keeps the rest", async () => {
+  const { token } = seedRun(HERE);
+
+  const res = await postRaw(token, JSON.stringify([7, { jsonrpc: "2.0", id: 2, method: "ping" }]));
+  assert.equal(res.status, 200);
+  const replies = (await res.json()) as { id: unknown; result?: unknown; error?: { code: number } }[];
+
+  assert.equal(replies.length, 2);
+  assert.equal(replies[0].error?.code, -32600);
+  assert.equal(replies[1].id, 2);
+  assert.deepEqual(replies[1].result, {});
+});

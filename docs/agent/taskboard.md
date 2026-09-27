@@ -20,6 +20,7 @@ The paragraphs themselves live in `docs/agent/taskboard/`, one topic file per he
 - Table: From / To / Who.
 - Four of those are load-bearing beyond their own row.
 - `from === to` is not a move and is allowed for every actor, so an update that restates the status it is not changing is a no-op rather than a refusal; `updateTask` calls the rule only when the status…
+- A write that changes nothing is not written, so `updated_at` does not move.
 - A move's effects are the other half of the rule, and re-opening deliberately clears both run columns.
 - `GET`/`POST /api/tasks` and `GET`/`PATCH`/`DELETE /api/tasks/[id]` are operator-facing and behind the app's ordinary gate, and the actor is a constant in the route rather than anything read off a…
 - A `mount_id`/`folder` pair is proved against the app's own mount list at the door, through the resolver a run is confined by, and half a pair is refused rather than stored.

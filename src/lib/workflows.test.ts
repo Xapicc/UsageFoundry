@@ -22,6 +22,7 @@ import {
   loopBody,
   mergeBlockOutcome,
   normalizeWorkflowInput,
+  pickDuplicateName,
   planEmission,
   groupPasses,
   planInstanceStep,
@@ -51,7 +52,11 @@ import {
 import type { LoopBoardCondition } from "./workflowGraph";
 import { topologicalOrder, type RunStatus } from "./orchestrator";
 import { readTaskLinks } from "./tasks";
-import type { RunProviderDTO, TaskPriorityDTO } from "./apiTypes";
+import {
+  MAX_WORKFLOW_NAME,
+  type RunProviderDTO,
+  type TaskPriorityDTO,
+} from "./apiTypes";
 import type { TurnResult } from "./chat";
 import type { RunGuards } from "./settings";
 import type { RunTemplate } from "./templates";
@@ -306,6 +311,60 @@ describe("topologicalOrder — every block after what it waits for", () => {
 /* ------------------------------------------------------------------ */
 /* Identity and substance                                              */
 /* ------------------------------------------------------------------ */
+
+describe("pickDuplicateName — the name a copy is saved under", () => {
+  /** Duplicates `source` `times` times, each copy taking its name. */
+  function duplicateRepeatedly(source: string, times: number): string[] {
+    const taken = [source];
+    for (let i = 0; i < times; i++) {
+      taken.push(pickDuplicateName(source, taken));
+    }
+    return taken.slice(1);
+  }
+
+  it("keeps a short name whole and numbers the copies after the first", () => {
+    assert.deepEqual(duplicateRepeatedly("Nightly", 3), [
+      "Nightly copy",
+      "Nightly copy 2",
+      "Nightly copy 3",
+    ]);
+  });
+
+  it("makes every copy of a name at or near the limit, each free and in bounds", () => {
+    for (const length of [75, 76, 77, 79, MAX_WORKFLOW_NAME]) {
+      const source = "x".repeat(length);
+      const copies = duplicateRepeatedly(source, 3);
+      assert.equal(
+        new Set([source, ...copies]).size,
+        4,
+        `${length}: ${JSON.stringify(copies)}`,
+      );
+      for (const copy of copies) {
+        assert.ok(copy.length <= MAX_WORKFLOW_NAME, `${length}: ${copy}`);
+      }
+    }
+  });
+
+  it("compares names the way the unique index does: ASCII case folded, nothing else", () => {
+    assert.equal(pickDuplicateName("Nightly", ["NIGHTLY COPY"]), "Nightly copy 2");
+    // `COLLATE NOCASE` accepts this beside "ÉTÉ COPY", so skipping it would
+    // be a fold that is not the index's.
+    assert.equal(pickDuplicateName("été", ["ÉTÉ COPY"]), "été copy");
+  });
+
+  it("does not split a surrogate pair, which SQLite would store as something else", () => {
+    // The cut for " copy" lands between the halves of the emoji.
+    const source = "a".repeat(74) + "😀" + "b".repeat(4);
+    const name = pickDuplicateName(source, [source]);
+    assert.equal(Buffer.from(name, "utf8").toString("utf8"), name);
+    assert.equal(name, "a".repeat(74) + " copy");
+  });
+
+  it("does not leave a space the cut landed after in front of the suffix", () => {
+    const source = "a".repeat(74) + " " + "b".repeat(5);
+    assert.equal(pickDuplicateName(source, [source]), "a".repeat(74) + " copy");
+  });
+});
 
 describe("normalizeWorkflowInput — name and blocks", () => {
   it("requires a name", () => {
