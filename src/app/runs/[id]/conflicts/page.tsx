@@ -142,9 +142,7 @@ export default function RunConflictsPage({ params }: Ctx) {
     <>
       <h1 className="mb-1 text-xl font-semibold tracking-tight">Where the conflicts are</h1>
       <p className="mb-4 text-sm text-ink-muted">
-        Every file this merge could not reconcile, positioned by where it sits in the
-        repository. <Link href={`/runs/${id}`}>Back to the run</Link> for the same files
-        in order, with their conflict markers — which is what resolving one needs.
+        <Link href={`/runs/${id}`}>Back to the run</Link> for the conflict markers.
       </p>
 
       {error && (
@@ -192,9 +190,7 @@ export default function RunConflictsPage({ params }: Ctx) {
                 <Count n={tree.files.length - totals.subtreeUnread} /> this preview
                 opened.
               </>
-            )}{" "}
-            Nothing was written to find that out — the merge was tried in memory, and
-            this is how it would land.
+            )}
           </p>
 
           {/* The load-bearing one. `land.ts` reads the merged content of a
@@ -206,11 +202,9 @@ export default function RunConflictsPage({ params }: Ctx) {
             <Notice tone="warn" quiet>
               <strong className="tabular-nums">{totals.subtreeUnread}</strong> of{" "}
               {totals.subtreeUnread === 1 ? "these files was" : "these files were"} never
-              opened. The preview reads the merged content of a bounded number of files
-              per load and lists the rest from git&apos;s stage records alone, so how many
-              clashes {totals.subtreeUnread === 1 ? "it holds is" : "they hold are"}{" "}
-              unknown rather than zero. {totals.subtreeUnread === 1 ? "It is" : "They are"}{" "}
-              drawn hollow and dashed at the smallest size, and that size is not a count.
+              opened, so{" "}
+              {totals.subtreeUnread === 1 ? "its clash count is" : "their clash counts are"}{" "}
+              unknown, not zero.
             </Notice>
           )}
 
@@ -220,9 +214,7 @@ export default function RunConflictsPage({ params }: Ctx) {
                 {plan.foldedFiles} file{plan.foldedFiles === 1 ? "" : "s"}
               </strong>{" "}
               {plan.foldedFiles === 1 ? "is" : "are"} behind {plan.folded.length} folded
-              director{plan.folded.length === 1 ? "y" : "ies"}, drawn as one node each
-              with the count on it. Nothing has been dropped — click a folded node to
-              open it.
+              director{plan.folded.length === 1 ? "y" : "ies"}; click one to open it.
             </Notice>
           )}
 
@@ -249,11 +241,7 @@ export default function RunConflictsPage({ params }: Ctx) {
           </div>
 
           <p className="mt-3 max-w-[70ch] text-xs leading-snug text-ink-muted">
-            A line means <em>is in</em> — the path hierarchy, and never a cause. This map
-            answers where in the tree a conflict falls and nothing else; the markers
-            themselves, in order and readable, are on{" "}
-            <Link href={`/runs/${id}`}>the run&apos;s land card</Link>, which is where
-            resolving one starts.
+            A line means <em>is in</em>: the path hierarchy, never a cause.
           </p>
         </Card>
       )}
@@ -305,7 +293,7 @@ function Nothing({
       return (
         <Empty>
           This run has no branch. It did not work in an isolated checkout, or it stopped
-          before one existed — so there is no merge to preview and nothing to draw.
+          before one existed.
         </Empty>
       );
     case "gone":
@@ -314,39 +302,29 @@ function Nothing({
       return <Empty>{view.reason}</Empty>;
     case "already-merged":
       return (
-        <Empty>
-          This branch is already in {into}. There is no merge left to make, so there is
-          nothing here to conflict.
-        </Empty>
+        <Empty>This branch is already in {into}.</Empty>
       );
     case "fast-forward":
       return (
         <Empty>
           {into} has not moved since this branch left it, so landing is a fast-forward.
-          Nothing is merged and nothing can conflict.
         </Empty>
       );
     case "clean":
       return (
-        <Empty>
-          Every file merges cleanly. git tried the whole merge in memory and found
-          nothing to reconcile.
-        </Empty>
+        <Empty>Every file merges cleanly.</Empty>
       );
     case "unknown":
       return (
         <Notice tone="warn">
           git could not work out how this branch would merge: {view.reason} That is not
-          the same as a clean merge — it is an answer this app does not have, so there is
-          nothing to draw and nothing here says landing is safe.
+          a clean merge, and nothing here says landing is safe.
         </Notice>
       );
     case "none-named":
       return (
         <Notice tone="warn">
-          git reported a conflict and named no file, so there is nothing to position.
-          That is not a clean merge either — what conflicts is read from the merge&apos;s
-          stage records, and this time they could not be read.
+          git reported a conflict and named no file.
         </Notice>
       );
   }
@@ -372,8 +350,7 @@ function Legend() {
           there are no markers to read
         </LegendRow>
         <LegendRow swatch={<span className="block size-3 rounded-full bg-accent" />}>
-          Another kind git named — a rename, an add/add, a binary. The inspector says
-          which
+          Another kind git named — a rename, an add/add, a binary
         </LegendRow>
         <LegendRow swatch={<span className="block size-3 rounded-full bg-ink-muted" />}>
           git named no kind for it
@@ -398,13 +375,12 @@ function Legend() {
             <span className="block size-3 rounded-full border border-ink-faint bg-surface" />
           }
         >
-          A directory, holding the files under it
+          A directory
         </LegendRow>
       </ul>
       <p className="mb-4 max-w-[42ch] text-xs leading-snug text-ink-muted">
-        A file&apos;s size is how many clash regions git left in it. A dashed one is
-        drawn at the smallest size, which is not a count. Drag to pan, scroll to zoom,
-        drag a node to arrange it.
+        A file&apos;s size is how many clash regions git left in it; a dashed
+        one&apos;s is not a count.
       </p>
     </>
   );
