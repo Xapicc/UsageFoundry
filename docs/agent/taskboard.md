@@ -94,6 +94,7 @@ The paragraphs themselves live in `docs/agent/taskboard/`, one topic file per he
 - The board draws controls; it never decides a move.
 - The count goes inside a cell the board already has, and a column for it is refused rather than merely not built.
 - The board draws an ordering as one line inside a cell it already has, and a column for it is refused for the count's reason above.
+- The open-tasks chart in the filter card is rebuilt from two timestamps, and says so on the page.
 - The three ways of having nothing are three different screens, and none of them is an empty list.
 - The poll does not stand down, which is the deliberate exception to `conventions.md`'s rule that a page stops polling what cannot change.
 

@@ -32,6 +32,7 @@ import {
   type JsonFailure,
   type JsonResult,
 } from "@/lib/jsonRequest";
+import { OpenTasksChart, openTaskSeries } from "@/components/OpenTasksChart";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonLink, ButtonRow } from "@/components/ui/Button";
 import { Card, CardTitle, Empty, SkeletonText } from "@/components/ui/Card";
@@ -417,6 +418,14 @@ export default function TasksPage() {
   const visible = useMemo(
     () => inPlace.filter((t) => inLane(t, lane)),
     [inPlace, lane],
+  );
+
+  // Over the rows both selects narrow to and every status, so choosing a
+  // project draws that project's line; counted at `fetchedAt` for the reason
+  // the relative ages are.
+  const openSeries = useMemo(
+    () => openTaskSeries(visible, fetchedAt),
+    [visible, fetchedAt],
   );
 
   const byStatus = useCallback(
@@ -817,6 +826,7 @@ export default function TasksPage() {
                 </Select>
               </div>
             </Field>
+            <OpenTasksChart series={openSeries} className="xl:ml-auto" />
           </div>
           {/* The list is replaced without anything moving focus, so the count
               is announced rather than only drawn. */}

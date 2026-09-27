@@ -106,6 +106,22 @@ answer to when an ordering is satisfied. An ordering that has fully cleared stil
 draws — as *After* rather than *Blocked by* — since a row that drew nothing for
 it would say this task was never put behind anything.
 
+**The open-tasks chart in the filter card is rebuilt from two timestamps, and
+says so on the page.** `OpenTasksChart` counts, at the end of each of the last
+seven local days and at the poll's `fetchedAt`, the rows both selects narrow to
+that had been filed and not yet closed — over every status, because a row closed
+today was open on Tuesday, which is also why no status narrows it. The table has
+no history to read instead: `closed_at` is cleared on the move back out of done
+or dropped, so a reopened task counts as open for its whole life, a deleted one
+is missing from every day it was on the board, and with no `claimed_at` open and
+claimed are one line, since two would draw a history nothing recorded. That is
+what the muted line under it says, and why it is computed in the browser from
+the rows already on screen rather than by a route, which would look like a
+record. Eight points rather than seven, so the first is where the week began and
+the change printed beside the line is the whole seven days'. It takes `Field`'s
+anatomy — a label, a control-height row, one muted line — so the card is no
+taller for it.
+
 **The three ways of having nothing are three different screens, and none of them
 is an empty list.** A board with nothing on it says a task is a brief anybody —
 the orchestrator, a workflow block, a work cycle, the operator — can file, and
