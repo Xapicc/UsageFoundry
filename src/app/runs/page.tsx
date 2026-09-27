@@ -933,11 +933,6 @@ export default function RunsPage() {
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="mb-1 text-xl font-semibold tracking-tight">Runs</h1>
-          <p className="max-w-[68ch] text-ink-muted">
-            A <strong className="font-semibold text-ink">run</strong> hands
-            Claude Code one task in one folder and lets it keep working until it
-            says the task is done — or until one of your limits is reached.
-          </p>
         </div>
         <ButtonLink href="/runs/new" variant="primary">
           New run
@@ -967,12 +962,11 @@ export default function RunsPage() {
           The server restarted {fmtRelative(boot.at, readAt)} and closed out{" "}
           <strong className="font-semibold text-ink">
             {boot.closed} run{boot.closed === 1 ? "" : "s"}
-          </strong>{" "}
-          that were in progress
+          </strong>
           {boot.kept > 0
             ? `, keeping ${boot.kept} paused run${boot.kept === 1 ? "" : "s"} to resume on their own`
             : ""}
-          . Nothing restarts on its own.
+          .
         </Notice>
       )}
 
@@ -1019,10 +1013,6 @@ export default function RunsPage() {
           <Card emphasis="quiet">
             <Empty>
               <div className="font-medium text-ink">Nothing is running</div>
-              <div className="mx-auto mt-1 max-w-[46ch] text-ink-muted">
-                A run you start appears here while it works, with what it has
-                spent and how close it is to your limits.
-              </div>
               <div className="mt-3">
                 <Link href="/runs/new">Start a run</Link>
               </div>
@@ -1065,10 +1055,6 @@ export default function RunsPage() {
           <Card emphasis="quiet">
             <Empty>
               <div className="font-medium text-ink">Nothing finished today</div>
-              <div className="mx-auto mt-1 max-w-[46ch] text-ink-muted">
-                A run lands here when it stops — whether it reported the task
-                done, ran out of work cycles, or hit a limit.
-              </div>
             </Empty>
           </Card>
         ) : (
