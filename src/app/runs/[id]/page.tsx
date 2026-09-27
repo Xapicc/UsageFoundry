@@ -522,10 +522,23 @@ function guardBars(run: RunDTO, now: number) {
   return bars;
 }
 
-/** A guard's value in the inspector's list, or the fact that it is not set. */
+/**
+ * A value in one of the inspector's lists — a guard, or the fact that it is not
+ * set, and the model, provider and agent rows below them.
+ *
+ * Capped and allowed to break anywhere because `ListRow` keeps its control side
+ * `shrink-0` above the breakpoint, which is right for a switch and wrong for a
+ * string nobody here chose the length of. A Bedrock model id is 42 characters:
+ * under the ascii skin it drew 4px past the card's content edge, over a label
+ * squeezed to one word a line. Under the cap it wraps inside its own column and
+ * the label keeps the rest; every value this page writes itself is well short
+ * of it, so those rows do not move.
+ */
 function GuardValue({ children }: { children: ReactNode }) {
   return (
-    <span className="text-sm tabular-nums text-ink">{children}</span>
+    <span className="max-w-48 text-right text-sm tabular-nums text-ink [overflow-wrap:anywhere]">
+      {children}
+    </span>
   );
 }
 
