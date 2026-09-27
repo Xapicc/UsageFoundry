@@ -77,6 +77,14 @@ At `fee5efb`. Work in progress — this paragraph is rewritten when the hunt end
 - **Value**: medium — turns the gate from a trap into a tool, for installs that set it.
 - **Not worth it if**: G-8 is enough for the operators who set a command.
 
+### G-10 Jump from a touched file to its patch
+- **Friction**: on the run page, "What it touched" is drawn inside the "What changed" card's own component (`src/components/RunDiff.tsx:208` renders `<RunTouches run={run} diff={diff} />`), so the two lists about the same files sit one above the other — and a row in the touched table is plain text (`src/components/RunTouches.tsx:251-257`, `<span className="mono">{file.path}</span>`). An operator reading "changed, never named by a tool call" — the group whose whole point is "go and look at this change" — scrolls back up the diff list and hunts for the same path by eye, then opens it.
+- **Change**: give each `DiffFileRow` an `id` derived from its path (`src/components/ui/Patch.tsx:140`) and make the path in a touched row a link to it when the file is in `diff.files`; following the link opens that row's disclosure (re-key with `defaultOpen`, as G-7 does) and scrolls it into view. Rows whose file is not in the diff stay plain text, which is itself the information.
+- **Size**: S.
+- **Touches**: `git-and-review.md`, "What a run *touched*…": the changed set arrives as a prop precisely so this needs no second fetch — keep it that way. "Nothing may render as an empty list" is unaffected. A path id needs escaping (paths can hold spaces, quotes, `#`); use an index into `diff.files` rather than the raw path.
+- **Value**: medium — it turns the reconciliation from a list of names into a route to the evidence, on the page where the land decision is made.
+- **Not worth it if**: board task `1c04d1ea` (filed by this hunt) changes which runs get a reconcilable diff enough that the link would mostly be absent; it should land first either way.
+
 ## Too big for this list
 
 ## Bugs filed
@@ -86,6 +94,9 @@ At `fee5efb`. Work in progress — this paragraph is rewritten when the hunt end
 - Delete branch refuses a merged branch whenever the operator's checkout is not on its target — normal — `a9ec4551-98a5-453e-95a3-d5885687ceea`
 - Land card hides why Land is refused once a landed run's branch gains new commits — normal — `9083ce3a-6fd8-4741-8f53-487128bc70de`
 - Branches page resets the chosen merge strategy on every inventory re-read, so a selection lands with the default — normal — `5b6e8305-4434-4cc4-8016-9a7055bba44b`
+- After a conflict resolution, "What changed" and the review count the target's commits as the run's work — normal — `a7f6343d-cd3f-40bb-b75f-81d0d0599fcb`
+- Files tab and touched map call every edited file "not changed" for runs without a committed branch diff — normal — `1c04d1ea-ce58-4f52-a409-0f3fd32ab8a0`
+- One failed patch read blanks every file's contents in "What changed" and blames size without the shortened-diff notice — normal — `eb0c39de-4d14-4b40-bb45-bb2e9636849c`
 
 ## Bugs not filed
 
