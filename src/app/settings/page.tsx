@@ -243,9 +243,9 @@ const ISOLATION_OPTIONS: readonly SegmentedOption<IsolationChoice>[] = [
 
 const ISOLATION_CONSEQUENCE: Record<IsolationChoice, string> = {
   worktree:
-    "The run works on its own branch in a separate checkout, so another run can use the same project meanwhile — you land it from Branches once you have read it",
+    "A separate checkout, so another run can use the same project meanwhile; you land it from Branches",
   direct:
-    "The agent edits the folder you pick, and no other run may touch anything in that tree until it finishes",
+    "Edits the folder in place, and no other run may touch that tree until it finishes",
 };
 
 type LandStrategy = "merge" | "squash";
@@ -504,10 +504,10 @@ function at(obj: unknown, path: string): unknown {
  */
 const SPEND_READ_AT: Record<BudgetPolicyDTO["enforcement"], string> = {
   "between-cycles":
-    "Read before each work cycle, and carried into the cycle as its own cap, so a run stops near it.",
-  live: "Read on a ticker while a cycle is going, and carried into the cycle as its own cap, so a run stops near it.",
+    "Checked before each work cycle and passed into it as a cap, so a run stops near it.",
+  live: "Checked on a ticker during a cycle and passed into it as a cap, so a run stops near it.",
   "live-resume":
-    "Read on a ticker while a cycle is going, and carried into the cycle as its own cap, so a run stops near it.",
+    "Checked on a ticker during a cycle and passed into it as a cap, so a run stops near it.",
 };
 
 /**
@@ -3830,14 +3830,7 @@ export default function SettingsPage() {
       <Section
         id="guards"
         title="Default guard set"
-        lede={
-          <>
-            What an agent may do when the orchestrator chat proposes work
-            without naming a template, and what a template the chat saves is
-            created with. Runs you start yourself take their guards from the
-            new-run form instead. The chat cannot change any of this.
-          </>
-        }
+        lede="For work the orchestrator chat proposes without a template, and for templates the chat saves. The chat cannot change it; runs you start use the new-run form's."
       >
         <ListGroup>
           <SettingRow
@@ -3880,7 +3873,7 @@ export default function SettingsPage() {
               <>
                 {SPEND_READ_AT[guards.budget.enforcement] ??
                   SPEND_READ_AT["between-cycles"]}{" "}
-                It is per run, so three at once can spend three times it
+                Per run, so three at once can spend three times it
               </>
             }
           >
@@ -3912,7 +3905,7 @@ export default function SettingsPage() {
               <Toned tone={noTerminus ? "danger" : "neutral"}>
                 {noTerminus
                   ? "Set this or a time limit — a run with neither would never have to end"
-                  : "How many times the agent is sent back in before the run ends. Blank is only allowed alongside a time limit"}
+                  : "Blank is allowed only alongside a time limit"}
               </Toned>
             }
           >
@@ -3944,7 +3937,7 @@ export default function SettingsPage() {
               <Toned tone={noTerminus ? "danger" : "neutral"}>
                 {noTerminus
                   ? "Set this or a work-cycle limit — a run with neither would never have to end"
-                  : "Minutes worked, not time parked — and the only limit that keeps moving whether or not a cycle reports what it spent"}
+                  : "Minutes worked, not parked; the only limit that moves whether or not a cycle reports what it spent"}
               </Toned>
             }
           >
@@ -3979,7 +3972,7 @@ export default function SettingsPage() {
             htmlFor="chatbudget"
             edited={isEdited("chatTurnBudgetUSD")}
             label="Orchestrator chat limit"
-            description="A chat is not a run and has no guards of its own, so this is the only thing that bounds one message — a turn runs for as long as it keeps working, and is stopped only after 15 minutes of producing nothing. It is spent on the conversation, never added to a run"
+            description="The only bound on one chat message: a turn runs as long as it keeps working and is stopped only after 15 minutes of producing nothing. Never added to a run's spend"
           >
             <div className="w-36">
               <Input
@@ -4005,7 +3998,7 @@ export default function SettingsPage() {
             htmlFor="installbudget"
             edited={isEdited("installDailyCostLimitUSD")}
             label="Install limit, rolling 24 hours"
-            description="Every other limit here bounds one run, one workflow or one chat turn — this is the only one that bounds the total. Once it is reached, no new run, workflow, orchestrator turn or chat message starts until spend ages out of the window. A run still going, or one that finished inside it, counts its whole spend"
+            description="Once reached, no new run, workflow, orchestrator turn or chat message starts until spend ages out of the window. A run still going, or one that finished inside it, counts its whole spend"
           >
             <div className="w-36">
               <Input
