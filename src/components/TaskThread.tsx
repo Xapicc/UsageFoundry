@@ -212,10 +212,6 @@ export function TaskThread({ taskId }: { taskId: string }) {
             <div className="font-medium text-ink">
               The comments could not be read
             </div>
-            <div className="mx-auto mt-1 max-w-[52ch]">
-              This is a failed request rather than an empty thread — nothing
-              here says whether anything has been said about this task.
-            </div>
             <ButtonRow className="mt-3 justify-center">
               <Button variant="secondary" onClick={() => void load()}>
                 Try again
@@ -226,16 +222,14 @@ export function TaskThread({ taskId }: { taskId: string }) {
 
         {threadIsEmpty && (
           <Empty>
-            Nothing said yet. A comment is a note on the brief — the operator,
-            the orchestrator and a run working this task can each add one, and
-            none of them can change or remove it afterwards.
+            Nothing said yet. The operator, the orchestrator and a run working
+            this task can each comment.
           </Empty>
         )}
 
         {clipped && (
           <Notice tone="warn">
-            Showing the newest {comments.length} of {thread.total} comments. The
-            oldest are not on this page.
+            Showing the newest {comments.length} of {thread.total} comments.
           </Notice>
         )}
 
