@@ -61,6 +61,7 @@ At `fee5efb`. Work in progress — this paragraph is rewritten when the hunt end
 - Land verify gate passes on uncommitted work that the land then leaves behind — normal — `0a3278ff-c134-4551-965f-e0cca9d87368`
 - Delete branch refuses a merged branch whenever the operator's checkout is not on its target — normal — `a9ec4551-98a5-453e-95a3-d5885687ceea`
 - Land card hides why Land is refused once a landed run's branch gains new commits — normal — `9083ce3a-6fd8-4741-8f53-487128bc70de`
+- Branches page resets the chosen merge strategy on every inventory re-read, so a selection lands with the default — normal — `5b6e8305-4434-4cc4-8016-9a7055bba44b`
 
 ## Bugs not filed
 
