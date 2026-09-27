@@ -132,7 +132,7 @@ Seventeen are renderings rather than functions — every `*.test.tsx` in the tre
 | `loopBoardCount.test.ts` |  |
 | `loopMergeOwnership.test.ts` |  |
 | `loopSection.test.ts` |  |
-| `workflows.test.ts` | [argv], [pricing] |
+| `workflows.test.ts` | [argv], [pricing], [workflows] |
 
 Units that are about no test file in the tree:
 
