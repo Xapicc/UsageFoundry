@@ -63,6 +63,10 @@ process.env.CODEX_HOME = path.join(tmp, "codex");
 // asserted the fallback while the code read the variable would pass or fail on
 // whoever ran it. Pinned above the `require` for the same reason as the others.
 process.env.GOPATH = path.join(tmp, "gopath");
+// The XDG cache the other way round: the image leaves XDG_CACHE_HOME unset, so
+// the fallback is the path production takes, and unset here is what makes the
+// test assert that path rather than whatever a developer's shell exports.
+delete process.env.XDG_CACHE_HOME;
 // And TMPDIR, which the write set follows for the same reason: the sandbox
 // creates its sockets under it, and `os.tmpdir()` reads it at every call.
 process.env.TMPDIR = path.join(tmp, "tmp");
@@ -4293,6 +4297,12 @@ describe("sandboxSettings — what one child may write", () => {
       writable(isolated, path.join(process.env.GOPATH as string, "pkg", "mod")),
       true,
     );
+    // And the XDG cache, which uv, pip, node-gyp and swiftc's clang module
+    // cache all default to. Named at a depth a real tool writes, since the
+    // failure this pins was `.cache/clang/ModuleCache/…` refused on EROFS.
+    const xdgCache = path.join(os.homedir(), ".cache");
+    assert.equal(writable(isolated, path.join(xdgCache, "uv")), true);
+    assert.equal(writable(isolated, path.join(xdgCache, "clang", "ModuleCache")), true);
 
     // And the resolver gets them too: it is the other child an operator can
     // point at a build command, through `settings.resolveAllowedTools`.
@@ -4303,6 +4313,7 @@ describe("sandboxSettings — what one child may write", () => {
     });
     assert.equal(writable(resolver, os.tmpdir()), true);
     assert.equal(writable(resolver, path.join(os.homedir(), ".npm")), true);
+    assert.equal(writable(resolver, path.join(xdgCache, "pip")), true);
   });
 
   it("keeps CLAUDE_CONFIG_DIR writable, which is the metering path", () => {

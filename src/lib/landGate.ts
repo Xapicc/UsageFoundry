@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 
 import { childCredentials } from "./privsep";
 import { parseVerifyCommand, type VerifyCommand } from "./verifyCommand";
@@ -64,7 +64,9 @@ export function landVerdict(o: {
   configured: boolean;
   parse: VerifyCommand;
   exitCode: number | null;
+  signal?: NodeJS.Signals | null;
   timedOut: boolean;
+  timeoutMs?: number;
   tail: string;
 }): VerifyOutcome {
   if (!o.configured) return { ran: false, passed: true, reason: "" };
@@ -83,19 +85,29 @@ export function landVerdict(o: {
       ran: true,
       passed: false,
       reason:
-        "The verify command did not finish in time, so nothing here knows " +
-        "whether this branch is good. Land refused rather than guessed.",
+        "The verify command did not finish in time and was killed after " +
+        `${spokenDuration(o.timeoutMs ?? VERIFY_TIMEOUT_MS)}, so nothing here ` +
+        "knows whether this branch is good. Land refused rather than guessed.",
     };
   }
   if (o.exitCode === 0) return { ran: true, passed: true, reason: "" };
   const tail = o.tail.trim();
+  // A signal death has no exit code, and "exited -1" named a number the
+  // command never returned.
+  const ending = o.signal ? `was killed by ${o.signal}` : `exited ${o.exitCode ?? -1}`;
   return {
     ran: true,
     passed: false,
     reason:
-      `The verify command exited ${o.exitCode ?? -1}, so this branch was not ` +
+      `The verify command ${ending}, so this branch was not ` +
       `landed.` + (tail ? ` Its last output was: ${tail}` : ""),
   };
+}
+
+function spokenDuration(ms: number): string {
+  const [n, unit] =
+    ms >= 60_000 ? [Math.round(ms / 60_000), "minute"] : [Math.round(ms / 1000), "second"];
+  return `${n} ${unit}${n === 1 ? "" : "s"}`;
 }
 
 /**
@@ -167,6 +179,51 @@ export const VERIFY_TIMEOUT_MS = 15 * 60_000;
 /** How much of a failing check's output the refusal carries. */
 export const VERIFY_TAIL_BYTES = 2000;
 
+/** How long `close` is given to deliver the last output after the exit. */
+const VERIFY_DRAIN_MS = 2_000;
+
+/**
+ * `signalTree`'s rule, copied rather than imported because this file must not
+ * import the run loop (see `verifyEnv`): the group when there is one, the
+ * process alone when the group is already gone.
+ */
+function signalGroup(child: ChildProcess, sig: NodeJS.Signals): void {
+  if (child.pid !== undefined && process.platform !== "win32") {
+    try {
+      process.kill(-child.pid, sig);
+      return;
+    } catch {
+      /* not a group leader, or already reaped — fall through */
+    }
+  }
+  try {
+    child.kill(sig);
+  } catch {
+    /* already gone */
+  }
+}
+
+/**
+ * Every verify command this process is running, and nothing else.
+ *
+ * `killAllAgents` is the reader, as the final sweep of `shutdownRuns`, and the
+ * only one. A land in flight at the signal is waited on and never signalled,
+ * so its check is left to finish inside the grace; this is what reaches it once
+ * the grace is spent. Before it existed nothing did, and on a host whose server
+ * was stopped with `kill <pid>` the check outlived the process, unbounded,
+ * since its timer lived in the process that had exited.
+ *
+ * Here rather than beside `trackAssistChild` for `signalGroup`'s reason, and
+ * `orchestrator.ts` importing this file costs nothing. Its own `globalThis` key
+ * for CLAUDE.md's reason about key shapes.
+ */
+const verifyProcs = ((globalThis as unknown as { __ufVerifyProcs?: Set<ChildProcess> })
+  .__ufVerifyProcs ??= new Set<ChildProcess>());
+
+export function runningVerifyChildren(): ChildProcess[] {
+  return [...verifyProcs];
+}
+
 /**
  * Run the configured check in the checkout Land is about to merge into.
  *
@@ -175,6 +232,20 @@ export const VERIFY_TAIL_BYTES = 2000;
  * separating those uids does not stop applying because the command came from
  * Settings rather than from a model. `verifyEnv` is the same argument applied
  * to what the child can read, which for a long time this spawn did not make.
+ *
+ * In its own process group, and ended by the group, because `landRun` and
+ * `deliverRun` await this holding the folder's `landing` claim. It used to
+ * settle on `close` and kill only the direct child at the timeout, and `close`
+ * waits for every process holding the pipes — so `npm test` whose runner hung
+ * outlived the timeout for as long as the runner did, and a check that passed
+ * but left a daemon behind held the land until the daemon exited. Either way
+ * the button never answered and nothing could land into that folder until a
+ * restart. So it settles on `exit` plus `VERIFY_DRAIN_MS` for the last output,
+ * `review.ts`'s `settleOnExit` rule, and the group is killed at the timeout and
+ * again at the exit, pass or fail: whatever the check left running would
+ * otherwise keep running in the tree Land is about to merge. Not gated on
+ * `killProcessGroup`, which is about agents: without a group this timeout
+ * cannot end the check at all.
  */
 export function runVerify(
   cwd: string,
@@ -189,23 +260,37 @@ export function runVerify(
     );
   }
   const [bin, ...args] = parse.argv;
+  const timeoutMs = deps.timeoutMs ?? VERIFY_TIMEOUT_MS;
   return new Promise((resolve) => {
     let out = "";
     let timedOut = false;
     let settled = false;
-    const finish = (exitCode: number | null) => {
+    let exitCode: number | null = null;
+    let signal: NodeJS.Signals | null = null;
+    let drain: NodeJS.Timeout | undefined;
+    const finish = () => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve(landVerdict({ configured, parse, exitCode, timedOut, tail: out }));
+      clearTimeout(drain);
+      resolve(
+        landVerdict({ configured, parse, exitCode, signal, timedOut, timeoutMs, tail: out }),
+      );
     };
-    let child: ReturnType<typeof spawn>;
+    // Armed by the timeout as well as by the exit, so a child that a SIGKILL
+    // cannot end — stuck in the kernel on a dead mount — still leaves Land
+    // answering on the timeout's word rather than on the child's.
+    const drainThenFinish = () => {
+      drain ??= setTimeout(finish, VERIFY_DRAIN_MS);
+    };
+    let child: ChildProcess;
     try {
       child = spawn(bin, args, {
         cwd,
         env: verifyEnv(),
         ...childCredentials(),
         stdio: ["ignore", "pipe", "pipe"],
+        detached: process.platform !== "win32",
       });
     } catch (err) {
       resolve({
@@ -217,10 +302,12 @@ export function runVerify(
       });
       return;
     }
+    verifyProcs.add(child);
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGKILL");
-    }, deps.timeoutMs ?? VERIFY_TIMEOUT_MS);
+      signalGroup(child, "SIGKILL");
+      drainThenFinish();
+    }, timeoutMs);
     const take = (chunk: string) => {
       out = (out + chunk).slice(-VERIFY_TAIL_BYTES);
     };
@@ -236,15 +323,24 @@ export function runVerify(
     // press. `error` and `close` both fire for an ENOENT, and the latch is
     // what stops the second one re-answering with a different verdict.
     child.on("error", (err) => {
+      verifyProcs.delete(child);
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearTimeout(drain);
       resolve({
         ran: false,
         passed: false,
         reason: `The verify command could not start: ${err.message}.`,
       });
     });
-    child.on("close", (code) => finish(code));
+    child.on("exit", (code, sig) => {
+      exitCode = code;
+      signal = sig;
+      verifyProcs.delete(child);
+      signalGroup(child, "SIGKILL");
+      drainThenFinish();
+    });
+    child.on("close", finish);
   });
 }

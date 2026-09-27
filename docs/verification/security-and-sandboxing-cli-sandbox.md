@@ -144,6 +144,13 @@
   writable, a sibling run's not, `CLAUDE_CONFIG_DIR` writable, plus glob-path
   and empty-set cases.
 
+- **The XDG cache joined the write set after a counted gap, 2026-09-27.**
+  Over `run_events` from 2026-08-28, 20 runs hit `Read-only file system` under
+  `~/.cache`: uv, pip, node-gyp, and the clang module cache every `swiftc`
+  needs. `BUILD_CACHE_DIRS` now names `$XDG_CACHE_HOME`, else `~/.cache`; the
+  new asserts in `orchestrator.test.ts` failed without it and pass with it.
+  Unit-level only — the item below is the live half.
+
 - **The CLI's own sandbox has been executed three narrow ways (2026-08-18/19
   onward).** `bwrap` with and without the seccomp profile, in both argv
   shapes; a 15-hour `UF_SANDBOX=1` install whose sandbox never started (Q2);
@@ -239,6 +246,12 @@
   `--settings` merging with the managed file. The set left out `/tmp`,
   `$HOME/.npm` and `$GOPATH` until 2026-08-19; that it now suffices is argued,
   not measured. Open dependency: a stock `settings.json` lets a run widen it.
+
+- **No sandboxed run has written under `~/.cache` since it joined the write
+  set, 2026-09-27.** Settle it after a `docker compose up --build` with
+  `UF_SANDBOX=1`: have a run `swiftc` a two-line file, or `uv venv` with no
+  `UV_CACHE_DIR`, and expect no `Read-only file system` under
+  `/home/node/.cache` in its `tool_error` rows.
 
 - **No work cycle has run in a started sandbox, the network allowlist never
   ran, and `scripts/sandbox-probe/` has never met a container.** CLI 2.1.226's
