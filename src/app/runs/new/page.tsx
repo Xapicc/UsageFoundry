@@ -1747,7 +1747,7 @@ export default function NewRunPage() {
               <p>
                 <strong>Spend reads as unknown, not $0.</strong> Codex reports
                 tokens and no money, so nothing reaches this run&rsquo;s spend
-                or the usage windows below. There is no per-cycle cost ceiling
+                or the usage windows below. There is no per-cycle cost limit
                 either, which is why this run needs a work-cycle limit or a time
                 limit.
               </p>
