@@ -3267,6 +3267,14 @@ measurement under *Verified* and cut the item down to what is still open.
   unit tested; no billed cycle has hit it, so whether the CLI honours it on
   `-p` and how far a cycle overshoots are reasoned, not measured.
 
+- **A conflict resolution stopping at `resolutionBudgetUSD` (added
+  2026-09-27).** `resolutionBudget.test.ts` asserts the argv against a stub
+  CLI; no billed resolution has hit it, so that the pinned CLI ends a `-p`
+  resolution there and the merge is rolled back is reasoned, not measured.
+  Settle: *Limit per conflict resolution* at 0.05, press Resolve on a
+  conflicting run; the row should fail naming `error_max_budget_usd` and the
+  branch should be unchanged.
+
 - **A workflow-wide budget tripping against real spend.** No instance has been
   halted by a guard; `instanceSpend` has never summed a real `otlp_requests`
   row.
