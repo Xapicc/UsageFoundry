@@ -67,6 +67,19 @@
   `--resume` continued the session. The CLI reported `total_cost_usd` 0.000075
   for a model it has no price for — the figure `providerReportsSpend` refuses.
 
+- **Winnow's `ENABLE_TOOL_SEARCH=1` broke the first real local run, and
+  `false` fixes it, 2026-09-28.** A local run against LM Studio serving
+  `qwen/qwen3.6-35b-a3b` failed on its first tool call with `400
+  request.messages.3.content.0.content.0.type: Invalid literal value, expected
+  "text"`; its transcript in `.claude-local` shows the model's `ToolSearch`
+  call answered by a `tool_result` holding a `tool_reference` block, which the
+  entrypoint's export had switched on for winnow. Reproduced against a stub
+  with host `claude` 2.1.283 — the request offered `ToolSearch` and deferred a
+  tool — and with `localCycleEnv` setting `false` the same request offered 20
+  tools, none of them `ToolSearch`, and deferred none. Not yet re-run against
+  LM Studio. A session that already holds a `tool_reference` fails again on
+  `--resume`, so a run that hit this has to be started afresh.
+
 ## Not yet verified by hand
 
 - **No local-provider work cycle has run through this app or against a real

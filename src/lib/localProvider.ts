@@ -303,6 +303,15 @@ export function localCycleEnv(
   // Update checks, error reporting and the like, all of which go to Anthropic.
   // A run the operator pointed at their own machine has no business there.
   env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
+  // The other half of winnow, and the half the base URL does not undo. The
+  // entrypoint exports `ENABLE_TOOL_SEARCH=1` beside the proxy, because a
+  // non-Anthropic base URL turns tool deferral off and the proxy forwards
+  // `tool_reference` blocks. A local server does not: LM Studio answered the
+  // first `ToolSearch` result with "400 request.messages.3.content.0.content.0
+  // .type: Invalid literal value, expected \"text\"" and the run ended there.
+  // Off, every tool's schema rides every request, which is what a server that
+  // cannot resolve a reference needs.
+  env.ENABLE_TOOL_SEARCH = "false";
   return env;
 }
 

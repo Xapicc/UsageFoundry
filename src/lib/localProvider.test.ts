@@ -121,6 +121,16 @@ describe("localCycleEnv", () => {
     }
   });
 
+  it("turns off the tool search winnow switched on, whose references a local server rejects", () => {
+    const env = mod.localCycleEnv(
+      { ...claudeCycle, ENABLE_TOOL_SEARCH: "1" },
+      { baseUrl: "http://h", token: "t" },
+      "m",
+      "/c",
+    );
+    assert.equal(env.ENABLE_TOOL_SEARCH, "false");
+  });
+
   it("sets a token even when the server wants none, so the OAuth login is never the fallback", () => {
     const env = mod.localCycleEnv(claudeCycle, { baseUrl: "http://h", token: null }, "m", "/c");
     assert.equal(env.ANTHROPIC_AUTH_TOKEN, mod.LOCAL_TOKEN_PLACEHOLDER);
