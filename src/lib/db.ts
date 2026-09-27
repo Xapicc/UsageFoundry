@@ -2320,6 +2320,15 @@ function migrate(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_dreaming_notes_night ON dreaming_notes(night);
   `);
 
+  // Which numbered item of its run's prompt this row was, so a report's
+  // `NOTE n` finds its row by number rather than by position. Position among a
+  // run's remaining rows shifts the moment `forgetNote` deletes an earlier one,
+  // and the next reconcile then attaches a real path to the row about a
+  // different failure. Nullable with no default: a row claimed before the
+  // column existed has no number anybody recorded, and `reconcileDreamingNotes`
+  // falls back to position for those. Additive, so no version bump.
+  addColumn(db, "dreaming_notes", "prompt_item", "INTEGER");
+
   // One row per night Dreaming decided anything, whether or not it wrote.
   //
   // A night that selected nothing is the *success* case for a write-on-

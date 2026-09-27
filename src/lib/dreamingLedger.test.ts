@@ -176,6 +176,77 @@ describe("noteStillPresent", () => {
   });
 });
 
+/**
+ * A report's `NOTE n` names the n-th item of that run's prompt, and nothing
+ * else. The rows were matched on their position among the run's rows, which
+ * held only until `forgetNote` removed one: every later row moved up a place,
+ * and the next reconcile attached a real path to the row about a different
+ * failure. The Dreaming pane's retraction list would then send a person to
+ * delete the wrong file from their vault.
+ */
+describe("reconcileDreamingNotes", () => {
+  let runs: typeof import("./dreamingRun");
+
+  before(async () => {
+    runs = await import("./dreamingRun");
+  });
+
+  beforeEach(() => {
+    dbMod.db().exec("DELETE FROM run_events; DELETE FROM runs;");
+  });
+
+  /** A finished dreaming run whose last assistant turn is `report`. */
+  const finishedRun = (id: string, report: string) => {
+    const at = Date.now();
+    dbMod
+      .db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, created_at, origin, origin_ref)
+         VALUES (?, '/vault', 'p', 'completed', '{}', ?, 'form', 'dreaming:2026-09-02')`,
+      )
+      .run(id, at);
+    dbMod
+      .db()
+      .prepare("INSERT INTO run_events (run_id, ts, kind, payload) VALUES (?, ?, 'assistant', ?)")
+      .run(id, at, JSON.stringify({ text: report }));
+  };
+
+  const paths = () =>
+    Object.fromEntries(ledger.listNotes().map((n) => [n.signature, n.notePath]));
+
+  it("keeps each path on its own item after an earlier row is forgotten", () => {
+    finishedRun("run-1", "Done.\nNOTE 1 notes/a.md\nNOTE 3 notes/c.md");
+    ledger.claimSignatures("2026-09-02", "run-1", [
+      rollup("sig-a", 2),
+      rollup("sig-b", 2),
+      rollup("sig-c", 2),
+    ]);
+
+    runs.reconcileDreamingNotes();
+    assert.deepEqual(paths(), { "sig-a": "notes/a.md", "sig-b": null, "sig-c": "notes/c.md" });
+
+    // sig-b has no path, so the run is still pending and is read again.
+    assert.equal(ledger.forgetNote("sig-a"), true);
+    runs.reconcileDreamingNotes();
+    assert.deepEqual(
+      paths(),
+      { "sig-b": null, "sig-c": "notes/c.md" },
+      "item 1's path must not move onto item 2 once item 1's row is gone",
+    );
+  });
+
+  it("falls back to claim order for rows that predate the item number", () => {
+    // Rows claimed before `prompt_item` existed carry null there, and they must
+    // still reconcile the way they always did rather than stop attaching at all.
+    finishedRun("run-old", "NOTE 2 notes/b.md");
+    ledger.claimSignatures("2026-09-02", "run-old", [rollup("sig-a", 2), rollup("sig-b", 2)]);
+    dbMod.db().exec("UPDATE dreaming_notes SET prompt_item = NULL");
+
+    runs.reconcileDreamingNotes();
+    assert.deepEqual(paths(), { "sig-a": null, "sig-b": "notes/b.md" });
+  });
+});
+
 describe("liveDreamingRun", () => {
   let runs: typeof import("./dreamingRun");
 

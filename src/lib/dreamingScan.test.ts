@@ -160,6 +160,39 @@ describe("scanDreaming deduplication", () => {
   });
 });
 
+/**
+ * A day is the operator's day, and the operator can change which zone that is.
+ *
+ * The memo is stamped on size and mtime, neither of which moves when
+ * `dreamingTimeZone` does. It used to hold each observation's day, so a scan
+ * after a zone change read every file it already had on the old boundary — and
+ * a failure seen twice in one local day came back spanning two, which is
+ * exactly what qualifies a signature for a note in the operator's vault.
+ */
+describe("scanDreaming after dreamingTimeZone changes", () => {
+  it("keys days on the zone in force, not the zone the memo was filled in", async () => {
+    const body = "bwrap: Can't create file at /a/b/settings.json: Permission denied";
+    // Two UTC days, one Berlin day: 01:30 and 20:00 on 2 September, CEST.
+    write("evening.jsonl", [
+      record({ at: "2026-09-01T23:30:00Z", toolUseId: "toolu_late", body }),
+      record({ at: "2026-09-02T18:00:00Z", toolUseId: "toolu_next", body }),
+    ]);
+
+    const utc = await mod.scanDreaming({ timeZone: "UTC" });
+    assert.deepEqual(utc.days, ["2026-09-01", "2026-09-02"], "the fixture spans two UTC days");
+
+    const berlin = await mod.scanDreaming({ timeZone: "Europe/Berlin" });
+    assert.equal(berlin.filesRead, 0, "the memo is warm, so nothing is re-read");
+    assert.deepEqual(berlin.days, ["2026-09-02"], "one local day");
+    assert.deepEqual(berlin.recurring, [], "so nothing recurred");
+    assert.deepEqual(
+      mod.selectWritable(berlin.recurring, new Set(), 2),
+      [],
+      "and nothing qualifies for a note",
+    );
+  });
+});
+
 /** Bytes exactly as given, for the cases where the line breaks are the subject. */
 function writeRaw(name: string, text: string) {
   const file = path.join(PROJECTS, name);

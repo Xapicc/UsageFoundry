@@ -623,16 +623,18 @@ export function reconcileDreamingNotes(): number {
     }
     if (!report) continue;
 
-    // The order `claimSignatures` inserted them, which is the order
-    // `buildDreamingPrompt` numbered them — both walk the same array.
     const claimed = db()
       .prepare(
-        "SELECT signature, note_path AS notePath FROM dreaming_notes WHERE run_id = ? ORDER BY rowid",
+        `SELECT signature, note_path AS notePath, prompt_item AS promptItem
+           FROM dreaming_notes WHERE run_id = ? ORDER BY rowid`,
       )
-      .all(runId) as { signature: string; notePath: string | null }[];
+      .all(runId) as ClaimedRow[];
+    const byItem = claimedByItem(claimed);
 
-    for (const [index, notePath] of parseNoteLines(report, claimed.length)) {
-      const target = claimed[index - 1];
+    for (const [index, notePath] of parseNoteLines(report, Math.max(0, ...byItem.keys()))) {
+      // No row for an item the operator has since forgotten, and that line is
+      // dropped: forgetting is what lets a later night write the signature again.
+      const target = byItem.get(index);
       // Never overwrites a path it already has: a run reopened and re-reported
       // must not blank a row that points at a real file.
       if (!target || target.notePath) continue;
@@ -641,4 +643,29 @@ export function reconcileDreamingNotes(): number {
     }
   }
   return attached;
+}
+
+interface ClaimedRow {
+  signature: string;
+  notePath: string | null;
+  promptItem: number | null;
+}
+
+/**
+ * A run's claimed rows by the item number its prompt gave each one.
+ *
+ * On the stored `prompt_item`, never on position among the rows that are left:
+ * `forgetNote` deletes a row and moves every later one up a place, and a
+ * position map then attaches a real path to the row about a different failure.
+ * A run whose rows predate the column carries no number, and falls back to the
+ * insertion order `claimSignatures` and `buildDreamingPrompt` both walked —
+ * right until a row of that run is forgotten, which is all those rows ever had.
+ */
+function claimedByItem(rows: readonly ClaimedRow[]): Map<number, ClaimedRow> {
+  const byItem = new Map<number, ClaimedRow>();
+  for (const row of rows) {
+    if (row.promptItem === null) return new Map(rows.map((r, i) => [i + 1, r]));
+    byItem.set(row.promptItem, row);
+  }
+  return byItem;
 }
