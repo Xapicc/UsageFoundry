@@ -1,6 +1,15 @@
 "use client";
 
-import { Fragment, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  use,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { RUN_PROVIDER_LABEL, pausedMsAt, providerReportsSpend } from "@/lib/apiTypes";
@@ -131,6 +140,26 @@ const INSPECTOR_SCROLL: Record<Exclude<CardEmphasis, "quiet">, string> = {
   primary: "lg:-m-5 lg:min-h-0 lg:overflow-y-auto lg:p-5",
   default: "lg:-m-4 lg:min-h-0 lg:overflow-y-auto lg:p-4",
 };
+
+/**
+ * Publish how far down the pane the split starts, as `--split-top` on the
+ * split, for the inspector's cap to take off.
+ *
+ * Measured rather than written as a figure because it is the heading above the
+ * split, which is as tall as its lede wraps and as whatever notice is showing.
+ * Read against the pane's scroll origin, so a pane that is scrolled when this
+ * runs publishes what an unscrolled one would. Compared before it is written
+ * because it runs after every render, and the page renders every second while
+ * the run can move.
+ */
+function publishSplitTop(split: HTMLElement, pane: HTMLElement) {
+  const top =
+    split.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop;
+  const value = `${top}px`;
+  if (split.style.getPropertyValue("--split-top") !== value) {
+    split.style.setProperty("--split-top", value);
+  }
+}
 
 /**
  * When this run's limits are acted on — in the run form's own words, verbatim.
@@ -978,6 +1007,27 @@ export default function RunDetail({
     return () => clearInterval(t);
   }, [active]);
 
+  // What the inspector's cap takes off, kept current: after every render,
+  // because everything standing above the split is this page's own output, and
+  // on every resize of the pane, because that is what rewraps the lede without
+  // one. A layout effect so the first frame with a split in it is already
+  // capped right. Above the early return for the same reason `nowTick` is.
+  const splitRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const split = splitRef.current;
+    const pane = split?.closest("main");
+    if (split && pane) publishSplitTop(split, pane);
+  });
+  const hasRun = run !== null;
+  useEffect(() => {
+    const split = splitRef.current;
+    const pane = split?.closest("main");
+    if (!split || !pane) return;
+    const observer = new ResizeObserver(() => publishSplitTop(split, pane));
+    observer.observe(pane);
+    return () => observer.disconnect();
+  }, [hasRun]);
+
   // A finished run is inside nothing. The orchestrator clears the set at the
   // end of every cycle and the page would normally be told — this is for the
   // case where it is not, a container that went down mid-call under a page that
@@ -1323,11 +1373,16 @@ export default function RunDetail({
           rather than decoration: the inspector is the taller column whenever
           the log is what the pane is showing, and with the row sized to it and
           the log a fixed 62vh box the column beside it ended in a screen-deep
-          band of nothing — which the page then scrolled through, because the
-          inspector's cap is measured from the top of the pane and it starts a
-          heading further down. Stacked, at one column, there is no second
-          column to be shorter than and the page is meant to scroll. */}
-      <div className="grid gap-5 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_21rem]">
+          band of nothing, which the page then scrolled through. That is also
+          why the inspector's cap is measured from where the split starts and
+          not from the top of the pane: a cap taller than the room the split
+          loads in stretches the row past the pane just as the log did.
+          Stacked, at one column, there is no second column to be shorter than
+          and the page is meant to scroll. */}
+      <div
+        ref={splitRef}
+        className="grid gap-5 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_21rem]"
+      >
         <Card
           emphasis={inspectorEmphasis}
           // `max-lg:min-w-0` is the pane column's own `min-w-0` on the other
@@ -1346,7 +1401,22 @@ export default function RunDetail({
           //
           // `lg:flex lg:flex-col` and no overflow of its own: the cap is the
           // card's, and the box inside it is what gives way to it and scrolls.
-          className={`uf-state-edge max-lg:min-w-0 border-l-[3px] ${STATE_ACCENT[state.tone]} lg:col-start-2 lg:row-start-1 lg:sticky lg:top-4 lg:self-start lg:flex lg:flex-col lg:max-h-[calc(var(--pane-h)-2rem)]`}
+          //
+          // The cap is the pane less where the split starts less the pane's
+          // `pb-12`, so the card ends where the split does. Measured from the
+          // top of the pane instead (`--pane-h` less 2rem), it was a heading
+          // taller than the room it loads in: at 1920x963 its last 77px sat
+          // below the window until the pane was scrolled, and as the tallest
+          // thing in the row it took the log down with it and was the whole
+          // of why the log tab scrolled at all. Leaving out the `pb-12` also
+          // put its top 16px under the toolbar at the foot of every scroll.
+          // The price is paid once it sticks on a long tab: it keeps the
+          // height it loaded at, and the heading's depth stands empty below
+          // it. Growing into that as the pane scrolls would mean resizing it
+          // from a scroll handler, which runs a frame behind the compositor,
+          // so its bottom edge would chase the scroll. The fallback is the
+          // `top-4` it sticks at, so an unmeasured cap still fits once stuck.
+          className={`uf-state-edge max-lg:min-w-0 border-l-[3px] ${STATE_ACCENT[state.tone]} lg:col-start-2 lg:row-start-1 lg:sticky lg:top-4 lg:self-start lg:flex lg:flex-col lg:max-h-[calc(var(--pane-h)-var(--split-top,1rem)-3rem)]`}
         >
           {/* The scroll is this box's and not the card's, because the card is
               what the ascii frame is drawn against. `AsciiFrame` is positioned
