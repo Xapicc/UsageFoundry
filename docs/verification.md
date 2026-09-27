@@ -4085,8 +4085,8 @@ measurement under *Verified* and cut the item down to what is still open.
 - **No Codex device sign-in has been completed** (no OpenAI account): the
   exit-0 `auth.json` write, `loginError` on any failure and the poll
   converging are unmeasured; an unnoticed success reads `waiting for approval`.
-  `codex` is not in the `Dockerfile`, and `CODEX_HOME` (unmounted `~/.codex`
-  by default) lives in the container's writable layer, lost on a rebuild.
+  `CODEX_HOME` (unmounted `~/.codex` by default) lives in the container's
+  writable layer, lost on a rebuild.
 
 - **The image has not been rebuilt with Codex (2026-09-05)**: the amd64
   figures (~335 MB unpacked, 123 MB download) are registry metadata, no work
