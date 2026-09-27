@@ -597,6 +597,33 @@ export function guardBadge(
 }
 
 /**
+ * Where a task's folder stands against the workspace scan the editor holds.
+ *
+ * `guardBadge`'s three states again, for the same reason: `folders` is null
+ * until `/api/folders` has answered, and "not in a scan we have not got" is a
+ * different fact from "not in the scan". Collapsed into one, every task with a
+ * project opened with a warning that its folder had gone — for as long as the
+ * scan took to walk every mount, and permanently when the read failed, which
+ * nothing else on the form said.
+ *
+ * `unread` and `absent` both keep the stored folder as its own option, so the
+ * select never resolves to one nobody picked; only `absent` is a warning.
+ */
+export type StoredFolderState = "none" | "listed" | "unread" | "absent";
+
+export function storedFolderState(
+  mountId: string,
+  folder: string,
+  folders: ReadonlyArray<{ mountId: string; path: string }> | null,
+): StoredFolderState {
+  if (mountId === "" || folder === "") return "none";
+  if (folders === null) return "unread";
+  return folders.some((f) => f.mountId === mountId && f.path === folder)
+    ? "listed"
+    : "absent";
+}
+
+/**
  * When a workflow's own limits are checked, in the words both surfaces use.
  *
  * The editor and the instance page each carried this sentence in full, and it

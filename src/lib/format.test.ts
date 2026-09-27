@@ -12,6 +12,7 @@ import {
   passesOf,
   pollFailureMessage,
   runPageNotes,
+  storedFolderState,
 } from "./format";
 import type {
   TaskCommentDTO,
@@ -191,6 +192,44 @@ test("only a template that is genuinely absent is called deleted", () => {
     guardBadge("t1", TEMPLATES),
   ]) {
     assert.equal(badge.tone, "neutral");
+  }
+});
+
+/**
+ * Whether the task editor warns that a task's folder has left the scan.
+ *
+ * `guardBadge`'s failure one page over, and it shipped the same way: the scan
+ * started as an empty list, so every task with a project opened under a warning
+ * that its folder was not in the workspace scan — until `/api/folders` answered,
+ * and for good when it failed. `absent` is the only state that draws the
+ * warning, and it must stay reachable, because a folder deleted under a task is
+ * refused at the next save and this is where the operator sees that first.
+ */
+
+const SCAN = [
+  { mountId: "m1", path: "app" },
+  { mountId: "m2", path: "site" },
+];
+
+test("an unread scan is not a scan without the folder", () => {
+  assert.equal(storedFolderState("m1", "app", null), "unread");
+  // The same pair against a scan that really has answered and does not hold it.
+  assert.equal(storedFolderState("m1", "app", []), "absent");
+});
+
+test("a folder the scan offers under the task's own mount is listed", () => {
+  assert.equal(storedFolderState("m1", "app", SCAN), "listed");
+  // The path alone is not the folder: the same name under another mount is a
+  // different directory, and the task's is not among them.
+  assert.equal(storedFolderState("m2", "app", SCAN), "absent");
+});
+
+test("a task with no project has nothing to keep, read or not", () => {
+  for (const scan of [null, [], SCAN]) {
+    assert.equal(storedFolderState("", "", scan), "none");
+    // Half a pair is what the mount select's own change leaves behind — the
+    // folder is cleared whenever the mount moves — and is nothing to warn of.
+    assert.equal(storedFolderState("m1", "", scan), "none");
   }
 });
 

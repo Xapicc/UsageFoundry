@@ -30,7 +30,15 @@ there is no path that writes the clip. The folder select carries the same shape
 of guard for a different reason: a stored folder the workspace scan does not
 currently offer stays in the list as its own option, since a `<select>` whose
 value is absent resolves to the first option and an unrelated save would then
-move the task to a folder nobody picked.
+move the task to a folder nobody picked. Whether the scan offers it has three
+answers, not two, and `storedFolderState` beside `guardBadge` in `format.ts` is
+where they are told apart: until `/api/folders` answers, and for good when it
+fails, the stored mount and folder are kept as their own options and the warning
+that the folder has left the scan is withheld, because a list not yet read is
+not a list without the folder. A failed read draws a notice saying the workspace
+list could not be read, with a retry, rather than a picker that offers no mount
+and says nothing — which on `tasks/new` read as a container with nowhere to put
+a task.
 
 **On an existing task, operator-only is its own press and never a field of the
 draft.** The draft is seeded once and this page does not poll, so a run that
