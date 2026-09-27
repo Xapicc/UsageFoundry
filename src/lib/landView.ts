@@ -1,4 +1,4 @@
-import type { LandStateDTO } from "./apiTypes";
+import type { LandStateDTO, MergeStrategyDTO } from "./apiTypes";
 
 /**
  * What the Land card and the branches page draw about landing, decided where a
@@ -96,4 +96,46 @@ export function purgeSheetText(
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+/**
+ * The branches page's "How to land them" picker.
+ *
+ * Two facts held apart, as the Land card holds them: what the operator picked,
+ * null until they pick, and what the server would do if they never did. The
+ * inventory is re-read after every row action and whenever an earlier batch
+ * finishes, and when one variable held both, each re-read put the picker back
+ * to the default under a selection that was kept — so a batch picked as
+ * squashes was queued as merges, into the operator's own checkout.
+ */
+export interface StrategyChoice {
+  chosen: MergeStrategyDTO | null;
+  serverDefault: MergeStrategyDTO;
+}
+
+export type StrategyEvent =
+  /** The inventory was read, and says what the server defaults to. */
+  | { kind: "read"; serverDefault: MergeStrategyDTO }
+  /** The operator picked from the selection bar. */
+  | { kind: "picked"; strategy: MergeStrategyDTO }
+  /** The selection was cleared or queued: the next one starts from the default. */
+  | { kind: "released" };
+
+export function nextStrategyChoice(
+  choice: StrategyChoice,
+  event: StrategyEvent,
+): StrategyChoice {
+  switch (event.kind) {
+    case "read":
+      return { ...choice, serverDefault: event.serverDefault };
+    case "picked":
+      return { ...choice, chosen: event.strategy };
+    case "released":
+      return { ...choice, chosen: null };
+  }
+}
+
+/** What the picker shows and what Land sends, as one expression. */
+export function strategyToSend(choice: StrategyChoice): MergeStrategyDTO {
+  return choice.chosen ?? choice.serverDefault;
 }

@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { landCardLine, purgeLabel, purgeSheetText } from "./landView";
+import {
+  landCardLine,
+  nextStrategyChoice,
+  purgeLabel,
+  purgeSheetText,
+  strategyToSend,
+  type StrategyChoice,
+  type StrategyEvent,
+} from "./landView";
 
 /**
  * The sentences the Land card and the branches page put in front of a press
@@ -113,5 +121,40 @@ describe("purgeSheetText", () => {
     assert.doesNotMatch(text, /0 uncommitted/);
     assert.match(text, /whatever is uncommitted in its checkout/);
     assert.match(text, /could not be read/);
+  });
+});
+
+/**
+ * The branches page re-reads its inventory after every row action and whenever
+ * an earlier batch finishes, while the selection it is composing is kept. Each
+ * re-read used to write the server's default over the picker, so a batch
+ * picked as squashes was queued as merges — into the operator's own checkout,
+ * where this app has no undo.
+ */
+describe("nextStrategyChoice", () => {
+  const start: StrategyChoice = { chosen: null, serverDefault: "merge" };
+  const replay = (...events: StrategyEvent[]) => events.reduce(nextStrategyChoice, start);
+
+  it("keeps what the operator picked across a re-read", () => {
+    const choice = replay(
+      { kind: "read", serverDefault: "merge" },
+      { kind: "picked", strategy: "squash" },
+      // A Commit on another row, or an earlier batch going idle.
+      { kind: "read", serverDefault: "merge" },
+    );
+    assert.equal(strategyToSend(choice), "squash");
+  });
+
+  it("follows the server's default until something is picked", () => {
+    assert.equal(strategyToSend(replay({ kind: "read", serverDefault: "squash" })), "squash");
+  });
+
+  it("starts the next selection from the default once this one is cleared or queued", () => {
+    const choice = replay(
+      { kind: "picked", strategy: "squash" },
+      { kind: "released" },
+      { kind: "read", serverDefault: "merge" },
+    );
+    assert.equal(strategyToSend(choice), "merge");
   });
 });

@@ -187,7 +187,7 @@ Units that are about no test file in the tree:
 | `landGate.test.ts` |  |
 | `landAfterVerify.test.ts` |  |
 | `landUnwind.test.ts` |  |
-| `landView.test.ts` |  |
+| `landView.test.ts` | [cards] |
 | `mergeQueue.test.ts` | [argv] |
 | `mergeQueueDrain.test.ts` |  |
 | `mergeQueueOrder.test.ts` |  |

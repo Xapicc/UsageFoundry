@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   type ReactNode,
@@ -24,7 +25,7 @@ import {
   type BadgeTone,
 } from "@/lib/format";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
-import { purgeLabel } from "@/lib/landView";
+import { nextStrategyChoice, purgeLabel, strategyToSend } from "@/lib/landView";
 import { UncommittedNote, offersCommit } from "@/components/BranchWork";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonRow } from "@/components/ui/Button";
@@ -739,7 +740,13 @@ export default function Branches() {
   const [armedPurge, setArmedPurge] = useState<string | null>(null);
   // Selection order is the merge order, so this is a list and not a Set.
   const [selected, setSelected] = useState<string[]>([]);
-  const [strategy, setStrategy] = useState<"merge" | "squash">("merge");
+  // What was picked and what the server defaults to, held apart — see
+  // `StrategyChoice` — so an inventory re-read can only ever write the second.
+  const [strategyChoice, dispatchStrategy] = useReducer(nextStrategyChoice, {
+    chosen: null,
+    serverDefault: "merge",
+  });
+  const strategy = strategyToSend(strategyChoice);
   const [autoResolve, setAutoResolve] = useState(true);
   // Only ever true on the paid path — see the press handler on Land.
   const [confirmLand, setConfirmLand] = useState(false);
@@ -786,7 +793,7 @@ export default function Branches() {
         return;
       }
       setData(json as BranchInventoryDTO);
-      setStrategy(json.defaultStrategy ?? "merge");
+      dispatchStrategy({ kind: "read", serverDefault: json.defaultStrategy ?? "merge" });
       setReadError(null);
     } catch (err) {
       const cause = err instanceof Error ? err.message : String(err);
@@ -930,6 +937,13 @@ export default function Branches() {
     }
   }
 
+  // The strategy goes with the selection it was picked for: the next selection
+  // is a new batch, and starts from the server's default.
+  function clearSelection() {
+    setSelected([]);
+    dispatchStrategy({ kind: "released" });
+  }
+
   function toggle(runId: string) {
     setSelected((prev) =>
       prev.includes(runId) ? prev.filter((id) => id !== runId) : [...prev, runId],
@@ -951,7 +965,7 @@ export default function Branches() {
       if (res.ok) {
         const { queued } = res.data;
         setNote(`Queued ${queued} branch${queued === 1 ? "" : "es"}.`);
-        setSelected([]);
+        clearSelection();
       } else {
         setError(actionFailureMessage(res, "Could not queue those."));
       }
@@ -1073,7 +1087,7 @@ export default function Branches() {
                   // The selection is the merge order and it survives everything
                   // else, but a branch the operator can no longer see is one they
                   // cannot take back out — so changing what is on screen clears it.
-                  setSelected([]);
+                  clearSelection();
                 }}
               >
                 <option value="">All repositories</option>
@@ -1097,7 +1111,7 @@ export default function Branches() {
                   disabled={loading || data.offset === 0}
                   onClick={() => {
                     setOffset(Math.max(0, data.offset - data.limit));
-                    setSelected([]);
+                    clearSelection();
                   }}
                 >
                   Previous
@@ -1109,7 +1123,7 @@ export default function Branches() {
                   }
                   onClick={() => {
                     setOffset(data.offset + data.limit);
-                    setSelected([]);
+                    clearSelection();
                   }}
                 >
                   Next
@@ -1295,7 +1309,10 @@ export default function Branches() {
                       id="land-strategy"
                       value={strategy}
                       onChange={(e) =>
-                        setStrategy(e.target.value as "merge" | "squash")
+                        dispatchStrategy({
+                          kind: "picked",
+                          strategy: e.target.value as "merge" | "squash",
+                        })
                       }
                     >
                       <option value="merge">Merge, keeping their commits</option>
@@ -1325,7 +1342,7 @@ export default function Branches() {
                 </Button>
                 <Button
                   variant="ghost"
-                  onClick={() => setSelected([])}
+                  onClick={clearSelection}
                   disabled={queueBusy}
                 >
                   Clear
@@ -1357,6 +1374,9 @@ export default function Branches() {
           void queueSelected();
         }}
       >
+        {strategy === "squash"
+          ? "Each is squashed into one commit. "
+          : "Each is merged, keeping its commits. "}
         A branch that conflicts is reconciled by Claude on that branch, in a
         throwaway checkout — billed, unattended, and against the same 5-hour
         window your runs use. Your own checkout is not involved.
