@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { after, describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
 import type { BudgetPolicy } from "./budget";
 // Type-only, so it is erased rather than hoisted above the environment setup
 // below — the same reason the values come through `require`.
@@ -86,6 +86,7 @@ const {
   dependencyCycle,
   isRunStatus,
   normalizeRunListQuery,
+  listRunsPage,
   duePausedRuns,
   edgeSatisfied,
   injectionFates,
@@ -6600,8 +6601,126 @@ describe("normalizeRunListQuery", () => {
   it("carries no status when none was named", () => {
     // Null rather than undefined, because the query below tests `!== null` to
     // decide whether the clause exists at all.
-    assert.equal(normalizeRunListQuery().status, null);
-    assert.equal(normalizeRunListQuery({ status: "failed" }).status, "failed");
+    assert.equal(normalizeRunListQuery().statuses, null);
+    assert.deepEqual(normalizeRunListQuery({ statuses: ["failed"] }).statuses, ["failed"]);
+  });
+
+  it("reads an empty status set as every status, not as none", () => {
+    // `IN ()` is a SQLite syntax error, and "no status matches" would draw an
+    // empty "In flight" band that reads as nothing running.
+    assert.equal(normalizeRunListQuery({ statuses: [] }).statuses, null);
+    assert.deepEqual(
+      normalizeRunListQuery({ statuses: ["running", "paused", "running"] }).statuses,
+      ["running", "paused"],
+    );
+  });
+
+  it("reads a settled-after boundary at or before the epoch as no boundary", () => {
+    // `settledBefore`'s rule, for the same blank parameter.
+    assert.equal(normalizeRunListQuery().settledAfter, null);
+    assert.equal(normalizeRunListQuery({ settledAfter: 0 }).settledAfter, null);
+    assert.equal(normalizeRunListQuery({ settledAfter: Number("") }).settledAfter, null);
+    assert.equal(
+      normalizeRunListQuery({ settledAfter: 1_750_000_000_000 }).settledAfter,
+      1_750_000_000_000,
+    );
+  });
+});
+
+/**
+ * The runs page's top bands, each asked for in its own query.
+ *
+ * They used to be cut in the browser out of one unfiltered hundred-row page,
+ * and the rows that fell off were the *oldest* active ones — which, behind a
+ * queue a workflow or a schedule filled, are the ones actually running. The
+ * seeding is that case: two old rows and a hundred newer queued ones, all in a
+ * folder of their own so the rows other cases in this file leave behind cannot
+ * move the counts.
+ */
+describe("listRunsPage", () => {
+  const folder = `${ws}/RunListBands`;
+  const now = Date.now();
+  const hour = 60 * 60 * 1000;
+  const boundary = now - 24 * hour;
+
+  function insertRun(
+    id: string,
+    status: RunStatus,
+    createdAt: number,
+    finishedAt: number | null,
+  ): void {
+    db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations,
+                           iterations, created_at, started_at, finished_at)
+         VALUES (?, ?, 'list the runs', ?, '{}', 5, 0, ?, ?, ?)`,
+      )
+      .run(id, folder, status, createdAt, createdAt, finishedAt);
+  }
+
+  // The running row also holds the folder, so a `promoteQueued` reached from
+  // anywhere while these exist finds none of the queued ones startable.
+  before(() => {
+    insertRun("bands-old-running", "running", now - 72 * hour, null);
+    insertRun("bands-old-finished", "failed", now - 71 * hour, now - hour);
+    // Settled exactly on the boundary, which belongs to exactly one side of it.
+    insertRun("bands-on-boundary", "completed", now - 70 * hour, boundary);
+    for (let i = 0; i < 100; i++) {
+      insertRun(`bands-queued-${String(i).padStart(3, "0")}`, "queued", now + i, null);
+    }
+  });
+
+  // Gone afterwards: a hundred queued rows and a running one would otherwise
+  // sit in every active-run walk the cases after this one make.
+  after(() => {
+    db().prepare("DELETE FROM runs WHERE folder = ?").run(folder);
+  });
+
+  const ids = (page: { rows: Array<{ id: string }> }) => page.rows.map((r) => r.id);
+
+  it("loses both old runs from the unfiltered newest page", () => {
+    // The shape the page used to cut its bands out of, pinned so the cases
+    // below are known to be answering a question this one cannot.
+    const page = listRunsPage({ q: folder });
+    assert.equal(page.rows.length, 100);
+    assert.equal(page.total, 103);
+    assert.ok(!ids(page).includes("bands-old-running"));
+    assert.ok(!ids(page).includes("bands-old-finished"));
+  });
+
+  it("finds the old running run when asked for what is executing", () => {
+    const page = listRunsPage({ q: folder, statuses: ["running", "paused"] });
+    assert.deepEqual(ids(page), ["bands-old-running"]);
+  });
+
+  it("reports the cap rather than hiding it when the active set outgrows a page", () => {
+    // Why the page asks for running and paused runs apart from the queue: over
+    // all four active statuses the default page is the hundred newest queued
+    // rows, and the running run is the one that falls off. `total` is what
+    // says so.
+    const page = listRunsPage({
+      q: folder,
+      statuses: ["running", "paused", "queued", "waiting"],
+    });
+    assert.equal(page.rows.length, 100);
+    assert.equal(page.total, 101);
+    assert.ok(!ids(page).includes("bands-old-running"));
+  });
+
+  it("finds the old run that finished an hour ago when asked for what settled since the boundary", () => {
+    const page = listRunsPage({ q: folder, settledAfter: boundary });
+    assert.deepEqual(ids(page).sort(), ["bands-old-finished", "bands-on-boundary"]);
+    // Settled means terminal: the hundred queued rows were created after the
+    // boundary and have no end instant, and must not be read as finished.
+    assert.equal(page.total, 2);
+  });
+
+  it("files a run that ended on the boundary in exactly one of the two lists", () => {
+    const after = ids(listRunsPage({ q: folder, settledAfter: boundary }));
+    const before = ids(listRunsPage({ q: folder, settledBefore: boundary }));
+    assert.ok(after.includes("bands-on-boundary"));
+    assert.ok(!before.includes("bands-on-boundary"));
+    assert.ok(!before.includes("bands-old-finished"));
   });
 });
 

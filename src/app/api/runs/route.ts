@@ -60,7 +60,8 @@ function clipPrompt(prompt: string): string {
 }
 
 /**
- * One page of runs: `?offset=`, `?limit=`, `?status=`, `?q=`, `?settledBefore=`.
+ * One page of runs: `?offset=`, `?limit=`, `?status=` (one status or a
+ * comma-separated set), `?q=`, `?settledBefore=`, `?settledAfter=`.
  *
  * These are what make the whole set reachable rather than only its newest page,
  * which is the principle `/api/branches` states at `:19-23` and this route did
@@ -85,12 +86,15 @@ export async function GET(req: Request) {
   const params = new URL(req.url).searchParams;
 
   // A blank `status=` is every status, not a status named "". The segmented
-  // control's own "All" submits exactly that.
+  // control's own "All" submits exactly that. Otherwise a comma-separated set,
+  // and one unknown member refuses the whole request: dropping it would answer
+  // `running,pasued` with the running runs alone, which reads as "none parked".
   const askedStatus = params.get("status");
-  const status = askedStatus && isRunStatus(askedStatus) ? askedStatus : null;
-  if (askedStatus && status === null) {
+  const statuses = askedStatus ? askedStatus.split(",") : [];
+  const unknownStatus = statuses.find((s) => !isRunStatus(s));
+  if (unknownStatus !== undefined) {
     return NextResponse.json(
-      { error: `Unknown run status: ${askedStatus}` },
+      { error: `Unknown run status: ${JSON.stringify(unknownStatus)}` },
       { status: 400 },
     );
   }
@@ -98,9 +102,10 @@ export async function GET(req: Request) {
   const page = listRunsPage({
     offset: Number(params.get("offset") ?? 0),
     limit: Number(params.get("limit") ?? 0),
-    status,
+    statuses: statuses.filter(isRunStatus),
     q: params.get("q"),
     settledBefore: Number(params.get("settledBefore") ?? 0),
+    settledAfter: Number(params.get("settledAfter") ?? 0),
   });
   const rows = page.rows;
   const deps = dependenciesOf(rows.map((r) => r.id));

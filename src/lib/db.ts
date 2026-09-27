@@ -2553,8 +2553,8 @@ function migrate(db: Database.Database) {
   //   status filter, first page      9.48 ms -> 0.44 ms
   //   history page (settledBefore)  15.01 ms -> 4.19 ms
   //
-  // and the unfiltered first page — the only one of these on the four-second
-  // poll — is unmoved at 0.41 ms, as is the `LIKE` search, which nothing can
+  // and the unfiltered first page — then the only one of these on the
+  // four-second poll — is unmoved at 0.41 ms, as is the `LIKE` search, which nothing can
   // index. So this buys the filtered pages and risks nothing on the hot one.
   //
   // Unconditional rather than gated on the stats being absent: they are an

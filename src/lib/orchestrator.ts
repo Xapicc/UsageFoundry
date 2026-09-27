@@ -1001,8 +1001,17 @@ export interface RunListQuery {
   offset?: number;
   /** Rows to take. Absent, zero, negative or unreadable is `DEFAULT_RUN_PAGE`. */
   limit?: number;
-  /** One status, or null for every status. Narrowed by the caller. */
-  status?: RunStatus | null;
+  /**
+   * The statuses to keep, or null or empty for every status. Narrowed by the
+   * caller.
+   *
+   * A set rather than one status because the runs page's "In flight" band is
+   * four of them, and asking for each band in its own query is the whole fix
+   * for the band that used to be cut out of the newest hundred rows in the
+   * browser — where a running run created before a large enough queue was on
+   * no page at all.
+   */
+  statuses?: readonly RunStatus[] | null;
   /** Free text, matched against the task, the folder and the id. */
   q?: string | null;
   /**
@@ -1015,16 +1024,26 @@ export interface RunListQuery {
    * not happened yet under what has.
    */
   settledBefore?: number | null;
+  /**
+   * Settled runs that ended at or after this instant, in ms.
+   *
+   * `settledBefore`'s exact complement over settled runs — the same statuses,
+   * the same end instant, `>=` against its `<` — so one boundary handed to both
+   * files a run that ended on it in exactly one list rather than in neither.
+   */
+  settledAfter?: number | null;
 }
 
 /** A run-list request in the terms the query below is written in. */
 export interface RunListFilters {
   offset: number;
   limit: number;
-  status: RunStatus | null;
+  /** Never empty: an empty set is null, which is every status. */
+  statuses: readonly RunStatus[] | null;
   /** A `LIKE` pattern with `\` as its escape, or null for no text filter. */
   like: string | null;
   settledBefore: number | null;
+  settledAfter: number | null;
 }
 
 export interface RunListPage {
@@ -1080,14 +1099,22 @@ export function normalizeRunListQuery(query: RunListQuery = {}): RunListFilters 
   // A boundary at or before the epoch is nobody's boundary: it is what
   // `Number(null)`, `Number("")` and a blank parameter all come to, and read as
   // a real instant it would answer every history request with an empty page.
-  const before = Math.floor(Number(query.settledBefore));
+  const boundary = (value: number | null | undefined): number | null => {
+    const at = Math.floor(Number(value));
+    return Number.isFinite(at) && at > 0 ? at : null;
+  };
+
+  // `IN ()` is a syntax error in SQLite, and an empty set read as "no status
+  // matches" would answer with an empty list that reads as "nothing is running".
+  const statuses = [...new Set(query.statuses ?? [])];
 
   return {
     offset,
     limit,
-    status: query.status ?? null,
+    statuses: statuses.length ? statuses : null,
     like: text ? likeNeedle(text) : null,
-    settledBefore: Number.isFinite(before) && before > 0 ? before : null,
+    settledBefore: boundary(query.settledBefore),
+    settledAfter: boundary(query.settledAfter),
   };
 }
 
@@ -1125,23 +1152,38 @@ export function clampRunOffset(offset: number, total: number): number {
  * dedicated `(created_at DESC, id DESC)` index removes the B-tree and brings it
  * to 0.15ms, which is not worth a migration. The two slower shapes are 7.8ms for
  * a status page at offset 20,000 and 4.1ms for a `LIKE` over `prompt`, and
- * neither is on the four-second poll: that one is the unfiltered first page.
+ * neither is on the four-second poll.
+ *
+ * That poll used to be the unfiltered first page, and the runs page cut its two
+ * bands out of it — which lost every active run older than the newest hundred.
+ * It is three narrower pages now, and the settled-since-the-boundary one is the
+ * page that scans: nothing indexes the `COALESCE`, so it reads every row. Measured
+ * at 200 rows a page, 1.07ms against 5,000 runs and 9.3ms against 50,000, where
+ * the unfiltered page was 0.23ms and 0.27ms; the two status sets seek
+ * `idx_runs_status` and stay under 0.15ms. Nothing prunes this table, so the
+ * scan grows with history — an expression index on that instant measured 1.3ms
+ * at 50,000 and leaves the older-runs page where it was, and is the lever.
  */
 export function listRunsPage(query: RunListQuery = {}): RunListPage {
   const filters = normalizeRunListQuery(query);
 
   const where: string[] = [];
   const args: unknown[] = [];
-  if (filters.status) {
-    where.push("status = ?");
-    args.push(filters.status);
+  if (filters.statuses) {
+    where.push(`status IN (${filters.statuses.map(() => "?").join(",")})`);
+    args.push(...filters.statuses);
+  }
+  if (filters.settledBefore !== null || filters.settledAfter !== null) {
+    where.push(`status IN (${TERMINAL_STATUSES.map(() => "?").join(",")})`);
+    args.push(...TERMINAL_STATUSES);
   }
   if (filters.settledBefore !== null) {
-    where.push(
-      `status IN (${TERMINAL_STATUSES.map(() => "?").join(",")})` +
-        " AND COALESCE(finished_at, started_at, created_at) < ?",
-    );
-    args.push(...TERMINAL_STATUSES, filters.settledBefore);
+    where.push("COALESCE(finished_at, started_at, created_at) < ?");
+    args.push(filters.settledBefore);
+  }
+  if (filters.settledAfter !== null) {
+    where.push("COALESCE(finished_at, started_at, created_at) >= ?");
+    args.push(filters.settledAfter);
   }
   if (filters.like) {
     where.push(
