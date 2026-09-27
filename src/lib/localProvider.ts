@@ -1,5 +1,6 @@
 import fs from "node:fs";
-import { LOCAL_CLAUDE_CONFIG_DIR } from "./config";
+import path from "node:path";
+import { CLAUDE_CONFIG_DIR, LOCAL_CLAUDE_CONFIG_DIR } from "./config";
 import { db } from "./db";
 import { chownForChild } from "./privsep";
 
@@ -316,14 +317,50 @@ export function localCycleEnv(
 }
 
 /**
- * Create the local config directory for the agent uid, if it is not there.
+ * The operator's own instructions, carried into the local config directory.
  *
- * Throws rather than degrading: a directory the child cannot write is a CLI
- * that dies at its first write, which the loop would read as a cycle that said
- * nothing.
+ * A separate `CLAUDE_CONFIG_DIR` keeps a local run's transcripts out of the
+ * meters, and it also took away everything else the CLI reads from the
+ * operator's one: the first rejected local run loaded the repository's
+ * `CLAUDE.md` and none of the five rule files a Claude run gets, and three of
+ * the frontier review's four findings were those rules broken — a default that
+ * hides a missing argument, a comment that says something false, a change the
+ * commit did not report. Instructions only: `settings.json` stays out, because
+ * its hooks and its `env` are the operator's Claude setup rather than rules for
+ * the work, and an `env` there could point the CLI back at Anthropic.
  */
-export function ensureLocalConfigDir(dir: string = LOCAL_CLAUDE_CONFIG_DIR): string {
+export const LOCAL_SHARED_INSTRUCTIONS = ["CLAUDE.md", "rules"] as const;
+
+/**
+ * Create the local config directory for the agent uid, if it is not there, and
+ * link the operator's instructions into it.
+ *
+ * Throws rather than degrading on the directory: one the child cannot write is
+ * a CLI that dies at its first write, which the loop would read as a cycle that
+ * said nothing. The links are symlinks so an edit to a rule reaches the next
+ * cycle, and an entry that is really there — a file rather than a link — is
+ * somebody's own and is left alone.
+ */
+export function ensureLocalConfigDir(
+  dir: string = LOCAL_CLAUDE_CONFIG_DIR,
+  source: string = CLAUDE_CONFIG_DIR,
+): string {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   chownForChild(dir);
+  for (const name of LOCAL_SHARED_INSTRUCTIONS) {
+    const target = path.join(source, name);
+    const link = path.join(dir, name);
+    if (!fs.existsSync(target)) continue;
+    let existing: fs.Stats | null = null;
+    try {
+      existing = fs.lstatSync(link);
+    } catch {
+      existing = null;
+    }
+    if (existing && !existing.isSymbolicLink()) continue;
+    if (existing && fs.readlinkSync(link) === target) continue;
+    if (existing) fs.unlinkSync(link);
+    fs.symlinkSync(target, link);
+  }
   return dir;
 }

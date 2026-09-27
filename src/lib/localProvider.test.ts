@@ -198,3 +198,40 @@ describe("probeLocalEndpoint", () => {
     assert.match((await mod.probeLocalEndpoint(signIn, unreachable)) ?? "", /EHOSTUNREACH/);
   });
 });
+
+describe("ensureLocalConfigDir", () => {
+  it("links the operator's rules and CLAUDE.md in, and nothing else", () => {
+    const source = path.join(tmp, "claude-home");
+    const dir = path.join(tmp, "claude-local");
+    fs.mkdirSync(path.join(source, "rules"), { recursive: true });
+    fs.writeFileSync(path.join(source, "rules", "coding-principles.md"), "fail loudly");
+    fs.writeFileSync(path.join(source, "CLAUDE.md"), "memory");
+    fs.writeFileSync(path.join(source, "settings.json"), "{}");
+
+    mod.ensureLocalConfigDir(dir, source);
+    assert.equal(
+      fs.readFileSync(path.join(dir, "rules", "coding-principles.md"), "utf8"),
+      "fail loudly",
+    );
+    assert.equal(fs.readFileSync(path.join(dir, "CLAUDE.md"), "utf8"), "memory");
+    assert.equal(fs.existsSync(path.join(dir, "settings.json")), false);
+
+    // Idempotent per cycle, and a stale link is repointed.
+    mod.ensureLocalConfigDir(dir, source);
+    fs.unlinkSync(path.join(dir, "CLAUDE.md"));
+    fs.symlinkSync(path.join(tmp, "nowhere"), path.join(dir, "CLAUDE.md"));
+    mod.ensureLocalConfigDir(dir, source);
+    assert.equal(fs.readlinkSync(path.join(dir, "CLAUDE.md")), path.join(source, "CLAUDE.md"));
+  });
+
+  it("leaves an entry that is really there alone", () => {
+    const source = path.join(tmp, "claude-home-2");
+    const dir = path.join(tmp, "claude-local-2");
+    fs.mkdirSync(path.join(source, "rules"), { recursive: true });
+    fs.mkdirSync(path.join(dir, "rules"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "rules", "own.md"), "mine");
+    mod.ensureLocalConfigDir(dir, source);
+    assert.equal(fs.lstatSync(path.join(dir, "rules")).isSymbolicLink(), false);
+    assert.equal(fs.readFileSync(path.join(dir, "rules", "own.md"), "utf8"), "mine");
+  });
+});

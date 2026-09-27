@@ -80,6 +80,16 @@
   LM Studio. A session that already holds a `tool_reference` fails again on
   `--resume`, so a run that hit this has to be started afresh.
 
+- **Local runs were working without the operator's rules, and a symlink
+  restores them, 2026-09-28.** The transcript of 45e27aad — the local run a
+  frontier review rejected — carries one `instructions` attachment holding the
+  repository's `CLAUDE.md` alone; the five files in `~/.claude/rules/` a
+  Claude run loads were absent, because `.claude-local` had none. With
+  `ensureLocalConfigDir` linking `rules/` and `CLAUDE.md`, host `claude`
+  2.1.283 sent marker text from both into the request to a stub server. Not
+  yet re-run in the container or against LM Studio; whether the rules change
+  the next review's verdict is the open question.
+
 ## Not yet verified by hand
 
 - **No local-provider work cycle has run through this app or against a real
