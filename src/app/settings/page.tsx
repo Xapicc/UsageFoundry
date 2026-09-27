@@ -316,9 +316,9 @@ const PRUNE_ENGINE_CONSEQUENCE: Record<PruneEngine, string> = {
 
 const LAND_CONSEQUENCE: Record<LandStrategy, string> = {
   merge:
-    "The run’s own commits go onto your branch, which is what keeps the diff on its page meaningful afterwards",
+    "The run’s own commits go onto your branch, so the diff on its page stays meaningful",
   squash:
-    "One commit on your branch. That rewrites the run’s commits, so git can no longer see the merge and this tool tracks the branch by its tip instead",
+    "One commit on your branch; the run’s commits are rewritten, so git can no longer see the merge",
 };
 
 /**
@@ -3349,14 +3349,13 @@ export default function SettingsPage() {
       <Section
         id="runs"
         title="Runs"
-        lede="What the new-run form starts at, and how many runs may work at once."
       >
         <ListGroup>
           <SettingRow
             htmlFor="model"
             edited={isEdited("defaultModel")}
             label="Default model"
-            description="Where a run falls through to when neither it nor its template nor its agent names one"
+            description="Used when neither the run, its template nor its agent names one"
           >
             <div className="w-64">
               <Select
@@ -3398,10 +3397,7 @@ export default function SettingsPage() {
             htmlFor="agent"
             edited={isEdited("defaultAgentId")}
             label="Default agent"
-            description={
-              describeAmbientAgents(ambientAgents) ??
-              "Pre-selected on the new-run form, which can change it or clear it"
-            }
+            description={describeAmbientAgents(ambientAgents)}
           >
             <div className="w-64">
               <Select
@@ -3441,7 +3437,7 @@ export default function SettingsPage() {
             htmlFor="effort"
             edited={isEdited("runEffort")}
             label="Reasoning effort"
-            description="Every work cycle of every run starts at this level, and nothing the orchestrator proposes can change it. CLI default leaves it to Claude Code, which runs Opus 5.5 at medium whatever its own settings file asks for"
+            description="Every work cycle of every run starts at this level, and the orchestrator cannot change it. CLI default runs Opus 5.5 at medium whatever Claude Code's own settings file asks for"
           >
             <div className="w-48">
               <Select
@@ -3466,7 +3462,7 @@ export default function SettingsPage() {
           <SettingRow
             edited={isEdited("forwardSubAgentText")}
             label="Sub-agent output in the run log"
-            description="Without it a delegation is a Task call followed by silence until it returns. A sub-agent's words are set apart from the run's own, and never become its report"
+            description="Off, a delegation shows as silence until it returns. Sub-agent text is set apart and never becomes the run's report"
           >
             <Switch
               checked={effective.forwardSubAgentText}
@@ -3478,7 +3474,7 @@ export default function SettingsPage() {
           <SettingRow
             edited={isEdited("defaultPermissionMode")}
             label="What a new run may do without asking"
-            description="Pre-selected on the new-run form, where every run can change it. It does not reach the guard set below"
+            description="Does not reach the default guard set below"
           >
             <SegmentedControl
               options={PERMISSION_OPTIONS}
@@ -3492,7 +3488,7 @@ export default function SettingsPage() {
             htmlFor="conc"
             edited={isEdited("maxConcurrentRuns")}
             label="Runs at the same time"
-            description="Work cycles only — reviews, chat turns and workflow blocks have their own budget below. Each run carries its own spending limit, so this multiplies the worst case: three runs at $5 can spend $15. A run over the limit waits rather than being refused, and queued or parked runs do not count against it"
+            description="Each run has its own spending limit, so this multiplies the worst case: three runs at $5 can spend $15. Extra runs wait rather than being refused, and queued or parked runs do not count"
           >
             <div className="w-32">
               <Input
@@ -3518,7 +3514,7 @@ export default function SettingsPage() {
             htmlFor="concassist"
             edited={isEdited("maxConcurrentAssists")}
             label="Other Claude processes at the same time"
-            description="A review, a merge-conflict resolution, an orchestrator chat turn and a workflow orchestrator block's deciding turn share this one budget. The first three are refused while it is full, and say so; a workflow block waits for a slot instead. Together with the limit above, this is the most Claude processes the container will ever carry"
+            description="Reviews, merge-conflict resolutions, orchestrator chat turns and a workflow orchestrator block's deciding turn share this. The first three are refused while it is full; a workflow block waits for a slot"
           >
             <div className="w-32">
               <Input
@@ -3647,11 +3643,7 @@ export default function SettingsPage() {
                   Add
                 </Button>
               </div>
-              <Hint>
-                Exactly as the CLI takes it, square brackets included. A model
-                released after this build is added here rather than in a
-                release
-              </Hint>
+              <Hint>Exactly as the CLI takes it, square brackets included</Hint>
             </Field>
           </div>
         </Disclosure>
@@ -3673,10 +3665,9 @@ export default function SettingsPage() {
               label="Files copied into a new checkout"
               description={
                 <>
-                  A fresh checkout holds committed work only, so a gitignored
-                  config file has to be copied in — prefix a pattern with{" "}
-                  <span className="mono">!</span> to exclude it, and write a path
-                  (<span className="mono">apps/web/.env</span>) to reach one below
+                  Prefix a pattern with <span className="mono">!</span> to
+                  exclude it, and write a path (
+                  <span className="mono">apps/web/.env</span>) to reach one below
                   the repository root. Dependencies are not copied; the agent
                   installs them
                 </>
@@ -3706,10 +3697,10 @@ export default function SettingsPage() {
               description={
                 <>
                   One <span className="mono">folder: patterns</span> line per
-                  repository, replacing the list above for that folder and
-                  everything under it. The folder is written as the picker shows
-                  it (<span className="mono">acme/web</span>) or absolute. A line
-                  with no patterns copies nothing
+                  repository, replacing the list above for everything under that
+                  folder. Write the folder as the picker shows it (
+                  <span className="mono">acme/web</span>) or absolute; a line with
+                  no patterns copies nothing
                 </>
               }
             >
@@ -3754,12 +3745,9 @@ export default function SettingsPage() {
               description={
                 <>
                   <span className="block">
-                    Land checks the checkout — clean, on the target, nobody
-                    working in it — and nothing about the work. Name a command
-                    here and a non-zero exit refuses the merge rather than
-                    warning about it. It runs in the run&rsquo;s own worktree,
-                    as the child uid, and is left blank by default: blank is no
-                    check, not a check that passes
+                    Runs in the run&rsquo;s own worktree as the child uid, and a
+                    non-zero exit refuses the merge. Blank is no check, not a
+                    check that passes
                   </span>
                   <span className="block text-2xs text-ink-muted">
                     argv, never a shell line — for <span className="mono">a &amp;&amp; b</span>{" "}
@@ -3790,13 +3778,10 @@ export default function SettingsPage() {
               label="Checks a conflict resolution may run"
               description={
                 <>
-                  When Claude resolves a merge conflict it can edit the files and
-                  run nothing, so the merge is judged by reading it. Name the
-                  commands it may run and it will check its own work — write them
-                  as tool patterns (
-                  <span className="mono">Bash(npm run typecheck:*)</span>). Left
-                  blank it runs none, which is the safe answer for a repository
-                  whose checks need a dependency tree the resolver does not have
+                  Tool patterns, such as{" "}
+                  <span className="mono">Bash(npm run typecheck:*)</span>. Blank
+                  runs none and the merge is judged by reading it, the safe answer
+                  where checks need a dependency tree the resolver does not have
                 </>
               }
             >
@@ -3819,7 +3804,7 @@ export default function SettingsPage() {
               htmlFor="resolvebudget"
               edited={isEdited("resolutionBudgetUSD")}
               label="Limit per conflict resolution"
-              description="A hard stop inside the CLI, and the only bound on a resolution — it has no time limit and nothing stops it once started. One that reaches it is rolled back. Blank removes it"
+              description="A hard stop, and the only bound on a resolution: it has no time limit. One that reaches it is rolled back; blank removes it"
             >
               <div className="w-36">
                 <Input
