@@ -294,8 +294,7 @@ export function UsagePeriods({
           unguarded, which is the opposite of true. */}
       <div className="mt-3 max-w-[80ch] text-xs text-ink-muted">
         Calendar {noun}s in <span className="mono">{series.timeZone}</span>,
-        priced from the same transcripts as the meters above — so the same floor
-        applies.
+        priced from the same transcripts as the meters above.
         {series.limitBasis === "prorated" && (
           <>
             {" "}
