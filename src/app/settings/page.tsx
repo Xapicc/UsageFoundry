@@ -954,7 +954,7 @@ function StorageFigures({
     return (
       <Notice tone="warn">
         <strong>Sizes could not be read.</strong> {error}. The horizons below
-        still apply — this is a measurement, not a setting.
+        still apply.
       </Notice>
     );
   }
@@ -966,8 +966,8 @@ function StorageFigures({
       label="On disk now"
       footnote={
         <>
-          Removing rows lets SQLite reuse the pages; the file itself only
-          shrinks after a <span className="mono">VACUUM</span>, which{" "}
+          The database file shrinks only after a{" "}
+          <span className="mono">VACUUM</span>, which{" "}
           <span className="mono">README.md</span> gives beside the backup
           procedure
           {lastSweep && (
@@ -1118,17 +1118,17 @@ const TOOL_GROUP: Record<ToolRowDTO["source"], { label: string; footnote: string
   python: {
     label: "Python tools",
     footnote:
-      "From UF_PY_TOOLS in your .env, installed at boot into a named volume. These are what a plugin's hooks shell out to — a hook whose command is missing ends in || true and exits 0 having done nothing",
+      "From UF_PY_TOOLS in your .env, installed at boot. A plugin hook whose command is missing exits 0 having done nothing",
   },
   "gh-extension": {
     label: "gh extensions",
     footnote:
-      "From UF_GH_EXTENSIONS in your .env, installed at boot into a named volume. An entry whose @tag has moved is deliberately not reinstalled, so a bumped pin and an unchanged binary is correct rather than broken",
+      "From UF_GH_EXTENSIONS in your .env, installed at boot. A moved @tag is not reinstalled, so a bumped pin beside an unchanged binary is expected",
   },
   stack: {
     label: "Stacks",
     footnote:
-      "From the stacks directory beside your docker-compose.yml — one folder per stack, each holding a stack.json naming an archive to download or a package for uv or npm to install, and what to link onto PATH. One row per binary, so a stack that links three is three things that can go missing separately. Add or remove a folder and restart; nothing here installs anything. Open a stack for what its install said",
+      "From the stacks directory beside your docker-compose.yml, one folder per stack holding a stack.json, and one row per binary it links. Add or remove a folder and restart; open a stack for what its install said",
   },
 };
 
@@ -1200,11 +1200,10 @@ function ToolFigures({
 
       {groups.length === 0 && report.unclaimed.length === 0 ? (
         <Empty>
-          No tools declared. <code>UF_PY_TOOLS</code> and{" "}
-          <code>UF_GH_EXTENSIONS</code> in your <code>.env</code> are where the first
-          two go — one requirement or one <code>owner/repo</code> per entry — and a
-          stack is a folder under <code>stacks/</code> beside your{" "}
-          <code>docker-compose.yml</code>. All three install on the next{" "}
+          No tools declared. List one requirement or <code>owner/repo</code> per entry
+          in <code>UF_PY_TOOLS</code> or <code>UF_GH_EXTENSIONS</code> in your{" "}
+          <code>.env</code>, or add a folder under <code>stacks/</code> beside your{" "}
+          <code>docker-compose.yml</code>; all three install on the next{" "}
           <code>docker compose up</code>.
         </Empty>
       ) : (
@@ -1226,7 +1225,7 @@ function ToolFigures({
         <ListGroup
           className="mt-4"
           label="Claimed by no entry"
-          footnote="Commands in the tool volumes that no declaration names — usually something installed by hand, and sometimes a Python package whose console script is called something other than the package. Nothing removes these: the installers touch only what they were asked for, so they outlive every restart and go only with docker compose down -v"
+          footnote="Usually installed by hand, or a Python package whose console script has another name. They outlive every restart and go only with docker compose down -v"
         >
           {report.unclaimed.map((name) => (
             <ListRow key={name} label={<span className="font-mono text-xs">{name}</span>}>
@@ -1257,17 +1256,14 @@ function KnowledgeFigures({
   if (!report.configured) {
     return (
       <Empty>
-        No knowledge base yet. Pick one of your mounted folders below and this
-        fills in with what is in it.
+        No knowledge base yet. Pick a mounted folder below.
       </Empty>
     );
   }
   if (!report.available) {
     return (
       <Notice tone="warn">
-        <strong>Nothing was scanned.</strong> {report.error} No figures are shown
-        rather than zeroes, because an unreadable vault and an empty one are not
-        the same thing.
+        <strong>Nothing was scanned.</strong> {report.error}
       </Notice>
     );
   }
@@ -1281,15 +1277,14 @@ function KnowledgeFigures({
       label="Found in the vault"
       footnote={
         <>
-          Read only — nothing in this app writes into the vault. Rescanned when
-          a file&rsquo;s size or timestamp moves
+          Rescanned when a file&rsquo;s size or timestamp moves
           {report.scannedAt !== null && <> — last scan {ago(report.scannedAt)}</>}
         </>
       }
     >
       <ListRow
         label="Vault"
-        description="One of the folders this container already mounts. Choosing it here adds no access an agent did not have"
+        description="Choosing it adds no access an agent did not already have"
       >
         <span className="text-sm">{where}</span>
       </ListRow>
@@ -1317,7 +1312,7 @@ function KnowledgeFigures({
 
       <ListRow
         label="Broken links"
-        description="Links naming a note that does not exist. Kept in the graph rather than dropped — in a vault they are usually intentions rather than mistakes"
+        description="Links naming a note that does not exist, usually intentions rather than mistakes"
       >
         <span className="tabular-nums text-sm">
           {(report.brokenLinkCount ?? 0).toLocaleString()}
@@ -1333,7 +1328,7 @@ function KnowledgeFigures({
       {report.truncated && (
         <ListRow
           label="The scan stopped early"
-          description="This vault is larger than the walk's cap, so every figure above is a floor rather than a total. Narrowing the folder below is the fix"
+          description="Every figure above is a floor rather than a total; narrow the folder below"
         >
           <Badge tone="warn">Truncated</Badge>
         </ListRow>
