@@ -43,6 +43,7 @@ function diff(over: Partial<RunDiffDTO> = {}): RunDiffDTO {
     reason: null,
     base: "main",
     branch: "uf/x",
+    head: null,
     files: [],
     filesChanged: 0,
     added: 0,

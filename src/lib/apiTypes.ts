@@ -2567,6 +2567,8 @@ export interface RunDiffDTO {
   reason: string | null;
   base: string | null;
   branch: string | null;
+  /** The commit `branch` pointed at when the diff was taken; null without a range. */
+  head: string | null;
   files: DiffFileDTO[];
   filesChanged: number;
   added: number;

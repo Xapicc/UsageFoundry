@@ -61,6 +61,14 @@ export interface RunDiff {
   reason: string | null;
   base: string | null;
   branch: string | null;
+  /**
+   * The commit `branch` resolved to when this diff was taken, and the one every
+   * patch here was read from. Null for a run with no range and for a branch
+   * that no longer resolves. `branch` is a name that moves with the next
+   * commit and is deleted by a land, so anything recording *what was read* — a
+   * validation's `head_sha` — takes this.
+   */
+  head: string | null;
   files: DiffFile[];
   filesChanged: number;
   added: number;
@@ -297,6 +305,7 @@ function repoPathFor(dir: string): string | null {
 const EMPTY: Omit<RunDiff, "kind" | "reason"> = {
   base: null,
   branch: null,
+  head: null,
   files: [],
   filesChanged: 0,
   added: 0,
@@ -344,8 +353,8 @@ async function rangeDiff(run: RunRow): Promise<RunDiff> {
   const base = run.worktree_base;
   if (!base) return nothing("This run never recorded the commit it branched from.");
 
-  const exists = await git(repoRoot, ["rev-parse", "--verify", `${branch}^{commit}`]);
-  if (!exists.ok) {
+  const resolved = await git(repoRoot, ["rev-parse", "--verify", `${branch}^{commit}`]);
+  if (!resolved.ok) {
     return {
       ...EMPTY,
       kind: "none",
@@ -355,7 +364,11 @@ async function rangeDiff(run: RunRow): Promise<RunDiff> {
     };
   }
 
-  const range = `${base}...${branch}`;
+  // The range names the commit, not the branch: a run still working commits
+  // between the calls below, and a diff whose numstat, statuses and patches
+  // were read from three different tips is one no recorded sha describes.
+  const head = resolved.stdout;
+  const range = `${base}...${head}`;
   const numstat = await git(repoRoot, ["diff", ...DIFF_FLAGS, "--numstat", "-z", range], {
     maxBytes: MAX_DIFF_BYTES,
   });
@@ -365,6 +378,7 @@ async function rangeDiff(run: RunRow): Promise<RunDiff> {
       kind: "none",
       base,
       branch,
+      head,
       reason: numstat.overflowed
         ? "This change is too large to summarise."
         : `git could not diff ${range}: ${numstat.stderr || "unknown error"}`,
@@ -378,6 +392,7 @@ async function rangeDiff(run: RunRow): Promise<RunDiff> {
       kind: "range",
       base,
       branch,
+      head,
       reason: "The agent committed nothing to this branch.",
       uncommitted: await uncommittedIn(run),
     };
@@ -395,6 +410,7 @@ async function rangeDiff(run: RunRow): Promise<RunDiff> {
     reason: null,
     base,
     branch,
+    head,
     files: buildFiles(entries, statuses, selected, patches),
     filesChanged: entries.length,
     added: entries.reduce((n, e) => n + (e.added ?? 0), 0),

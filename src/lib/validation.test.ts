@@ -360,6 +360,7 @@ describe("buildValidationPrompt", () => {
     reason: null,
     base: "abc123",
     branch: "uf/run-1",
+    head: "89abcdef0123456789abcdef0123456789abcdef",
     files: [],
     filesChanged: 3,
     added: 40,
