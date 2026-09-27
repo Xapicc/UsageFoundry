@@ -966,9 +966,9 @@ export default function ChatPage() {
               ? `Approve starts ${runCount} unattended runs that spend real money, under the guards shown on each.`
               : "",
           graphCount === 1
-            ? "It saves one workflow without starting it — press Run on the workflow itself when you want it."
+            ? "It saves one workflow without starting it."
             : graphCount > 1
-              ? `It saves ${graphCount} workflows without starting them — press Run on each when you want it.`
+              ? `It saves ${graphCount} workflows without starting them.`
               : "",
           scheduleCount === 1
             ? "It puts one workflow on a schedule, so it starts itself at every occurrence with nobody present."
@@ -1106,18 +1106,17 @@ export default function ChatPage() {
             folded however rare it is — what changed is only that keeping it
             visible now costs the box below nothing. */}
         <Notice tone="info" quiet>
-          <Disclosure summary="What the chat itself may do, and what its turns cost">
+          <Disclosure summary="The chat's own permissions and cost">
             <p className="mt-2">
               A proposal that names no template runs under the default guard set
               in <Link href="/settings">Settings</Link>.
             </p>
             <p className="mt-2">
-              The chat itself runs with no tool restrictions, so it can read, run
-              commands and reach GitHub while it works out what to propose; the
-              instruction not to do the work, rather than a permission mode, is
-              what keeps it out of your checkouts. Its turns spend against the
-              same 5-hour window as everything else, and that cost is shown here
-              only — never added to a run&rsquo;s, or to the dashboard meters.
+              The chat runs with no tool restrictions: it can read, run commands
+              and reach GitHub, and only its instructions, not a permission mode,
+              keep it out of your checkouts. Its turns spend from the same 5-hour
+              window as everything else; that cost shows here only, never in a
+              run&rsquo;s or on the dashboard meters.
             </p>
           </Disclosure>
         </Notice>
@@ -1201,10 +1200,6 @@ export default function ChatPage() {
                   ) : messageCount === 0 ? (
                     <div className="px-2 py-10 text-center">
                       <p className="text-sm text-ink">Nothing asked yet</p>
-                      <p className="mx-auto mt-1 max-w-[46ch] text-xs leading-normal text-ink-muted">
-                        Ask it to look at something — &ldquo;check the open issues
-                        on usagefoundry and propose a run for each bug&rdquo;.
-                      </p>
                     </div>
                   ) : (
                     items.map((item, i) => {
@@ -2148,8 +2143,8 @@ function AskedQuestions({
                   // nothing on it to press. Said, because the way out is a
                   // different control on a different part of the page.
                   <p className="mt-1 text-2xs leading-normal text-warn">
-                    This question offers nothing to press and no way to type an
-                    answer. Reply in the composer instead, which closes it.
+                    Nothing to answer with here; reply in the composer, which
+                    closes it.
                   </p>
                 )}
               </>
@@ -2557,8 +2552,8 @@ function ProposedGraph({ proposal }: { proposal: ChatProposalDTO }) {
     <div className="mt-2 flex flex-col gap-2">
       <p className="text-2xs leading-normal text-ink-muted">
         Approving <strong className="font-semibold text-ink">saves</strong> this
-        workflow and starts nothing. You press Run on it yourself, and it has no
-        workflow-wide budget until you set one — so it cannot be scheduled yet.
+        workflow and starts nothing. It has no workflow-wide budget until you
+        set one, so it cannot be scheduled yet.
       </p>
 
       {proposal.blocks.length === 0 ? (

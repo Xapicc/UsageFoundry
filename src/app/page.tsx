@@ -71,10 +71,7 @@ function ceilingDetail(
   // just moved needs to know they are looking at a reading, not a live tap.
   if (w.fractionMetric === "plan") {
     const age = plan ? ` Read ${fmtRelative(plan.fetchedAt, now)}.` : "";
-    return (
-      "Reported by Anthropic for this account, covering every Claude surface " +
-      `that shares the allowance — not only the turns counted above.${age}`
-    );
+    return `Anthropic's reading for this account, across every Claude surface that shares the allowance.${age}`;
   }
 
   if (w.fractionMetric === "cost") {
@@ -83,10 +80,9 @@ function ceilingDetail(
       : `Ceiling: ${fmtUSD(w.limit ?? 0)} equivalent API cost — your configured estimate.`;
   }
   if (w.fractionMetric === "tokens") {
-    const head = reduced
+    return reduced
       ? `Ceiling: ${fmtTokens(w.limit ?? 0)} raw tokens — your ${fmtTokens(configured)} estimate less ${fmtPct(reserve)} reserved headroom.`
       : `Ceiling: ${fmtTokens(w.limit ?? 0)} raw tokens.`;
-    return `${head} A cost ceiling is steadier for this workload — see Settings.`;
   }
   return "Set a ceiling in Settings to see a percentage.";
 }
@@ -311,18 +307,14 @@ function FirstRun({
         )}
       </p>
       <ul className="mt-3 max-w-[64ch] list-disc space-y-1.5 pl-5 text-sm text-ink-muted marker:text-ink-faint">
-        <li>
-          Use Claude Code once in any project. This page reads the transcripts
-          it writes as it goes — no setup, no export.
-        </li>
+        <li>Use Claude Code once in any project.</li>
         <li>
           If you have already used it, <span className="mono">CLAUDE_HOME</span>{" "}
-          is pointing somewhere else. It is fixed at boot, so changing it means
-          restarting the container.
+          points somewhere else; changing it means restarting the container.
         </li>
         <li>
-          <Link href="/settings">Set a ceiling</Link> now and the meters will
-          have something to measure against when the first turn lands.
+          <Link href="/settings">Set a ceiling</Link> for the meters to measure
+          against.
         </li>
       </ul>
     </Card>
@@ -407,7 +399,6 @@ export default function Dashboard() {
       },
       effort: {
         rows: s.byEffort.map((r) => ({ label: r.effort, cost: r.agg.costUSD })),
-        hint: "Reasoning effort is usually the largest single cost lever.",
       },
       agent: {
         // The bucket is still whatever the CLI recorded on the turn; the chip
@@ -427,8 +418,8 @@ export default function Dashboard() {
         // proof of delegation, and an all-main-thread column reading as proof
         // that no run was ever started as anything.
         hint: data.meta.includeSidechains
-          ? "Unmarked names have no definition here — a Claude Code built-in, a repository's own .claude/agents, or an agent since deleted. (main thread) is a turn Claude Code recorded no agent name on, which may include a run started as one."
-          : "Sub-agent turns are excluded from totals in Settings. A name can still appear here: a session started as an agent may record that name on its own turns.",
+          ? "Unmarked names have no definition here: a built-in, a repository's own agent, or a deleted one. (main thread) is a turn with no agent name recorded, which may include a run started as one."
+          : "Sub-agent turns are excluded in Settings, but a session started as an agent can still record its name here.",
       },
       skill: {
         rows: s.bySkill.map((r) => ({ label: r.skill, cost: r.agg.costUSD })),
@@ -465,9 +456,8 @@ export default function Dashboard() {
           is below can still change. */}
       {data?.meta?.newWorkPaused && (
         <Notice tone="warn">
-          <strong>New work is held.</strong> Nothing starts — queued runs stay
-          queued, dependents stay waiting, schedules do not fire and an
-          orchestrator block cannot emit. Work already in flight carries on.{" "}
+          <strong>New work is held.</strong> Queued runs, dependents, schedules
+          and orchestrator blocks all wait; work in flight carries on.{" "}
           <Link href="/runs">Resume it on the runs page</Link>.
         </Notice>
       )}
@@ -765,13 +755,12 @@ export default function Dashboard() {
               </div>
             ) : cardNotes.sessionResetSource === "pinned" ? (
               <div>
-                Window start taken from a{" "}
-                <Link href="/settings">manual reset</Link>, not from the
-                transcripts — usage before{" "}
+                Window start set by a{" "}
+                <Link href="/settings">manual reset</Link>: usage before{" "}
                 <span className="tabular-nums">
                   {new Date(s.session.startsAt).toLocaleString()}
                 </span>{" "}
-                is excluded from this card and from the budget guard.
+                is excluded here and from the budget guard.
               </div>
             ) : (
               <div>
@@ -843,9 +832,8 @@ export default function Dashboard() {
                   does is waiting for nothing, so say what it is instead. */}
               {!weeklyResets && (
                 <div>
-                  It falls as old turns age out rather than resetting. Pick a{" "}
-                  <Link href="/settings">weekly reset</Link> day to measure against
-                  a fixed week instead.
+                  It never resets; old turns age out. Pick a{" "}
+                  <Link href="/settings">weekly reset</Link> day for a fixed week.
                 </div>
               )}
               {/* A wall that binds without ever reaching this meter: the weekly
@@ -892,25 +880,21 @@ export default function Dashboard() {
           <strong>No percentages available.</strong>{" "}
           {meta.planUsageFromApi ? (
             <>
-              Anthropic reports this account&rsquo;s own utilisation, but that
-              read did not answer — the credential Claude Code keeps on this
-              machine is missing or expired, or the request failed. Sign in with{" "}
-              <span className="mono">claude</span> and it will resume by itself.
+              The account&rsquo;s utilisation read did not answer: Claude
+              Code&rsquo;s credential here is missing or expired, or the request
+              failed. Sign in with <span className="mono">claude</span> and it
+              resumes by itself.
             </>
           ) : (
             <>
-              Reading the account&rsquo;s own utilisation is{" "}
+              Reading the account&rsquo;s utilisation is{" "}
               <Link href="/settings">switched off</Link>, and Anthropic
-              publishes no numeric value for a Pro/Max limit
-              {meta.account.label && (
-                <> — knowing you are on {meta.account.label} does not supply one</>
-              )}
-              .
+              publishes no number for a Pro/Max limit.
             </>
           )}{" "}
-          Until then a percentage needs a ceiling of your own: Settings →{" "}
-          <Link href="/settings">Estimate a ceiling from your own history</Link>{" "}
-          derives one from your own peak usage, or enter a value manually.
+          Until then a percentage needs your own ceiling: enter one, or derive
+          one in Settings →{" "}
+          <Link href="/settings">Estimate a ceiling from your own history</Link>.
           Volumes and costs above are exact regardless.
         </Notice>
       )}
@@ -918,12 +902,10 @@ export default function Dashboard() {
       {meta.unpricedModels.length > 0 && (
         <Notice tone="warn">
           <strong>Unpriced models seen:</strong>{" "}
-          <span className="mono">{meta.unpricedModels.join(", ")}</span>. Their
-          tokens count toward volume but contribute $0 to cost, so the dollar
-          figures here are a floor. The budget guard does not use that floor —
-          it charges these models a conservative rate instead, which is the
-          hatched span on the meters above. A run can therefore be stopped
-          before the solid bar looks full.
+          <span className="mono">{meta.unpricedModels.join(", ")}</span>. They
+          count toward volume at $0, so dollar figures here are a floor. The
+          budget guard charges them a conservative rate instead (the hatched
+          span above), so a run can stop before the solid bar looks full.
         </Notice>
       )}
 
@@ -936,10 +918,9 @@ export default function Dashboard() {
       {unattributedCacheWrite > 0 && (
         <Notice tone="warn">
           <strong>Cache writes with no declared lifetime:</strong>{" "}
-          {fmtTokens(unattributedCacheWrite)}. They were billed at either 1.25×
-          or 2× input and the records do not say which, so the dollar figures
-          here take the cheaper rate and are a floor. The budget guard takes the
-          dearer one, which is the hatched span on the meters above.
+          {fmtTokens(unattributedCacheWrite)}. Billed at 1.25× or 2× input and
+          the records do not say which: figures here take the cheaper rate, the
+          budget guard the dearer one (the hatched span above).
         </Notice>
       )}
 
@@ -966,9 +947,8 @@ export default function Dashboard() {
               more
             </>
           )}
-          . Every figure here is short by whatever those hold, and a run's budget
-          guard reads the same scan — so it is measuring against a total that is
-          too low.
+          . Every figure here, and every run&rsquo;s budget guard, is short by
+          whatever those hold.
         </Notice>
       )}
 
@@ -1035,17 +1015,11 @@ export default function Dashboard() {
               </ListValue>
             </ListRow>
 
-            {/* The second clause used to read "which is why the dollar figures
-                track work and the token counts do not", and this install's own
-                telemetry says otherwise: across a week of run cycles, cache reads
-                were 60% of the *bill* as well as 96% of the tokens, with the
-                1-hour cache write another 26% and generated output 14%. Cheap per
-                token is not the same as small, and a reader told the dollars track
-                work will look for the expensive run rather than the long one. */}
-            <ListRow
-              label="Cache reads"
-              description="Share of all tokens, billed at 0.1× — cheap each, and still the largest share of the bill once conversations run long"
-            >
+            {/* Never "which is why the dollar figures track work": this install's
+                own telemetry had cache reads at 60% of the *bill* as well as 96%
+                of the tokens, so a reader told that looks for the expensive run
+                rather than the long one. */}
+            <ListRow label="Cache reads" description="Share of all tokens, billed at 0.1×">
               <ListValue>{fmtPct(cacheShare)}</ListValue>
             </ListRow>
 
@@ -1190,22 +1164,16 @@ export default function Dashboard() {
               but not listed.
             </div>
           )}
-          {/* Never folded away and never shortened. The column beside Cost is a
-              dollar figure for work that did not happen, and a reader who quotes
-              it as a saving has been misled by this page rather than by their
-              own arithmetic. */}
+          {/* Never folded away, and the "counterfactual, not a forecast"
+              caveat is never cut. The column beside Cost is a dollar figure for
+              work that did not happen, and a reader who quotes it as a saving
+              has been misled by this page rather than by their own arithmetic. */}
           {showCounterfactual && (
             <div className="mt-2 max-w-[68ch] text-xs text-ink-muted">
-              <strong>On {counterfactualLabel}</strong> is these exact turns —
-              the same input, output and cache tokens — repriced at that
-              model&rsquo;s rate on the day each one ran. It is a counterfactual,
-              not a forecast: the same task on a smaller model may take more work
-              cycles, longer conversations or more retries, and this figure knows
-              nothing about that. It is worth reading because the discount lands
-              on cache reads, which are {fmtPct(cacheShare)} of the tokens here
-              and the largest single share of the bill. An agent carries a model
-              and a run started as that agent runs on it, so pointing a
-              template&rsquo;s agent at it is how you would find out for real.
+              <strong>On {counterfactualLabel}</strong> is these exact turns
+              repriced at that model&rsquo;s rate on the day each one ran. It is a
+              counterfactual, not a forecast: the same task on a smaller model may
+              take more work cycles, longer conversations or more retries.
             </div>
           )}
           {current.hint && (
@@ -1223,23 +1191,20 @@ export default function Dashboard() {
         <Card emphasis="quiet" className="mb-4">
           <CardTitle>What filled the context</CardTitle>
           <p className="mb-3 max-w-[68ch] text-xs text-ink-muted">
-            Tool results are what an agent puts into a context and then pays to
-            carry: each one is re-read on every later turn of the session. The
-            shares below are of characters of tool output over{" "}
-            {s.weekly.label.toLowerCase()} — not of money, and not comparable
-            with any figure above.
+            Shares are of tool-output characters over{" "}
+            {s.weekly.label.toLowerCase()}, not of money.
           </p>
 
           <ListGroup>
             <ListRow
               label="Tokens placed"
-              description="Entered a context once — as fresh input, as a cache write, or as generated output. Re-reads are excluded, which is the point of the two rows below."
+              description="Fresh input, cache writes and output; re-reads excluded"
             >
               <ListValue>{fmtTokens(s.byTool.placedTokens)}</ListValue>
             </ListRow>
             <ListRow
               label="Read back"
-              description="Times the average placed token was re-read across this window"
+              description="Times the average placed token was re-read"
             >
               <ListValue>
                 {s.byTool.reReadRatio === null
@@ -1249,7 +1214,7 @@ export default function Dashboard() {
             </ListRow>
             <ListRow
               label="Cost per million placed"
-              description="This window’s whole bill over the tokens placed into it. Not a rate anyone is charged — it is what a token ends up costing once it has been carried, which is far above any list input price."
+              description="This window’s bill over the tokens placed; not a rate anyone is charged"
             >
               <ListValue>
                 {s.byTool.costPerMillionPlacedUSD === null
@@ -1328,14 +1293,12 @@ export default function Dashboard() {
               {s.byTool.unansweredCalls > 0 && (
                 <>
                   {" "}
-                  {s.byTool.unansweredCalls.toLocaleString()} of them have no
-                  recorded result — interrupted, or answered in a transcript this
-                  scan could not read — and count towards the calls and towards
-                  no share.
+                  {s.byTool.unansweredCalls.toLocaleString()} have no recorded
+                  result and count toward calls but no share.
                 </>
               )}{" "}
-              A result that came back as an image counts no characters, so a tool
-              that answers in pictures reads low here.
+              Image results count no characters, so a tool that answers in
+              pictures reads low.
             </div>
           )}
         </Card>
@@ -1384,37 +1347,27 @@ export default function Dashboard() {
       {hasContextControl && (
         <SourceRegion
           heading="What context control saved, in detail"
-          statement="The figure beside the meters is these two added: tool results kept out of the request as it was sent, and conversation removed between work cycles."
+          statement="The figure beside the meters is these two added."
         >
           {/* The filter first, matching the tile: it acts before the pruner
               does, so what the pruner reports is the residual of it. */}
           <Card className="mb-4">
             <CardTitle>Intake filter</CardTitle>
             <FilterSavingsRows filter={intakeFilter} />
-            <Hint>
-              A tool result the filter recognises is replaced with a pointer past
-              the last cache breakpoint, so the API never writes it and no later
-              turn re-reads it. Nothing is edited, so unlike a prune there is no
-              invalidation to pay and no break-even — it earns on the first
-              request. What it still costs is sending the result once, uncached,
-              which is the middle row.{" "}
-              {intakeFilter.ledger === "read" && (
-                <>
-                  Measured over {intakeFilter.requests} rewritten{" "}
-                  {intakeFilter.requests === 1 ? "request" : "requests"}
-                  {intakeFilter.unjoinedRequests > 0 && (
-                    <>
-                      , {intakeFilter.unjoinedRequests} of which matched no
-                      main-thread turn this install still holds — a sub-agent&rsquo;s
-                      request, or one whose transcript has been swept. What they
-                      saved is missing from the figure rather than counted as
-                      nothing
-                    </>
-                  )}
-                  .
-                </>
-              )}
-            </Hint>
+            {intakeFilter.ledger === "read" && (
+              <Hint>
+                Measured over {intakeFilter.requests} rewritten{" "}
+                {intakeFilter.requests === 1 ? "request" : "requests"}
+                {intakeFilter.unjoinedRequests > 0 && (
+                  <>
+                    ; {intakeFilter.unjoinedRequests} matched no main-thread turn
+                    still held, so what they saved is missing from the figure
+                    rather than counted as nothing
+                  </>
+                )}
+                .
+              </Hint>
+            )}
           </Card>
 
           <Card className="mb-4">
@@ -1462,35 +1415,21 @@ export default function Dashboard() {
               pruner={pruning.pruner}
               activity={pruning.activity.weekly}
             />
-            <Hint>
-              Removing conversation does not simply make a run cheaper: an edit
-              invalidates the cached prefix, so the saving is what later turns did
-              not have to re-read, less what the edit itself cost. A prune between
-              two work cycles was believed to pay nothing, because the next cycle
-              was going to rewrite that conversation anyway — that is the most
-              likely reading and it has not been measured, so a total still
-              carrying unsettled prunes is printed as a ceiling. One that ended a
-              cycle early pays for the restart it caused. Both are counted here.
-              A cut is left alone when the last one on that run would need more
-              than 18 further turns to pay for itself.
-              {/* Why the first block stops where it does. It belongs here rather
-                  than on the tile: it is the one line that explains a span, and
-                  a reader who wants to know why the total starts on a date has
-                  already come looking for the arithmetic. */}
-              {pruning.totalFrom !== null && (
-                <>
-                  {" "}
-                  It stops at{" "}
-                  <span className="tabular-nums">
-                    {fmtDate(pruning.totalFrom)}
-                  </span>{" "}
-                  because a saving is measured over the turns that followed it,
-                  and transcripts older than your{" "}
-                  <Link href="/settings">retention</Link> have been deleted —
-                  what those prunes saved is unknown rather than nothing.
-                </>
-              )}
-            </Hint>
+            {/* Why the first block stops where it does. It belongs here rather
+                than on the tile: it is the one line that explains a span, and a
+                reader who wants to know why the total starts on a date has
+                already come looking for the arithmetic. */}
+            {pruning.totalFrom !== null && (
+              <Hint>
+                It starts at{" "}
+                <span className="tabular-nums">
+                  {fmtDate(pruning.totalFrom)}
+                </span>
+                : older transcripts are past your{" "}
+                <Link href="/settings">retention</Link>, so what earlier prunes
+                saved is unknown rather than nothing.
+              </Hint>
+            )}
           </Card>
         </SourceRegion>
       )}

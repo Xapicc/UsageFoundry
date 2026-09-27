@@ -184,8 +184,8 @@ export function DiffFileRow({ file }: { file: DiffFileDTO }) {
           // No reason here: the row cannot tell a budget's omission from a read
           // that failed, and the notice over the list says which it was.
           <Hint tone="warn">
-            This file&rsquo;s contents are not shown here. See it with{" "}
-            <span className="mono">git diff</span> in the repository
+            Not shown here; see it with <span className="mono">git diff</span> in
+            the repository
           </Hint>
         ) : (
           <>

@@ -353,8 +353,7 @@ export function FilterSavingsRows({ filter }: { filter: FilterSavingsDTO }) {
               <Tr>
                 <Td className="text-ink-muted" colSpan={2}>
                   Money covers {filter.pricedResults} of {filter.results}{" "}
-                  results — the rest ran on a model with no price here, or on a
-                  request no transcript still holds, so what they saved is
+                  results; the rest could not be priced, so what they saved is
                   unknown rather than nothing.
                 </Td>
               </Tr>
@@ -364,19 +363,16 @@ export function FilterSavingsRows({ filter }: { filter: FilterSavingsDTO }) {
         {filter.deferredOnly > 0 && (
           <Tr>
             <Td className="text-ink-muted" colSpan={2}>
-              {filter.deferredOnly} more were held for a turn and never dropped
-              again. The filter moves the cache breakpoint in front of those
-              instead, and the ledger does not record whether that worked, so
-              they are left out.
+              {filter.deferredOnly} more were held for a turn and never dropped;
+              whether that saved anything is not recorded, so they are left out.
             </Td>
           </Tr>
         )}
         {filter.fallbackKeyed > 0 && (
           <Tr>
             <Td className="text-ink-muted" colSpan={2}>
-              {filter.fallbackKeyed} of {filter.results} carried no tool id and
-              were matched on tool, rule and size instead, which counts two
-              identical outputs in one session once.
+              {filter.fallbackKeyed} of {filter.results} carried no tool id, so
+              two identical outputs in one session count once.
             </Td>
           </Tr>
         )}
