@@ -67,6 +67,11 @@ not in this tree) have been read; the hunt itself is under way.
 
 ## Bugs filed
 
+- A resumed chat turn's cumulative total_cost_usd is banked as that turn's cost — high — `d2782026-77dc-4893-8198-8aae0d7b4cfb`
+- Chat stream counts one response's usage once per content block, inflating the live guard estimate — high — `11cf59df-b4ad-479b-99af-3a817ce9cd28`
+- list_tasks narrowed by mountId+folder always returns zero: relative folder compared to stored absolute path — high — `9c4cbf8a-443d-4d8c-82d7-dafdcd6fabc5`
+- Validation boundary reads the run's newest verdict, so a not-finished task is ignored once another task is checked — high — `d82e9d21-50e6-456c-8878-c655c19c523f`
+
 ## Bugs not filed
 
 ## Seen outside my territory
