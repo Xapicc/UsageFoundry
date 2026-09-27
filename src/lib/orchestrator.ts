@@ -19,6 +19,7 @@ import {
   type WorkspaceMount,
 } from "./config";
 import { git, gitSync } from "./git";
+import { runningVerifyChildren } from "./landGate";
 import { withRepoAdmin } from "./repoLock";
 import { dataDirRefusal, mayWriteDataDir, requireDataDir } from "./serverLock";
 import { childCredentials, chownForChild, deprioritiseChildForOom } from "./privsep";
@@ -44,6 +45,7 @@ import {
   type RunProgress,
   LIVE_ENFORCEABLE_CODES,
   RESUME_MARGIN_MS,
+  cycleCapReason,
   enforceableForRun,
   evaluateBudget,
   normalizePolicy,
@@ -288,7 +290,24 @@ export interface RunRow {
   /** Paused runs: when to look again. A hint, not a promise — see sweepPaused. */
   resume_at: number | null;
   paused_at: number | null;
+  /** Every park this run has taken, of either kind. Never reset. */
   pause_count: number;
+  /**
+   * Refusals this run has parked to wait out, which is what
+   * `MAX_PAUSES_PER_RUN` caps. A subset of `pause_count`, and unlike it zeroed
+   * by `reopenRun` — see that constant.
+   */
+  refusal_pauses: number;
+  /**
+   * Work cycles a live guard cut short and the loop refunded to `iterations`,
+   * which `MAX_PAUSES_PER_RUN` also caps. Only ever increases.
+   */
+  guard_refunds: number;
+  /**
+   * Work cycles the context ceiling ended early and the loop refunded, which
+   * `MAX_EARLY_ENDS_PER_RUN` caps. Only ever increases.
+   */
+  early_ends: number;
   /**
    * Parked milliseconds already closed off. Open parks are not in here — the
    * total at any instant is this plus `now - paused_at` while `paused_at` is
@@ -686,6 +705,13 @@ const contextWatches = ((globalThis as unknown as {
  * So it is bounded, `MAX_PAUSES_PER_RUN`'s arrangement and its number. Past
  * this, a crossing still prunes and still ends the cycle; it simply counts,
  * and `iterations` climbs monotonically again.
+ *
+ * Per run and not per segment, which is why the count is `runs.early_ends`:
+ * as a local of `startRun` it restarted at zero after every park, restart and
+ * pick-up, so a run whose every cycle crossed the ceiling had three more
+ * refunds each time it came back. Nothing resets it, `reopenRun` included — it
+ * corrects `iterations`, and a pick-up carries `iterations`, where
+ * `started_at` and `paused_ms`, which a pick-up does clear, are a clock.
  */
 export const MAX_EARLY_ENDS_PER_RUN = 3;
 
@@ -1798,11 +1824,29 @@ const MIN_REFUSAL_WAIT_MS = 5 * 60_000;
 /** Never hold a folder longer than one window plus slack on a refusal. */
 const MAX_REFUSAL_WAIT_MS = 6 * 3_600_000;
 /**
- * How many times one run may wait out a refusal.
+ * How many times one run may wait out a refusal, and how many work cycles a
+ * live guard may cut short and have refunded. Two counts on two columns, and
+ * the one number bounds each.
  *
- * The guard path needs no such cap — wall clock is checked ahead of the window
- * and terminates the run — but a refusal is someone else's claim about someone
- * else's counter, and a misread one must not re-park forever.
+ * Refusals are counted on `runs.refusal_pauses`, and not on `pause_count`. A
+ * refusal is someone else's claim about someone else's counter, and a misread
+ * one must not re-park forever. Only the refusal branch advances the count: a
+ * run that stepped aside at its own 5-hour guard has not waited out a refusal,
+ * and charging it one failed the run at its first real wall. `reopenRun` zeroes
+ * it, because a run failed `pauses-spent` and picked up by hand is the fresh
+ * attempt this cap was not meant to span — carried, the count failed it again
+ * at the next wall without one wait.
+ *
+ * Guard refunds are counted on `runs.guard_refunds`. A `live-resume` cycle the
+ * live guard cut is refunded to `iterations`, and unbounded that refund stops
+ * `maxIterations` from advancing: a run whose cycle is longer than the share of
+ * a window its guard allows never completes one, so the cycle cap never ends
+ * it and a run with no time limit parks for ever. Past this many a cut cycle
+ * stays charged. Nothing resets the count, `reopenRun` included: it corrects
+ * `iterations`, and a pick-up carries `iterations`.
+ *
+ * `pause_count` counts every park of either kind and is never reset, because
+ * `ensureWorktree` reads it as "this run has worked before".
  */
 export const MAX_PAUSES_PER_RUN = 3;
 
@@ -5528,7 +5572,9 @@ const SANDBOX_GLOB_CHARS = /[*?[\]{}!]/;
  * named or the build fails inside a tool call the run loop does not read —
  * `docs/verification.md` names these two by name as the ones the set left out.
  * npm's cache is `$HOME/.npm` and Go's is under `GOPATH`, which the image points
- * at a named volume so it survives a container it is meant to outlive.
+ * at a named volume so it survives a container it is meant to outlive. The XDG
+ * cache has no volume and lives in the writable layer, so a rebuild empties it:
+ * that costs a re-download, and a directory the sandbox refuses costs the build.
  *
  * Read off the *environment* rather than written as literals, because the uid
  * that owns them is not the one asking: the server runs as root under compose
@@ -5543,6 +5589,15 @@ const SANDBOX_GLOB_CHARS = /[*?[\]{}!]/;
 const BUILD_CACHE_DIRS = [
   path.join(os.homedir(), ".npm"),
   process.env.GOPATH || path.join(os.homedir(), "go"),
+  // The XDG cache, which is where the toolchains that are neither npm nor Go
+  // default to — uv, pip, node-gyp, and the clang module cache every `swiftc`
+  // has to populate before it compiles anything. Left out, each of those fails
+  // on EROFS inside a tool call: measured over this install's `run_events` to
+  // 2026-09-27, 20 runs hit it, and a `swiftc` of a two-line file cannot build
+  // `SwiftShims`. One entry for the directory rather than one per tool, for
+  // the reason `state/` below is one tree: the next tool that caches here is
+  // otherwise the next silent failure.
+  process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"),
   // Where every stack's tool keeps its own cache, plugins and config. One
   // entry for the mechanism and not one per stack, which is the reason
   // `state/` is one tree rather than a path each stack chooses. Reading and
@@ -8709,6 +8764,24 @@ export async function startRun(id: string): Promise<void> {
     .run(claimedAt, claimedAt, id);
   if (claim.changes !== 1) return;
 
+  // A live guard's verdict is about a cycle in flight, and this loop has none
+  // yet, so one found here was written for a loop that has already ended —
+  // after that loop's `finally` cleared the map, with no loop left to consume
+  // it and nothing else that deletes it. Left standing, the pre-scan below
+  // applies it and a run just picked up, perhaps with the very limit it names
+  // raised, ends having spawned nothing under a reason that no longer holds.
+  // Only the guard kind: an operator's stop against a `running` row is a
+  // request about this run whenever it landed, and `liveGuardTick`'s identity
+  // test is the first line against the stale verdict; this is the second.
+  const staleGuard = interrupts.get(id);
+  if (staleGuard?.kind === "guard") {
+    interrupts.delete(id);
+    log(
+      id,
+      `Discarded a live budget verdict recorded after this run's last work cycle had ended: ${staleGuard.reason}`,
+    );
+  }
+
   const startedAt = run.started_at ?? claimedAt;
   /**
    * What the UPDATE above just wrote. Hydrated from the row for the same reason
@@ -8767,9 +8840,13 @@ export async function startRun(id: string): Promise<void> {
     const carried = pendingForkFor(id, sessionId);
     if (carried && !pendingFork.has(id)) pendingFork.set(id, carried);
   }
-  // How many cycles the context ceiling has ended and refunded. See
-  // `MAX_EARLY_ENDS_PER_RUN`.
-  let earlyEnds = 0;
+  // How many cycles the context ceiling has ended and refunded, over the run's
+  // whole life. See `MAX_EARLY_ENDS_PER_RUN`.
+  let earlyEnds = run.early_ends ?? 0;
+  // How many guard-cut cycles have been refunded, over the run's whole life
+  // rather than this segment's: every cut ends a segment. See
+  // `MAX_PAUSES_PER_RUN`.
+  let guardRefunds = run.guard_refunds ?? 0;
   /** The operator's message for the first cycle of this segment, if any. */
   let followUp: string | null = run.follow_up ?? null;
   /**
@@ -8793,6 +8870,11 @@ export async function startRun(id: string): Promise<void> {
   let incompleteIteration = false;
   /** Set when the run is stepping aside rather than ending. */
   let pausedUntil: number | null = null;
+  /**
+   * Whether that park is waiting out a refusal, which is what `refusal_pauses`
+   * counts.
+   */
+  let refusalPark = false;
   /** The next prompt should be the DONE pushback rather than the continuation. */
   let justRetriggered = false;
   /**
@@ -8962,6 +9044,14 @@ export async function startRun(id: string): Promise<void> {
         );
       }
 
+      // Off the row on every pass rather than hydrated once, because the grant
+      // is written there at the boundary below and the cycle it pays for is
+      // the next pass — and off the row at all so a restart meets the cap the
+      // run was already under. Held for the pass: the post-cycle cap check and
+      // the live guard judge this cycle against the same figure that admitted
+      // it, and nothing writes the column between here and that check.
+      const grantedCycles = getRun(id)?.validation_cycles ?? 0;
+
       const verdict: BudgetVerdict = evaluateBudget(
         policy,
         snapshot,
@@ -8976,6 +9066,7 @@ export async function startRun(id: string): Promise<void> {
           // What this task has cost before. Read here rather than inside the
           // guard so `evaluateBudget` stays a pure function of numbers.
           costBaseline: costBaselineFor(run),
+          grantedCycles,
         },
         Date.now(),
       );
@@ -9491,6 +9582,11 @@ export async function startRun(id: string): Promise<void> {
               spentGuardTokens: spentTokens + spentEstTokens + inFlight.tokens,
               startedAt,
               pausedMs,
+              // Without it a granted cycle reads as over its cap, and since
+              // `iterations` is checked first and is not live-enforceable, the
+              // tick would skip the run — leaving that cycle's spend and time
+              // unguarded mid-flight.
+              grantedCycles,
             };
           },
         });
@@ -9773,9 +9869,11 @@ export async function startRun(id: string): Promise<void> {
           // to the same number, so it never corrects at all. The visible effect
           // is a "Work cycles" bar that advances the moment the ceiling fires,
           // while the run is still working on the cycle it was refunded for.
+          // The count goes in the same statement, so a restart can never store
+          // the refund without the refund's cost against the bound.
           db()
-            .prepare("UPDATE runs SET iterations = ? WHERE id = ?")
-            .run(iterations, id);
+            .prepare("UPDATE runs SET iterations = ?, early_ends = ? WHERE id = ?")
+            .run(iterations, earlyEnds, id);
         }
 
         // Captured before the cut, because `adoptSession` reassigns `sessionId`
@@ -9816,11 +9914,22 @@ export async function startRun(id: string): Promise<void> {
         // resume continues this same conversation rather than starting fresh
         // work, and charging it would mean `live-resume` with a single work
         // cycle could only park and then stop at `cycles` without ever
-        // finishing. `MAX_PAUSES_PER_RUN` bounds the refund, so one cycle is at
-        // most four billed invocations. Only here — `applyInterrupt`'s other
-        // two call sites run *before* the increment above, and refunding there
-        // would discount a cycle that completed.
-        if (postCycle.pause) iterations -= 1;
+        // finishing. Only here — `applyInterrupt`'s other two call sites run
+        // *before* the increment above, and refunding there would discount a
+        // cycle that completed.
+        //
+        // Bounded by `MAX_PAUSES_PER_RUN`, counted on the row and written with
+        // `iterations` in the ending below, because every cut ends a segment
+        // and a local would restart at zero each time. It used to be bounded by
+        // nothing: a run whose cycle is longer than its guard's share of a
+        // window was cut and refunded every window, never reached its cycle
+        // cap, and parked for ever. Past the bound the cut cycle stays charged
+        // and the cycle cap ends the run on its ordinary verdict, so guard cuts
+        // add at most that many billed invocations to what `maxIterations` buys.
+        if (postCycle.pause && guardRefunds < MAX_PAUSES_PER_RUN) {
+          guardRefunds += 1;
+          iterations -= 1;
+        }
         break;
       }
 
@@ -9916,7 +10025,9 @@ export async function startRun(id: string): Promise<void> {
         const limited = kind === "allowance";
         const plan = refusalDisposition({
           kind,
-          pauseCount: run.pause_count ?? 0,
+          // Not `pause_count`, which counts guard parks too — see
+          // `MAX_PAUSES_PER_RUN`.
+          pauseCount: run.refusal_pauses ?? 0,
           transientRetries,
         });
         const retrying = plan.action === "retry";
@@ -9969,15 +10080,18 @@ export async function startRun(id: string): Promise<void> {
           // boundary and was refused again scans a tree that already holds the
           // previous refusal's zero-token record, and that record opens a block
           // of its own reading as a window five hours out.
+          // The ladder is the refusal count's too: a guard park between two
+          // refusals is not a second refusal in a row.
           pausedUntil = refusalResumeAt({
             boundary: lastSpendingWindowEnd(snapshot),
-            pauseCount: run.pause_count ?? 0,
+            pauseCount: run.refusal_pauses ?? 0,
             now: Date.now(),
           });
           stopReason =
             "Claude refused the work cycle: the subscription allowance is used up. " +
             "Waiting for it to refill.";
           finalStatus = "paused";
+          refusalPark = true;
           // Refunded for the same reason a guard-interrupted cycle is, and with
           // more force: the provider refused before any work happened at all.
           iterations -= 1;
@@ -10009,8 +10123,9 @@ export async function startRun(id: string): Promise<void> {
         // row. It deliberately no longer also requires the earlier segment to
         // have ended in a *pause* — a truncated session is a truncated session
         // whether a guard parked the run or a crash ended it, and a run picked
-        // up by hand has `pause_count === 0`, so that condition excluded the
-        // one case an operator is watching.
+        // up by hand after a crash may never have parked at all — a pick-up
+        // neither adds to `pause_count` nor clears it — so that condition
+        // excluded the one case an operator is watching.
         // "This cycle did no work at all", split out because two callers need
         // it and only one of them wants the segment-position term.
         const didNoWork = !res.sawResult && res.finalText === "";
@@ -10175,11 +10290,9 @@ export async function startRun(id: string): Promise<void> {
       if (
         !heldBack &&
         policy.maxIterations !== null &&
-        iterations >= policy.maxIterations
+        iterations >= policy.maxIterations + grantedCycles
       ) {
-        stopReason = `Used all ${policy.maxIterations} work ${
-          policy.maxIterations === 1 ? "cycle" : "cycles"
-        } allowed for this run.`;
+        stopReason = cycleCapReason(policy.maxIterations, grantedCycles);
         finalStatus = "completed";
         break;
       }
@@ -10286,6 +10399,9 @@ export async function startRun(id: string): Promise<void> {
     const carried: Partial<RunRow> = {
       stop_reason: stopReason,
       iterations,
+      // Beside the count it corrects, so no ending can store one without the
+      // other.
+      guard_refunds: guardRefunds,
       spent_usd: spentUSD,
       spent_tokens: spentTokens,
       spent_usd_est: spentEstUSD,
@@ -10316,6 +10432,7 @@ export async function startRun(id: string): Promise<void> {
           resume_at: pausedUntil,
           paused_at: Date.now(),
           pause_count: (run.pause_count ?? 0) + 1,
+          ...(refusalPark ? { refusal_pauses: (run.refusal_pauses ?? 0) + 1 } : {}),
         });
         startSweeper();
       } else {
@@ -10633,8 +10750,12 @@ function stopLiveTicker(): void {
  * call, and a row a minute for three days across several runs is tens of
  * thousands of rows plus a proportionally larger stream replay. Only an actual
  * interrupt is worth recording.
+ *
+ * Exported for `orchestrator.test.ts` and for nothing else, on
+ * `checkContextCeilings`' grounds: its only caller is a `setInterval` a spawn
+ * starts, so the alternative to the export is a billed cycle.
  */
-async function liveGuardTick(): Promise<void> {
+export async function liveGuardTick(): Promise<void> {
   // A scan slower than the interval must not stack ticks on top of each other.
   if (timers.ticking) return;
   timers.ticking = true;
@@ -10666,8 +10787,16 @@ async function liveGuardTick(): Promise<void> {
     const now = Date.now();
 
     for (const [id, guard] of pending) {
-      // An operator stop may have landed while the scan was running.
-      if (interrupts.has(id)) continue;
+      // An operator stop may have landed while the scan was running — and so
+      // may the end of the cycle this guard was registered for, since the scan
+      // is coalesced and can take seconds. Identity rather than `has`,
+      // `checkContextCeilings`' test: the entry is re-set per cycle. A stale
+      // guard's `progress()` still reads the loop's live `spentUSD`, which by
+      // now includes that cycle's `result`, and adds telemetry since the same
+      // cycle's start on top — that cycle counted twice, and a run under its
+      // limit stopped for a figure it never spent. With no child left to
+      // signal, the stop would land on the next cycle, or on the next pick-up.
+      if (liveGuards.get(id) !== guard || interrupts.has(id)) continue;
 
       const verdict = evaluateBudget(guard.policy, snapshot, guard.progress(), now);
       if (verdict.allowed) continue;
@@ -11406,6 +11535,10 @@ export async function sweepPaused(): Promise<void> {
           // waiting to resume — which is the whole shape this accumulator
           // exists to stop.
           pausedMs: pausedMsAt(run, now),
+          // A run can park at the pre-cycle guard of a cycle a task check
+          // granted, and this is that guard's re-reading: without the grant it
+          // ends on the cap the loop had just widened, instead of resuming.
+          grantedCycles: run.validation_cycles,
         },
         now,
       );
@@ -11916,9 +12049,16 @@ export function reopenRun(
       // duration cap it has not spent a minute of. `paused_at=NULL` for the same
       // reason — a row reopened from `stopped` may still carry the park it was
       // stopped in on a database written before that was closed off.
+      //
+      // `refusal_pauses=0` and not `pause_count=0`. The refusal allowance is
+      // the one `MAX_PAUSES_PER_RUN` bounds, and a run it ended `pauses-spent`
+      // would otherwise fail again at the next wall without waiting once.
+      // `pause_count` stays because `ensureWorktree` reads it as "has worked
+      // before", and zeroing it would send a run parked in its first cycle
+      // past the orphaned-branch guard.
       `UPDATE runs SET status=?, budget=?, max_iterations=?, follow_up=?, reopened_at=?,
          started_at=NULL, finished_at=NULL, exit_code=NULL, stop_reason=NULL,
-         needs_review_reason=NULL, paused_ms=0, paused_at=NULL,
+         needs_review_reason=NULL, paused_ms=0, paused_at=NULL, refusal_pauses=0,
          resume_at=NULL, restart_closed=0, restart_cut_cycle=0, set_aside_at=NULL
          WHERE id=? AND status=?`,
     )
@@ -11991,10 +12131,14 @@ export function reopenRun(
  * anything that outlived it. The children in `assistProcs` are swept with the
  * cycles, because they are spawned `detached` for the same reason and a Ctrl-C
  * misses them in the same way.
+ *
+ * So is a land's verify command, and here alone: the lands are waited on and
+ * never signalled, so a check still running when the grace is spent is ended
+ * with everything it started rather than left behind with no timer on it.
  */
 export function killAllAgents(sig: NodeJS.Signals = "SIGTERM"): number {
   let n = 0;
-  for (const child of [...procs.values(), ...assistProcs]) {
+  for (const child of [...procs.values(), ...assistProcs, ...runningVerifyChildren()]) {
     signalTree(child, sig);
     n += 1;
   }

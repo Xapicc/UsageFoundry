@@ -228,3 +228,22 @@ nothing about it.
   foot of every scroll. Found with `getBoundingClientRect()` read after load
   without scrolling; fixed by publishing the split's measured top as
   `--split-top` and capping at the pane less that less `3rem`.
+- **2026-09-27, `dc0d21a`, class A.** `/runs/new`'s Save and Update sent a
+  spending or time limit switched on with its box blank, which Start refuses,
+  and the template door stored it as no limit: `saveTemplate` never read
+  `runFormProblems`. Found by reading the source; fixed by refusing `""` in
+  `normalizeTemplateInput` and running `limitProblems` at Save, so Start's
+  sentence lands beside the box.
+- **2026-09-27, `ea04225`, class A.** `/runs/new` warned under both window
+  guards that the run would be refused whenever no ceiling was set, which on a
+  stock install is always, while the door reads Anthropic's own percentage and
+  admits it. The form asked a different question from `readWindowGuard`.
+  Found by reading the source; fixed with `windowGuardUnreadable`, which asks
+  the snapshot's `fraction` as the door does.
+- **2026-09-27, `0b85aac`, class C.** `/runs/new`'s workspace select held a
+  value with no option — a copied run or template naming a gone mount, or a
+  copy whose seed fetch failed — so React showed the first mount while state
+  kept `""`, and on a one-mount install choosing it fired no change and Start
+  could not be satisfied. Found by reading the source and React's
+  `updateOptions`; fixed with a disabled "Choose a workspace" option carrying
+  the current value, and checked in Chromium for all three seeds.

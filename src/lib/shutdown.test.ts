@@ -70,6 +70,7 @@ const { assistRefusal, getAssist, SHUTDOWN_REFUSAL, startAssist } =
   require("./review") as typeof import("./review");
 const { getSettings, saveSettings } =
   require("./settings") as typeof import("./settings");
+const { runVerify } = require("./landGate") as typeof import("./landGate");
 
 const SESSION = "11111111-2222-3333-4444-555555555555";
 const lockFile = path.join(config.DATA_DIR, "server.lock");
@@ -531,6 +532,31 @@ describe("shutting down with a child that is not a work cycle", () => {
       untrack();
     }
     assert.deepEqual(signals, ["SIGKILL"]);
+  });
+
+  it("reaches a land's verify command, which is waited on and nothing else signals", async () => {
+    // A real child, through the spawn this file otherwise replaces: what has to
+    // hold is that the sweep reaches the process `runVerify` started, and the
+    // fake exits on any signal it is handed. Its own timeout is the
+    // fifteen-minute default, so nothing but the sweep can end it inside the
+    // bound.
+    const dir = fs.mkdtempSync(path.join(tmp, "verify-"));
+    fs.writeFileSync(path.join(dir, "check.sh"), "sleep 6\n");
+    const fakeSpawn = childProcess.spawn;
+    childProcess.spawn = realSpawn;
+    const started = Date.now();
+    let verdict: ReturnType<typeof runVerify>;
+    try {
+      verdict = runVerify(dir, "sh check.sh");
+    } finally {
+      childProcess.spawn = fakeSpawn;
+    }
+
+    killAllAgents("SIGKILL");
+    const outcome = await verdict;
+
+    assert.ok(Date.now() - started < 4_000, "the check outlived the final sweep");
+    assert.equal(outcome.passed, false);
   });
 
   it("refuses to start another once the process is going down", async () => {
