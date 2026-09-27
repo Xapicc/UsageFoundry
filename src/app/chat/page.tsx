@@ -12,7 +12,9 @@ import type {
   ChatQuestionDTO,
   ProposedBlockDTO,
   ProposedScheduleDTO,
+  RunProviderDTO,
 } from "@/lib/apiTypes";
+import { RUN_PROVIDER_LABEL } from "@/lib/apiTypes";
 import { chatRequest } from "@/lib/chatRequest";
 import { mergeMessages, threadItems, turnStartInstant } from "@/lib/chatThread";
 import {
@@ -144,6 +146,18 @@ const PROPOSAL_TONE = {
 const PROPOSAL_ROW: Record<"selected" | "idle", string> = {
   selected: "bg-selection",
   idle: "bg-transparent hover:bg-fill-hover",
+};
+
+/**
+ * What a proposed run gives up by not being the ordinary Claude run, keyed by
+ * provider. The new-run form's disclosure in one sentence each; absent for a
+ * provider that gives up nothing worth a line.
+ */
+const PROVIDER_CARD_WARNING: Partial<Record<RunProviderDTO, string>> = {
+  codex:
+    "Runs as Codex: spend is unknown rather than measured, it gets no plugins, " +
+    "agent role or taskboard, its process-kill denial is weaker, and it needs " +
+    "its own sign-in under Settings.",
 };
 
 const GUARD_TONE: Record<"missing" | "set", string> = {
@@ -2320,6 +2334,15 @@ function Proposal({
                 </span>
               </span>
             )}
+            {/* Which CLI runs it, where it is not the ordinary one. Toned warn
+                rather than set, because the new-run form draws the same choice
+                as a warning: it is the one field on the card that changes
+                which of Claude's guarantees the run keeps. */}
+            {proposal.provider && proposal.provider !== "claude" && (
+              <span className="min-w-0 max-w-full truncate font-medium text-warn">
+                via {RUN_PROVIDER_LABEL[proposal.provider]}
+              </span>
+            )}
             {/* The tasks on the board this proposal came off. Outside the guard
                 mark for the agent's reason and one step weaker than it: an
                 agent decides who the run is, where this decides nothing at all
@@ -2396,6 +2419,17 @@ function Proposal({
             . Approve them together, or this one is not started.
           </p>
         )}
+
+        {/* The price, said where the approval is made — the new-run form's
+            disclosure in one line, because this card is the only surface with
+            a person on it at the moment this run is decided. */}
+        {proposal.kind === "run" &&
+          proposal.provider &&
+          PROVIDER_CARD_WARNING[proposal.provider] && (
+            <p className="mt-2 text-2xs leading-normal font-medium text-warn">
+              {PROVIDER_CARD_WARNING[proposal.provider]}
+            </p>
+          )}
 
         {missing && proposal.kind === "run" && (
           <p className="mt-2 text-2xs leading-normal font-medium text-danger">

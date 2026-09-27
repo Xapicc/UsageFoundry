@@ -1310,6 +1310,14 @@ function migrate(db: Database.Database) {
   // fail the copy for every install that has one to make.
   addColumn(db, "chat_proposals", "guards_json", "TEXT");
 
+  // Which agent CLI the proposed run is spawned as, or null for the ordinary
+  // Claude run — the same reading `runs.provider` gives a null, and the one
+  // every proposal written before this column keeps. Written by the model and
+  // shown on the card, which is where the new-run form's argument for keeping
+  // the choice with a person is met: the person reading the card is the one
+  // who approves it. Not in PROPOSAL_BASE_COLUMNS, for `guards_json`'s reason.
+  addColumn(db, "chat_proposals", "provider", "TEXT");
+
   // The task on the board this proposal is for, by id, or null for work nobody
   // wrote down first.
   //

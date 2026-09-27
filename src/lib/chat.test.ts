@@ -280,6 +280,7 @@ const proposal = (over: Partial<ChatProposalRow> = {}) =>
     template_id: "tpl1",
     agent_id: null,
     model: null,
+    provider: null,
     prompt_override: null,
     mount_id: null,
     folder: null,
@@ -297,6 +298,7 @@ const proposal = (over: Partial<ChatProposalRow> = {}) =>
     | "template_id"
     | "agent_id"
     | "model"
+    | "provider"
     | "prompt_override"
     | "guards_json"
   >;
@@ -319,6 +321,35 @@ const agent: RegistryAgent = {
 };
 
 describe("planProposal", () => {
+  /**
+   * The provider a proposal names reaches the run, and the two things a Codex
+   * run cannot honour are settled here rather than left to the spawn: a Claude
+   * model — the template's included, which is a Claude id by construction — and
+   * a guard set nothing would end. The second is asked at the click as well as
+   * at the tool because a templated proposal's guards are read live.
+   */
+  it("starts a proposal as the provider it named, on Codex's own model", () => {
+    const plan = planProposal(proposal({ provider: "codex" }), template, defaults, null);
+    assert.equal(plan.ok, true);
+    if (!plan.ok) return;
+    assert.equal(plan.input.provider, "codex");
+    assert.equal(plan.input.model, null, "the template's Claude model is not handed to Codex");
+
+    const ordinary = planProposal(proposal(), template, defaults, null);
+    assert.equal(ordinary.ok && ordinary.input.provider, null, "none named stays not recorded");
+  });
+
+  it("refuses a Codex proposal whose guards would never end it", () => {
+    const endless: RunTemplate = {
+      ...template,
+      budget: { ...template.budget, maxIterations: null, maxDurationMinutes: null },
+    };
+    const plan = planProposal(proposal({ provider: "codex" }), endless, defaults, null);
+    assert.equal(plan.ok, false);
+    assert.match(plan.ok ? "" : plan.reason, /needs a work-cycle limit or a time limit/);
+    assert.equal(planProposal(proposal(), endless, defaults, null).ok, true);
+  });
+
   it("takes every guard from the template and none from the proposal", () => {
     const plan = planProposal(proposal(), template, defaults, null);
     assert.equal(plan.ok, true);

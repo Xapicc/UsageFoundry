@@ -88,7 +88,9 @@ import {
 } from "../../../lib/taskComments";
 import { addTaskDep, depsForTask, depsForTasks } from "../../../lib/taskDeps";
 import { releaseTask } from "../../../lib/taskRelease";
-import type { TaskDepRefDTO } from "../../../lib/apiTypes";
+import type { RunProviderDTO, TaskDepRefDTO } from "../../../lib/apiTypes";
+import { RUN_PROVIDER_LABEL, RUN_PROVIDERS } from "../../../lib/apiTypes";
+import { providerTerminusRefusal } from "../../../lib/budget";
 import { completeTaskWithValidation } from "../../../lib/validation";
 import {
   createTemplate,
@@ -1176,6 +1178,20 @@ const CHAT_TOOLS = [
             "settable here. The list is the operator's own — anything not on " +
             "it is refused, because an id this machine does not have is a " +
             "run that fails when it starts.",
+        },
+        provider: {
+          type: "string",
+          enum: [...RUN_PROVIDERS],
+          description:
+            "Which agent CLI runs it. Omit it for the ordinary Claude Code run, " +
+            "which is the right answer unless the operator asked for another. " +
+            "\"codex\" runs OpenAI's Codex CLI, with weaker guarantees than " +
+            "Claude: its spend is unknown rather than measured, it gets no " +
+            "plugins, agent role or taskboard, and its guard set must carry a " +
+            "work-cycle or time limit — a template or default set without one " +
+            "is refused. It takes no model from the list above: omit model and " +
+            "it runs Codex's own default. It also needs its own sign-in in " +
+            "Settings. Like the model, it is not a guard and widens nothing.",
         },
         title: {
           type: "string",
@@ -4692,6 +4708,53 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
   const modelProblem = modelRefusal(getSettings().modelCatalogue, model);
   if (modelProblem) return text(modelProblem, true);
 
+  // Narrowed against the list `POST /api/runs` narrows against, for its reason:
+  // a value nothing recognises must not become a run that quietly spawned
+  // Claude Code instead. Absent is the ordinary run and stays null.
+  const providerRaw = String(args.provider ?? "").trim();
+  if (providerRaw && !(RUN_PROVIDERS as readonly string[]).includes(providerRaw)) {
+    return text(
+      `Unknown provider "${providerRaw}". Use one of ${RUN_PROVIDERS.join(", ")}, ` +
+        "or omit it for the ordinary Claude Code run.",
+      true,
+    );
+  }
+  const provider = (providerRaw || null) as RunProviderDTO | null;
+  // Refused rather than dropped: `planProposal` would drop it, and a card
+  // saying "on claude-opus-5-5" over a run that starts on Codex's default is
+  // a card that says something false.
+  // The same reason one field over: an agent's prompt reaches only Claude
+  // Code's `--agent`, so a card saying "as the reviewer" over a Codex run is a
+  // run that is not the reviewer, which the agent door refuses everywhere else.
+  if (provider === "codex" && agentId) {
+    return text(
+      "A Codex run cannot be started as a saved agent — the agent's prompt " +
+        "reaches Claude Code only. Drop agentId, or drop provider.",
+      true,
+    );
+  }
+  if (provider === "codex" && model) {
+    return text(
+      `A Codex run cannot take ${model}: every model on this list is a Claude ` +
+        "id. Omit model and it runs on Codex's own default.",
+      true,
+    );
+  }
+  // Here as well as at the click, so the model can act on it while it is
+  // still writing the card. The guards are the ones the run would start under
+  // — the template's, or the default set this proposal is about to freeze.
+  const terminus = providerTerminusRefusal(
+    provider,
+    template ? template.budget : chatGuards().budget,
+  );
+  if (terminus) {
+    return text(
+      `${terminus} ${template ? `The "${template.name}" template has` : "The operator's default guard set has"} ` +
+        "neither. Name a template that does, or ask the operator.",
+      true,
+    );
+  }
+
   // The board rows this run is for, refused here for the template's and the
   // agent's reason and gating nothing at the click, unlike either of them: a
   // proposal that named a task nobody can find is discovered by a person
@@ -4718,6 +4781,7 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
     templateId: template ? template.id : null,
     agentId,
     model,
+    provider,
     taskIds,
     title,
     task,
@@ -4758,6 +4822,10 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
   // is a fact the reply should carry rather than one the operator meets on a
   // bill. Silent where none was named: the card draws no row there either.
   const onModel = model ? ` It runs on ${model}.` : "";
+  const onProvider =
+    provider && provider !== "claude"
+      ? ` It is spawned as ${RUN_PROVIDER_LABEL[provider]}, and the card says so.`
+      : "";
   // Said back for the model's reason and with the model's caveat: it is a fact
   // the operator should meet on the card rather than work out. Every title, so
   // a model that meant three tasks can see whether it linked three. Worded so
@@ -4796,7 +4864,7 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
         : ".")
     : "";
   return text(
-    `Proposed "${title}" (id ${proposal.id}) under ${guards}.${asAgent}${onModel}${forTask}${replacing}${after} ` +
+    `Proposed "${title}" (id ${proposal.id}) under ${guards}.${asAgent}${onModel}${onProvider}${forTask}${replacing}${after} ` +
       "It is waiting for the operator to approve it; nothing is running.",
   );
 }

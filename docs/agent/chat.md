@@ -18,6 +18,7 @@ The paragraphs themselves live in `docs/agent/chat/`, one topic file per heading
 
 - Prompt text is the one half of a run a model may write, and it is written down as an exception rather than absorbed.
 - Who does the work is the third half a model may write, and it is the same act as writing the task.
+- Which CLI runs it is a fourth thing a model may write, and the card is what makes that allowed.
 - The chat's own turn is not started as one, and the asymmetry with an orchestrator block is the whole reason.
 - Order is the other half of the work a model may write, and it is a label until a person approves it.
 

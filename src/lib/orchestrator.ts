@@ -3354,11 +3354,11 @@ export interface CreateRunInput {
   /**
    * Which agent CLI this run's cycles are spawned as.
    *
-   * Absent means "not recorded", and it is what every caller other than
-   * `POST /api/runs` passes: a workflow node, a chat proposal and a reopened run
-   * all deliberately have no provider to name, and writing `'claude'` for them
-   * would be this app answering a question nobody asked it. Only the form's own
-   * door, where a person picked, may write a value here.
+   * Absent means "not recorded", and it is what a workflow node and a reopened
+   * run pass: neither has a provider to name, and writing `'claude'` for them
+   * would be this app answering a question nobody asked it. Two doors may write
+   * a value, and both have a person at them who was shown the price: the form's
+   * own, and an approved chat proposal, whose card states the provider.
    */
   provider?: RunProviderDTO | null;
   permissionMode?: PermissionMode;

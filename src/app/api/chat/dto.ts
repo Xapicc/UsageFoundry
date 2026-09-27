@@ -260,6 +260,8 @@ function proposalDTO(
     // guards are. Trimmed to null the way the plan reads it, so a row carrying
     // whitespace draws no row rather than an empty one.
     model: p.model?.trim() || null,
+    // Truthy for `planProposal`'s reason: a row from before the column exists.
+    provider: p.provider || null,
     title: p.title,
     task: p.task,
     folderLabel: folderLabel(p.mount_id, p.folder),
