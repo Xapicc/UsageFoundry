@@ -122,6 +122,24 @@ the change printed beside the line is the whole seven days'. It takes `Field`'s
 anatomy — a label, a control-height row, one muted line — so the card is no
 taller for it.
 
+**Closes per day are a second chart beside it rather than a second line on it,
+because the two are not on one scale.** The open count is a level in the tens or
+hundreds and closes are a handful a day, so one plot would need two scales, and
+then a crossing or the gap between the lines reads as a comparison that means
+nothing. `ClosedTasksChart` takes `closedTaskSeries`, which counts the rows whose
+`closed_at` falls in each of the week's seven local days, today so far — seven
+points, because the day ending at the open series' first point is the one before
+the week — and the interval is half-open on the side `isOpenAt` is, so the week's
+closes are exactly what the open line lost beside what was filed. It is scaled
+from zero rather than to its own range, because a day nothing closed is a reading:
+on its own range 5, 6, 5, 6 draws the sawtooth 0, 6, 0, 6 does. The bold figure is
+today's count, the dot drawn larger, as the open chart's is its last point; the
+week's total is the muted text beside it. Its muted line says done and dropped
+both count, since `closed_at` is set by either and the label alone reads as
+"completed"; a close undone by a reopen is on no day, for the reason above. The
+page wraps the pair in one box so they wrap and align together, which at 1280px
+puts them on a second row of the card.
+
 **The three ways of having nothing are three different screens, and none of them
 is an empty list.** A board with nothing on it says a task is a brief anybody —
 the orchestrator, a workflow block, a work cycle, the operator — can file, and

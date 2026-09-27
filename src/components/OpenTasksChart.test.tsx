@@ -2,8 +2,11 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
+  ClosedTasksChart,
   OpenTasksChart,
+  closedTaskSeries,
   openTaskSeries,
+  type ClosedTasksPoint,
   type OpenTasksPoint,
 } from "./OpenTasksChart";
 // The component's own formatter, so the label's date cannot drift from what is
@@ -23,6 +26,8 @@ import { fmtDate } from "../lib/format";
  *    sample instant is closed at it; one filed at it is open at it.
  *  - A flat series scaled by its own zero range, which is `NaN` in every
  *    coordinate and draws nothing at all over figures that still look right.
+ *  - A close counted on both days its instant borders, or on neither, which
+ *    moves one task between two bars that each still look plausible.
  *
  * The zone is pinned for the file so the day boundaries are asserted as UTC
  * instants — the thing a wrong cut would move — rather than against a local
@@ -176,4 +181,104 @@ test("a flat series, zero included, draws a line rather than NaN", () => {
 test("says the counts are rebuilt rather than recorded", () => {
   const html = renderToStaticMarkup(<OpenTasksChart series={seriesOf(Array(8).fill(1))} />);
   assert.match(html, /Rebuilt from when each task was filed and closed/);
+});
+
+function closedCounts(tasks: ReturnType<typeof task>[], now = NOW): number[] {
+  return closedTaskSeries(tasks, now).map((point) => point.closed);
+}
+
+test("closes are counted per local day for the week, today so far", () => {
+  const series = closedTaskSeries([], NOW);
+  assert.deepEqual(
+    series.map((point) => point.at),
+    [21, 22, 23, 24, 25, 26].map(endOfSeptemberDay).concat(NOW),
+  );
+  assert.deepEqual(series.map((point) => point.closed), [0, 0, 0, 0, 0, 0, 0]);
+
+  const filed = Date.UTC(2026, 8, 1);
+  const midday = (day: number) => Date.UTC(2026, 8, day, 10, 0);
+  assert.deepEqual(
+    closedCounts([
+      task(filed, midday(22)),
+      task(filed, midday(22)),
+      task(filed, midday(25)),
+      task(filed, NOW - HOUR),
+      // Still open, closed before the week, and closed after now: none count.
+      task(filed),
+      task(filed, midday(20)),
+      task(filed, NOW + HOUR),
+    ]),
+    [0, 2, 0, 0, 1, 0, 1],
+  );
+});
+
+test("a close at a day's last millisecond is that day's, and only that day's", () => {
+  const filed = Date.UTC(2026, 8, 1);
+  const end23 = endOfSeptemberDay(23);
+  assert.deepEqual(closedCounts([task(filed, end23)]), [0, 0, 1, 0, 0, 0, 0]);
+  assert.deepEqual(closedCounts([task(filed, end23 + 1)]), [0, 0, 0, 1, 0, 0, 0]);
+  // The week's first instant ends the day before it, which is not in it.
+  assert.deepEqual(
+    closedCounts([task(filed, endOfSeptemberDay(20))]),
+    [0, 0, 0, 0, 0, 0, 0],
+  );
+});
+
+test("a close is filed under its local day, not its UTC one", () => {
+  // 00:30 CEST on the 22nd, which is still the 21st in UTC.
+  const closed = Date.UTC(2026, 8, 21, 22, 30);
+  assert.deepEqual(
+    closedCounts([task(Date.UTC(2026, 8, 1), closed)]),
+    [0, 1, 0, 0, 0, 0, 0],
+  );
+});
+
+test("the week's closes are what the open line lost beside what was filed", () => {
+  const at = (day: number, hour: number) => Date.UTC(2026, 8, day, hour);
+  const tasks = [
+    task(at(1, 9)),
+    task(at(1, 9), at(21, 9)),
+    task(at(19, 9), at(26, 21)),
+    task(at(22, 9), at(22, 15)),
+    task(at(24, 9)),
+    task(at(24, 9), NOW - HOUR),
+    task(at(10, 9), at(15, 9)),
+  ];
+  const open = openTaskSeries(tasks, NOW).map((point) => point.open);
+  const weekStart = openTaskSeries([], NOW)[0].at;
+  const filed = tasks.filter((t) => t.createdAt > weekStart).length;
+  const closed = closedCounts(tasks).reduce((sum, n) => sum + n, 0);
+  assert.equal(closed, 4);
+  assert.equal(open[open.length - 1] - open[0], filed - closed);
+});
+
+function closedSeriesOf(counts: number[]): ClosedTasksPoint[] {
+  return counts.map((closed, i) => ({
+    at: i === counts.length - 1 ? NOW : endOfSeptemberDay(21 + i),
+    closed,
+  }));
+}
+
+test("the closed chart states every day's count and today's and the week's", () => {
+  const counts = [3, 0, 5, 4, 2, 5, 4];
+  const html = renderToStaticMarkup(
+    <ClosedTasksChart series={closedSeriesOf(counts)} />,
+  );
+  const label = `Tasks closed on each day from ${fmtDate(endOfSeptemberDay(21))} to today: ${counts.join(", ")}`;
+  assert.ok(
+    html.includes(`aria-label="${label}"`),
+    `expected aria-label "${label}" in ${html}`,
+  );
+  assert.match(html, />4<\/span>/);
+  assert.match(html, /today, 23 over 7 days/);
+  assert.match(html, /Done and dropped both count/);
+});
+
+test("a closed week of nothing sits on the floor rather than NaN", () => {
+  const html = renderToStaticMarkup(
+    <ClosedTasksChart series={closedSeriesOf(Array(7).fill(0))} />,
+  );
+  assert.doesNotMatch(html, /NaN/);
+  // Every point at the bottom of the plot: VIEW_H 36 less PAD 3.
+  assert.match(html, /<path d="M3 33 L[\d.]+ 33 /);
 });

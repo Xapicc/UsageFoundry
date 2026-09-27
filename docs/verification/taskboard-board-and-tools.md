@@ -87,6 +87,14 @@
   console error or sideways scroll; at 390px it wrapped under the selects.
   Caveat: the rows were made up, so no real board's history has been drawn.
 
+- **The closed-per-day chart beside it, 2026-09-27**, standalone build of the
+  working tree on `b3c1a80`, `TZ=Europe/Berlin`, forty tasks filed through the
+  API with their times and statuses rewritten in Chromium: at 2056px both charts
+  sat on the selects' row, at 1280px the pair wrapped to a second row at the
+  card's right edge, at 390px each stacked under the selects; light and dark had
+  no console error or sideways scroll, and the labels read open 16→17 with 12
+  closed. Caveat: made-up rows, and the ascii skin was not rendered with rows.
+
 ## Not yet verified by hand
 
 - **No model has called the board tools over stdio**; that needs a billed run.
