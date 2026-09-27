@@ -56,7 +56,7 @@ import {
   budgetFromForm,
   modelFromForm,
 } from "./budgetPayload";
-import { runFormProblems } from "./formProblems";
+import { limitProblems, runFormProblems } from "./formProblems";
 
 /** Everything a template or an earlier run supplies to this form. */
 interface FormSeed {
@@ -1133,6 +1133,31 @@ export default function NewRunPage() {
   }
 
   async function saveTemplate() {
+    // Start's refusals about the limits, said the way Start says them. The
+    // server refuses a blank limit as well, but a template saved past one would
+    // carry no cap into the chat and the canvas, and only here can the sentence
+    // land beside the box that caused it.
+    const refused = limitProblems({
+      iterationsCapped,
+      effIterations,
+      costLimited,
+      effCost,
+      timeLimited,
+      effMinutes,
+      noTerminus,
+    });
+    if (refused.length > 0) {
+      setTouched((t) => ({
+        ...t,
+        ...Object.fromEntries(refused.map((p) => [p.focus, true])),
+      }));
+      // An earlier "Saved" left under the button would read as this press's.
+      setTemplateNote(null);
+      setTemplateError(null);
+      requestAnimationFrame(() => focusControl(refused[0].focus));
+      return;
+    }
+
     const name = templateName.trim();
     // Typing an existing name is how an edit is asked for. Matched
     // case-insensitively because the unique index is, so the alternative is a

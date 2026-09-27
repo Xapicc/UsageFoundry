@@ -144,6 +144,19 @@ export type TemplateNormalization =
 /* Validation — pure, and the reason this file has a test              */
 /* ------------------------------------------------------------------ */
 
+/** The two limits whose blank box would otherwise save as no limit at all. */
+const BLANK_LIMIT_REFUSALS: ReadonlyArray<readonly [keyof BudgetPolicy, string]> =
+  [
+    [
+      "maxRunCostUSD",
+      "Enter an amount above $0, or switch the spending limit off — a blank box saves a template with no spending limit at all.",
+    ],
+    [
+      "maxDurationMinutes",
+      "Enter a number of minutes, or switch the time limit off — a blank box saves a template with no time limit at all.",
+    ],
+  ];
+
 /**
  * Read a template off the wire, refusing anything that could not be run.
  *
@@ -203,6 +216,20 @@ export function normalizeTemplateInput(
       return { ok: false, error: `Unknown enforcement mode: ${candidate}` };
     }
   }
+
+  // The wire says "switched on, box left blank" as `""` and "off" as `null`,
+  // and `normalizePolicy` reads both as no limit — the `null`/`""`/`0` rule it
+  // keeps for every other caller. Here the difference is kept: the run form
+  // refuses a blank box at Start, and a template saved from the same form
+  // would otherwise carry no cap into the chat and the canvas, which inherit
+  // its guards with no form in front of them. `maxIterations` is not on this
+  // list because a blank one already fails closed, to one cycle.
+  const blankLimit = BLANK_LIMIT_REFUSALS.find(
+    ([key]) =>
+      typeof rawBudget[key] === "string" &&
+      (rawBudget[key] as string).trim() === "",
+  );
+  if (blankLimit) return { ok: false, error: blankLimit[1] };
 
   const budget = normalizePolicy(rawBudget);
 

@@ -1,6 +1,10 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { type RunFormState, runFormProblems } from "./formProblems";
+import {
+  type RunFormState,
+  limitProblems,
+  runFormProblems,
+} from "./formProblems";
 
 /**
  * Every refusal the new-run form can make, pinned one at a time.
@@ -116,6 +120,26 @@ test("a limit switched on with an unreadable box is refused, and off is not", ()
     [],
   );
   assert.deepEqual(focuses({ ...CLEAN, costLimited: false, effCost: null }), []);
+});
+
+test("Save refuses the limits in Start's own words, and nothing about the target", () => {
+  // Save reads `limitProblems` and Start reads `runFormProblems`; a template
+  // saved past a refusal Start would give carries no cap into the chat and the
+  // canvas, so the two must not drift apart.
+  const form: RunFormState = {
+    ...CLEAN,
+    mountId: "",
+    prompt: "",
+    effCost: null,
+    timeLimited: true,
+    effMinutes: null,
+  };
+  const atStart = runFormProblems(form).filter((p) =>
+    ["iters", "cost", "dur", "cycles-on"].includes(p.focus),
+  );
+  assert.deepEqual(limitProblems(form), atStart);
+  assert.deepEqual(limitProblems(form).map((p) => p.focus), ["cost", "dur"]);
+  assert.deepEqual(limitProblems(CLEAN), []);
 });
 
 test("a run with no terminus is refused at the switch, not at the box", () => {

@@ -96,6 +96,56 @@ export function runFormProblems(v: RunFormState): Problem[] {
       immediate: true,
     });
   }
+  problems.push(...limitProblems(v));
+  // Above 100 is not a stricter guard, it is a hundredth of one: the form sends
+  // a fraction and `normalizePolicy` divides anything over 1 by a hundred
+  // again, so a typed 150 arrives as 1.5%.
+  if (
+    v.maxSessionFraction !== "" &&
+    !(v.effSessionPct !== null && v.effSessionPct <= 100)
+  ) {
+    problems.push({
+      focus: "sess",
+      message: "The 5-hour guard has to be between 1 and 100 percent.",
+      immediate: true,
+    });
+  }
+  if (
+    v.maxWeeklyFraction !== "" &&
+    !(v.effWeeklyPct !== null && v.effWeeklyPct <= 100)
+  ) {
+    problems.push({
+      focus: "wk",
+      message: "The weekly guard has to be between 1 and 100 percent.",
+      immediate: true,
+    });
+  }
+  return problems;
+}
+
+/** What `limitProblems` reads: the limits, and nothing about where the run works. */
+export type LimitState = Pick<
+  RunFormState,
+  | "iterationsCapped"
+  | "effIterations"
+  | "costLimited"
+  | "effCost"
+  | "timeLimited"
+  | "effMinutes"
+  | "noTerminus"
+>;
+
+/**
+ * The refusals about the limits alone, in the order `runFormProblems` gives them.
+ *
+ * Split out because Save reads them too. A template is saved from this form
+ * and inherited by the chat and the canvas with no form in front of them, so a
+ * limit switched on with its box blank has to be refused at Save in the same
+ * words as at Start — the server refuses it as well, but only here can the
+ * sentence land beside the box.
+ */
+export function limitProblems(v: LimitState): Problem[] {
+  const problems: Problem[] = [];
   if (v.iterationsCapped && v.effIterations === null) {
     problems.push({
       focus: "iters",
@@ -127,29 +177,6 @@ export function runFormProblems(v: RunFormState): Problem[] {
       focus: "cycles-on",
       message:
         "Set a time limit, or cap the work cycles. Nothing else here only moves one way, so without one of them nothing would ever end this run.",
-      immediate: true,
-    });
-  }
-  // Above 100 is not a stricter guard, it is a hundredth of one: the form sends
-  // a fraction and `normalizePolicy` divides anything over 1 by a hundred
-  // again, so a typed 150 arrives as 1.5%.
-  if (
-    v.maxSessionFraction !== "" &&
-    !(v.effSessionPct !== null && v.effSessionPct <= 100)
-  ) {
-    problems.push({
-      focus: "sess",
-      message: "The 5-hour guard has to be between 1 and 100 percent.",
-      immediate: true,
-    });
-  }
-  if (
-    v.maxWeeklyFraction !== "" &&
-    !(v.effWeeklyPct !== null && v.effWeeklyPct <= 100)
-  ) {
-    problems.push({
-      focus: "wk",
-      message: "The weekly guard has to be between 1 and 100 percent.",
       immediate: true,
     });
   }
