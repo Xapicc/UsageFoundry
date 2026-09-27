@@ -876,3 +876,43 @@ export function matchesLogFilter(
     entry.text.toLowerCase().includes(query)
   );
 }
+
+/** Which of the two things that park a run parked this one. */
+export type ParkTrigger = "guard" | "refusal";
+
+/**
+ * What parked a run, read off the newest event that parks one; null when none
+ * has arrived.
+ *
+ * The run page's paused card used to name the guard for every park — "your
+ * 5-hour window reached the percentage this run was told to step aside at" —
+ * and on a stock install that guard cannot fire: it needs a per-run fraction
+ * and a 5-hour ceiling, and ceilings default to null. The park that does fire
+ * there is the provider refusing the cycle, so the one sentence explaining the
+ * state blamed a percentage the operator never set, beside a Guards list
+ * reading "no guard".
+ *
+ * Off each event's own payload, never the wording of `stop_reason` or of a
+ * message, which is prose and gets reworded. Newest first, because a run can
+ * park more than once and by both routes. A guard verdict the run carried past
+ * (`enforceable: false`) parked nothing, and `!== false` rather than `=== true`
+ * because the mid-cycle guard's emit omits the field. An `error` parks only when
+ * it says `waiting`: an allowance refusal that has spent `MAX_PAUSES_PER_RUN`
+ * carries `usageLimit` too, and fails the run instead.
+ */
+export function parkTrigger(events: readonly RunEventDTO[]): ParkTrigger | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    const p = e.payload ?? {};
+    if (
+      e.kind === "budget" &&
+      p.allowed === false &&
+      p.disposition === "pause" &&
+      p.enforceable !== false
+    ) {
+      return "guard";
+    }
+    if (e.kind === "error" && p.waiting === true) return "refusal";
+  }
+  return null;
+}

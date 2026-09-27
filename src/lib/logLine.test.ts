@@ -6,6 +6,7 @@ import {
   describeEvent,
   logFilterActive,
   matchesLogFilter,
+  parkTrigger,
   toolArgs,
   type LogFilter,
 } from "./logLine";
@@ -411,5 +412,76 @@ describe("describeEvent — a guard verdict the run may not be ended on", () => 
       assert.equal(entry.tone, "warn");
       assert.match(entry.text, /^stop — /);
     }
+  });
+});
+
+describe("parkTrigger — which of the two parks put a run where it is", () => {
+  const guardPark = budgetEvent({
+    allowed: false,
+    code: "session_fraction",
+    disposition: "pause",
+    reason: "5-hour window at 80%, over this run's 75%.",
+  });
+  // The mid-cycle guard's own emit, which carries no `enforceable` at all.
+  const liveGuardPark = budgetEvent({
+    allowed: false,
+    live: true,
+    code: "session_fraction",
+    disposition: "pause",
+    reason: "5-hour window at 80%, over this run's 75%.",
+  });
+  const refusal = (waiting: boolean): RunEventDTO => ({
+    id: 3,
+    runId: "r",
+    ts: 0,
+    kind: "error",
+    payload: {
+      message: "Claude AI usage limit reached",
+      usageLimit: true,
+      waiting,
+      retrying: false,
+    },
+  });
+
+  it("names the provider's refusal, which is the park a stock install gets", () => {
+    assert.equal(parkTrigger([refusal(true)]), "refusal");
+  });
+
+  it("names the guard for either of its emits", () => {
+    assert.equal(parkTrigger([guardPark]), "guard");
+    assert.equal(parkTrigger([liveGuardPark]), "guard");
+  });
+
+  it("answers with the newest park when a run has parked both ways", () => {
+    assert.equal(parkTrigger([guardPark, refusal(true)]), "refusal");
+    assert.equal(parkTrigger([refusal(true), guardPark]), "guard");
+  });
+
+  it("does not credit the guard with a verdict the run carried past", () => {
+    // A `no_ceiling` pause verdict is recorded and the cycle runs anyway, so a
+    // later refusal park is still the refusal's.
+    const carried = budgetEvent({
+      allowed: false,
+      code: "no_ceiling",
+      disposition: "pause",
+      enforceable: false,
+      reason: "nothing to read",
+    });
+    assert.equal(parkTrigger([refusal(true), carried]), "refusal");
+    assert.equal(parkTrigger([carried]), null);
+  });
+
+  it("does not read a refusal that failed the run, or a stop, as a park", () => {
+    assert.equal(parkTrigger([refusal(false)]), null);
+    assert.equal(
+      parkTrigger([
+        budgetEvent({ allowed: false, code: "run_cost", disposition: "stop", reason: "x" }),
+      ]),
+      null,
+    );
+  });
+
+  it("says nothing before the events that would say have arrived", () => {
+    assert.equal(parkTrigger([]), null);
   });
 });
