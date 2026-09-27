@@ -78,21 +78,18 @@ export function InstallSpendCard({ install }: { install: InstallSpendDTO }) {
         detail={detail}
       />
       <Hint>
-        Runs, workflow blocks and chat turns together. A run still going, or one
-        that finished inside the window, counts its whole spend, so what this
-        card shows is an upper bound on the window rather than the
-        window&rsquo;s own share: it over-counts rather than under-counts, the
-        safe direction for a ceiling and the wrong one for a report.{" "}
+        Runs, workflow blocks and chat turns. A run alive inside the window
+        counts its whole spend, so this is an upper bound: it over-counts rather
+        than under-counts.{" "}
         {limitUSD === null ? (
           <>
-            Every guard in this app bounds one run, one workflow or one chat
-            turn. Nothing bounds the total until you{" "}
+            Nothing bounds this total until you{" "}
             <Link href="/settings">set an install limit</Link>.
           </>
         ) : (
           <>
-            Not comparable with the meters above: those measure every transcript
-            on this machine against Anthropic&rsquo;s windows.
+            Not comparable with the meters above, which cover every transcript on
+            this machine.
           </>
         )}
       </Hint>
