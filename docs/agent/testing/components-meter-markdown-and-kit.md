@@ -22,7 +22,7 @@ So the assertion is on the title. `— first-party` is now the whole of the card
 
 The shared-`LiveTelemetryTotals` case went in the same pass and has no replacement: the per-run table moved onto the top-row card and the band under it was deleted, so there is one rendering of the window on the page and "these two figures cannot disagree" has one party. A card that contains its own markup is not an assertion, and a test saying so would read as cover.
 
-`Markdown.test.tsx`'s wikilink cases are the same bar reached from the knowledge page: a `[[link]]` the renderer does not recognise falls through as ordinary prose, and a vault with 183 dangling links then reads as a vault with none — on the page whose reason for existing is to find them.
+`Markdown.test.tsx`'s wikilink cases are the same bar reached from the knowledge page: a `[[link]]` the renderer does not recognise falls through as ordinary prose, and a vault's dangling links then read as none — on the page whose reason for existing is to find them. The 183 this quoted was counted with the resolver defect [knowledge-vault-and-graph.md](knowledge-vault-and-graph.md) records; the operator's vault had one on 2026-09-27.
 
 So both signs are pinned, a resolved link *and* an unresolved one, along with the third answer that is neither: a target that exists and is not a note, which marked broken would report a healthy vault as a broken one.
 

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type {
+  KnowledgeBacklinkDTO,
   KnowledgeBrokenLinkDTO,
   KnowledgeBrowseDTO,
   KnowledgeEdgeDTO,
@@ -940,6 +941,13 @@ function shortest(candidates: readonly string[]): string {
  *    adding an alias to one note silently repoints every link to another.
  *
  * Ties inside a step go to the shortest path, which is Obsidian's own rule.
+ *
+ * A target with a non-note extension is tried as an attachment first, and a
+ * miss there falls through to the notes with the whole key as the name.
+ * `path.extname` cannot tell `diagram.png` from `Node.js HTTP Server
+ * Documentation`, whose "extension" is `.js http server documentation`, and
+ * stopping at the attachment miss is what made 705 of the 706 broken links on
+ * the operator's vault name notes that exist.
  */
 function resolveTarget(
   r: Resolver,
@@ -954,10 +962,9 @@ function resolveTarget(
     if (byName?.length) return { kind: "attachment", rel: shortest(byName) };
     const byPath = r.attachmentByPath.get(key);
     if (byPath?.length) return { kind: "attachment", rel: shortest(byPath) };
-    return null;
   }
 
-  const bare = ext ? key.slice(0, -ext.length) : key;
+  const bare = NOTE_EXTENSIONS.has(ext) ? key.slice(0, -ext.length) : key;
   const byName = r.byName.get(path.basename(bare));
   if (byName?.length) return { kind: "note", rel: shortest(byName) };
   const byPath = r.byPath.get(bare);
@@ -1306,8 +1313,21 @@ export function knowledgeNoteView(index: KnowledgeIndex, rel: string): Knowledge
     headings: note.headings,
     body,
     outgoing: index.outgoing.get(id) ?? [],
-    incoming: index.backlinks.get(id) ?? [],
+    incoming: (index.backlinks.get(id) ?? []).map((edge) => withSourceNote(index, edge)),
   };
+}
+
+/** An edge into a note, carrying the note it was written in by path and title. */
+function withSourceNote(index: KnowledgeIndex, edge: KnowledgeEdgeDTO): KnowledgeBacklinkDTO {
+  const source = index.nodes.get(edge.from);
+  // `buildIndex` draws edges only out of notes, and makes every note's node
+  // before the first edge, so this is a broken index, not a vault to render.
+  if (source?.kind !== "note" || source.path === null) {
+    throw new Error(
+      `A backlink starts at ${edge.from}, which is ${source ? `a ${source.kind} node` : "not in the index"}; every edge starts at a note`,
+    );
+  }
+  return { ...edge, fromNotePath: source.path, fromTitle: source.title };
 }
 
 /**

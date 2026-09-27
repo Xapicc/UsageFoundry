@@ -42,7 +42,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Git and review | [git-and-review.md](verification/git-and-review.md) | 11 | 8 |
 | Agents, templates and models | [agents-templates-and-models.md](verification/agents-templates-and-models.md) | 14 | 7 |
 | Other providers | [other-providers.md](verification/other-providers.md) | 6 | 3 |
-| Knowledge and plugins | [knowledge-and-plugins.md](verification/knowledge-and-plugins.md) | 14 | 11 |
+| Knowledge and plugins | [knowledge-and-plugins.md](verification/knowledge-and-plugins.md) | 16 | 11 |
 | Dreaming | [dreaming.md](verification/dreaming.md) | 2 | 1 |
 | Retention | [retention.md](verification/retention.md) | 2 | 2 |
 | Security and sandboxing | [security-and-sandboxing-cli-sandbox.md](verification/security-and-sandboxing-cli-sandbox.md) — the CLI's sandbox, bwrap, seccomp, mount points and the write set | 16 | 11 |
@@ -58,4 +58,4 @@ measurement under *Verified* and cut the item down to what is still open.
 | Interface | [interface-narrow-viewports.md](verification/interface-narrow-viewports.md) — pages at 390px, layout sweeps and smoke-pages | 15 | 9 |
 | Interface | [interface-canvases.md](verification/interface-canvases.md) — the graph canvases, touched map and replay | 5 | 2 |
 | Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads | 13 | 10 |
-| **Total** | | **353** | **225** |
+| **Total** | | **355** | **225** |

@@ -12,7 +12,9 @@ The resolution order is the other half and the sharper one: basename, then path,
 
 Put aliases first and giving one note an alias equal to another note's filename silently repoints every link written with that filename — an edge nobody wrote, drawn confidently, with nothing anywhere to report it — so that inversion is its own case against a hand-built two-note fixture.
 
-The broken-link cases are there because the tempting implementation drops what it cannot resolve, which turns "this vault has 212 dangling links" into a graph that reads as complete, and the complete-looking one is the reading an operator would act on.
+The broken-link cases are there because the tempting implementation drops what it cannot resolve, which turns a vault's dangling links into a graph that reads as complete, and the complete-looking one is the reading an operator would act on. Measured read-only on 2026-09-27 at `17ae20f`, the operator's 1,711-note vault has one. The 212 this sentence quoted until then was counted by a resolver that took a dot in a note's name for an attachment extension, the defect that made 705 of the 706 it reported that day false; so the dotted-name case is the same bar from the other side, because a link reported broken that is not sends somebody to fix a note that exists.
+
+The backlinks case pins that a note view's incoming edge names the note it was written in. Every other field on the edge that names a note names the open one, and a panel drawn from them read "Sources MOC" in each of the hundred rows it showed on that note's own page, 1,777 backlinks answering "which notes link here" with nothing.
 
 And the cache cases pin the only claim that makes the walk affordable — an unchanged vault returns the *same object*, an edited note invalidates and the notes beside it do not — because a cache that misses an edit shows yesterday's graph indefinitely with a "last scan" beside it saying otherwise.
 

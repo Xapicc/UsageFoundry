@@ -12,6 +12,7 @@ import {
   knowledgeBrowse,
   knowledgeHealth,
   knowledgeIndex,
+  knowledgeNoteView,
   normalizeSubpath,
   noteFolder,
   noteType,
@@ -334,6 +335,30 @@ test("an embedded attachment resolves to an attachment node, not a phantom", () 
   );
 });
 
+test("a dot in a note's name is not an attachment extension", () => {
+  // `path.extname` reads `.js Guide` off `Node.js Guide`, and a resolver that
+  // took that as an attachment's extension never tried the notes: on the
+  // operator's vault 705 of 706 broken links named a note that exists. The
+  // attachment is still tried first, so `[[img.png]]` keeps meaning the file.
+  const notes = new Map<string, ParsedNote>();
+  const add = (rel: string, raw: string) => {
+    notes.set(rel, { ...parseNote(rel, raw), abs: rel, mtimeMs: 0, size: raw.length });
+  };
+  add("Node.js Guide.md", "# Node.js Guide");
+  add("WCAG 2.2 (W3C 2024).md", "# WCAG");
+  add("Source.md", "See [[Node.js Guide]], [[WCAG 2.2 (W3C 2024)]] and ![[img.png]].");
+  const attachments = new Map([["img.png", "/nowhere/img.png"]]);
+
+  const idx = buildIndex("/nowhere", notes, attachments, false);
+  const out = idx.outgoing.get("note:Source.md") ?? [];
+  const to = (target: string) => out.find((e) => e.target === target)?.to;
+
+  assert.equal(to("Node.js Guide"), "note:Node.js Guide.md", "a dotted note name did not resolve");
+  assert.equal(to("WCAG 2.2 (W3C 2024)"), "note:WCAG 2.2 (W3C 2024).md");
+  assert.equal(to("img.png"), "attachment:img.png", "an attachment stopped resolving as one");
+  assert.deepEqual(idx.brokenLinks, [], "a link to something that exists was reported as broken");
+});
+
 /* -------------------------------- graph --------------------------------- */
 
 test("the walk skips dot-directories and the shared skip set", () => {
@@ -385,6 +410,22 @@ test("backlinks are the incoming edges, and degrees agree with them", () => {
     (idx.outgoing.get(id) ?? []).length,
     "outDegree disagrees with the outgoing edges",
   );
+});
+
+test("a note's backlinks name the note each link was written in", () => {
+  // Every field of an edge that names a note (`target`, `label`, `toNotePath`)
+  // names the note being viewed when the edge comes *in*, so a Backlinks
+  // panel drawn from them lists the open note once per link, each row a link
+  // to the page it is already on.
+  const idx = synthetic([
+    { rel: "Alpha.md", raw: ["---", "title: The Alpha note", "---", "", "See [[Beta]]."].join("\n") },
+    { rel: "Beta.md", raw: "# Beta" },
+  ]);
+  const view = knowledgeNoteView(idx, "Beta.md");
+  assert.ok(view);
+  assert.equal(view.incoming.length, 1);
+  assert.equal(view.incoming[0].fromNotePath, "Alpha.md", "the backlink does not open the linking note");
+  assert.equal(view.incoming[0].fromTitle, "The Alpha note");
 });
 
 test("search finds a note by title, alias, tag and path", () => {
