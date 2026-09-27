@@ -1,0 +1,190 @@
+# Verification: Security and sandboxing — the privilege split, credentials, auth and containment
+
+[← Verification index](../verification.md)
+
+## Verified
+
+- **Child environment, dumped from a real spawn:** 97 variables, `PATH` and
+  `HOME` intact; `ANTHROPIC_ADMIN_KEY`, `UF_AUTH_TOKEN` and `OTEL_*` absent.
+
+- **Path traversal rejected in every form tested:** `../`, an absolute path
+  outside all mounts, an escaping symlink, another mount's folder, an unknown
+  mount id, an unmounted workspace, a disabled slot.
+
+- **The prune has to run as the server, not the agent uid, 2026-08-24.** Under
+  `setpriv`, a child at `UF_AGENT_UID` raises `PermissionError` on
+  `WINNOW_DATA_DIR`, because transcripts are `0600 root` and `DATA_DIR` is
+  `0700 root` on this install. `spawnPrune` is the only spawn that omits
+  `childCredentials()`.
+
+- **The gap-register pass, 2026-09-06**, dev server on an isolated `DATA_DIR`:
+  logout-all without a credential is 401 and revokes nothing; with
+  `UF_STATUS_TOKEN` set, `/api/status` takes a minted `uf_session` but not the
+  master token as a cookie. `npm test` 2,268/2,269, the miss
+  `backupRestore.test.ts`'s `ulimit -f` case, which fails on this macOS host.
+
+- **The entrypoint drops the intake filter to the agent uid, under a harness
+  only.** The real `docker-entrypoint.sh` with a recording `setpriv` and `uv`
+  recorded `setpriv --reuid=1000 --regid=1000 --clear-groups env -i …` and a
+  seven-entry environment holding none of the four credentials set. A
+  recording `uv` is not `uv`, and none of it boots a container.
+
+- **`UF_LOCK_CLAUDE_HOME`'s entrypoint passed an 18-scenario `dash` harness.**
+  Stubbed `chown`/`stat`/`id`/`setpriv`; every branch printed right and chowned
+  nothing wrong. Control flow only, not a kernel: no ownership changed. CLI
+  2.1.226 (throwaway config dir) reaches the API with an unwritable top level
+  whose entries exist, and rewrites in place with `O_TRUNC` on `EACCES`.
+
+- **Under `UF_LOCK_CLAUDE_HOME`'s layout an OAuth refresh is never attempted and
+  no credential write lands, simulated on CLI 2.1.280, 2026-09-27.** A
+  throwaway `CLAUDE_CONFIG_DIR` laid out like the lock (`CLAUDE_HOME_HANDBACK`'s
+  entries present and writable, `settings.json` 0440), its directory `chmod
+  0550` by its own owner in place of root:agent-gid 0750, which gives the same
+  `EACCES` on a create beside a file; control 0750. With a fake expired
+  `claudeAiOauth` token, a scrubbed env and `HTTPS_PROXY` at a loopback
+  listener that logged each `CONNECT` and refused it, `claude -p` tried
+  `platform.claude.com:443` 3 times in the control ("OAuth refresh failed
+  (expected)" ×3 in `--debug-file`) and 0 times locked, with no line saying so:
+  the refresh first takes `<config dir>/.oauth_refresh.lock` (`K_r`, byte
+  192852671) and returns `lock_error` before the token request. A write through
+  `Un().mutate`, the call the refresh's save makes, driven by `claude mcp add
+  --client-secret`, replaced `.credentials.json` by rename in the control (inode
+  53168190 to 53168214) and left inode, mtime and hash alone locked, failing on
+  `mkdir .storage-write.lock` rather than at `cQ`'s temp file as predicted; only
+  the CLI's stdout said so, and no arm's debug log names `.credentials.json`.
+  `CLAUDE_SECURESTORAGE_CONFIG_DIR` at a writable sibling restored both under
+  0550 (3 token attempts, write by rename). No mock token pair was possible: a
+  127.0.0.1 `CLAUDE_CODE_CUSTOM_OAUTH_URL` is off the three approved hosts (byte
+  ~190188853) and makes every command exit 0 with no output. So the refresh
+  token is never spent and renewal itself fails from the access token's expiry.
+  Caveat: not the lock's real uid/gid layout, no real provider refresh, and the
+  save after a successful refresh (`ENn`) is read, not run.
+
+## Not yet verified by hand
+
+- **What an authenticated work cycle replaces under `~/.claude` is unwatched,
+  2026-09-27.** *Verified* above reads each deny-listed file's write method off
+  the binary and reproduces the strip on `.config.json`, but both scratch runs
+  stopped at "Not logged in", so two things rest on the binary alone: that an
+  authenticated headless cycle never rewrites `settings.json`, and that an OAuth
+  refresh strips `.credentials.json`'s read-deny bind. Settle from an
+  authenticated container by recording
+  `stat -c '%n %i' ~/.claude/settings.json ~/.claude/.credentials.json` before
+  and after a real work cycle, and, from inside a sandboxed session there (the
+  credential file reads as a `/dev/null` character device), polling that inode
+  and a one-byte read across a token refresh: the read should stop returning the
+  device in the step the inode changes, and the `settings.json` inode should not
+  move at all.
+
+- **The intake filter's uid drop has never been booted.** Unseen: the filter
+  running as the agent uid (`docker compose exec usagefoundry ps -o uid,cmd |
+  grep 'winnow filter'` must not say 0), the `/var/lib/winnow` ledger growing
+  after a cycle (a failed write is silent), and uid 1000 refused `filter-off`.
+
+- **`/app`'s ownership has never been read off a built image** since the
+  `Dockerfile` stopped chowning it to `node` (#200); `deployment.test.ts` pins
+  the absence. Settle: `stat -c '%U %n' /app /app/server.js
+  /app/scripts/discord-relay.mjs` must say `root` thrice, a `touch` as the
+  container's `UF_AGENT_UID` must be refused, and the boot log stay healthy.
+
+- **The privilege split's probes (#79, #80, #87, #83) have never been run
+  against a container.** `resolveChildCredentials`, the compose/Dockerfile
+  pair, the capability file and `telemetryEnv` are unit-tested; one uid cannot
+  observe the MCP refusal.
+  Also unrun: an isolated run committing as the dropped uid, and macOS Docker
+  Desktop's mount remapping. Known open: agents can read `.credentials.json`.
+  ```sh
+  docker compose logs usagefoundry | grep 'privilege separation'
+  # expect "on: children run as 1000:1000, chat and block turns as 1000:65533,
+  # server as 0"; uid below read in-container (#147, reshaped 2026-09-08, not re-run)
+  uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
+  # #79 the server's environment: expect a permission error, not a count
+  docker compose exec --user "$uid" usagefoundry sh -c \
+    'tr "\0" "\n" < /proc/$(pgrep -f "next-server" | head -1)/environ | grep -c UF_'
+  # #80 the database, fresh and upgraded volume: expect ok twice
+  docker compose exec --user "$uid" usagefoundry sh -c \
+    'test -w /data/usagefoundry.db && echo BAD-writable || echo ok'
+  docker compose exec --user "$uid" usagefoundry sh -c \
+    'test -w /data/server.lock && echo BAD-writable || echo ok'
+  # #87 mid chat turn: nothing from the first ls, a permission error from the second
+  docker compose exec --user "$uid" usagefoundry sh -c \
+    'ls /tmp/uf-mcp-* 2>/dev/null; ls /run/uf-mcp 2>/dev/null; echo "exit=$?"'
+  # #87 the read: expect "ok: not readable", directory group 65533; no
+  # --mcp-config argv found proves nothing, so probe while the turn works
+  docker compose exec --user "$uid" usagefoundry sh -c '
+    for p in $(ls /proc | grep "^[0-9][0-9]*$"); do
+      cfg=$(tr "\0" "\n" < /proc/$p/cmdline 2>/dev/null |
+            grep -A1 -x -- --mcp-config | tail -1)
+      case "$cfg" in /run/uf-mcp/*)
+        echo "pid $p -> $cfg"
+        if [ -r "$cfg" ]; then echo "BAD-readable, $(wc -c < "$cfg") bytes"
+        else echo "ok: not readable"; fi ;;
+      esac
+    done'
+  # #83 task the agent with `env | grep OTEL_EXPORTER_OTLP_HEADERS`: expect a
+  # bearer that is not UF_AUTH_TOKEN
+  ```
+
+- **The `/api/mcp` middleware exemption under a real `UF_AUTH_TOKEN`.** Only
+  the route's capability check ran, with auth off (no edge runtime there).
+
+- **Root-owning `~/.claude` (`UF_LOCK_CLAUDE_HOME=1`) has never run in a
+  container.** Unknown: that the kernel enforces it (`fakeowner` on macOS may
+  void it), that cycles still meter, what it does to the host's `~/.claude`.
+  Not read-only: credentials stay readable; `remote-settings.json` and
+  `policy-limits.json`, not fully traced, stay agent-owned. Steps, none run:
+  ```sh
+  # 0. the shipped state first — with UF_LOCK_CLAUDE_HOME unset, nothing changes
+  docker compose up -d --build
+  docker compose logs usagefoundry | grep UF_LOCK_CLAUDE_HOME    # expect nothing
+  uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
+  docker compose exec --user "$uid" usagefoundry sh -c \
+    'test -w ~/.claude/settings.json && echo BAD-writable'   # expect BAD-writable
+
+  # then set UF_LOCK_CLAUDE_HOME=1 in .env and restart
+  docker compose up -d
+  docker compose exec usagefoundry sh -c 'echo "[$UF_LOCK_CLAUDE_HOME]"'
+  # expect [1]: compose forwards by name and has no env_file
+  docker compose logs usagefoundry | grep UF_LOCK_CLAUDE_HOME
+  # expect "…is root-owned: a run cannot rewrite or replace its settings.json…"
+
+  # 1 + 2. the two the sketch names (09-implementation-sketch.md:274–284)
+  docker compose exec --user "$uid" usagefoundry \
+    sh -c 'echo x >> ~/.claude/settings.json'                    # expect denied
+  docker compose exec --user "$uid" usagefoundry \
+    sh -c 'rm -f ~/.claude/settings.json; ls ~/.claude/settings.json'
+                                              # expect denied, and still listed
+  # if the append *succeeds*, the lock is not in force and your settings.json is
+  # no longer valid JSON — remove the stray line before the next session reads it
+
+  # 3. and the half that is not a permission check — the metering path
+  docker compose exec --user "$uid" usagefoundry \
+    sh -c 'ls ~/.claude/projects >/dev/null && touch ~/.claude/projects/.probe'
+                                                          # expect BOTH to work
+  docker compose exec --user "$uid" usagefoundry \
+    sh -c 'cat ~/.claude/settings.json >/dev/null'           # expect it to work
+  # then run a real work cycle and confirm the dashboard's figures move
+
+  # from a host shell, not docker compose exec
+  ls -ld ~/.claude ~/.claude/settings.json
+  # Linux: expect root:<your gid> 0750, and root:<your gid> 0640 on the file
+  claude -p 'say hi'                               # expect a normal answer
+
+  # the way back: clear UF_LOCK_CLAUDE_HOME in .env, then
+  docker compose up -d
+  docker compose logs usagefoundry | grep UF_LOCK_CLAUDE_HOME
+  # expect "off — gave /home/node/.claude back to <uid>:<gid>"
+  # and if that ever fails to run — two paths, no -R:
+  sudo chown "$(id -u):$(id -g)" ~/.claude ~/.claude/settings.json
+  sudo chmod 0700 ~/.claude && sudo chmod 0600 ~/.claude/settings.json
+  ```
+
+- **That the lock stops a real OAuth refresh is simulated only, 2026-09-27.**
+  *Verified* above found it on a 0550 stand-in with fake tokens; the lock's own
+  root:agent-gid 0750 and a real login were not tried. Settle in a container
+  with `UF_LOCK_CLAUDE_HOME=1` and a login whose access token has expired:
+  record `stat -c '%i %y' ~/.claude/.credentials.json`, run `claude -p hi
+  --debug-file /tmp/r.log` as the agent uid, and expect an auth failure, no
+  "OAuth refresh failed" line and the inode and mtime unchanged; then the same
+  with the lock off, which should rewrite the file. The refresh token is never
+  spent while locked, so turning the lock off recovers the login.
