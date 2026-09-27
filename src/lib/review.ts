@@ -85,11 +85,17 @@ const REVIEW_TIMEOUT_MS = 10 * 60_000;
 /**
  * The clock for one assist, or none at all.
  *
- * A resolution is unbounded on purpose — see above. The escapes it leaves are
- * the ones that already exist and are somebody's decision rather than a
- * timer's: stopping the queue's batch, and the process ending. Its *spend* is
+ * A resolution is unbounded on purpose (see above), and nothing else in this
+ * app stops one either: this timer is the only thing that signals an assist's
+ * child, and `cancelBatch` cancels a batch's *queued* rows while leaving the
+ * one in flight to finish. What ends a resolution is its child exiting, or a
+ * container restart taking the child down with everything else. Its *spend* is
  * bounded all the same, by `resolutionBudgetUSD` inside the CLI, which is the
- * half of a clock's job a clock could not do without ending large merges.
+ * half of a clock's job a clock could not do without ending large merges. A
+ * child that spends nothing and never exits is the part left over: it holds
+ * one of `maxConcurrentAssists` and its repository's merge worker until that
+ * restart, and `docs/agent/isolation-and-landing.md` records why that is
+ * accepted rather than timed.
  */
 const assistTimeoutMs = (kind: AssistKind): number =>
   // A validation is bounded for the review's reason and more sharply: a run is

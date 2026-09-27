@@ -97,9 +97,10 @@ export const isQueueActive = (status: QueueStatus): boolean =>
  * then said the branch could not be merged when what had actually happened was
  * that this loop stopped watching — while the child carried on spending, and
  * `after` committed or rolled back a merge nothing was waiting for any more.
- * The escapes are unchanged and each is somebody's decision rather than a
- * clock's: the resolution settles either way, `cancelBatch` takes the rest of
- * the queue, and the process ending ends the child with it.
+ * Nothing but the child ends this wait. `cancelBatch` cancels the rows still
+ * queued behind it and never signals the one running, so this loop holds its
+ * repository until the resolution settles or a container restart takes the
+ * child down with it. `resolutionBudgetUSD` bounds what it can spend meanwhile.
  */
 const RESOLVE_POLL_MS = 2_000;
 
