@@ -1547,6 +1547,67 @@ async function discardCheckout(
   await git(repoRoot, ["worktree", "remove", "--force", checkout.path], NO_CLOCK);
 }
 
+/** What undoing a resolution's merge left true, as the sentence a row carries. */
+interface Rollback {
+  /** The branch is where the resolution found it and no merge is left open. */
+  clean: boolean;
+  sentence: string;
+}
+
+/**
+ * Undo a resolution's merge, and say what is true afterwards.
+ *
+ * "Rolled back; the branch is unchanged" used to follow a `merge --abort` whose
+ * result nobody read. The case that proved it false: a Commit pressed on the
+ * Land card while the agent worked committed the open merge, markers and all,
+ * so the abort had nothing left to abort and failed, and the row reported an
+ * untouched branch whose target had just become its ancestor. The claim is
+ * therefore checked against the branch tip taken before the merge, and against
+ * the checkout, rather than inferred from having tried.
+ */
+async function rollBackResolution(
+  repoRoot: string,
+  checkout: ResolveCheckout,
+  branch: string,
+  tipBefore: string,
+): Promise<Rollback> {
+  const abort = await git(checkout.path, ["merge", "--abort"], NO_CLOCK);
+  await discardCheckout(repoRoot, checkout);
+
+  const tip = await git(repoRoot, ["rev-parse", "--verify", `refs/heads/${branch}`], NO_CLOCK);
+  if (!tip.ok) {
+    return {
+      clean: false,
+      sentence:
+        `Whether ${branch} is as the resolution found it could not be read ` +
+        `(${gitFailureLine(tip.stderr) || "unknown error"}). Check it before landing.`,
+    };
+  }
+  if (tip.stdout !== tipBefore) {
+    return {
+      clean: false,
+      sentence:
+        `Nothing was rolled back: ${branch} moved from ${tipBefore.slice(0, 8)} to ` +
+        `${tip.stdout.slice(0, 8)} while the merge was open, so something committed in ` +
+        "that checkout. Check what is on the branch before landing it.",
+    };
+  }
+  // A temporary checkout is gone with its merge, so only a slot can still be
+  // holding one.
+  const stillOpen = fs.existsSync(checkout.path) && (await mergeHeadIn(checkout.path)) !== false;
+  if (!abort.ok && stillOpen) {
+    return {
+      clean: false,
+      sentence:
+        `${branch} is unchanged, but its merge could not be rolled back ` +
+        `(${gitFailureLine(abort.stderr) || "unknown error"}), so ` +
+        `${path.basename(checkout.path)} is still in the middle of it. Run ` +
+        "`git merge --abort` there.",
+    };
+  }
+  return { clean: true, sentence: `The merge was rolled back; ${branch} is unchanged.` };
+}
+
 /**
  * Runs whose resolution is being set up.
  *
@@ -1686,6 +1747,17 @@ async function startResolution(
     return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   }
 
+  // What every rollback below is checked against. Without it "unchanged" is a
+  // guess, and refusing here costs nothing: no merge has been made yet.
+  const tipBefore = await git(repoRoot, ["rev-parse", "--verify", `refs/heads/${branch}`], NO_CLOCK);
+  if (!tipBefore.ok) {
+    await discardCheckout(repoRoot, checkout);
+    return {
+      ok: false,
+      reason: `Could not read where ${branch} stands: ${gitFailureLine(tipBefore.stderr) || "unknown error"}`,
+    };
+  }
+
   const merge = await git(checkout.path, ["merge", "--no-edit", target], NO_CLOCK);
   if (merge.ok) {
     // The preview was stale — the branches agree after all. The merge commit is
@@ -1740,20 +1812,22 @@ async function startResolution(
       // keep its own error: reporting "markers are still in f.txt" would be
       // true and useless, because the agent never ran.
       if (result.status === "failed") {
-        await git(checkout.path, ["merge", "--abort"], NO_CLOCK);
-        await discardCheckout(repoRoot, checkout);
-        return;
+        const rollback = await rollBackResolution(repoRoot, checkout, branch, tipBefore.stdout);
+        if (rollback.clean) return;
+        return {
+          status: "failed" as const,
+          error: `${result.error ?? "The resolution failed."} ${rollback.sentence}`,
+        };
       }
 
       const left = unresolvedFiles(
         conflicted.map((p) => ({ path: p, text: readIfPossible(path.join(checkout.path, p)) })),
       );
       if (left.length > 0) {
-        await git(checkout.path, ["merge", "--abort"], NO_CLOCK);
-        await discardCheckout(repoRoot, checkout);
+        const rollback = await rollBackResolution(repoRoot, checkout, branch, tipBefore.stdout);
         return {
           status: "failed" as const,
-          error: `Conflict markers are still in ${left.join(", ")}. The merge was rolled back; ${branch} is unchanged.`,
+          error: `Conflict markers are still in ${left.join(", ")}. ${rollback.sentence}`,
         };
       }
 
@@ -1764,21 +1838,19 @@ async function startResolution(
       );
       const unmerged = await git(checkout.path, ["ls-files", "-u"], NO_CLOCK);
       if (!staged.ok || !unmerged.ok || unmerged.stdout !== "") {
-        await git(checkout.path, ["merge", "--abort"], NO_CLOCK);
-        await discardCheckout(repoRoot, checkout);
+        const rollback = await rollBackResolution(repoRoot, checkout, branch, tipBefore.stdout);
         return {
           status: "failed" as const,
-          error: `The resolution could not be staged, so the merge was rolled back and ${branch} is unchanged.`,
+          error: `The resolution could not be staged. ${rollback.sentence}`,
         };
       }
 
       const commit = await git(checkout.path, ["commit", "--no-edit"], NO_CLOCK);
       if (!commit.ok) {
-        await git(checkout.path, ["merge", "--abort"], NO_CLOCK);
-        await discardCheckout(repoRoot, checkout);
+        const rollback = await rollBackResolution(repoRoot, checkout, branch, tipBefore.stdout);
         return {
           status: "failed" as const,
-          error: `The merge could not be committed and was rolled back: ${commit.stderr.split("\n")[0] || "unknown error"}`,
+          error: `The merge could not be committed (${commit.stderr.split("\n")[0] || "unknown error"}). ${rollback.sentence}`,
         };
       }
 

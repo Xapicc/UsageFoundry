@@ -28,6 +28,13 @@ import { after, before, describe, it, mock } from "node:test";
  * rollback assertions mean something. Node prints an `ExperimentalWarning` for
  * the API once per file; that line is expected.
  *
+ * It also carries the one case that needs the same path for another reason:
+ * that the row's account of a rollback is checked rather than assumed. That
+ * sentence followed a `merge --abort` whose result nobody read, so a resolution
+ * whose open merge something else had committed reported an unchanged branch
+ * that had in fact moved, and no fixture short of a real child and a real
+ * checkout can put a commit in the gap.
+ *
  * Its own file, with `DATA_DIR` named before the first import, for
  * `loopMergeOwnership.test.ts`'s reason.
  */
@@ -268,4 +275,42 @@ describe("a conflict resolution that stops printing", () => {
       assert.deepEqual(snapshot(branch), before);
     },
   );
+});
+
+/** The checkout git has given `branch` to, which a resolution made for itself. */
+function checkoutHolding(branch: string): string {
+  let current = "";
+  for (const line of git(repoRoot(), "worktree", "list", "--porcelain").split("\n")) {
+    if (line.startsWith("worktree ")) current = line.slice("worktree ".length);
+    if (line === `branch refs/heads/${branch}`) return current;
+  }
+  assert.fail(`no checkout holds ${branch}`);
+}
+
+describe("a resolution whose open merge was committed underneath it", () => {
+  it("does not report a rollback it did not make", { timeout: 30_000 }, async () => {
+    const branch = "uf/committed-under";
+    const runId = conflictingRun(branch);
+    const tipBefore = git(repoRoot(), "rev-parse", branch).trim();
+    const assistId = await startResolution(runId);
+
+    // What Commit on the Land card did while the agent worked: `add -A` and a
+    // commit in the resolution's checkout, which turns the open merge into a
+    // two-parent commit with the markers in it.
+    const checkout = checkoutHolding(branch);
+    git(checkout, "add", "-A");
+    git(checkout, "commit", "-q", "--no-edit");
+    fs.writeFileSync(control("exit"), "");
+
+    const row = await settled(assistId);
+    assert.notEqual(
+      git(repoRoot(), "rev-parse", branch).trim(),
+      tipBefore,
+      "the fixture's commit did not move the branch, so this proves nothing",
+    );
+    assert.equal(row.status, "failed");
+    assert.match(row.error ?? "", /Conflict markers are still in a\.txt/);
+    assert.doesNotMatch(row.error ?? "", /is unchanged/);
+    assert.match(row.error ?? "", /Nothing was rolled back/);
+  });
 });
