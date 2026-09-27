@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { purgeLabel, purgeSheetText } from "./landView";
+import { landCardLine, purgeLabel, purgeSheetText } from "./landView";
 
 /**
  * The sentences the Land card and the branches page put in front of a press
@@ -9,6 +9,72 @@ import { purgeLabel, purgeSheetText } from "./landView";
  * sentence — see the module's own note — so it is pinned here rather than in
  * a screenshot.
  */
+
+describe("landCardLine", () => {
+  const landedRun = {
+    landedAt: Date.UTC(2026, 8, 20, 9, 0),
+    landedInto: "main",
+    landedStrategy: "merge",
+    merged: true,
+    landedUnchanged: false,
+    branchExists: true,
+    blocked: "Already in main — there is nothing left to land.",
+  };
+  const onFeature =
+    "Your checkout is on feature-x, and this work belongs on main. Switch to it first.";
+
+  it("says merged while the landed work is still the whole branch", () => {
+    assert.equal(landCardLine(landedRun).kind, "landed");
+    // A squash leaves no ancestry, and the recorded tip is what stands in for it.
+    assert.equal(
+      landCardLine({ ...landedRun, merged: false, landedUnchanged: true }).kind,
+      "landed",
+    );
+  });
+
+  it("shows the refusal once a reopened run has put new commits on the branch", () => {
+    // The card used to say only "Merged into main" here, with Land withheld and
+    // no sentence saying why — and Purge offered under it.
+    const line = landCardLine({
+      ...landedRun,
+      merged: false,
+      landedUnchanged: false,
+      blocked: onFeature,
+    });
+    assert.deepEqual(line, {
+      kind: "moved",
+      refusal: onFeature,
+      landed: { at: landedRun.landedAt, into: "main", strategy: "merge" },
+    });
+  });
+
+  it("keeps the earlier land as history when the new commits can be landed", () => {
+    const line = landCardLine({ ...landedRun, merged: false, blocked: null });
+    assert.equal(line.kind, "moved");
+    assert.equal(line.kind === "moved" && line.refusal, null);
+  });
+
+  it("says merged for a landed branch that has since been deleted", () => {
+    // The ordinary end of a run: land, then Delete. "Branch … no longer
+    // exists" would be true and would bury the one fact worth keeping.
+    const line = landCardLine({
+      ...landedRun,
+      merged: false,
+      branchExists: false,
+      blocked: "Branch uf/x no longer exists.",
+    });
+    assert.equal(line.kind, "landed");
+  });
+
+  it("gives a run that never landed its refusal, or nothing", () => {
+    const never = { ...landedRun, landedAt: null, landedInto: null, landedStrategy: null };
+    assert.deepEqual(landCardLine({ ...never, merged: false, blocked: onFeature }), {
+      kind: "refusal",
+      refusal: onFeature,
+    });
+    assert.deepEqual(landCardLine({ ...never, merged: false, blocked: null }), { kind: "none" });
+  });
+});
 
 describe("purgeLabel", () => {
   it("names the count it was given", () => {

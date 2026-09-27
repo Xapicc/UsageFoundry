@@ -12,7 +12,7 @@ import type {
 } from "@/lib/apiTypes";
 import { fmtDateTime, fmtUSD, pollFailureMessage } from "@/lib/format";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
-import { purgeLabel, purgeSheetText } from "@/lib/landView";
+import { landCardLine, purgeLabel, purgeSheetText } from "@/lib/landView";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonRow } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
@@ -337,6 +337,7 @@ export function RunLand({ run }: { run: RunDTO }) {
   }
 
   const canLand = state.blocked === null;
+  const line = landCardLine(state);
   // A negative list, unlike `RunDiff`'s, so a new terminal status reads settled
   // with no edit here — which is right for `needs-review` and is worth stating,
   // because the two components spell the same idea opposite ways round.
@@ -371,7 +372,7 @@ export function RunLand({ run }: { run: RunDTO }) {
     <Card emphasis={canLand || canResolve ? "primary" : "default"}>
       <CardTitle>
         Land this work
-        {state.landedAt && <Badge tone="ok">landed</Badge>}
+        {line.kind === "landed" && <Badge tone="ok">landed</Badge>}
       </CardTitle>
 
       <div className="text-sm tabular-nums text-ink-muted">
@@ -441,6 +442,13 @@ export function RunLand({ run }: { run: RunDTO }) {
           a card that stacks them reads as three separate things happening — so
           the outcome of the last action, above, replaces this while it stands.
 
+          The same fact only while the landed work is still the whole branch.
+          A landed run can be reopened and commit again, and the landed line
+          used to win regardless: Land withheld with nothing saying why, and
+          Purge offered under a notice that the work was merged. So once the
+          branch has moved, `landCardLine` puts the refusal first and the land
+          below it as history.
+
           The refusal is that line whenever there is one, and the conflict list
           below is its elaboration rather than a rival statement. It used to be
           the other way round: a conflict replaced the refusal outright, and
@@ -453,19 +461,22 @@ export function RunLand({ run }: { run: RunDTO }) {
           question. */}
       {!error && !note && (
         <>
-          {state.landedAt ? (
+          {line.kind === "landed" && (
             <Notice tone="info" quiet className="mt-3">
-              Merged into <span className="mono">{state.landedInto}</span> on{" "}
-              {fmtDateTime(state.landedAt)} ({state.landedStrategy}). Reopening
-              this run can put new commits on the branch, so this describes a
-              moment, not a permanent state.
+              Merged into <span className="mono">{line.landed.into}</span> on{" "}
+              {fmtDateTime(line.landed.at)} ({line.landed.strategy}).
             </Notice>
-          ) : (
-            state.blocked && (
-              <Notice tone={state.merged ? "info" : "warn"} className="mt-3">
-                {state.blocked}
-              </Notice>
-            )
+          )}
+          {(line.kind === "refusal" || line.kind === "moved") && line.refusal && (
+            <Notice tone={state.merged ? "info" : "warn"} className="mt-3">
+              {line.refusal}
+            </Notice>
+          )}
+          {line.kind === "moved" && (
+            <Hint>
+              Last landed into <span className="mono">{line.landed.into}</span> on{" "}
+              {fmtDateTime(line.landed.at)} ({line.landed.strategy})
+            </Hint>
           )}
 
           {state.preview.outcome === "conflict" && (
