@@ -1462,6 +1462,46 @@ is `docs/agent/testing.md`; interface defects and their classes are
   deny list is the CLI's and not this app's, and nothing here was changed for
   it.
 
+- **Which deny-listed `~/.claude` files the CLI writes by rename versus in
+  place, and whether that widens the sandbox, measured 2026-09-27 against CLI
+  2.1.280 (arm64 bun binary).** Grepping the shipped binary: the CLI writes the
+  global config (`.config.json` at its legacy location, else `.claude.json`),
+  `settings.json` and `.credentials.json` by temp-file-then-rename through the
+  atomic writer `cQ`/`vv` (byte 190881839), which stages a temp file (in
+  `~/.claude/.cc-writes` for `settings.json`, beside the target elsewhere) and
+  renames it over the path; it writes `remote-settings.json` and
+  `policy-limits.json` in place (`publishDiscipline:"inPlace"`, byte 203300557),
+  confirming both halves of the earlier reading. A rename replaces the inode,
+  which is what strips a running sandbox's read-only bind, whereas an in-place
+  write keeps it. Shown live: a fresh `~/.claude/.config.json` went from inode
+  53037914 to 53037957 across one `claude -p` (nine "written atomically" debug
+  lines), and a nested `bwrap --ro-bind .config.json .config.json` refused an
+  in-sandbox write until the CLI's rename changed the inode (53038054 to
+  53038088 to 53038105), after which the write succeeded, the same reproduction
+  as the two entries above. On widening: the file whose bind-lapse would let a
+  later cycle widen its own sandbox is `settings.json`, the honored source for
+  `sandbox.filesystem.allowWrite` and `permissions.allow/deny`
+  (`orchestrator.ts:5497-5507`), and the sandbox policy is built from the
+  settings sources, not from the global config. But `settings.json` is written
+  only on a settings change (`/config`, an "always allow"), not on an ordinary
+  headless cycle: its inode held at 53037915 across two `claude -p` runs with
+  zero "settings.json written atomically" lines, so its deny bind survives a
+  session in practice. What the CLI does rewrite mid-session is the global config
+  (on startup) and, once authenticated, `.credentials.json` (on OAuth refresh):
+  the global config carries `mcpServers`, trust state and the feature-flag cache
+  but no sandbox or permission keys, so its lapse only lets a sandboxed process
+  seed an `mcpServers` entry a later cycle would load (`--strict-mcp-config` is
+  absent from work-cycle argv, `cycleInvocation.ts`), a softer widening than the
+  write set, while `.credentials.json` is deny-*read*, so its lapse is a
+  mid-session credential-exposure axis rather than a widening one. Caveat: this
+  stays subsumed by the open "No sandbox has ever honoured the per-run write set"
+  item, since the app does not yet root-own `~/.claude` (`UF_LOCK_CLAUDE_HOME`
+  unshipped) and so none of these deny binds is a boundary it currently relies
+  on; the bind loss is a CLI sandbox property, and `docs/agent/security.md`
+  states no guarantee that these binds hold, so nothing there is affected.
+  `policy-limits.json` and the `.signature.json` sidecars are in place too;
+  `policy-limits.json.stamp.json` is renamed, but its lapse carries no widening.
+
 - **`--agent` / `--agents`, seven probes on CLI 2.1.226:** `--agent` selects a
   definition passed on the same argv, exits 1 on an unregistrable one, keeps
   `--append-system-prompt`, survives `--resume`, and yields to the run's
@@ -4194,6 +4234,17 @@ measurement under *Verified* and cut the item down to what is still open.
   count should reach zero. Read the other two messages separately: if `Can't find
   source path` and `Can't get type of source` survive on these names, something
   is still deleting them and the entry above says what has been ruled out.
+
+- **The `.credentials.json` refresh stripping a running sandbox's read-deny bind
+  is inferred, not watched, 2026-09-27.** *Verified* above reads the write method
+  off the binary (temp-then-rename, the atomic writer `cQ`) and reproduces the
+  strip live on `.config.json`, but the credential file could not be driven: the
+  scratch homes tested were unauthenticated, so no OAuth refresh fired. Settle
+  from an authenticated container: inside a sandboxed session where
+  `~/.claude/.credentials.json` is bound (it reads as a `/dev/null` character
+  device from in-sandbox), poll `stat -c %i ~/.claude/.credentials.json` and a
+  one-byte read of it across a token refresh, and expect the read to stop
+  returning the device in the same step the inode changes.
 
 - **The post-cycle `sweepSandboxTreeRoot` call is unseen, 2026-09-09.** No
   sandboxed cycle since; its log line, the `EBUSY` branch and the interplay
