@@ -1015,6 +1015,13 @@ export function WorkflowEditor({
     },
     [blocks],
   );
+  // A link's ends are blocks of this draft, since removing a block removes its
+  // links; `run` is what the link panel assumed of both before it asked.
+  const kindOf = useCallback(
+    (id: string): WorkflowNodeKind =>
+      blocks.find((b) => b.id === id)?.kind ?? "run",
+    [blocks],
+  );
 
   return (
     <>
@@ -1135,6 +1142,8 @@ export function WorkflowEditor({
                 link={selectedLink}
                 fromName={nameOf(selectedLink.from)}
                 toName={nameOf(selectedLink.to)}
+                fromKind={kindOf(selectedLink.from)}
+                toKind={kindOf(selectedLink.to)}
                 insideSection={sections.get(selectedLink.from)}
                 carriedFrom={
                   selectedCarrier === undefined
@@ -1165,11 +1174,12 @@ export function WorkflowEditor({
                 min={0}
                 step="0.5"
               />
-              <Hint>
-                {costCapped
-                  ? "Everything every block spends, together — each block still has its own limits from its guards"
-                  : "Only the per-block guards bound this workflow, so ten blocks under a $5 block limit is a $50 workflow"}
-              </Hint>
+              {!costCapped && (
+                <Hint>
+                  Only each block&rsquo;s own limit applies, so ten blocks limited
+                  to $5 each can spend $50
+                </Hint>
+              )}
             </Field>
 
             <Field label="Stop at 5-hour usage" htmlFor="wf-sess">
@@ -1187,8 +1197,7 @@ export function WorkflowEditor({
               {maxSessionFraction && ceilings?.session === false && (
                 <Hint tone="warn">
                   No 5-hour ceiling is set and the account&rsquo;s own percentage
-                  is switched off, so this guard has nothing to measure and Run
-                  will refuse the workflow
+                  is off, so Run will refuse the workflow
                 </Hint>
               )}
             </Field>
@@ -1208,8 +1217,7 @@ export function WorkflowEditor({
               {maxWeeklyFraction && ceilings?.weekly === false && (
                 <Hint tone="warn">
                   No weekly ceiling is set and the account&rsquo;s own percentage
-                  is switched off, so this guard has nothing to measure and Run
-                  will refuse the workflow
+                  is off, so Run will refuse the workflow
                 </Hint>
               )}
             </Field>
@@ -1231,7 +1239,7 @@ export function WorkflowEditor({
           >
             {saving
               ? "Saving the graph…"
-              : "Saves the graph. Nothing starts until you press Run on it."}
+              : "Nothing starts until you press Run"}
           </p>
           {/* Through the same guard the shell's exits use rather than around
               it: Cancel is the one exit this component owns, and an exit that
@@ -1464,9 +1472,8 @@ function BlockStatement({
       return (
         <p className="mb-3.5 text-sm leading-normal text-ink-muted">
           Repeats{" "}
-          <strong className="font-semibold text-danger">nothing yet</strong> —
-          put a block inside the frame, and everything linked after it is in the
-          pass too. At most {passCap}
+          <strong className="font-semibold text-danger">nothing yet</strong>. At
+          most {passCap}
           {spentBetween}
           {board}.
         </p>
@@ -1684,7 +1691,7 @@ function BlockPanel({
    * that says what turning this on buys.
    */
   const WHEN_COUNTED =
-    "Counted before every pass, including the first — a backlog already clear starts no run";
+    "Counted before every pass, so a backlog already clear starts no run";
   const boardCountLine = !boardOn
     ? WHEN_COUNTED
     : board?.error
@@ -1802,10 +1809,7 @@ function BlockPanel({
             as an arrow any more, so the orphaned “repeats” link it left behind
             would be a refusal at Save with nothing on the canvas to explain it. */}
         {loop ? (
-          <ListRow
-            label="Block"
-            description="Made by framing blocks; Delete on the frame unmakes it"
-          >
+          <ListRow label="Block">
             <span className="text-sm text-ink">{KIND_LABEL.loop}</span>
           </ListRow>
         ) : (
@@ -1844,8 +1848,8 @@ function BlockPanel({
           label="What it does"
           footnote={
             <span className="text-warn">
-              What this block decides on starts with no approval — this number is
-              the whole of what you are agreeing to
+              Its runs start with no approval, so this cap is the whole of what
+              you agree to
             </span>
           }
         >
@@ -1877,7 +1881,7 @@ function BlockPanel({
           footnote={
             body.length === 0
               ? "Put a block inside the frame on the canvas; everything linked after it is in the pass too"
-              : "Put blocks in and take them out on the frame; a link drawn from it is what runs after the whole loop"
+              : "A link drawn from the frame starts after the whole loop"
           }
         >
           {body.length === 0 ? (
@@ -1924,8 +1928,8 @@ function BlockPanel({
           label="How often"
           footnote={
             <span className="text-warn">
-              Each pass is a whole run, with its own work cycles and its own
-              spend — the pass cap is the whole of what you are agreeing to
+              Every pass runs and spends again, so this cap is the whole of what
+              you agree to
             </span>
           }
         >
@@ -1988,9 +1992,7 @@ function BlockPanel({
                   });
                 }}
               >
-                <option value={NO_PROJECT}>
-                  Off — the caps are the only ending
-                </option>
+                <option value={NO_PROJECT}>Off</option>
                 {projects.map((p) => (
                   <option key={p.key} value={p.key} disabled={!p.available}>
                     {p.label}
@@ -2011,8 +2013,8 @@ function BlockPanel({
                 label="Count folders under it"
                 description={
                   block.stopWhenTasksIncludeSubfolders
-                    ? "One project, counting every folder beneath it"
-                    : "The board counts this folder's own tasks; anything filed under it is a different project"
+                    ? undefined
+                    : "Tasks filed in folders under it are not counted"
                 }
               >
                 <Switch
@@ -2032,8 +2034,8 @@ function BlockPanel({
                 htmlFor={`${block.id}-boardstatuses`}
                 description={
                   block.stopWhenTasksStatuses === "open"
-                    ? "A claim is a record of which run holds a task, never a lease"
-                    : "A claim has no clock on it, so one task left claimed by a run that died holds this loop open for every pass it is allowed"
+                    ? undefined
+                    : "A claim never expires, so a task left claimed by a run that died keeps this loop going to its pass cap"
                 }
               >
                 <div className={ROW_CONTROL}>
@@ -2160,13 +2162,7 @@ function BlockPanel({
         <ListGroup
           className="mb-4"
           label="What it does"
-          footnote={
-            <>
-              Each branch goes onto the target its own run recorded, not one
-              named here. Your own checkout must be clean and on that branch, or
-              this block refuses that repository.
-            </>
-          }
+          footnote="Your own checkout must be clean and on each target branch, or this block refuses that repository"
         >
           <ListRow label="How to land" htmlFor={`${block.id}-strategy`}>
             <div className={ROW_CONTROL}>
@@ -2242,7 +2238,7 @@ function BlockPanel({
               placeholder={
                 orchestrator
                   ? "What this block should look at, and what makes a piece of work worth starting."
-                  : "What this block asks the agent to do."
+                  : undefined
               }
             />
           </Field>
@@ -2298,7 +2294,7 @@ function BlockPanel({
                 missingTemplate ? (
                   <span role="alert" className="text-danger">
                     That template has been deleted, so Save will refuse this
-                    graph — pick another
+                    graph
                   </span>
                 ) : undefined
               }
@@ -2356,7 +2352,7 @@ function BlockPanel({
                   "Where it looks; the runs it starts must be in this workspace"
                 ) : block.folder === "" ? (
                   <span className="text-warn">
-                    The whole workspace — no other run in it can start meanwhile
+                    No other run in this workspace can start meanwhile
                   </span>
                 ) : undefined
               }
@@ -2416,17 +2412,18 @@ function BlockPanel({
                   missingAgent ? (
                     <span role="alert" className="text-danger">
                       That agent has been deleted, so Save will refuse this
-                      graph — pick another, or none
+                      graph
                     </span>
                   ) : agent && !agent.usable ? (
                     <span role="alert" className="text-danger">
                       {agent.name} is missing its description or its prompt, so
-                      Claude Code will not register it and the spawn would fail
+                      Claude Code will not register it and the block would fail
+                      to start
                     </span>
                   ) : agent ? (
                     agent.description
                   ) : orchestrator ? (
-                    "What this block's own deciding turn is started as — the runs it starts name their own"
+                    "The runs it starts name their own"
                   ) : undefined
                 }
               >
@@ -2483,6 +2480,8 @@ function LinkPanel({
   link,
   fromName,
   toName,
+  fromKind,
+  toKind,
   insideSection,
   carriedFrom,
   onChange,
@@ -2491,6 +2490,8 @@ function LinkPanel({
   link: LinkDraft;
   fromName: string;
   toName: string;
+  fromKind: WorkflowNodeKind;
+  toKind: WorkflowNodeKind;
   /** The loop that repeats both ends of this link, or undefined. */
   insideSection: string | undefined;
   /**
@@ -2509,6 +2510,8 @@ function LinkPanel({
     const statement = sectionLinkStatement(link, {
       from: fromName,
       to: toName,
+      fromKind,
+      toKind,
       carriedFrom,
     });
     return (
@@ -2547,8 +2550,7 @@ function LinkPanel({
           description={
             link.edge === "" ? (
               <span className="text-warn">
-                Neither answer is a safe default, so this one is yours to make —
-                until it is answered, Save refuses this graph
+                No safe default: Save refuses this graph until you pick one
               </span>
             ) : undefined
           }

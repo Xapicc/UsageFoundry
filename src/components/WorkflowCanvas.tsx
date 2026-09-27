@@ -979,8 +979,8 @@ export function WorkflowCanvas({
           `matchMedia`, and a second would be a second boundary to keep in
           step. */}
       <p className="border-b border-line bg-inset px-3 py-1.5 text-xs text-ink-muted md:hidden">
-        A graph is arranged on a larger screen. Here the blocks are listed in
-        the order it runs them — tap one to edit it in the panel below.
+        Blocks are arranged on a larger screen; here they are listed in the
+        order they run.
       </p>
 
       {linking && (
@@ -1080,7 +1080,6 @@ export function WorkflowCanvas({
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
               <Empty>
                 <div className="font-medium text-ink">No blocks yet</div>
-                <div className="mt-1">Drag one from Add, or press Enter on it</div>
               </Empty>
             </div>
           )}
@@ -1453,7 +1452,7 @@ export function WorkflowCanvas({
                   <div className="mt-0.5 flex-1 overflow-hidden text-xs leading-snug text-ink-faint">
                     <span className="line-clamp-2">
                       {block.kind === "merge"
-                        ? "Puts each branch onto the target its run recorded."
+                        ? null
                         : block.task.trim() || "No task yet"}
                     </span>
                   </div>
@@ -1589,13 +1588,13 @@ export function WorkflowCanvas({
           are untouched. */}
       <ul className="border-t border-line md:hidden">
         {narrowOrder.length === 0 && (
-          /* The sheet carried this sentence and is hidden here, so the list
-             owes it: an empty new workflow would otherwise be a rule between
-             the note and the footer and nothing else. */
+          /* The sheet carried this and is hidden here, so the list owes it:
+             an empty new workflow would otherwise be a rule between the note
+             and the footer and nothing else. How to add one is the footer's
+             first line. */
           <li className="px-2.5 py-4">
             <Empty>
               <div className="font-medium text-ink">No blocks yet</div>
-              <div className="mt-1">Tap one in Add</div>
             </Empty>
           </li>
         )}
