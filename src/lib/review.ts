@@ -19,6 +19,7 @@ import {
   sandboxArgsFor,
   SEARCH_TOOLS,
   signalTree,
+  trackAssistChild,
   workDirOf,
   type RunRow,
 } from "./orchestrator";
@@ -922,6 +923,11 @@ function spawnAssist(id: string, req: AssistRequest): Promise<void> {
     // review that dies is a review, and this one is refusable and re-runnable.
     deprioritiseChildForOom(child.pid);
 
+    // The only handle a shutdown has on it. Undone in `done`, after the row is
+    // written and a resolution's `after` has run, so a shutdown waiting on it
+    // waits for the merge to be aborted rather than only for the exit.
+    const untrack = trackAssistChild(child);
+
     // The whole of stdout is still kept: `parseReviewOutput` reads the result
     // object out of it at the end, and a child killed mid-line leaves whatever
     // it managed to print for the failure path. `pending` is the same bytes
@@ -984,6 +990,7 @@ function spawnAssist(id: string, req: AssistRequest): Promise<void> {
     const done = () => {
       if (timer) clearTimeout(timer);
       stopWatching?.();
+      untrack();
       resolve();
     };
 
