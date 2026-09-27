@@ -7090,7 +7090,15 @@ async function pruneAtBoundary(
   // about the conversation that was standing at this boundary, and the control
   // group is read by looking for the first billed turn after it.
   await settleBoundary(id, sessionId, outcome !== null, contextTokensNow);
-  if (outcome) forgetComposition(id);
+  if (outcome) {
+    forgetComposition(id);
+    // The ceiling's mark too, for the reason the ceiling clears it at its own
+    // cut: the measurement it records was of a conversation that no longer
+    // exists. Under the fork engine this clear is the only thing that notices,
+    // because the window after the resume is not lower than before the cut and
+    // the tick's below-the-mark reset never fires.
+    ceilingMeasuredAt.delete(id);
+  }
   return outcome;
 }
 
@@ -9340,6 +9348,10 @@ export async function startRun(id: string): Promise<void> {
           `Starting this work cycle fresh rather than resuming: the last one ended on about ${Math.round(lastContextTokens / 1000)}k tokens of context, past the ${Math.round(freshStartAt / 1000)}k this install restarts at. The task is sent again and the work so far is on disk; nothing of the previous conversation carries over.`,
         );
         adoptSession(null);
+        // The conversation the ceiling last measured is gone, so its mark is
+        // too. Kept, it would hold the fresh conversation's first crossing back
+        // until it had grown 25,000 tokens past a figure it never had.
+        ceilingMeasuredAt.delete(id);
       }
 
       const prompt = nextPrompt({
@@ -11064,6 +11076,19 @@ export async function checkContextCeilings(): Promise<void> {
       }
     }
 
+    // A reading under the ceiling's mark is a conversation that shrank since it
+    // was measured, and the growth the mark counts from went with it. Paced from
+    // the stale mark, a run declined at 210k and cut to 120k went unmeasured
+    // from its next crossing until 235k, carrying the excess on every turn. The
+    // cut sites clear the mark themselves; this is for whatever shrinks the
+    // conversation without passing through one — a compaction the CLI makes
+    // inside a cycle, or the next such path. Ahead of the ceiling comparison so
+    // that a reading taken back under the ceiling counts: behind it, a run whose
+    // next reading over the line was already past the old mark would still be
+    // held to it.
+    const staleMark = ceilingMeasuredAt.get(id);
+    if (staleMark !== undefined && tokens < staleMark) ceilingMeasuredAt.delete(id);
+
     if (tokens < CYCLE_CONTEXT_CEILING_TOKENS) continue;
 
     // Asked about **this** conversation, now, rather than inferred from the last
@@ -11299,7 +11324,12 @@ const earlyEndDeclined = ((globalThis as unknown as {
  * a map rather than a flag: `earlyEndDeclined` does not bound the measurement,
  * because that latch suppresses the *log line* and not the work.
  *
- * Keyed by run, cleared when a cut happens and when the run's loop ends.
+ * Keyed by run, and cleared wherever the conversation it measured stops
+ * existing: the ceiling's own cut, a cut at a natural boundary, a fresh start,
+ * and the end of the run's loop. `checkContextCeilings` also drops it on any
+ * reading below it, which covers a shrink that none of those sites sees. A mark
+ * outliving its conversation holds the next crossing back until the new one has
+ * grown 25,000 tokens past a figure it never had.
  */
 const ceilingMeasuredAt = ((globalThis as unknown as {
   __ufCeilingMeasuredAt?: Map<string, number>;
@@ -11321,11 +11351,13 @@ const ceilingMeasuredAt = ((globalThis as unknown as {
  * call on it throws.
  *
  * Compared in **both** directions, which is the one place this departs from
- * `ceilingMeasuredAt`'s arithmetic. That mark is one-sided because the ceiling
- * only cares about growth toward it; a prune that drops a conversation by 80k
- * leaves `tokens - measuredAt` negative for as long as it takes to grow back,
- * and read one-sided here that is the whole post-cut shape missed — the one
- * moment the composition is worth having.
+ * `ceilingMeasuredAt`'s arithmetic. That mark paces growth only, and treats any
+ * reading below it as a reset rather than as distance, because the ceiling acts
+ * only above a fixed line and must re-decide the first time a shrunken
+ * conversation crosses it. Here a drop is itself worth a reading: a prune that
+ * takes 80k off a conversation changes its shape, and read one-sided that is
+ * the whole post-cut shape missed — the one moment the composition is worth
+ * having.
  *
  * **The distance is the pacing for growth and was never the trigger for a
  * cut**, though it was left standing as both for a while and could not do the
