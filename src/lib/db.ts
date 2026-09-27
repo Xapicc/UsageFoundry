@@ -1427,6 +1427,18 @@ function migrate(db: Database.Database) {
   // accumulated across the thread's life, shown *beside* the total and never
   // folded into it, because no measured figure is ever coming for them.
   addColumn(db, "chat_sessions", "cost_usd_est", "REAL NOT NULL DEFAULT 0");
+  // The last `total_cost_usd` the CLI reported under `session_id`, or null when
+  // there is none to trust. On the pinned CLI that figure is cumulative across
+  // a `--resume`d session — the ledger is restored from the transcript's
+  // `cost-state` record — so a turn's own cost is the increase over this, and
+  // banking the figure whole charged turn N for turns 1..N: a thread total
+  // that grew quadratically and a `chat_turn_spend` that closed the install's
+  // ceiling on money nobody spent. Nullable rather than defaulted to zero,
+  // because zero is a figure: a thread that predates this column resumes a
+  // session whose ledger is already non-zero, and null is what makes that one
+  // turn bank the whole figure — the old over-count, once — rather than
+  // subtracting from nothing it can name.
+  addColumn(db, "chat_sessions", "session_cost_usd", "REAL");
 
   // That this instance was halted, by what, and when.
   //

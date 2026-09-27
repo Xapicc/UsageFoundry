@@ -629,6 +629,204 @@ describe("a turn a restart left mid-flight", () => {
   });
 });
 
+/**
+ * What a resumed turn is charged, end to end: the CLI's `total_cost_usd` is the
+ * session's running total on the pin, and the row, the thread's total and the
+ * install's ceiling all have to see each turn's own cost. The pure half is
+ * `turnCostOf` in `chat.test.ts`; this pins that `finishTurn` feeds it the
+ * session it resumed and keeps the figure the next turn subtracts from.
+ */
+describe("three turns on one resumed session", () => {
+  const realSpawn = childProcess.spawn;
+  const started: Array<{ child: FakeChild; args: string[] }> = [];
+
+  before(() => {
+    childProcess.spawn = (_bin: string, args: string[]) => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        exitCode: null as number | null,
+        signalCode: null as NodeJS.Signals | null,
+        kill: () => true,
+      }) as FakeChild;
+      started.push({ child, args });
+      return child;
+    };
+  });
+
+  after(() => {
+    childProcess.spawn = realSpawn;
+    for (const { child } of started) {
+      if (child.exitCode === null) {
+        child.exitCode = 0;
+        child.emit("close", 0);
+      }
+    }
+  });
+
+  it("banks each turn's increase rather than the session's running total", async () => {
+    const row = chat.createChat();
+    const before = installBudget.installSpend();
+
+    for (const [i, total] of [0.25, 0.5, 0.75].entries()) {
+      const sent = await chat.sendChatMessage(row.id, `message ${i + 1}`);
+      if (!sent.ok) assert.fail(`turn ${i + 1} did not start: ${sent.reason}`);
+      const { child, args } = started[started.length - 1];
+      // The premise: every turn after the first resumes the session the first
+      // one reported, which is what makes the CLI restore its ledger.
+      const resumed = args.indexOf("--resume");
+      if (i === 0) assert.equal(resumed, -1, "the first turn had nothing to resume");
+      else assert.equal(args[resumed + 1], "session-a", `turn ${i + 1} did not resume`);
+
+      child.stdout.write(
+        JSON.stringify({
+          type: "result",
+          subtype: "success",
+          result: `reply ${i + 1}`,
+          session_id: "session-a",
+          total_cost_usd: total,
+        }) + "\n",
+      );
+      await new Promise((r) => setImmediate(r));
+      child.exitCode = 0;
+      child.emit("close", 0);
+      for (let t = 0; t < 3; t++) await new Promise((r) => setImmediate(r));
+      assert.equal(chat.getChat(row.id)?.status, "idle", `turn ${i + 1} did not settle`);
+    }
+
+    const spend = dbMod
+      .db()
+      .prepare("SELECT cost_usd, estimated FROM chat_turn_spend WHERE chat_id=? ORDER BY ts")
+      .all(row.id) as { cost_usd: number; estimated: number }[];
+    assert.deepEqual(
+      spend.map((s) => s.cost_usd),
+      [0.25, 0.25, 0.25],
+      "a resumed turn was charged the session's running total",
+    );
+    assert.ok(spend.every((s) => s.estimated === 0), "a measured turn was marked estimated");
+    assert.equal(chat.getChat(row.id)?.cost_usd, 0.75, "the thread's total double-counted");
+
+    // As a difference, because the window is install-wide and the cases above
+    // spent into it too.
+    const afterwards = installBudget.installSpend();
+    const close = (a: number, b: number) => Math.abs(a - b) < 1e-9;
+    assert.ok(close(afterwards.spentUSD - before.spentUSD, 0.75), "installSpend over-read");
+    assert.ok(
+      close(afterwards.spentGuardUSD - before.spentGuardUSD, 0.75),
+      "the install's guard figure over-read",
+    );
+  });
+});
+
+/**
+ * A turn's capability ends when a turn is decided over, not when its child is
+ * finally gone. Stop returns while the child has eight seconds of ladder left,
+ * and a `spawn` that throws never produces a child for `land` to be wired to —
+ * in both, the token stayed live, and a stopped turn could put proposals, tasks
+ * and questions into a thread the operator had stopped. Nothing throws and the
+ * page looks right, which is why it is asserted through `subjectForCapability`,
+ * the one thing `/api/mcp` asks.
+ */
+describe("a turn's capability ends when the turn is decided over", () => {
+  const realSpawn = childProcess.spawn;
+  const started: FakeChild[] = [];
+  let spawnThrows: Error | null = null;
+  const configsSeen: string[] = [];
+
+  /** The token a turn was given, read off the file its argv names. */
+  const tokenIn = (configPath: string): string => {
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+      mcpServers: { uf: { headers: { Authorization: string } } };
+    };
+    return config.mcpServers.uf.headers.Authorization.replace(/^Bearer /, "");
+  };
+  const tokensSeen: string[] = [];
+
+  before(() => {
+    childProcess.spawn = (_bin: string, args: string[]) => {
+      const configPath = args[args.indexOf("--mcp-config") + 1];
+      configsSeen.push(configPath);
+      tokensSeen.push(tokenIn(configPath));
+      if (spawnThrows) throw spawnThrows;
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        exitCode: null as number | null,
+        signalCode: null as NodeJS.Signals | null,
+        kill: () => true,
+      }) as FakeChild;
+      started.push(child);
+      return child;
+    };
+  });
+
+  after(() => {
+    childProcess.spawn = realSpawn;
+    for (const child of started) {
+      if (child.exitCode === null) {
+        child.exitCode = 0;
+        child.emit("close", 0);
+      }
+    }
+  });
+
+  it("is revoked by Stop, while the stopped child is still dying", async () => {
+    const row = chat.createChat();
+    const sent = await chat.sendChatMessage(row.id, "propose some work");
+    if (!sent.ok) assert.fail(`the turn did not start: ${sent.reason}`);
+    const token = tokensSeen[tokensSeen.length - 1];
+    assert.deepEqual(chat.subjectForCapability(token), { kind: "chat", chatId: row.id });
+
+    const stop = chat.cancelChatTurn(row.id);
+    assert.deepEqual(stop, { ok: true, outcome: "signalled" });
+    // The premise: nothing has exited, so `land` has not run.
+    assert.equal(started[started.length - 1].exitCode, null);
+    assert.equal(chat.subjectForCapability(token), null, "a stopped turn can still call tools");
+  });
+
+  it("is revoked, and its config directory removed, when spawn throws", async () => {
+    const row = chat.createChat();
+    // What an over-long argv element does — synchronously, before any child.
+    spawnThrows = Object.assign(new Error("spawn E2BIG"), { code: "E2BIG" });
+    try {
+      const sent = await chat.sendChatMessage(row.id, "propose some work");
+      assert.equal(sent.ok, false);
+      if (sent.ok) return;
+      assert.match(sent.reason, /E2BIG/);
+    } finally {
+      spawnThrows = null;
+    }
+
+    const token = tokensSeen[tokensSeen.length - 1];
+    const configPath = configsSeen[configsSeen.length - 1];
+    assert.equal(chat.subjectForCapability(token), null, "a turn that never spawned left a live token");
+    assert.equal(fs.existsSync(configPath), false, "the file holding the token is still on disk");
+    assert.equal(fs.existsSync(path.dirname(configPath)), false, "the per-turn directory is left behind");
+    assert.equal(chat.getChat(row.id)?.status, "failed");
+  });
+
+  it("is never minted for a message too long to pass as one argument", async () => {
+    // Refused before the claim, so none of the above has anything to release:
+    // no row moved, no message appended, no spawn.
+    const row = chat.createChat();
+    const spawnsBefore = configsSeen.length;
+    const text = "x".repeat(chat.MAX_CHAT_MESSAGE_BYTES + 1);
+    const sent = await chat.sendChatMessage(row.id, text);
+    assert.equal(sent.ok, false);
+    if (sent.ok) return;
+    assert.match(sent.reason, /at most 64 KB/);
+    assert.equal(configsSeen.length, spawnsBefore, "a refused message reached spawn");
+    const after = chat.getChat(row.id);
+    assert.equal(after?.status, row.status);
+    assert.equal(after?.turn_seq, row.turn_seq, "a refused message claimed a turn");
+    assert.equal(chat.listMessages(row.id).length, 0, "a refused message was appended");
+
+    // And the limit is not off by one in the other direction.
+    const fits = await chat.sendChatMessage(row.id, "x".repeat(chat.MAX_CHAT_MESSAGE_BYTES));
+    assert.equal(fits.ok, true);
+  });
+});
+
 describe("sendChatMessage when the turn cannot be started", () => {
   it("leaves the row failed, not thinking, and says why", async () => {
     const row = chat.createChat();

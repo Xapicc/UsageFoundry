@@ -100,7 +100,26 @@
   496 times across 78 runs, `workflows.ts` (68,000) over 185; by arithmetic one
   avoided full read of the first is worth about $3.19.
 
+- **`total_cost_usd` is a resumed session's running total on 2.1.280, read off
+  the arm64 binary and transcripts, no turn spawned, 2026-09-27.** The binary
+  restores a saved `costState` into its ledger (`nte` → `aAr` →
+  `costLedger.restore`) and builds `result.total_cost_usd` from
+  `costLedger.totalCostUSD()`. 138 of 138 local transcripts holding two or
+  more `cost-state` records (of 1,617; 36 written by 2.1.280) never fall — one
+  session read 8.415 → 10.340 → 11.970. Caveat: the call path from `--resume`
+  to the restore was not traced. The chat's `turnCostOf` banks the increase on
+  this reading.
+
 ## Not yet verified by hand
+
+- **No real resumed chat turn has been compared with its transcript.** The
+  entry above is read, not run, and `chat_turn_spend` now banks each resumed
+  turn's increase on it; whether `result.usage` is cumulative too is unread.
+  Settle it with two turns on one thread in a logged-in container: compare
+  `SELECT ts, cost_usd FROM chat_turn_spend WHERE chat_id = '<id>'` in
+  `$DATA_DIR/usagefoundry.db` with that session's deduped per-message usage in
+  `~/.claude/projects/*/<session>.jsonl` priced by `pricing.ts`, and read the
+  second turn's `result.usage` against the first's.
 
 - **No Fable 5.1 / Mythos 5.1 turn has been metered here.** A transcript not
   spelling `claude-fable-5-1` / `claude-mythos-5-1` would price silently at the

@@ -201,7 +201,7 @@ export interface ChatRow {
    */
   partial_text: string | null;
   partial_at: number | null;
-  /** Usage the CLI reported this turn — measured, and summed across requests. */
+  /** Usage the CLI reported this turn — measured, counted once per response. */
   turn_tokens: number;
   /**
    * This app's own price for those tokens: a **guard** figure, never shown
@@ -215,6 +215,11 @@ export interface ChatRow {
    * `cost_usd` and never folded into it, because no measured figure is coming.
    */
   cost_usd_est: number;
+  /**
+   * The CLI's last cumulative `total_cost_usd` under `session_id`, or null —
+   * what the next resumed turn's figure is measured from. See `turnCostOf`.
+   */
+  session_cost_usd: number | null;
   /**
    * When the turn in flight began, and null when none is. Deliberately not
    * `updated_at`: the chat's own `save_template` tool writes a system message
@@ -447,6 +452,21 @@ export const MAX_PENDING_PROPOSALS = 25;
 /** How much of the thread is replayed when there is no session to resume. */
 const THREAD_REPLAY_MESSAGES = 20;
 const THREAD_REPLAY_BYTES = 20_000;
+
+/**
+ * The longest message a turn will pass on, in UTF-8 bytes.
+ *
+ * The message reaches the CLI as the one argv element after `-p`, and Linux
+ * refuses any single element over `MAX_ARG_STRLEN` — 32 pages, 128 KiB at 4 KiB
+ * pages — with `E2BIG`, which `spawn` throws synchronously. Refused before the
+ * claim rather than met at the spawn, because "Could not start the turn: spawn
+ * E2BIG" is a sentence nobody can act on. Half of that rather than all of it:
+ * `chatPrompt` puts up to `THREAD_REPLAY_BYTES` code units of replayed thread in
+ * front of the message, up to three bytes each in UTF-8, and a limit that held
+ * only when there was a session to resume would fail on exactly the turn that
+ * had lost one.
+ */
+export const MAX_CHAT_MESSAGE_BYTES = 64 * 1024;
 
 /**
  * How long a turn may go **silent** before it is stopped. Not how long it may
@@ -2255,10 +2275,12 @@ const caps = ((globalThis as unknown as { __ufChatCaps?: Map<string, Capability>
  * written to avoid.
  *
  * What replaces the clock is that every ending revokes: `land` in
- * `runOrchestratorChild` runs on the spawn failure, on the exit and on the
- * kill, the idle timer revokes at the moment it decides the turn is over rather
- * than waiting for the corpse, and the map is in this process's memory, so it
- * dies with the process either way.
+ * `runOrchestratorChild` runs on a launch that fails, on the exit and on the
+ * kill; a setup or `spawn` that throws before there is a child revokes in the
+ * same function; the idle timer and `endTurn` — Stop, the sweeper, the install
+ * ceiling — revoke at the moment they decide the turn is over rather than
+ * waiting for the corpse; and the map is in this process's memory, so it dies
+ * with the process either way.
  */
 export function mintCapability(subject: CapabilitySubject): string {
   const token = randomBytes(32).toString("base64url");
@@ -2314,6 +2336,27 @@ export function mintRunCapability(runId: string): string {
 export function revokeRunCapabilities(runId: string): void {
   for (const [token, cap] of caps) {
     if (cap.subject.kind === "run" && cap.subject.runId === runId) caps.delete(token);
+  }
+}
+
+/**
+ * Called from `endTurn`, at the moment it decides a chat's turn is over.
+ *
+ * `land` revokes on every other ending, but it runs when the child is gone, and
+ * `endTurn` returns while the child it signalled still has eight seconds of
+ * ladder left — so after Stop, the sweeper or the install ceiling, a stopped
+ * turn could still propose runs, file tasks and ask questions into a thread the
+ * operator had stopped, while their retry was claiming the next turn. The idle
+ * timer's rule, applied to the other three endings.
+ *
+ * By chat rather than by token, which is `revokeRunCapabilities`' shape one
+ * function up: the turn being ended is the only one this chat may have live,
+ * and any other token under its id is a superseded child's that some earlier
+ * ending already decided was over.
+ */
+function revokeChatCapabilities(chatId: string): void {
+  for (const [token, cap] of caps) {
+    if (cap.subject.kind === "chat" && cap.subject.chatId === chatId) caps.delete(token);
   }
 }
 
@@ -2574,6 +2617,10 @@ function endTurn(chatId: string, error: string): boolean {
   // that never came.
   if (changed) appendMessage(chatId, "system", error);
 
+  // Before any signal, and whether or not there is a child left to send one
+  // to: the decision is what ends the credential, not the corpse.
+  revokeChatCapabilities(chatId);
+
   const child = turns.get(chatId);
   if (!child) return false;
 
@@ -2697,6 +2744,17 @@ export async function sendChatMessage(
 
   const text = message.trim();
   if (!text) return { ok: false, reason: "Nothing to send." };
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes > MAX_CHAT_MESSAGE_BYTES) {
+    return {
+      ok: false,
+      reason:
+        `That message is ${Math.ceil(bytes / 1024)} KB, and a chat message can be at most ` +
+        `${MAX_CHAT_MESSAGE_BYTES / 1024} KB because it is handed to the CLI as one ` +
+        "command-line argument. Shorten it, or save the long part to a file in a " +
+        "mounted folder and ask the chat to read it.",
+    };
+  }
 
   // The same gate a review passes: the operator's own configured ceiling is
   // already spent. A chat turn spends against the same window as everything
@@ -2802,9 +2860,14 @@ export interface TurnResult {
   text?: string;
   error?: string;
   /**
-   * What the CLI itself said the turn cost. **Absent means it never said** —
-   * the child died before its `result` event — not that the turn was free, and
-   * a caller that banks `costUSD ?? 0` has written a measurement nobody made.
+   * The CLI's own `total_cost_usd`. **Absent means it never said** — the child
+   * died before its `result` event — not that the turn was free, and a caller
+   * that banks `costUSD ?? 0` has written a measurement nobody made.
+   *
+   * It is the *session's* total rather than this invocation's: the pinned CLI
+   * restores its cost ledger on `--resume`. A one-shot child's figure is
+   * therefore its own cost, and a resumed chat turn's is not until
+   * `finishTurn` has subtracted what the session had already reported.
    */
   costUSD?: number;
   tokens?: number;
@@ -2891,34 +2954,27 @@ export interface OrchestratorChildOptions {
 }
 
 /**
- * Spawn one headless orchestrator turn.
- *
- * **The fourth kind of child process, invoked a second way — not a fifth kind.**
- * `review.ts` says adding a third was a decision rather than a detail, and the
- * chat says the same of the fourth. A workflow's orchestrator block is the same
- * child with the same argv, the same environment, the same capability token and
- * the same MCP config file; what differs is that there is no thread to resume
- * and nobody typing. That is why this function exists rather than a second
- * `spawn` call site: two of those would be two sets of flags to keep in step,
- * and the flags are what bound the child.
- *
- * Everything about *what* it may do is a caller's argument — the subject decides
- * its tool list, the system prompt states its role — and everything about how it
- * is contained is here and identical for both.
+ * What a launch has taken before there is a child to hand it to: the capability
+ * file on disk, and the tree the sandbox fill wrote placeholders into. Filled in
+ * as each is taken, so a throw part-way through releases exactly those.
  */
-export function runOrchestratorChild(o: OrchestratorChildOptions): void {
-  const token = mintCapability(o.subject);
-  let configPath: string;
-  try {
-    configPath = writeMcpConfig(token);
-  } catch (err) {
-    // `land` is the only thing that revokes, and it is inside the promise this
-    // never reaches — so a token minted for a turn that cannot start would
-    // stay live in memory until it expired, an hour later. The caller records
-    // the failure on the row; this releases what the failed setup took.
-    revokeCapability(token);
-    throw err;
-  }
+interface LaunchTaken {
+  configPath?: string;
+  cwd?: string;
+}
+
+/**
+ * Everything from the capability file to a running child, and nothing after —
+ * its own function so that one `catch` in `runOrchestratorChild` covers all of
+ * it. `land` releases a turn, and `land` is wired to a child.
+ */
+function launchOrchestratorChild(
+  o: OrchestratorChildOptions,
+  token: string,
+  taken: LaunchTaken,
+): { child: ChatProcess; configPath: string; cwd: string } {
+  const configPath = writeMcpConfig(token);
+  taken.configPath = configPath;
 
   const settings = getSettings();
   const args = [
@@ -3029,6 +3085,7 @@ export function runOrchestratorChild(o: OrchestratorChildOptions): void {
   // answer differently, and a sweep aimed at the other answer silently leaves
   // the placeholders where they fell.
   const cwd = o.cwd && fs.existsSync(o.cwd) ? o.cwd : chatCwd();
+  taken.cwd = cwd;
 
   /**
    * The same sandbox preparation a work cycle gets, minus the git half — and
@@ -3089,6 +3146,49 @@ export function runOrchestratorChild(o: OrchestratorChildOptions): void {
     stdio: ["ignore", "pipe", "pipe"],
     detached: settings.killProcessGroup && process.platform !== "win32",
   });
+  return { child, configPath, cwd };
+}
+
+/**
+ * Spawn one headless orchestrator turn.
+ *
+ * **The fourth kind of child process, invoked a second way — not a fifth kind.**
+ * `review.ts` says adding a third was a decision rather than a detail, and the
+ * chat says the same of the fourth. A workflow's orchestrator block is the same
+ * child with the same argv, the same environment, the same capability token and
+ * the same MCP config file; what differs is that there is no thread to resume
+ * and nobody typing. That is why this function exists rather than a second
+ * `spawn` call site: two of those would be two sets of flags to keep in step,
+ * and the flags are what bound the child.
+ *
+ * Everything about *what* it may do is a caller's argument — the subject decides
+ * its tool list, the system prompt states its role — and everything about how it
+ * is contained is here and identical for both.
+ */
+export function runOrchestratorChild(o: OrchestratorChildOptions): void {
+  const token = mintCapability(o.subject);
+  const taken: LaunchTaken = {};
+  let launched: ReturnType<typeof launchOrchestratorChild>;
+  try {
+    launched = launchOrchestratorChild(o, token, taken);
+  } catch (err) {
+    // Nothing reaches `land` from here, so what the launch took is given back
+    // here or never: a token live in memory until restart, a file on disk
+    // holding it as `Bearer`, and placeholders in a tree the operator works
+    // in. Reachable by an operator rather than only by a full disk — a message
+    // longer than one argv element makes `spawn` throw `E2BIG` synchronously,
+    // which `sendChatMessage` now refuses before the claim but a workflow
+    // block's prompt does not. The caller records the failure on the row.
+    revokeCapability(token);
+    if (taken.configPath) removeMcpConfig(taken.configPath);
+    if (taken.cwd) {
+      for (const problem of sweepSandboxTreeRoot(taken.cwd).problems) {
+        opsLog("warn", "chat.sandbox_sweep_failed", { message: problem });
+      }
+    }
+    throw err;
+  }
+  const { child, configPath, cwd } = launched;
 
   // A worse OOM victim than the server, like every other long-lived child. A
   // turn that dies ends one turn, with a person in front of it to say so.
@@ -3469,9 +3569,11 @@ export function settleOnExit(
  * Read the CLI's `--output-format json` object.
  *
  * Same contract `parseReviewOutput` reads, from the same pinned build:
- * `total_cost_usd` is authoritative per invocation and is never re-derived from
- * tokens. `permission_denials` is read as well and surfaced, because a chat
- * that quietly could not run `gh` reads as a chat that found no issues.
+ * `total_cost_usd` is authoritative and is never re-derived from tokens — but
+ * it is the session's running total, which only a one-shot child can bank as
+ * it stands; see `turnCostOf`. `permission_denials` is read as well and
+ * surfaced, because a chat that quietly could not run `gh` reads as a chat that
+ * found no issues.
  */
 export function parseTurnOutput(
   stdout: string,
@@ -3568,6 +3670,38 @@ export function turnResultOf(
 }
 
 /**
+ * What one turn cost, given the session's running total before it and the one
+ * the CLI reported at its end.
+ *
+ * The pinned CLI's `total_cost_usd` is the session's rather than the
+ * invocation's: a `--resume`d child restores the ledger the last one saved —
+ * the `cost-state` record in the transcript — and reports the running total.
+ * Banked whole, turn N carried the cost of turns 1..N, so a thread's `cost_usd`
+ * grew quadratically and `chat_turn_spend`, which the install's ceiling reads,
+ * over-reported by the same amount until it closed every door in the app on
+ * money nobody spent.
+ *
+ * The whole figure when there is nothing to subtract: no earlier report, or a
+ * different session — `--resume` against a session the CLI no longer has
+ * starts a new one, whose ledger starts at zero. And the whole figure when the
+ * total went *down*, which a ledger that is only ever added to does only when
+ * it was not restored at all: the difference would bank nothing for a turn
+ * that certainly cost something, and a ceiling must not fail in that direction.
+ *
+ * Pure and unit-tested because both ways of getting it wrong are silent: too
+ * much closes the install's ceiling, too little lets it be overrun.
+ */
+export function turnCostOf(
+  previousCumulative: number | null,
+  reported: number,
+  sameSession: boolean,
+): number {
+  if (!sameSession || previousCumulative === null) return reported;
+  if (reported < previousCumulative) return reported;
+  return reported - previousCumulative;
+}
+
+/**
  * Settle the turn this result belongs to, and nothing else.
  *
  * `turnSeq` is the identity, and it is what makes the latch a latch. Status
@@ -3596,11 +3730,12 @@ export function turnResultOf(
  */
 function finishTurn(chatId: string, turnSeq: number, r: TurnResult): void {
   const now = Date.now();
-  const prior = getChat(chatId)?.session_id ?? null;
+  const row = getChat(chatId);
+  const prior = row?.session_id ?? null;
 
   // Read before the UPDATE clears it: this is the turn's own running estimate,
   // and it is the only figure there is if the CLI never reported a cost.
-  const estimate = getChat(chatId)?.turn_cost_est ?? 0;
+  const estimate = row?.turn_cost_est ?? 0;
 
   // And what it had said, for the same reason one line up. `keepPartialTurn`
   // does this for the three endings that go through `endTurn`; this is the
@@ -3608,7 +3743,24 @@ function finishTurn(chatId: string, turnSeq: number, r: TurnResult): void {
   // lands *here* rather than there, and the UPDATE below clears `partial_text`
   // with nobody having read it. Fourteen minutes of work discarded because the
   // fifteenth was quiet is the failure this whole change is about.
-  const partial = (getChat(chatId)?.partial_text ?? "").trim();
+  const partial = (row?.partial_text ?? "").trim();
+
+  // What this turn cost, as against what its session has cost so far. `prior`
+  // is the session the turn resumed: nothing but this turn's own settle can
+  // move it, and a superseded child's settle is refused below.
+  const sameSession = !!r.sessionId && r.sessionId === prior;
+  const banked =
+    r.costUSD === undefined
+      ? 0
+      : turnCostOf(row?.session_cost_usd ?? null, r.costUSD, sameSession);
+  // And what the next turn will subtract from: the figure just reported, under
+  // the session it was reported for. Nothing rather than a figure for another
+  // session when the id moved without one, and nothing when a figure came with
+  // no id to pin it to — both bank the next turn whole, which over-counts one
+  // turn rather than under-counting every one after it.
+  let sessionCost: number | null = null;
+  if (r.costUSD !== undefined) sessionCost = r.sessionId ? r.costUSD : null;
+  else if (sameSession || !r.sessionId) sessionCost = row?.session_cost_usd ?? null;
 
   const changed =
     db()
@@ -3616,7 +3768,7 @@ function finishTurn(chatId: string, turnSeq: number, r: TurnResult): void {
         `UPDATE chat_sessions
             SET status=?, error=?, updated_at=?, turn_started_at=NULL,
                 cost_usd = cost_usd + ?, tokens = tokens + ?,
-                session_id = COALESCE(?, session_id),
+                session_id = COALESCE(?, session_id), session_cost_usd = ?,
                 partial_text=NULL, partial_at=NULL,
                 turn_tokens=0, turn_cost_est=0
           WHERE id=? AND status='thinking' AND turn_seq=?`,
@@ -3625,9 +3777,10 @@ function finishTurn(chatId: string, turnSeq: number, r: TurnResult): void {
         r.status,
         r.error ?? null,
         now,
-        r.costUSD ?? 0,
+        banked,
         r.tokens ?? 0,
         r.sessionId,
+        sessionCost,
         chatId,
         turnSeq,
       ).changes > 0;
@@ -3642,12 +3795,14 @@ function finishTurn(chatId: string, turnSeq: number, r: TurnResult): void {
   // charged a thread's whole history to whichever 24 hours its last message
   // fell in — see `chat_turn_spend` in db.ts. Written after the latch above
   // rather than beside it, so a late settle that changed no total adds no row.
-  if ((r.costUSD ?? 0) > 0) {
+  // The increase and never the session's running total, for `turnCostOf`'s
+  // reason: this is the table the install's ceiling sums.
+  if (banked > 0) {
     db()
       .prepare(
         "INSERT INTO chat_turn_spend (chat_id, ts, cost_usd) VALUES (?, ?, ?)",
       )
-      .run(chatId, now, r.costUSD ?? 0);
+      .run(chatId, now, banked);
   } else if (estimate > 0) {
     // A turn that settled without the CLI reporting a cost — a child killed
     // after it had worked, a `result` that never arrived. The money was spent

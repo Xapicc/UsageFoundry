@@ -52,8 +52,24 @@ import {
 export interface ChatTurnAccumulator {
   /** Assistant text as it arrives, main thread only. Live view, never stored. */
   text: string;
-  /** Usage the CLI reported, summed across requests — measured, not derived. */
+  /**
+   * Usage the CLI reported, summed across API responses and counted once per
+   * response — measured, not derived. See `countedById`.
+   */
   tokens: TokenCounts;
+  /**
+   * The usage already in `tokens` for each `message.id`.
+   *
+   * The CLI emits one `assistant` event per content block — a thinking block, a
+   * text block, a tool call — and every one repeats the response's id and its
+   * whole `usage`. Summed per event, one response was counted once per block,
+   * and the figure lands where a ceiling reads it: `turn_cost_est` is what
+   * `installSpend` counts for a live turn and what `recordProgress` re-asks the
+   * install's ceiling with. `transcripts.ts` meets the same duplication in the
+   * files and resolves it the same way, highest output wins, because every
+   * block before the last carries a streaming placeholder in the output field.
+   */
+  countedById: Map<string, TokenCounts>;
   /** Our own price for those tokens: a guard figure, never a shown one. */
   costGuardUSD: number;
   sessionId: string | null;
@@ -87,6 +103,7 @@ export function newChatTurnAccumulator(): ChatTurnAccumulator {
   return {
     text: "",
     tokens: { ...ZERO_TOKENS },
+    countedById: new Map(),
     costGuardUSD: 0,
     sessionId: null,
     apiError: null,
@@ -119,6 +136,19 @@ function usageOf(message: Record<string, unknown> | undefined): TokenCounts {
     cacheWrite1h: write1h,
     cacheWriteUnattributed:
       write5m || write1h ? Math.max(0, flat - write5m - write1h) : flat,
+  };
+}
+
+/** What a later reading of one response adds over the reading already counted. */
+function tokensOver(next: TokenCounts, counted: TokenCounts): TokenCounts {
+  return {
+    input: next.input - counted.input,
+    output: next.output - counted.output,
+    cacheRead: next.cacheRead - counted.cacheRead,
+    cacheWrite5m: next.cacheWrite5m - counted.cacheWrite5m,
+    cacheWrite1h: next.cacheWrite1h - counted.cacheWrite1h,
+    cacheWriteUnattributed:
+      next.cacheWriteUnattributed - counted.cacheWriteUnattributed,
   };
 }
 
@@ -186,9 +216,18 @@ export function readChatEvent(
     }
 
     const used = usageOf(message);
-    const spendGrew = totalTokens(used) > 0;
+    const id = typeof message?.id === "string" && message.id ? message.id : null;
+    const counted = id === null ? undefined : acc.countedById.get(id);
+    // A block of a response already counted moves nothing unless it carries
+    // more output, and then it replaces the earlier reading rather than adding
+    // to it. Output is provisional until the response's last block arrives, so
+    // a turn cut off between two blocks under-counts that one response's
+    // output: the price of not guessing a number the CLI has not printed yet.
+    const spendGrew =
+      totalTokens(used) > 0 && (counted === undefined || used.output > counted.output);
     if (spendGrew) {
-      acc.tokens = addTokens(acc.tokens, used);
+      acc.tokens = addTokens(acc.tokens, counted ? tokensOver(used, counted) : used);
+      if (id !== null) acc.countedById.set(id, used);
       // Priced by us, so it is a *guard* figure and is labelled one everywhere
       // it lands: the CLI's own `total_cost_usd` arrives with the `result`
       // event and is the shown figure. `guardCostOf` charges an unplaced model

@@ -35,12 +35,14 @@ const assistant = (o: {
   model?: string;
   usage?: Record<string, unknown>;
   parent?: string;
+  id?: string;
 }) =>
   line({
     type: "assistant",
     session_id: "s-1",
     ...(o.parent ? { parent_tool_use_id: o.parent } : {}),
     message: {
+      ...(o.id ? { id: o.id } : {}),
       model: o.model ?? "claude-opus-5",
       content: o.text === undefined ? [] : [{ type: "text", text: o.text }],
       ...(o.usage ? { usage: o.usage } : {}),
@@ -101,6 +103,49 @@ describe("readChatEvent", () => {
     // money and not a restatement of the first.
     assert.equal(totalTokens(acc.tokens), 100 + 50 + 200 + 1_000);
     assert.ok(acc.costGuardUSD > 0);
+  });
+
+  it("counts one response once however many blocks it arrives in", () => {
+    // The CLI emits one event per content block, and each repeats the
+    // response's id and whole usage; every block before the last carries a
+    // placeholder in the output field. Summed per event, a thinking block and
+    // a tool call doubled what the live ceiling check reads.
+    const usage = { cache_read_input_tokens: 29_238, input_tokens: 6 };
+    const acc = newChatTurnAccumulator();
+    readChatEvent(acc, assistant({ id: "msg_1", usage: { ...usage, output_tokens: 4 } }));
+    const moved = readChatEvent(
+      acc,
+      assistant({ id: "msg_1", text: "done", usage: { ...usage, output_tokens: 311 } }),
+    );
+    assert.equal(moved.spendGrew, true, "the final output count is new spend");
+    const repeat = readChatEvent(
+      acc,
+      assistant({ id: "msg_1", usage: { ...usage, output_tokens: 311 } }),
+    );
+    assert.equal(repeat.spendGrew, false, "a repeated reading is not new spend");
+
+    const once = newChatTurnAccumulator();
+    readChatEvent(once, assistant({ id: "msg_1", usage: { ...usage, output_tokens: 311 } }));
+    assert.deepEqual(acc.tokens, once.tokens);
+    assert.equal(acc.tokens.cacheRead, 29_238);
+    assert.equal(acc.tokens.output, 311);
+    assert.equal(acc.costGuardUSD, once.costGuardUSD);
+  });
+
+  it("counts two responses twice", () => {
+    // The control: an id is what makes two events one response, so two ids
+    // with identical usage are two requests billed twice.
+    const usage = { cache_read_input_tokens: 29_238, output_tokens: 311 };
+    const acc = newChatTurnAccumulator();
+    readChatEvent(acc, assistant({ id: "msg_1", usage }));
+    const moved = readChatEvent(acc, assistant({ id: "msg_2", usage }));
+    assert.equal(moved.spendGrew, true);
+
+    const one = newChatTurnAccumulator();
+    readChatEvent(one, assistant({ id: "msg_1", usage }));
+    assert.equal(acc.tokens.cacheRead, 2 * 29_238);
+    assert.equal(acc.tokens.output, 2 * 311);
+    assert.ok(Math.abs(acc.costGuardUSD - 2 * one.costGuardUSD) < 1e-12);
   });
 
   it("prices an unplaced model rather than charging it nothing", () => {

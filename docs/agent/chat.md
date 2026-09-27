@@ -51,6 +51,7 @@ The paragraphs themselves live in `docs/agent/chat/`, one topic file per heading
 - A provider refusal is what the turn says went wrong, ahead of anything this app inferred from the wreckage.
 - A chat turn is durable while it is happening, and it was not.
 - A chat turn is spend with no `evaluateBudget` behind it.
+- A resumed turn is charged its increase, never the figure the CLI printed.
 - The install's ceiling is asked again while the turn runs, and that is what `chatTurnBudgetUSD` never covered.
 
 ## [Questions to the operator](chat/operator-questions.md)
