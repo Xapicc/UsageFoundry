@@ -120,12 +120,15 @@ function ConflictFile({ file }: { file: ConflictFileDTO }) {
  */
 function PendingWork({
   pending,
+  resolving,
   busy,
   message,
   onMessage,
   onCommit,
 }: {
   pending: NonNullable<LandStateDTO["pending"]>;
+  /** A conflict resolution is working, and what is listed is its open merge. */
+  resolving: boolean;
   busy: boolean;
   message: string;
   onMessage: (value: string) => void;
@@ -164,22 +167,41 @@ function PendingWork({
             <Hint>{hidden} further path{hidden === 1 ? "" : "s"} not listed</Hint>
           )}
 
-          <ButtonRow className="mt-2.5">
-            <Input
-              className="min-w-0 flex-1"
-              value={message}
-              onChange={(e) => onMessage(e.target.value)}
-              placeholder={pending.suggestedMessage}
-              aria-label="Commit message"
-            />
-            <Button variant="secondary" onClick={onCommit} disabled={busy}>
-              {busy ? "Committing…" : `Commit ${pending.count}`}
-            </Button>
-          </ButtonRow>
-          <Hint>
-            Commits everything above onto the branch and frees the checkout slot
-            for the next run
-          </Hint>
+          {/* Neither is work to commit. Offering Commit here is how a
+              resolution's conflict markers reached the branch and then the
+              target, so the button is not drawn rather than drawn to be
+              refused; `commitRefusal` refuses both all the same. */}
+          {resolving ? (
+            <Hint>
+              Claude is resolving conflicts in this checkout, so nothing is
+              offered until it finishes
+            </Hint>
+          ) : pending.merging ? (
+            <Hint tone="warn">
+              A conflict resolution was cut off here mid-merge, so nothing is
+              offered: run <span className="mono">git merge --abort</span> in
+              this checkout, then resolve again
+            </Hint>
+          ) : (
+            <>
+              <ButtonRow className="mt-2.5">
+                <Input
+                  className="min-w-0 flex-1"
+                  value={message}
+                  onChange={(e) => onMessage(e.target.value)}
+                  placeholder={pending.suggestedMessage}
+                  aria-label="Commit message"
+                />
+                <Button variant="secondary" onClick={onCommit} disabled={busy}>
+                  {busy ? "Committing…" : `Commit ${pending.count}`}
+                </Button>
+              </ButtonRow>
+              <Hint>
+                Commits everything above onto the branch and frees the checkout
+                slot for the next run
+              </Hint>
+            </>
+          )}
         </>
       )}
     </div>
@@ -352,7 +374,9 @@ export function RunLand({ run }: { run: RunDTO }) {
   // offered beside Delete: when git can see the work is safe, that is the
   // button, and two destructive controls side by side is how the wrong one
   // gets pressed.
-  const canPurge = state.branchExists && settled && !canDelete;
+  // Not while a resolution works: its checkout is what a purge force-removes,
+  // with a billed agent editing files inside it.
+  const canPurge = state.branchExists && settled && !canDelete && !resolving;
   // The other exit, and the only one here that leaves the machine. Offered once
   // per pull request: a second press would push again — updating the pull
   // request — and then be refused by GitHub's "already exists", so what it
@@ -497,6 +521,7 @@ export function RunLand({ run }: { run: RunDTO }) {
       {state.pending && (
         <PendingWork
           pending={state.pending}
+          resolving={resolving}
           busy={busy}
           message={message}
           onMessage={setMessage}

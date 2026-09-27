@@ -543,7 +543,14 @@ describe("commitRefusal", () => {
     branch: "uf/repo-1234abcd",
     checkedOutBranch: "uf/repo-1234abcd",
     readable: true,
-    pendingCount: 4,
+    pending: [
+      { path: "src/parser.ts", code: " M" },
+      { path: "src/lexer.ts", code: "A " },
+      { path: "docs/parser.md", code: "??" },
+      { path: "src/old.ts", code: " D" },
+    ],
+    mergeInProgress: false,
+    resolutionRunning: false,
     message: "Add the parser",
   };
 
@@ -590,9 +597,64 @@ describe("commitRefusal", () => {
 
   it("refuses when there is nothing to commit", () => {
     assert.match(
-      commitRefusal({ ...committable, pendingCount: 0 }) ?? "",
+      commitRefusal({ ...committable, pending: [] }) ?? "",
       /nothing uncommitted/,
     );
+  });
+
+  it("refuses while a conflict resolution holds the branch", () => {
+    // The run is terminal, so the active-run refusal above says nothing, and the
+    // resolution's merge is open in this very checkout with its conflicted files
+    // still marked. `add -A` and a commit put the markers on the branch as a
+    // merge commit, which then lands as a fast-forward.
+    const refusal = commitRefusal({ ...committable, resolutionRunning: true });
+    assert.match(refusal ?? "", /resolving a conflict on uf\/repo-1234abcd/);
+    assert.match(refusal ?? "", /conflict markers/);
+  });
+
+  it("refuses a checkout a cut-off resolution left mid-merge", () => {
+    // The same merge with nobody left to finish or roll it back: a restart while
+    // the resolution ran. Nothing records that it is running any more, so the
+    // status letters are the evidence.
+    const refusal = commitRefusal({
+      ...committable,
+      pending: [...committable.pending, { path: "src/parser.ts", code: "UU" }],
+    });
+    assert.match(refusal ?? "", /middle of a merge/);
+    assert.match(refusal ?? "", /src\/parser\.ts is still unmerged/);
+    assert.match(refusal ?? "", /git merge --abort/);
+  });
+
+  it("counts every unmerged state git reports, and only those", () => {
+    for (const code of ["UU", "AU", "UA", "DU", "UD", "AA", "DD"]) {
+      assert.match(
+        commitRefusal({ ...committable, pending: [{ path: "f.txt", code }] }) ?? "",
+        /middle of a merge/,
+        `${code} is unmerged`,
+      );
+    }
+    // The control: every ordinary state in the fixture, renames and copies
+    // included, is still committable, so the refusal above is about the letters.
+    for (const code of ["M ", "MM", "AM", "R ", "C ", "D ", "??"]) {
+      assert.equal(
+        commitRefusal({ ...committable, pending: [{ path: "f.txt", code }] }),
+        null,
+        `${code} is not unmerged`,
+      );
+    }
+  });
+
+  it("refuses a merge still open once every conflicted file is staged", () => {
+    // `git add` marks a file resolved whatever is still in it, so a merge with
+    // no unmerged path left can hold markers all the same. `MERGE_HEAD` is what
+    // says a merge is open.
+    const refusal = commitRefusal({
+      ...committable,
+      pending: [{ path: "src/parser.ts", code: "M " }],
+      mergeInProgress: true,
+    });
+    assert.match(refusal ?? "", /middle of a merge/);
+    assert.doesNotMatch(refusal ?? "", /still unmerged/);
   });
 
   it("refuses a message that was given and then emptied", () => {
@@ -621,6 +683,7 @@ describe("purgeRefusal", () => {
     branchExists: true,
     confirmBranch: "uf/repo-1234abcd",
     chain: [{ runId: "aaaaaaaa", status: "failed" as const, iterations: 1 }],
+    resolutionRunning: false,
   };
 
   it("allows an unmerged branch, which is the whole point of it", () => {
@@ -649,6 +712,15 @@ describe("purgeRefusal", () => {
         `${runStatus} should not be purgeable`,
       );
     }
+  });
+
+  it("refuses while a conflict resolution holds the branch", () => {
+    // `activeRuns()` does not see a resolution, so the purge force-removed the
+    // checkout its billed agent was editing, and its `after` then had no merge
+    // to roll back.
+    const refusal = purgeRefusal({ ...purgeable, resolutionRunning: true });
+    assert.match(refusal ?? "", /resolving a conflict on uf\/repo-1234abcd/);
+    assert.match(refusal ?? "", /Wait for the resolution to finish/);
   });
 
   it("says so when the branch is already gone", () => {

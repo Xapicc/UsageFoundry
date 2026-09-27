@@ -2739,6 +2739,8 @@ export interface PendingWorkDTO {
   files: PendingChangeDTO[];
   /** False when `git status` failed, so `files` says nothing about this checkout. */
   readable: boolean;
+  /** Mid-merge, so the listed paths are a resolution's half-done work and never committed. */
+  merging: boolean;
   /** The run's task as a commit subject, offered as the default. */
   suggestedMessage: string;
 }

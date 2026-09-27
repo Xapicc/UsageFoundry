@@ -131,4 +131,40 @@ describe("the checkout a resolution is given", () => {
       assert.equal(path.dirname(at), path.join(ws, ".uf-worktrees"));
     }
   });
+
+  it("refuses a slot a cut-off resolution left mid-merge, and never says to commit it", async () => {
+    // The run's own slot still holds its branch, so it is reused or refused.
+    // Its tracked dirt here is a merge nobody finished, and the refusal used to
+    // be the dirty-slot sentence: "Commit or discard them there and resolve
+    // again". Committing it is how the markers reached the branch and then the
+    // target, so this state gets a sentence of its own.
+    const midMerge = makeRepo("mid-merge", ["uf/cut-off"]);
+    const slot = path.join(ws, ".uf-worktrees", "mid-merge-slot");
+    fixtureGit(midMerge, ["worktree", "add", "-q", slot, "uf/cut-off"]);
+    fs.writeFileSync(path.join(slot, "README.md"), "branch side\n");
+    fixtureGit(slot, ["commit", "-q", "-am", "branch side"]);
+    fs.writeFileSync(path.join(midMerge, "README.md"), "main side\n");
+    fixtureGit(midMerge, ["commit", "-q", "-am", "main side"]);
+    assert.throws(() => fixtureGit(slot, ["merge", "--no-edit", "main"]));
+
+    const run = createRun({
+      folder: "mid-merge",
+      prompt: "resolve a branch whose last resolution was cut off",
+      budget: { maxIterations: 1 },
+      origin: "form",
+    });
+
+    await assert.rejects(
+      resolveCheckout(midMerge, { ...run, worktree_path: slot }, "uf/cut-off"),
+      (err: Error) => {
+        assert.match(err.message, /in the middle of a merge/);
+        assert.match(err.message, /git merge --abort/);
+        assert.doesNotMatch(err.message, /Commit or discard/);
+        return true;
+      },
+    );
+    // Refused, not repaired: whether the open merge is a resolution's or the
+    // operator's own is not something this can tell.
+    assert.ok(fixtureGit(slot, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]));
+  });
 });

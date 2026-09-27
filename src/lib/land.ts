@@ -164,6 +164,12 @@ export interface PendingWork {
   files: PendingChange[];
   /** False when `git status` failed, so `files` says nothing about this checkout. */
   readable: boolean;
+  /**
+   * The checkout is in the middle of a merge (`MERGE_HEAD`, or a path git left
+   * unmerged), so what is listed is a conflict resolution's half-done work,
+   * markers and all, and `commitRefusal` will not commit it.
+   */
+  merging: boolean;
   /** The run's task as a commit subject, offered as the default. */
   suggestedMessage: string;
 }
@@ -1463,11 +1469,26 @@ export async function resolveCheckout(
       // — falling through on a dirty slot was a guaranteed failure wearing a
       // fallback's clothes, and it reported itself as `Preparing worktree`.
       // The choice here is reuse or refuse, never a second checkout.
-      const status = await git(own, ["status", "--porcelain"], NO_CLOCK);
-      if (!status.ok) {
+      const [status, merging] = await Promise.all([
+        git(own, ["status", "--porcelain"], NO_CLOCK),
+        mergeHeadIn(own),
+      ]);
+      if (!status.ok || merging === null) {
         throw new Error(
           `${branch} is checked out in ${path.basename(own)}, whose state could not be read: ` +
             `${gitFailureLine(status.stderr) || "unknown error"}`,
+        );
+      }
+      // Its own sentence rather than the dirt below, which tells the operator to
+      // commit: committing this is exactly how a resolution's markers reach the
+      // branch, and then the target. `resolveConflicts` holds its claim here, so
+      // no resolution of this run is live, and this is one that was cut off.
+      if (merging || status.stdout.split("\n").some((line) => isUnmerged(line.slice(0, 2)))) {
+        throw new Error(
+          `${branch} is checked out in ${path.basename(own)}, which is in the middle of a ` +
+            "merge. That is what a conflict resolution leaves when it is cut off before it " +
+            "can finish or roll back. Do not commit it: run `git merge --abort` in that " +
+            "checkout, then resolve again.",
         );
       }
       const dirt = trackedDirt(status.stdout);
@@ -1539,6 +1560,19 @@ async function discardCheckout(
  */
 const resolving = ((globalThis as unknown as { __ufResolving?: Set<string> })
   .__ufResolving ??= new Set<string>());
+
+/**
+ * Whether a conflict resolution holds this run's branch right now.
+ *
+ * Both halves, because each covers a stretch the other does not: the claim
+ * from entry until `startAssist` writes the row, which is where the merge is
+ * made, and the row from then until `after` has finished or rolled it back.
+ * While either holds, the run's own checkout can be mid-merge with a billed
+ * agent editing the conflicted files, and nothing else may write to it.
+ */
+function resolutionHolds(runId: string): boolean {
+  return resolving.has(runId) || assistRunning(runId, "resolve");
+}
 
 /**
  * Merge the target *into* the run's branch, and have Claude resolve what git
@@ -1940,12 +1974,44 @@ interface SlotState {
   /** False when `git status` failed — which is not the same as clean. */
   readable: boolean;
   files: PendingChange[];
+  /** `MERGE_HEAD` exists there. Always false when `readable` is. */
+  mergeInProgress: boolean;
+}
+
+/**
+ * Whether git's two status letters mark a path it could not merge.
+ *
+ * `U` in either column, or both sides adding or both deleting: the seven
+ * unmerged states `git status` documents. A path in one holds a conflict
+ * nobody has settled, usually with its markers still in it.
+ */
+function isUnmerged(code: string): boolean {
+  return code.includes("U") || code === "AA" || code === "DD";
+}
+
+/**
+ * Whether a checkout has a merge open, or null when git could not say.
+ *
+ * `rev-parse -q --verify` answers a missing ref with exit 1 and nothing on
+ * stderr, and that is the only reading taken as "no merge": anything else is
+ * git failing, and a guard that took it as absent would commit on a guess.
+ */
+async function mergeHeadIn(dir: string): Promise<boolean | null> {
+  const head = await git(dir, ["rev-parse", "-q", "--verify", "MERGE_HEAD"], NO_CLOCK);
+  if (head.ok) return true;
+  return head.code === 1 && head.stderr === "" ? false : null;
 }
 
 async function slotState(run: RunRow): Promise<SlotState> {
   const slot = run.worktree_path;
   if (!slot || !fs.existsSync(slot)) {
-    return { path: slot ?? null, checkedOutBranch: null, readable: false, files: [] };
+    return {
+      path: slot ?? null,
+      checkedOutBranch: null,
+      readable: false,
+      files: [],
+      mergeInProgress: false,
+    };
   }
 
   const head = await git(slot, ["rev-parse", "--abbrev-ref", "HEAD"], NO_CLOCK);
@@ -1954,18 +2020,26 @@ async function slotState(run: RunRow): Promise<SlotState> {
   // branch. Anything uncommitted under a different branch is a later run's, and
   // reporting it here would offer to commit one run's work onto another's.
   if (!checkedOutBranch || checkedOutBranch !== run.worktree_branch) {
-    return { path: slot, checkedOutBranch, readable: head.ok, files: [] };
+    return {
+      path: slot,
+      checkedOutBranch,
+      readable: head.ok,
+      files: [],
+      mergeInProgress: false,
+    };
   }
 
-  const status = await git(slot, ["status", "--porcelain", "-z"], {
-    ...NO_CLOCK,
-    trim: false,
-  });
+  const [status, merging] = await Promise.all([
+    git(slot, ["status", "--porcelain", "-z"], { ...NO_CLOCK, trim: false }),
+    mergeHeadIn(slot),
+  ]);
+  const readable = status.ok && merging !== null;
   return {
     path: slot,
     checkedOutBranch,
-    readable: status.ok,
+    readable,
     files: status.ok ? parseStatusZ(status.stdout) : [],
+    mergeInProgress: readable && merging === true,
   };
 }
 
@@ -1982,6 +2056,9 @@ async function pendingWork(run: RunRow): Promise<PendingWork | null> {
     count: slot.files.length,
     files: slot.files.slice(0, MAX_PENDING_FILES),
     readable: slot.readable,
+    // Over every path rather than the listed ones: an unmerged file past
+    // `MAX_PENDING_FILES` is still in what a Commit would stage.
+    merging: slot.mergeInProgress || slot.files.some((f) => isUnmerged(f.code)),
     suggestedMessage: taskSubject(run),
   };
 }
@@ -2152,7 +2229,15 @@ export function commitRefusal(s: {
   /** The branch its checkout holds now — not necessarily the same one. */
   checkedOutBranch: string | null;
   readable: boolean;
-  pendingCount: number;
+  /** Every uncommitted path in that checkout, with git's status letters. */
+  pending: readonly Pick<PendingChange, "path" | "code">[];
+  /** `MERGE_HEAD` exists in that checkout. */
+  mergeInProgress: boolean;
+  /**
+   * A conflict resolution holds this run's branch: being set up, or its agent
+   * working. See `resolutionHolds`.
+   */
+  resolutionRunning: boolean;
   message: string;
 }): string | null {
   if (!s.isolated) {
@@ -2164,6 +2249,18 @@ export function commitRefusal(s: {
     return (
       "This run is still active. It can write to that checkout at any moment, so a " +
       "commit now would catch a change half-written."
+    );
+  }
+  // The run is terminal, and the resolution's agent is the one writing. Its
+  // merge is open in that checkout with the conflicted files still marked, so
+  // `add -A` and a commit would put the markers on the branch as a merge commit,
+  // which then lands as a fast-forward, and its `after` would find no merge
+  // left to finish or roll back.
+  if (s.resolutionRunning) {
+    return (
+      `Claude is resolving a conflict on ${s.branch}, and its merge is half-done in ` +
+      "that checkout. A commit now would put the conflict markers on the branch. " +
+      "Wait for the resolution to finish."
     );
   }
 
@@ -2182,7 +2279,27 @@ export function commitRefusal(s: {
   if (!s.readable) {
     return "Could not read that checkout's status, so nothing is offered. Check it by hand.";
   }
-  if (s.pendingCount === 0) return "There is nothing uncommitted in that checkout.";
+  // The same half-done merge with nobody finishing it: a resolution cut off by
+  // a restart, or by anything else that kept its `after` from running. Refused
+  // on either sign, because each is enough: a merge whose files were all
+  // staged still has a `MERGE_HEAD` and no unmerged path, and `git add` marks a
+  // file resolved whatever is still in it.
+  const unmerged = s.pending.filter((p) => isUnmerged(p.code)).map((p) => p.path);
+  if (s.mergeInProgress || unmerged.length > 0) {
+    const rest = unmerged.length - DIRT_NAMED;
+    const named =
+      unmerged.length > 0
+        ? ` ${unmerged.slice(0, DIRT_NAMED).join(", ")}${rest > 0 ? ` and ${rest} more` : ""} ` +
+          `${unmerged.length === 1 ? "is" : "are"} still unmerged.`
+        : "";
+    return (
+      "That checkout is in the middle of a merge, which is what a conflict resolution " +
+      `leaves when it is cut off before it can finish or roll back.${named} Committing ` +
+      `it would put a half-done merge on ${s.branch}, conflict markers included. Run ` +
+      "`git merge --abort` in that checkout, then resolve again."
+    );
+  }
+  if (s.pending.length === 0) return "There is nothing uncommitted in that checkout.";
 
   const message = s.message.trim();
   if (message === "") return "A commit message is required.";
@@ -2221,7 +2338,11 @@ export async function commitPending(
     branch: run.worktree_branch,
     checkedOutBranch: slot.checkedOutBranch,
     readable: slot.readable,
-    pendingCount: slot.files.length,
+    pending: slot.files,
+    mergeInProgress: slot.mergeInProgress,
+    // Read after the slot, so a resolution that began while it was being read
+    // is still seen.
+    resolutionRunning: resolutionHolds(run.id),
     message: resolved,
   });
   if (refusal) return { ok: false, reason: refusal };
@@ -2541,11 +2662,22 @@ export function purgeRefusal(s: {
   chain: readonly ChainMember[];
   /** A live pass of a loop that owns it. See `loopStillRepeating`. */
   loopBlock?: { blockName: string; pass: number | null } | null;
+  /** A conflict resolution holds the branch. See `resolutionHolds`. */
+  resolutionRunning: boolean;
 }): string | null {
   if (!s.branch) return "This run has no branch.";
   if (!s.branchExists) return `${s.branch} is already gone.`;
   if (["running", "queued", "paused"].includes(s.runStatus)) {
     return "This run is still active. Stop it before purging the branch it is working on.";
+  }
+  // The run is terminal and `activeRuns()` does not see the resolution, whose
+  // child is a billed agent editing files in the checkout this would
+  // force-remove, and whose `after` would then have nothing to roll back.
+  if (s.resolutionRunning) {
+    return (
+      `Claude is resolving a conflict on ${s.branch}, and purging now would delete ` +
+      "the checkout it is editing. Wait for the resolution to finish."
+    );
   }
   // "Not an active run" stopped meaning "nobody is using this branch" the day a
   // second run could be told to carry it on. Purging here would destroy the
@@ -2606,6 +2738,7 @@ export async function purgeBranch(
     // Always a person, for `deleteBranch`'s reason: purging is a button and
     // nothing else reaches it.
     loopBlock: loopStillRepeating(chain, null),
+    resolutionRunning: resolutionHolds(run.id),
   });
   if (refusal) return { ok: false, reason: refusal };
 
