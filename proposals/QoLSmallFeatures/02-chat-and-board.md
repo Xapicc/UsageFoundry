@@ -142,6 +142,14 @@ their own proposals (`OperatorInterface`, `UIChecks`).
 - **Value**: medium — triage is the board's other daily move besides closing.
 - **Not worth it if**: the operator rarely re-ranks.
 
+### C-16 Let the orchestrator's replies link to the app's own pages
+- **Friction**: the orchestrator's job is to talk about runs, tasks, proposals and workflows, and its tools hand it their ids (`list_runs`, `get_run`, `list_tasks`, `list_past_proposals`). Its replies render through `Markdown` (`src/app/chat/page.tsx:1832`, and `:1261` for the live partial), whose `safeHref` accepts only `http`, `https` and `mailto` (`src/components/Markdown.tsx:551-556`). So a reply writing `[the failed run](/runs/3f2a…)` renders as that literal bracketed text (`Markdown.tsx:744-748`). An operator reading "run 3f2a1b9c stopped on its budget" copies the id into quick open or the URL bar to follow it. How often replies name ids was not counted; the `OrchestratorChatQuality` corpus would answer it.
+- **Change**: an opt-in `appLinks` prop on `Markdown`, passed only by the chat page. With it on, a link target that is a same-origin path under a closed list of prefixes — `/runs/`, `/tasks/`, `/workflows/`, `/chat` — is drawn as an in-app link (same tab, no `target="_blank"`). A target starting `//` or `/\` is refused, since those are protocol-relative. One sentence in `systemPrompt()` then tells the model to link what it names that way. Every other caller, including the knowledge pages and a run's report, is unchanged.
+- **Size**: S.
+- **Touches**: `Markdown.tsx:34-41` — the renderer's safety rests on "a scheme allowlist and an unknown scheme renders as its own literal text". A path allowlist keeps that shape: it is a closed set, it is checked before any link is drawn, and a path without a scheme cannot execute. `Markdown.tsx:43-45` — the file imports nothing that reaches the app, so the link stays a plain `href` and no router call is added. `chat.md:39` — the prompt is this child's boundary, so the added sentence must say nothing about what the model may *do*.
+- **Value**: medium — every reply that names a run becomes one click to it.
+- **Not worth it if**: the model rarely names a run or task in prose (not measured).
+
 ## Too big for this list
 
 - **Tell an operator who is not looking that the chat asked them something.** `ask_operator` ends the turn and waits on a person (`docs/agent/chat.md:49`), but the only outbound channel is the run webhook, whose field list is closed and run-only (`src/lib/notify.ts:49`, `NotificationBody` at `:66-78` carries a `run_id` and a `/runs/<id>` url), and a chat thread has no URL to send (`ChatPanelExperience` O3). It needs a decision on reopening that closed list, plus a per-thread URL first.
