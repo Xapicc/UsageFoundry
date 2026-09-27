@@ -608,15 +608,22 @@ export function describeEvent(e: RunEventDTO): LogEntry | null {
         };
       }
       if (p.purged) {
+        // Either count is null when git would not give it, and a purge row is
+        // the run's only record of what was destroyed — "null commits" at best,
+        // and read as none.
+        const commits =
+          typeof p.commits === "number"
+            ? `${p.commits} commit${p.commits === 1 ? "" : "s"}`
+            : "uncounted commits";
+        const discarded =
+          typeof p.discarded === "number"
+            ? `${p.discarded} uncommitted path${p.discarded === 1 ? "" : "s"}`
+            : "whatever was uncommitted";
         return {
           voice: "system",
           tone: "warn",
           label: "purged",
-          text: `${p.branch} — ${p.commits} commit${
-            p.commits === 1 ? "" : "s"
-          } and ${p.discarded} uncommitted path${
-            p.discarded === 1 ? "" : "s"
-          } gone`,
+          text: `${p.branch} — ${commits} and ${discarded} gone`,
         };
       }
       if (p.deleted) {

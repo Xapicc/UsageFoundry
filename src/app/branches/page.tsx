@@ -24,6 +24,7 @@ import {
   type BadgeTone,
 } from "@/lib/format";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
+import { purgeLabel } from "@/lib/landView";
 import { UncommittedNote, offersCommit } from "@/components/BranchWork";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonRow } from "@/components/ui/Button";
@@ -183,8 +184,10 @@ function StateBadge({ b }: { b: BranchSummaryDTO }) {
  * that is still going is offered too — it may well have finished by the time
  * the queue reaches it, and if it has not, that row says so.
  */
+// An uncounted branch is offered: the queue asks git again at its turn, and
+// refuses there with a sentence naming why, where a missing checkbox says nothing.
 const queueable = (b: BranchSummaryDTO) =>
-  b.exists && !!b.target && !b.merged && !b.landedUnchanged && b.ahead > 0;
+  b.exists && !!b.target && !b.merged && !b.landedUnchanged && b.ahead !== 0;
 
 const ITEM_ACTIVE: MergeQueueItemDTO["status"][] = [
   "queued",
@@ -1563,7 +1566,7 @@ function BranchTable({
                     </Td>
 
                     <Td num label="Ahead" className="align-top">
-                      {b.exists ? b.ahead : "—"}
+                      {b.exists ? (b.ahead ?? "—") : "—"}
                     </Td>
 
                     <Td
@@ -1615,6 +1618,8 @@ function BranchTable({
                               <p className="w-full text-right text-xs leading-snug text-warn">
                                 Deletes the branch and its checkout. Nothing on
                                 it is recoverable afterwards.
+                                {b.ahead === null &&
+                                  " How many commits it has could not be counted."}
                               </p>
                               <Button
                                 variant="ghost"
@@ -1631,7 +1636,7 @@ function BranchTable({
                               >
                                 {working
                                   ? "Purging…"
-                                  : `Purge ${b.ahead} commit${b.ahead === 1 ? "" : "s"}`}
+                                  : purgeLabel(b.ahead)}
                               </Button>
                             </>
                           ) : (

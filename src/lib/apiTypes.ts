@@ -2751,7 +2751,8 @@ export interface LandStateDTO {
   /** True when the target was deduced from the base commit, not recorded. */
   targetInferred: boolean;
   branchExists: boolean;
-  ahead: number;
+  /** Null when git could not count them — never the same as none. */
+  ahead: number | null;
   behind: number;
   merged: boolean;
   /** Landed by this tool and unchanged since — how a squash reads as done. */
@@ -2872,7 +2873,8 @@ export interface BranchSummaryDTO {
   repoRoot: string;
   repoLabel: string;
   createdAt: number;
-  ahead: number;
+  /** Null when git could not count them — never the same as none. */
+  ahead: number | null;
   merged: boolean;
   landedUnchanged: boolean;
   /**

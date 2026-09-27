@@ -12,6 +12,7 @@ import type {
 } from "@/lib/apiTypes";
 import { fmtDateTime, fmtUSD, pollFailureMessage } from "@/lib/format";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
+import { purgeLabel, purgeSheetText } from "@/lib/landView";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonRow } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
@@ -386,7 +387,7 @@ export function RunLand({ run }: { run: RunDTO }) {
         {state.branchExists && (
           <>
             {" · "}
-            {state.ahead} commit{state.ahead === 1 ? "" : "s"} ahead
+            {state.ahead ?? "—"} commit{state.ahead === 1 ? "" : "s"} ahead
             {state.behind > 0 && `, ${state.behind} behind`}
             {" · "}
             <span
@@ -754,19 +755,12 @@ export function RunLand({ run }: { run: RunDTO }) {
           </>
         }
         confirmVariant="danger"
-        confirmLabel={`Purge ${state.ahead} commit${state.ahead === 1 ? "" : "s"}`}
+        confirmLabel={purgeLabel(state.ahead)}
         onConfirm={() => void act("purge")}
         cancelLabel="Keep it"
         busy={busy}
       >
-        This deletes the branch, its {state.ahead} commit
-        {state.ahead === 1 ? "" : "s"}
-        {state.pending
-          ? ` and ${state.pending.count} uncommitted path${
-              state.pending.count === 1 ? "" : "s"
-            }`
-          : ""}
-        , and its checkout. None of it is recoverable from here.
+        {purgeSheetText(state.ahead, state.pending)}
       </Sheet>
     </Card>
   );

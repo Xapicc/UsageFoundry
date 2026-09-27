@@ -2,14 +2,17 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  aheadRangeFor,
   commitRefusal,
   conflictRegions,
   gitFailureLine,
   hasConflictMarkers,
   landRecheck,
   landRefusal,
+  parseCount,
   parseMergeTree,
   parseStatusZ,
+  purgedMessage,
   purgeRefusal,
   selectBranchCandidates,
   selectProbeTargets,
@@ -291,6 +294,76 @@ describe("landRefusal", () => {
 
   it("refuses a branch that is gone", () => {
     assert.match(landRefusal({ ...landable, branchExists: false }) ?? "", /no longer exists/);
+  });
+
+  it("refuses a branch whose commits could not be counted, rather than reading it as some", () => {
+    const refusal = landRefusal({ ...landable, ahead: null });
+    assert.match(refusal ?? "", /Could not count/);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Counting what a branch holds                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Purge is the one door that destroys committed work, and its confirmation
+ * states the count these produce as what goes. Every way of not having a count
+ * used to become 0 — no recorded target, a target renamed away, a `rev-list`
+ * that failed — so the sheet said "Purge 0 commits" over a branch with work on
+ * it. Unknown and none have to stay two answers all the way to the sentence.
+ */
+describe("aheadRangeFor", () => {
+  it("counts against the target when there is one", () => {
+    assert.equal(
+      aheadRangeFor({ target: "main", base: "abc123", branch: "uf/x" }),
+      "main..uf/x",
+    );
+  });
+
+  it("counts against the base commit when no target was recorded", () => {
+    // A run isolated from a detached HEAD records no target by design, and
+    // still has committed work; this range used to be null, and so a 0.
+    assert.equal(
+      aheadRangeFor({ target: null, base: "abc123", branch: "uf/x" }),
+      "abc123..uf/x",
+    );
+  });
+
+  it("has nothing to count against with neither", () => {
+    assert.equal(aheadRangeFor({ target: null, base: null, branch: "uf/x" }), null);
+  });
+});
+
+describe("parseCount", () => {
+  it("reads git's count", () => {
+    assert.equal(parseCount("3"), 3);
+    assert.equal(parseCount("0\n"), 0);
+  });
+
+  it("is null when git gave no count, never 0", () => {
+    // A range naming a renamed-away target exits 128 with an empty stdout,
+    // which `Number("") || 0` read as a branch with nothing on it.
+    assert.equal(parseCount(null), null);
+    assert.equal(parseCount(""), null);
+    assert.equal(parseCount("fatal: bad revision"), null);
+  });
+});
+
+describe("purgedMessage", () => {
+  it("says what went", () => {
+    assert.equal(
+      purgedMessage("uf/x", 3, 2),
+      "Purged uf/x. 3 commits and 2 uncommitted paths went with it.",
+    );
+    assert.equal(purgedMessage("uf/x", 0, 0), "Purged uf/x.");
+  });
+
+  it("says a count could not be taken instead of leaving it out", () => {
+    const message = purgedMessage("uf/x", null, 2);
+    assert.match(message, /2 uncommitted paths went with it/);
+    assert.match(message, /commits .*could not be counted/);
+    assert.match(purgedMessage("uf/x", 1, null), /uncommitted .*could not be read/);
   });
 });
 
