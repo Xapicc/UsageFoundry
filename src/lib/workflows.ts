@@ -737,6 +737,19 @@ export function planEmission(raw: unknown, limits: EmissionLimits): EmissionPlan
   for (const [index, entry] of list.entries()) {
     const e = (entry ?? {}) as Record<string, unknown>;
     const spec = specs[index];
+    // Absent is "starts at once"; anything else that is not a list is refused
+    // rather than read as absent, because the likeliest other shape is the list
+    // sent as a JSON string, and a run told to wait and started at once is
+    // bit-for-bit a run that was never told — with nobody reading the emission.
+    if (e.dependsOn !== undefined && e.dependsOn !== null && !Array.isArray(e.dependsOn)) {
+      return {
+        ok: false,
+        reason:
+          `“${spec.title}” has a dependsOn that is not a list. It has to be a ` +
+          "list of {id, edge} objects naming runs in this emission, or left " +
+          "out for a run that starts at once.",
+      };
+    }
     const links = Array.isArray(e.dependsOn) ? e.dependsOn : [];
 
     for (const link of links) {

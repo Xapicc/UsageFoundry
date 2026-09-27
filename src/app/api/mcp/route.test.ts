@@ -370,3 +370,78 @@ test("list_tasks refuses a folder within a mount it has no root for", async () =
   assert.equal(refused.isError, true, "an unknown is not a clear backlog");
   assert.match(refused.text, /list_folders/);
 });
+
+/**
+ * A chat to propose into, and a count of the rows it holds, because what the
+ * proposal refusals below pin is that nothing reached the operator's panel:
+ * a card a person approves is the only door these arguments have to a run.
+ */
+function proposingChat(): { chatId: string; token: string; proposals: () => number } {
+  const chatId = chat.createChat().id;
+  return {
+    chatId,
+    token: chat.mintCapability({ kind: "chat", chatId }),
+    proposals: () =>
+      (
+        db()
+          .prepare("SELECT COUNT(*) AS n FROM chat_proposals WHERE chat_id = ?")
+          .get(chatId) as { n: number }
+      ).n,
+  };
+}
+
+test("a dependsOn that is not a list is refused by name and proposes nothing", async () => {
+  // The list sent as a JSON string is the shape a model's array arguments
+  // arrive in. Read as "no dependency", it was a card with no "starts after"
+  // line and a run started on top of the one it was told to wait for.
+  const { token, proposals } = proposingChat();
+  const first = await callTool(token, "propose_run", {
+    mountId: MOUNT,
+    folder: "RepoOne",
+    id: "first",
+    title: "First",
+    task: "Do the first thing.",
+  });
+  assert.equal(first.isError, false, first.text);
+  const asString = JSON.stringify([{ id: "first", edge: "on-success" }]);
+
+  const run = await callTool(token, "propose_run", {
+    mountId: MOUNT,
+    folder: "RepoOne",
+    title: "Second",
+    task: "Do the second thing, after the first.",
+    dependsOn: asString,
+  });
+  assert.equal(run.isError, true, "propose_run refuses it");
+  assert.match(run.text, /dependsOn is not a list/);
+
+  const block = (id: string, over: Record<string, unknown> = {}) => ({
+    id,
+    name: id.toUpperCase(),
+    mountId: MOUNT,
+    folder: "RepoOne",
+    task: `Step ${id}.`,
+    ...over,
+  });
+  const workflow = await callTool(token, "propose_workflow", {
+    name: `Two steps ${randomUUID()}`,
+    blocks: [
+      block("a"),
+      block("b", { dependsOn: JSON.stringify([{ id: "a", edge: "on-success" }]) }),
+    ],
+  });
+  assert.equal(workflow.isError, true, "propose_workflow refuses it");
+  assert.match(workflow.text, /“B” has a dependsOn that is not a list/);
+
+  assert.equal(proposals(), 1, "only the first proposal was written");
+
+  // Absent and null still mean "starts at once".
+  const unordered = await callTool(token, "propose_run", {
+    mountId: MOUNT,
+    folder: "RepoOne",
+    title: "Third",
+    task: "Do the third thing whenever.",
+    dependsOn: null,
+  });
+  assert.equal(unordered.isError, false, unordered.text);
+});

@@ -2668,6 +2668,17 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
       );
     }
 
+    // Absent is "starts at once" and anything else that is not a list is
+    // refused, `planEmission`'s rule: read as absent, the list sent as a JSON
+    // string saves a graph with the edge missing, and a card with no "after".
+    if (b.dependsOn !== undefined && b.dependsOn !== null && !Array.isArray(b.dependsOn)) {
+      return text(
+        `“${String(b.name ?? to)}” has a dependsOn that is not a list. It has ` +
+          "to be a list of {id, edge} objects naming other blocks, or left out " +
+          "for a block that starts at once.",
+        true,
+      );
+    }
     for (const raw of Array.isArray(b.dependsOn) ? b.dependsOn : []) {
       const d = (raw ?? {}) as Record<string, unknown>;
       edges.push({
@@ -4462,6 +4473,18 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
   // need to know the label before the row exists.
   const specId = ownSpecId ?? superseded?.spec_id ?? null;
 
+  // Absent is "starts at once" and anything else that is not a list is
+  // refused, `planEmission`'s rule: the list sent as a JSON string, read as
+  // absent, is a card with no "starts after" line and a run started on top of
+  // the one it was told to wait for.
+  if (args.dependsOn !== undefined && args.dependsOn !== null && !Array.isArray(args.dependsOn)) {
+    return text(
+      "dependsOn is not a list. It has to be a list of {id, edge} objects " +
+        "naming other proposals in this chat, or left out for a run that " +
+        "starts once approved.",
+      true,
+    );
+  }
   const dependsOn: ProposalDependency[] = [];
   for (const raw of Array.isArray(args.dependsOn) ? args.dependsOn : []) {
     const d = (raw ?? {}) as Record<string, unknown>;
