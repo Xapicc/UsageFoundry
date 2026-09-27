@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, describe, it } from "node:test";
+import type { WorkflowGraph, WorkflowNode } from "./workflowGraph";
 
 /**
  * Which gate created each run, driven through the gates rather than asserted
@@ -40,6 +42,30 @@ before(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "uf-run-origin-"));
   workspace = path.join(root, "workspace");
   fs.mkdirSync(path.join(workspace, "project"), { recursive: true });
+  // A repository with a commit on it, for the loop's sake only: a repeated
+  // block has to land every pass, and `startWorkflow` refuses a loop whose
+  // section works in a folder git cannot use.
+  const repo = path.join(workspace, "repo");
+  fs.mkdirSync(repo);
+  fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
+  for (const args of [
+    ["init", "-q", "-b", "main"],
+    ["add", "-A"],
+    ["commit", "-q", "-m", "first"],
+  ]) {
+    execFileSync("git", args, {
+      cwd: repo,
+      // An identity of the fixture's own: a machine running the suite need not
+      // have one configured.
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@example.com",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@example.com",
+      },
+    });
+  }
   process.env.DATA_DIR = path.join(root, "data");
   process.env.CLAUDE_HOME = path.join(root, "claude");
   process.env.WORKSPACE_ROOT = workspace;
@@ -110,30 +136,37 @@ function originOf(runId: string): { origin: string | null; ref: string | null } 
   return row;
 }
 
-function runBlockGraph(kind: "run" | "orchestrator") {
+/** Every field a saved graph carries, so a fixture states only what it means. */
+function block(
+  id: string,
+  kind: WorkflowNode["kind"],
+  over: Partial<WorkflowNode> = {},
+): WorkflowNode {
   return {
-    nodes: [
-      {
-        id: "A",
-        name: "Do it",
-        kind,
-        templateId: null,
-        mountId: "scratch",
-        folder: "project",
-        task: "do the thing",
-        promptOverride: null,
-        agentId: null,
-        fanOut: kind === "orchestrator" ? 2 : null,
-        mergeStrategy: null,
-        mergeAutoResolve: false,
-        maxPasses: null,
-        maxLoopCostUSD: null,
-        stopWhenTasks: null,
-        bodyNodeIds: [],
-      },
-    ],
-    edges: [],
+    id,
+    name: `Do ${id}`,
+    kind,
+    templateId: null,
+    // A loop frames the blocks it repeats and runs nothing itself, so a saved
+    // one carries no workspace and no task.
+    mountId: kind === "loop" ? "" : "scratch",
+    folder: kind === "loop" ? "" : "project",
+    task: kind === "loop" ? "" : "do the thing",
+    promptOverride: null,
+    agentId: null,
+    fanOut: kind === "orchestrator" ? 2 : null,
+    mergeStrategy: null,
+    mergeAutoResolve: false,
+    maxPasses: null,
+    maxLoopCostUSD: null,
+    stopWhenTasks: null,
+    bodyNodeIds: [],
+    ...over,
   };
+}
+
+function runBlockGraph(kind: "run" | "orchestrator"): WorkflowGraph {
+  return { nodes: [block("A", kind)], edges: [] };
 }
 
 describe("every creation path records the gate it came through", () => {
@@ -280,6 +313,109 @@ describe("every creation path records the gate it came through", () => {
       origin: "orchestrator-block",
       ref: "A",
     });
+  });
+});
+
+/**
+ * The runs a scheduled instance creates after `startWorkflow` has returned.
+ *
+ * The cases above only see the creating pass, which is handed its origin as an
+ * argument. Everything created later — a node behind an orchestrator block, a
+ * loop's pass — reads it back off the stored instance, so a read path that
+ * drops the column is invisible to them and stamps every such run as a press
+ * of Run.
+ */
+describe("a scheduled instance's later runs are still the schedule's", () => {
+  async function startScheduled(
+    name: string,
+    graph: WorkflowGraph,
+    scheduleId: string,
+  ): Promise<string> {
+    const workflow = workflows.createWorkflow({
+      name,
+      graph,
+      instanceBudget: {
+        maxInstanceCostUSD: null,
+        maxSessionFraction: null,
+        maxWeeklyFraction: null,
+      },
+    });
+    const outcome = workflows.startWorkflow(
+      workflow.id,
+      await orch.currentSnapshot(),
+      { kind: "schedule", scheduleId },
+    );
+    assert.ok(outcome.ok, `start refused: ${!outcome.ok && outcome.reason}`);
+    return outcome.instance.id;
+  }
+
+  function memberRun(instanceId: string, where: string): { id: string } | undefined {
+    return dbMod
+      .db()
+      .prepare(`SELECT run_id AS id FROM workflow_instance_runs WHERE instance_id = ? AND ${where}`)
+      .get(instanceId) as { id: string } | undefined;
+  }
+
+  it("a node behind an orchestrator block, created once the block's runs finish", async () => {
+    const instanceId = await startScheduled(
+      "Decide, then follow up",
+      {
+        nodes: [block("O", "orchestrator"), block("B", "run")],
+        edges: [{ from: "O", to: "B", edge: "on-success", continueBranch: false }],
+      },
+      "sched-3",
+    );
+
+    dbMod
+      .db()
+      .prepare(
+        "UPDATE workflow_instance_blocks SET status='thinking' WHERE instance_id=? AND node_id=?",
+      )
+      .run(instanceId, "O");
+    const emission = workflows.emitBlockRuns(instanceId, "O", [
+      { id: "s1", title: "Emitted", task: "do the emitted thing", folder: "project" },
+    ]);
+    assert.ok(emission.ok, `emission refused: ${!emission.ok && emission.reason}`);
+    workflows.settleBlock(instanceId, "O", { status: "idle", text: "done" });
+
+    const emitted = memberRun(instanceId, "emitted_by = 'O'");
+    assert.ok(emitted, "the orchestrator block's turn created no run");
+    assert.equal(memberRun(instanceId, "node_id = 'B'"), undefined, "B started early");
+    dbMod
+      .db()
+      .prepare("UPDATE runs SET status='completed', iterations=1, finished_at=? WHERE id=?")
+      .run(Date.now(), emitted.id);
+    workflows.advanceInstances();
+
+    const deferred = memberRun(instanceId, "node_id = 'B'");
+    assert.ok(deferred, "B was not created once the block's runs had finished");
+    // Created hours after the fire, by nobody: the schedule authorised it, and
+    // `workflow` here is a row saying a person pressed Run.
+    assert.deepEqual(originOf(deferred.id), { origin: "schedule", ref: "sched-3" });
+  });
+
+  it("a member of a loop's pass", async () => {
+    const instanceId = await startScheduled(
+      "Chip away",
+      {
+        nodes: [
+          block("L", "loop", { maxPasses: 1, bodyNodeIds: ["B", "M"] }),
+          block("B", "run", { folder: "repo" }),
+          block("M", "merge", { folder: "", mergeStrategy: "merge" }),
+        ],
+        edges: [
+          { from: "L", to: "B", edge: "repeats", continueBranch: false },
+          { from: "B", to: "M", edge: "on-success", continueBranch: false },
+        ],
+      },
+      "sched-4",
+    );
+
+    const member = memberRun(instanceId, "emitted_by = 'L'");
+    assert.ok(member, "the loop opened no pass");
+    // Not `orchestrator-block` either: no model decided a pass, and the fire
+    // that authorised the graph authorised every pass its cap allows.
+    assert.deepEqual(originOf(member.id), { origin: "schedule", ref: "sched-4" });
   });
 });
 
