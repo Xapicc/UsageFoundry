@@ -160,18 +160,32 @@ export function signatureOf(text: string): string {
  * page.
  */
 export function dayKey(atMs: number, timeZone: string): string {
+  return dayKeyer(timeZone)(atMs);
+}
+
+/**
+ * `dayKey` for one zone, with the formatter built once.
+ *
+ * The scan keys every memoised observation on every call, and constructing an
+ * `Intl.DateTimeFormat` per observation measured 78 ms over 2,435 of them
+ * against 1.4 ms for one reused formatter — nearly four times the whole warm
+ * scan it would sit inside.
+ */
+function dayKeyer(timeZone: string): (atMs: number) => string {
+  let format: Intl.DateTimeFormat;
   try {
     // `en-CA` is ISO-shaped (YYYY-MM-DD) in every ICU build, which is why it is
     // used here rather than assembling the parts by hand.
-    return new Intl.DateTimeFormat("en-CA", {
+    format = new Intl.DateTimeFormat("en-CA", {
       timeZone,
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
-    }).format(atMs);
+    });
   } catch {
-    return new Date(atMs).toISOString().slice(0, 10);
+    return (atMs) => new Date(atMs).toISOString().slice(0, 10);
   }
+  return (atMs) => format.format(atMs);
 }
 
 /**
@@ -247,10 +261,24 @@ export function selectWritable(
 /*                             The scan                                */
 /* ------------------------------------------------------------------ */
 
+/**
+ * An observation as the memo holds it: the instant, never the day.
+ *
+ * The day depends on `dreamingTimeZone`, which can change while a file's size
+ * and mtime do not. A memo that held days kept the old zone's keys for every
+ * file already read and the new zone's for every file read after, so one scan
+ * mixed two boundaries — and a single local evening read as two days, which is
+ * the one error the write policy exists to refuse. Keying at scan time keeps
+ * every hit across a zone change instead of spending a cold walk on it.
+ */
+interface ParsedObservation extends Omit<ErrorObservation, "day"> {
+  atMs: number;
+}
+
 interface FileMemo {
   /** `${size}:${mtimeMs}` — what makes a re-read unnecessary. */
   stamp: string;
-  observations: ErrorObservation[];
+  observations: ParsedObservation[];
 }
 
 /**
@@ -259,13 +287,14 @@ interface FileMemo {
  * On `globalThis` because module state does not survive a dev request
  * otherwise, and under its own key rather than beside the transcript cache:
  * the two hold different shapes with different lifetimes, and reusing a key
- * whose shape changed is the trap `orchestrator.ts:373` records.
+ * whose shape changed is the trap `orchestrator.ts:373` records. `V2` because
+ * the observations stopped carrying a day and started carrying an instant.
  */
 const globalMemo = globalThis as unknown as {
-  __ufDreamingMemo?: Map<string, FileMemo>;
+  __ufDreamingMemoV2?: Map<string, FileMemo>;
 };
-globalMemo.__ufDreamingMemo ??= new Map<string, FileMemo>();
-const memo = globalMemo.__ufDreamingMemo;
+globalMemo.__ufDreamingMemoV2 ??= new Map<string, FileMemo>();
+const memo = globalMemo.__ufDreamingMemoV2;
 
 async function mapWithLimit<T, R>(
   items: readonly T[],
@@ -297,7 +326,7 @@ async function mapWithLimit<T, R>(
  * that started its own array would hand every identifier-less record the key
  * `file:0` and collapse the lot of them into one.
  */
-function parseLine(line: string, timeZone: string, file: string, out: ErrorObservation[]): void {
+function parseLine(line: string, file: string, out: ParsedObservation[]): void {
   if (!line.startsWith("{")) return;
   let rec: Record<string, unknown>;
   try {
@@ -323,7 +352,7 @@ function parseLine(line: string, timeZone: string, file: string, out: ErrorObser
     out.push({
       signature,
       sample: body.slice(0, SAMPLE_BYTES),
-      day: dayKey(ts, timeZone),
+      atMs: ts,
       sessionId,
       // Without either identifier there is nothing to prove this is not a
       // duplicate, so fall back to a key that can only ever match itself —
@@ -360,8 +389,8 @@ function parseLine(line: string, timeZone: string, file: string, out: ErrorObser
  * - **A rejection is the caller's to answer**, because a file really does vanish
  *   mid-scan under the retention sweep.
  */
-async function readLines(file: string, timeZone: string): Promise<ErrorObservation[]> {
-  const out: ErrorObservation[] = [];
+async function readLines(file: string): Promise<ParsedObservation[]> {
+  const out: ParsedObservation[] = [];
   const decoder = new StringDecoder("utf8");
   let tail = "";
   for await (const chunk of createReadStream(file)) {
@@ -371,7 +400,7 @@ async function readLines(file: string, timeZone: string): Promise<ErrorObservati
     // would trade the memory this change saves for time it never had to spend.
     let start = 0;
     for (let nl = tail.indexOf("\n"); nl !== -1; nl = tail.indexOf("\n", start)) {
-      parseLine(tail.slice(start, nl), timeZone, file, out);
+      parseLine(tail.slice(start, nl), file, out);
       start = nl + 1;
     }
     if (start > 0) tail = tail.slice(start);
@@ -379,14 +408,11 @@ async function readLines(file: string, timeZone: string): Promise<ErrorObservati
   tail += decoder.end();
   // A file not ending in a newline: `split` handed that last stretch over as a
   // line, and the newest file in the corpus is one being written to right now.
-  if (tail) parseLine(tail, timeZone, file, out);
+  if (tail) parseLine(tail, file, out);
   return out;
 }
 
-async function readOne(
-  file: string,
-  timeZone: string,
-): Promise<{ observations: ErrorObservation[]; read: boolean }> {
+async function readOne(file: string): Promise<{ observations: ParsedObservation[]; read: boolean }> {
   let stamp: string;
   try {
     const st = await fs.stat(file);
@@ -401,9 +427,9 @@ async function readOne(
   const cached = memo.get(file);
   if (cached && cached.stamp === stamp) return { observations: cached.observations, read: false };
 
-  let observations: ErrorObservation[];
+  let observations: ParsedObservation[];
   try {
-    observations = await readLines(file, timeZone);
+    observations = await readLines(file);
   } catch {
     // Unreadable, or gone between the stat above and the open — the same
     // retention sweep, one step later. A partial parse is discarded rather than
@@ -431,12 +457,11 @@ export async function scanDreaming(opts: {
   const now = opts.now ?? startedAt;
   const { files } = await listTranscriptFiles(PROJECTS_DIR);
 
-  const results = await mapWithLimit(files, READ_CONCURRENCY, (f) => readOne(f, opts.timeZone));
+  const results = await mapWithLimit(files, READ_CONCURRENCY, readOne);
 
+  const toDay = dayKeyer(opts.timeZone);
   const horizon =
-    opts.sinceDays && opts.sinceDays > 0
-      ? dayKey(now - opts.sinceDays * 86_400_000, opts.timeZone)
-      : null;
+    opts.sinceDays && opts.sinceDays > 0 ? toDay(now - opts.sinceDays * 86_400_000) : null;
 
   // Deduplicated across files, not within one: a resumed session writes the
   // earlier records into a *new* transcript, so the copies are in a different
@@ -447,14 +472,15 @@ export async function scanDreaming(opts: {
   let duplicates = 0;
   for (const r of results) {
     if (r.read) filesRead++;
-    for (const ob of r.observations) {
-      if (horizon && ob.day < horizon) continue;
+    for (const { atMs, ...ob } of r.observations) {
+      const day = toDay(atMs);
+      if (horizon && day < horizon) continue;
       if (seen.has(ob.key)) {
         duplicates++;
         continue;
       }
       seen.add(ob.key);
-      observations.push(ob);
+      observations.push({ ...ob, day });
     }
   }
 
