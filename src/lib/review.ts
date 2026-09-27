@@ -235,15 +235,27 @@ export function assistRunning(runId: string, kind: AssistKind): boolean {
  * progress indicator on the run page for ever. Called from
  * `instrumentation.ts` rather than from `reconcileOnBoot` itself, so that
  * `orchestrator.ts` does not have to import this module and close a cycle.
+ *
+ * Returns the rows it failed, as they now stand, because failing the row is not
+ * the whole of what a settle did: a validation's `after` is the only thing that
+ * closes the task it was holding open, and that died with the old process too.
+ * `closeStrandedValidations` is handed them, from the same caller, for the
+ * reason above.
  */
-export function reconcileReviewsOnBoot(): void {
-  db()
-    .prepare(
-      "UPDATE run_reviews SET status='failed', finished_at=?," +
-        " error='The server restarted while this review was running.'" +
-        " WHERE status='running'",
-    )
-    .run(Date.now());
+export function reconcileReviewsOnBoot(): ReviewRow[] {
+  const now = Date.now();
+  const error = "The server restarted while this review was running.";
+  return db().transaction((): ReviewRow[] => {
+    const stranded = db()
+      .prepare("SELECT * FROM run_reviews WHERE status='running'")
+      .all() as ReviewRow[];
+    db()
+      .prepare(
+        "UPDATE run_reviews SET status='failed', finished_at=?, error=? WHERE status='running'",
+      )
+      .run(now, error);
+    return stranded.map((row) => ({ ...row, status: "failed", finished_at: now, error }));
+  })();
 }
 
 export type ReviewOutcome =
@@ -416,12 +428,21 @@ export function startAssist(req: AssistRequest): ReviewOutcome {
   const id = randomUUID();
   const now = Date.now();
   const counts = req.counts ?? { files: 0, shown: 0, truncated: false };
+  // `after` is wrapped only to know whether it has run, for the `.catch` below.
+  const { after } = req;
+  let afterRan = false;
   // Resolved once, for the row and the argv both. The row used to take
   // `req.run.model` while the spawn took this, so an assist on a Codex run was
   // recorded under the Codex id while its child ran Claude.
   const spawned: SpawnedAssist = {
     ...req,
     model: assistModel(req.run, getSettings().defaultModel),
+    after:
+      after &&
+      ((result) => {
+        afterRan = true;
+        return after(result);
+      }),
   };
 
   db()
@@ -465,11 +486,23 @@ export function startAssist(req: AssistRequest): ReviewOutcome {
   });
 
   // Not awaited: it runs for minutes and the row is what reports on it.
+  //
+  // A throw that reaches here is settled through `after` like every other
+  // failure, because `after` runs on every outcome: a validation's is the only
+  // thing that closes the task it holds open, and a resolution's is the only
+  // thing that aborts its merge. Most such throws come before a child exists —
+  // `spawn` refuses an argument outright — so `after` has not run; one that
+  // came from writing the row after `after` ran must not run it twice.
   void spawnAssist(id, spawned).catch((err) => {
-    finish(id, req.run.id, req.kind, {
+    const failed: AssistResult = {
       status: "failed",
       error: err instanceof Error ? err.message : String(err),
-    });
+    };
+    if (afterRan) {
+      finish(id, req.run.id, req.kind, failed);
+      return;
+    }
+    return settleAssist(id, spawned, failed);
   });
 
   return { ok: true, id };

@@ -176,7 +176,12 @@ export async function register() {
       // Called from here rather than from inside `reconcileOnBoot` so that
       // `orchestrator.ts` does not have to import `review.ts`, which imports it.
       const { reconcileReviewsOnBoot } = await import("./lib/review");
-      reconcileReviewsOnBoot();
+      const strandedAssists = reconcileReviewsOnBoot();
+
+      // A validation among them was holding a task open, and the settle that
+      // closes it died with the old process — so the close happens here.
+      const { closeStrandedValidations } = await import("./lib/validation");
+      closeStrandedValidations(strandedAssists);
 
       // And once more for the merge queue, where the rule is stricter than for
       // either of those: a queued merge is *cancelled*, never resumed. It writes

@@ -63,11 +63,12 @@ import {
  *    `MAX_EARLY_ENDS_PER_RUN` is the same shape for the context ceiling's
  *    refund and is the precedent.
  * 3. **Every way of having no verdict closes the task.** A refusal, a crash, a
- *    timeout, a run with no readable diff, a `unjudgeable` verdict: all of them
- *    close. This is the asymmetry the whole design rests on — a gate that fails
- *    closed converts a shortage of assist slots, or a model's shrug, into
- *    billed work nobody asked for, which is the failure this feature is
- *    supposed to prevent rather than a stricter version of preventing it.
+ *    timeout, a restart mid-check, a run with no readable diff, a `unjudgeable`
+ *    verdict: all of them close. This is the asymmetry the whole design rests
+ *    on — a gate that fails closed converts a shortage of assist slots, or a
+ *    model's shrug, into billed work nobody asked for, which is the failure
+ *    this feature is supposed to prevent rather than a stricter version of
+ *    preventing it.
  *
  * ## What the literature says about the shape, and what it does not
  *
@@ -735,6 +736,31 @@ function closeAfterVerdict(taskId: string, runId: string, note: string): void {
   logRun(runId, done.ok ? note : `The task was not closed: ${done.error ?? "it is gone."}`);
 }
 
+/**
+ * Close the task of every check a restart cut off, as its settle would have.
+ *
+ * Handed what `reconcileReviewsOnBoot` just failed. A restart is one more way of
+ * having no verdict, and every one of those closes the task — but the only
+ * thing that closes one is `settleValidation`, reached through the assist's
+ * `after`, which died with the process that would have run it. Without this the
+ * task stayed claimed for good by a run that believed the check was handling
+ * it, and the operator's only way out was a Done or a Release by hand.
+ *
+ * Through `closeAfterVerdict`, so the run is the actor and
+ * `taskTransitionRefusal` still decides: a task the operator has since moved is
+ * left where they put it.
+ */
+export function closeStrandedValidations(rows: readonly ReviewRow[]): void {
+  for (const row of rows) {
+    if (row.kind !== "validate" || !row.task_id) continue;
+    closeAfterVerdict(
+      row.task_id,
+      row.run_id,
+      "The server restarted while this task was being checked, so it is closed on the run's own word.",
+    );
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* What the run loop reads                                             */
 /* ------------------------------------------------------------------ */
@@ -868,7 +894,7 @@ export function validationPushback(o: {
  * the row settled rather than because this gave up. Reaching it at all means
  * something outside this module stopped writing the row — a killed server that
  * `reconcileReviewsOnBoot` has not swept yet — and the answer then is no verdict,
- * which closes the task.
+ * which closes the task: `closeStrandedValidations` does it at the next boot.
  */
 const VERDICT_WAIT_MS = 11 * 60_000;
 

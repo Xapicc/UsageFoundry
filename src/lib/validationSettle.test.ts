@@ -13,14 +13,17 @@ import type { Task } from "./tasks";
  * run that has finished with it, and nothing anywhere says so. A second task's
  * check hid the first one's `not-finished` at the boundary, so the run ended
  * `completed` without the pushback or the grant it was owed; and a check that
- * never reached its settle — a restart mid-check — closed nothing, where every
- * other way of having no verdict closes the task on the run's own word.
+ * never reached its settle — a restart mid-check, or a spawn that threw before
+ * a child existed — closed nothing, where every other way of having no verdict
+ * closes the task on the run's own word.
  *
  * Its own file, with `DATA_DIR` named before the first import, for
  * `loopMergeOwnership.test.ts`'s reason.
  */
 
 let validation: typeof import("./validation");
+let review: typeof import("./review");
+let orchestrator: typeof import("./orchestrator");
 let tasks: typeof import("./tasks");
 let settings: typeof import("./settings");
 let database: typeof import("./db");
@@ -33,8 +36,9 @@ before(async () => {
   process.env.CLAUDE_CONFIG_DIR = path.join(root, "claude");
   process.env.WORKSPACE_ROOT = path.join(root, "workspace");
   process.env.WORKSPACE_ROOTS = "";
-  // Nothing here should reach a spawn; a `claude` that does not exist makes a
-  // regression that gets that far a failed test rather than a billed one.
+  // Nothing here should start a child; a `claude` that does not exist makes a
+  // regression that gets that far a failed test rather than a billed one. The
+  // one case that reaches `spawn` is built to throw before a child exists.
   process.env.CLAUDE_BIN = path.join(root, "no-such-claude");
 
   const config = await import("./config");
@@ -49,6 +53,8 @@ before(async () => {
   settings = await import("./settings");
   tasks = await import("./tasks");
   validation = await import("./validation");
+  review = await import("./review");
+  orchestrator = await import("./orchestrator");
   settings.saveSettings({ validateTaskCompletion: true, maxValidationCycles: 2 });
 });
 
@@ -201,5 +207,80 @@ describe("validationAtBoundary with more than one task", () => {
     const spent = logLines(runId).filter((line) => line.includes("extra work cycles"));
     assert.equal(spent.length, 1, logLines(runId).join("\n"));
     assert.match(spent[0]!, /“First task” and “Second task” were checked/);
+  });
+});
+
+describe("a check that never reached its settle", () => {
+  it("closes the task as the run when a restart cut the check off", () => {
+    const runId = runRow();
+    const task = heldTask(runId, "Ship the retry ladder");
+    validateRow({
+      runId,
+      taskId: task.id,
+      createdAt: Date.now() - 5_000,
+      finishedAt: null,
+      status: "running",
+      verdict: null,
+    });
+
+    validation.closeStrandedValidations(review.reconcileReviewsOnBoot());
+
+    const after = tasks.getTask(task.id);
+    assert.equal(after?.status, "done", "the settle died with the old process");
+    assert.equal(after?.completedByRunId, runId);
+    const row = database
+      .db()
+      .prepare("SELECT status, verdict FROM run_reviews WHERE task_id = ?")
+      .get(task.id) as { status: string; verdict: string | null };
+    // Null stays null: closed unchecked, never checked and passed.
+    assert.deepEqual({ ...row }, { status: "failed", verdict: null });
+  });
+
+  it("leaves a task the operator moved while it was being checked", () => {
+    const runId = runRow();
+    const task = heldTask(runId, "Released mid-check");
+    validateRow({
+      runId,
+      taskId: task.id,
+      createdAt: Date.now() - 5_000,
+      finishedAt: null,
+      status: "running",
+      verdict: null,
+    });
+    assert.ok(tasks.updateTask(task.id, { status: "open" }, { kind: "operator" }).ok);
+
+    validation.closeStrandedValidations(review.reconcileReviewsOnBoot());
+
+    assert.equal(tasks.getTask(task.id)?.status, "open");
+  });
+
+  it("settles through after when the child cannot even be spawned", async () => {
+    // `startAssist`'s `.catch` wrote the row and skipped `after`, which for a
+    // validation is the only thing that closes the task. A prompt carrying a
+    // NUL byte is one way `spawn` throws before a child exists.
+    const runId = runRow();
+    const run = orchestrator.getRun(runId)!;
+    const settled: import("./review").AssistResult[] = [];
+    const started = review.startAssist({
+      run,
+      kind: "validate",
+      cwd: root,
+      permissionMode: "plan",
+      prompt: "a prompt with a \0 in it",
+      after: async (result) => {
+        settled.push(result);
+      },
+    });
+    assert.ok(started.ok);
+
+    const deadline = Date.now() + 5_000;
+    while (review.getAssist(started.id)?.status === "running" && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(review.getAssist(started.id)?.status, "failed");
+    assert.deepEqual(
+      settled.map((result) => result.status),
+      ["failed"],
+    );
   });
 });
