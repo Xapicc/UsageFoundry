@@ -1970,6 +1970,31 @@ is `docs/agent/testing.md`; interface defects and their classes are
   2.1.226 (throwaway config dir) reaches the API with an unwritable top level
   whose entries exist, and rewrites in place with `O_TRUNC` on `EACCES`.
 
+- **Under `UF_LOCK_CLAUDE_HOME`'s layout an OAuth refresh is never attempted and
+  no credential write lands, simulated on CLI 2.1.280, 2026-09-27.** A
+  throwaway `CLAUDE_CONFIG_DIR` laid out like the lock (`CLAUDE_HOME_HANDBACK`'s
+  entries present and writable, `settings.json` 0440), its directory `chmod
+  0550` by its own owner in place of root:agent-gid 0750, which gives the same
+  `EACCES` on a create beside a file; control 0750. With a fake expired
+  `claudeAiOauth` token, a scrubbed env and `HTTPS_PROXY` at a loopback
+  listener that logged each `CONNECT` and refused it, `claude -p` tried
+  `platform.claude.com:443` 3 times in the control ("OAuth refresh failed
+  (expected)" ×3 in `--debug-file`) and 0 times locked, with no line saying so:
+  the refresh first takes `<config dir>/.oauth_refresh.lock` (`K_r`, byte
+  192852671) and returns `lock_error` before the token request. A write through
+  `Un().mutate`, the call the refresh's save makes, driven by `claude mcp add
+  --client-secret`, replaced `.credentials.json` by rename in the control (inode
+  53168190 to 53168214) and left inode, mtime and hash alone locked, failing on
+  `mkdir .storage-write.lock` rather than at `cQ`'s temp file as predicted; only
+  the CLI's stdout said so, and no arm's debug log names `.credentials.json`.
+  `CLAUDE_SECURESTORAGE_CONFIG_DIR` at a writable sibling restored both under
+  0550 (3 token attempts, write by rename). No mock token pair was possible: a
+  127.0.0.1 `CLAUDE_CODE_CUSTOM_OAUTH_URL` is off the three approved hosts (byte
+  ~190188853) and makes every command exit 0 with no output. So the refresh
+  token is never spent and renewal itself fails from the access token's expiry.
+  Caveat: not the lock's real uid/gid layout, no real provider refresh, and the
+  save after a successful refresh (`ENn`) is read, not run.
+
 - **The CLI's own sandbox has been executed three narrow ways (2026-08-18/19
   onward).** `bwrap` with and without the seccomp profile, in both argv
   shapes; a 15-hour `UF_SANDBOX=1` install whose sandbox never started (Q2);
@@ -4491,6 +4516,16 @@ measurement under *Verified* and cut the item down to what is still open.
   sudo chown "$(id -u):$(id -g)" ~/.claude ~/.claude/settings.json
   sudo chmod 0700 ~/.claude && sudo chmod 0600 ~/.claude/settings.json
   ```
+
+- **That the lock stops a real OAuth refresh is simulated only, 2026-09-27.**
+  *Verified* above found it on a 0550 stand-in with fake tokens; the lock's own
+  root:agent-gid 0750 and a real login were not tried. Settle in a container
+  with `UF_LOCK_CLAUDE_HOME=1` and a login whose access token has expired:
+  record `stat -c '%i %y' ~/.claude/.credentials.json`, run `claude -p hi
+  --debug-file /tmp/r.log` as the agent uid, and expect an auth failure, no
+  "OAuth refresh failed" line and the inode and mtime unchanged; then the same
+  with the lock off, which should rewrite the file. The refresh token is never
+  spent while locked, so turning the lock off recovers the login.
 
 - **No work cycle has run in a started sandbox, the network allowlist never
   ran, and `scripts/sandbox-probe/` has never met a container.** CLI 2.1.226's
