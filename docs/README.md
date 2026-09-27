@@ -39,8 +39,9 @@
   parsing.
 - **[Security](security.md)** — what the container holds and what is scoped away
   from whom.
-- **[Verification log](verification.md)** — what has been exercised by hand
-  against a real CLI, and an explicit list of what has **not**.
+- **[Verification log](verification.md)** — indexes `verification/`, one file
+  per area, recording what has been exercised by hand against a real CLI and
+  an explicit list of what has **not**.
 - **[Interface defects](interface-defects.md)** — every interface defect found,
   and the class of check that could have caught it.
 - **[A fourth ending: `needs-review`](needs-review.md)** — **a design record, not
