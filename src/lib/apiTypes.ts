@@ -3159,6 +3159,8 @@ export interface SettingsDTO {
    * Empty means none, which is what it had before this existed.
    */
   resolveAllowedTools: string[];
+  /** Hard ceiling on one conflict resolution. Null means no cap. */
+  resolutionBudgetUSD: number | null;
   /** argv that must exit 0 before Land merges. Empty is no check, not a pass. */
   landVerifyCommand: string;
   isolationPreamble: string;
@@ -4243,6 +4245,11 @@ export interface TaskDTO {
   claimedByRunId: string | null;
   completedByRunId: string | null;
   parentTaskId: string | null;
+  /**
+   * Work no run in this container can do, left for the operator. Not a status:
+   * an operator-only task is still `open`, and no run may claim it.
+   */
+  operatorOnly: boolean;
   /**
    * Runs started *for* this task, newest first, capped at `MAX_TASK_RUN_LINKS`.
    *

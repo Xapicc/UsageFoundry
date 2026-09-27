@@ -150,6 +150,7 @@ export function verifyEnv(): NodeJS.ProcessEnv {
       key === "ANTHROPIC_ADMIN_KEY" ||
       key === "OPENAI_API_KEY" ||
       key === "CODEX_API_KEY" ||
+      key === "CODEX_ACCESS_TOKEN" ||
       key === "CLAUDE_CODE_ENABLE_TELEMETRY" ||
       key === "DATA_DIR" ||
       key === "NODE_OPTIONS"

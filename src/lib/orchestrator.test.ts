@@ -73,6 +73,7 @@ fs.mkdirSync(process.env.TMPDIR, { recursive: true });
 const {
   buildArgs,
   buildCodexArgs,
+  frozenRunModel,
   codexPromptPreamble,
   childEnv,
   clampRunOffset,
@@ -3558,6 +3559,28 @@ describe("buildCodexArgs", () => {
     // that had nothing to say.
     assert.notEqual(selectCycleAdapter(null).parseLine, codex.parseLine);
   });
+
+  /**
+   * `settings.defaultModel` is a Claude id by construction, and `createRun`
+   * used to freeze it onto every run that named none, so a Codex run left
+   * blank on the form spawned `codex exec -m claude-…`, with the form's own
+   * placeholder showing that id as though it were meant. Asserted through the
+   * argv rather than on the frozen value alone, because no `-m` at all is the
+   * whole of what "Codex's own default" means to this builder.
+   */
+  it("leaves a Codex run that named no model on Codex's own default", () => {
+    const frozen = frozenRunModel(null, "codex", "claude-opus-5-5");
+    assert.equal(frozen, null);
+    const args = buildCodexArgs({ ...base, model: frozen, workDir: "/w/repo" });
+    assert.equal(args.includes("-m"), false, `argv carried -m: ${args.join(" ")}`);
+    // A Codex run that named a model still gets it, and the Claude side still
+    // falls back to the setting. A null provider is a row from before the
+    // column and is Claude, `selectCycleAdapter`'s reading.
+    assert.equal(frozenRunModel("gpt-5-codex", "codex", "claude-opus-5-5"), "gpt-5-codex");
+    assert.equal(frozenRunModel(null, "claude", "claude-opus-5-5"), "claude-opus-5-5");
+    assert.equal(frozenRunModel(null, null, "claude-opus-5-5"), "claude-opus-5-5");
+    assert.equal(frozenRunModel(undefined, undefined, "claude-opus-5-5"), "claude-opus-5-5");
+  });
 });
 
 /**
@@ -4418,16 +4441,18 @@ describe("sandboxSettings — what one child may write", () => {
 });
 
 describe("childEnv — a credential class the app has no use for", () => {
-  // A denylist fails open, and these two are the shape it fails open on today:
+  // A denylist fails open, and these three are the shape it fails open on today:
   // an operator running a second provider's CLI on the same server sets one,
-  // and every `CLAUDE_BIN` child this app spawns inherits it — inside a session
-  // that has `Bash`, where `env` is read-only shell `acceptEdits` approves
-  // without asking. Nothing in the app reads them, so nothing in the app would
-  // report it if they came back; that is what this pins.
-  // `proposals/ProviderFallback/13-recommendation.md` has the finding.
+  // and every child this app spawns, `CLAUDE_BIN` or `CODEX_BIN`, inherits it
+  // inside a session that has `Bash`, where `env` is read-only shell
+  // `acceptEdits` approves without asking. Nothing in the app reads them, so
+  // nothing in the app would report it if they came back; that is what this
+  // pins. `proposals/ProviderFallback/13-recommendation.md` has the finding, and
+  // `14-validation.md` §1f names the third, which the first strip missed.
   const planted = {
     OPENAI_API_KEY: "sk-openai-that-nothing-here-bills-against",
     CODEX_API_KEY: "codex-key",
+    CODEX_ACCESS_TOKEN: "codex-access-token",
   };
   const previous = Object.fromEntries(
     Object.keys(planted).map((k) => [k, process.env[k]]),

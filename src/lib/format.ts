@@ -5,7 +5,9 @@ import type {
   LoopBoardThresholdDTO,
   RunDependencyDTO,
   RunDTO,
+  RunTaskNotesDTO,
   TaskCommentAuthorDTO,
+  TaskCommentDTO,
   TaskDepRefDTO,
   TaskDTO,
   TaskOriginDTO,
@@ -341,6 +343,62 @@ export const TASK_COMMENT_AUTHOR_WORD: Record<TaskCommentAuthorDTO, string> = {
   block: "Workflow",
   run: "Run",
 };
+
+/**
+ * One task's slice of notes as the run page draws it: the notes this run wrote
+ * itself are counted in a line rather than drawn as rows.
+ *
+ * On that page a row by this run says nothing the page does not: its header is
+ * the page's own run id and its body is what the run already reported, which
+ * the task's page also holds whole. The line stays because a work cycle writing
+ * on its own task is the live event the block polls for, and a note that
+ * vanished without a word would read as nothing having happened.
+ *
+ * The count is only ever claimed over what the reply carries. `newest` is the
+ * newest `MAX_RUN_TASK_NOTES` by anyone and `total` is counted over the table,
+ * so once a thread is longer than the slice nothing here knows who wrote the
+ * older notes: the line then says how many *of the newest* are this run's rather
+ * than how many this run left, and "Newest 3 of 7" never stands above fewer
+ * rows without saying where the others went. The latest one's age is exact
+ * either way, since any note of this run's outside the slice is older than
+ * every note in it.
+ */
+export function runPageNotes(
+  thread: RunTaskNotesDTO,
+  runId: string,
+  fetchedAt: number,
+): {
+  /** Every note in the slice that this run did not write, oldest first. */
+  drawn: TaskCommentDTO[];
+  /** The line above the rows, or null when the rows say it all. */
+  line: { text: string; link: string } | null;
+} {
+  const own = thread.newest.filter((note) => note.authorRunId === runId);
+  const drawn = thread.newest.filter((note) => note.authorRunId !== runId);
+  const shown = thread.newest.length;
+  const head = thread.total > shown ? `Newest ${shown} of ${thread.total}` : null;
+
+  if (own.length === 0) {
+    return { drawn, line: head === null ? null : { text: `${head}.`, link: "Read the thread" } };
+  }
+
+  const latest = fmtRelative(Math.max(...own.map((note) => note.createdAt)), fetchedAt);
+  const age = own.length === 1 ? latest : `the latest ${latest}`;
+
+  if (head === null) {
+    const noun = own.length === 1 ? "note" : "notes";
+    return {
+      drawn,
+      line: {
+        text: `This run left ${own.length} ${noun}, ${age}.`,
+        link: own.length === 1 ? "Read it on the task" : "Read them on the task",
+      },
+    };
+  }
+
+  const whose = own.length === shown ? "all by this run" : `${own.length} of them by this run`;
+  return { drawn, line: { text: `${head}, ${whose}, ${age}.`, link: "Read the thread" } };
+}
 
 /**
  * Where a task's work is, as both surfaces that draw a task say it.

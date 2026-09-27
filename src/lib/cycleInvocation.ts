@@ -947,15 +947,17 @@ const COMMIT_IDENTITY_NOTICE =
  * What a run is told about the operator's board, and only when it has one.
  *
  * **Behavioural rather than descriptive**, which is the whole of why it is worth
- * the prefix it costs. The tool list already says what the three tools *are*; a
+ * the prefix it costs. The tool list already says what the tools *are*; a
  * model reading only that closes the task it was given and stops there, or —
  * worse — finds a second defect and fixes it, because nothing told it there was
- * anywhere else to put one. The two sentences that matter are "complete only
- * what you hold" and "file what you find rather than fixing it", and both are
- * about when to reach for a tool rather than what it does.
+ * anywhere else to put one. The sentences that matter are "complete only what
+ * you hold", "give back what you cannot finish" and "file what you find rather
+ * than fixing it", and all three are about when to reach for a tool rather than
+ * what it does. The middle one is there because a run that stops with its task
+ * held leaves the board saying a finished run is working it.
  *
  * It satisfies `docs/agent/security.md`'s rule about literals the way the file
- * price list and the git-identity notice do. The three tool names are shared
+ * price list and the git-identity notice do. The four tool names are shared
  * across every board-enabled run on the box, so they *are* the kind of literal
  * that made `pgrep -f 3100` fatal; what keeps them safe is that nothing near
  * them offers a pattern — no verb here selects a process, no command is named at
@@ -981,7 +983,9 @@ const TASKBOARD_NOTICE =
   "else is open in the folder you are working in. When the work you were given " +
   "is done, call complete_task on it: you can complete only a task already " +
   "recorded against this run, and nothing you have can close anybody else's or " +
-  "start any work. When you notice something that needs fixing and is not what " +
+  "start any work. If you cannot finish it, call release_task with what " +
+  "stopped you rather than leaving it held, so the next run can take it. When " +
+  "you notice something that needs fixing and is not what " +
   "you were asked to do, call create_task to write it down and carry on with " +
   "your own change — a brief somebody can pick up later is worth more than a " +
   "fix nobody asked for, and widening your own work is how a diff a reviewer " +

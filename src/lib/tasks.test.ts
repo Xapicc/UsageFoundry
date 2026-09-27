@@ -70,6 +70,7 @@ const {
   normalizeTaskInput,
   normalizeTaskListQuery,
   normalizeTaskPatch,
+  operatorOnlyRefusal,
   readTaskLinks,
   recordRunTasks,
   runLinksForTasks,
@@ -86,6 +87,10 @@ const {
 } = require("./tasks") as typeof import("./tasks");
 const { MAX_TASK_RUN_LINKS } = require("./apiTypes") as typeof import("./apiTypes");
 const { db } = require("./db") as typeof import("./db");
+const { releaseTask, MAX_RELEASE_REASON } =
+  require("./taskRelease") as typeof import("./taskRelease");
+const { listTaskComments } = require("./taskComments") as typeof import("./taskComments");
+const { claimTasksForRun } = require("./orchestrator") as typeof import("./orchestrator");
 
 /**
  * A `runs` row with nothing on it but the columns the insert refuses to be
@@ -690,9 +695,9 @@ test("an id that is not on the board is refused, and a closed task is not", () =
   // dropped instead of refusing produces a proposal that said "for the
   // flaky-auth task" and is bit-for-bit one that named none.
   const board = new Map([
-    ["t-open", { title: "Open one", status: "open" as const }],
-    ["t-done", { title: "Closed one", status: "done" as const }],
-    ["t-dropped", { title: "Dropped one", status: "dropped" as const }],
+    ["t-open", { title: "Open one", status: "open" as const, operatorOnly: false }],
+    ["t-done", { title: "Closed one", status: "done" as const, operatorOnly: false }],
+    ["t-dropped", { title: "Dropped one", status: "dropped" as const, operatorOnly: false }],
   ]);
 
   assert.equal(taskRefusal("t-open", board), null);
@@ -802,10 +807,10 @@ const DONE_ID = "dfa89779-71cd-41d5-bae3-7c417807a96d";
 const SHORT_ID = "0f146cc6-1c9a-4a8e-9d0e-5b2f1f2c0e11";
 
 const BRIEFED = new Map([
-  [OPEN_ID, { title: "The merge tool opens with no conflicts in it", status: "open" as const }],
-  [CLAIMED_ID, { title: "Shell.run deadlocks forever on a loud child", status: "claimed" as const }],
-  [DONE_ID, { title: "git diff on a conflicted repo traps the app", status: "done" as const }],
-  [SHORT_ID, { title: "Fix the README", status: "open" as const }],
+  [OPEN_ID, { title: "The merge tool opens with no conflicts in it", status: "open" as const, operatorOnly: false }],
+  [CLAIMED_ID, { title: "Shell.run deadlocks forever on a loud child", status: "claimed" as const, operatorOnly: false }],
+  [DONE_ID, { title: "git diff on a conflicted repo traps the app", status: "done" as const, operatorOnly: false }],
+  [SHORT_ID, { title: "Fix the README", status: "open" as const, operatorOnly: false }],
 ]);
 
 test("a task is named by its whole id, its eight-character prefix, or its whole title", () => {
@@ -869,7 +874,7 @@ test("the task link fields are refused by name when they cannot mean what was se
   const tooMany = Array.from({ length: MAX_RUN_TASKS + 1 }, () => OPEN_ID).map(
     (id, n) => `${id.slice(0, -2)}${String(n).padStart(2, "0")}`,
   );
-  const board = new Map(tooMany.map((id) => [id, { title: id, status: "open" as const }]));
+  const board = new Map(tooMany.map((id) => [id, { title: id, status: "open" as const, operatorOnly: false }]));
   const capped = readTaskLinks({ taskIds: tooMany }, "", board);
   assert.match(capped.ok ? "" : capped.reason, new RegExp(`at most ${MAX_RUN_TASKS}`));
 
@@ -975,4 +980,395 @@ test("a clipped board says how much it left out", () => {
     total,
     "the count is of what exists, not of what was returned",
   );
+});
+
+/* ------------------------------------------------------------------ */
+/* Operator-only: who moves the flag, and what it refuses              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `operatorOnlyRefusal` as a matrix, `taskTransitionRefusal`'s reason: both
+ * ways of getting it wrong are silent. A model allowed to clear the flag starts
+ * a run on work the operator was told needs a Mac, and the run spends its whole
+ * budget finding that out again; one refused where it should be allowed is a
+ * run that cannot say the blocker is the environment, so the next run is
+ * started on the same wall.
+ *
+ * The run acts as the row's holder (`holding`) or as somebody else
+ * (`stranger`). "release" is the one write a run may mark in: `claimed → open`
+ * of the task the row says it holds.
+ */
+test("the operator-only matrix: every actor, set and clear, at a create and at an edit", () => {
+  const actors: Record<string, TaskActor> = {
+    operator: { kind: "operator" },
+    holding: { kind: "run", runId: HOLDER },
+    stranger: { kind: "run", runId: STRANGER },
+    chat: { kind: "chat" },
+    block: { kind: "block" },
+  };
+  const release = { from: "claimed", to: "open", claimedByRunId: HOLDER } as const;
+
+  const cases: Array<{
+    what: string;
+    from: boolean | null;
+    to: boolean;
+    move: typeof release | null;
+    allowed: readonly string[];
+  }> = [
+    // Filing. Clearing at a create is filing agent work, which is the default.
+    { what: "file marked", from: null, to: true, move: null,
+      allowed: ["operator", "holding", "stranger", "chat"] },
+    { what: "file unmarked", from: null, to: false, move: null,
+      allowed: ["operator", "holding", "stranger", "chat", "block"] },
+    // Marking an existing task, in the write that releases it and outside one.
+    { what: "mark while releasing", from: false, to: true, move: release,
+      allowed: ["operator", "holding"] },
+    { what: "mark alone", from: false, to: true, move: null,
+      allowed: ["operator"] },
+    // Clearing: the operator's alone, whatever else the write does.
+    { what: "clear while releasing", from: true, to: false, move: release,
+      allowed: ["operator"] },
+    { what: "clear alone", from: true, to: false, move: null,
+      allowed: ["operator"] },
+    // Restating the flag the row already has is not a change.
+    { what: "restate marked", from: true, to: true, move: null,
+      allowed: ["operator", "holding", "stranger", "chat", "block"] },
+  ];
+
+  for (const c of cases) {
+    for (const [name, actor] of Object.entries(actors)) {
+      const refusal = operatorOnlyRefusal({ actor, from: c.from, to: c.to, move: c.move });
+      const where = `${name}: ${c.what}`;
+      if (c.allowed.includes(name)) {
+        assert.equal(refusal, null, `${where} should be allowed, got: ${refusal}`);
+      } else {
+        assert.ok(
+          typeof refusal === "string" && refusal.length > 20,
+          `${where} should be refused with a sentence, got: ${refusal}`,
+        );
+      }
+    }
+  }
+
+  // The stranger's refusal is the holder rule's own sentence rather than a
+  // second copy of it, which is the only thing that keeps the two in step.
+  assert.equal(
+    operatorOnlyRefusal({ actor: actors.stranger, from: false, to: true, move: release }),
+    taskTransitionRefusal({
+      from: "claimed",
+      to: "open",
+      actor: actors.stranger,
+      claimedByRunId: HOLDER,
+    }),
+  );
+});
+
+test("nothing claims an operator-only task, and the refusal names the flag", () => {
+  for (const [name, actor] of Object.entries(ACTORS)) {
+    const refusal = taskTransitionRefusal({
+      from: "open",
+      to: "claimed",
+      actor,
+      claimedByRunId: null,
+      claimRunId: HOLDER,
+      operatorOnly: true,
+    });
+    assert.match(refusal ?? "", /operator-only/, `${name} claimed an operator-only task`);
+    assert.match(refusal ?? "", /operator clears/, "and says who can undo it");
+  }
+  // Every other edge is untouched by the flag: an operator-only task is still
+  // open, and the operator still closes and drops it the ordinary way.
+  for (const to of ["done", "dropped"] as const) {
+    assert.equal(
+      taskTransitionRefusal({
+        from: "open",
+        to,
+        actor: { kind: "operator" },
+        claimedByRunId: null,
+        operatorOnly: true,
+      }),
+      null,
+    );
+  }
+});
+
+test("the flag is a boolean at both doors, and absent is agent work", () => {
+  const filed = normalizeTaskInput({ title: "T", body: "b" }, CREATION);
+  assert.equal(filed.ok && filed.value.operatorOnly, false);
+  const marked = normalizeTaskInput({ title: "T", body: "b", operatorOnly: true }, CREATION);
+  assert.equal(marked.ok && marked.value.operatorOnly, true);
+
+  // "false" is truthy: coerced, it would mark a task the caller said not to.
+  for (const seen of ["false", "true", 1, 0]) {
+    const atCreate = normalizeTaskInput({ title: "T", body: "b", operatorOnly: seen }, CREATION);
+    assert.equal(atCreate.ok, false, `create took ${JSON.stringify(seen)}`);
+    assert.match(atCreate.ok ? "" : atCreate.error, /operatorOnly/);
+    const atEdit = normalizeTaskPatch({ operatorOnly: seen });
+    assert.equal(atEdit.ok, false, `edit took ${JSON.stringify(seen)}`);
+  }
+
+  const untouched = normalizeTaskPatch({ title: "x" });
+  assert.equal(untouched.ok && "operatorOnly" in untouched.value, false);
+  const cleared = normalizeTaskPatch({ operatorOnly: false });
+  assert.equal(cleared.ok && cleared.value.operatorOnly, false);
+});
+
+test("the store asks the flag's rule at a create and at an edit", () => {
+  const byChat = normalizeTaskInput(
+    { title: "Sign the macOS build", body: "Needs Xcode.", operatorOnly: true },
+    { origin: "chat", createdByRunId: null },
+  );
+  const filed = byChat.ok ? createTask(byChat.value) : assert.fail("door refused");
+  assert.equal(filed.ok && filed.task.operatorOnly, true, "a chat may file one marked");
+
+  const byBlock = normalizeTaskInput(
+    { title: "T", body: "b", operatorOnly: true },
+    { origin: "block", createdByRunId: null },
+  );
+  const refused = byBlock.ok ? createTask(byBlock.value) : assert.fail("door refused");
+  assert.equal(refused.ok, false, "a block may not");
+
+  const task = file();
+  const byChatEdit = updateTask(task.id, { operatorOnly: true }, { kind: "chat" });
+  assert.equal(byChatEdit.ok, false, "a chat may not mark a task already there");
+  assert.equal(getTask(task.id)?.operatorOnly, false, "and nothing was written");
+
+  const byOperator = updateTask(task.id, { operatorOnly: true }, { kind: "operator" });
+  assert.equal(byOperator.ok && byOperator.task.operatorOnly, true);
+
+  const claim = updateTask(task.id, { status: "claimed" }, { kind: "run", runId: HOLDER });
+  assert.equal(claim.ok, false, "no run claims it");
+  assert.equal(getTask(task.id)?.status, "open");
+
+  const byRunClear = updateTask(task.id, { operatorOnly: false }, { kind: "run", runId: HOLDER });
+  assert.equal(byRunClear.ok, false, "a run may not clear it");
+
+  // Cleared and claimed in one press is a claim on agent work: the rule reads
+  // the flag as the write leaves it.
+  const both = updateTask(
+    task.id,
+    { operatorOnly: false, status: "claimed", claimRunId: HOLDER },
+    { kind: "operator" },
+  );
+  assert.equal(both.ok, true, both.ok ? "" : both.error);
+  assert.equal(both.ok && both.task.claimedByRunId, HOLDER);
+});
+
+test("a board request narrows on the flag, and says nothing when it is not asked", () => {
+  const folder = path.join(ws, "RepoOne", "lanes");
+  fs.mkdirSync(folder, { recursive: true });
+  const agents = file({ mountId: MOUNT, folder, title: "agent work" });
+  const operators = file({ mountId: MOUNT, folder, title: "operator work", operatorOnly: true });
+
+  const ids = (operatorOnly?: boolean | null) =>
+    listTasks({ mountId: MOUNT, folder, operatorOnly }).tasks.map((t: Task) => t.id).sort();
+
+  assert.deepEqual(ids(true), [operators.id]);
+  assert.deepEqual(ids(false), [agents.id]);
+  assert.deepEqual(ids(null), [agents.id, operators.id].sort());
+  assert.deepEqual(ids(undefined), [agents.id, operators.id].sort());
+  assert.equal(listTasks({ mountId: MOUNT, folder, operatorOnly: true }).total, 1);
+  assert.equal(normalizeTaskListQuery({}).operatorOnly, null);
+});
+
+test("a brief may name an operator-only task as context and never as work", () => {
+  const RESERVED = "c0ffee00-1111-4222-8333-444455556666";
+  const board = new Map([
+    ...BRIEFED,
+    [RESERVED, { title: "Notarise the macOS installer by hand", status: "open" as const, operatorOnly: true }],
+  ]);
+  const brief = "Build the Linux half. The macOS half is “Notarise the macOS installer by hand”.";
+
+  const asWork = readTaskLinks({ taskIds: [RESERVED] }, brief, board);
+  assert.equal(asWork.ok, false);
+  const reason = asWork.ok ? "" : asWork.reason;
+  assert.match(reason, /operator-only/);
+  assert.match(reason, /relatedTaskIds/, "and names the way to say it is context");
+
+  assert.deepEqual(
+    readTaskLinks({ relatedTaskIds: [RESERVED] }, brief, board),
+    { ok: true, taskIds: [] },
+  );
+  // The mention rule is not loosened for it: named and in neither list is
+  // still the silent bundle that rule exists for.
+  assert.equal(readTaskLinks({}, brief, board).ok, false);
+});
+
+/* ------------------------------------------------------------------ */
+/* Releasing a task: the move, the reason and the flag, together       */
+/* ------------------------------------------------------------------ */
+
+/** A task claimed by `runId`, filed through the real door. */
+function claimedBy(runId: string, over: Record<string, unknown> = {}): Task {
+  const task = file(over);
+  const claimed = updateTask(task.id, { status: "claimed" }, { kind: "run", runId });
+  if (!claimed.ok) throw new Error(`fixture claim refused: ${claimed.error}`);
+  return claimed.task;
+}
+
+test("the holder releases: the task is open, unclaimed, and carries the reason", () => {
+  const task = claimedBy(HOLDER);
+  const released = releaseTask(task.id, HOLDER, {
+    reason: "  The build needs Xcode and this container is Linux arm64.  ",
+    operatorOnly: false,
+  });
+  assert.equal(released.ok, true, released.ok ? "" : released.error);
+
+  const row = getTask(task.id)!;
+  assert.equal(row.status, "open");
+  assert.equal(row.claimedByRunId, null);
+  assert.equal(row.operatorOnly, false, "a plain release leaves the flag alone");
+
+  const thread = listTaskComments(task.id, 10).comments;
+  assert.equal(thread.length, 1);
+  assert.equal(thread[0].author, "run");
+  assert.equal(thread[0].authorRunId, HOLDER, "signed by the run that let it go");
+  assert.match(thread[0].body, /Released/);
+  assert.match(thread[0].body, /needs Xcode and this container is Linux arm64\.$/);
+
+  // Released means released: the run no longer holds it and cannot close it.
+  assert.equal(
+    updateTask(task.id, { status: "done" }, { kind: "run", runId: HOLDER }).ok,
+    false,
+  );
+});
+
+test("a release asked for operator-only marks the task, and no run claims it after", () => {
+  const task = claimedBy(HOLDER);
+  const released = releaseTask(task.id, HOLDER, {
+    reason: "Needs a signed-in Apple ID on a Mac.",
+    operatorOnly: true,
+  });
+  assert.equal(released.ok, true, released.ok ? "" : released.error);
+  assert.equal(getTask(task.id)?.operatorOnly, true);
+  assert.match(listTaskComments(task.id, 10).comments[0].body, /operator-only/);
+
+  const again = updateTask(task.id, { status: "claimed" }, { kind: "run", runId: STRANGER });
+  assert.equal(again.ok, false);
+});
+
+test("a refused release writes nothing: a stranger, no reason, or a task nobody holds", () => {
+  const task = claimedBy(HOLDER);
+  const unchanged = () => {
+    const row = getTask(task.id)!;
+    assert.equal(row.status, "claimed");
+    assert.equal(row.claimedByRunId, HOLDER);
+    assert.equal(row.operatorOnly, false);
+    assert.equal(listTaskComments(task.id, 10).total, 0);
+  };
+
+  const byStranger = releaseTask(task.id, STRANGER, { reason: "not mine", operatorOnly: true });
+  assert.equal(byStranger.ok, false);
+  assert.match(byStranger.ok ? "" : byStranger.error, /cannot release/);
+  unchanged();
+
+  for (const reason of ["", "   \n  "]) {
+    const empty = releaseTask(task.id, HOLDER, { reason, operatorOnly: false });
+    assert.equal(empty.ok, false);
+    assert.match(empty.ok ? "" : empty.error, /reason/);
+    unchanged();
+  }
+
+  const long = releaseTask(task.id, HOLDER, {
+    reason: "x".repeat(MAX_RELEASE_REASON + 1),
+    operatorOnly: false,
+  });
+  assert.equal(long.ok, false);
+  unchanged();
+  // The longest reason allowed still fits the note it becomes, flag and all.
+  const longest = releaseTask(task.id, HOLDER, {
+    reason: "x".repeat(MAX_RELEASE_REASON),
+    operatorOnly: true,
+  });
+  assert.equal(longest.ok, true, longest.ok ? "" : longest.error);
+
+  // Open and held by nobody: `open → open` is not a move and the transition
+  // rule allows it for anyone, so without this a run could sign a "released"
+  // note on any open task on the board.
+  const open = file();
+  const nobody = releaseTask(open.id, HOLDER, { reason: "never held it", operatorOnly: false });
+  assert.equal(nobody.ok, false);
+  assert.equal(listTaskComments(open.id, 10).total, 0);
+
+  const missing = releaseTask("no-such-task", HOLDER, { reason: "r", operatorOnly: false });
+  assert.equal(!missing.ok && missing.kind, "missing");
+});
+
+test("a release whose note cannot be written does not open the task", () => {
+  const task = claimedBy(HOLDER);
+  // Forced at the store rather than injected, so what is under test is the
+  // real function's transaction and not a seam made for the test.
+  db().exec(
+    `CREATE TRIGGER refuse_task_comments BEFORE INSERT ON task_comments
+       BEGIN SELECT RAISE(ABORT, 'forced for the test'); END`,
+  );
+  try {
+    assert.throws(
+      () => releaseTask(task.id, HOLDER, { reason: "blocked", operatorOnly: true }),
+      /forced for the test/,
+    );
+  } finally {
+    db().exec("DROP TRIGGER refuse_task_comments");
+  }
+
+  const row = getTask(task.id)!;
+  assert.equal(row.status, "claimed", "the move rolled back with the note");
+  assert.equal(row.claimedByRunId, HOLDER);
+  assert.equal(row.operatorOnly, false, "and so did the flag");
+  assert.equal(listTaskComments(task.id, 10).total, 0);
+});
+
+test("a run started for an operator-only task logs the refused claim and carries on", () => {
+  const run = seedRun("run-started-for-operator-work");
+  const reserved = file({ title: "Plug the device in", operatorOnly: true });
+  const ordinary = file({ title: "The part a run can do" });
+  recordRunTasks(run, [reserved.id, ordinary.id]);
+
+  assert.doesNotThrow(() => claimTasksForRun(run));
+
+  assert.equal(getTask(reserved.id)?.status, "open");
+  assert.equal(getTask(reserved.id)?.claimedByRunId, null);
+  assert.equal(getTask(ordinary.id)?.claimedByRunId, run, "the rest are still claimed");
+
+  const lines = (
+    db()
+      .prepare("SELECT payload FROM run_events WHERE run_id = ? AND kind = 'log'")
+      .all(run) as Array<{ payload: string }>
+  ).map((row) => String(JSON.parse(row.payload).message));
+  assert.ok(
+    lines.some((line) => /could not claim/.test(line) && /operator-only/.test(line)),
+    `the refusal is on the run's log: ${JSON.stringify(lines)}`,
+  );
+  const status = db().prepare("SELECT status FROM runs WHERE id = ?").get(run) as {
+    status: string;
+  };
+  assert.equal(status.status, "queued", "a refused claim is a log line, never a failure");
+});
+
+/**
+ * Last in the file, because it reopens the database: a boot against a `tasks`
+ * table from before the column is what an existing install does once, and the
+ * rows it already holds must come back as agent work rather than refuse to
+ * read or read as something nobody filed.
+ */
+test("an install from before the flag reads every old row as agent work", () => {
+  const before = file({ title: "filed before the upgrade" });
+  db().exec("ALTER TABLE tasks DROP COLUMN operator_only");
+  db()
+    .prepare(
+      `INSERT INTO tasks (id, title, body, status, priority, origin, created_at, updated_at)
+       VALUES ('pre-flag-row', 'written by the old build', 'b', 'open', 'normal',
+               'operator', 1, 1)`,
+    )
+    .run();
+
+  const g = globalThis as { __ufDb?: { close(): void } };
+  g.__ufDb?.close();
+  delete g.__ufDb;
+
+  assert.equal(getTask("pre-flag-row")?.operatorOnly, false);
+  assert.equal(getTask(before.id)?.operatorOnly, false);
+  // And the column is back as the new build writes it, not merely readable.
+  const marked = updateTask("pre-flag-row", { operatorOnly: true }, { kind: "operator" });
+  assert.equal(marked.ok && marked.task.operatorOnly, true);
 });

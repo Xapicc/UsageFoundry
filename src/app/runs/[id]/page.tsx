@@ -1,6 +1,15 @@
 "use client";
 
-import { Fragment, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  use,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { RUN_PROVIDER_LABEL, pausedMsAt, providerReportsSpend } from "@/lib/apiTypes";
@@ -33,7 +42,7 @@ import {
 } from "@/lib/format";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonRow } from "@/components/ui/Button";
-import { Card, Empty, Stat } from "@/components/ui/Card";
+import { Card, Empty, Stat, type CardEmphasis } from "@/components/ui/Card";
 import { Field, Input, Select, Textarea } from "@/components/ui/Field";
 import { Hint } from "@/components/ui/Hint";
 import { ListGroup, ListRow } from "@/components/ui/List";
@@ -101,6 +110,10 @@ type StateTone = "neutral" | "info" | "ok" | "warn" | "danger";
  * A complete class string per tone, never `border-l-${tone}`: Tailwind scans
  * source as plain text, so an interpolated name emits no rule at all and the
  * edge silently disappears in the shipped container. Same rule as `Badge`.
+ *
+ * The card also carries `uf-state-edge`, which is the only thing keeping this
+ * edge under the ascii skin: `Card`'s `uf-unboxed` paints every border out
+ * there, this one with it. `globals.css` says why, beside the rule.
  */
 const STATE_ACCENT: Record<StateTone, string> = {
   neutral: "border-l-line-strong",
@@ -109,6 +122,44 @@ const STATE_ACCENT: Record<StateTone, string> = {
   warn: "border-l-warn",
   danger: "border-l-danger",
 };
+
+/**
+ * The inspector's scroll box, stretched back out over `Card`'s own padding.
+ *
+ * Only above `lg`, where the card is capped and the box scrolls. The negative
+ * margin cancels the padding `Card`'s `EMPHASIS` gives each rung at that width
+ * and the padding puts it back inside, so the box's edges are the card's
+ * padding box: the scrollbar sits against the border and the content is cut
+ * there, exactly where the card cut it when it scrolled itself. That is
+ * `conventions.md`'s move for cancelling a component's spacing — on a wrapper,
+ * never a caller class on the component — and it means these two figures must
+ * follow `EMPHASIS` if it changes. `quiet` is absent because the inspector is
+ * never quiet.
+ */
+const INSPECTOR_SCROLL: Record<Exclude<CardEmphasis, "quiet">, string> = {
+  primary: "lg:-m-5 lg:min-h-0 lg:overflow-y-auto lg:p-5",
+  default: "lg:-m-4 lg:min-h-0 lg:overflow-y-auto lg:p-4",
+};
+
+/**
+ * Publish how far down the pane the split starts, as `--split-top` on the
+ * split, for the inspector's cap to take off.
+ *
+ * Measured rather than written as a figure because it is the heading above the
+ * split, which is as tall as its lede wraps and as whatever notice is showing.
+ * Read against the pane's scroll origin, so a pane that is scrolled when this
+ * runs publishes what an unscrolled one would. Compared before it is written
+ * because it runs after every render, and the page renders every second while
+ * the run can move.
+ */
+function publishSplitTop(split: HTMLElement, pane: HTMLElement) {
+  const top =
+    split.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop;
+  const value = `${top}px`;
+  if (split.style.getPropertyValue("--split-top") !== value) {
+    split.style.setProperty("--split-top", value);
+  }
+}
 
 /**
  * When this run's limits are acted on — in the run form's own words, verbatim.
@@ -372,10 +423,11 @@ function Section({
   return (
     // The `first:` half is what makes a block sit directly under the heading of
     // the region it opens rather than under a hairline drawn a line below one.
-    // It is a `:first-child` rule rather than a prop because three of the four
-    // regions have a *conditional* first block — `Agent` and `Checkout` are
-    // both gated — so which one opens the region is not knowable where the
-    // region is written.
+    // It is a `:first-child` rule rather than a prop so that it follows
+    // whichever block leads, gated ones included, without the region saying
+    // which — and it only fires because `Region` puts its blocks in a box of
+    // their own. With the region's `<h2>` as their first sibling it never did,
+    // and every region opened on two hairlines with its heading between them.
     <div className="mt-4 border-t border-line pt-4 first:mt-0 first:border-t-0 first:pt-0">
       <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold text-ink">
         {title}
@@ -405,7 +457,9 @@ function Region({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="mt-5 border-t border-line pt-4">
       <h2 className="mb-2 text-sm font-semibold text-ink">{title}</h2>
-      {children}
+      {/* A box of their own so the first block is a `:first-child` — see
+          `Section`, whose opening hairline depends on it. */}
+      <div>{children}</div>
     </div>
   );
 }
@@ -501,10 +555,29 @@ function guardBars(run: RunDTO, now: number) {
   return bars;
 }
 
-/** A guard's value in the inspector's list, or the fact that it is not set. */
+/**
+ * A value in one of the inspector's lists — a guard, or the fact that it is not
+ * set, and the model, provider and agent rows below them.
+ *
+ * Capped and allowed to break anywhere because `ListRow` keeps its control side
+ * `shrink-0` above the breakpoint, which is right for a switch and wrong for a
+ * string nobody here chose the length of. A Bedrock model id is 42 characters:
+ * under the ascii skin it drew 4px past the card's content edge, over a label
+ * squeezed to one word a line. Under the cap it wraps inside its own column and
+ * the label keeps the rest; every value this page writes itself is well short
+ * of it, so those rows do not move.
+ *
+ * The cap is `lg:` only, because that is the one width where the inspector is a
+ * fixed 21rem column. Below `md` the row already wraps and lets its control
+ * shrink, so the break alone fits the value to the line — capped there it wrapped
+ * at 192px on a line with nothing else on it — and between the two the card is
+ * the pane's width and a long value fits beside its label.
+ */
 function GuardValue({ children }: { children: ReactNode }) {
   return (
-    <span className="text-sm tabular-nums text-ink">{children}</span>
+    <span className="text-right text-sm tabular-nums text-ink [overflow-wrap:anywhere] lg:max-w-48">
+      {children}
+    </span>
   );
 }
 
@@ -934,6 +1007,27 @@ export default function RunDetail({
     return () => clearInterval(t);
   }, [active]);
 
+  // What the inspector's cap takes off, kept current: after every render,
+  // because everything standing above the split is this page's own output, and
+  // on every resize of the pane, because that is what rewraps the lede without
+  // one. A layout effect so the first frame with a split in it is already
+  // capped right. Above the early return for the same reason `nowTick` is.
+  const splitRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const split = splitRef.current;
+    const pane = split?.closest("main");
+    if (split && pane) publishSplitTop(split, pane);
+  });
+  const hasRun = run !== null;
+  useEffect(() => {
+    const split = splitRef.current;
+    const pane = split?.closest("main");
+    if (!split || !pane) return;
+    const observer = new ResizeObserver(() => publishSplitTop(split, pane));
+    observer.observe(pane);
+    return () => observer.disconnect();
+  }, [hasRun]);
+
   // A finished run is inside nothing. The orchestrator clears the set at the
   // end of every cycle and the page would normally be told — this is for the
   // case where it is not, a container that went down mid-call under a page that
@@ -1180,6 +1274,9 @@ export default function RunDetail({
   // of them formatting a zero as a measurement.
   const reportsSpend = providerReportsSpend(run.provider);
   const bars = guardBars(run, nowTick);
+  // Read by the card and by the scroll box inside it, which has to cancel the
+  // padding this picks — one local so the two cannot disagree.
+  const inspectorEmphasis: CardEmphasis = active ? "primary" : "default";
 
   // Review and Land exist only for a run with a branch, and Report only once
   // the agent has said something. A tab that would be empty is not offered —
@@ -1276,13 +1373,18 @@ export default function RunDetail({
           rather than decoration: the inspector is the taller column whenever
           the log is what the pane is showing, and with the row sized to it and
           the log a fixed 62vh box the column beside it ended in a screen-deep
-          band of nothing — which the page then scrolled through, because the
-          inspector's cap is measured from the top of the pane and it starts a
-          heading further down. Stacked, at one column, there is no second
-          column to be shorter than and the page is meant to scroll. */}
-      <div className="grid gap-5 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_21rem]">
+          band of nothing, which the page then scrolled through. That is also
+          why the inspector's cap is measured from where the split starts and
+          not from the top of the pane: a cap taller than the room the split
+          loads in stretches the row past the pane just as the log did.
+          Stacked, at one column, there is no second column to be shorter than
+          and the page is meant to scroll. */}
+      <div
+        ref={splitRef}
+        className="grid gap-5 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_21rem]"
+      >
         <Card
-          emphasis={active ? "primary" : "default"}
+          emphasis={inspectorEmphasis}
           // `max-lg:min-w-0` is the pane column's own `min-w-0` on the other
           // half of the split, and it is missing rather than withheld. Below
           // `lg` the two stack into one implicit `auto` track, whose floor is
@@ -1296,638 +1398,678 @@ export default function RunDetail({
           // Scoped to `max-lg:` rather than stated plainly: above the
           // breakpoint the track is a fixed 21rem and this would change which
           // way a pathological prompt overflows.
-          className={`max-lg:min-w-0 border-l-[3px] ${STATE_ACCENT[state.tone]} lg:col-start-2 lg:row-start-1 lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(var(--pane-h)-2rem)] lg:overflow-y-auto`}
+          //
+          // `lg:flex lg:flex-col` and no overflow of its own: the cap is the
+          // card's, and the box inside it is what gives way to it and scrolls.
+          //
+          // The cap is the pane less where the split starts less the pane's
+          // `pb-12`, so the card ends where the split does. Measured from the
+          // top of the pane instead (`--pane-h` less 2rem), it was a heading
+          // taller than the room it loads in: at 1920x963 its last 77px sat
+          // below the window until the pane was scrolled, and as the tallest
+          // thing in the row it took the log down with it and was the whole
+          // of why the log tab scrolled at all. Leaving out the `pb-12` also
+          // put its top 16px under the toolbar at the foot of every scroll.
+          // The price is paid once it sticks on a long tab: it keeps the
+          // height it loaded at, and the heading's depth stands empty below
+          // it. Growing into that as the pane scrolls would mean resizing it
+          // from a scroll handler, which runs a frame behind the compositor,
+          // so its bottom edge would chase the scroll. The fallback is the
+          // `top-4` it sticks at, so an unmeasured cap still fits once stuck.
+          className={`uf-state-edge max-lg:min-w-0 border-l-[3px] ${STATE_ACCENT[state.tone]} lg:col-start-2 lg:row-start-1 lg:sticky lg:top-4 lg:self-start lg:flex lg:flex-col lg:max-h-[calc(var(--pane-h)-var(--split-top,1rem)-3rem)]`}
         >
-          {/* Announced, because it is the one thing on the page that changes
-              on its own and matters. The detail below it is not: while the
-              run is parked it carries a countdown that reticks every second,
-              and a live region there would read it out every second. */}
-          <h2
-            aria-live="polite"
-            className="flex items-center gap-2 text-md font-semibold tracking-tight text-ink"
-          >
-            {run.status === "running" && <Spinner />}
-            {state.headline}
-          </h2>
-          <p className="mt-1 text-sm text-ink-muted">{state.detail}</p>
-          {run.stop_reason && (
-            <p className="mt-1 text-xs text-ink-muted">{run.stop_reason}</p>
-          )}
-          {/* The agent's own account of what stopped it, verbatim and clipped
-              only at the write. Gated on the column rather than on the status:
-              it is cleared by every other ending and by a pick-up, so its
-              presence already means this row records that ending.
-              `whitespace-pre-wrap` because the agent writes paragraphs and the
-              three facts it was asked for are usually on separate lines. */}
-          {run.needs_review_reason && (
-            <p className="mt-2 whitespace-pre-wrap border-l-2 border-l-warn pl-2 text-xs text-ink">
-              {run.needs_review_reason}
-            </p>
-          )}
-          {haltedWith && (
-            <p className="mt-1 text-xs text-ink-muted">
-              Stopping a workflow run is final, so this run cannot be picked up
-              on its own — start “{haltedWith}” again to do this work.
-            </p>
-          )}
+          {/* The scroll is this box's and not the card's, because the card is
+              what the ascii frame is drawn against. `AsciiFrame` is positioned
+              on the card's padding box and lays its stroke on the border, and
+              a scroll container clips at its padding box: with the card
+              scrolling, all four edges were cut away at every width that has
+              the split (measured at 1920x963: frame box 1559.5 to 1906.5
+              around a padding box of 1567 to 1899, not one stroke drawn), and
+              a frame that had survived would have scrolled off with the
+              content. Here the card keeps its edge still and this box scrolls
+              inside it, which is what the border already did in the default
+              skin. `INSPECTOR_SCROLL` is why it reaches the card's edges. */}
+          <div className={INSPECTOR_SCROLL[inspectorEmphasis]}>
+            {/* Announced, because it is the one thing on the page that changes
+                on its own and matters. The detail below it is not: while the
+                run is parked it carries a countdown that reticks every second,
+                and a live region there would read it out every second.
 
-          {/* Where the run says it is being held back, next to the Resume
-              button that still works. The chip in the heading is the glance;
-              this is the sentence, because what an operator needs to know is
-              which press it changes — and the answer is not this page's. */}
-          {setAsideAt && (
-            <p className="mt-1 text-xs text-ink-muted">
-              Set aside {fmtRelative(setAsideAt, nowTick)}. Picking up runs in
-              bulk skips this one; Resume here still works and puts it back.
-            </p>
-          )}
-
-          {/* The only place the promotion order can be changed. Here rather
-              than on the runs list because this is the page that already says
-              how many runs are ahead of it, and a number is only meaningful
-              beside the position it moves. */}
-          {run.status === "queued" && (
-            <QueuePriority
-              runId={id}
-              priority={run.priority ?? 0}
-              onError={setActionError}
-            />
-          )}
-
-          {/* Up to four of these render together, and the variants are what say
-              which one the page is for. **At most one `primary` in every
-              reachable state**, and the pick-up is the one that gets it: a run
-              still working has none, because the only thing to do to it is stop
-              it. `Try now` never becomes a second one — it and the pick-up
-              cannot co-render, `paused` being the one status that is not
-              pickupable — and it is deliberately the quieter of the two, since
-              the run rejoins the queue on its own and pressing it does not
-              bypass the guard that parked it. */}
-          <ButtonRow className="mt-3">
-            {run.status === "paused" && (
-              <Button variant="secondary" onClick={tryNow}>
-                Try now
-              </Button>
-            )}
-            {resumable && !reopenOpen && (
-              <Button onClick={openReopen}>{resumeLabel}</Button>
-            )}
-            {active && (
-              <Button variant="danger" onClick={stop}>
-                {run.status === "paused" ? "Give up" : "Stop run"}
-              </Button>
-            )}
-            {/* Last, and `ghost`, because this is the one control here that does
-                not change what the run *is* — it changes which runs the two bulk
-                pick-ups will act on, and nothing else. A live run's press also
-                ends a billed agent, and the label says so in words rather than
-                in a colour that would put a second red button beside Stop. The
-                undo takes the same slot and is `secondary`: a run already set
-                aside has nothing else to offer from this row, so it is the one
-                thing there is to press. */}
-            {setAsideAt ? (
-              <Button variant="secondary" onClick={() => void setAside(false)}>
-                Put back
-              </Button>
-            ) : (
-              <Button variant="ghost" onClick={() => void setAside(true)}>
-                {active ? "Stop and set aside" : "Set aside"}
-              </Button>
-            )}
-          </ButtonRow>
-
-          {/* Transient feedback for a button that was just pressed. The region
-              is always in the DOM so a screen reader announces what arrives. */}
-          <div aria-live="polite">
-            {stopNote && <p className="mt-3 text-sm text-accent">{stopNote}</p>}
-            {actionError && (
-              <Notice tone="danger" className="mt-3">
-                {actionError}
-              </Notice>
-            )}
-          </div>
-
-          {reopenOpen && (
-            <Section
-              title={
-                blockedBeforeStart
-                  ? "Put this run back behind the ones it waits on"
-                  : guardRefused
-                    ? "Start this run again, under the limits below"
-                    : !run.session_id
-                      ? "Start this run again from its original task"
-                      : saidDone
-                        ? "Send this run back into the same session"
-                        : "Carry on from where this run stopped"
-              }
+                `mb-1` stated rather than left unset, because unset is not
+                zero here: the legacy sheet gives every `h2` a 12px bottom
+                margin, which beat the detail's `mt-1` and stood the headline
+                three steps off the sentences it heads while each of those sat
+                one step off the next. `/settings` sets its lede the same way. */}
+            <h2
+              aria-live="polite"
+              className="mb-1 flex items-center gap-2 text-md font-semibold tracking-tight text-ink"
             >
-              <Field label="What else needs doing?" htmlFor="re-note">
-                <Textarea
-                  id="re-note"
-                  value={reopenNote}
-                  onChange={(e) => setReopenNote(e.target.value)}
-                  placeholder="The retry logic is missing a test for the timeout path."
-                />
-                <Hint>
-                  {blockedBeforeStart
-                    ? "It starts by itself if the runs ahead of it have since succeeded, and says so again if they have not"
-                    : guardRefused
-                      ? // The one fact this run's operator needs and no other
-                        // branch carries: nothing here overrides the guard that
-                        // refused it, and a window percentage is not on this form.
-                        "It never started, so it begins its original task with this added to the end. Its guards are checked again before it spawns — raise whatever refused it, or it stops here again"
-                      : !run.session_id
-                        ? "This run never reported a session to resume, so it starts the original task again with this added to the end"
-                        : saidDone
-                          ? "Sent verbatim as the next turn of the same conversation. Blank asks it to re-check the original task, run the tests and fix what fails"
-                          : "Sent verbatim as the next turn of the same conversation. Blank just tells it to continue"}
-                </Hint>
-              </Field>
-
-              <Field label="Work cycles" htmlFor="re-cycles">
-                <div className="flex items-center gap-2">
-                  <Input
-                    id="re-cycles"
-                    type="number"
-                    min={1}
-                    className="w-full min-w-0 flex-1"
-                    value={reopenCycles}
-                    onChange={(e) => setReopenCycles(e.target.value)}
-                  />
-                  <span className="whitespace-nowrap text-xs text-ink-muted">
-                    in total
-                  </span>
-                </div>
-                <Hint>
-                  Counts the {run.iterations} it has already had. Blank means no
-                  cycle limit, which needs a time limit
-                </Hint>
-              </Field>
-
-              <Field label="Spending limit" htmlFor="re-cost">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-ink-muted">$</span>
-                  <Input
-                    id="re-cost"
-                    type="number"
-                    min={0}
-                    step="0.5"
-                    className="w-full min-w-0 flex-1"
-                    value={reopenCost}
-                    onChange={(e) => setReopenCost(e.target.value)}
-                  />
-                </div>
-                {/* The field stays offered for a provider that reports no
-                    cost, because a run never changes provider and a reopen is
-                    the same run: hiding it would leave an operator wondering
-                    where it went. What changes is the promise under it, which
-                    would otherwise count a $0.00 nobody measured and imply a
-                    ceiling this run's loop will never test. */}
-                {reportsSpend ? (
-                  <Hint>
-                    Counts the {fmtUSD(run.spent_usd + (run.spent_usd_est ?? 0))}{" "}
-                    already spent. Blank means no limit
-                  </Hint>
-                ) : (
-                  <Hint tone="warn">
-                    Not enforced:{" "}
-                    {RUN_PROVIDER_LABEL[run.provider ?? "claude"]} reports no
-                    cost, so nothing measures against it
-                  </Hint>
-                )}
-              </Field>
-
-              <Field label="Time limit" htmlFor="re-minutes">
-                <div className="flex items-center gap-2">
-                  <Input
-                    id="re-minutes"
-                    type="number"
-                    min={1}
-                    className="w-full min-w-0 flex-1"
-                    value={reopenMinutes}
-                    onChange={(e) => setReopenMinutes(e.target.value)}
-                  />
-                  <span className="whitespace-nowrap text-xs text-ink-muted">
-                    minutes
-                  </span>
-                </div>
-                <Hint>Runs from when it starts again. Blank means no limit</Hint>
-              </Field>
-
-              <Hint>
-                Everything else carries over: the window percentages, how the
-                limits are enforced, what happens after DONE, the permission
-                mode
-                {run.agent ? `, and the ${run.agent.name} agent` : ""}. It keeps
-                its folder
-                {isolated ? ` and its checkout on ${run.worktree_branch}` : ""}
-              </Hint>
-
-              {reopenError && <Hint tone="danger">{reopenError}</Hint>}
-
-              <ButtonRow className="mt-3">
-                {/* The same word the button that opened this panel used. It
-                    read `Resume run` under a `Try again`, which is two names
-                    for one act on one screen. */}
-                <Button onClick={submitReopen} busy={reopenBusy}>
-                  {resumeLabel}
-                </Button>
-                <Button
-                  variant="secondary"
-                  onClick={() => setReopenOpen(false)}
-                  disabled={reopenBusy}
-                >
-                  Cancel
-                </Button>
-              </ButtonRow>
-            </Section>
-          )}
-
-          <Region title="Against its limits">
-            <Section title="Guards">
-              {bars.length > 0 && (
-                <div className="mb-3">
-                  {bars.map((b) => (
-                    <Meter
-                      key={b.label}
-                      size="compact"
-                      label={b.label}
-                      fraction={b.fraction}
-                      upperFraction={b.upperFraction}
-                      upperHint={b.upperHint}
-                      value={b.value}
-                      upperValue={b.upperValue}
-                    />
-                  ))}
-                </div>
-              )}
-              <ListGroup>
-                <ListRow label="5-hour window">
-                  <GuardValue>
-                    {run.budget.maxSessionFraction === null
-                      ? "no guard"
-                      : fmtPct(run.budget.maxSessionFraction)}
-                  </GuardValue>
-                </ListRow>
-                <ListRow label="Weekly window">
-                  <GuardValue>
-                    {run.budget.maxWeeklyFraction === null
-                      ? "no guard"
-                      : fmtPct(run.budget.maxWeeklyFraction)}
-                  </GuardValue>
-                </ListRow>
-                {!reportsSpend && (run.budget.maxRunCostUSD ?? 0) > 0 && (
-                  <ListRow label="Spending limit">
-                    <GuardValue>
-                      {fmtUSD(run.budget.maxRunCostUSD ?? 0)}, not enforced
-                    </GuardValue>
-                  </ListRow>
-                )}
-                <ListRow label="When a limit is acted on">
-                  <GuardValue>{ENFORCEMENT[run.budget.enforcement]}</GuardValue>
-                </ListRow>
-                <ListRow label="After DONE">
-                  <GuardValue>
-                    {run.budget.continueAfterDone ? "sent back in" : "stops"}
-                  </GuardValue>
-                </ListRow>
-                <ListRow label="Permission mode">
-                  <GuardValue>{run.budget.permissionMode ?? "—"}</GuardValue>
-                </ListRow>
-              </ListGroup>
-            </Section>
-
-            {/* Here rather than beside the pruning figures, and the region is
-                the reason: this is a reading against a limit that acts on the
-                run — the size at which a work cycle is ended early — and it is
-                not money. In `What it has spent` its token count would sit
-                under a heading that says every figure below it is spend, one
-                block away from a prune's `tokensRemoved`, which is the exact
-                subtraction the component's caption exists to refuse. */}
-            {context && (
-              <Section title="Context">
-                <ContextOccupancy
-                  context={context}
-                  now={nowTick}
-                  live={active}
-                />
-              </Section>
+              {run.status === "running" && <Spinner />}
+              {state.headline}
+            </h2>
+            <p className="mt-1 text-sm text-ink-muted">{state.detail}</p>
+            {run.stop_reason && (
+              <p className="mt-1 text-xs text-ink-muted">{run.stop_reason}</p>
             )}
-          </Region>
+            {/* The agent's own account of what stopped it, verbatim and clipped
+                only at the write. Gated on the column rather than on the status:
+                it is cleared by every other ending and by a pick-up, so its
+                presence already means this row records that ending.
+                `whitespace-pre-wrap` because the agent writes paragraphs and the
+                three facts it was asked for are usually on separate lines. */}
+            {run.needs_review_reason && (
+              <p className="mt-2 whitespace-pre-wrap border-l-2 border-l-warn pl-2 text-xs text-ink">
+                {run.needs_review_reason}
+              </p>
+            )}
+            {haltedWith && (
+              <p className="mt-1 text-xs text-ink-muted">
+                Stopping a workflow run is final, so this run cannot be picked up
+                on its own — start “{haltedWith}” again to do this work.
+              </p>
+            )}
 
-          {/* Three readings of overlapping money, and the region is what says
-              they are three. **No figure, meter, badge or total may be drawn at
-              this level.** Any sum of two of them double-counts: `spent_usd` is
-              what a work cycle's own `result` event reported, `Agent work` is
-              this app's price table over the transcripts, and telemetry is
-              Claude Code's own per-request cost. Each keeps its own footnote
-              saying so, because adjacency is not permission — and a subtotal
-              here would break a correctness invariant that will not throw and
-              will not fail a typecheck. */}
-          <Region title="What it has spent">
-            {/* The two figures that belong to the run itself: both come from what
-                Claude Code reported for a finished work cycle. Telemetry is a
-                different measurement and stays in a block of its own. */}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <div className="text-xs font-semibold text-ink">Spent</div>
-                {/* **A provider that reports no cost gets no figure at all.**
-                    `metering.md`'s first rule is that unknown must not render
-                    as zero, and this is the one place in the app where the two
-                    are indistinguishable in the data: the loop withholds the
-                    `+=` for such a run, so the column really does hold 0, and
-                    formatting it would publish a measurement nobody made. The
-                    dash is the mark this page already uses for a reading it
-                    does not have — see `exit —` one column over. Tokens are
-                    measured on both providers and are shown on both. */}
-                {reportsSpend ? (
-                  <Stat>{fmtUSD(run.spent_usd)}</Stat>
-                ) : (
-                  <Stat>&mdash;</Stat>
-                )}
-                <div className={SUB}>
-                  {fmtTokens(run.spent_tokens)} tokens, as{" "}
-                  {RUN_PROVIDER_LABEL[run.provider ?? "claude"]} reported them
-                </div>
-                {!reportsSpend && (
-                  <div className={SUB}>
-                    {RUN_PROVIDER_LABEL[run.provider ?? "claude"]} reports no
-                    cost, so this is unknown rather than $0
-                  </div>
-                )}
-                {/* $0.00 on a run eight minutes into its first cycle is
-                    documented behaviour rather than a broken counter — Claude
-                    Code reports what a cycle cost in its terminal `result`
-                    event and nowhere earlier. */}
-                {cycleInFlight && reportsSpend && (
-                  <div className={SUB}>
-                    excludes the cycle in flight, which is reported when it ends
-                  </div>
-                )}
-                {/* Held apart from the measured figure above, not added to it. */}
-                {(run.spent_usd_est ?? 0) > 0 && (
-                  <Hint tone="warn">
-                    {fmtUSD(run.spent_usd_est ?? 0)} more is estimated from your
-                    transcripts for cycles that were cut short
-                  </Hint>
-                )}
-              </div>
+            {/* Where the run says it is being held back, next to the Resume
+                button that still works. The chip in the heading is the glance;
+                this is the sentence, because what an operator needs to know is
+                which press it changes — and the answer is not this page's. */}
+            {setAsideAt && (
+              <p className="mt-1 text-xs text-ink-muted">
+                Set aside {fmtRelative(setAsideAt, nowTick)}. Picking up runs in
+                bulk skips this one; Resume here still works and puts it back.
+              </p>
+            )}
 
-              <div>
-                <div className="text-xs font-semibold text-ink">Work cycles</div>
-                <Stat>
-                  {run.iterations}
-                  {/* 0 is the stored sentinel for "no cap" — see db.ts. */}
-                  <span className="text-lg font-medium text-ink-muted">
-                    {run.max_iterations > 0
-                      ? `/${run.max_iterations}`
-                      : " · no cap"}
-                  </span>
-                </Stat>
-                <div className={SUB}>
-                  {run.status === "paused"
-                    ? "parked between cycles"
-                    : (cycleInFlight ?? (active ? "starting" : "finished"))}
-                </div>
-                {!active && (
-                  <div className={SUB}>exit {run.exit_code ?? "—"}</div>
-                )}
-                {(run.done_retriggers ?? 0) > 0 && (
-                  <div className={SUB}>
-                    {run.done_retriggers} sent back after it reported done
-                  </div>
-                )}
-              </div>
+            {/* The only place the promotion order can be changed. Here rather
+                than on the runs list because this is the page that already says
+                how many runs are ahead of it, and a number is only meaningful
+                beside the position it moves. */}
+            {run.status === "queued" && (
+              <QueuePriority
+                runId={id}
+                priority={run.priority ?? 0}
+                onError={setActionError}
+              />
+            )}
+
+            {/* Up to four of these render together, and the variants are what say
+                which one the page is for. **At most one `primary` in every
+                reachable state**, and the pick-up is the one that gets it: a run
+                still working has none, because the only thing to do to it is stop
+                it. `Try now` never becomes a second one — it and the pick-up
+                cannot co-render, `paused` being the one status that is not
+                pickupable — and it is deliberately the quieter of the two, since
+                the run rejoins the queue on its own and pressing it does not
+                bypass the guard that parked it. */}
+            <ButtonRow className="mt-3">
+              {run.status === "paused" && (
+                <Button variant="secondary" onClick={tryNow}>
+                  Try now
+                </Button>
+              )}
+              {resumable && !reopenOpen && (
+                <Button onClick={openReopen}>{resumeLabel}</Button>
+              )}
+              {active && (
+                <Button variant="danger" onClick={stop}>
+                  {run.status === "paused" ? "Give up" : "Stop run"}
+                </Button>
+              )}
+              {/* Last, and `ghost`, because this is the one control here that does
+                  not change what the run *is* — it changes which runs the two bulk
+                  pick-ups will act on, and nothing else. A live run's press also
+                  ends a billed agent, and the label says so in words rather than
+                  in a colour that would put a second red button beside Stop. The
+                  undo takes the same slot and is `secondary`: a run already set
+                  aside has nothing else to offer from this row, so it is the one
+                  thing there is to press. */}
+              {setAsideAt ? (
+                <Button variant="secondary" onClick={() => void setAside(false)}>
+                  Put back
+                </Button>
+              ) : (
+                <Button variant="ghost" onClick={() => void setAside(true)}>
+                  {active ? "Stop and set aside" : "Set aside"}
+                </Button>
+              )}
+            </ButtonRow>
+
+            {/* Transient feedback for a button that was just pressed. The region
+                is always in the DOM so a screen reader announces what arrives. */}
+            <div aria-live="polite">
+              {stopNote && <p className="mt-3 text-sm text-accent">{stopNote}</p>}
+              {actionError && (
+                <Notice tone="danger" className="mt-3">
+                  {actionError}
+                </Notice>
+              )}
             </div>
 
-            {/* Who did the work, and what their share of it cost. The two
-                figures above say what the run spent and neither can say this:
-                only the transcript records which agent produced a turn, which
-                is why this is the same source the dashboard meters come from
-                rather than a fourth one. Its own poll and its own route — see
-                the component.
+            {reopenOpen && (
+              <Section
+                title={
+                  blockedBeforeStart
+                    ? "Put this run back behind the ones it waits on"
+                    : guardRefused
+                      ? "Start this run again, under the limits below"
+                      : !run.session_id
+                        ? "Start this run again from its original task"
+                        : saidDone
+                          ? "Send this run back into the same session"
+                          : "Carry on from where this run stopped"
+                }
+              >
+                <Field label="What else needs doing?" htmlFor="re-note">
+                  <Textarea
+                    id="re-note"
+                    value={reopenNote}
+                    onChange={(e) => setReopenNote(e.target.value)}
+                    placeholder="The retry logic is missing a test for the timeout path."
+                  />
+                  <Hint>
+                    {blockedBeforeStart
+                      ? "It starts by itself if the runs ahead of it have since succeeded, and says so again if they have not"
+                      : guardRefused
+                        ? // The one fact this run's operator needs and no other
+                          // branch carries: nothing here overrides the guard that
+                          // refused it, and a window percentage is not on this form.
+                          "It never started, so it begins its original task with this added to the end. Its guards are checked again before it spawns — raise whatever refused it, or it stops here again"
+                        : !run.session_id
+                          ? "This run never reported a session to resume, so it starts the original task again with this added to the end"
+                          : saidDone
+                            ? "Sent verbatim as the next turn of the same conversation. Blank asks it to re-check the original task, run the tests and fix what fails"
+                            : "Sent verbatim as the next turn of the same conversation. Blank just tells it to continue"}
+                  </Hint>
+                </Field>
 
-                `startedAs` changes nothing about the arithmetic and only what
-                the card is allowed to say. Under `--agent` this split has two
-                readings an operator would otherwise take for a bug: every row
-                under the agent's name and nothing in `(main thread)`, or the
-                reverse, on a page whose region below says the run is the
-                reviewer. Which one the CLI writes is unmeasured and no branch
-                here depends on it, so the card names the run's agent and lets
-                the rows say what they say. */}
-            <Section title="Agent work">
-              <RunAgentCost
-                runId={run.id}
-                active={active}
-                now={nowTick}
-                startedAs={run.agent?.name ?? null}
-              />
-            </Section>
-
-            {/* A separate measurement, deliberately not folded into the figures
-                above. It counts every API request the agent made, including any
-                belonging to a work cycle that ended before the CLI reported its
-                cost — so a higher number here is the expected outcome of an
-                interrupted run, not a discrepancy to reconcile away. */}
-            {telemetry && (
-              <Section title="Telemetry — first-party">
-                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                  <Stat>{fmtUSD(telemetry.costUSD)}</Stat>
-                  <div className="text-xs tabular-nums text-ink-muted">
-                    {telemetry.requests} API{" "}
-                    {telemetry.requests === 1 ? "request" : "requests"} ·{" "}
-                    {fmtTokens(telemetry.tokens)} tokens
+                <Field label="Work cycles" htmlFor="re-cycles">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="re-cycles"
+                      type="number"
+                      min={1}
+                      className="w-full min-w-0 flex-1"
+                      value={reopenCycles}
+                      onChange={(e) => setReopenCycles(e.target.value)}
+                    />
+                    <span className="whitespace-nowrap text-xs text-ink-muted">
+                      in total
+                    </span>
                   </div>
-                </div>
-                {/* Shortened, but never to nothing: this line is one of the two
-                    places the three cost readings say in user-visible copy that
-                    they must not be added, and the region's whole purpose is
-                    that prohibition. */}
-                <p className="mt-2 text-xs leading-snug text-ink-muted">
-                  Claude Code&rsquo;s own per-request cost, never added to the
-                  figures above.
-                </p>
+                  <Hint>
+                    Counts the {run.iterations} it has already had. Blank means no
+                    cycle limit, which needs a time limit
+                  </Hint>
+                </Field>
+
+                <Field label="Spending limit" htmlFor="re-cost">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-ink-muted">$</span>
+                    <Input
+                      id="re-cost"
+                      type="number"
+                      min={0}
+                      step="0.5"
+                      className="w-full min-w-0 flex-1"
+                      value={reopenCost}
+                      onChange={(e) => setReopenCost(e.target.value)}
+                    />
+                  </div>
+                  {/* The field stays offered for a provider that reports no
+                      cost, because a run never changes provider and a reopen is
+                      the same run: hiding it would leave an operator wondering
+                      where it went. What changes is the promise under it, which
+                      would otherwise count a $0.00 nobody measured and imply a
+                      ceiling this run's loop will never test. */}
+                  {reportsSpend ? (
+                    <Hint>
+                      Counts the {fmtUSD(run.spent_usd + (run.spent_usd_est ?? 0))}{" "}
+                      already spent. Blank means no limit
+                    </Hint>
+                  ) : (
+                    <Hint tone="warn">
+                      Not enforced:{" "}
+                      {RUN_PROVIDER_LABEL[run.provider ?? "claude"]} reports no
+                      cost, so nothing measures against it
+                    </Hint>
+                  )}
+                </Field>
+
+                <Field label="Time limit" htmlFor="re-minutes">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="re-minutes"
+                      type="number"
+                      min={1}
+                      className="w-full min-w-0 flex-1"
+                      value={reopenMinutes}
+                      onChange={(e) => setReopenMinutes(e.target.value)}
+                    />
+                    <span className="whitespace-nowrap text-xs text-ink-muted">
+                      minutes
+                    </span>
+                  </div>
+                  <Hint>Runs from when it starts again. Blank means no limit</Hint>
+                </Field>
+
+                <Hint>
+                  Everything else carries over: the window percentages, how the
+                  limits are enforced, what happens after DONE, the permission
+                  mode
+                  {run.agent ? `, and the ${run.agent.name} agent` : ""}. It keeps
+                  its folder
+                  {isolated ? ` and its checkout on ${run.worktree_branch}` : ""}
+                </Hint>
+
+                {reopenError && <Hint tone="danger">{reopenError}</Hint>}
+
+                <ButtonRow className="mt-3">
+                  {/* The same word the button that opened this panel used. It
+                      read `Resume run` under a `Try again`, which is two names
+                      for one act on one screen. */}
+                  <Button onClick={submitReopen} busy={reopenBusy}>
+                    {resumeLabel}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => setReopenOpen(false)}
+                    disabled={reopenBusy}
+                  >
+                    Cancel
+                  </Button>
+                </ButtonRow>
               </Section>
             )}
 
-            {/* A fourth reading in this region, and the only one that is not
-                money that moved: it is what the run did *not* pay because its
-                conversation was pruned between cycles. Never added to the three
-                above — the copy says so, on the same grounds the telemetry line
-                does. */}
-            {/* Rendered when the run has either cuts or boundary decisions.
-                Absent now genuinely means nothing happened: every boundary an
-                install with pruning on reaches writes a decision row, so the
-                five states that used to share this one blank — pruning off,
-                winnow absent, every boundary declined, nothing worth removing,
-                and a run that never reached a boundary — each have a sentence
-                of their own below. */}
-            {(pruning || pruneActivity || pruner) && (
-              <Section title="Context pruning">
-                <RunPruning
-                  savings={pruning}
-                  statement={runStatement}
-                  pruner={pruner}
-                />
-              </Section>
-            )}
-          </Region>
-
-          {/* What was decided before it started, and the region is what keeps
-              `Model` and `Agent` *beside* the guards rather than among them —
-              two regions away from `Against its limits`. A row inside that
-              guard group would claim they bound something, and each bounds
-              strictly nothing: a model moves cost, which every guard in that
-              group already measures rather than being set by, and `--agent`
-              sets the session's system prompt, and its model
-              where the run named none, while the permission mode, the isolation
-              grant and the deny list are all argued at the spawn and untouched
-              by it, which `orchestrator.test.ts` asserts again with one
-              selected. Tidying it into the guards is a change nothing would
-              report. */}
-          {/* The notes on the brief, beside the brief: the region below holds
-              `Task`, which is the prompt the agent was handed, and this is what
-              has been said about it since without changing it. Gated on the run
-              naming a board task at all — a run started from the form names
-              none, and an empty region on every one of those costs more than
-              the block is worth on the few that have one, which is the rule the
-              background-task panel already follows. */}
-          {run.tasks && run.tasks.length > 0 && (
-            <Region title="On the board">
-              <RunTaskComments runId={id} tasks={run.tasks} active={active} />
-            </Region>
-          )}
-
-          <Region title="How it was set up">
-            {/* Both models in one place, in precedence order, because that is
-                the only order in which either row answers anything: the run's
-                own reaches `--model` and outranks the agent's, so the agent's
-                is what a run that named none falls back to. Off the run's row
-                rather than from Settings — a per-run choice read back from a
-                global setting is a choice nobody can check, and the two stopped
-                being the same answer the moment the form offered a model.
-
-                What it says is what was sent: `runs.model` was resolved once,
-                at creation, so this still names the model the run was started
-                with after Settings has moved on. Same for the agent, which is
-                the run's own frozen copy and still names it after that agent
-                has been renamed or deleted. */}
-            <Section title="Model">
-              <ListGroup>
-                <ListRow label="This run">
-                  <GuardValue>
-                    {run.model ?? "Claude Code's own default"}
-                  </GuardValue>
-                </ListRow>
-                {run.agent && (
-                  <ListRow label="Its agent">
+            <Region title="Against its limits">
+              <Section title="Guards">
+                {bars.length > 0 && (
+                  <div className="mb-3">
+                    {bars.map((b) => (
+                      <Meter
+                        key={b.label}
+                        size="compact"
+                        label={b.label}
+                        fraction={b.fraction}
+                        upperFraction={b.upperFraction}
+                        upperHint={b.upperHint}
+                        value={b.value}
+                        upperValue={b.upperValue}
+                      />
+                    ))}
+                  </div>
+                )}
+                <ListGroup>
+                  <ListRow label="5-hour window">
                     <GuardValue>
-                      {run.agent.model ?? "the run's own"}
+                      {run.budget.maxSessionFraction === null
+                        ? "no guard"
+                        : fmtPct(run.budget.maxSessionFraction)}
                     </GuardValue>
                   </ListRow>
-                )}
-              </ListGroup>
-            </Section>
-
-            {/* Which CLI ran it — its own section rather than a third row under
-                `Model`, because a provider is not one: the two rows above are a
-                model and a fallback model, and a third headed by a word that
-                names neither would read as one.
-
-                In this region for the model's own reason, though. A provider
-                bounds nothing, so the same argument that keeps `Model` out of
-                the guard group keeps this out of it.
-
-                `null` is "not recorded" and is never drawn as "Claude Code":
-                the column landed after this row did, so a row that predates it
-                was never asked. That is `git-and-review.md`'s distinction
-                between a question answered "none" and a question nobody put,
-                and collapsing the second into the first would put a claim on
-                history that nothing in this app can support. */}
-            <Section title="Provider">
-              <ListGroup>
-                <ListRow label="Spawned as">
-                  <GuardValue>
-                    {run.provider
-                      ? RUN_PROVIDER_LABEL[run.provider]
-                      : "not recorded"}
-                  </GuardValue>
-                </ListRow>
-              </ListGroup>
-              {/* Here rather than beside the spend figure, and the reason is
-                  which question a reader is asking in each place. Beside the
-                  figure they are asking what this run cost; the honest answer
-                  is a blank, and a blank with a paragraph attached reads as an
-                  error. Here they are asking what kind of run this is, and
-                  "its costs were never reported" is an answer to that. The
-                  Costs region is where the figure is missing; this is where it
-                  says why.
-
-                  Drawn off `run.provider` rather than off a zero spend so it
-                  is never confused with a run that genuinely cost nothing, and
-                  never shown for `null`, which is a row that predates the
-                  column rather than a row that was asked. */}
-              {run.provider === "codex" && (
-                <Hint tone="warn" className="mt-2.5">
-                  <strong>This run reports no cost.</strong> Codex sends token
-                  counts and no money, so nothing was added to this run&rsquo;s
-                  spend and nothing reached the usage windows. Its dollar
-                  figures are unknown rather than zero, and its token count is
-                  measured. Two other guarantees are weaker here than on a
-                  Claude run: the denial that stops an agent killing the server
-                  supervising it is a rules file rather than a flag, so it is
-                  install-wide and does not cover a command written with
-                  substitution or a wildcard; and the notices about what this
-                  agent is running inside rode the prompt rather than a system
-                  prompt.
-                </Hint>
-              )}
-            </Section>
-
-            {run.agent && (
-              <Section title="Agent">
-                <ListGroup>
-                  <ListRow label="Started as">
-                    <GuardValue>{run.agent.name}</GuardValue>
+                  <ListRow label="Weekly window">
+                    <GuardValue>
+                      {run.budget.maxWeeklyFraction === null
+                        ? "no guard"
+                        : fmtPct(run.budget.maxWeeklyFraction)}
+                    </GuardValue>
+                  </ListRow>
+                  {!reportsSpend && (run.budget.maxRunCostUSD ?? 0) > 0 && (
+                    <ListRow label="Spending limit">
+                      <GuardValue>
+                        {fmtUSD(run.budget.maxRunCostUSD ?? 0)}, not enforced
+                      </GuardValue>
+                    </ListRow>
+                  )}
+                  <ListRow label="When a limit is acted on">
+                    <GuardValue>{ENFORCEMENT[run.budget.enforcement]}</GuardValue>
+                  </ListRow>
+                  <ListRow label="After DONE">
+                    <GuardValue>
+                      {run.budget.continueAfterDone ? "sent back in" : "stops"}
+                    </GuardValue>
+                  </ListRow>
+                  <ListRow label="Permission mode">
+                    <GuardValue>{run.budget.permissionMode ?? "—"}</GuardValue>
                   </ListRow>
                 </ListGroup>
               </Section>
+
+              {/* Here rather than beside the pruning figures, and the region is
+                  the reason: this is a reading against a limit that acts on the
+                  run — the size at which a work cycle is ended early — and it is
+                  not money. In `What it has spent` its token count would sit
+                  under a heading that says every figure below it is spend, one
+                  block away from a prune's `tokensRemoved`, which is the exact
+                  subtraction the component's caption exists to refuse. */}
+              {context && (
+                <Section title="Context">
+                  <ContextOccupancy
+                    context={context}
+                    now={nowTick}
+                    live={active}
+                  />
+                </Section>
+              )}
+            </Region>
+
+            {/* Three readings of overlapping money, and the region is what says
+                they are three. **No figure, meter, badge or total may be drawn at
+                this level.** Any sum of two of them double-counts: `spent_usd` is
+                what a work cycle's own `result` event reported, `Agent work` is
+                this app's price table over the transcripts, and telemetry is
+                Claude Code's own per-request cost. Each keeps its own footnote
+                saying so, because adjacency is not permission — and a subtotal
+                here would break a correctness invariant that will not throw and
+                will not fail a typecheck. */}
+            <Region title="What it has spent">
+              {/* The two figures that belong to the run itself: both come from what
+                  Claude Code reported for a finished work cycle. Telemetry is a
+                  different measurement and stays in a block of its own. */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="text-xs font-semibold text-ink">Spent</div>
+                  {/* **A provider that reports no cost gets no figure at all.**
+                      `metering.md`'s first rule is that unknown must not render
+                      as zero, and this is the one place in the app where the two
+                      are indistinguishable in the data: the loop withholds the
+                      `+=` for such a run, so the column really does hold 0, and
+                      formatting it would publish a measurement nobody made. The
+                      dash is the mark this page already uses for a reading it
+                      does not have — see `exit —` one column over. Tokens are
+                      measured on both providers and are shown on both. */}
+                  {reportsSpend ? (
+                    <Stat>{fmtUSD(run.spent_usd)}</Stat>
+                  ) : (
+                    <Stat>&mdash;</Stat>
+                  )}
+                  <div className={SUB}>
+                    {fmtTokens(run.spent_tokens)} tokens, as{" "}
+                    {RUN_PROVIDER_LABEL[run.provider ?? "claude"]} reported them
+                  </div>
+                  {!reportsSpend && (
+                    <div className={SUB}>
+                      {RUN_PROVIDER_LABEL[run.provider ?? "claude"]} reports no
+                      cost, so this is unknown rather than $0
+                    </div>
+                  )}
+                  {/* $0.00 on a run eight minutes into its first cycle is
+                      documented behaviour rather than a broken counter — Claude
+                      Code reports what a cycle cost in its terminal `result`
+                      event and nowhere earlier. */}
+                  {cycleInFlight && reportsSpend && (
+                    <div className={SUB}>
+                      excludes the cycle in flight, which is reported when it ends
+                    </div>
+                  )}
+                  {/* Held apart from the measured figure above, not added to it. */}
+                  {(run.spent_usd_est ?? 0) > 0 && (
+                    <Hint tone="warn">
+                      {fmtUSD(run.spent_usd_est ?? 0)} more is estimated from your
+                      transcripts for cycles that were cut short
+                    </Hint>
+                  )}
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold text-ink">Work cycles</div>
+                  <Stat>
+                    {run.iterations}
+                    {/* 0 is the stored sentinel for "no cap" — see db.ts. */}
+                    <span className="text-lg font-medium text-ink-muted">
+                      {run.max_iterations > 0
+                        ? `/${run.max_iterations}`
+                        : " · no cap"}
+                    </span>
+                  </Stat>
+                  <div className={SUB}>
+                    {run.status === "paused"
+                      ? "parked between cycles"
+                      : (cycleInFlight ?? (active ? "starting" : "finished"))}
+                  </div>
+                  {!active && (
+                    <div className={SUB}>exit {run.exit_code ?? "—"}</div>
+                  )}
+                  {(run.done_retriggers ?? 0) > 0 && (
+                    <div className={SUB}>
+                      {run.done_retriggers} sent back after it reported done
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Who did the work, and what their share of it cost. The two
+                  figures above say what the run spent and neither can say this:
+                  only the transcript records which agent produced a turn, which
+                  is why this is the same source the dashboard meters come from
+                  rather than a fourth one. Its own poll and its own route — see
+                  the component.
+
+                  `startedAs` changes nothing about the arithmetic and only what
+                  the card is allowed to say. Under `--agent` this split has two
+                  readings an operator would otherwise take for a bug: every row
+                  under the agent's name and nothing in `(main thread)`, or the
+                  reverse, on a page whose region below says the run is the
+                  reviewer. Which one the CLI writes is unmeasured and no branch
+                  here depends on it, so the card names the run's agent and lets
+                  the rows say what they say. */}
+              <Section title="Agent work">
+                <RunAgentCost
+                  runId={run.id}
+                  active={active}
+                  now={nowTick}
+                  startedAs={run.agent?.name ?? null}
+                />
+              </Section>
+
+              {/* A separate measurement, deliberately not folded into the figures
+                  above. It counts every API request the agent made, including any
+                  belonging to a work cycle that ended before the CLI reported its
+                  cost — so a higher number here is the expected outcome of an
+                  interrupted run, not a discrepancy to reconcile away. */}
+              {telemetry && (
+                <Section title="Telemetry — first-party">
+                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                    <Stat>{fmtUSD(telemetry.costUSD)}</Stat>
+                    <div className="text-xs tabular-nums text-ink-muted">
+                      {telemetry.requests} API{" "}
+                      {telemetry.requests === 1 ? "request" : "requests"} ·{" "}
+                      {fmtTokens(telemetry.tokens)} tokens
+                    </div>
+                  </div>
+                  {/* Shortened, but never to nothing: this line is one of the two
+                      places the three cost readings say in user-visible copy that
+                      they must not be added, and the region's whole purpose is
+                      that prohibition. */}
+                  <p className="mt-2 text-xs leading-snug text-ink-muted">
+                    Claude Code&rsquo;s own per-request cost, never added to the
+                    figures above.
+                  </p>
+                </Section>
+              )}
+
+              {/* A fourth reading in this region, and the only one that is not
+                  money that moved: it is what the run did *not* pay because its
+                  conversation was pruned between cycles. Never added to the three
+                  above — the copy says so, on the same grounds the telemetry line
+                  does. */}
+              {/* Rendered when the run has either cuts or boundary decisions.
+                  Absent now genuinely means nothing happened: every boundary an
+                  install with pruning on reaches writes a decision row, so the
+                  five states that used to share this one blank — pruning off,
+                  winnow absent, every boundary declined, nothing worth removing,
+                  and a run that never reached a boundary — each have a sentence
+                  of their own below. */}
+              {(pruning || pruneActivity || pruner) && (
+                <Section title="Context pruning">
+                  <RunPruning
+                    savings={pruning}
+                    statement={runStatement}
+                    pruner={pruner}
+                  />
+                </Section>
+              )}
+            </Region>
+
+            {/* What was decided before it started, and the region is what keeps
+                `Model` and `Agent` *beside* the guards rather than among them —
+                two regions away from `Against its limits`. A row inside that
+                guard group would claim they bound something, and each bounds
+                strictly nothing: a model moves cost, which every guard in that
+                group already measures rather than being set by, and `--agent`
+                sets the session's system prompt, and its model
+                where the run named none, while the permission mode, the isolation
+                grant and the deny list are all argued at the spawn and untouched
+                by it, which `orchestrator.test.ts` asserts again with one
+                selected. Tidying it into the guards is a change nothing would
+                report. */}
+            {/* The notes on the brief, beside the brief: the region below holds
+                `Task`, which is the prompt the agent was handed, and this is what
+                has been said about it since without changing it. Gated on the run
+                naming a board task at all — a run started from the form names
+                none, and an empty region on every one of those costs more than
+                the block is worth on the few that have one, which is the rule the
+                background-task panel already follows. */}
+            {run.tasks && run.tasks.length > 0 && (
+              <Region title="On the board">
+                <RunTaskComments runId={id} tasks={run.tasks} active={active} />
+              </Region>
             )}
 
-            {isolated && (
-              <Section title="Checkout">
-                <div className="mono break-all text-sm text-ink">
-                  {run.worktree_branch}
-                </div>
-                {/* The link rather than the sentence it was in: which run this
-                    branch carries on is a fact the Changes and Land tabs both
-                    act on, and it is the one thing here the branch name does
-                    not already say. */}
-                {run.continues_run && (
-                  <div className={SUB}>
-                    carries on{" "}
-                    <Link
-                      href={`/runs/${run.continues_run}`}
-                      className="mono underline underline-offset-2"
-                    >
-                      {run.continues_run.slice(0, 8)}
-                    </Link>
-                  </div>
+            <Region title="How it was set up">
+              {/* Both models in one place, in precedence order, because that is
+                  the only order in which either row answers anything: the run's
+                  own reaches `--model` and outranks the agent's, so the agent's
+                  is what a run that named none falls back to. Off the run's row
+                  rather than from Settings — a per-run choice read back from a
+                  global setting is a choice nobody can check, and the two stopped
+                  being the same answer the moment the form offered a model.
+
+                  What it says is what was sent: `runs.model` was resolved once,
+                  at creation, so this still names the model the run was started
+                  with after Settings has moved on. Same for the agent, which is
+                  the run's own frozen copy and still names it after that agent
+                  has been renamed or deleted. */}
+              <Section title="Model">
+                <ListGroup>
+                  <ListRow label="This run">
+                    <GuardValue>
+                      {run.model ??
+                        (run.provider === "codex"
+                          ? "Codex's own default"
+                          : "Claude Code's own default")}
+                    </GuardValue>
+                  </ListRow>
+                  {run.agent && (
+                    <ListRow label="Its agent">
+                      <GuardValue>
+                        {run.agent.model ?? "the run's own"}
+                      </GuardValue>
+                    </ListRow>
+                  )}
+                </ListGroup>
+              </Section>
+
+              {/* Which CLI ran it — its own section rather than a third row under
+                  `Model`, because a provider is not one: the two rows above are a
+                  model and a fallback model, and a third headed by a word that
+                  names neither would read as one.
+
+                  In this region for the model's own reason, though. A provider
+                  bounds nothing, so the same argument that keeps `Model` out of
+                  the guard group keeps this out of it.
+
+                  `null` is "not recorded" and is never drawn as "Claude Code":
+                  the column landed after this row did, so a row that predates it
+                  was never asked. That is `git-and-review.md`'s distinction
+                  between a question answered "none" and a question nobody put,
+                  and collapsing the second into the first would put a claim on
+                  history that nothing in this app can support. */}
+              <Section title="Provider">
+                <ListGroup>
+                  <ListRow label="Spawned as">
+                    <GuardValue>
+                      {run.provider
+                        ? RUN_PROVIDER_LABEL[run.provider]
+                        : "not recorded"}
+                    </GuardValue>
+                  </ListRow>
+                </ListGroup>
+                {/* Here rather than beside the spend figure, and the reason is
+                    which question a reader is asking in each place. Beside the
+                    figure they are asking what this run cost; the honest answer
+                    is a blank, and a blank with a paragraph attached reads as an
+                    error. Here they are asking what kind of run this is, and
+                    "its costs were never reported" is an answer to that. The
+                    Costs region is where the figure is missing; this is where it
+                    says why.
+
+                    Drawn off `run.provider` rather than off a zero spend so it
+                    is never confused with a run that genuinely cost nothing, and
+                    never shown for `null`, which is a row that predates the
+                    column rather than a row that was asked. */}
+                {run.provider === "codex" && (
+                  <Hint tone="warn" className="mt-2.5">
+                    <strong>This run reports no cost.</strong> Codex sends token
+                    counts and no money, so nothing was added to this run&rsquo;s
+                    spend and nothing reached the usage windows. Its dollar
+                    figures are unknown rather than zero, and its token count is
+                    measured. Two other guarantees are weaker here than on a
+                    Claude run: the denial that stops an agent killing the server
+                    supervising it is a rules file rather than a flag, so it is
+                    install-wide and does not cover a command written with
+                    substitution or a wildcard; and the notices about what this
+                    agent is running inside rode the prompt rather than a system
+                    prompt.
+                  </Hint>
                 )}
               </Section>
-            )}
 
-            <Section title="Task">
-              <div
-                tabIndex={0}
-                role="group"
-                aria-label="Task given to the agent"
-                className="mono max-h-52 overflow-auto whitespace-pre-wrap break-words rounded-sm border border-line bg-inset p-2.5 text-ink-muted"
-              >
-                {run.prompt}
-              </div>
-            </Section>
-          </Region>
+              {run.agent && (
+                <Section title="Agent">
+                  <ListGroup>
+                    <ListRow label="Started as">
+                      <GuardValue>{run.agent.name}</GuardValue>
+                    </ListRow>
+                  </ListGroup>
+                </Section>
+              )}
+
+              {isolated && (
+                <Section title="Checkout">
+                  <div className="mono break-all text-sm text-ink">
+                    {run.worktree_branch}
+                  </div>
+                  {/* The link rather than the sentence it was in: which run this
+                      branch carries on is a fact the Changes and Land tabs both
+                      act on, and it is the one thing here the branch name does
+                      not already say. */}
+                  {run.continues_run && (
+                    <div className={SUB}>
+                      carries on{" "}
+                      <Link
+                        href={`/runs/${run.continues_run}`}
+                        className="mono underline underline-offset-2"
+                      >
+                        {run.continues_run.slice(0, 8)}
+                      </Link>
+                    </div>
+                  )}
+                </Section>
+              )}
+
+              <Section title="Task">
+                <div
+                  tabIndex={0}
+                  role="group"
+                  aria-label="Task given to the agent"
+                  className="mono max-h-52 overflow-auto whitespace-pre-wrap break-words rounded-sm border border-line bg-inset p-2.5 text-ink-muted"
+                >
+                  {run.prompt}
+                </div>
+              </Section>
+            </Region>
+          </div>
         </Card>
 
         <div className="min-w-0 lg:col-start-1 lg:row-start-1 lg:flex lg:flex-col">

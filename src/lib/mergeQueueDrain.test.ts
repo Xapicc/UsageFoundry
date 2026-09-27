@@ -43,8 +43,17 @@ import type Database from "better-sqlite3";
 
 let mergeQueue: typeof import("./mergeQueue");
 let dbMod: typeof import("./db");
+let orchestrator: typeof import("./orchestrator");
 let root: string;
 let repo: string;
+/** A second repository, so a second worker can be mid-land beside the first. */
+let otherRepo: string;
+/**
+ * Where a case holds the app's own git at one subcommand. A file named `merge`
+ * or `status` here makes that call write `<name>.started` and wait for
+ * `<name>.release` before it runs.
+ */
+let holds: string;
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, {
@@ -79,6 +88,39 @@ before(async () => {
   process.env.WORKSPACE_ROOTS = path.join(root, "ws");
   fs.mkdirSync(path.join(root, "ws"), { recursive: true });
 
+  // The app's git, able to be held at one step long enough for a shutdown to
+  // begin inside it, and a pass-through for every call no case holds. The real
+  // binary by absolute path, because `gitEnv()` decides what the child's PATH
+  // is. The wait gives up after twenty seconds so a failed case cannot keep the
+  // runner alive behind a child nobody will release.
+  holds = path.join(root, "holds");
+  fs.mkdirSync(holds);
+  const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const gitStub = path.join(root, "git");
+  fs.writeFileSync(
+    gitStub,
+    [
+      "#!/bin/sh",
+      'for arg in "$@"; do',
+      '  case "$arg" in',
+      "    merge|status)",
+      `      if [ -e '${holds}'/"$arg" ]; then`,
+      `        : > '${holds}'/"$arg".started`,
+      "        i=0",
+      `        while [ ! -e '${holds}'/"$arg".release ] && [ $i -lt 200 ]; do`,
+      "          sleep 0.1; i=$((i + 1))",
+      "        done",
+      "      fi",
+      "      break ;;",
+      "  esac",
+      "done",
+      `exec '${realGit}' "$@"`,
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  process.env.GIT_BIN = gitStub;
+
   const config = await import("./config");
   assert.equal(
     config.DATA_DIR,
@@ -94,8 +136,16 @@ before(async () => {
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "first");
 
+  otherRepo = path.join(root, "ws", "other");
+  fs.mkdirSync(otherRepo);
+  git(otherRepo, "init", "-q", "-b", "main");
+  fs.writeFileSync(path.join(otherRepo, "a.txt"), "one\n");
+  git(otherRepo, "add", "-A");
+  git(otherRepo, "commit", "-q", "-m", "first");
+
   mergeQueue = await import("./mergeQueue");
   dbMod = await import("./db");
+  orchestrator = await import("./orchestrator");
 });
 
 after(() => {
@@ -128,12 +178,12 @@ function breakLandEvent(): () => void {
 /** A completed isolated run whose branch is one commit ahead of `main`. */
 function makeRun(id: string, file: string, repoRoot = repo): string {
   const branch = `uf/repo-${id}`;
-  git(repo, "checkout", "-q", "-b", branch);
-  fs.writeFileSync(path.join(repo, file), `${file}\n`);
-  git(repo, "add", "-A");
-  git(repo, "commit", "-q", "-m", `work ${id}`);
-  const base = git(repo, "rev-parse", "main").trim();
-  git(repo, "checkout", "-q", "main");
+  git(repoRoot, "checkout", "-q", "-b", branch);
+  fs.writeFileSync(path.join(repoRoot, file), `${file}\n`);
+  git(repoRoot, "add", "-A");
+  git(repoRoot, "commit", "-q", "-m", `work ${id}`);
+  const base = git(repoRoot, "rev-parse", "main").trim();
+  git(repoRoot, "checkout", "-q", "main");
 
   dbMod
     .db()
@@ -218,5 +268,95 @@ describe("the merge worker", () => {
 
     const rows = await settle(queued.batchId);
     assert.equal(rows[0].status, "landed", rows[0].message ?? "");
+  });
+});
+
+/** Hold the app's git at `step` from its next call on; resolves once one is held. */
+async function holdAt(step: "merge" | "status"): Promise<void> {
+  fs.writeFileSync(path.join(holds, step), "");
+  const started = path.join(holds, `${step}.started`);
+  for (let i = 0; i < 500 && !fs.existsSync(started); i++) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  assert.ok(fs.existsSync(started), `no git ${step} was reached`);
+}
+
+function release(...steps: ("merge" | "status")[]): void {
+  for (const step of steps) fs.writeFileSync(path.join(holds, `${step}.release`), "");
+}
+
+/**
+ * A SIGTERM that arrives while two workers are part-way through a land.
+ *
+ * Nothing waited for either. `shutdownRuns` waited for work cycles and for the
+ * children in `trackAssistChild`'s set, and a land is neither: its `git merge`
+ * is a plain `git()` child. So the process exited with the merge running under
+ * it, which under Docker takes it down with PID 1 part-way, and the next boot
+ * failed both rows with "The server restarted while this was landing".
+ *
+ * Held with release files rather than timed with sleeps, so the shutdown is
+ * certain to begin inside both. Last in the file because `shutdownRuns` sets a
+ * flag nothing clears, and every case after it would run in a process that is
+ * going down.
+ */
+describe("the merge worker at a shutdown", () => {
+  it("finishes the merge it is in, refuses the one it has not begun, and takes no other", async () => {
+    makeRun("eeeeeeee", "f.txt");
+    makeRun("ffffffff", "g.txt");
+    makeRun("gggggggg", "h.txt", otherRepo);
+    const otherHead = git(otherRepo, "rev-parse", "HEAD").trim();
+
+    try {
+      // Mid-merge in one repository: the first branch's `git merge` is running.
+      const merging = mergeQueue.enqueue(["eeeeeeee", "ffffffff"], {
+        strategy: "merge",
+        autoResolve: false,
+      });
+      assert.ok(merging.ok, JSON.stringify(merging));
+      await holdAt("merge");
+
+      // Taken but not yet merging in the other: its row is `landing` while
+      // `landState` reads the operator's checkout.
+      const reading = mergeQueue.enqueue(["gggggggg"], {
+        strategy: "merge",
+        autoResolve: false,
+      });
+      assert.ok(reading.ok, JSON.stringify(reading));
+      await holdAt("status");
+
+      let returned = false;
+      const shutdown = orchestrator.shutdownRuns("SIGTERM").finally(() => {
+        returned = true;
+      });
+      await new Promise((r) => setTimeout(r, 300));
+      assert.equal(returned, false, "the shutdown returned with a merge still running");
+
+      // The merge first and the read well after it, so a wait that held only
+      // `landRun` returns here with the other row still `landing`.
+      release("merge");
+      await new Promise((r) => setTimeout(r, 500));
+      assert.equal(returned, false, "the shutdown returned with a row it had taken still unanswered");
+
+      release("status");
+      await shutdown;
+
+      // Read the moment it returns, which is when the server exits.
+      const [landed, behind] = mergeQueue.batchRows(merging.batchId);
+      assert.equal(landed.status, "landed", `left on ${landed.status}: ${landed.message ?? ""}`);
+      // The drain does not reach for the next branch on the way out: that row
+      // is the boot's to cancel, and a merge begun now is one the exit could
+      // cut off.
+      assert.equal(behind.status, "queued", `left on ${behind.status}`);
+
+      // And the row whose merge had not begun is refused at `landRun`'s door
+      // rather than merged during the grace, with the operator's checkout as
+      // it was.
+      const [refused] = mergeQueue.batchRows(reading.batchId);
+      assert.equal(refused.status, "failed", `left on ${refused.status}: ${refused.message ?? ""}`);
+      assert.match(refused.message ?? "", /shutting down, so nothing was merged/);
+      assert.equal(git(otherRepo, "rev-parse", "HEAD").trim(), otherHead);
+    } finally {
+      release("merge", "status");
+    }
   });
 });

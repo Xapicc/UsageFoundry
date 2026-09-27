@@ -835,6 +835,51 @@ is `docs/agent/testing.md`; interface defects and their classes are
   deleted run's token read only what it held. All six failed before the change.
   Caveat: no real CLI and no model was involved.
 
+- **The run page no longer draws its own run's notes, 2026-09-26**, standalone
+  server, Chromium at **1920x963 and 390x844**, default skin, light theme, one
+  completed run seeded straight into a throwaway `DATA_DIR` (the notes by the run
+  itself need an `author_run_id` no operator route writes) and linked to four
+  tasks. A task holding only a 40-line report by this run drew *This run left 1
+  note, 3m ago. Read it on the task* and no row; one holding that report plus an
+  operator note drew the same line above the operator's row alone; one with no
+  notes drew *Nothing said yet* as before; and a seven-note thread whose newest
+  three were this run's, another run's, this run's drew *Newest 3 of 7, 2 of them
+  by this run, the latest 1m ago* above one row, `Run 9c1e44aa`, with its run
+  link. Every link opened `/tasks/<id>`, and no console error at either width.
+  `/tasks/[id]` for the second task still drew both notes whole, the run's with
+  its `Run 337d38f5` header. Gate on the same tree: `npm run typecheck` exit 0;
+  `npm test` **3033 tests, 3033 pass, 0 fail**, exit 0, beside the one suite
+  that throws during construction against CLI 2.1.280 (`sandboxMountPoints`,
+  already on the board); `npm run smoke-pages` against
+  `.next/standalone/server.js`, **92/92 page loads clean**. Caveat: one engine
+  and one skin for this block, and `smoke-pages`' own seed carries no notes, so
+  its pass says nothing about it.
+
+- **Operator-only and `release_task` through the real MCP route, in-process,
+  2026-09-27**: `route.ts` and `src/lib` compiled with `tsc` to a scratch
+  `outDir`, `POST` called directly with tokens from `mintRunCapability` and
+  `mintCapability` against seeded `runs` rows, **21/21 assertions**.
+  `release_task` is on the run's list and `complete_task`'s description points
+  at it; `list_my_tasks` marks the operator-only row in `openInFolder` and says
+  nothing on an unmarked `held` row; a string `operatorOnly`, a blank reason,
+  another run and an unknown id are each refused with nothing written; the
+  holder's release left the task open, unclaimed and marked with its reason as
+  a note from that run, after which `complete_task` and a second release were
+  refused; a run's `create_task` filed a task marked; a chat calling
+  `release_task` got its own sentence; chat `list_tasks` narrowed on the flag
+  both ways and refused `"yes"`; `get_task` returned it. Caveat: no `claude`
+  child was spawned, so what a model does with the descriptions is unmeasured.
+
+- **Operator-only on the board, 2026-09-27**, standalone build on a scratch
+  `DATA_DIR`, three tasks seeded through `POST /api/tasks`, Chromium at 1280px
+  and 390px: the badge drew under the marked row's title, the "Who does it"
+  filter left one row on Operator only at 1280px (the 390px pass ran after the
+  flag was cleared and showed none, as it should), the task page's toggle cleared the
+  flag through its own `PATCH` (read back `false`), the new-task toggle drew
+  below Folder, no console error and no sideways scroll at either width.
+  `GET /api/tasks?operatorOnly=yes` and a `PATCH` sending `"false"` were both
+  400s. `npm run smoke-pages` 92/92 on the same build.
+
 ### Workflows and schedules
 
 - **A loop as a region, 2026-09-21** (production standalone build from this
@@ -1231,6 +1276,120 @@ is `docs/agent/testing.md`; interface defects and their classes are
   driven through the browser — the blocker's presence on the admission response
   was checked, and the sentence is a pure function of it.
 
+- **A review or a chat turn no longer outlives the server, 2026-09-27**: on
+  the built standalone bundle with a stub `CLAUDE_BIN` that records its pid and
+  sleeps, a review child and a chat-turn child under `killProcessGroup` each
+  led their own session and **survived** the server's exit, both to `SIGINT`
+  sent to the server's whole process group (what a terminal's Ctrl-C does) and
+  to `SIGTERM` sent to the server alone. With the setting off, the group
+  `SIGINT` reached the child directly. After `trackAssistChild` and the
+  shutdown's ladder, none of the four cases left anything alive. Caveat: the
+  stub exits on its first signal, so the `SIGTERM` and `SIGKILL` rungs were not
+  exercised, the real `claude` was not run, and `npm run dev` was not driven
+  (it cannot compile CSS here); dev runs the same `instrumentation.ts` handler.
+
+- **Next's own signal handler cuts the shutdown's grace short, 2026-09-27**,
+  Next 15.5.24: in the same harness the server exited 0.1s after the signal
+  and left the review row `running` and the chat row `thinking`, with or
+  without the fix above. `next/dist/server/lib/start-server.js` installs a
+  `SIGINT`/`SIGTERM` handler that calls `process.exit(0)` once the HTTP server
+  has closed unless `NEXT_MANUAL_SIG_HANDLE` is set, and nothing here sets it.
+  With `NEXT_MANUAL_SIG_HANDLE=1` in the server's environment the same
+  shutdown took 0.2s and both rows got their endings from the child's own
+  settle (`failed`, "produced no readable output (exit 143)"). Caveat: the
+  standalone bundle only, not `docker compose`, and no work cycle was in
+  flight, where the same race would skip `reconcileInterruptedCycles`.
+
+- **A work cycle in flight at SIGTERM is reconciled once Next's handler is
+  off, 2026-09-27**, Next 15.5.24, standalone bundle at `8e4e847` and at
+  `25d9ca7`, stub `CLAUDE_BIN` that writes one $0.60 transcript turn
+  (100k in, 20k out, `claude-sonnet-4-5`), never prints `result` and ignores
+  `SIGINT`. Without the variable the server exited 0.02s after `SIGTERM`
+  with the run `running`, `spent_usd_est` 0, `active_started_at` still set,
+  `server.lock` left behind and the stub still alive. With
+  `NEXT_MANUAL_SIG_HANDLE=1` it exited at 3.04s, the `SIGTERM` rung: run
+  `stopped`, $0.60 and 120,000 tokens reconciled, the column cleared, the lock
+  released. A stub ignoring `SIGTERM` too was killed by the `SIGKILL` rung and
+  the server exited at 8.14s, reconciled; one exiting on `SIGINT`, as the CLI
+  does, at 0.13s; an idle server at once. The stub's environment held the
+  variable at `8e4e847` and not at `25d9ca7`, which deletes it after Next has
+  read it. Caveat: the loop settled every cycle itself, so
+  `reconcileInterruptedCycles` found nothing to do; not `docker compose`.
+
+- **A repeated signal no longer ends the shutdown, 2026-09-27**, same
+  harness: with the variable set, `8e4e847`'s `process.once` left a second
+  `SIGTERM` 10ms after the first to Node's default action, exit 143 at 0.02s
+  with nothing reconciled. At `25d9ca7` a second `SIGTERM`, or `SIGINT` then
+  `SIGTERM`, 1s apart, logged one "ignored" line and ended like the single
+  signal (3.08s, $0.60 reconciled), and the stub got one `SIGINT` where
+  `8e4e847` had sent it two from two shutdowns.
+
+- **`npm run dev` needs `NEXT_EXIT_TIMEOUT_MS` as well, 2026-09-27**, same
+  stub, `SIGINT` to the whole process group: `next dev`'s parent forwards the
+  signal and `SIGKILL`s its server 100ms later by default, so with
+  `NEXT_MANUAL_SIG_HANDLE=1` alone the server died at 0.13s, unreconciled.
+  Every Ctrl-C there also delivers `SIGINT` twice (the group's and the
+  parent's), and the handler logged the second as ignored. Through the
+  `dev` script at `25d9ca7` it exited at 3.10s with $0.60 reconciled, the
+  column cleared and the lock released, but the row was still `running` with
+  no stop reason: the shutdown stops waiting once the child is gone and
+  `active_started_at` is cleared, which can come before the loop writes the
+  run's ending. Caveat: one run each; the standalone runs above all won that
+  race.
+
+- **The shutdown gate with two live processes, 2026-09-27**, `25d9ca7`,
+  same harness: a second standalone server on the owner's `DATA_DIR` came
+  up read-only and exited 0.02s after `SIGTERM`, leaving the owner's run
+  `running` with its cycle open and `restart_closed` 0, the owner's lock in
+  place and the stub alive; the owner's own `SIGTERM` then reconciled the
+  cycle as above. Caveat: a stub, not a real billed agent.
+
+- **The shutdown waits for each interrupted loop to write its ending,
+  2026-09-27**, Next 15.5.24, `bb20fc5` against its parent `45f85c2`, the
+  stub above with 150 MB of `user` lines appended to its transcript, so the
+  transcript read between the post-cycle UPDATE and the status write
+  outlasts the wait's 100ms poll. At `45f85c2` every run lost the race:
+  through the `dev` script with `SIGINT` to the group, 6 of 6 exited at 3.2s
+  with $0.60 reconciled and the row `running` with no stop reason, and on
+  the standalone bundle with `SIGTERM`, 4 of 4. At `bb20fc5`, which waits on
+  the loop rather than on the row, 6 of 6 and 4 of 4 exited at 3.3s
+  `stopped` with the shutdown's stop reason. Unpadded, both wrote `stopped`
+  (6 of 6 dev at `45f85c2`; 6 dev and 9 standalone at `bb20fc5`). Caveat: a
+  stub, not `docker compose`; the padding widens the gap rather than finding
+  it, and a run caught before its cycle began is pinned by
+  `shutdown.test.ts`, not measured here.
+
+- **The shutdown's log line counts the cycles the loop recovered,
+  2026-09-27**, same harness and pins: at `45f85c2` the line read "recovered
+  the spend of 0 interrupted work cycle(s)" in all 16 runs above, each row
+  carrying the $0.60 its own loop had reconciled; at `bb20fc5` it read 1 in
+  all 25. Caveat: one cycle per shutdown, and never one the mop-up
+  recovered, so a sum of the two paths was not measured.
+
+- **An assist that passed its door before a shutdown spawns nothing,
+  2026-09-27**, `shutdown.test.ts` against its stubbed `spawn`: with
+  `shutdownRuns` already called, `startAssist` for a resolution at `45f85c2`
+  spawned the child and the row was still `running` when the 2s wait gave up;
+  at `39b06aa` nothing was spawned, `after` ran once with `SHUTDOWN_REFUSAL`,
+  and the row ended `failed` with that sentence. Caveat: the shutdown began
+  before `startAssist` rather than inside `reviewCwd` or a resolution's merge,
+  which is the state those awaits end in rather than the race itself, and no
+  built server was signalled.
+
+- **The shutdown waits for a merge the queue has in flight, 2026-09-27**,
+  Next 15.5.24, standalone bundle on the host, `c3df39d` against `14d68c9`
+  with only `land.ts`, `mergeQueue.ts` and `orchestrator.ts` swapped. A
+  `GIT_BIN` stub held the queue's `git merge` until a release file appeared;
+  SIGTERM while it was held, the release 1s later. At `14d68c9` 5 of 5 exited
+  at 0.00s with the row `landing` and `landed_at` unset, and the orphaned
+  merge then finished: the branch was in `main` with nothing recording it. At
+  `c3df39d` 5 of 5 exited 0.08s to 0.16s after the release with the row
+  `landed` and `landed_at` set. Never released, `c3df39d` exited at 10.05s
+  and left the row `landing` for the boot. Caveat: not `docker compose`, so
+  a merge killed part-way with PID 1 was not seen; the stub holds before git
+  starts, so no half-written `MERGE_HEAD` was produced; the harness is not in
+  the tree.
+
 ### Isolation and landing
 
 - **Isolation, real repo with uncommitted work and a gitignored `.env`:** two
@@ -1290,6 +1449,26 @@ is `docs/agent/testing.md`; interface defects and their classes are
   checkout halts the repository on `The checkout has uncommitted changes`, the
   merge block settles `failed`, and `blocksOf` reports `branchesFailed: 1`.
   This run changed who may land, not what a failure to land means.
+
+- **A resolution's longest silence is minutes, not an hour.** Measured
+  2026-09-27 over every transcript under `~/.claude/projects` whose first prompt
+  is `resolvePrompt`'s: 79 (8 in `-resolve-` checkouts, 71 in runs' own
+  worktrees), 8 repositories, 2026-08-28 to 2026-09-26, CLI 2.1.226, 2.1.260
+  and 2.1.280. The largest gap between consecutive timestamped entries per
+  transcript ran 3.7s to 193.5s, median 32.0s, p90 115.3s; three of the top
+  four (176s to 184s) were the CLI's API retries ending in a synthetic `API
+  Error` and an exit of its own. None hung; the longest of 161 `Bash` calls
+  took 20.3s. `RESOLVE_SILENCE_MS`'s hour rests on this. Caveat: an entry
+  stands in for a stdout line, and no long verify command was in the sample.
+
+- **A merge queue drain stops at the next row once a shutdown starts,
+  2026-09-27**, a scratch script over the compiled modules, two `queued` rows
+  in one repository whose runs have no branch. `shutdownRuns` called while the
+  first row was inside `landState`: `45f85c2` answered both rows, `4c8a20b`
+  answered the first and left the second `queued` for the boot. Called before
+  `startWorker`: `45f85c2` answered both, `4c8a20b` started no drain. With no
+  shutdown both answered both. Caveat: the rows fail at "no branch", so no
+  real `git merge` into a checkout ran, and the script is not in the tree.
 
 ### Git and review
 
@@ -1363,6 +1542,114 @@ is `docs/agent/testing.md`; interface defects and their classes are
   (`uname -m` → `aarch64`); the amd64 build of the same version was not read,
   and the pin in `Dockerfile` is the version rather than the arch.
 
+- **The sandbox's config-directory binds re-read on the pinned 2.1.280,
+  2026-09-27, and the bound set is not identical: one name was added.**
+  `sandboxMountPoints.test.ts` threw at "the config-directory bind loop" against
+  the installed `claude.exe` (`claude --version` → 2.1.280). The loop is still
+  there in the same shape; the test hard-coded two minified names (`tl`, `SN`)
+  and 2.1.280 renamed all five the loop uses. `Gy`/`jy`/`tf`/`zy`, which the
+  board task suspected, are not the sandbox. They are byte-identical in 2.1.260
+  and belong to the Bash script-path classifier, where `zy` marks a dotfile,
+  `tf` a dot-directory other than `.claude*/` or `.config/` (`private_dotdir`)
+  and `jy` a path under one of `Gy`'s five data directories. None of them binds
+  anything. With every identifier now discovered, the extraction run over
+  `npm pack @anthropic-ai/claude-code-linux-arm64@2.1.260` and over 2.1.280
+  differs by one name, `policy-limits.json.stamp.json`. It is a file, named by a
+  third sidecar function (`${e}.stamp.json`) spread into the list. Every name
+  2.1.260 bound is unchanged, file or directory. The stamp went onto
+  `SANDBOX_CONFIG_DIR_REFUSED`, because 2.1.280 reads an empty stamp as
+  `unusable` rather than `absent` and marks the policy cache's HIPAA history
+  incomplete. The test was watched to fail four ways: against 2.1.260, with the
+  stamp dropped from the list, against a copy of 2.1.280 with the loop's bytes
+  altered, and against a copy naming an undefined sidecar function. Caveat: this
+  is arm64 only. The twelve project-`.claude` names are still outside the
+  test's extraction, so the claim that they are unchanged rests on reading both
+  binaries by eye.
+
+- **The `remote-settings.json` "Unable to find … in mount table" failure is not
+  a missing mount point, read 2026-09-27.** The transcripts under
+  `~/.claude/projects` hold two real events, both solo `Bash` calls in a dockrac
+  worktree: 2026-09-20T18:06Z on 2.1.260 and 2026-09-26T17:02Z on 2.1.280. In
+  both the bind source is `/oldroot/home/node/.claude/remote-settings.json`, the
+  file itself, so the CLI found it present and emitted the self-mount form, and
+  bwrap failed after the bind rather than on a create. The code that binds it is
+  the same in both versions. So it does not follow from 2.1.280, and
+  pre-creating in `sandboxMountPoints.ts` cannot touch it. The same wording also
+  appears on tree-root dotfiles (`/workspace2/.zprofile`) and on
+  `config.worktree`. Caveat: the cause was not established. A rewrite of the
+  file between bwrap's bind and its mount-table lookup fits the message but was
+  not measured, and the file's current mtime (2026-09-26 22:27Z) postdates the
+  failure, so the question cannot be settled from what is on disk now.
+
+- **That failure is a delete-and-recreate race, not a rename, measured
+  2026-09-27 against bwrap 0.8.0 and CLI 2.1.280.** bwrap looks its bind target
+  up in `/proc/self/mountinfo` right after binding it. The message means the
+  path's directory entry was replaced in between, which detaches the bind. A
+  nested `bwrap --ro-bind f f` reproduced it word for word: 462 of 1,000 starts
+  against a rename-over loop, 155 of 400 on the `~/.claude` virtiofs share, and
+  357 of 1,000 against unlink-then-recreate. It failed 0 times in 1,400 against
+  in-place writes, 0 in 1,000 each against sibling churn and a `stat` loop on
+  the share, and 0 in 300 with no writer. Only unlink-then-recreate also gives
+  "Can't get type of source: No such file". This install's transcripts show
+  that wording on the file twice (2026-09-20, 09-26), alongside the three
+  mount-table-family events and "Can't create file" as late as 09-25, so the
+  file keeps vanishing. Neither 2.1.260 nor 2.1.280 renames it: both write it
+  in place (`open(…, "w")`). It is deleted by the auth-change cache clear and
+  by the sandbox's placeholder cleanup, which unlinks any zero-byte file at a
+  path its process covered with `/dev/null`. It is recreated by bwrap's
+  placeholder create or by the CLI's first write. `~/.claude` is listed twice
+  in a sandbox's mount table, but so is `/workspace2`, so that is the
+  read-only root bind with the write allowlist's bind on top, not the share.
+  The race also fails on overlay, where nothing is stacked. Nothing in this app
+  can prevent it. Pre-creating the file is refused in
+  `SANDBOX_CONFIG_DIR_REFUSED`, and an empty file there is exactly what that
+  cleanup deletes. The cost is one tool call, and the file has been stable
+  since it regained content (inode and mtime unchanged 07:57 to 08:17Z). Caveat:
+  which deleter fired at each event is inferred. Logging
+  `stat -c '%i %s %Y' ~/.claude/remote-settings.json` through the next spell
+  when it is missing would settle that.
+
+- **A replacement also strips the read-only bind from sandboxes already
+  running, measured 2026-09-27 on bwrap 0.8.0.** A nested sandbox binding a
+  file read-only under a read-write bind of its directory could not write the
+  file until something outside renamed over it. After that the bind was gone
+  from its mount table and the write succeeded. It happened live at 08:08:44Z:
+  this session's own Bash sandbox lost its bind on `~/.claude/.config.json`,
+  whose mtime is that same second. Caveat: the writer was not identified, the
+  deny list is the CLI's and not this app's, and nothing here was changed for
+  it.
+
+- **Which deny-listed `~/.claude` files the CLI replaces by rename, and whether
+  that widens anything, read off CLI 2.1.280 on 2026-09-27.** By rename, so the
+  bind strips: the global config (`.config.json` at its legacy path, else
+  `.claude.json`) and `settings.json` through `vv` (temp file beside the target,
+  or in `.cc-writes` for `settings.json`), and `.credentials.json` and
+  `policy-limits.json.stamp.json` through `cQ` (byte 190881839). In place, so the
+  bind holds: `remote-settings.json` (`open(..., "w")`, byte ~203301020),
+  `policy-limits.json` (`writeFile`, byte ~203076400) and the `.signature.json`
+  sidecars; both halves of the earlier reading stand. Live: a scratch home's
+  `.config.json` changed inode (53037914 to 53037957) across its first
+  `claude -p`, with nine "written atomically" debug lines, and a nested
+  `bwrap --ro-bind` on it refused a write until that rename and allowed it after;
+  a second run rewrote nothing. Only `settings.json` would widen a later cycle,
+  being the honoured source for `sandbox.filesystem.allowWrite` and permissions
+  (`orchestrator.ts:5497-5507`), and neither run rewrote it: its inode held
+  across both. The global config does get rewritten, but the eleven
+  permission-rule sources (byte 193336360) do not include it, so the legacy
+  `projects[cwd].allowedTools` it still parses (byte 192721656) grants nothing;
+  what its lapse opens is an `mcpServers` entry a later work cycle would load,
+  since that argv carries no `--strict-mcp-config` (`cycleInvocation.ts:1188`).
+  `.credentials.json`'s lapse exposes a read, not a widening. Against the open
+  "No sandbox has ever honoured the per-run write set": with
+  `UF_LOCK_CLAUDE_HOME` unset `settings.json` is agent-writable anyway, so the
+  lapse adds no route; with it set the directory is root-owned 0750
+  (`docker-entrypoint.sh:705-707`), no rename into it can succeed from the
+  agent's uid, and `vv` falls back to writing in place, which keeps the bind.
+  Caveat: both runs were unauthenticated and stopped at "Not logged in", so an
+  authenticated cycle's writes were not watched, and the locked half is read
+  from the writer rather than run, like the lock itself.
+  `docs/agent/security.md` states no guarantee that these binds hold.
+
 - **`--agent` / `--agents`, seven probes on CLI 2.1.226:** `--agent` selects a
   definition passed on the same argv, exits 1 on an unregistrable one, keeps
   `--append-system-prompt`, survives `--resume`, and yields to the run's
@@ -1430,6 +1717,14 @@ is `docs/agent/testing.md`; interface defects and their classes are
   check` forbids `pkill node` under the app's `prefix_rule` spelling
   (`rule(...)` and `define_program(...)` do not parse); a seeded Codex run
   renders `148.2k` tokens against a dash, not `$0.00`, in the built app.
+
+- **`CODEX_ACCESS_TOKEN` outranks a stored Codex credential, 2026-09-26**,
+  `codex-cli 0.153.4`, scratch `CODEX_HOME` holding a key stored by
+  `--with-api-key`: `login status` says `Logged in using an API key` (exit 0)
+  without it and `Error checking login status: invalid agent identity JWT
+  format` (exit 1) with it set to a non-JWT; blank is ignored. `OPENAI_API_KEY`
+  and `CODEX_API_KEY` each left an empty home at `Not logged in`. No valid token
+  was tried (no OpenAI account), so what a parsing one reports is unmeasured.
 
 ### Knowledge and plugins
 
@@ -1722,6 +2017,31 @@ is `docs/agent/testing.md`; interface defects and their classes are
   nothing wrong. Control flow only, not a kernel: no ownership changed. CLI
   2.1.226 (throwaway config dir) reaches the API with an unwritable top level
   whose entries exist, and rewrites in place with `O_TRUNC` on `EACCES`.
+
+- **Under `UF_LOCK_CLAUDE_HOME`'s layout an OAuth refresh is never attempted and
+  no credential write lands, simulated on CLI 2.1.280, 2026-09-27.** A
+  throwaway `CLAUDE_CONFIG_DIR` laid out like the lock (`CLAUDE_HOME_HANDBACK`'s
+  entries present and writable, `settings.json` 0440), its directory `chmod
+  0550` by its own owner in place of root:agent-gid 0750, which gives the same
+  `EACCES` on a create beside a file; control 0750. With a fake expired
+  `claudeAiOauth` token, a scrubbed env and `HTTPS_PROXY` at a loopback
+  listener that logged each `CONNECT` and refused it, `claude -p` tried
+  `platform.claude.com:443` 3 times in the control ("OAuth refresh failed
+  (expected)" ×3 in `--debug-file`) and 0 times locked, with no line saying so:
+  the refresh first takes `<config dir>/.oauth_refresh.lock` (`K_r`, byte
+  192852671) and returns `lock_error` before the token request. A write through
+  `Un().mutate`, the call the refresh's save makes, driven by `claude mcp add
+  --client-secret`, replaced `.credentials.json` by rename in the control (inode
+  53168190 to 53168214) and left inode, mtime and hash alone locked, failing on
+  `mkdir .storage-write.lock` rather than at `cQ`'s temp file as predicted; only
+  the CLI's stdout said so, and no arm's debug log names `.credentials.json`.
+  `CLAUDE_SECURESTORAGE_CONFIG_DIR` at a writable sibling restored both under
+  0550 (3 token attempts, write by rename). No mock token pair was possible: a
+  127.0.0.1 `CLAUDE_CODE_CUSTOM_OAUTH_URL` is off the three approved hosts (byte
+  ~190188853) and makes every command exit 0 with no output. So the refresh
+  token is never spent and renewal itself fails from the access token's expiry.
+  Caveat: not the lock's real uid/gid layout, no real provider refresh, and the
+  save after a successful refresh (`ENn`) is read, not run.
 
 - **The CLI's own sandbox has been executed three narrow ways (2026-08-18/19
   onward).** `bwrap` with and without the seccomp profile, in both argv
@@ -3150,6 +3470,60 @@ fixed.
   the stroke measures; and the static shell carries no `next/font`, so the
   glyphs were painted in the fallback face rather than in SF.
 
+- **The run inspector's polish pass, 2026-09-27**, standalone server, Chromium
+  at **1920x963 DPR 2 and 390x844 DPR 2**, both skins, both themes, 48 page loads
+  per build. Six run rows (completed with a board task and a checkout, running,
+  paused, queued, `needs-review` with a 42-character Bedrock model id, and a
+  failed, set-aside Codex run) were served by intercepting `GET /api/runs/<id>`
+  over one run seeded through the API, so both builds read identical rows;
+  before is `35b8164`, after `da450be`. Before, under the ascii skin at 1920:
+  the card was its own scroll container and its frame box (1559.5 to 1906.5)
+  lay round a padding box of 1567 to 1899, so no edge of the frame drew; the
+  3px state edge was transparent; and the long id ran to x=1887 against a
+  content edge of 1883, over its own label. In both skins every region led by
+  a `Section` drew two hairlines round its heading, and the headline sat 12px
+  above its detail against 4px between every other header line. After: the
+  scroll box is exactly the card's padding box (332x877), the frame box is
+  unchanged and does not move when the box is scrolled to its end, the left
+  edge's six device columns read the tone at every column (the frame's stroke
+  used to grey two of them), and every state's scroll height is 58px shorter,
+  which is the 8px headline gap and 25px from each of the two regions and
+  nothing else. No console error in any of the 96 loads, and no content past
+  the card's edge in any of the after build's 48. Gate on `da450be`: `npm run typecheck` exit 0; `npm test`
+  **3033 tests, 3033 pass**, exit 0, beside the `sandboxMountPoints` suite
+  that throws during construction against CLI 2.1.280 (already on the board);
+  `npm run smoke-pages` against `.next/standalone/server.js`, **92/92**. Shots
+  and both probes' readings are in `scratch/run-inspector-polish/`. Caveat: one
+  engine, and the run rows are crafted rather than written by the
+  orchestrator, so a field combination no real run reaches may be among them.
+
+- **The run inspector's cap against the window, 2026-09-27**, standalone
+  server, Chromium at **1920x963 and 1280x800, DPR 2**, both skins, two seeded
+  runs (a 30-line prompt and a one-line one; both inspectors outgrow any cap
+  here), each on the log tab and with a 2400px block appended to the pane
+  column to stand in for a long tab. `getBoundingClientRect()` read after load
+  without scrolling, then with the pane scrolled to where the card sticks,
+  then at the foot. Before is `887670b`, after `3a50d6a`. Before, standard skin:
+  card 161 to 1040 at 1920x963 and 161 to 877 at 1280x800, so **77px** below
+  the window at both; the log tab scrolled 125px for nothing but that; at the
+  foot of every scroll the card's top was at y=36 against a pane edge at 52.
+  Before, ascii: computed `position` **relative, not sticky**, the card 16px
+  below its own split (177 on a split at 161), so **93px** below the window
+  and the frame 99.5px, and on a long tab it scrolled off with the page. After,
+  both skins alike, `--split-top` 109px: card 161 to 915 at 1920x963 and 161 to
+  752 at 1280x800, ascii frame bottom 921.5 and 758.5; the log tab scrolls
+  0px; on a long tab the card sticks at 68 and stays there to the foot of the
+  scroll. What it cost: stuck on a long tab the card keeps its load height,
+  754px where it had 879 (591 where it had 716), so 141px stand empty below
+  it. Gate on `3a50d6a`: `npm run typecheck` exit 0; `npm test` **3033 pass,
+  0 fail**; `npm run smoke-pages` against `.next/standalone/server.js`,
+  **92/92**. A lede lengthened in the DOM and then rewrapped to three lines by
+  a resize to 1100px (ascii) re-measured to 128.5px, and the card still ended
+  at 915 with the log tab at 0px of scroll. Caveat: one engine; below `lg`
+  nothing was measured before and after, and is claimed unchanged only because
+  both edits apply above it; a notice appearing above the split was reasoned
+  about and not seen.
+
 ## Not yet verified by hand
 
 - **The graph at a size no hand-drawn ordering reaches.** Every reading above is
@@ -3275,6 +3649,14 @@ measurement under *Verified* and cut the item down to what is still open.
 - **A work cycle stopping at its `--max-budget-usd` ceiling.** The argv is
   unit tested; no billed cycle has hit it, so whether the CLI honours it on
   `-p` and how far a cycle overshoots are reasoned, not measured.
+
+- **A conflict resolution stopping at `resolutionBudgetUSD` (added
+  2026-09-27).** `resolutionBudget.test.ts` asserts the argv against a stub
+  CLI; no billed resolution has hit it, so that the pinned CLI ends a `-p`
+  resolution there and the merge is rolled back is reasoned, not measured.
+  Settle: *Limit per conflict resolution* at 0.05, press Resolve on a
+  conflicting run; the row should fail naming `error_max_budget_usd` and the
+  branch should be unchanged.
 
 - **A workflow-wide budget tripping against real spend.** No instance has been
   halted by a guard; `instanceSpend` has never summed a real `otlp_requests`
@@ -3629,6 +4011,15 @@ measurement under *Verified* and cut the item down to what is still open.
   over 200 characters and reading the first cycle's transcript for a
   `get_my_task` call and for no read under `~/.claude/projects`.
 
+- **No model has called `release_task`, and the judgement it asks for is
+  unmeasured.** The write is covered in `tasks.test.ts` and through the route
+  in process; what is not is whether a cycle that cannot finish reaches for it
+  rather than stopping with the task held, and whether it keeps `operatorOnly`
+  for blockers outside the container rather than for work that was merely
+  hard. Settle it after `docker compose up --build` with *Let runs use the
+  taskboard* on: start a run from a task that needs a Mac, and read whether
+  the task comes back open, marked, with a reason naming the blocker.
+
 ### Workflows and schedules
 
 - **The pager has not met live instances**: all rows were inserted `finished`
@@ -3733,12 +4124,24 @@ measurement under *Verified* and cut the item down to what is still open.
   nothing has been timed under 25 concurrent runs.
 
 - **The shutdown reconciling its cycles under a real `docker compose
-  restart`.** `shutdown.test.ts` fakes `spawn`; whether 30s of grace suffices
-  is unknown.
+  restart`.** The standalone bundle does, with a stub (Verified above).
+  Still open: that the image's `ENV NEXT_MANUAL_SIG_HANDLE=1` reaches the
+  server through tini and the entrypoint, the real CLI against the ladder, and
+  whether 30s suffices for many cycles at once. Settle: `docker compose stop
+  usagefoundry` with a cycle in flight, then `docker compose logs
+  usagefoundry | grep 'run(s) on SIGTERM'` should print the line the handler
+  writes only once it has finished, and the run's total should include the
+  interrupted cycle's spend.
 
-- **No two-process reproduction of the shutdown gate was run**, and no
-  container built; the second server is only worth watching against a real
-  billed agent in the first.
+- **The shutdown gate against a real billed agent**: the two-process
+  reproduction (Verified above) used a stub, and no container was built.
+
+- **A land in flight at a real `docker compose stop`.** The standalone
+  bundle waits for it (Verified above); what a merge cut off by PID 1's exit
+  leaves in the operator's checkout, when the grace runs out first, has not
+  been seen. Settle: hold `git merge` with a `GIT_BIN` stub mounted into the
+  container, `docker compose stop usagefoundry` without releasing it, then
+  `git status` and `ls .git/MERGE_HEAD .git/index.lock` in the checkout.
 
 - **A migration finding has not been seen on a real boot (2026-09-07).**
   Settle: set `user_version = 99` via `docker compose exec app node -e`, run
@@ -3787,6 +4190,13 @@ measurement under *Verified* and cut the item down to what is still open.
 - **Landing inside the container, on git 2.39** rather than 2.50. Conflict
   types come from `-z` records captured on 2.50; a 2.39 that differs loses type
   and explanation but still lists every file.
+
+- **The resolution silence deadline has never fired against a real `claude`.**
+  `resolutionSilence.test.ts` drives it with a stand-in child and faked time.
+  Settle by pressing Resolve with the child's `ANTHROPIC_BASE_URL` pointed at
+  a listener that accepts and never answers (`nc -lk 127.0.0.1 9999`), then
+  reading the `run_reviews` row and `git worktree list` after the hour. The CLI
+  may give up by itself first, which is worth knowing too.
 
 ### Git and review
 
@@ -3862,8 +4272,8 @@ measurement under *Verified* and cut the item down to what is still open.
 - **No Codex device sign-in has been completed** (no OpenAI account): the
   exit-0 `auth.json` write, `loginError` on any failure and the poll
   converging are unmeasured; an unnoticed success reads `waiting for approval`.
-  `codex` is not in the `Dockerfile`, and `CODEX_HOME` (unmounted `~/.codex`
-  by default) lives in the container's writable layer, lost on a rebuild.
+  `CODEX_HOME` (unmounted `~/.codex` by default) lives in the container's
+  writable layer, lost on a rebuild.
 
 - **The image has not been rebuilt with Codex (2026-09-05)**: the amd64
   figures (~335 MB unpacked, 123 MB download) are registry metadata, no work
@@ -4027,6 +4437,20 @@ measurement under *Verified* and cut the item down to what is still open.
   source path` and `Can't get type of source` survive on these names, something
   is still deleting them and the entry above says what has been ruled out.
 
+- **What an authenticated work cycle replaces under `~/.claude` is unwatched,
+  2026-09-27.** *Verified* above reads each deny-listed file's write method off
+  the binary and reproduces the strip on `.config.json`, but both scratch runs
+  stopped at "Not logged in", so two things rest on the binary alone: that an
+  authenticated headless cycle never rewrites `settings.json`, and that an OAuth
+  refresh strips `.credentials.json`'s read-deny bind. Settle from an
+  authenticated container by recording
+  `stat -c '%n %i' ~/.claude/settings.json ~/.claude/.credentials.json` before
+  and after a real work cycle, and, from inside a sandboxed session there (the
+  credential file reads as a `/dev/null` character device), polling that inode
+  and a one-byte read across a token refresh: the read should stop returning the
+  device in the step the inode changes, and the `settings.json` inode should not
+  move at all.
+
 - **The post-cycle `sweepSandboxTreeRoot` call is unseen, 2026-09-09.** No
   sandboxed cycle since; its log line, the `EBUSY` branch and the interplay
   with `land.ts`'s `trackedDirt` workaround are reasoned only.
@@ -4164,6 +4588,16 @@ measurement under *Verified* and cut the item down to what is still open.
   sudo chown "$(id -u):$(id -g)" ~/.claude ~/.claude/settings.json
   sudo chmod 0700 ~/.claude && sudo chmod 0600 ~/.claude/settings.json
   ```
+
+- **That the lock stops a real OAuth refresh is simulated only, 2026-09-27.**
+  *Verified* above found it on a 0550 stand-in with fake tokens; the lock's own
+  root:agent-gid 0750 and a real login were not tried. Settle in a container
+  with `UF_LOCK_CLAUDE_HOME=1` and a login whose access token has expired:
+  record `stat -c '%i %y' ~/.claude/.credentials.json`, run `claude -p hi
+  --debug-file /tmp/r.log` as the agent uid, and expect an auth failure, no
+  "OAuth refresh failed" line and the inode and mtime unchanged; then the same
+  with the lock off, which should rewrite the file. The refresh token is never
+  spent while locked, so turning the lock off recovers the login.
 
 - **No work cycle has run in a started sandbox, the network allowlist never
   ran, and `scripts/sandbox-probe/` has never met a container.** CLI 2.1.226's

@@ -43,6 +43,7 @@ import {
   SEARCH_TOOLS,
   signalTree,
   topologicalOrder,
+  trackAssistChild,
   type CreateRunInput,
   type DependencyEdge,
   type RunDependencyInput,
@@ -2701,10 +2702,11 @@ export async function sendChatMessage(
   // already spent. A chat turn spends against the same window as everything
   // else, and unlike a run it goes through no `evaluateBudget` — there is no
   // per-chat fraction and inventing one would be a threshold nobody set.
-  // …and the install-wide ceiling, which is the one limit in this app a chat
-  // turn was never measured against at all: `chatTurnBudgetUSD` bounds *this*
-  // turn and nothing bounds the hundredth.
-  const refusal = (await assistRefusal()) ?? installBudgetRefusal();
+  // …and the install-wide ceiling, which `assistRefusal` now asks for every
+  // caller and which is the one limit a chat turn was once never measured
+  // against at all: `chatTurnBudgetUSD` bounds *this* turn and nothing bounds
+  // the hundredth.
+  const refusal = await assistRefusal();
   if (refusal) return { ok: false, reason: refusal };
 
   // From here to the spawn there is deliberately no `await`: one event-loop
@@ -3095,6 +3097,9 @@ export function runOrchestratorChild(o: OrchestratorChildOptions): void {
   // Registered before anything can go wrong with it, so an operator pressing
   // Stop reaches the child rather than orphaning it.
   o.onSpawn?.(child);
+  // And where a shutdown reaches it, which neither caller's own registry is:
+  // this module imports the orchestrator, so the orchestrator cannot read them.
+  const untrack = trackAssistChild(child);
 
   // Folded line by line rather than buffered whole: the accumulator *is* the
   // turn's state now, and the caller's `onProgress` is what makes it durable.
@@ -3189,6 +3194,9 @@ export function runOrchestratorChild(o: OrchestratorChildOptions): void {
       opsLog("warn", "chat.sandbox_sweep_failed", { message: problem });
     }
     o.onSettle(result);
+    // After the row is written, so a shutdown waiting on this child is waiting
+    // for the turn's ending and not only for its exit.
+    untrack();
   };
 
   child.on("error", (err) => {
@@ -3885,7 +3893,9 @@ function systemPrompt(): string {
     "- A run that works board tasks lists every one of them in taskIds. The run",
     "  claims those when it starts and can close only those: a task written into",
     "  the brief but left out of taskIds stays open after the work is done, and",
-    "  propose_run refuses a brief that does that.",
+    "  propose_run refuses a brief that does that. A task marked operatorOnly",
+    "  needs the operator and no run may claim it: it goes in relatedTaskIds",
+    "  if the brief mentions it, never in taskIds.",
     "- A template's prompt is instructions the operator wrote and tested. Say",
     "  whether you named one or left the run on the default guard set.",
     "- Use promptOverride rather than contradicting the template inside the task,",
@@ -4066,6 +4076,7 @@ export function chatEnv(): NodeJS.ProcessEnv {
       key === "ANTHROPIC_ADMIN_KEY" ||
       key === "OPENAI_API_KEY" ||
       key === "CODEX_API_KEY" ||
+      key === "CODEX_ACCESS_TOKEN" ||
       key === "CLAUDE_CODE_ENABLE_TELEMETRY" ||
       key === "DATA_DIR" ||
       key === "NODE_OPTIONS"

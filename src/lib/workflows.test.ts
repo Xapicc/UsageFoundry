@@ -2239,8 +2239,8 @@ function limits(over: Partial<EmissionLimits> = {}): EmissionLimits {
 }
 
 const EMISSION_BOARD = new Map([
-  ["task-known", { title: "The known task on the board", status: "open" as const }],
-  ["task-other", { title: "Another open task the brief quotes", status: "open" as const }],
+  ["task-known", { title: "The known task on the board", status: "open" as const, operatorOnly: false }],
+  ["task-other", { title: "Another open task the brief quotes", status: "open" as const, operatorOnly: false }],
 ]);
 
 /** One emitted spec with everything filled in. */

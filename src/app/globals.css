@@ -740,8 +740,18 @@
    on every card in the app would move whatever a page has absolutely
    positioned inside one, and there are twenty-two pages of them.
    `border-color` rather than `border-width`, so a box keeps its 1px and
-   nothing reflows when the skin changes. */
-:root[data-skin="ascii"] .uf-framed { position: relative; }
+   nothing reflows when the skin changes.
+
+   `position` sits in a layer below the utilities, unlike everything else
+   here, so a host that states its own position keeps it: every position but
+   `static` anchors the frame as well as `relative` does. Unlayered, it beat
+   the run inspector's `lg:sticky`, so under this skin the card scrolled away
+   with a long tab, and its `lg:top-4` turned into a 16px relative nudge that
+   hung it past the foot of its own row. Measured at 1920x963: card top 177
+   on a split starting at 161. */
+@layer components {
+  :root[data-skin="ascii"] .uf-framed { position: relative; }
+}
 :root[data-skin="ascii"] .uf-unboxed { border-color: transparent; }
 
 /* The 1px the rule above keeps is still 1px of *layout*, and an absolutely
@@ -794,6 +804,31 @@
    are both `bg-canvas` — which is why this sat unfixed after the frame's. */
 :root[data-skin="ascii"] .uf-unboxed > .uf-ascii-edge-right { right: calc(-0.5em - 1px); }
 :root[data-skin="ascii"] .uf-unboxed > .uf-ascii-edge-bottom { bottom: calc(-0.5em - 1px); }
+
+/* The run inspector's left edge is its state's tone, and `uf-unboxed`'s
+   shorthand above painted it out with the rest of the box: under this skin a
+   run that is working and one that refused to start wore the same card.
+   `.uf-notice` below keeps its tone bar for the same reason in its own words —
+   the left edge is the one part that is not decoration.
+
+   `revert-layer` rather than a colour, so the edge is whatever the component's
+   own `border-l-*` utility says and this block names no tone. It is unlayered
+   like everything here, and reverting an unlayered declaration hands the
+   property back to the layers, where that utility is.
+
+   The band then *is* the left side, so the frame gives up its own. The edge is
+   3px, not the 1px the `inset` above backs out, so the `│` landed a pixel
+   inside the band and drew a grey stripe down the middle of it — measured at
+   1920x963, DPR 2, dark: of the band's six device columns the fourth and
+   fifth read 186,146,87 and 192,148,82 against the other four's 255,159,10.
+   The clip takes everything left of the padding box off the frame, which is
+   that column and the corners' downstrokes, and leaves the top and bottom
+   rules starting on the band's inner edge. `0.5em + 1px` is the distance from
+   the frame's box to that edge, set by the `inset` rule above. */
+:root[data-skin="ascii"] .uf-unboxed.uf-state-edge { border-left-color: revert-layer; }
+:root[data-skin="ascii"] .uf-unboxed.uf-state-edge > .uf-ascii-frame {
+  clip-path: inset(0 0 0 calc(0.5em + 1px));
+}
 
 /* `[ok]`, not a pill. The brackets are generated content rather than two more
    spans because a span would be a flex item and would take the badge's `gap`

@@ -10,7 +10,7 @@ import {
 } from "./land";
 import { getAssist } from "./review";
 import { dataDirRefusal, mayWriteDataDir } from "./serverLock";
-import { getRun, type RunRow } from "./orchestrator";
+import { getRun, isShuttingDown, trackLand, type RunRow } from "./orchestrator";
 
 /**
  * Landing several branches, one after another.
@@ -97,9 +97,11 @@ export const isQueueActive = (status: QueueStatus): boolean =>
  * then said the branch could not be merged when what had actually happened was
  * that this loop stopped watching — while the child carried on spending, and
  * `after` committed or rolled back a merge nothing was waiting for any more.
- * The escapes are unchanged and each is somebody's decision rather than a
- * clock's: the resolution settles either way, `cancelBatch` takes the rest of
- * the queue, and the process ending ends the child with it.
+ * Nothing but the resolution settling ends this wait: its child exiting, its
+ * silence deadline (`RESOLVE_SILENCE_MS` in `review.ts`, an hour with nothing
+ * printed), or a container restart taking the child down with it.
+ * `cancelBatch` cancels the rows still queued behind it and never signals the
+ * one running. `resolutionBudgetUSD` bounds what it can spend meanwhile.
  */
 const RESOLVE_POLL_MS = 2_000;
 
@@ -734,6 +736,12 @@ export function startWorker(): void {
   // than per repository because the answer is about this process, not about
   // which queue it would drain.
   if (!mayWriteDataDir()) return;
+  // A drain started during a shutdown is `drainRepo`'s landing-on-the-way-out
+  // by another door, and that drain's own tail call comes back through here:
+  // without this it would claim the repository again, find the row it just
+  // left `queued`, leave it again and re-arm, synchronously, until the stack
+  // gave out.
+  if (isShuttingDown()) return;
   for (const repo of queuedRepos()) {
     if (workers.active.size >= MAX_MERGE_WORKERS) break;
     if (workers.active.has(repo)) continue;
@@ -774,6 +782,32 @@ export function startWorker(): void {
  * uncertainty. It halts the repository for `planItem`'s reason: a fault in this
  * app will meet the branch behind this one identically, and each rediscovery is
  * another merge attempted into a directory a person owns.
+ *
+ * **A shutdown stops it taking the next row, and never touches the one in
+ * flight.** It used to read nothing, so a drain under way at SIGTERM went on
+ * calling `landRun`, a `git merge` into the operator's own checkout, for every
+ * clean branch behind the current one, in a process that could exit part-way
+ * through any of them and leave a row for the boot to call uncertain. The rows
+ * it does not take stay `queued`, and `reconcileMergeQueueOnBoot` cancels them:
+ * a queue never merges into somebody's checkout by itself, and the grace before
+ * a restart is no more the operator's say-so than the boot after it.
+ *
+ * **The row already `landing` or `resolving` is waited for, and never
+ * signalled.** Nothing on the landing path has a clock on its duration, and a
+ * shutdown is not a reason to abort a merge part-way. But nothing waited for it
+ * either: the shutdown's grace ended once the work cycles had settled, so a
+ * SIGTERM mid-merge let the process exit under it, which under Docker kills the
+ * `git merge` with PID 1 and can leave `MERGE_HEAD` in the operator's checkout.
+ * The row is now held in `trackLand`'s set from the moment it is taken until
+ * its status is written, and `shutdownRuns` waits for it inside the grace it
+ * gives the loops, so it ends here in the normal way: a merge already running
+ * finishes and lands, a `landRun` that had not yet begun its merge refuses
+ * with the checkout untouched, and a resolution the ladder interrupts fails as
+ * it would for any other reason. That grace is not a clock on the merge: it
+ * signals nothing and fails nothing, and the process was exiting at that
+ * signal whatever the merge was doing. Only a grace that runs out first leaves
+ * the row for the boot, which fails it with the sentence it gives any row
+ * caught mid-merge.
  */
 async function drainRepo(repo: string): Promise<void> {
   /** Why this repository was given up on, if it was. */
@@ -781,6 +815,10 @@ async function drainRepo(repo: string): Promise<void> {
 
   try {
     for (let row = nextQueuedIn(repo); row; row = nextQueuedIn(repo)) {
+      // Before anything answers the row, so every row behind a shutdown is
+      // left for the boot to cancel with the same sentence.
+      if (isShuttingDown()) break;
+
       const run = getRun(row.run_id);
       if (!run) {
         setStatus(row.id, "failed", { message: "That run no longer exists." });
@@ -792,6 +830,11 @@ async function drainRepo(repo: string): Promise<void> {
         continue;
       }
 
+      // Taken in the same synchronous stretch as the flag read at the top of
+      // this pass, so a row taken before a shutdown began is one it waits for,
+      // and given up after the row's own ending is written, whichever branch
+      // wrote it.
+      const untrack = trackLand();
       try {
         setStatus(row.id, "landing");
         const outcome = await processOne(row, {
@@ -822,6 +865,8 @@ async function drainRepo(repo: string): Promise<void> {
             err instanceof Error ? err.message : String(err)
           }. Check the branch before queueing it again.`,
         });
+      } finally {
+        untrack();
       }
     }
   } finally {
@@ -882,9 +927,9 @@ async function processOne(
         status: "failed",
         message: resolved.reason,
         resolveCost,
-        // A window already at its ceiling refuses every later resolution
-        // identically, and each attempt costs a full transcript scan to find
-        // that out again.
+        // A window or an install already at its ceiling refuses every later
+        // resolution identically, and each attempt costs a fresh `landState`
+        // (and, for the window, a full transcript scan) to find that out again.
         ...(resolved.refusesEveryResolution
           ? { refusedResolutions: resolved.reason }
           : {}),
@@ -902,6 +947,35 @@ async function processOne(
     };
   }
   return { status: "failed", message: landed.reason, resolveCost };
+}
+
+/**
+ * Whether a refusal at the resolution door will refuse every later item too.
+ *
+ * The two refusals that are about the operator's limits rather than about this
+ * branch: the window ceiling (`windowRefusal`) and the install's rolling-day
+ * ceiling (`installBudgetRefusal`), both worded elsewhere and matched on the
+ * part that is not a figure or a branch name. Neither changes between one item
+ * and the next. The process budget deliberately does not match — a full budget
+ * is a slot somebody frees in minutes, so the item behind it asks again.
+ *
+ * A shutdown (`SHUTDOWN_REFUSAL`) matches, because it too holds for every later
+ * item and asking again would spend a `landState` per branch in a process that
+ * is exiting. It is the belt now rather than the whole of it: `drainRepo` stops
+ * before the next item once the process is going down. Matching cannot park
+ * anything past the restart: what it sets is `resolutionsRefused`, which is
+ * this process's memory and dies with it, and the boot cancels every row still
+ * `queued` whatever this drain decided.
+ *
+ * Pure and exported for a test, because both ways of getting it wrong are
+ * silent: a sentence reworded out from under the match costs every later item a
+ * fresh refusal, and a match too wide fails branches a free slot would have let
+ * through.
+ */
+export function refusesEveryLaterResolution(reason: string): boolean {
+  return /already at the ceiling|limit set in Settings for everything it runs|is shutting down/.test(
+    reason,
+  );
 }
 
 interface ResolveOutcome {
@@ -929,10 +1003,7 @@ async function resolveWithClaude(
       ok: false,
       reason: started.reason,
       costUSD: 0,
-      // The one refusal that is about the operator's window rather than about
-      // this branch. Worded by `assistRefusal`, matched on the part of it that
-      // is not a branch name.
-      refusesEveryResolution: /already at the ceiling/.test(started.reason),
+      refusesEveryResolution: refusesEveryLaterResolution(started.reason),
     };
   }
   // A preview that had gone stale: the branches agreed after all and no child

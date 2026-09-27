@@ -554,12 +554,14 @@ export async function completeTaskWithValidation(
 
   const refusal = await assistRefusal();
   if (refusal) {
-    // Closed rather than held, and this is the branch most worth stating: the
-    // cap it hit is `maxConcurrentAssists`, a bound on how many Node processes
-    // this container carries. Holding a task open for that would convert a
-    // memory limit into work, and it would do it exactly when the fleet is
-    // busiest.
-    return closeNow(taskId, runId, `there was no slot free to check it (${refusal})`);
+    // Closed rather than held, and this is the branch most worth stating. The
+    // commonest cap it hits is `maxConcurrentAssists`, a bound on how many Node
+    // processes this container carries: holding a task open for that would
+    // convert a memory limit into work, exactly when the fleet is busiest. The
+    // install's daily ceiling closes it the same way — a check it refuses
+    // costs nothing, and a task held open would sit claimed behind a run that
+    // same ceiling stops at its next pre-cycle guard.
+    return closeNow(taskId, runId, `no check could be started (${refusal})`);
   }
 
   const { text, truncated } = diffAsText(diff, VALIDATION_DIFF_BYTES);
@@ -584,10 +586,8 @@ export async function completeTaskWithValidation(
     taskId: task.id,
     baseSha: diff.base,
     headSha: diff.branch,
-    // The one automatic spender in this app, so it is the one that must not be
-    // able to run away. `spawnAssist` carries no ceiling for a review or a
-    // resolution because a person pressed a button for each of those; nothing
-    // presses anything here.
+    // The one spender in this app that only ever starts itself, so it must not
+    // be able to run away: nothing presses anything here.
     maxBudgetUSD: settings.validationBudgetUSD,
     after: async (result) => settleValidation(task.id, runId, result),
   });
@@ -814,8 +814,9 @@ export function validationPushback(o: {
     "",
     "The task is still open and still yours. Either finish what is missing and",
     "commit it — work left uncommitted is not on the branch and does not count —",
-    "and then call complete_task again, or, if you believe the reading is wrong",
-    "or the task cannot be finished, say so in your reply rather than closing it.",
+    "and then call complete_task again. If you believe the reading is wrong,",
+    "say so in your reply rather than closing it; if the task cannot be",
+    "finished, call release_task with what stopped you.",
   ]
     .filter((line): line is string => line !== null)
     .join("\n");

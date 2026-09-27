@@ -50,6 +50,18 @@ ENV NODE_ENV=production \
     CLAUDE_HOME=/home/node/.claude \
     CLAUDE_CONFIG_DIR=/home/node/.claude
 
+# Keeps Next's own SIGINT/SIGTERM handler off, so the server's shutdown gets the
+# grace it is built around. Without it `next/dist/server/lib/start-server.js`
+# closes the HTTP server and calls `process.exit(0)` about a tenth of a second
+# after `docker stop`'s SIGTERM, and `src/instrumentation.ts`'s handler never
+# gets past its first `await`: the work cycles in flight are left unreconciled,
+# their agents are never sent the SIGTERM or SIGKILL rungs, and the lock stays
+# behind for the next boot to wait out. `stop_grace_period` in compose is sized
+# against that handler, not against Next's. The server deletes the variable
+# from its own environment once Next has read it, so no agent inherits it.
+# `deployment.test.ts` pins it.
+ENV NEXT_MANUAL_SIG_HANDLE=1
+
 # What the agent needs on PATH to do the work, not just to be started.
 #
 #   git, ripgrep      — what it reaches for constantly; git additionally backs
@@ -535,31 +547,42 @@ RUN set -eux; \
     chown -R node:node "${PLAYWRIGHT_BROWSERS_PATH}/.links"; \
     playwright --version
 
-# The Codex CLI, on PATH for an agent that is asked to reach for a second
-# model. Nothing in this app spawns it — `CLAUDE_BIN` is still the only child
-# kind there is, and `proposals/ProviderFallback/13-recommendation.md` argues
-# at length against making Codex a *provider*, which would be a second
-# `buildArgs`, a second stream parser, a second refusal classifier and a
-# second cost story, none of them optional and every one failing silently.
-# This line changes none of that: it puts a binary on PATH and stops.
+# The Codex CLI, which this app spawns as `CODEX_BIN` for two things, both
+# under the agent uid: a work cycle of a run whose `provider` is `codex`
+# (`CODEX_ADAPTER` in `orchestrator.ts`, a `codex exec --json` argv from
+# `buildCodexArgs` read by `handleCodexStreamLine`), and the four commands
+# behind the Codex sign-in panel in Settings (`codexAuth.ts`: `login status`,
+# `login --device-auth`, `login --with-api-key`, `logout`). It is also on PATH
+# for a Claude agent that reaches for it from `Bash`.
+# `proposals/ProviderFallback/13-recommendation.md` argued against a second
+# provider; the tree has one anyway, chosen per run and never switched to at a
+# wall (`selectCycleAdapter`).
 #
 # In the image rather than installed by hand, on the argument the gh, Go and
 # Playwright blocks above all make: an `npm install -g` typed into a shell
 # survives `docker restart` and is discarded by the `docker compose up
-# --build` this project is deployed with, so what the next upgrade hands an
-# agent is `codex: command not found` inside a tool call — which no part of
-# the run loop reads, and which ends the cycle looking like the agent decided
-# not to run it.
+# --build` this project is deployed with, so what the next upgrade hands a
+# Codex run is a spawn that fails, and hands a Claude agent `codex: command
+# not found` inside a tool call, which no part of the run loop reads and which
+# ends the cycle looking like the agent decided not to run it.
 #
-# **It arrives signed out, and that is deliberate rather than an oversight to
-# close.** `childEnv` and its four byte-identical siblings strip
-# `OPENAI_API_KEY` and `CODEX_API_KEY` from every child this app spawns, on
-# the reasoning in `docs/agent/security.md` — twenty-five unattended agents
-# with `Bash`, where `env` is a read-only command `acceptEdits` approves
-# without asking. `codex login` writes under `$HOME/.codex`, which is an image
-# layer and not one of the five named volumes, so it also lasts only until the
-# next rebuild. Making either persist is a mount plus a decision about who
-# holds the key, not a line in this file.
+# **It arrives signed out, and a sign-in is a file rather than a variable.**
+# `childEnv` and its five byte-identical siblings strip `OPENAI_API_KEY`,
+# `CODEX_API_KEY` and `CODEX_ACCESS_TOKEN`, the Codex CLI's three credential
+# variables, from every child they build, on the reasoning in
+# `docs/agent/security.md`: twenty-five unattended agents with `Bash`, where
+# `env` is a read-only command `acceptEdits` approves without asking. A Codex
+# cycle authenticates from `$CODEX_HOME/auth.json` instead, which the panel's
+# `codex login` writes as the agent uid (the panel's own copy, `codexAuthEnv`,
+# strips only the token, and says why).
+#
+# `CODEX_HOME` is set by neither this file nor `docker-compose.yml`, so
+# `config.ts` resolves it to the CLI's own default under the `HOME` set above,
+# `/home/node/.codex`: neither the `~/.claude` bind mount nor a named volume.
+# The credential and the `sessions/` threads a Codex run resumes therefore live
+# in the container's writable layer, surviving `docker restart` and gone when
+# compose recreates the container, so a sign-in lasts until the next rebuild.
+# Making it persist is a volume at that path, not a line in this file.
 #
 # ~335 MB unpacked on amd64 and ~292 MB on arm64, from a 123 MB download: a
 # 259 MB `codex`, a 69 MB `codex-code-mode-host`, and its own `rg`, `bwrap`
@@ -567,16 +590,18 @@ RUN set -eux; \
 # PATH — the image's ripgrep and bubblewrap are untouched.
 #
 # Last of the install blocks so that moving this pin does not invalidate the
-# Playwright layer above it, which is a 640 MB re-download. Pinned on
-# Playwright's weaker argument rather than the CLI's: nothing here parses
-# Codex's output, so what the pin buys is only that a rebuild cannot silently
-# change the tool an agent's transcript was written against.
+# Playwright layer above it, which is a 640 MB re-download. Pinned on the
+# Claude CLI's argument rather than Playwright's weaker one: this app parses
+# Codex's output, `codex exec --json` in `handleCodexStreamLine` and the
+# sign-in commands' in `parseCodexStatus` and `extractDeviceLogin`, each
+# written against this build rather than a specification, so an unpinned
+# rebuild could move what they read with no line here changing.
 #
 # The platform binary arrives through `optionalDependencies` gated on
 # `os`/`cpu`, so an `--omit=optional` added here would install a wrapper with
 # nothing behind it — the same trap the `deps` stage records at the top of
 # this file. `codex --version` is what catches that at build time instead of
-# inside a tool call.
+# at a Codex cycle's spawn or inside a tool call.
 ARG CODEX_CLI_VERSION=0.153.4
 RUN npm install -g "@openai/codex@${CODEX_CLI_VERSION}" \
  && npm cache clean --force \

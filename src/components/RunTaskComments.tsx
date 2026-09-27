@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { RunTaskDTO, RunTaskNotesDTO } from "@/lib/apiTypes";
-import { TASK_STATUS_TONE, pollFailureMessage } from "@/lib/format";
+import { TASK_STATUS_TONE, pollFailureMessage, runPageNotes } from "@/lib/format";
 import { jsonRequest } from "@/lib/jsonRequest";
 import { TaskCommentRows } from "@/components/TaskThread";
 import { Badge } from "@/components/ui/Badge";
@@ -12,11 +12,23 @@ import { Notice } from "@/components/ui/Notice";
 /**
  * What has been said on the board about the brief this run was given.
  *
- * A run's work cycle can write a note on its own task, and until this block the
- * operator watching the run had to open `/tasks/[id]` to read it — on the one
- * page they were already on. So it draws the newest notes and nothing else: the
- * task's own page is where a thread is read whole, and it is one link away from
- * every line here.
+ * The operator, the orchestrator and other runs can all write on a task this run
+ * is working, and until this block the operator watching the run had to open
+ * `/tasks/[id]` to read any of it, on the one page they were already on. So it
+ * draws the newest notes and nothing else: the task's own page is where a thread
+ * is read whole, and it is one link away from every line here.
+ *
+ * **It does not repeat this run's own notes back to it.** A note this run wrote
+ * is counted in one line with a link to the task rather than drawn as a row. As
+ * a row it said nothing this page does not: its header was the page's own run
+ * id, and its body was what the run already reported, which the task's page also
+ * holds whole. The line is kept because a work cycle writing on its own task is
+ * still the event the poll below is for, and a note that vanished without a word
+ * would read as nothing having happened. `runPageNotes` holds the rule and says
+ * why its count is only ever claimed over the slice the route sends. Notes by
+ * anyone else, another run included, keep their full row: there the run id is
+ * information. `TaskCommentRows` is handed fewer rows rather than told to draw
+ * differently, so `/tasks/[id]` still draws every note whole.
  *
  * Three decisions, each of which `/tasks/[id]` settled the other way and neither
  * of which carries over on its own. They are written out in
@@ -30,8 +42,9 @@ import { Notice } from "@/components/ui/Notice";
  * **It polls, and only while the run can still write.** `/tasks/[id]` refuses to
  * because it is a form holding unsaved text, and that reason is spent here: with
  * no draft there is nothing a re-read could throw away. What it is watching is a
- * work cycle writing a note on its own task, which is a live event and the whole
- * reason the block exists — a note that appeared only on reload would miss it.
+ * work cycle writing a note on its own task, or somebody answering one, which is
+ * a live event and the whole reason the block exists: a line that moved only on
+ * reload would miss it.
  * A run that has stopped cannot write another, so the interval ends with the run
  * rather than running for as long as the tab is open.
  *
@@ -139,6 +152,7 @@ export function RunTaskComments({
             </div>
 
             <TaskThreadSlice
+              runId={runId}
               taskId={task.id}
               deleted={task.title === null}
               read={notes !== null}
@@ -159,14 +173,20 @@ export function RunTaskComments({
  * rather than inside `TaskCommentRows`: a task the operator deleted has no
  * thread to read, so the request never asked for one. Drawing "nothing said yet"
  * against it would report an empty conversation about a row that is gone.
+ *
+ * A thread holding only this run's notes is not one of the four. It draws no
+ * rows and still says what was written, because "nothing said yet" over a task
+ * the run has just reported on is the one sentence here that would be false.
  */
 function TaskThreadSlice({
+  runId,
   taskId,
   deleted,
   read,
   thread,
   fetchedAt,
 }: {
+  runId: string;
   taskId: string;
   deleted: boolean;
   read: boolean;
@@ -190,21 +210,22 @@ function TaskThreadSlice({
     );
   }
 
+  const { drawn, line } = runPageNotes(thread, runId, fetchedAt);
+
   return (
     <>
       {/* Why this is not the task page's `warn` notice, though both say a
           reader is seeing part of a thread: there the route ran out of room
           and dropped the oldest end, which is a caveat. Here the block is
-          drawing what it is for — the newest few — and the rest is a link
-          away, which is a fact about where to find it. `total` covers both
-          causes, since it is counted over the table either way. */}
-      {thread.total > thread.newest.length && (
-        <p className="mb-2 text-xs text-ink-faint">
-          Newest {thread.newest.length} of {thread.total}.{" "}
-          <Link href={`/tasks/${taskId}`}>Read the thread</Link>
+          drawing what it is for (the newest few, less this run's own) and the
+          rest is a link away, which is a fact about where to find it. `total`
+          covers both causes, since it is counted over the table either way. */}
+      {line && (
+        <p className={drawn.length > 0 ? "mb-2 text-xs text-ink-faint" : "text-xs text-ink-faint"}>
+          {line.text} <Link href={`/tasks/${taskId}`}>{line.link}</Link>
         </p>
       )}
-      <TaskCommentRows comments={thread.newest} fetchedAt={fetchedAt} />
+      <TaskCommentRows comments={drawn} fetchedAt={fetchedAt} />
     </>
   );
 }

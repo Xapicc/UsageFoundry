@@ -485,6 +485,45 @@ const procs = ((globalThis as unknown as {
   __ufProcs?: Map<string, AgentProcess>;
 }).__ufProcs ??= new Map<string, AgentProcess>());
 
+/** What `signalTree` needs of a child, and all the registry below keeps. */
+type SignalTarget = Parameters<typeof signalTree>[0];
+
+/**
+ * Every live `claude` child that is not a work cycle: a review, a conflict
+ * resolution or a validation from `review.ts`, and a chat turn or a workflow
+ * block's turn from `chat.ts`'s `runOrchestratorChild`.
+ *
+ * `shutdownRuns` is the reader, and it is the only reason this exists. Each of
+ * those modules holds its own handle, but both import this one, so the
+ * shutdown could not reach back into them without a cycle; and every one of
+ * them is spawned `detached` exactly as a cycle is, so a Ctrl-C on `npm run dev`
+ * reached none of them and a server that exited left them running and billed.
+ *
+ * A set of handles rather than a map keyed by chat or block, because a turn
+ * cancelled and re-sent while its old child is still dying has two children at
+ * once and the shutdown must reach both. Its own key rather than a second shape
+ * on `__ufProcs`, for the reason CLAUDE.md gives about a key whose shape changed.
+ */
+const assistProcs = ((globalThis as unknown as {
+  __ufAssistProcs?: Set<SignalTarget>;
+}).__ufAssistProcs ??= new Set<SignalTarget>());
+
+/**
+ * Put a child that is not a work cycle where shutdown will find it, and return
+ * what takes it off again.
+ *
+ * Call it at the spawn and undo it at the settle, the lifetime `procs` gives a
+ * cycle's child: the shutdown waits for this set to empty, so that is a wait for
+ * the row the child's ending writes (and, for a resolution, for its merge to be
+ * aborted) rather than only for the exit.
+ */
+export function trackAssistChild(child: SignalTarget): () => void {
+  assistProcs.add(child);
+  return () => {
+    assistProcs.delete(child);
+  };
+}
+
 /**
  * Why a run is being stopped, and whether it may come back.
  *
@@ -3747,6 +3786,26 @@ function admitDependencies(
 }
 
 /**
+ * The model `createRun` freezes onto `runs.model`.
+ *
+ * `settings.defaultModel` is picked from a catalogue seeded from Anthropic's
+ * price table, so it is a Claude id by construction and a fallback for the
+ * Claude provider only. Handed to a Codex run it became `codex exec -m
+ * claude-…`, a model that CLI has never heard of. A Codex run that named none
+ * is left null instead, which `buildCodexArgs` turns into no `-m` at all, so
+ * Codex runs its own default. Not refused: blank has a true meaning for that
+ * CLI, and the door already declines to validate a Codex id against a list it
+ * was never told.
+ */
+export function frozenRunModel(
+  model: string | null | undefined,
+  provider: RunProviderDTO | null | undefined,
+  defaultModel: string | null,
+): string | null {
+  return model ?? (provider === "codex" ? null : defaultModel);
+}
+
+/**
  * Admit a run, or park it behind whatever is already in its folder.
  *
  * Everything from here to the INSERT is synchronous — `resolveWorkspaceFolder`,
@@ -3862,9 +3921,10 @@ export function createRun(input: CreateRunInput): RunRow {
         id,
         folder,
         prompt,
-        input.model ?? settings.defaultModel,
+        frozenRunModel(input.model, input.provider, settings.defaultModel),
         // No `?? "claude"`, unlike the model above: the model has a settings
-        // default to fall back to, and a provider nobody named is a question
+        // default to fall back to (for Claude; `frozenRunModel` says why a
+        // Codex run gets none), and a provider nobody named is a question
         // that was never put to anybody. Null here is what the run page renders
         // as "not recorded".
         input.provider ?? null,
@@ -5772,8 +5832,12 @@ export function sandboxArgsFor(scope: SandboxScope): string[] {
  *   the `UF_` rule above: these are Next's private channel to its own
  *   children, and nothing this app spawns is one of them.
  *
- *   `OPENAI_API_KEY`, `CODEX_API_KEY` — a second provider's credential, which
- *   no child this app spawns has any use for: all five of them are `CLAUDE_BIN`.
+ *   `OPENAI_API_KEY`, `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN`: the Codex CLI's
+ *   three credential variables (`proposals/ProviderFallback/14-validation.md`
+ *   §1f), which no child this app spawns may take from the environment. A
+ *   `CLAUDE_BIN` child has no use for them, and a Codex cycle, the one child
+ *   spawned as `CODEX_BIN` through this same function, authenticates from
+ *   `$CODEX_HOME/auth.json`, the credential the Codex sign-in panel reports on.
  *   Withheld because a denylist fails open, and this one fails open on a key an
  *   operator may well have set for a sibling tool on the same server — reaching
  *   a session that has `Bash`, where `env` is read-only shell that `acceptEdits`
@@ -5850,9 +5914,9 @@ export function contextShapingEnv(
  * The strip, applied. Every exclusion's reasoning is the block above
  * `CONTEXT_SHAPING_ENV`, which the three copies of this list cite in turn.
  *
- * Exported for the test that pins the two provider keys' absence, on
+ * Exported for the test that pins the three provider credentials' absence, on
  * `telemetryEnv`'s grounds: there is nothing else in this app that would notice
- * if either came back.
+ * if any of them came back.
  */
 export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, FORCE_COLOR: "0" };
@@ -5864,6 +5928,7 @@ export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
       key === "ANTHROPIC_ADMIN_KEY" ||
       key === "OPENAI_API_KEY" ||
       key === "CODEX_API_KEY" ||
+      key === "CODEX_ACCESS_TOKEN" ||
       key === "CLAUDE_CODE_ENABLE_TELEMETRY" ||
       key === "DATA_DIR" ||
       key === "NODE_OPTIONS"
@@ -8517,8 +8582,15 @@ async function reconcileKilledCycle(
  * A task already `claimed` by this same run is `from === to`, which the rule
  * allows and which changes nothing — the shape a resumed or picked-up run takes,
  * since this fires again on every segment.
+ *
+ * A task marked operator-only is refused by the same rule and takes the same
+ * path: a log line naming the flag, and the run carries on with the rest.
+ *
+ * Exported for `tasks.test.ts`, which pins that last sentence against a seeded
+ * run row rather than by driving a run: the refusal is the board's and the
+ * direction it falls is this function's, and neither needs a spawn to show.
  */
-function claimTasksForRun(id: string): void {
+export function claimTasksForRun(id: string): void {
   for (const link of tasksLinkedToRun(id)) claimTaskForRun(id, link);
 }
 
@@ -8761,6 +8833,12 @@ export async function startRun(id: string): Promise<void> {
     finalStatus = outcome.status;
     pausedUntil = outcome.resumeAt;
   };
+
+  // Registered on the line before the `try`, so its `finally` is what takes it
+  // off again: a shutdown waits on this entry, and one left behind holds a
+  // later shutdown for its whole grace.
+  const loop: RunLoop = { reconciled: 0 };
+  runLoops.set(id, loop);
 
   // Everything that can throw belongs inside the try. Parsing the budget blob
   // outside it used to leave the row stuck at 'running' with the finally never
@@ -9577,6 +9655,7 @@ export async function startRun(id: string): Promise<void> {
           spentEstUSD += recovered.costUSD;
           spentGuardEstUSD += recovered.costGuardUSD;
           spentEstTokens += recovered.tokens;
+          loop.reconciled += 1;
         }
       }
 
@@ -10221,24 +10300,31 @@ export async function startRun(id: string): Promise<void> {
       active_started_at: null,
     };
 
-    if (finalStatus === "paused") {
-      // A parked run is not finished. `finished_at` and `exit_code` stay unset
-      // so nothing reports a run that is about to spend more money as over, and
-      // it keeps its folder, branch and session for the resume.
-      setStatus(id, "paused", {
-        ...carried,
-        resume_at: pausedUntil,
-        paused_at: Date.now(),
-        pause_count: (run.pause_count ?? 0) + 1,
-      });
-      startSweeper();
-    } else {
-      setStatus(id, finalStatus, {
-        ...carried,
-        finished_at: Date.now(),
-        exit_code: lastExit,
-        resume_at: null,
-      });
+    try {
+      if (finalStatus === "paused") {
+        // A parked run is not finished. `finished_at` and `exit_code` stay unset
+        // so nothing reports a run that is about to spend more money as over, and
+        // it keeps its folder, branch and session for the resume.
+        setStatus(id, "paused", {
+          ...carried,
+          resume_at: pausedUntil,
+          paused_at: Date.now(),
+          pause_count: (run.pause_count ?? 0) + 1,
+        });
+        startSweeper();
+      } else {
+        setStatus(id, finalStatus, {
+          ...carried,
+          finished_at: Date.now(),
+          exit_code: lastExit,
+          resume_at: null,
+        });
+      }
+    } finally {
+      // The last write a shutdown waits for, landed or thrown. Everything after
+      // it in this block is synchronous or deliberately not awaited, so no poll
+      // can observe the loop between here and its return.
+      runLoops.delete(id);
     }
 
     // The workflow-wide guard's other boundary, and the only one that can see
@@ -11867,15 +11953,36 @@ export function reopenRun(
  *
  * The last step of `shutdownRuns` rather than the whole of it: the ladder in
  * `interruptRun` gets there first with `SIGINT`, and this is the sweep for
- * anything that outlived it.
+ * anything that outlived it. The children in `assistProcs` are swept with the
+ * cycles, because they are spawned `detached` for the same reason and a Ctrl-C
+ * misses them in the same way.
  */
 export function killAllAgents(sig: NodeJS.Signals = "SIGTERM"): number {
   let n = 0;
-  for (const child of procs.values()) {
+  for (const child of [...procs.values(), ...assistProcs]) {
     signalTree(child, sig);
     n += 1;
   }
   return n;
+}
+
+/**
+ * `interruptRun`'s ladder, for a child that has no run to record a reason on.
+ *
+ * The same three rungs for the same reasons: a CLI that handles `SIGINT` may
+ * still print its `result`, which is what makes a review's or a turn's cost
+ * measured rather than lost, and each later rung asks whether the child is still
+ * registered rather than reading `child.killed`, which is true once anything has
+ * been sent.
+ */
+function interruptAssistChild(child: SignalTarget): void {
+  signalTree(child, "SIGINT");
+  setTimeout(() => {
+    if (assistProcs.has(child)) signalTree(child, "SIGTERM");
+  }, 3_000).unref?.();
+  setTimeout(() => {
+    if (assistProcs.has(child)) signalTree(child, "SIGKILL");
+  }, 8_000).unref?.();
 }
 
 /* ------------------------------------------------------------------ */
@@ -11901,7 +12008,7 @@ export function killAllAgents(sig: NodeJS.Signals = "SIGTERM"): number {
  */
 export const SHUTDOWN_GRACE_MS = 10_000;
 
-/** How often the wait below re-asks. Cheap: one map size and one COUNT. */
+/** How often the wait below re-asks. Cheap: map lookups, and no query. */
 const SHUTDOWN_POLL_MS = 100;
 
 /**
@@ -11916,6 +12023,69 @@ const shutdown = ((globalThis as unknown as { __ufShutdown?: { active: boolean }
   .__ufShutdown ??= { active: false });
 
 export const isShuttingDown = (): boolean => shutdown.active;
+
+/**
+ * Every `startRun` loop in this process that has not yet written its run's
+ * ending, and how many killed cycles each has reconciled itself.
+ *
+ * `shutdownRuns` is the reader. Its wait used to end on a reading of the row,
+ * no cycle in flight, and the loop's post-cycle UPDATE clears
+ * `active_started_at` a transcript read before the status and the stop reason
+ * are written: under `npm run dev` the process exited in that gap and left the
+ * row `running` with no reason, for the next boot to fail. Only the loop knows
+ * when it is done with the row, so it says so here, in its `finally`.
+ *
+ * The count is for the shutdown's log line. A loop that settles inside the
+ * grace recovers its own cycle, which is the ordinary case, and leaves the
+ * mop-up nothing to find, so a line counting the mop-up alone said 0 beside a
+ * row carrying the recovered spend.
+ */
+type RunLoop = { reconciled: number };
+const runLoops = ((globalThis as unknown as { __ufRunLoops?: Map<string, RunLoop> })
+  .__ufRunLoops ??= new Map<string, RunLoop>());
+
+/**
+ * Every land in this process that has not yet written its ending: a `landRun`,
+ * whichever door called it, and a merge-queue row from the moment `drainRepo`
+ * takes it until the status it is given has been written.
+ *
+ * `shutdownRuns` is the reader, and it waits for the ones in flight at the
+ * signal inside the grace it already gives the loops. Nothing it does signals
+ * them, and nothing else here could: the `git merge` is a plain `git()` child
+ * that no registry held, so a SIGTERM mid-land let the process exit as soon as
+ * the cycles had settled. Under Docker that takes the merge down with PID 1
+ * and can leave `MERGE_HEAD` or `index.lock` in the operator's own checkout;
+ * on a host the orphaned merge finishes and nothing records that it landed.
+ *
+ * The queue's row is held as well as the `landRun` inside it because a row
+ * can be `landing` before `landRun` is reached, in `landState`, and
+ * `resolving` while its resolution child dies on the ladder and the drain's
+ * two-second poll has still to see it: both end in a status write the boot
+ * would otherwise make for them with "The server restarted while this was
+ * landing".
+ *
+ * Symbols rather than folder names, so a land and the row around it are two
+ * entries that each take off only their own.
+ */
+const landsInFlight = ((globalThis as unknown as { __ufLandsInFlight?: Set<symbol> })
+  .__ufLandsInFlight ??= new Set<symbol>());
+
+/**
+ * Put a land where shutdown will wait for it, and return what takes it off.
+ *
+ * Take it in the same synchronous stretch as the `isShuttingDown()` read that
+ * let the land through, and undo it in a `finally` after its last write: the
+ * shutdown waits only on entries that exist when it starts, so one taken after
+ * an `await` can miss it, and one left behind holds every later shutdown for
+ * its whole grace.
+ */
+export function trackLand(): () => void {
+  const land = Symbol("land");
+  landsInFlight.add(land);
+  return () => {
+    landsInFlight.delete(land);
+  };
+}
 
 /**
  * Rows whose cycle was in flight when everything stopped.
@@ -12023,9 +12193,11 @@ export async function reconcileInterruptedCycles(): Promise<number> {
  *     and it is what stops the loop spawning the *next* cycle when its child
  *     dies, which a bare kill would not have done now that the process lingers.
  *     It also gives the run an ending that names the shutdown, instead of
- *     `Claude Code exited with code -1`.
+ *     `Claude Code exited with code -1`. Every child in `assistProcs` gets the
+ *     same ladder, since no run's Stop path reaches it.
  *  3. **The loops are given their grace**, bounded, and return early the moment
- *     nothing is left in flight.
+ *     every loop it interrupted has written its run's ending and every land
+ *     in flight at the signal has written its own.
  *  4. **Whatever they did not finish is mopped up**, then anything still alive
  *     is killed outright.
  *
@@ -12068,6 +12240,12 @@ export async function shutdownRuns(
   const pending = db()
     .prepare("SELECT id FROM runs WHERE status = 'running'")
     .all() as { id: string }[];
+  // The loops behind those rows, as they stand before anything is signalled,
+  // so what each reconciles from here on is what this shutdown interrupted.
+  const loops = pending.flatMap(({ id }) => {
+    const loop = runLoops.get(id);
+    return loop ? [{ id, loop, reconciledBefore: loop.reconciled }] : [];
+  });
 
   // Every `running` row, not only the ones holding a child: a run in its
   // pre-cycle transcript scan has no process to signal and is very much about
@@ -12085,22 +12263,59 @@ export async function shutdownRuns(
     markRestartClosed.run(id);
   }
 
-  // Waits for the children to go *and* for the loops behind them to write what
-  // the cycle cost — that write is the whole point, and it happens a tick after
-  // the child exits, not with it. Bounded by the runs that actually had a child
-  // rather than by every row claiming a cycle: a row left over from a crash has
-  // no loop coming for it, and waiting the full grace out for one would make
-  // every shutdown as slow as the worst one. The mop-up below covers it.
-  const signalled = new Set(live);
+  // The children that are not work cycles: a review, a resolution, a
+  // validation, a chat turn, a block's turn. `interruptRun` never reaches them,
+  // and before this nothing else here did either, so a server stopped from its
+  // terminal exited in a tenth of a second and left each one running on its
+  // own session, billed, with its row closed later by a boot that took the
+  // child to be gone. Only the ones alive now are waited on below; one spawned
+  // during the wait is the final sweep's.
+  const assists = [...assistProcs];
+  for (const child of assists) interruptAssistChild(child);
+
+  // The lands are waited on and never signalled. A merge part-way through is
+  // the one write here that is worse interrupted than left to finish. Every
+  // door to one reads the flag set above before it registers, so a land this
+  // snapshot misses is one that never begins a merge.
+  const lands = [...landsInFlight];
+
+  // Waits for the children to go *and* for the loops behind them to write the
+  // run's ending: what the cycle cost, then the status and the stop reason.
+  // Asked of the loop rather than read off the row, because the post-cycle
+  // UPDATE clears `active_started_at` a transcript read before the status
+  // write, and a run caught in its pre-cycle scan never had the column set at
+  // all. Bounded by the loops this process is running rather than by every
+  // row claiming a cycle: a row left over from a crash has no loop coming for
+  // it, and waiting the full grace out for one would make every shutdown as
+  // slow as the worst one. The mop-up below covers it.
+  //
+  // The lands share the grace rather than holding one of their own, and that
+  // is not a clock on the merge: it signals nothing and fails nothing, and the
+  // process was exiting at this signal whatever the merge was doing. What it
+  // changes is only that the exit now waits for the merge, up to the bound
+  // the platform's own stop deadline was already set against.
   const stillSettling = () =>
-    procs.size > 0 || cyclesInFlight().some((r) => signalled.has(r.id));
+    procs.size > 0 ||
+    assists.some((child) => assistProcs.has(child)) ||
+    loops.some(({ id, loop }) => runLoops.get(id) === loop) ||
+    lands.some((land) => landsInFlight.has(land));
 
   const until = Date.now() + SHUTDOWN_GRACE_MS;
   while (Date.now() < until && stillSettling()) {
     await new Promise((r) => setTimeout(r, SHUTDOWN_POLL_MS));
   }
 
-  const recovered = await reconcileInterruptedCycles();
+  // Counted before the mop-up, not after it. A loop bumps its count and clears
+  // `active_started_at` in one synchronous stretch, so a cycle counted here is
+  // one the mop-up cannot select, and a loop still reconciling now is left to
+  // the mop-up's count: no cycle is reported by both. The price is a loop whose
+  // write lands during the mop-up's own read being reported by neither, which
+  // takes a grace that ran out mid-read.
+  const recoveredByLoops = loops.reduce(
+    (n, { loop, reconciledBefore }) => n + loop.reconciled - reconciledBefore,
+    0,
+  );
+  const recovered = recoveredByLoops + (await reconcileInterruptedCycles());
 
   // Nothing may outlive this process: an agent detached from the terminal's
   // foreground group survives a Ctrl-C on its own, and under Docker a child

@@ -108,6 +108,7 @@ const PROBES: Record<keyof Settings, Probe> = {
   maxConcurrentRuns: { send: 3 },
   maxConcurrentAssists: { send: 5 },
   resolveAllowedTools: { send: ["Bash(npm run typecheck:*)"] },
+  resolutionBudgetUSD: { send: 12 },
   isolationCopyGlobs: { send: [".env.local"] },
   isolationCopyGlobsByRepo: { send: { "acme/web": ["apps/web/.env"] } },
   isolationPreamble: { send: "CHANGED preamble" },

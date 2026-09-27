@@ -811,6 +811,88 @@ describe("the container's stop grace and the server's shutdown grace agree", () 
 });
 
 /**
+ * Whether the shutdown above runs at all.
+ *
+ * Next installs a `SIGINT`/`SIGTERM` handler of its own in `start-server.js`,
+ * which both the standalone `server.js` and `next start` go through. It closes
+ * the HTTP server and calls `process.exit(0)` about a tenth of a second after
+ * the signal unless `NEXT_MANUAL_SIG_HANDLE` is set, so `shutdownRuns` never
+ * gets past its first `await` and both graces pinned above are moot. Measured
+ * against the standalone bundle with a work cycle in flight: without the
+ * variable the server exited 0.02s after `SIGTERM` with the cycle's spend
+ * unrecovered and its `active_started_at` still set, which is the failure
+ * that fails open. Nothing notices: the process exits 0 either way.
+ *
+ * A blank value is the same as none, since Next asks `!process.env…`, and that
+ * is why compose may not name it: it renders an optional variable as
+ * `${VAR:-}`, which is blank, and the container's environment wins over the
+ * image's `ENV`.
+ */
+describe("Next leaves the shutdown signals to the server", () => {
+  const withoutComments = (text: string) =>
+    text
+      .split("\n")
+      .filter((line) => !/^\s*#/.test(line))
+      .join("\n");
+
+  it("is set in the image's runtime stage", () => {
+    assert.match(
+      withoutComments(runnerStage()),
+      /\bNEXT_MANUAL_SIG_HANDLE=[^\s\\]/,
+      "the runner stage no longer sets NEXT_MANUAL_SIG_HANDLE, so Next's own " +
+        "signal handler exits the container a tenth of a second into " +
+        "`docker stop` and every work cycle in flight goes unreconciled.",
+    );
+  });
+
+  it("is not blanked by compose", () => {
+    assert.doesNotMatch(
+      withoutComments(compose),
+      /NEXT_MANUAL_SIG_HANDLE/,
+      "docker-compose.yml names NEXT_MANUAL_SIG_HANDLE. The image already sets " +
+        "it, and a `${VAR:-}` rendering there would blank it and bring Next's " +
+        "own signal handler back.",
+    );
+  });
+
+  const manifest = fs.readFileSync(path.join(root, "package.json"), "utf8");
+
+  it("is set by `npm start`", () => {
+    assert.match(
+      manifest,
+      /"start":\s*"NEXT_MANUAL_SIG_HANDLE=\S+\s+next start\b/,
+      "`npm start` goes through the same start-server.js as the image and " +
+        "needs the same variable.",
+    );
+  });
+
+  it("is set by `npm run dev`, whose parent then waits out the shutdown", () => {
+    // `next dev` is two processes. The parent forwards the signal to the server
+    // it forked and SIGKILLs it `NEXT_EXIT_TIMEOUT_MS` later, 100ms unless told
+    // otherwise, so the variable alone bought nothing there: measured, the
+    // server was killed 0.13s after Ctrl-C with the cycle unreconciled. The
+    // headroom is the stop grace test's, for the same reconciliation.
+    const dev = /"dev":\s*"([^"]*)"/.exec(manifest)?.[1] ?? "";
+    assert.match(
+      dev,
+      /\bNEXT_MANUAL_SIG_HANDLE=\S+\s/,
+      "`npm run dev` no longer sets NEXT_MANUAL_SIG_HANDLE.",
+    );
+    const exitTimeout = /\bNEXT_EXIT_TIMEOUT_MS=(\d+)\s/.exec(dev);
+    assert.ok(exitTimeout, "`npm run dev` no longer sets NEXT_EXIT_TIMEOUT_MS.");
+    const wait = orchestratorMs(
+      "SHUTDOWN_GRACE_MS",
+      /^export const SHUTDOWN_GRACE_MS = ([\d_]+);$/m,
+    );
+    assert.ok(
+      Number(exitTimeout[1]) >= wait + 10_000,
+      `next dev SIGKILLs its server ${exitTimeout[1]}ms after the signal, and ` +
+        `the server waits ${wait}ms before it even starts reconciling.`,
+    );
+  });
+});
+
+/**
  * The agreement that decides whether a *correct* install accuses itself.
  *
  * Compose cannot omit an environment key conditionally, so every optional
@@ -2071,9 +2153,13 @@ describe("the rotation cost of every environment-sourced value is recorded", () 
 
   /**
    * The three this app never reads and still hands out, listed rather than
-   * derived because what puts them in the list is an *absence* — no strip in
-   * `childEnv` and its four siblings — and a test that greps for a missing line
-   * asserts nothing. They are the easiest ones to forget for the same reason.
+   * derived because what puts them in the list is an *absence*, and a test that
+   * greps for a missing line asserts nothing: `ANTHROPIC_API_KEY` is stripped by
+   * `gitEnv` alone, and `OPENAI_API_KEY` and `CODEX_API_KEY`, which all six
+   * strip-list copies drop, are kept by `codexAuthEnv` (`codexAuth.ts`, the
+   * Codex sign-in child), whose docblock says why. `CODEX_ACCESS_TOKEN` is not
+   * here because every child, that one included, strips it. They are the easiest
+   * ones to forget for the same reason.
    */
   it("names the credentials this app forwards but never reads itself", () => {
     for (const name of ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY"]) {

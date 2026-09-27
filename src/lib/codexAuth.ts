@@ -320,6 +320,17 @@ export function normalizeApiKey(input: unknown): CodexAuthResult<string> {
  * `CODEX_HOME` still answers `Not logged in`. There is consequently no
  * `apiKeySource` row on this panel, because there is no environment credential
  * for it to outrank. Stripping them here would state the opposite.
+ *
+ * `CODEX_ACCESS_TOKEN`, the CLI's third credential variable, **is** stripped,
+ * and for next door's reason rather than against it: the panel answers for the
+ * credential a cycle actually gets. Unlike the two keys it does change what
+ * `codex login status` reports, and it outranks the stored file. Measured
+ * against 0.153.4 on 2026-09-26 with a scratch `CODEX_HOME` holding a stored
+ * API key: `Logged in using an API key` without it, `Error checking login
+ * status: invalid agent identity JWT format` (exit 1) with it set to a non-JWT.
+ * `childEnv` withholds it from every Codex cycle, which therefore authenticates
+ * from `auth.json` alone, so a status read that kept it would report a sign-in
+ * or an error off a credential no cycle ever sees.
  */
 function codexAuthEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
@@ -332,6 +343,7 @@ function codexAuthEnv(): NodeJS.ProcessEnv {
       key.startsWith("UF_") ||
       key.startsWith("OTEL_") ||
       key === "ANTHROPIC_ADMIN_KEY" ||
+      key === "CODEX_ACCESS_TOKEN" ||
       key === "CLAUDE_CODE_ENABLE_TELEMETRY" ||
       key === "DATA_DIR" ||
       key === "NODE_OPTIONS"

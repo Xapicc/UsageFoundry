@@ -12,7 +12,7 @@ import type {
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
 import { Button, ButtonRow } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import { Field, Input, Select, Textarea } from "@/components/ui/Field";
+import { Field, Input, Select, Textarea, Toggle } from "@/components/ui/Field";
 import { Hint } from "@/components/ui/Hint";
 import { Notice } from "@/components/ui/Notice";
 import { Sheet } from "@/components/ui/Sheet";
@@ -55,6 +55,12 @@ interface TaskDraft {
   mountId: string;
   /** Relative to the mount, which is what the folder picker offers. */
   folder: string;
+  /**
+   * Sent at a create only. On an existing task the flag is its own press on
+   * the task's page — see `markOperatorOnly` there for why it is not a field
+   * of a draft that is never re-seeded.
+   */
+  operatorOnly: boolean;
 }
 
 const EMPTY_DRAFT: TaskDraft = {
@@ -63,6 +69,7 @@ const EMPTY_DRAFT: TaskDraft = {
   priority: "normal",
   mountId: "",
   folder: "",
+  operatorOnly: false,
 };
 
 function draftFrom(task: TaskDTO | null): TaskDraft {
@@ -73,6 +80,7 @@ function draftFrom(task: TaskDTO | null): TaskDraft {
     priority: task.priority,
     mountId: task.mountId ?? "",
     folder: task.relPath ?? "",
+    operatorOnly: task.operatorOnly,
   };
 }
 
@@ -141,6 +149,7 @@ export function TaskEditor({
       body: draft.body,
       priority: draft.priority,
       ...projectPayload(draft),
+      ...(task ? {} : { operatorOnly: draft.operatorOnly }),
     };
     const res = await jsonRequest<{ task: TaskDTO }>(
       task ? `/api/tasks/${task.id}` : "/api/tasks",
@@ -315,6 +324,20 @@ export function TaskEditor({
               This folder is not in the workspace scan right now. Saving
               re-proves it, and an absent mount refuses the save rather than
               clearing the task’s project
+            </Hint>
+          </div>
+        )}
+
+        {!task && (
+          <div className="mb-3.5">
+            <Toggle
+              id="task-operator-only"
+              checked={draft.operatorOnly}
+              onChange={(next) => setDraft({ ...draft, operatorOnly: next })}
+              label="Operator only"
+            />
+            <Hint>
+              Work no run here can do: a Mac, a GUI, hardware, your credentials
             </Hint>
           </div>
         )}

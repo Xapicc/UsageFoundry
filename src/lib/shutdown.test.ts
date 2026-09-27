@@ -53,15 +53,22 @@ assert.equal(
 const {
   createRun,
   getRun,
+  killAllAgents,
   reconcileInterruptedCycles,
   reconcileOnBoot,
   runEvents,
   shutdownRuns,
+  startRun,
+  trackAssistChild,
 } =
   require("./orchestrator") as typeof import("./orchestrator");
 const { db } = require("./db") as typeof import("./db");
 const { claimDataDir, releaseDataDir } =
   require("./serverLock") as typeof import("./serverLock");
+const { assistRefusal, getAssist, SHUTDOWN_REFUSAL, startAssist } =
+  require("./review") as typeof import("./review");
+const { getSettings, saveSettings } =
+  require("./settings") as typeof import("./settings");
 
 const SESSION = "11111111-2222-3333-4444-555555555555";
 const lockFile = path.join(config.DATA_DIR, "server.lock");
@@ -174,6 +181,10 @@ describe("shutting down with a work cycle in flight", () => {
 
     const outcome = await shutdownRuns("SIGTERM");
     assert.equal(outcome.closed, 1, "the run must have been stopped by the shutdown");
+    // The loop recovered this one itself, inside the grace, so the mop-up found
+    // nothing. The handler's log line is built from this count, and it read 0
+    // while the row below carried the recovered spend.
+    assert.equal(outcome.recovered, 1, "a cycle the loop recovered must be counted");
 
     const settled = getRun(run.id)!;
 
@@ -206,6 +217,44 @@ describe("shutting down with a work cycle in flight", () => {
     // as measured spend is the one thing worse than a missing one, which is why
     // it lives in its own column and its own sentence.
     assert.match(settled.stop_reason ?? "", /reconciled from transcripts/);
+  });
+
+  it("does not return before the loops it interrupted have written their endings", async () => {
+    // The wait used to end on a reading of the row: no child left, and no
+    // cycle claiming to be in flight. Neither says the loop has written the
+    // run's ending. After a killed cycle the post-cycle UPDATE clears
+    // `active_started_at` a transcript read before the status write, and under
+    // `npm run dev` the handler's `process.exit(0)` landed in that gap and left
+    // the row `running` for the next boot to fail. A run caught in its
+    // pre-cycle scan is the same gap with no clock in it: it has no child and
+    // no open cycle, so the old wait did not wait at all.
+    const run = createRun({
+      folder: "project",
+      mountId: null,
+      prompt: "do the other thing",
+      budget: { maxIterations: 1 },
+      origin: "form",
+    });
+    // The case above has already shut down, so `promoteQueued` refuses and the
+    // loop is started here instead. It runs as far as its pre-cycle transcript
+    // scan, its first `await`, before this line returns.
+    void startRun(run.id);
+    const before = getRun(run.id)!;
+    assert.equal(before.status, "running");
+    assert.equal(before.active_started_at, null, "the fixture must be between cycles");
+    const spawnedBefore = spawned;
+
+    const outcome = await shutdownRuns("SIGINT");
+    assert.equal(outcome.closed, 1);
+
+    const settled = getRun(run.id)!;
+    assert.equal(
+      settled.status,
+      "stopped",
+      "the shutdown returned before the loop had written the run's ending",
+    );
+    assert.match(settled.stop_reason ?? "", /server shut down \(SIGINT\)/);
+    assert.equal(spawned, spawnedBefore, "no work cycle may start on the way out");
   });
 
   it("mops up a cycle whose loop never got to finish", async () => {
@@ -409,5 +458,152 @@ describe("shutting down without owning the data directory", () => {
       eventsBefore,
       "no run_events row — and so no outbound webhook, which is fired from emit",
     );
+  });
+});
+
+/**
+ * A child that is not a work cycle, on the same way out.
+ *
+ * Reproduced against the built server before these cases existed: a review and
+ * a chat turn spawned `detached` under `killProcessGroup` both outlived a group
+ * `SIGINT` and a lone `SIGTERM`, because `killAllAgents` read only `procs` and
+ * nothing else on the path read anything. The server exited in a tenth of a
+ * second and said nothing. A fake handle rather than a real review, because
+ * `spawnAssist` needs a run with a committed diff and a CLI; what these pin is
+ * the registry's contract with the shutdown, which is the half that was missing.
+ */
+describe("shutting down with a child that is not a work cycle", () => {
+  it("interrupts it with SIGINT and waits for it to settle", async () => {
+    const signals: NodeJS.Signals[] = [];
+    let settled = false;
+    let untrack = () => {};
+    const child = {
+      pid: undefined as number | undefined,
+      kill(sig: NodeJS.Signals) {
+        signals.push(sig);
+        // A beat later, as a CLI that handles the signal and prints its result
+        // would, so returning before this is a shutdown that did not wait.
+        setTimeout(() => {
+          settled = true;
+          untrack();
+        }, 50);
+        return true;
+      },
+    };
+    untrack = trackAssistChild(child);
+
+    await shutdownRuns("SIGINT");
+
+    assert.equal(settled, true, "the shutdown returned before the child had settled");
+    assert.deepEqual(
+      signals,
+      ["SIGINT"],
+      "SIGINT first, and nothing harder for a child that settled on it",
+    );
+  });
+
+  it("is in the final sweep, which is all a process that may not write gets", () => {
+    const signals: NodeJS.Signals[] = [];
+    const untrack = trackAssistChild({
+      pid: undefined,
+      kill(sig) {
+        signals.push(sig);
+        return true;
+      },
+    });
+    try {
+      killAllAgents("SIGKILL");
+    } finally {
+      untrack();
+    }
+    assert.deepEqual(signals, ["SIGKILL"]);
+  });
+
+  it("refuses to start another once the process is going down", async () => {
+    await shutdownRuns("SIGTERM");
+
+    // The finding: nothing but `promoteQueued` read the flag, so a review, a
+    // resolution, a validation or a chat turn asked for during the grace was
+    // spawned, got no SIGINT, and left its row open for the next boot.
+    assert.equal(await assistRefusal(), SHUTDOWN_REFUSAL);
+
+    // And it outranks a full process budget, whose sentence the merge queue
+    // deliberately asks again after: once per branch, in a process that is
+    // exiting.
+    const cap = getSettings().maxConcurrentAssists;
+    const now = Date.now();
+    saveSettings({ maxConcurrentAssists: 1 });
+    db()
+      .prepare("INSERT INTO chat_sessions (id, created_at, updated_at, status) VALUES (?,?,?,?)")
+      .run("shutdown-chat", now, now, "thinking");
+    try {
+      assert.equal(await assistRefusal(), SHUTDOWN_REFUSAL);
+    } finally {
+      db().prepare("DELETE FROM chat_sessions WHERE id=?").run("shutdown-chat");
+      saveSettings({ maxConcurrentAssists: cap });
+    }
+  });
+
+  it("settles one that passed the door before the shutdown through `after`, and spawns nothing", async () => {
+    await shutdownRuns("SIGTERM");
+
+    // The state `startReview` and a resolution reach when the shutdown begins
+    // inside the awaits between `assistRefusal` and `startAssist`: the door
+    // said yes, and the process is now going down.
+    db()
+      .prepare(
+        "INSERT INTO runs (id, folder, prompt, model, status, budget, max_iterations," +
+          " iterations, created_at, spent_usd, spent_tokens) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+      )
+      .run(
+        "resolved-during-shutdown",
+        path.join(tmp, "workspace", "project"),
+        "task",
+        null,
+        "completed",
+        "{}",
+        1,
+        1,
+        Date.now(),
+        0,
+        0,
+      );
+    const run = getRun("resolved-during-shutdown")!;
+    const spawnedBefore = spawned;
+    const handed: { status: string; error?: string }[] = [];
+
+    const started = startAssist({
+      run,
+      kind: "resolve",
+      cwd: path.join(tmp, "workspace", "project"),
+      permissionMode: "acceptEdits",
+      prompt: "resolve the conflict",
+      // A resolution's rollback — `merge --abort` and the checkout discarded —
+      // lives here and nowhere else, so a refusal that skipped it would leave
+      // the throwaway checkout mid-merge.
+      after: async (result) => {
+        handed.push({ status: result.status, error: result.error });
+      },
+    });
+    assert.equal(started.ok, true);
+    const id = started.ok ? started.id : "";
+
+    await waitFor(
+      () => getAssist(id)?.status !== "running",
+      "the resolution's row to settle",
+    );
+
+    // The finding: the child was spawned during the grace, got no SIGINT
+    // because the ladder snapshots its children at the signal, and left this
+    // row `running` for the boot.
+    assert.equal(spawned, spawnedBefore, "no child may be spawned once the process is going down");
+    assert.deepEqual(
+      handed,
+      [{ status: "failed", error: SHUTDOWN_REFUSAL }],
+      "`after` must run once, with the failure, so a resolution can roll back",
+    );
+    const row = getAssist(id)!;
+    assert.equal(row.status, "failed");
+    assert.equal(row.error, SHUTDOWN_REFUSAL);
   });
 });

@@ -86,6 +86,7 @@ import {
   type TaskComment,
 } from "../../../lib/taskComments";
 import { addTaskDep, depsForTask, depsForTasks } from "../../../lib/taskDeps";
+import { releaseTask } from "../../../lib/taskRelease";
 import type { TaskDepRefDTO } from "../../../lib/apiTypes";
 import { completeTaskWithValidation } from "../../../lib/validation";
 import {
@@ -402,6 +403,13 @@ const SHARED_TOOLS = [
           description:
             "Who filed it. 'operator' is what a person wrote down themselves.",
         },
+        operatorOnly: {
+          type: "boolean",
+          description:
+            "true for only the tasks marked as needing the operator — work no " +
+            "run here can do, which no run may claim — false for only the " +
+            "work a run can take. Omit for both.",
+        },
         offset: {
           type: "number",
           description: "Skip this many. The reply says how many are left.",
@@ -468,7 +476,7 @@ const SHARED_TOOLS = [
 /**
  * Everything a work cycle gets, and the whole of it.
  *
- * **Six tools, and what is absent is the design.** A run does not get
+ * **Seven tools, and what is absent is the design.** A run does not get
  * `SHARED_TOOLS`: not `list_runs`, not `get_run_diff`, not `list_folders`, and
  * deliberately not `list_tasks` or `get_task` — a work cycle is an unattended
  * agent that was pointed at one folder and given one brief, and the whole
@@ -500,13 +508,21 @@ const SHARED_TOOLS = [
  * is no tool that removes one, and that absence is the design rather than work
  * left over: only the operator takes an edge away.
  *
- * `get_my_task` is the sixth, the whole-brief door onto `list_my_tasks`' own
+ * `release_task` is the sixth and is `complete_task`'s other half: the same
+ * holder rule, asked through the same `updateTask`, moving the task the other
+ * way. It exists because a run that could not finish had nowhere to put the
+ * task but its reply — the task stayed `claimed` by a run that had ended, and
+ * the board showed it held by nobody who was working it. It may also mark the
+ * task operator-only, which is the one way a model moves the flag at all; it
+ * can never clear it.
+ *
+ * `get_my_task` is the seventh, the whole-brief door onto `list_my_tasks`' own
  * rows, and its scope is that list's and never wider: a task this run holds, in
  * any status, or one open in its own folder — `taskVisibleToRun`, the list's two
  * `WHERE` clauses as a predicate. It exists because the list clips every brief
  * at `MAX_LIST_TASK_BODY` and runs were digging the rest out of transcripts on
  * disk. Whole bodies on `held` instead would be up to twenty briefs on every
- * call to the tool a run calls before each `complete_task` and each
+ * call to the tool a run calls before each `complete_task`, `release_task` and
  * `create_task`; a separate door is read once. It refuses "not yours" and "not
  * there" in one sentence, so it cannot be used to probe the board for ids.
  */
@@ -516,10 +532,12 @@ const RUN_TOOLS = [
     description:
       "The tasks this run was started for, and what else is already open in " +
       "the folder you are working in. Not the whole board. Read it before you " +
-      "call complete_task, so you close the things you were given rather than " +
-      "one you read about, and before create_task, so you do not write down " +
-      "something already on the board. Each bodyPreview is clipped: call " +
-      "get_my_task for the whole brief of any task listed here.",
+      "call complete_task or release_task, so you close or put back the things " +
+      "you were given rather than one you read about, and before create_task, " +
+      "so you do not write down something already on the board. A task marked " +
+      "operatorOnly needs the operator and no run can take it. Each " +
+      "bodyPreview is clipped: call get_my_task for the whole brief of any " +
+      "task listed here.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -529,8 +547,8 @@ const RUN_TOOLS = [
       "already recorded against this run — the one list_my_tasks returns as " +
       "held — and naming any other is refused. Call it when the work the task " +
       "asked for is actually finished, not when you have decided to stop: a " +
-      "task marked done is one nobody looks at again. If you could not finish " +
-      "it, leave it and say why in your reply.",
+      "task marked done is one nobody looks at again. If you cannot finish it, " +
+      "call release_task instead, with the reason.",
     inputSchema: {
       type: "object",
       properties: {
@@ -540,6 +558,55 @@ const RUN_TOOLS = [
         },
       },
       required: ["taskId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    // `complete_task`'s other half. The description carries two judgements the
+    // model has to make and cannot read off the schema: *when* to give a task
+    // up rather than stop with it held, and when the blocker belongs to the
+    // operator. The second is spelled out with the cases, because the one
+    // expensive misuse is "this was hard" filed as operator-only — a task no run
+    // will ever be started on again, waiting for a person who could have had a
+    // run do it.
+    name: "release_task",
+    description:
+      "Give back a task this run holds because you cannot finish it, so it is " +
+      "open again for the next run or the operator. Use it instead of " +
+      "stopping with the task still held: a held task is one nobody else will " +
+      "start. You can release only a task list_my_tasks returns as held. The " +
+      "reason is written on the task as a note from this run, and it is the " +
+      "first thing whoever picks it up reads — say what you tried, what " +
+      "stopped you, and what is left, naming files and commands. Set " +
+      "operatorOnly only when the blocker is something no run in this " +
+      "container can remove: it needs a Mac or a GUI, hardware or credentials " +
+      "that are not here, or a physical action. Not for work that was hard, " +
+      "long or unclear — that is a plain release, for the next run. An " +
+      "operator-only task is never claimed by a run again until the operator " +
+      "clears the mark, and you cannot clear it. Once released you cannot " +
+      "complete it; say in your reply that you released it and why.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: {
+          type: "string",
+          description: "An id from list_my_tasks, from the tasks you hold.",
+        },
+        reason: {
+          type: "string",
+          description:
+            "What you tried, what blocked you and what is left, for somebody " +
+            "who cannot see your work. Required.",
+        },
+        operatorOnly: {
+          type: "boolean",
+          description:
+            "True only when the blocker is outside this container: a Mac, a " +
+            "GUI, hardware, credentials only the operator holds, a physical " +
+            "action. Omit otherwise.",
+        },
+      },
+      required: ["taskId", "reason"],
       additionalProperties: false,
     },
   },
@@ -585,6 +652,14 @@ const RUN_TOOLS = [
           description:
             "The task this was found while working on. Omit to file it under " +
             "the first task this run was started for.",
+        },
+        operatorOnly: {
+          type: "boolean",
+          description:
+            "True only for work no run in this container can do: it needs a " +
+            "Mac or a GUI, hardware, credentials only the operator holds, or " +
+            "a physical action. No run will claim it; it waits for the " +
+            "operator. Omit otherwise.",
         },
       },
       required: ["title", "body"],
@@ -758,6 +833,14 @@ const CHAT_TOOLS = [
         parentTaskId: {
           type: "string",
           description: "An id from list_tasks this is filed under.",
+        },
+        operatorOnly: {
+          type: "boolean",
+          description:
+            "True only for work no agent in this container can do: it needs a " +
+            "Mac or a GUI, hardware, credentials only the operator holds, or " +
+            "a physical action. No run will claim it and propose_run refuses " +
+            "it in taskIds; only the operator can clear it. Omit otherwise.",
         },
       },
       required: ["title", "body"],
@@ -1042,7 +1125,9 @@ const CHAT_TOOLS = [
             "run for three tasks lists all three here. A brief that names an " +
             "open task (by id or title) that is in neither this list nor " +
             "relatedTaskIds is refused. Changes nothing else about the run — " +
-            "no guard, no folder, no prompt. An id not on the board is refused.",
+            "no guard, no folder, no prompt. An id not on the board is refused, " +
+            "and so is a task marked operatorOnly — no run may claim one; name " +
+            "it in relatedTaskIds if the brief mentions it.",
         },
         relatedTaskIds: {
           type: "array",
@@ -1459,8 +1544,9 @@ const BLOCK_TOOLS = [
                   "of this list stays open after the run has done it. A brief " +
                   "naming an open task (by id or title) that is in neither " +
                   "this list nor relatedTaskIds refuses the whole emission, as " +
-                  "does an id not on the board. Sets no guard, picks no folder " +
-                  "and does not change the brief.",
+                  "does an id not on the board or a task marked operatorOnly, " +
+                  "which no run may claim — name that in relatedTaskIds. Sets " +
+                  "no guard, picks no folder and does not change the brief.",
               },
               relatedTaskIds: {
                 type: "array",
@@ -1553,8 +1639,8 @@ const CHECKED_COMPLETE_TASK =
   "something is missing you will be told what, in your next turn, and the " +
   "task stays yours. So commit your work before you call this — anything " +
   "uncommitted is not on the branch and cannot be seen. Do not call this " +
-  "again to find out what happened, and do not wait for it. If you could not " +
-  "finish the task, leave it and say why in your reply.";
+  "again to find out what happened, and do not wait for it. If you cannot " +
+  "finish the task, call release_task instead, with the reason.";
 
 function toolsFor(subject: CapabilitySubject) {
   if (subject.kind === "run") {
@@ -1643,6 +1729,18 @@ function withModelChoices(tools: ToolSpec[], enabledIds: string[]): ToolSpec[] {
  * shape that let a run subject, added later, fall through both of them.
  */
 function subjectRefusal(subject: CapabilitySubject, name: string): string {
+  // Before either orchestrator subject's generic sentence, both of which point
+  // at the tool that *starts* work — the wrong answer to "give this task back".
+  // Neither holds a task, so there is nothing of theirs to release, and a stale
+  // claim is the operator's to put back.
+  if (name === "release_task" && subject.kind !== "run") {
+    return (
+      "release_task is for the run that holds a task and cannot finish it. " +
+      "Nothing here holds one: a claim left behind by a run that has ended is " +
+      "the operator's to release on the board."
+    );
+  }
+
   if (subject.kind === "block") {
     // `ask_operator` is the one of these with no alternative to name, and
     // pointing a block at `emit_runs` would be worse than saying nothing: a
@@ -1738,9 +1836,9 @@ function subjectRefusal(subject: CapabilitySubject, name: string): string {
   }
   return (
     `${name} is not available to a work cycle. A run can list the tasks it ` +
-    "holds, read one whole, complete one of those, write a note on one and " +
-    "file a new one — it cannot start work, approve anything or touch another " +
-    "run. Anything else belongs in your reply, which the operator reads."
+    "holds, read one whole, complete or release one of those, write a note on " +
+    "one and file a new one — it cannot start work, approve anything or touch " +
+    "another run. Anything else belongs in your reply, which the operator reads."
   );
 }
 
@@ -2200,15 +2298,18 @@ async function callTool(
 
     // Narrowed rather than asserted, for `emit_runs`' reason: the gate above
     // proves the tool is on this subject's list, and the union is what makes the
-    // run id unmixable with a chat id or an instance id. The run id these three
+    // run id unmixable with a chat id or an instance id. The run id these four
     // act on comes from here and from nowhere else — no argument supplies one.
     case "list_my_tasks":
     case "get_my_task":
-    case "complete_task": {
+    case "complete_task":
+    case "release_task": {
       if (subject.kind !== "run") return text(subjectRefusal(subject, name), true);
       if (name === "list_my_tasks") return listMyTasks(subject.runId);
       if (name === "get_my_task") return getMyTask(args, subject.runId);
-      return await completeTaskForRun(args, subject.runId);
+      return name === "complete_task"
+        ? await completeTaskForRun(args, subject.runId)
+        : releaseTaskForRun(args, subject.runId);
     }
 
     case "ask_operator":
@@ -3065,11 +3166,24 @@ function listTasksTool(args: Record<string, unknown>) {
     );
   }
 
+  // Checked by name for the closed sets' reason above: `listTasks` reads
+  // anything but a boolean as "both", and a model that sent "true" would read
+  // the whole board back as the operator's lane.
+  const operatorOnly = args.operatorOnly ?? null;
+  if (operatorOnly !== null && typeof operatorOnly !== "boolean") {
+    return text(
+      `operatorOnly must be true or false; got ${JSON.stringify(operatorOnly)}. ` +
+        "Leave it out for both.",
+      true,
+    );
+  }
+
   const page = listTasks({
     status: (args.status as TaskStatus | undefined) ?? null,
     origin: (args.origin as TaskOrigin | undefined) ?? null,
     mountId,
     folder,
+    operatorOnly,
     offset: Number(args.offset) || 0,
   });
 
@@ -3110,6 +3224,10 @@ function listTasksTool(args: Record<string, unknown>) {
             // own doc names: two agents, one brief, one folder, nothing saying
             // so.
             claimedByRunId: row.claimedByRunId,
+            // Beside the status rather than instead of it: an operator-only
+            // task is `open`, and a model reading "open" alone proposes a run
+            // `propose_run` then refuses.
+            operatorOnly: row.operatorOnly,
             // Two numbers rather than the neighbours themselves, which is the
             // whole of what a *list* can afford: the ids are in `get_task`, and
             // a page carrying two ref lists per row is the payload the board's
@@ -3264,6 +3382,7 @@ function wholeBrief(task: Task) {
     commentsShown: thread.comments.length,
     commentsTotal: thread.total,
     status: task.status,
+    operatorOnly: task.operatorOnly,
     priority: task.priority,
   };
 }
@@ -3504,13 +3623,23 @@ function createTaskTool(args: Record<string, unknown>, chatId: string) {
     chatId,
     "system",
     `The chat filed a task on the board: “${task.title}”. It is open and ` +
-      "nothing is running for it.",
+      (task.operatorOnly
+        ? "marked operator-only, so no run will claim it."
+        : "nothing is running for it."),
   );
+  // Two different next steps, because naming an operator-only task in taskIds
+  // is refused: a reply that offered `propose_run` for one would send the model
+  // straight into that refusal.
   return text(
-    `Filed “${task.title}” (id ${task.id}) on the board as open. Nothing is ` +
-      "running for it and nothing will until somebody starts it — name this " +
-      "id in taskIds on a propose_run to link a run to it. You cannot close it; " +
-      "that is the operator's press or the run that does the work.",
+    `Filed “${task.title}” (id ${task.id}) on the board as open. ` +
+      (task.operatorOnly
+        ? "It is marked operator-only: no run will claim it and propose_run " +
+          "refuses it in taskIds, so it waits for the operator, and only they " +
+          "can clear the mark. "
+        : "Nothing is running for it and nothing will until somebody starts " +
+          "it — name this id in taskIds on a propose_run to link a run to it. ") +
+      "You cannot close it; that is the operator's press or the run that does " +
+      "the work.",
   );
 }
 
@@ -3601,6 +3730,12 @@ function listMyTasks(runId: string) {
             bodyClipped: row.body.length < t.body.length,
             status: row.status,
             priority: row.priority,
+            // Only when set, on both halves: the result is paid for by the token
+            // on every call, and the note below says what its absence means. A
+            // held task carries it when the operator marked it after the claim
+            // was written — the claim stands, and the run should know whose
+            // work the operator thinks it is.
+            ...(t.operatorOnly ? { operatorOnly: true } : {}),
             comments: thread.comments.map(toolComment),
             commentsShown: thread.comments.length,
             commentsTotal: thread.total,
@@ -3628,6 +3763,10 @@ function listMyTasks(runId: string) {
             bodyPreview: row.body,
             bodyClipped: row.body.length < t.body.length,
             priority: row.priority,
+            // Marked rather than left out: this half is what a run reads so it
+            // does not file a duplicate, and an operator-only task is still a
+            // task somebody already wrote down.
+            ...(t.operatorOnly ? { operatorOnly: true } : {}),
           };
         }),
         // Said rather than left to be inferred from a list that stops, the rule
@@ -3639,9 +3778,13 @@ function listMyTasks(runId: string) {
         // The sentence the shape cannot carry. A model reading two arrays of
         // ids will reach for the nearest one, and only one of them is closeable.
         note:
-          "complete_task works on held only. Nothing here can close, claim or " +
-          "drop anything in openInFolder — comment_on_task if one of those " +
-          "needs a note, or create_task if it is work of its own. waitingFor " +
+          "complete_task and release_task work on held only. If you cannot " +
+          "finish a held task, release it with the reason rather than leaving " +
+          "it held. Nothing here can close, claim or drop anything in " +
+          "openInFolder — comment_on_task if one of those needs a note, or " +
+          "create_task if it is work of its own. A task marked operatorOnly " +
+          "needs something no run in this container has and waits for the " +
+          "operator; unmarked tasks are work a run can take. waitingFor " +
           "is a record of ordering and holds nothing back: carry on with the " +
           "task you were given even if something it waits for is unfinished, " +
           "and say in your reply if that turns out to be why you could not. " +
@@ -3724,6 +3867,61 @@ async function completeTaskForRun(args: Record<string, unknown>, runId: string) 
 }
 
 /**
+ * Give back a task this run holds, with the reason on it.
+ *
+ * `completeTaskForRun`'s rule and for its reason: the run id is the token's and
+ * no argument names one, and every refusal is `tasks.ts`' sentence rather than
+ * one written here — `releaseTask` asks `updateTask`, which asks
+ * `taskTransitionRefusal` and `operatorOnlyRefusal`, and this adds nothing to
+ * either. The move and the note are one transaction in `taskRelease.ts`.
+ */
+function releaseTaskForRun(args: Record<string, unknown>, runId: string) {
+  const taskId = String(args.taskId ?? "").trim();
+  if (!taskId) {
+    return text(
+      "release_task needs the taskId of a task this run holds. list_my_tasks " +
+        "returns them under held.",
+      true,
+    );
+  }
+  // Refused rather than coerced, `listTasksTool`'s reason: "false" is truthy,
+  // and a coercion would hand the task to the operator when the model said not
+  // to.
+  const operatorOnly = args.operatorOnly ?? false;
+  if (typeof operatorOnly !== "boolean") {
+    return text(
+      `operatorOnly must be true or false; got ${JSON.stringify(operatorOnly)}. ` +
+        "Nothing was released.",
+      true,
+    );
+  }
+
+  const released = releaseTask(taskId, runId, {
+    reason: typeof args.reason === "string" ? args.reason : "",
+    operatorOnly,
+  });
+  if (!released.ok) {
+    return text(
+      released.kind === "missing"
+        ? `No task with id ${taskId}. list_my_tasks returns the ones this run holds.`
+        : `${released.error} Nothing was released.`,
+      true,
+    );
+  }
+
+  return text(
+    `Released “${released.task.title}”: it is open again and held by no run, ` +
+      "and your reason is on it as a note from this run. " +
+      (released.task.operatorOnly
+        ? "It is marked operator-only, so no run will claim it until the " +
+          "operator clears that. "
+        : "The next run started for it reads your note first. ") +
+      "You no longer hold it and cannot complete it. Say in your reply that " +
+      "you released it and why.",
+  );
+}
+
+/**
  * File a task a run found while doing something else.
  *
  * Three of the four fields that place it are taken from the token rather than
@@ -3779,6 +3977,9 @@ function createTaskForRun(args: Record<string, unknown>, runId: string) {
         ? `open, against ${created.task.folder}. `
         : "open, against no project — this run's folder is under no mount the " +
           "app currently has, so the brief is on the board unplaced. ") +
+      (created.task.operatorOnly
+        ? "It is marked operator-only, so it waits for the operator. "
+        : "") +
       "Nothing is running for it and nothing will until somebody starts it — " +
       "carry on with the work you were given, and say in your reply that you " +
       "filed it.",
