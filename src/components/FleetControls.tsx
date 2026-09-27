@@ -110,7 +110,7 @@ export function FleetControls({
 
       {paused && (
         <Notice tone="warn">
-          <strong>New work is held.</strong> Nothing starts — queued runs stay
+          Nothing starts — queued runs stay
           queued, dependents stay waiting, schedules do not fire and an
           orchestrator block cannot emit. Anything already running carries on to
           its own end.
