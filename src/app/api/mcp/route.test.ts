@@ -445,3 +445,56 @@ test("a dependsOn that is not a list is refused by name and proposes nothing", a
   });
   assert.equal(unordered.isError, false, unordered.text);
 });
+
+test("propose_run refuses a mount with no folder, and a folder with no mount", async () => {
+  const { token, proposals } = proposingChat();
+
+  // An omitted folder is not `""`, and read as one it proposed the whole
+  // mount — the folder claim that blocks every other run under it.
+  const noFolder = await callTool(token, "propose_run", {
+    mountId: MOUNT,
+    title: "Somewhere",
+    task: "Do a thing somewhere.",
+  });
+  assert.equal(noFolder.isError, true);
+  assert.match(noFolder.text, /names a mount and no folder/);
+  assert.match(noFolder.text, /list_folders/);
+
+  // With a template naming its own folder, a folder sent without its mount was
+  // dropped and the run proposed in the template's folder instead, under a
+  // reply that never said so.
+  const templateId = randomUUID();
+  db()
+    .prepare(
+      `INSERT INTO run_templates (id, name, prompt, mount_id, folder, permission_mode,
+         isolate, budget, created_at, updated_at)
+       VALUES (?, ?, 'p', ?, 'RepoOne', 'plan', 0, '{}', 0, 0)`,
+    )
+    .run(templateId, `Template ${templateId}`, MOUNT);
+  const noMount = await callTool(token, "propose_run", {
+    templateId,
+    folder: "RepoTwo",
+    title: "Elsewhere",
+    task: "Do a thing in the other repository.",
+  });
+  assert.equal(noMount.isError, true);
+  assert.match(noMount.text, /needs mountId beside it/);
+  assert.match(noMount.text, /list_folders/);
+
+  assert.equal(proposals(), 0, "neither wrote a card");
+
+  // The mount root is still a real answer, and the template's folder is still
+  // what a proposal naming neither gets.
+  for (const args of [
+    { mountId: MOUNT, folder: "" },
+    { templateId },
+  ]) {
+    const ok = await callTool(token, "propose_run", {
+      ...args,
+      title: `Fine ${randomUUID()}`,
+      task: "Do a thing.",
+    });
+    assert.equal(ok.isError, false, ok.text);
+  }
+  assert.equal(proposals(), 2);
+});

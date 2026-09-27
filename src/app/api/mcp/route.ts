@@ -1195,7 +1195,8 @@ const CHAT_TOOLS = [
           type: "string",
           description:
             "Path within the mount, exactly as list_folders gives it. Required " +
-            "when mountId is given; \"\" means the mount root.",
+            "when mountId is given, and refused without it; \"\" means the " +
+            "mount root.",
         },
         id: {
           type: "string",
@@ -4376,7 +4377,20 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
         true,
       );
     }
-    folder = String(args.folder ?? "");
+    // `propose_workflow`'s rule, for its reason: `""` is the mount root and a
+    // real answer, where an omitted folder is not that answer, and reading one as
+    // the other puts the run on the whole mount — the one folder claim that
+    // blocks every other run under it, approved in a batch as a card that looks
+    // like any other.
+    if (args.folder === undefined || args.folder === null) {
+      return text(
+        "This names a mount and no folder. Pass the folder exactly as " +
+          'list_folders gives it, or "" if you really mean the whole ' +
+          "workspace, which blocks every other run under it.",
+        true,
+      );
+    }
+    folder = String(args.folder);
     try {
       resolveWorkspaceFolder(folder, mountId);
     } catch (err) {
@@ -4386,6 +4400,17 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
         true,
       );
     }
+  } else if (String(args.folder ?? "").trim() !== "") {
+    // Refused rather than dropped, `list_tasks`' reason: a folder path alone
+    // does not say which mount it is on, and a templated proposal would
+    // otherwise run in the template's folder under a reply that never says the
+    // one the model named was ignored.
+    return text(
+      `folder "${String(args.folder)}" needs mountId beside it — a folder path ` +
+        "alone does not say which mount it is on. Call list_folders for both, " +
+        "or leave both out to run where the template says.",
+      true,
+    );
   } else if (!template) {
     return text(
       "A proposal with no template has to name where it runs. Pass mountId " +
