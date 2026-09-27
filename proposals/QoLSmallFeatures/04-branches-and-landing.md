@@ -85,6 +85,46 @@ At `fee5efb`. Work in progress — this paragraph is rewritten when the hunt end
 - **Value**: medium — it turns the reconciliation from a list of names into a route to the evidence, on the page where the land decision is made.
 - **Not worth it if**: board task `1c04d1ea` (filed by this hunt) changes which runs get a reconcilable diff enough that the link would mostly be absent; it should land first either way.
 
+### G-11 Mark a review that no longer matches the branch
+- **Friction**: a review is a verdict about one diff, and the card shows it with only its date (`src/components/RunReview.tsx:33`). After a Reopen adds commits, or a resolution merges the target in, the old review still reads as the review of this branch. `run_reviews` already has `base_sha` and `head_sha` (`src/lib/review.ts:167-168`, inserted at `:429-450`), but `startReview` never passes them (`review.ts:298-310` builds the `startAssist` request with no `baseSha`/`headSha`); only validations fill them.
+- **Change**: have `startReview` record the branch tip it read (one `rev-parse`, the same moment `runDiff` is taken) as `headSha`; return it on the review DTO; on the card, when the branch tip now differs, say "Reviewed at `<sha7>`; the branch has N commits since" beside the date, and label the button "Review again".
+- **Size**: S.
+- **Touches**: `git-and-review.md`, "Reviewing a diff is not a work cycle and is never automatic" — this only labels, it never re-reviews by itself. The columns' rule ("written at the start … what the child was *shown*") is exactly what a review needs too.
+- **Value**: medium — a stale "looks good" beside a Land button is the review being wrong in the most expensive direction.
+- **Not worth it if**: reviews are rarely run on this install (not measured).
+
+### G-12 Show what a failed resolution said
+- **Friction**: when a conflict resolution fails ("Conflict markers are still in …", or a refusal from the agent), the Land card shows the error but hides the agent's own text, which is drawn only for `status === "completed"` (`src/components/RunLand.tsx:536-540`). The text is stored on the row (`run_reviews.text`, returned by the land GET as `resolution.text`, `src/app/api/runs/[id]/land/route.ts`). The operator's only next step is another billed press of "Resolve with Claude", without knowing whether the agent gave up, misunderstood, or was one file short.
+- **Change**: render `resolution.text` for `failed` too, under the error, in the same `max-h-52` scrolling block (collapsed by default with the kit's `Disclosure`, since it is secondary to the error).
+- **Size**: S.
+- **Touches**: `git-and-review.md`, "An assist streams…": the assistant's own text belongs in `run_reviews.text` and nowhere else, which this respects. It must still read as the agent's account, not as a result — the card's existing "What it says it did, and then what it did" framing (`RunLand.tsx:542-544`).
+- **Value**: medium — it is the difference between retrying blind and knowing what to fix by hand.
+- **Not worth it if**: failed resolutions almost never carry text (the silence deadline and spawn failures carry none; not measured how many do).
+
+### G-13 Show how long a queued merge has been going, and what it was authorised to do
+- **Friction**: a queue row draws its position, branch, target, resolution cost and status (`src/app/branches/page.tsx:295-355`); `MergeQueueItemDTO` also carries `startedAt`, `finishedAt`, `strategy` and `autoResolve` (`src/lib/apiTypes.ts:2815-2820`) and none is drawn. A `resolving` row five seconds in and one fifty-five minutes into `RESOLVE_SILENCE_MS`'s hour (`docs/agent/isolation-and-landing.md`, "A resolution's child has one deadline…") look identical, and nothing on the panel says whether a batch was allowed to spend on auto-resolution.
+- **Change**: on a `landing`/`resolving` row, "for 12 min" from `startedAt` (re-rendered on the panel's existing 3-second poll); on a finished row, its duration; in the batch header (`branches/page.tsx:416-420`), "merge · auto-resolve on" or "squash · auto-resolve off" once per batch, since both are per-batch decisions recorded per row.
+- **Size**: S.
+- **Touches**: "Nothing on the landing path has a clock on its duration" (`isolation-and-landing.md`) — this displays elapsed time and decides nothing; the copy must not suggest a limit. Auto-resolution is authorised per batch (`isolation-and-landing.md`, "Auto-resolution is authorised per batch and recorded per row"), so saying it on the batch is saying what was authorised.
+- **Value**: medium — it answers "is it stuck?" without a restart, which is the only remedy the page offers today.
+- **Not worth it if**: resolutions stay as short as measured (median 111.6 s, longest 867.5 s, per the same doc) — then the elapsed time rarely matters.
+
+### G-14 Say which workflow block queued a batch before offering to cancel it
+- **Friction**: a batch a workflow's merge block queued reads exactly like one the operator queued — "Queued <time>" and a Cancel button (`src/app/branches/page.tsx:416-435`). Cancelling it fails that block, and in a loop the pass stops (`isolation-and-landing.md`, "A branch a live pass of a workflow loop is working on…"). `workflow_instance_blocks.merge_batch_id` already ties the batch to its block (same doc: "`workflow_instance_blocks.merge_batch_id` ties that batch back to the block that queued it").
+- **Change**: `queueView` (`src/lib/mergeQueue.ts`) left-joins `workflow_instance_blocks` on `merge_batch_id` and returns the instance id, workflow name and block name per batch; the header says "From <workflow> › <block>" with a link to the instance page, and the Cancel press on such a batch goes through the existing `Sheet` saying the block will be recorded as not landed.
+- **Size**: S.
+- **Touches**: the queue panel polls every three seconds while working and "is one `GROUP BY` and no git" (`isolation-and-landing.md`, "The queue panel polls whatever it last said") — one indexed left join keeps it that. The asker rule ("recorded, never inferred") is the same column, read for display only.
+- **Value**: medium — the one press on this panel that can stop an unattended workflow currently looks like housekeeping.
+- **Not worth it if**: workflows with merge blocks are not used on this install.
+
+### G-15 Re-queue a batch's failed and skipped rows in one press
+- **Friction**: a row that failed (a conflict with auto-resolve off, a verify refusal) or was skipped by a checkout halt ("The checkout is on main rather than …") has no action on the panel (`src/app/branches/page.tsx:295-355`); the way back is to find each branch again in the paged, repository-filtered table, tick them in the original order and press Land. A halt skips every remaining row of the repository at once (`isolation-and-landing.md`, "A queue tells a branch's problem apart from the checkout's"), so after fixing the checkout the operator re-picks the whole tail of the batch by hand.
+- **Change**: a "Queue N again" button on a finished batch that has `failed`/`skipped` rows, POSTing their `runId`s in their original `position` order to the existing `POST /api/branches/queue` with the batch's own `strategy` and `autoResolve` (G-13's fields). `enqueue` already refuses a run that is still in the queue by name.
+- **Size**: S.
+- **Touches**: "Auto-resolution is authorised per batch" — a new press is a new batch and a new authorisation; if the old batch had auto-resolve on, the press goes through the same confirmation `Sheet` the selection bar uses (`branches/page.tsx:1345-1360`). `landRun` re-derives everything at each row's turn, so nothing is trusted from the old batch.
+- **Value**: medium — halts are the queue's commonest multi-row outcome by design, and this makes recovering from one a single press.
+- **Not worth it if**: the unfiled queue-classification bugs below are fixed so that far fewer rows fail spuriously (see "Bugs not filed", first entry).
+
 ## Too big for this list
 
 ## Bugs filed
