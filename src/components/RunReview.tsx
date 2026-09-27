@@ -41,7 +41,7 @@ function ReviewBody({ review }: { review: RunReviewDTO }) {
           <Badge tone="ok">done</Badge>
         )}
         <span>
-          {fmtUSD(review.costUSD)} · {review.model ?? "default model"}
+          {fmtUSD(review.costUSD)} · {review.model ?? "Claude Code's own default"}
         </span>
       </div>
 

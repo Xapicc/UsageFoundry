@@ -391,6 +391,21 @@ export interface AssistRequest {
 }
 
 /**
+ * What `spawnAssist` is handed: the request plus the model `startAssist`
+ * wrote to the row.
+ *
+ * Not a field on `AssistRequest`, so no caller of `startAssist` can name one,
+ * and required here, so the spawn cannot be reached without the value the row
+ * recorded. `run_reviews.model` is the only record of which model a billed
+ * assist ran on, and nothing checks it against the argv afterwards: cost is
+ * the CLI's own figure, never priced from this column.
+ */
+interface SpawnedAssist extends AssistRequest {
+  /** `--model`, or null for Claude Code's own default. */
+  model: string | null;
+}
+
+/**
  * Spawn one, record it, and return as soon as it is on its way.
  *
  * The child outlives the request: these take minutes, and holding an HTTP
@@ -401,6 +416,13 @@ export function startAssist(req: AssistRequest): ReviewOutcome {
   const id = randomUUID();
   const now = Date.now();
   const counts = req.counts ?? { files: 0, shown: 0, truncated: false };
+  // Resolved once, for the row and the argv both. The row used to take
+  // `req.run.model` while the spawn took this, so an assist on a Codex run was
+  // recorded under the Codex id while its child ran Claude.
+  const spawned: SpawnedAssist = {
+    ...req,
+    model: assistModel(req.run, getSettings().defaultModel),
+  };
 
   db()
     .prepare(
@@ -414,7 +436,7 @@ export function startAssist(req: AssistRequest): ReviewOutcome {
       req.run.id,
       req.kind,
       now,
-      req.run.model,
+      spawned.model,
       counts.files,
       counts.shown,
       counts.truncated ? 1 : 0,
@@ -443,7 +465,7 @@ export function startAssist(req: AssistRequest): ReviewOutcome {
   });
 
   // Not awaited: it runs for minutes and the row is what reports on it.
-  void spawnAssist(id, req).catch((err) => {
+  void spawnAssist(id, spawned).catch((err) => {
     finish(id, req.run.id, req.kind, {
       status: "failed",
       error: err instanceof Error ? err.message : String(err),
@@ -884,7 +906,7 @@ export function assistModel(
 }
 
 /** Spawn one, and record what it cost whatever happened. */
-async function spawnAssist(id: string, req: AssistRequest): Promise<void> {
+async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
   // Read again here rather than trusted from the door. `assistRefusal` answered
   // before `startReview` awaited `reviewCwd` and before a resolution awaited its
   // checkout, its merge and its conflict scan, so a shutdown that began inside
@@ -902,7 +924,7 @@ async function spawnAssist(id: string, req: AssistRequest): Promise<void> {
     return;
   }
 
-  const { run, kind, cwd, prompt, permissionMode, allowedTools } = req;
+  const { run, kind, cwd, prompt, permissionMode, allowedTools, model } = req;
 
   return new Promise((resolve) => {
     const args = [
@@ -925,7 +947,6 @@ async function spawnAssist(id: string, req: AssistRequest): Promise<void> {
       "--permission-mode",
       permissionMode,
     ];
-    const model = assistModel(run, getSettings().defaultModel);
     if (model) args.push("--model", model);
     if (req.maxBudgetUSD !== null && req.maxBudgetUSD !== undefined) {
       // A hard stop inside the CLI, and the only money bound an automatic

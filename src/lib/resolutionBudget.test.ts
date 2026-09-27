@@ -4,9 +4,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
+import type { ReviewRow } from "./review";
 
 /**
- * What a conflict resolution's child is handed as a spending ceiling.
+ * What a conflict resolution's child is handed as a spending ceiling, and
+ * which model its row says it was handed.
  *
  * A resolution has no clock — the landing path's rule, because a clock was
  * ending large merges — and nothing reaches its child once it is spawned but
@@ -23,6 +25,14 @@ import { after, before, describe, it } from "node:test";
  * been right all along: a real repository with a real conflict, `resolveConflicts`
  * asked exactly as the Resolve button asks it, and a stand-in `claude` that
  * writes down the argv it was spawned with.
+ *
+ * The model cases are here for the same reason and on the same fixture.
+ * `assistModel` was right, and the row was written from `run.model` beside it,
+ * so a resolution on a Codex run was recorded under the Codex id while its
+ * child ran Claude. Nothing else would say so: cost is the CLI's own figure and
+ * is never priced from `run_reviews.model`, so the column is the only record of
+ * which model a billed assist ran on. `startAssist` writes every kind's row, so
+ * one kind pins all three.
  *
  * Its own file, with `DATA_DIR` named before the first import, for
  * `loopMergeOwnership.test.ts`'s reason.
@@ -113,7 +123,13 @@ after(() => {
 });
 
 /** A finished run on its own branch, which conflicts with `main`. */
-function conflictingRun(branch: string): string {
+function conflictingRun(
+  branch: string,
+  spawnedAs: { provider: "claude" | "codex" | null; model: string | null } = {
+    provider: null,
+    model: null,
+  },
+): string {
   const base = git(repoRoot(), "rev-parse", "main").trim();
   git(repoRoot(), "checkout", "-q", "-b", branch, "main");
   fs.writeFileSync(path.join(repoRoot(), "a.txt"), `${branch}\n`);
@@ -128,15 +144,27 @@ function conflictingRun(branch: string): string {
     .prepare(
       `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
                          created_at, finished_at, isolation, repo_root, worktree_branch,
-                         worktree_base, worktree_base_branch)
-       VALUES (?, ?, 'change a', 'completed', '{}', 1, 1, ?, ?, 'worktree', ?, ?, ?, 'main')`,
+                         worktree_base, worktree_base_branch, provider, model)
+       VALUES (?, ?, 'change a', 'completed', '{}', 1, 1, ?, ?, 'worktree', ?, ?, ?, 'main', ?, ?)`,
     )
-    .run(runId, repoRoot(), Date.now(), Date.now(), repoRoot(), branch, base);
+    .run(
+      runId,
+      repoRoot(),
+      Date.now(),
+      Date.now(),
+      repoRoot(),
+      branch,
+      base,
+      spawnedAs.provider,
+      spawnedAs.model,
+    );
   return runId;
 }
 
-/** Resolve as the button does, wait for the child to settle, and return its argv. */
-async function resolveAndReadArgv(runId: string): Promise<string[]> {
+/** Resolve as the button does, wait for the child to settle, and return its argv and row. */
+async function resolveAndSettle(
+  runId: string,
+): Promise<{ argv: string[]; row: ReviewRow }> {
   fs.rmSync(argvFile(), { force: true });
   const started = await land.resolveConflicts(runId, null);
   assert.equal(started.ok, true, started.ok ? "" : started.reason);
@@ -148,13 +176,21 @@ async function resolveAndReadArgv(runId: string): Promise<string[]> {
     assert.ok(Date.now() < deadline, "the resolution never settled");
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  return JSON.parse(fs.readFileSync(argvFile(), "utf8")) as string[];
+  const row = review.getAssist(assistId);
+  assert.ok(row, "the resolution's row is gone");
+  return { argv: JSON.parse(fs.readFileSync(argvFile(), "utf8")) as string[], row };
+}
+
+/** The value after `--model`, or null when the child was given none. */
+function modelFlag(argv: string[]): string | null {
+  const at = argv.indexOf("--model");
+  return at === -1 ? null : argv[at + 1];
 }
 
 describe("a conflict resolution's spending ceiling", () => {
   it("hands the child resolutionBudgetUSD as --max-budget-usd", async () => {
     settings.saveSettings({ resolutionBudgetUSD: 7 });
-    const argv = await resolveAndReadArgv(conflictingRun("uf/ceiling"));
+    const { argv } = await resolveAndSettle(conflictingRun("uf/ceiling"));
 
     const at = argv.indexOf("--max-budget-usd");
     assert.notEqual(at, -1, "a resolution was spawned with no ceiling at all");
@@ -163,7 +199,36 @@ describe("a conflict resolution's spending ceiling", () => {
 
   it("passes no ceiling when the operator has removed it", async () => {
     settings.saveSettings({ resolutionBudgetUSD: null });
-    const argv = await resolveAndReadArgv(conflictingRun("uf/uncapped"));
+    const { argv } = await resolveAndSettle(conflictingRun("uf/uncapped"));
     assert.equal(argv.includes("--max-budget-usd"), false);
+  });
+});
+
+describe("the model a resolution's row is recorded under", () => {
+  it("is the Claude default a Codex run's child was handed, not the Codex id", async () => {
+    settings.saveSettings({ defaultModel: "claude-opus-5-5" });
+    const { argv, row } = await resolveAndSettle(
+      conflictingRun("uf/codex-default", { provider: "codex", model: "gpt-5-codex" }),
+    );
+    assert.equal(modelFlag(argv), "claude-opus-5-5");
+    assert.equal(row.model, "claude-opus-5-5");
+  });
+
+  it("is null when a Codex run's child was handed no --model", async () => {
+    settings.saveSettings({ defaultModel: null });
+    const { argv, row } = await resolveAndSettle(
+      conflictingRun("uf/codex-blank", { provider: "codex", model: "gpt-5-codex" }),
+    );
+    assert.equal(modelFlag(argv), null);
+    assert.equal(row.model, null);
+  });
+
+  it("is still a Claude run's own model", async () => {
+    settings.saveSettings({ defaultModel: "claude-opus-5-5" });
+    const { argv, row } = await resolveAndSettle(
+      conflictingRun("uf/claude-own", { provider: "claude", model: "claude-sonnet-5" }),
+    );
+    assert.equal(modelFlag(argv), "claude-sonnet-5");
+    assert.equal(row.model, "claude-sonnet-5");
   });
 });
