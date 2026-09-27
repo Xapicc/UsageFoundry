@@ -1594,6 +1594,12 @@ async function startResolution(
     // minutes from here, and these paths are what makes the resolution's own
     // change readable afterwards instead of the whole merge.
     paths: conflicted,
+    // The only bound on what this child spends: it gets no clock on its
+    // duration (the landing path's rule), and its silence deadline ends only a
+    // child that has stopped printing, so the queue's auto-resolve, with
+    // nobody present, would otherwise spend until it chose to exit. Read
+    // at the spawn rather than when the batch was queued, the read guard's rule.
+    maxBudgetUSD: getSettings().resolutionBudgetUSD,
     after: async (result) => {
       // The spawn itself failed — a crash, a timeout, a refusal. Roll back and
       // keep its own error: reporting "markers are still in f.txt" would be

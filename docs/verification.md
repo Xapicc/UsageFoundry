@@ -1282,6 +1282,17 @@ is `docs/agent/testing.md`; interface defects and their classes are
   merge block settles `failed`, and `blocksOf` reports `branchesFailed: 1`.
   This run changed who may land, not what a failure to land means.
 
+- **A resolution's longest silence is minutes, not an hour.** Measured
+  2026-09-27 over every transcript under `~/.claude/projects` whose first prompt
+  is `resolvePrompt`'s: 79 (8 in `-resolve-` checkouts, 71 in runs' own
+  worktrees), 8 repositories, 2026-08-28 to 2026-09-26, CLI 2.1.226, 2.1.260
+  and 2.1.280. The largest gap between consecutive timestamped entries per
+  transcript ran 3.7s to 193.5s, median 32.0s, p90 115.3s; three of the top
+  four (176s to 184s) were the CLI's API retries ending in a synthetic `API
+  Error` and an exit of its own. None hung; the longest of 161 `Bash` calls
+  took 20.3s. `RESOLVE_SILENCE_MS`'s hour rests on this. Caveat: an entry
+  stands in for a stdout line, and no long verify command was in the sample.
+
 ### Git and review
 
 - **Diff and land parsers, `npm test` 24 assertions:** NUL-separated numstat
@@ -3275,6 +3286,14 @@ measurement under *Verified* and cut the item down to what is still open.
   unit tested; no billed cycle has hit it, so whether the CLI honours it on
   `-p` and how far a cycle overshoots are reasoned, not measured.
 
+- **A conflict resolution stopping at `resolutionBudgetUSD` (added
+  2026-09-27).** `resolutionBudget.test.ts` asserts the argv against a stub
+  CLI; no billed resolution has hit it, so that the pinned CLI ends a `-p`
+  resolution there and the merge is rolled back is reasoned, not measured.
+  Settle: *Limit per conflict resolution* at 0.05, press Resolve on a
+  conflicting run; the row should fail naming `error_max_budget_usd` and the
+  branch should be unchanged.
+
 - **A workflow-wide budget tripping against real spend.** No instance has been
   halted by a guard; `instanceSpend` has never summed a real `otlp_requests`
   row.
@@ -3778,6 +3797,13 @@ measurement under *Verified* and cut the item down to what is still open.
 - **Landing inside the container, on git 2.39** rather than 2.50. Conflict
   types come from `-z` records captured on 2.50; a 2.39 that differs loses type
   and explanation but still lists every file.
+
+- **The resolution silence deadline has never fired against a real `claude`.**
+  `resolutionSilence.test.ts` drives it with a stand-in child and faked time.
+  Settle by pressing Resolve with the child's `ANTHROPIC_BASE_URL` pointed at
+  a listener that accepts and never answers (`nc -lk 127.0.0.1 9999`), then
+  reading the `run_reviews` row and `git worktree list` after the hour. The CLI
+  may give up by itself first, which is worth knowing too.
 
 ### Git and review
 

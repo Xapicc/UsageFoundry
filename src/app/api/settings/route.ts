@@ -580,6 +580,12 @@ async function putHandler(req: Request) {
       .filter(Boolean);
   }
 
+  if ("resolutionBudgetUSD" in body) {
+    // Blank means "no cap", as `validationBudgetUSD` reads it: the only bound on
+    // a child with no clock, so removing it is the operator's explicit act.
+    patch.resolutionBudgetUSD = optionalNumber(body.resolutionBudgetUSD);
+  }
+
   if ("isolationCopyGlobsByRepo" in body) {
     const raw = body.isolationCopyGlobsByRepo;
     const map: Record<string, string[]> = {};

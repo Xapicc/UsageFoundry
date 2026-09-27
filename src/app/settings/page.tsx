@@ -359,6 +359,7 @@ const EDITABLE_PATHS = [
   "landStrategy",
   "landVerifyCommand",
   "resolveAllowedTools",
+  "resolutionBudgetUSD",
   "continuationPrompt",
   "donePushbackPrompt",
   "isolationPreamble",
@@ -413,6 +414,7 @@ const ISOLATED_RUN_KEYS = [
   "landStrategy",
   "landVerifyCommand",
   "resolveAllowedTools",
+  "resolutionBudgetUSD",
 ];
 
 /**
@@ -3820,6 +3822,30 @@ export default function SettingsPage() {
                     patch({ resolveAllowedTools: parseGlobs(verifyToolsText) });
                     setVerifyToolsText(null);
                   }}
+                />
+              </div>
+            </SettingRow>
+
+            <SettingRow
+              htmlFor="resolvebudget"
+              edited={isEdited("resolutionBudgetUSD")}
+              label="Limit per conflict resolution"
+              description="A hard stop inside the CLI, and the only bound on a resolution — it has no time limit and nothing stops it once started. One that reaches it is rolled back. Blank removes it"
+            >
+              <div className="w-36">
+                <Input
+                  id="resolvebudget"
+                  type="number"
+                  inputMode="decimal"
+                  step="1"
+                  min={0}
+                  value={effective.resolutionBudgetUSD ?? ""}
+                  onChange={(e) =>
+                    patch({
+                      resolutionBudgetUSD:
+                        e.target.value === "" ? null : Number(e.target.value),
+                    })
+                  }
                 />
               </div>
             </SettingRow>
