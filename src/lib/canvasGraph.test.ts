@@ -27,6 +27,7 @@ import {
   type WorkflowDraftBody,
 } from "./canvasGraph";
 import type { WorkflowEdgeDTO, WorkflowNodeDTO } from "./apiTypes";
+import { MAX_LOOP_PASSES, MAX_LOOP_RUNS } from "./apiTypes";
 import { normalizeWorkflowInput } from "./workflowGraph";
 
 /**
@@ -1117,20 +1118,20 @@ test("taking the entry out moves the frame onto what followed it", () => {
 test("the worst case counts a fan-out again on every pass", () => {
   // The number an operator cannot do in their head, and the one a press of Run
   // is approved against: four passes of one block reads as four runs and is
-  // twenty when that block decides.
+  // twenty-four when that block decides — its fan-out of five, and its own
+  // deciding turn, which is a spawned and billed child on every pass.
   assert.equal(
     worstCaseRuns(4, [{ kind: "orchestrator", fanOut: 5 }]),
-    20,
+    24,
   );
   assert.equal(
     worstCaseRuns(3, [
       { kind: "run", fanOut: null },
       { kind: "orchestrator", fanOut: 2 },
-      // A merge member starts no run of its own, and neither does the
-      // orchestrator's own deciding turn.
+      // A merge member starts nothing of its own.
       { kind: "merge", fanOut: null },
     ]),
-    9,
+    12,
   );
   // Both blanks are refused at Save, and a figure that read either as zero
   // would be approving an unbounded press of Run on the operator's behalf.
@@ -1140,6 +1141,47 @@ test("the worst case counts a fan-out again on every pass", () => {
     null,
   );
   assert.equal(worstCaseRuns(0, [{ kind: "run", fanOut: null }]), null);
+});
+
+test("the worst case the editor states is the one Save refuses at", () => {
+  // Two copies of this arithmetic once disagreed by the deciding turn: the
+  // editor stated "up to 60 runs" over a section Save refused at 72, so the
+  // number an operator approved was not the number that was enforced. Every
+  // pass cap is tried, so the crossing is pinned from both sides.
+  for (let passes = 1; passes <= MAX_LOOP_PASSES; passes++) {
+    const blocks = [
+      block("l", { kind: "loop", maxPasses: String(passes) }),
+      block("o", { kind: "orchestrator", fanOut: "5" }),
+      block("m", { kind: "merge" }),
+    ];
+    const wire = draftToGraph({
+      blocks,
+      links: [repeats("l", "o"), link("o", "m", { edge: "on-success" })],
+    });
+    // Read off the wire graph the way `/workflows/[id]`'s loop row reads it.
+    const loopNode = wire.nodes.find((n) => n.id === "l")!;
+    const stated = worstCaseRuns(
+      loopNode.maxPasses,
+      loopNode.bodyNodeIds.map((id) => wire.nodes.find((n) => n.id === id)!),
+    );
+    assert.ok(stated !== null, `${passes} pass(es) state no figure`);
+
+    const saved = normalizeWorkflowInput(
+      { name: "Fan-out loop", graph: wire },
+      {
+        templates: new Map(),
+        mountIds: ["main"],
+        defaultIsolate: true,
+        agents: new Map(),
+      },
+    );
+    if (stated > MAX_LOOP_RUNS) {
+      assert.ok(!saved.ok, `${passes} pass(es) state ${stated} and must be refused`);
+      assert.match(saved.error, new RegExp(`which is ${stated} runs`));
+    } else {
+      assert.ok(saved.ok, saved.ok ? "" : `${passes} pass(es): ${saved.error}`);
+    }
+  }
 });
 
 test("a link into a frame is refused at the release, naming the frame", () => {

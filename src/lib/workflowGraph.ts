@@ -33,6 +33,7 @@ import {
   type TaskStatusDTO,
   type WorkflowNodeKind,
 } from "./apiTypes";
+import { worstCaseRuns } from "./canvasGraph";
 
 /**
  * What a workflow graph *is*, and every refusal that can be decided without
@@ -1645,36 +1646,30 @@ function loopBodyRefusal(
     // deciding turn and every run it is allowed to emit. A merge block is
     // neither: it creates no run and spawns no agent of its own.
     //
-    // Neither `maxPasses` on a loop nor `fanOut` on an orchestrator is null by
-    // the time this runs — `normalizeNode` refuses a node without either, and
-    // it has already run on every node here. The fallbacks exist so the
-    // sentence cannot say "null time(s)" if that order ever changes, and both
-    // fall the same way on purpose: *under*-count, so a ceiling reached only
-    // through a broken invariant is a graph let through rather than an
-    // operator refused over a number this file invented.
+    // The product is `worstCaseRuns`'s, the function the editor's statement and
+    // `/workflows/[id]`'s loop row print, and never a copy of it here: a refusal
+    // computed apart from the figure the operator was shown is how the editor
+    // came to state "up to 60 runs" over a graph this refused at 72.
+    //
+    // It is null only through a broken invariant — `normalizeNode` refuses a
+    // loop with no pass cap and an orchestrator with no fan-out, and has
+    // already run on every node here — and null lets the graph through on
+    // purpose, rather than refusing an operator over a number this file would
+    // have had to invent.
     const membership = [...members].map((id) => byId.get(id)!);
-    const perPass = membership.reduce(
-      (total, m) =>
-        m.kind === "run"
-          ? total + 1
-          : m.kind === "orchestrator"
-            ? total + 1 + (m.fanOut ?? 0)
-            : total,
-      0,
-    );
-    const passes = loop.maxPasses ?? 1;
-    const worst = passes * perPass;
-    if (worst > MAX_LOOP_RUNS) {
+    const worst = worstCaseRuns(loop.maxPasses, membership);
+    if (worst !== null && worst > MAX_LOOP_RUNS) {
+      const perPass = worstCaseRuns(1, membership);
       const deciders = membership
         .filter((m) => m.kind === "orchestrator")
         .map(
           (m) =>
-            `for “${m.name}” the deciding turn plus the ${m.fanOut ?? 0} runs ` +
+            `for “${m.name}” the deciding turn plus the ${m.fanOut} runs ` +
             "its fan-out cap allows, spent again on every pass",
         )
         .join(", ");
       return (
-        `“${loop.name}” repeats ${members.size} block(s) up to ${passes} ` +
+        `“${loop.name}” repeats ${members.size} block(s) up to ${loop.maxPasses} ` +
         `time(s). Each pass is ${perPass} run(s) — one for each block that ` +
         `runs${deciders ? `, and ${deciders}` : ""} — which is ${worst} runs ` +
         `from one press of Run. A loop may start at most ${MAX_LOOP_RUNS}.`

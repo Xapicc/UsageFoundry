@@ -544,8 +544,9 @@ export default function WorkflowPage() {
                         // `worstCaseRuns` in both places rather than passes ×
                         // members, because an orchestrator member's fan-out is
                         // spent again on every pass: a section of one deciding
-                        // block at 5 over 4 passes is twenty runs nobody
-                        // approves one by one, and "4 blocks" says four.
+                        // block at 5 over 4 passes is twenty-four runs, its
+                        // deciding turn among them, nobody approves one by one,
+                        // and "4 blocks" says four.
                         <div className="mt-0.5 text-warn">
                           Repeats until done — up to {n.maxPasses} pass(es) over{" "}
                           {n.bodyNodeIds.length} block(s), so{" "}

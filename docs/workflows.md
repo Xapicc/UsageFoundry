@@ -415,7 +415,7 @@ pass is:
 
 A merge block is neither: it lands branches and starts no run. Three run blocks
 and a merge over 10 passes is 30 runs; swap one of those for an orchestrator
-capped at 5 and the same 10 passes is 70. A loop whose worst case is more than
+capped at 5 and the same 10 passes is 80. A loop whose worst case is more than
 **60 runs** is refused when you save it, with the arithmetic spelled out and
 every factor named. The spending limit across passes is the other bound and is
 worth setting here more than anywhere else in this tool.

@@ -1448,9 +1448,10 @@ function BlockStatement({
     // **The worst case in runs, with an orchestrator member's fan-out spent
     // again on every pass.** A member count times a pass cap is the number an
     // operator would reach for and it is wrong by the fan-out: a section of one
-    // orchestrator at 5 over 4 passes is twenty runs nobody approves one by
-    // one. `worstCaseRuns` is where that arithmetic lives, and it answers null
-    // rather than guessing where a figure is not stated.
+    // orchestrator at 5 over 4 passes is twenty-four runs, its deciding turn
+    // among them, nobody approves one by one. `worstCaseRuns` is where that
+    // arithmetic lives — the same function Save refuses against — and it
+    // answers null rather than guessing where a figure is not stated.
     const worst = worstCaseRuns(
       Number.isInteger(passes) && passes > 0 ? passes : null,
       body.map((member) => ({
@@ -1499,7 +1500,7 @@ function BlockStatement({
           </strong>
         )}
         {fansOut
-          ? " — a deciding member's fan-out is spent again on every pass"
+          ? " — a deciding member's own turn and its fan-out are spent again on every pass"
           : ""}
         .{" "}
         {exit ? (

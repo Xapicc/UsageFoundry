@@ -1084,17 +1084,20 @@ export function linkRefusal(
  *
  * **An orchestrator member's fan-out is spent again on every pass**, and that
  * is the whole reason this is arithmetic rather than a member count: a section
- * of one orchestrator at a fan-out of 5 over 4 passes is twenty runs nobody
- * approves one by one, and "4 passes of 1 block" says four. A merge member
- * starts no run of its own, and neither does the orchestrator's own deciding
- * turn.
+ * of one orchestrator at a fan-out of 5 over 4 passes is twenty-four runs
+ * nobody approves one by one, and "4 passes of 1 block" says four. The
+ * orchestrator's own deciding turn is one of them: it is a headless child
+ * spawned and billed on every pass, whatever it goes on to emit. A merge
+ * member starts nothing of its own.
  *
  * Null where the figure cannot be stated — no pass cap, or an orchestrator
  * member with no fan-out typed — because both are refused at Save and a number
  * that quietly read the blank as zero would be approving an unbounded press of
- * Run on the operator's behalf. One definition, because the editor's statement
- * and the saved workflow's page are the same promise about money and would
- * otherwise print two numbers for one graph.
+ * Run on the operator's behalf. One definition, and `normalizeWorkflowInput`
+ * refuses against this same function rather than its own copy: the editor's
+ * statement, the saved workflow's page and the `MAX_LOOP_RUNS` refusal are one
+ * promise about money, and two copies of the arithmetic let the editor state
+ * "up to 60 runs" over a graph Save refused at 72.
  */
 export function worstCaseRuns(
   passes: number | null,
@@ -1109,7 +1112,7 @@ export function worstCaseRuns(
       if (fanOut === null || !Number.isInteger(fanOut) || fanOut <= 0) {
         return null;
       }
-      perPass += fanOut;
+      perPass += 1 + fanOut;
     }
   }
   return passes * perPass;
