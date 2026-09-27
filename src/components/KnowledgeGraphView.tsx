@@ -35,7 +35,6 @@ import { Button, ButtonRow } from "@/components/ui/Button";
 import { Card, CardTitle, Empty } from "@/components/ui/Card";
 import { Disclosure } from "@/components/ui/Disclosure";
 import { ColorSwatch, Input, Slider, Switch } from "@/components/ui/Field";
-import { Hint } from "@/components/ui/Hint";
 import { GroupLabel, ListGroup, ListRow } from "@/components/ui/List";
 import { Notice } from "@/components/ui/Notice";
 import { SegmentedControl, type SegmentedOption } from "@/components/ui/SegmentedControl";
@@ -333,7 +332,7 @@ export function KnowledgeGraphView({
       {graph?.truncated && (
         <Notice tone="warn" quiet>
           The vault walk hit its cap, so this graph is drawn from part of the
-          vault rather than all of it.
+          vault.
         </Notice>
       )}
 
@@ -422,10 +421,9 @@ export function KnowledgeGraphView({
                 {shown.dropped.toLocaleString()} past the {MAX_DRAWN_NODES.toLocaleString()}-node
                 drawing cap were left out, least-linked first. Narrow the filters to see them.
               </>
-            )}{" "}
+            )}
           </>
         )}
-        Drag to pan, scroll to zoom, drag a node to place it, click one to open the note.
       </p>
     </div>
   );
@@ -532,17 +530,10 @@ function GraphPanel({
         onChange={(view) => onChange((s) => ({ ...s, view }))}
         label="What the graph covers"
       />
-      {settings.view === "local" && !hasNote && (
-        <Hint tone="warn">Open a note above and the graph follows it</Hint>
-      )}
 
       {settings.view === "local" && (
         <ListGroup label="Around this note">
-          <ListRow
-            label="Depth"
-            description="How many links out from the open note to follow"
-            htmlFor="graph-depth"
-          >
+          <ListRow label="Depth" htmlFor="graph-depth">
             <Slider
               id="graph-depth"
               value={local.depth}
@@ -585,9 +576,8 @@ function GraphPanel({
           <>
             The search takes <code>-term</code>, <code>&quot;a phrase&quot;</code>,{" "}
             <code>path:</code>, <code>file:</code>, <code>tag:</code> and <code>OR</code>. It
-            matches a note&apos;s title, path, tags and aliases — not its body, which is not
-            part of the graph. The Notes list below has its own filters and this search does
-            not read them.
+            matches a note&apos;s title, path, tags and aliases, not its body. The Notes
+            list&apos;s filters do not apply here.
           </>
         }
       >
@@ -621,7 +611,7 @@ function GraphPanel({
         </ListRow>
         <ListRow
           label="Existing files only"
-          description="Hide a link's target where no note has been written yet"
+          description="Hide links to notes not yet written"
           htmlFor="graph-existing"
         >
           <Switch
@@ -630,11 +620,7 @@ function GraphPanel({
             onChange={(existingOnly) => setFilters({ existingOnly })}
           />
         </ListRow>
-        <ListRow
-          label="Orphans"
-          description="Notes nothing links to and which link to nothing"
-          htmlFor="graph-orphans"
-        >
+        <ListRow label="Orphans" htmlFor="graph-orphans">
           <Switch
             id="graph-orphans"
             checked={filters.showOrphans}
@@ -661,7 +647,7 @@ function GraphPanel({
         </ListRow>
         <ListRow
           label="Label fade"
-          description="The zoom a title appears at. 0 shows every label always"
+          description="Zoom a title appears at; 0 shows every label"
           htmlFor="graph-textfade"
         >
           <Slider
@@ -693,11 +679,7 @@ function GraphPanel({
             className="w-40"
           />
         </ListRow>
-        <ListRow
-          label="Animate"
-          description="Off freezes the layout where it stands"
-          htmlFor="graph-animate"
-        >
+        <ListRow label="Animate" htmlFor="graph-animate">
           <Switch
             id="graph-animate"
             checked={display.animate}
@@ -789,7 +771,7 @@ function Legend({
 }) {
   return (
     <div>
-      <GroupLabel>What the marks mean</GroupLabel>
+      <GroupLabel>Legend</GroupLabel>
       <ul className="space-y-1.5 text-xs text-ink-muted">
         {groups.map((group, index) => (
           <LegendRow
@@ -847,17 +829,15 @@ function Legend({
           </LegendRow>
         )}
         <LegendRow swatch={<span className="block size-3 rounded-full bg-accent" />}>
-          The node under the pointer. Its links and neighbours stay lit; everything else dims
+          The node under the pointer
         </LegendRow>
       </ul>
       <p className="mt-2 text-xs leading-snug text-ink-muted">
-        A node&apos;s size is how many of its links are <strong>drawn</strong>. Turning a filter
-        on makes a node smaller without the vault having changed.
+        A node&apos;s size is how many of its links are <strong>drawn</strong>.
       </p>
       {groups.length > 1 && (
         <p className="mt-2 text-xs leading-snug text-ink-muted">
-          Colour groups are tried in order and the first match wins, so a note two groups match
-          takes the higher one&apos;s colour.
+          Colour groups are tried in order; the first match wins.
         </p>
       )}
     </div>

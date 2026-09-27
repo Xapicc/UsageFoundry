@@ -755,10 +755,7 @@ export default function TasksPage() {
             Taskboard
           </h1>
           <p className="max-w-[68ch] text-ink-muted">
-            A <strong className="font-semibold text-ink">task</strong> is a
-            brief nobody has started — the text an agent would be handed, and
-            the folder it belongs to. Writing one down costs nothing; starting
-            the work is a separate press.
+            Filing a task costs nothing; starting the work is a separate press.
           </p>
         </div>
         <ButtonLink href="/tasks/new" variant="primary">
@@ -778,11 +775,7 @@ export default function TasksPage() {
       {loaded && !unreadable && tasks.length > 0 && (
         <Card emphasis="quiet" className="mb-6">
           <div className="flex flex-wrap gap-x-4">
-            <Field
-              label="Project"
-              htmlFor="task-place"
-              hint="Every mount by default"
-            >
+            <Field label="Project" htmlFor="task-place">
               <div className="w-80">
                 <Select
                   id="task-place"
@@ -805,11 +798,7 @@ export default function TasksPage() {
                 </Select>
               </div>
             </Field>
-            <Field
-              label="Who does it"
-              htmlFor="task-lane"
-              hint="Operator only is work no run here can do"
-            >
+            <Field label="Who does it" htmlFor="task-lane">
               <div className="w-56">
                 <Select
                   id="task-lane"
@@ -852,10 +841,6 @@ export default function TasksPage() {
             <div className="font-medium text-ink">
               The board could not be read
             </div>
-            <div className="mx-auto mt-1 max-w-[52ch]">
-              This is a failed request rather than an empty backlog — nothing
-              here says whether there is work waiting.
-            </div>
             <div className="mt-3">
               <Button variant="secondary" onClick={() => void load()}>
                 Try again
@@ -868,9 +853,8 @@ export default function TasksPage() {
           <Empty>
             <div className="font-medium text-ink">Nothing on the board</div>
             <div className="mx-auto mt-1 max-w-[52ch]">
-              A task is a brief somebody writes down so it is not lost — the
-              orchestrator, a workflow block and a work cycle can each file one,
-              and so can you.
+              The orchestrator, a workflow block and a work cycle can each file
+              one, and so can you.
             </div>
             <div className="mt-3">
               <ButtonLink href="/tasks/new" variant="secondary">
@@ -883,10 +867,6 @@ export default function TasksPage() {
         <Card emphasis="primary">
           <Empty>
             <div className="font-medium text-ink">{nothingMatched}</div>
-            <div className="mx-auto mt-1 max-w-[52ch]">
-              The board holds {tasks.length}, and this filter matched none of
-              them.
-            </div>
             <div className="mt-3">
               <Button
                 variant="secondary"

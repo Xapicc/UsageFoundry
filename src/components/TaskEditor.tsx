@@ -248,11 +248,7 @@ export function TaskEditor({
       )}
 
       <Card emphasis="primary" className="mb-6">
-        <Field
-          label="Title"
-          htmlFor="task-title"
-          hint="What the work is, in a line"
-        >
+        <Field label="Title" htmlFor="task-title">
           <Input
             id="task-title"
             value={draft.title}
@@ -334,9 +330,7 @@ export function TaskEditor({
           label="Folder"
           htmlFor="task-folder"
           hint={
-            draft.mountId
-              ? "Proved against the mount when the task is saved"
-              : "Pick a workspace first"
+            draft.mountId ? undefined : "Pick a workspace first"
           }
         >
           <div className="w-72">
@@ -368,9 +362,8 @@ export function TaskEditor({
           // itself loses to the larger value it wrote.
           <div className="-mt-2">
             <Hint tone="warn" className="mb-3.5">
-              This folder is not in the workspace scan right now. Saving
-              re-proves it, and an absent mount refuses the save rather than
-              clearing the task’s project
+              Not in the current workspace scan; if its mount is absent, the
+              save is refused rather than clearing the project
             </Hint>
           </div>
         )}
@@ -381,10 +374,8 @@ export function TaskEditor({
             // it says the project has gone.
             <Notice tone="warn">
               <strong>The workspace list could not be read.</strong>{" "}
-              {workspace.error} This is a failed request rather than an empty
-              workspace — nothing here says which mounts or folders exist.
-              {task?.mountId &&
-                " The task’s project is kept, and saving still proves it against the mount."}
+              {workspace.error}
+              {task?.mountId && " The task’s project is kept."}
               <ButtonRow className="mt-2.5">
                 <Button variant="secondary" onClick={retryWorkspace}>
                   Try again
@@ -443,14 +434,10 @@ export function TaskEditor({
         busy={deleting}
         onConfirm={() => void remove()}
       >
-        <p>
-          The brief goes with it and there is no undo. Nothing running is
-          affected — a task holds no folder, no concurrency slot and no child
-          process.
-        </p>
+        <p>There is no undo. Nothing running is affected.</p>
         <p className="mt-2">
           If the work should simply not happen, drop it instead: a dropped task
-          stays on the board where somebody can disagree with it.
+          stays on the board.
         </p>
       </Sheet>
     </>
