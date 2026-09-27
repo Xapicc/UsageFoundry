@@ -1,0 +1,43 @@
+# Fleet stop, hold and shutdown
+
+[← testing index](../testing.md)
+
+Read before adding or editing tests of `fleet.ts` (`stopFleet`, the hold, the bulk pick-ups) and of `shutdownRuns` and the shutdown ladder in `orchestrator.ts`.
+
+The twelfth of the twenty that open the database is `fleet.test.ts`, and it is two subjects that are one file because both are about *whether anything is running*.
+
+The stop half pins an ordering, `bootBlocks.test.ts`'s kind of fact: a dependent still `waiting` when the run it waits on is stopped is released, promoted and spawned — a run starting *because* the fleet was stopped — so the waiting rows are blocked first, and the only evidence otherwise is a billed agent under a page saying everything stopped.
+
+It pins the third halt cause beside it, since `fleet` versus `operator` on the instance row is the only thing that afterwards tells a workflow somebody stopped from one that went down with everything else.
+
+The hold half is a case per call site, and that shape is the point: four separate places start work and a fix that misses one is silent, so each case drives the real entry point — `promoteQueued`, `releaseDependents`, `emitBlockRuns`, `tickSchedules` — and proves the *difference* by running the same call with the hold clear.
+
+Two of them need that second run to be legible rather than merely different: the emission is refused for a malformed payload once the hold is gone, and the schedule tick is refused by `scheduleRefusal` instead, which is what separates a tick that never looked from one that did.
+
+`tickSchedules` is exported for that case and for nothing else.
+
+A third describe covers the per-run exemption from the bulk pick-ups, and it is three cases because there are three doors and none of them shares a mechanism: `reopenFleet` reads `set_aside_at` off the row rather than trusting the ids it was handed, `restartClosedRuns` filters the query in both directions — the notice has to come back when the run is put back, or the operator has a switch with no off — and `reopenRun` clears the column instead of reading it, because a mark that survived a hand pick-up would go on excluding a run that had since worked again.
+
+Every one of those failures ends the same way and none of them throws: an agent that accepts edits, back at work in a folder somebody had finished with.
+
+`shutdown.test.ts` is the nineteenth of the twenty that open the database and the only one here whose subject is a *promise the process makes on the way out*: it drives a real run to `running` against a child that stays alive until it is signalled, calls the real `shutdownRuns`, and reads the row.
+
+Nothing short of that says what it needs to say — `reconcileKilledCycle` was always correct and was reachable from exactly one place, inside `startRun`'s loop, which a `process.exit(0)` two lines after `killAllAgents` meant no suspended frame ever reached.
+
+So a test that the function exists would have passed against the defect; what is pinned is that the handler *awaits* it, that the columns claiming an open cycle are cleared, and that the second work cycle the run's budget still allowed is not spawned on the way out.
+
+It also pins the count the handler's log line is built from, which must include a cycle the loop recovered itself inside the grace: that is the ordinary case, the mop-up then finds nothing, and the line read 0 beside a row carrying the recovered spend. The assertion failed against that tree.
+
+Its second case is a run caught in its pre-cycle scan, because the wait has to end on the loop having written the run's ending rather than on a reading of the row. The post-cycle UPDATE clears `active_started_at` a transcript read before the status write, which is the gap `npm run dev` exited in with the row still `running`, and a run with no child and no open cycle is that same gap with no clock in it: against the unfixed wait, which returned at once, the case failed on every run.
+
+Its third case is the mop-up for a loop that did not finish inside the grace, including that a second pass charges nothing twice, and its fourth is `reconcileOnBoot` clearing those columns for the endings no handler reaches at all.
+
+Its fifth is the same call in the process that may *not* write, which is the other half of the same promise and fails in the direction nothing reports: the `SELECT` is install-wide by design, so a second server — an agent's `npm run dev` against an inherited `DATA_DIR`, restarted by every file change — was closing out the owner's live runs on each exit, and clearing `active_started_at` widens both ceilings that bound their spend below by it.
+
+It is refused for real rather than through a stubbed `mayWriteDataDir` — a lock file naming a live pid that is not ours, then `claimDataDir()` — because what it has to distinguish is `held` from the `unclaimed` its own four cases above run under, and a stub proves only that a branch exists.
+
+Its sixth and seventh are the children that are not work cycles, and they were reproduced before they were written: a review and a chat turn spawned `detached` under `killProcessGroup` outlived the built server's exit, because `killAllAgents` read only `procs`, and nothing in the log or on a page said so. A handle registered through `trackAssistChild` must get `SIGINT` and be waited on until it settles, and must be in the final sweep, which is all a process that may not write gets; both cases failed against the unfixed shutdown path.
+
+Its eighth is the door those children come through, because the ladder reaches only the ones alive at the signal: once `shutdownRuns` has begun, `assistRefusal` must answer `SHUTDOWN_REFUSAL`, and must still answer it with the process budget full, since a budget sentence is one the merge queue asks again after, once per branch, in a process that is exiting. Both assertions failed against a tree where only `promoteQueued` read the flag and against one where the budget outranked it. A block's turn reads the flag at `advanceInstance`'s claim and in `startBlockTurn` and is not pinned: reaching either means a workflow instance with a deciding block, and the check is one line in each.
+
+Its ninth is the second read of that flag, for the two doors that still await after `assistRefusal` has answered: an assist handed to `startAssist` once the shutdown has begun must spawn nothing, must run `after` exactly once with `SHUTDOWN_REFUSAL`, and must leave its row `failed` with that sentence, because `after` is where a resolution's merge is aborted and its checkout discarded and a refusal that skipped it would strand both. It failed against a tree whose `spawnAssist` did not read the flag: the child was spawned and the row was still `running` when the wait gave up. The merge queue's drain reads the flag before each row, which `mergeQueueDrain.test.ts`'s fourth case reaches, and `startWorker` before it starts one, which is not pinned for the block turn's reason: the check is one line.

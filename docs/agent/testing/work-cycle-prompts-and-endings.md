@@ -1,0 +1,33 @@
+# Work-cycle prompts, endings and deadlines
+
+[← testing index](../testing.md)
+
+Read before adding or editing tests of `nextPrompt`/`reopenPrompt`, `cycleEnding` and the `DONE`/`NEEDS_REVIEW` contracts, `edgeSatisfied`, the cycle silence deadline, `resumeControl` and `logLifecycle` in `orchestrator.ts`.
+
+`nextPrompt` and `reopenPrompt` each gained the branch that decides what an unattended agent is told about *ending*: that the opening cycle carries the DONE contract and carries it after the task, that it is withheld where `endsOnDone` is false because the promise would be untrue, that an isolated opening turn names the shared stash stack, and that a restart-killed run is told its cycle was cut off — above the pushback branch, since `reported_done` is stale after a kill and below it a run would be told it had reported the task complete.
+
+The fourth ending added six sets of cases and refused two more, and what each earned is the same bar read against what it costs.
+
+`cycleEnding` is the one that had to be *extracted* to be testable, and the obvious answer — "test the sentinel matcher" — is the wrong one: a bare regex pins the language rather than a decision, and the `DONE` matcher beside it has gone untested since it was written.
+
+What earns it is the **precedence**, that `NEEDS_REVIEW` outranks `DONE` in one turn's text and that neither fires unless it is alone on its line, because a wrong precedence files a run that said it was stuck as green `completed` — the exact defect the ending exists to remove — and throws nothing.
+
+Its negative cases carry the same weight and will be exercised first: the matcher runs over generated text, so a run whose *task* is this feature carries the literal token in prose, and the two guards that bound that (a sentinel spelled unlike the stored status, and a line of its own) are pinned rather than commented.
+
+`edgeSatisfied` earns its first direct cases here for `dependencies.md`'s two failures — a chain that never starts, or one started on top of work that did not happen — with the `releasableRuns` pair beside them saying the dependent is *named* rather than merely blocked.
+
+`reopenPrompt` was already on this list for the branch that decides what an unattended agent is told about ending, and the new branch is the one whose absence looks correct: the pushback tests `completed`, which a `needs-review` row is not, so doing nothing sends the plain continuation into a conversation whose last turn was the agent reporting a wall.
+
+`nextPrompt`'s new assertion is the **ungating** — that the notice rides on a prompt where `endsOnDone` is false — because `maxIterations` defaults to 1, so folding it under that flag would withhold the ending from the majority of runs on a stock install and nothing else would report the loss; its existing equalities compose against the notice rather than dropping to substring matches, since only an equality catches a second sentence appended by accident.
+
+The ninth of the twenty that open the database is `settleOnExit`'s argument in its strongest form: what `cycleDeadline.test.ts` pins is that `runIteration` *returns at all* against a child that prints nothing and does not exit, so the subject has to be a real process — a stubbed emitter would pin the wiring rather than the fault, and the fault is the child.
+
+It is the one file in the suite that points `CLAUDE_BIN` at a binary that exists (`process.execPath`, running an inline script, so it can reach nothing and spend nothing), which is exactly why it cannot be a case in `orchestrator.test.ts`, whose own harness pins that variable at a path that does not exist so a regression reaching a spawn is a failed test rather than a billed one.
+
+Its control is half of it and is what says the clock is *silence*: a child printing every 100ms must survive a one-second deadline, which a wall-clock deadline would fail while passing every assertion in the case beside it.
+
+The bound is the test's own `timeout`, because without one the only failure available is a test that never returns, and that is not a failure anything reports.
+
+`resumeControl.test.ts` pins the control group's reading of which turn a clean resume actually was. `resumeControl` used to answer each probe by walking every main-thread turn on the machine and skipping the ones belonging to another session; grouping the turns by session once is meant to be the same loop over the only entries that could ever have answered it, and the failure mode of getting that wrong is silent: `warmShare` feeds `netReceipt`, so a control that quietly picked another session's turn would move every priced receipt's `netUSD` — the figure that decides whether pruning looks worth keeping — with nothing throwing and nothing failing to typecheck. The behaviour was untested before the change, so each case pins one thing the old whole-corpus walk did that the grouped read has to keep doing.
+
+`logLifecycle` in `orchestrator.test.ts` earns the not-pure exception on `settleOnExit`'s terms: what it decides is a *line* on container stdout, and both halves of that line fail silently. The level is a **routing** decision — the field a shipper filters on to decide whether a person is woken — so one `info` for all nine statuses made the ending whose entire content is *a person should look at this* arrive indistinguishable from an ordinary completion, and the only evidence of getting it wrong is an alert that never fires, which reads exactly like a fleet with nothing wrong. All nine statuses are therefore one case in both directions, `stopped` pinned at `info` beside the three at `warn`, since an operator's own cancel arrives as that one and a guard trip already has `run.guard_tripped`. The field set is the other half and fails the other way: the function **projects** rather than serialising, because a `status` payload at creation carries the folder and an `iteration` payload carries the whole prompt, so two cases assert a line's exact key set rather than the presence of a field — which is the only mechanical guard there is on a spread being added later, and the leak it would be is onto a stream with a different audience and a different lifetime from `run_events`. The 429 ladder's two booleans are pinned in all three of their readings, because `retrying: false` is a refusal that will park and an *absent* `retrying` is a spawn failure that was never a refusal at all, and collapsing the second into the first files every dead container as a rate limit the ladder had given up on. It is exported for that test and for nothing else, `tickSchedules`' precedent.
