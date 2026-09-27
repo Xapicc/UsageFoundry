@@ -43,6 +43,7 @@ import {
   SEARCH_TOOLS,
   signalTree,
   topologicalOrder,
+  trackAssistChild,
   type CreateRunInput,
   type DependencyEdge,
   type RunDependencyInput,
@@ -3096,6 +3097,9 @@ export function runOrchestratorChild(o: OrchestratorChildOptions): void {
   // Registered before anything can go wrong with it, so an operator pressing
   // Stop reaches the child rather than orphaning it.
   o.onSpawn?.(child);
+  // And where a shutdown reaches it, which neither caller's own registry is:
+  // this module imports the orchestrator, so the orchestrator cannot read them.
+  const untrack = trackAssistChild(child);
 
   // Folded line by line rather than buffered whole: the accumulator *is* the
   // turn's state now, and the caller's `onProgress` is what makes it durable.
@@ -3190,6 +3194,9 @@ export function runOrchestratorChild(o: OrchestratorChildOptions): void {
       opsLog("warn", "chat.sandbox_sweep_failed", { message: problem });
     }
     o.onSettle(result);
+    // After the row is written, so a shutdown waiting on this child is waiting
+    // for the turn's ending and not only for its exit.
+    untrack();
   };
 
   child.on("error", (err) => {

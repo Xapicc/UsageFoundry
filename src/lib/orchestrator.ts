@@ -485,6 +485,45 @@ const procs = ((globalThis as unknown as {
   __ufProcs?: Map<string, AgentProcess>;
 }).__ufProcs ??= new Map<string, AgentProcess>());
 
+/** What `signalTree` needs of a child, and all the registry below keeps. */
+type SignalTarget = Parameters<typeof signalTree>[0];
+
+/**
+ * Every live `claude` child that is not a work cycle: a review, a conflict
+ * resolution or a validation from `review.ts`, and a chat turn or a workflow
+ * block's turn from `chat.ts`'s `runOrchestratorChild`.
+ *
+ * `shutdownRuns` is the reader, and it is the only reason this exists. Each of
+ * those modules holds its own handle, but both import this one, so the
+ * shutdown could not reach back into them without a cycle; and every one of
+ * them is spawned `detached` exactly as a cycle is, so a Ctrl-C on `npm run dev`
+ * reached none of them and a server that exited left them running and billed.
+ *
+ * A set of handles rather than a map keyed by chat or block, because a turn
+ * cancelled and re-sent while its old child is still dying has two children at
+ * once and the shutdown must reach both. Its own key rather than a second shape
+ * on `__ufProcs`, for the reason CLAUDE.md gives about a key whose shape changed.
+ */
+const assistProcs = ((globalThis as unknown as {
+  __ufAssistProcs?: Set<SignalTarget>;
+}).__ufAssistProcs ??= new Set<SignalTarget>());
+
+/**
+ * Put a child that is not a work cycle where shutdown will find it, and return
+ * what takes it off again.
+ *
+ * Call it at the spawn and undo it at the settle, the lifetime `procs` gives a
+ * cycle's child: the shutdown waits for this set to empty, so that is a wait for
+ * the row the child's ending writes (and, for a resolution, for its merge to be
+ * aborted) rather than only for the exit.
+ */
+export function trackAssistChild(child: SignalTarget): () => void {
+  assistProcs.add(child);
+  return () => {
+    assistProcs.delete(child);
+  };
+}
+
 /**
  * Why a run is being stopped, and whether it may come back.
  *
@@ -11872,15 +11911,36 @@ export function reopenRun(
  *
  * The last step of `shutdownRuns` rather than the whole of it: the ladder in
  * `interruptRun` gets there first with `SIGINT`, and this is the sweep for
- * anything that outlived it.
+ * anything that outlived it. The children in `assistProcs` are swept with the
+ * cycles, because they are spawned `detached` for the same reason and a Ctrl-C
+ * misses them in the same way.
  */
 export function killAllAgents(sig: NodeJS.Signals = "SIGTERM"): number {
   let n = 0;
-  for (const child of procs.values()) {
+  for (const child of [...procs.values(), ...assistProcs]) {
     signalTree(child, sig);
     n += 1;
   }
   return n;
+}
+
+/**
+ * `interruptRun`'s ladder, for a child that has no run to record a reason on.
+ *
+ * The same three rungs for the same reasons: a CLI that handles `SIGINT` may
+ * still print its `result`, which is what makes a review's or a turn's cost
+ * measured rather than lost, and each later rung asks whether the child is still
+ * registered rather than reading `child.killed`, which is true once anything has
+ * been sent.
+ */
+function interruptAssistChild(child: SignalTarget): void {
+  signalTree(child, "SIGINT");
+  setTimeout(() => {
+    if (assistProcs.has(child)) signalTree(child, "SIGTERM");
+  }, 3_000).unref?.();
+  setTimeout(() => {
+    if (assistProcs.has(child)) signalTree(child, "SIGKILL");
+  }, 8_000).unref?.();
 }
 
 /* ------------------------------------------------------------------ */
@@ -12028,7 +12088,8 @@ export async function reconcileInterruptedCycles(): Promise<number> {
  *     and it is what stops the loop spawning the *next* cycle when its child
  *     dies, which a bare kill would not have done now that the process lingers.
  *     It also gives the run an ending that names the shutdown, instead of
- *     `Claude Code exited with code -1`.
+ *     `Claude Code exited with code -1`. Every child in `assistProcs` gets the
+ *     same ladder, since no run's Stop path reaches it.
  *  3. **The loops are given their grace**, bounded, and return early the moment
  *     nothing is left in flight.
  *  4. **Whatever they did not finish is mopped up**, then anything still alive
@@ -12090,6 +12151,16 @@ export async function shutdownRuns(
     markRestartClosed.run(id);
   }
 
+  // The children that are not work cycles: a review, a resolution, a
+  // validation, a chat turn, a block's turn. `interruptRun` never reaches them,
+  // and before this nothing else here did either, so a server stopped from its
+  // terminal exited in a tenth of a second and left each one running on its
+  // own session, billed, with its row closed later by a boot that took the
+  // child to be gone. Only the ones alive now are waited on below; one spawned
+  // during the wait is the final sweep's.
+  const assists = [...assistProcs];
+  for (const child of assists) interruptAssistChild(child);
+
   // Waits for the children to go *and* for the loops behind them to write what
   // the cycle cost — that write is the whole point, and it happens a tick after
   // the child exits, not with it. Bounded by the runs that actually had a child
@@ -12098,7 +12169,9 @@ export async function shutdownRuns(
   // every shutdown as slow as the worst one. The mop-up below covers it.
   const signalled = new Set(live);
   const stillSettling = () =>
-    procs.size > 0 || cyclesInFlight().some((r) => signalled.has(r.id));
+    procs.size > 0 ||
+    assists.some((child) => assistProcs.has(child)) ||
+    cyclesInFlight().some((r) => signalled.has(r.id));
 
   const until = Date.now() + SHUTDOWN_GRACE_MS;
   while (Date.now() < until && stillSettling()) {

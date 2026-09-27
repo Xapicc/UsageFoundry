@@ -53,10 +53,12 @@ assert.equal(
 const {
   createRun,
   getRun,
+  killAllAgents,
   reconcileInterruptedCycles,
   reconcileOnBoot,
   runEvents,
   shutdownRuns,
+  trackAssistChild,
 } =
   require("./orchestrator") as typeof import("./orchestrator");
 const { db } = require("./db") as typeof import("./db");
@@ -409,5 +411,64 @@ describe("shutting down without owning the data directory", () => {
       eventsBefore,
       "no run_events row — and so no outbound webhook, which is fired from emit",
     );
+  });
+});
+
+/**
+ * A child that is not a work cycle, on the same way out.
+ *
+ * Reproduced against the built server before these cases existed: a review and
+ * a chat turn spawned `detached` under `killProcessGroup` both outlived a group
+ * `SIGINT` and a lone `SIGTERM`, because `killAllAgents` read only `procs` and
+ * nothing else on the path read anything. The server exited in a tenth of a
+ * second and said nothing. A fake handle rather than a real review, because
+ * `spawnAssist` needs a run with a committed diff and a CLI; what these pin is
+ * the registry's contract with the shutdown, which is the half that was missing.
+ */
+describe("shutting down with a child that is not a work cycle", () => {
+  it("interrupts it with SIGINT and waits for it to settle", async () => {
+    const signals: NodeJS.Signals[] = [];
+    let settled = false;
+    let untrack = () => {};
+    const child = {
+      pid: undefined as number | undefined,
+      kill(sig: NodeJS.Signals) {
+        signals.push(sig);
+        // A beat later, as a CLI that handles the signal and prints its result
+        // would, so returning before this is a shutdown that did not wait.
+        setTimeout(() => {
+          settled = true;
+          untrack();
+        }, 50);
+        return true;
+      },
+    };
+    untrack = trackAssistChild(child);
+
+    await shutdownRuns("SIGINT");
+
+    assert.equal(settled, true, "the shutdown returned before the child had settled");
+    assert.deepEqual(
+      signals,
+      ["SIGINT"],
+      "SIGINT first, and nothing harder for a child that settled on it",
+    );
+  });
+
+  it("is in the final sweep, which is all a process that may not write gets", () => {
+    const signals: NodeJS.Signals[] = [];
+    const untrack = trackAssistChild({
+      pid: undefined,
+      kill(sig) {
+        signals.push(sig);
+        return true;
+      },
+    });
+    try {
+      killAllAgents("SIGKILL");
+    } finally {
+      untrack();
+    }
+    assert.deepEqual(signals, ["SIGKILL"]);
   });
 });

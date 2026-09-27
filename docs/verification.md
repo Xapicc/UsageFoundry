@@ -1242,6 +1242,30 @@ is `docs/agent/testing.md`; interface defects and their classes are
   driven through the browser — the blocker's presence on the admission response
   was checked, and the sentence is a pure function of it.
 
+- **A review or a chat turn no longer outlives the server, 2026-09-27**: on
+  the built standalone bundle with a stub `CLAUDE_BIN` that records its pid and
+  sleeps, a review child and a chat-turn child under `killProcessGroup` each
+  led their own session and **survived** the server's exit, both to `SIGINT`
+  sent to the server's whole process group (what a terminal's Ctrl-C does) and
+  to `SIGTERM` sent to the server alone. With the setting off, the group
+  `SIGINT` reached the child directly. After `trackAssistChild` and the
+  shutdown's ladder, none of the four cases left anything alive. Caveat: the
+  stub exits on its first signal, so the `SIGTERM` and `SIGKILL` rungs were not
+  exercised, the real `claude` was not run, and `npm run dev` was not driven
+  (it cannot compile CSS here); dev runs the same `instrumentation.ts` handler.
+
+- **Next's own signal handler cuts the shutdown's grace short, 2026-09-27**,
+  Next 15.5.24: in the same harness the server exited 0.1s after the signal
+  and left the review row `running` and the chat row `thinking`, with or
+  without the fix above. `next/dist/server/lib/start-server.js` installs a
+  `SIGINT`/`SIGTERM` handler that calls `process.exit(0)` once the HTTP server
+  has closed unless `NEXT_MANUAL_SIG_HANDLE` is set, and nothing here sets it.
+  With `NEXT_MANUAL_SIG_HANDLE=1` in the server's environment the same
+  shutdown took 0.2s and both rows got their endings from the child's own
+  settle (`failed`, "produced no readable output (exit 143)"). Caveat: the
+  standalone bundle only, not `docker compose`, and no work cycle was in
+  flight, where the same race would skip `reconcileInterruptedCycles`.
+
 ### Isolation and landing
 
 - **Isolation, real repo with uncommitted work and a gitignored `.env`:** two
