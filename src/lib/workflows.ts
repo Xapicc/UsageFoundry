@@ -1973,6 +1973,47 @@ export function updateWorkflow(
 }
 
 /**
+ * The name a copy of `sourceName` is saved under: `"<name> copy"`, then
+ * `"<name> copy 2"`, …, the first that none of `takenNames` already holds.
+ *
+ * The name is bounded, and the suffix pushes a long one over the limit. The
+ * original is trimmed to make room rather than the copy refused — a duplicate
+ * that cannot be made because the name is long is a dead end on a button with
+ * one job — and it is trimmed *before* the candidate is tested, because a name
+ * cut after the test is never tested: an 80-character workflow's copy came out
+ * as the original's own name, and a 77-character one's second copy as its first.
+ */
+export function pickDuplicateName(
+  sourceName: string,
+  takenNames: readonly string[],
+): string {
+  // The unique index on `workflows.name` is `COLLATE NOCASE`, which folds the
+  // 26 ASCII capitals and nothing else. A wider fold only skips names the
+  // index would accept; a locale-dependent one (Turkish "I") would pass a name
+  // it refuses.
+  const fold = (name: string) =>
+    name.replace(/[A-Z]/g, (c) => c.toLowerCase());
+  const taken = new Set(takenNames.map(fold));
+  for (let n = 1; ; n++) {
+    const suffix = n === 1 ? " copy" : ` copy ${n}`;
+    const candidate =
+      trimForSuffix(sourceName, MAX_WORKFLOW_NAME - suffix.length) + suffix;
+    if (!taken.has(fold(candidate))) return candidate;
+  }
+}
+
+function trimForSuffix(name: string, room: number): string {
+  let cut = name.slice(0, room);
+  // Half a surrogate pair is written to SQLite as replacement characters, so
+  // the stored name would differ from the candidate tested here, and the next
+  // copy would pass the test and collide.
+  const last = cut.charCodeAt(cut.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  // A cut that lands just after a space would otherwise read "…x  copy".
+  return cut.trimEnd();
+}
+
+/**
  * A copy, named so it can be saved beside the original.
  *
  * Node ids are kept: they are unique within a graph and nothing outside one
@@ -1983,22 +2024,11 @@ export function duplicateWorkflow(id: string): Workflow | null {
   const source = getWorkflow(id);
   if (!source) return null;
 
-  const taken = new Set(
-    listWorkflows().map((w) => w.name.toLocaleLowerCase()),
-  );
-  let name = `${source.name} copy`;
-  for (let n = 2; taken.has(name.toLocaleLowerCase()); n++) {
-    name = `${source.name} copy ${n}`;
-  }
-  // The name is bounded, and "copy" pushes a long one over the limit. Trimmed
-  // from the original rather than refused: a duplicate that cannot be made
-  // because the name is long is a dead end on a button with one job.
-  if (name.length > MAX_WORKFLOW_NAME) {
-    name = name.slice(0, MAX_WORKFLOW_NAME);
-  }
-
   return createWorkflow({
-    name,
+    name: pickDuplicateName(
+      source.name,
+      listWorkflows().map((w) => w.name),
+    ),
     graph: source.graph,
     instanceBudget: source.instanceBudget,
   });
