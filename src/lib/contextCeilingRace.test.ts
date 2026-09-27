@@ -136,6 +136,48 @@ function grow(runId: string, by: number): void {
   );
 }
 
+/** The session `liveCycle` opened for a run. */
+function sessionOf(runId: string): string {
+  return `00000000-0000-4000-8000-00000000000${runId.split("-")[1]}`;
+}
+
+/**
+ * Append one turn billed at `tokens` of context to a run's transcript for
+ * `session`, starting that transcript if it is new.
+ *
+ * An absolute figure rather than `grow`'s offset from the ceiling, because the
+ * cases that use it are about a conversation that *shrank*, and 120,000 is
+ * easier to read than an offset of minus 90,000.
+ */
+function billTurn(runId: string, session: string, tokens: number): void {
+  const file = path.join(
+    root,
+    "claude",
+    "projects",
+    `proj-${runId.split("-")[1]}`,
+    `${session}.jsonl`,
+  );
+  fs.appendFileSync(
+    file,
+    (fs.existsSync(file) ? "\n" : "") +
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          id: `${session}-${tokens}`,
+          role: "assistant",
+          model: "claude-opus-5",
+          content: "hi",
+          usage: {
+            input_tokens: 1_000,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: tokens - 1_000,
+            output_tokens: 5,
+          },
+        },
+      }),
+  );
+}
+
 let root: string;
 let orchestrator: typeof import("./orchestrator");
 let pruningMod: typeof import("./contextPruning");
@@ -380,6 +422,80 @@ describe("the context ceiling's declines", () => {
         "operator-facing line and must not latch the record — a run climbing from " +
         "200k to 300k is re-decided the whole way up",
     );
+  });
+});
+
+describe("the ceiling's growth mark once the conversation has shrunk", () => {
+  /**
+   * `ceilingMeasuredAt` paces re-measurement by growth from where the ceiling
+   * last measured, and that mark used to outlive the conversation it measured.
+   * Declined at 210k and cut to 120k, a run crossed the ceiling again and was
+   * left alone until 235k — ticks at 205k, 220k and 234k measured nothing —
+   * carrying everything over 200k on every turn in between. Nothing threw and
+   * nothing was logged, because a skipped tick says nothing.
+   *
+   * Both cases hand the tick the conversation each path leaves behind and
+   * assert that its first crossing afterwards is acted on. They drive the tick
+   * alone, so what they pin is its reset on a reading below the mark; the clears
+   * at the cut sites themselves are inside `startRun`'s loop, which nothing here
+   * reaches. The first tick in each must decline, or the mark under test was
+   * never set and the rest passes for the wrong reason.
+   */
+
+  it("acts at the first crossing after a boundary cut, not 25,000 tokens past the old mark", async () => {
+    const id = liveCycle();
+    patch("ceilingCut", async () => TINY_CUT);
+    await orchestrator.checkContextCeilings();
+    assert.equal(decisions(id).length, 1, "the first crossing was never measured, so no mark was set");
+    assert.equal(interrupts().get(id), undefined, "the first crossing has to be declined");
+
+    // The next cycle, resumed on the conversation an in-place cut left: the
+    // same session, billed well under the ceiling.
+    contextWatches().set(id, { sessionId: () => sessionOf(id), iteration: () => 2 });
+    billTurn(id, sessionOf(id), 120_000);
+    await orchestrator.checkContextCeilings();
+
+    // Back over the line, but 5,000 tokens *under* the mark the decline left.
+    billTurn(id, sessionOf(id), 205_000);
+    patch("ceilingCut", async () => HUGE_CUT);
+    await orchestrator.checkContextCeilings();
+
+    const recorded = interrupts().get(id);
+    assert.ok(
+      recorded,
+      "the tick paced the cut conversation from the mark of the one before it, " +
+        "so the ceiling stays blind until 235k",
+    );
+    assert.equal(recorded.kind, "prune");
+    assert.match(recorded.reason, /205\.0k tokens/);
+  });
+
+  it("acts at a fresh conversation's first crossing, not 25,000 tokens past the old one's mark", async () => {
+    const id = liveCycle();
+    patch("ceilingCut", async () => TINY_CUT);
+    await orchestrator.checkContextCeilings();
+    assert.equal(decisions(id).length, 1, "the first crossing was never measured, so no mark was set");
+    assert.equal(interrupts().get(id), undefined, "the first crossing has to be declined");
+
+    // The next cycle opened fresh, as `startsFresh` leaves it: a new session
+    // under the same run, starting from the task again.
+    const fresh = `00000000-0000-4000-9000-00000000000${id.split("-")[1]}`;
+    contextWatches().set(id, { sessionId: () => fresh, iteration: () => 2 });
+    billTurn(id, fresh, 60_000);
+    await orchestrator.checkContextCeilings();
+
+    billTurn(id, fresh, 205_000);
+    patch("ceilingCut", async () => HUGE_CUT);
+    await orchestrator.checkContextCeilings();
+
+    const recorded = interrupts().get(id);
+    assert.ok(
+      recorded,
+      "the tick paced the fresh conversation from the mark of the one it replaced, " +
+        "so the ceiling stays blind until 235k",
+    );
+    assert.equal(recorded.kind, "prune");
+    assert.match(recorded.reason, /205\.0k tokens/);
   });
 });
 

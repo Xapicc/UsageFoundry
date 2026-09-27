@@ -95,6 +95,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - The ceiling asks the engine that would do the cutting, and asking the other one silenced the feature for two days.
 - A `treat` dry run is read in bytes and converted as a share, never through `BYTES_PER_TOKEN`.
 - The ceiling has its own watch map, not `liveGuards`.
+- The ceiling's growth mark dies with the conversation it measured.
 - A `prune` interrupt is the one kind that does not end the run
 
 ## [Context samples and the tick's cadence](run-lifecycle/context-samples.md)
