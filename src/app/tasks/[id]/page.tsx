@@ -201,8 +201,7 @@ export default function TaskDetail({
             That task is not on the board
           </div>
           <div className="mx-auto mt-1 max-w-[52ch]">
-            It was deleted, or this link names a task this install never held.
-            Deleting one affects nothing that is running.
+            It was deleted, or this install never held it.
           </div>
           <div className="mt-3">
             <ButtonLink href="/tasks" variant="secondary">
@@ -225,10 +224,6 @@ export default function TaskDetail({
             <Empty>
               <div className="font-medium text-ink">
                 The task could not be read
-              </div>
-              <div className="mx-auto mt-1 max-w-[52ch]">
-                This is a failed request rather than a deleted task — nothing
-                here says whether it is still on the board.
               </div>
               <ButtonRow className="mt-3 justify-center">
                 <Button variant="secondary" onClick={() => void load()}>
