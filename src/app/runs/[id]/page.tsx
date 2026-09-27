@@ -334,7 +334,7 @@ function describeRun(
       return {
         tone: "warn",
         headline: "Refused to start",
-        detail: "It never started a work cycle, so it has spent nothing.",
+        detail: "It has spent nothing.",
       };
 
     case "failed":
@@ -1599,7 +1599,7 @@ export default function RunDetail({
                           // refused it, and a window percentage is not on this form.
                           "Added to its original task; its guards are checked again first, so raise whatever refused it or it stops again"
                         : !run.session_id
-                          ? "Starts the original task again with this added to the end"
+                          ? "Added to the end of the original task"
                           : saidDone
                             ? "Blank asks it to re-check the original task, run the tests and fix what fails"
                             : "Blank just tells it to continue"}
