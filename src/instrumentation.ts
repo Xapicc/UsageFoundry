@@ -62,6 +62,15 @@ export async function register() {
       process.exit(1);
     }
 
+    // Set for Next and already read by it: `start-server.js` asks once, before
+    // it loads the app, and nothing else in Next reads it. It is deleted because
+    // every child copies this environment, and inherited it would switch Next's
+    // signal handling off in any Next server an agent starts in its own
+    // repository too, where a listener of that project's own that does not
+    // exit would then outlive the agent's `kill`. The handler at the end of
+    // this function is why the server sets it.
+    delete process.env.NEXT_MANUAL_SIG_HANDLE;
+
     // What the stacks export, into this process's environment, before anything
     // spawns a child.
     //
@@ -265,33 +274,62 @@ export async function register() {
     // unreachable from here — along with the two columns saying a cycle is open.
     // `shutdownRuns` is bounded (`SHUTDOWN_GRACE_MS`) and returns as soon as
     // nothing is left in flight, so an idle server still exits at once.
-    for (const sig of ["SIGINT", "SIGTERM"] as const) {
-      process.once(sig, () => {
-        void (async () => {
-          try {
-            const { closed, recovered } = await shutdownRuns(sig);
-            if (closed > 0) {
-              console.warn(
-                `[usagefoundry] Stopped ${closed} run(s) on ${sig}; recovered the ` +
-                  `spend of ${recovered} interrupted work cycle(s). They are on the ` +
-                  "runs page, and can be picked up together.",
-              );
-            }
-          } catch (err) {
-            // A shutdown that cannot account for its cycles still has to be a
-            // shutdown. Reported rather than swallowed, because the alternative
-            // is a container that hangs until Docker's grace period kills it.
-            console.error("[usagefoundry] Shutdown reconciliation failed:", err);
-          } finally {
-            // Hand the directory back explicitly. Without this the next boot —
-            // which for `restart: unless-stopped` is immediate — finds a lock
-            // that is still inside its stale window and has to watch a dead pid
-            // for four seconds before it may reconcile anything.
-            releaseDataDir();
-            process.exit(0);
+    //
+    // None of that happens unless `NEXT_MANUAL_SIG_HANDLE` is set where the
+    // server starts (the Dockerfile and `npm start`). Without it Next's own
+    // handler closes the HTTP server and calls `process.exit(0)` about a tenth
+    // of a second after the signal, which is before any of the grace above.
+    //
+    // With it set, this is the only listener, so a repeated signal has to be
+    // absorbed here: `once` left the second one to Node's default action, which
+    // killed the server mid-grace with 143 and left the cycle unreconciled. A
+    // second Ctrl-C from somebody watching a server that has not exited yet is
+    // the ordinary way to send one, and a SIGINT followed by a SIGTERM also
+    // used to start a second `shutdownRuns` beside the first. SIGKILL is still
+    // the way to give up on the wait.
+    let shuttingDownOn: NodeJS.Signals | null = null;
+    const onSignal = (sig: NodeJS.Signals) => {
+      if (shuttingDownOn) {
+        console.warn(
+          `[usagefoundry] ${sig} ignored: already shutting down on ` +
+            `${shuttingDownOn}, which ends by itself once the work cycles in ` +
+            "flight have settled. SIGKILL ends it now, and loses what it is " +
+            "still recovering.",
+        );
+        return;
+      }
+      shuttingDownOn = sig;
+      void (async () => {
+        try {
+          const { closed, recovered } = await shutdownRuns(sig);
+          if (closed > 0) {
+            console.warn(
+              `[usagefoundry] Stopped ${closed} run(s) on ${sig}; recovered the ` +
+                `spend of ${recovered} interrupted work cycle(s). They are on the ` +
+                "runs page, and can be picked up together.",
+            );
           }
-        })();
-      });
-    }
+        } catch (err) {
+          // A shutdown that cannot account for its cycles still has to be a
+          // shutdown. Reported rather than swallowed, because the alternative
+          // is a container that hangs until Docker's grace period kills it.
+          console.error("[usagefoundry] Shutdown reconciliation failed:", err);
+        } finally {
+          // Hand the directory back explicitly. Without this the next boot —
+          // which for `restart: unless-stopped` is immediate — finds a lock
+          // that is still inside its stale window and has to watch a dead pid
+          // for four seconds before it may reconcile anything.
+          //
+          // The exit is this handler's alone now that Next's is off. Nothing
+          // above it may throw past it: Next's `unhandledRejection` listener
+          // only logs, so a throw here would leave a server that ignores every
+          // further signal.
+          releaseDataDir();
+          process.exit(0);
+        }
+      })();
+    };
+    process.on("SIGINT", onSignal);
+    process.on("SIGTERM", onSignal);
   }
 }
