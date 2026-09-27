@@ -87,6 +87,20 @@ restates the status it is not changing is a no-op rather than a refusal;
 `updateTask` calls the rule only when the status actually differs, which is what
 keeps a patch from applying a move's effects when nothing moved.
 
+**A write that changes nothing is not written, so `updated_at` does not move.**
+That column means the task moved — `idx_tasks_board` and `listTasks` both sort on
+it — and the write is what stamps it, so `updateTask` compares the row it built
+against the one it read and returns the stored row untouched when no column
+differs. The case that needed it is `claimTasksForRun`, which fires again on
+every pick-up, resume and restart of a run: each re-claim by the holder, and each
+no-op against a task another run holds, used to lift the task to the top of its
+priority group in Claimed, the same false signal a comment or an edge is refused
+the right to send. A `PATCH` restating a value is the same no-op, and a `PATCH`
+body that does not parse is a 400 rather than being read as the empty patch,
+which answers 200. `WRITTEN_TASK_FIELDS` is the list compared, and a column
+added to the `UPDATE` without joining it is skipped whenever it is the only
+thing a patch changes.
+
 **A move's effects are the other half of the rule, and re-opening deliberately
 clears both run columns.** Into `claimed`, the claim names its run and `closed_at`
 is cleared. Into `done`, `completed_by_run_id` is the acting run, or null when the

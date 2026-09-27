@@ -7,6 +7,7 @@ import {
 } from "../../../../../lib/taskDeps";
 import { getTask } from "../../../../../lib/tasks";
 import { auditMutation } from "../../../../../lib/requestLog";
+import { readJsonObject } from "../../../../../lib/http";
 import type { TaskDepsDTO, TaskDepsReplyDTO } from "../../../../../lib/apiTypes";
 
 export const runtime = "nodejs";
@@ -116,7 +117,9 @@ export async function GET(req: Request, ctx: Ctx) {
  */
 async function postHandler(req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
-  const raw = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const read = await readJsonObject(req);
+  if (!read.ok) return read.response;
+  const raw = read.body;
 
   const dependsOn = typeof raw.dependsOn === "string" ? raw.dependsOn.trim() : "";
   if (!dependsOn) {
@@ -151,7 +154,9 @@ async function postHandler(req: Request, ctx: Ctx) {
  */
 async function deleteHandler(req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
-  const raw = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const read = await readJsonObject(req);
+  if (!read.ok) return read.response;
+  const raw = read.body;
 
   const dependsOn = typeof raw.dependsOn === "string" ? raw.dependsOn.trim() : "";
   if (!dependsOn) {

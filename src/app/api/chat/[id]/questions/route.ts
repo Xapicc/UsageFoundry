@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { answerChatQuestions, getChat } from "@/lib/chat";
+// Relative, not "@/…", so `jsonObjectBody.test.ts` can load this handler —
+// `../route.ts` gives the reason.
+import { answerChatQuestions, getChat } from "../../../../../lib/chat";
+import { readJsonObject } from "../../../../../lib/http";
 import { chatDTO } from "../../dto";
 import { auditMutation } from "../../../../../lib/requestLog";
 
@@ -32,7 +35,9 @@ type Ctx = { params: Promise<{ id: string }> };
  */
 async function postHandler(req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const read = await readJsonObject(req);
+  if (!read.ok) return read.response;
+  const body = read.body;
 
   // Read off the wire in the shape the page holds it: one entry per question
   // the operator touched. Anything unreadable becomes an empty list, which is

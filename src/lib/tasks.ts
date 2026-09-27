@@ -1526,6 +1526,25 @@ export interface TaskPatch {
 }
 
 /**
+ * Every column `updateTask`'s `UPDATE` sets besides `updated_at`. A column
+ * added to that statement and not here is skipped whenever it is the only
+ * thing a patch changes.
+ */
+const WRITTEN_TASK_FIELDS = [
+  "title",
+  "body",
+  "status",
+  "priority",
+  "mountId",
+  "folder",
+  "claimedByRunId",
+  "completedByRunId",
+  "parentTaskId",
+  "operatorOnly",
+  "closedAt",
+] as const satisfies readonly (keyof Task)[];
+
+/**
  * Edit a task, and move it if the patch says so.
  *
  * One writer rather than an `updateTask` beside a `moveTask`, because the two
@@ -1647,6 +1666,14 @@ export function updateTask(
       next.completedByRunId = null;
       next.closedAt = null;
     }
+  }
+
+  // A patch that changes nothing is not written, because the write is what
+  // stamps `updated_at` and that column is the board's record that the task
+  // moved. `claimTasksForRun` re-claims on every segment of a run, and each
+  // re-claim used to lift every task it holds to the top of Claimed.
+  if (!WRITTEN_TASK_FIELDS.some((field) => next[field] !== task[field])) {
+    return { ok: true, task };
   }
 
   db()

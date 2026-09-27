@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 
-import { acceptsGzip, jsonNoStore, shouldGzip } from "./http";
+import { acceptsGzip, jsonNoStore, readJsonObject, shouldGzip } from "./http";
 
 /**
  * Covers `jsonNoStore`, and the wiring of the one page that has nothing but a
@@ -170,5 +170,45 @@ describe("acceptsGzip reads the header the way RFC 9110 asks", () => {
     // version of this that produces an unreadable page.
     assert.equal(acceptsGzip("gzip;q=banana"), false);
     assert.equal(acceptsGzip("gzip;q="), false);
+  });
+});
+
+describe("readJsonObject", () => {
+  const read = (body: string) =>
+    readJsonObject(new Request("http://localhost/api/x", { method: "POST", body }));
+
+  it("hands back an object as it arrived", async () => {
+    const result = await read('{"message":"hi"}');
+    assert.deepEqual(result.ok && result.body, { message: "hi" });
+  });
+
+  // `{}` is a real request on some routes — "change nothing" on a task PATCH —
+  // so a body that does not parse must not be read as one.
+  it("refuses a body that does not parse rather than reading it as {}", async () => {
+    const result = await read("{not json");
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(result.response.status, 400);
+    assert.match(
+      String(((await result.response.json()) as { error: string }).error),
+      /has to be a JSON object; this one did not parse/,
+    );
+  });
+
+  it("refuses every JSON value that is not an object, naming what it got", async () => {
+    for (const [body, seen] of [
+      ["null", "null"],
+      ["[]", "an array"],
+      ["5", "a number"],
+      ['"x"', "a string"],
+      ["true", "a boolean"],
+    ]) {
+      const result = await read(body);
+      assert.equal(result.ok, false, body);
+      if (result.ok) continue;
+      assert.equal(result.response.status, 400, body);
+      const { error } = (await result.response.json()) as { error: string };
+      assert.equal(error, `The body has to be a JSON object; got ${seen}.`);
+    }
   });
 });
