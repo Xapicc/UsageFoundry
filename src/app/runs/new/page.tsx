@@ -56,7 +56,11 @@ import {
   budgetFromForm,
   modelFromForm,
 } from "./budgetPayload";
-import { limitProblems, runFormProblems } from "./formProblems";
+import {
+  limitProblems,
+  runFormProblems,
+  windowGuardUnreadable,
+} from "./formProblems";
 
 /** Everything a template or an earlier run supplies to this form. */
 interface FormSeed {
@@ -649,8 +653,8 @@ export default function NewRunPage() {
       const loaded = res.ok ? res.data.settings : undefined;
       if (!loaded) {
         // A 200 with no `settings` in it is the same failure by a third door:
-        // `setSettings(undefined)` reads as "no ceiling configured" everywhere
-        // else on this form as well.
+        // `setSettings(undefined)` leaves every other setting this form reads
+        // at its fallback as well.
         setSettingsError(
           res.ok
             ? pollFailureMessage(200, "no settings in the answer")
@@ -837,10 +841,14 @@ export default function NewRunPage() {
   const parked = isolated ? null : (selectedFolder?.parkedRunId ?? null);
   const rootParked = folder === "" ? (activeMount?.parkedRunId ?? null) : null;
 
-  const weeklyCeilingSet =
-    settings?.weeklyTokenLimit != null || settings?.weeklyCostLimit != null;
-  const sessionCeilingSet =
-    settings?.sessionTokenLimit != null || settings?.sessionCostLimit != null;
+  const sessionUnreadable = windowGuardUnreadable(
+    maxSessionFraction,
+    usage?.snapshot.session ?? null,
+  );
+  const weeklyUnreadable = windowGuardUnreadable(
+    maxWeeklyFraction,
+    usage?.snapshot.weekly ?? null,
+  );
   const weeklyRolling = settings != null && settings.weeklyAnchor == null;
   const live = enforcement !== "between-cycles";
   const resuming = enforcement === "live-resume";
@@ -2259,11 +2267,12 @@ export default function NewRunPage() {
               description={
                 problemFor("sess") ? (
                   <Toned tone="danger">{problemFor("sess")?.message}</Toned>
-                ) : maxSessionFraction && !sessionCeilingSet ? (
+                ) : sessionUnreadable ? (
                   <Toned tone="warn">
-                    No 5-hour ceiling is set, so this guard has nothing to
-                    measure against and the run is refused before its first
-                    cycle — <Link href="/settings">set one</Link>
+                    Nothing to measure this guard against: Anthropic&rsquo;s
+                    own reading is unavailable and no 5-hour ceiling is set, so
+                    the run is refused before its first cycle —{" "}
+                    <Link href="/settings">set a ceiling</Link>
                   </Toned>
                 ) : (
                   <>
@@ -2312,11 +2321,12 @@ export default function NewRunPage() {
               description={
                 problemFor("wk") ? (
                   <Toned tone="danger">{problemFor("wk")?.message}</Toned>
-                ) : maxWeeklyFraction && !weeklyCeilingSet ? (
+                ) : weeklyUnreadable ? (
                   <Toned tone="warn">
-                    No weekly ceiling is set, so this guard has nothing to
-                    measure against and the run is refused before its first
-                    cycle — <Link href="/settings">set one</Link>
+                    Nothing to measure this guard against: Anthropic&rsquo;s
+                    own reading is unavailable and no weekly ceiling is set, so
+                    the run is refused before its first cycle —{" "}
+                    <Link href="/settings">set a ceiling</Link>
                   </Toned>
                 ) : (
                   <>

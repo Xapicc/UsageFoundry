@@ -1,9 +1,12 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
+import { readWindowGuard } from "../../../lib/budget";
+import type { WindowState } from "../../../lib/windows";
 import {
   type RunFormState,
   limitProblems,
   runFormProblems,
+  windowGuardUnreadable,
 } from "./formProblems";
 
 /**
@@ -216,4 +219,26 @@ test("which refusals wait for a blur and which do not", () => {
       ["wk", true],
     ],
   );
+});
+
+test("a window guard is called unreadable exactly when the door would refuse it", () => {
+  // The form used to ask whether a ceiling was configured, and on a stock
+  // install none is: the fraction is Anthropic's own percentage, so the guard
+  // worked while the form said the run would be refused.
+  const providerReading = { fraction: 0.42, guardFraction: 0.42 };
+  const noReading = { fraction: null, guardFraction: null };
+  assert.equal(windowGuardUnreadable("80", providerReading), false);
+  assert.equal(windowGuardUnreadable("80", noReading), true);
+  for (const w of [providerReading, noReading]) {
+    assert.equal(
+      windowGuardUnreadable("80", w),
+      // `readWindowGuard` reads `fraction` and `guardFraction` and nothing else
+      // on the window, so the rest of a `WindowState` would be noise here.
+      readWindowGuard(w as WindowState, 0.8).state === "no-ceiling",
+    );
+  }
+
+  // A guard left blank is off, and a snapshot still loading is not a no.
+  assert.equal(windowGuardUnreadable("", noReading), false);
+  assert.equal(windowGuardUnreadable("80", null), false);
 });

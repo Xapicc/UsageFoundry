@@ -182,3 +182,22 @@ export function limitProblems(v: LimitState): Problem[] {
   }
   return problems;
 }
+
+/**
+ * Whether a window guard typed on this form will be refused at the door for
+ * having nothing to read.
+ *
+ * The door's own test rather than a guess at it: `readWindowGuard` calls a
+ * window unreadable only when its `fraction` is null, and that fraction is
+ * Anthropic's own percentage whenever it answered — so on a stock install,
+ * with no ceiling set, the guard is readable and enforced. Keyed on a
+ * configured ceiling instead, the form told the operator a working guard would
+ * refuse their run. A snapshot that has not arrived is not a no: the form
+ * cannot know yet, so it says nothing.
+ */
+export function windowGuardUnreadable(
+  guard: string,
+  window: { fraction: number | null } | null,
+): boolean {
+  return guard !== "" && window !== null && window.fraction === null;
+}
