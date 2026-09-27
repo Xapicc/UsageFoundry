@@ -4246,6 +4246,11 @@ export interface TaskDTO {
   completedByRunId: string | null;
   parentTaskId: string | null;
   /**
+   * Work no run in this container can do, left for the operator. Not a status:
+   * an operator-only task is still `open`, and no run may claim it.
+   */
+  operatorOnly: boolean;
+  /**
    * Runs started *for* this task, newest first, capped at `MAX_TASK_RUN_LINKS`.
    *
    * The fourth relationship between a task and a run and the only one that is

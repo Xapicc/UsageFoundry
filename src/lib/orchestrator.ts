@@ -8582,8 +8582,15 @@ async function reconcileKilledCycle(
  * A task already `claimed` by this same run is `from === to`, which the rule
  * allows and which changes nothing — the shape a resumed or picked-up run takes,
  * since this fires again on every segment.
+ *
+ * A task marked operator-only is refused by the same rule and takes the same
+ * path: a log line naming the flag, and the run carries on with the rest.
+ *
+ * Exported for `tasks.test.ts`, which pins that last sentence against a seeded
+ * run row rather than by driving a run: the refusal is the board's and the
+ * direction it falls is this function's, and neither needs a spawn to show.
  */
-function claimTasksForRun(id: string): void {
+export function claimTasksForRun(id: string): void {
   for (const link of tasksLinkedToRun(id)) claimTaskForRun(id, link);
 }
 

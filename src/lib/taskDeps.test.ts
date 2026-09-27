@@ -222,6 +222,7 @@ function seedTask(title: string): string {
     folder: null,
     createdByRunId: null,
     parentTaskId: null,
+    operatorOnly: false,
   });
   assert.ok(created.ok, "seed task should be created");
   return created.task.id;

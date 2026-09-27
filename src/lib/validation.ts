@@ -814,8 +814,9 @@ export function validationPushback(o: {
     "",
     "The task is still open and still yours. Either finish what is missing and",
     "commit it — work left uncommitted is not on the branch and does not count —",
-    "and then call complete_task again, or, if you believe the reading is wrong",
-    "or the task cannot be finished, say so in your reply rather than closing it.",
+    "and then call complete_task again. If you believe the reading is wrong,",
+    "say so in your reply rather than closing it; if the task cannot be",
+    "finished, call release_task with what stopped you.",
   ]
     .filter((line): line is string => line !== null)
     .join("\n");
