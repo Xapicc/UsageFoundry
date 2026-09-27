@@ -78,6 +78,15 @@
   the other was not. Caveat: no child was spawned; the rows were written by
   hand, not left by a real validation.
 
+- **The open-tasks chart, 2026-09-27**, standalone build of `7b1e1af` on a
+  scratch `DATA_DIR`, with 160 rows over twenty days served by intercepting
+  `GET /api/tasks` in Chromium, since the API cannot backdate `createdAt`:
+  the filter row stayed 96px tall at 2056px (1758px wide) and at 1280px, the
+  chart sat at its right end, choosing a project redrew the line (84→75 on
+  every project, 38→44 on one), and light, dark and ascii rendered with no
+  console error or sideways scroll; at 390px it wrapped under the selects.
+  Caveat: the rows were made up, so no real board's history has been drawn.
+
 ## Not yet verified by hand
 
 - **No model has called the board tools over stdio**; that needs a billed run.
