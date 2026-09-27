@@ -180,20 +180,17 @@ export function RepoSpendCard() {
           <p className="mt-3 max-w-[72ch] text-xs text-ink-muted">
             <strong>A floor, not a total.</strong> {fmtUSD(total)} across{" "}
             {data.totals.runCount} run
-            {data.totals.runCount === 1 ? "" : "s"} created in this span, as each
-            work cycle reported it — a cycle still in flight has reported nothing
-            and counts as zero for its whole duration.
+            {data.totals.runCount === 1 ? "" : "s"} created in this span; a work
+            cycle still in flight counts as zero until it reports.
             {estimated > 0 && (
               <>
                 {" "}
-                A further {fmtUSD(estimated)} is reconciled from transcripts for
-                cycles killed before they reported, kept in its own column
-                because it is an estimate.
+                A further {fmtUSD(estimated)} is estimated from transcripts for
+                cycles killed before they reported.
               </>
             )}{" "}
-            This is not the same reading as the window meters above and must not
-            be added to them: those cover every Claude Code transcript on this
-            machine, where this covers runs this app started.
+            Never add this to the window meters above, which cover every Claude
+            Code transcript on this machine.
           </p>
         </>
       )}
