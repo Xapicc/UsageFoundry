@@ -270,9 +270,8 @@ function stepNote(item: MergeQueueItemDTO, ahead: number): string | null {
     return `Waiting behind ${ahead} branch${ahead === 1 ? "" : "es"}`;
   }
   if (item.message) return item.message;
-  if (item.status === "landing") return "Merging it into its target now";
   if (item.status === "resolving")
-    return "Claude is resolving the conflict, on this branch, in a throwaway checkout";
+    return "Claude is resolving the conflict on this branch, in a throwaway checkout";
   return null;
 }
 
@@ -524,11 +523,6 @@ function QueuePanel({
 
       <p className="mb-3 text-sm text-ink-muted" aria-live="polite">
         {queueSummary(items)}
-        {active && (
-          <span className="text-ink-muted">
-            {" — "}one at a time, each re-checked against git at its own turn
-          </span>
-        )}
       </p>
 
       {queue.batches.map((batch) => (
@@ -618,8 +612,8 @@ function CheckoutStores({ stores }: { stores: CheckoutStoreDTO[] }) {
               ? `${exhausted[0].repoLabel} has no checkout left.`
               : `${exhausted.length} repositories have no checkout left.`}
           </strong>{" "}
-          An isolated run there is refused rather than started in your own
-          checkout. Commit or purge what the checkouts below hold to free them.
+          An isolated run there is refused, not started in your own checkout.
+          Commit or purge the checkouts below to free them.
         </Notice>
       )}
       <TableWrap>
@@ -1002,12 +996,6 @@ export default function Branches() {
     <>
       <div className="mb-6">
         <h1 className="mb-1 text-xl font-semibold tracking-tight">Branches</h1>
-        <p className="max-w-[68ch] text-ink-muted">
-          One row per branch, listed against the last run on it. Pick several to
-          land them one after another, or open a run to preview its merge first
-          — each landing changes the base for the one behind it, so they go
-          through in the order you choose them.
-        </p>
       </div>
 
       {/* Both regions are in the DOM whether or not they hold anything, so the
@@ -1158,7 +1146,7 @@ export default function Branches() {
             </div>
             <div className="mx-auto mt-1 max-w-[52ch] text-ink-muted">
               Their repositories are no longer inside a configured workspace
-              mount, so nothing here can look at them.
+              mount.
             </div>
           </Empty>
         ) : branches.length === 0 ? (
@@ -1167,9 +1155,8 @@ export default function Branches() {
               {repo ? "No branches in this repository" : "No branches yet"}
             </div>
             <div className="mx-auto mt-1 max-w-[52ch] text-ink-muted">
-              A run given its own checkout puts its work on a branch, and it
-              appears here for you to land. A run that works directly in your
-              folder never makes one.
+              A run given its own checkout puts its work on a branch here; a run
+              in your own folder makes none.
             </div>
             <div className="mt-3">
               <Link href="/runs/new">Start a run</Link>
@@ -1378,8 +1365,8 @@ export default function Branches() {
           ? "Each is squashed into one commit. "
           : "Each is merged, keeping its commits. "}
         A branch that conflicts is reconciled by Claude on that branch, in a
-        throwaway checkout — billed, unattended, and against the same 5-hour
-        window your runs use. Your own checkout is not involved.
+        throwaway checkout: billed, unattended, and against the same 5-hour
+        window your runs use.
       </Sheet>
     </>
   );
