@@ -8704,6 +8704,24 @@ export async function startRun(id: string): Promise<void> {
     .run(claimedAt, claimedAt, id);
   if (claim.changes !== 1) return;
 
+  // A live guard's verdict is about a cycle in flight, and this loop has none
+  // yet, so one found here was written for a loop that has already ended —
+  // after that loop's `finally` cleared the map, with no loop left to consume
+  // it and nothing else that deletes it. Left standing, the pre-scan below
+  // applies it and a run just picked up, perhaps with the very limit it names
+  // raised, ends having spawned nothing under a reason that no longer holds.
+  // Only the guard kind: an operator's stop against a `running` row is a
+  // request about this run whenever it landed, and `liveGuardTick`'s identity
+  // test is the first line against the stale verdict; this is the second.
+  const staleGuard = interrupts.get(id);
+  if (staleGuard?.kind === "guard") {
+    interrupts.delete(id);
+    log(
+      id,
+      `Discarded a live budget verdict recorded after this run's last work cycle had ended: ${staleGuard.reason}`,
+    );
+  }
+
   const startedAt = run.started_at ?? claimedAt;
   /**
    * What the UPDATE above just wrote. Hydrated from the row for the same reason
@@ -10640,8 +10658,12 @@ function stopLiveTicker(): void {
  * call, and a row a minute for three days across several runs is tens of
  * thousands of rows plus a proportionally larger stream replay. Only an actual
  * interrupt is worth recording.
+ *
+ * Exported for `orchestrator.test.ts` and for nothing else, on
+ * `checkContextCeilings`' grounds: its only caller is a `setInterval` a spawn
+ * starts, so the alternative to the export is a billed cycle.
  */
-async function liveGuardTick(): Promise<void> {
+export async function liveGuardTick(): Promise<void> {
   // A scan slower than the interval must not stack ticks on top of each other.
   if (timers.ticking) return;
   timers.ticking = true;
@@ -10673,8 +10695,16 @@ async function liveGuardTick(): Promise<void> {
     const now = Date.now();
 
     for (const [id, guard] of pending) {
-      // An operator stop may have landed while the scan was running.
-      if (interrupts.has(id)) continue;
+      // An operator stop may have landed while the scan was running — and so
+      // may the end of the cycle this guard was registered for, since the scan
+      // is coalesced and can take seconds. Identity rather than `has`,
+      // `checkContextCeilings`' test: the entry is re-set per cycle. A stale
+      // guard's `progress()` still reads the loop's live `spentUSD`, which by
+      // now includes that cycle's `result`, and adds telemetry since the same
+      // cycle's start on top — that cycle counted twice, and a run under its
+      // limit stopped for a figure it never spent. With no child left to
+      // signal, the stop would land on the next cycle, or on the next pick-up.
+      if (liveGuards.get(id) !== guard || interrupts.has(id)) continue;
 
       const verdict = evaluateBudget(guard.policy, snapshot, guard.progress(), now);
       if (verdict.allowed) continue;
