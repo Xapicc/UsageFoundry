@@ -1054,7 +1054,7 @@ export default function RunsPage() {
         ) : recent.length === 0 ? (
           <Card emphasis="quiet">
             <Empty>
-              <div className="font-medium text-ink">Nothing finished today</div>
+              <div className="font-medium text-ink">Nothing finished</div>
             </Empty>
           </Card>
         ) : (
