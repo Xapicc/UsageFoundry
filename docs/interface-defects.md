@@ -212,3 +212,19 @@ nothing about it.
   with a `uf-state-edge` hook that reverts the left colour to the layers, as
   `.uf-notice` keeps its bar, and a clip that takes the frame's own left column
   off that host, since its 1px inset put the stroke inside the 3px band.
+- **2026-09-27, `abff136`, class A.** Under the ascii skin the run inspector was
+  not sticky at all. `.uf-framed`'s unlayered `position: relative` outranked
+  the card's layered `lg:sticky`, so on a long tab the card scrolled away with
+  the page, and its `lg:top-4` became a 16px relative nudge that hung it past
+  the foot of its own row. The cascade decides it from the source alone. Found
+  by reading the card's computed `position` in Chromium while measuring its cap;
+  fixed by moving that one declaration into `@layer components`, so a host
+  that states a position keeps it. No other framed host states one.
+- **2026-09-27, `3a50d6a`, class D.** The run inspector's cap was the pane less
+  2rem, measured from the pane's top, while the card loads a heading further
+  down: at 1920x963 and 1280x800 its last 77px sat below the window, it
+  stretched the log with it so the log tab scrolled 125px for nothing else,
+  and leaving out the pane's `pb-12` put its top 16px under the toolbar at the
+  foot of every scroll. Found with `getBoundingClientRect()` read after load
+  without scrolling; fixed by publishing the split's measured top as
+  `--split-top` and capping at the pane less that less `3rem`.

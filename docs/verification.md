@@ -3188,6 +3188,33 @@ fixed.
   engine, and the run rows are crafted rather than written by the
   orchestrator, so a field combination no real run reaches may be among them.
 
+- **The run inspector's cap against the window, 2026-09-27**, standalone
+  server, Chromium at **1920x963 and 1280x800, DPR 2**, both skins, two seeded
+  runs (a 30-line prompt and a one-line one; both inspectors outgrow any cap
+  here), each on the log tab and with a 2400px block appended to the pane
+  column to stand in for a long tab. `getBoundingClientRect()` read after load
+  without scrolling, then with the pane scrolled to where the card sticks,
+  then at the foot. Before is `887670b`, after `3a50d6a`. Before, standard skin:
+  card 161 to 1040 at 1920x963 and 161 to 877 at 1280x800, so **77px** below
+  the window at both; the log tab scrolled 125px for nothing but that; at the
+  foot of every scroll the card's top was at y=36 against a pane edge at 52.
+  Before, ascii: computed `position` **relative, not sticky**, the card 16px
+  below its own split (177 on a split at 161), so **93px** below the window
+  and the frame 99.5px, and on a long tab it scrolled off with the page. After,
+  both skins alike, `--split-top` 109px: card 161 to 915 at 1920x963 and 161 to
+  752 at 1280x800, ascii frame bottom 921.5 and 758.5; the log tab scrolls
+  0px; on a long tab the card sticks at 68 and stays there to the foot of the
+  scroll. What it cost: stuck on a long tab the card keeps its load height,
+  754px where it had 879 (591 where it had 716), so 141px stand empty below
+  it. Gate on `3a50d6a`: `npm run typecheck` exit 0; `npm test` **3033 pass,
+  0 fail**; `npm run smoke-pages` against `.next/standalone/server.js`,
+  **92/92**. A lede lengthened in the DOM and then rewrapped to three lines by
+  a resize to 1100px (ascii) re-measured to 128.5px, and the card still ended
+  at 915 with the log tab at 0px of scroll. Caveat: one engine; below `lg`
+  nothing was measured before and after, and is claimed unchanged only because
+  both edits apply above it; a notice appearing above the split was reasoned
+  about and not seen.
+
 ## Not yet verified by hand
 
 - **The graph at a size no hand-drawn ordering reaches.** Every reading above is
