@@ -1486,6 +1486,37 @@ is `docs/agent/testing.md`; interface defects and their classes are
   deny list is the CLI's and not this app's, and nothing here was changed for
   it.
 
+- **Which deny-listed `~/.claude` files the CLI replaces by rename, and whether
+  that widens anything, read off CLI 2.1.280 on 2026-09-27.** By rename, so the
+  bind strips: the global config (`.config.json` at its legacy path, else
+  `.claude.json`) and `settings.json` through `vv` (temp file beside the target,
+  or in `.cc-writes` for `settings.json`), and `.credentials.json` and
+  `policy-limits.json.stamp.json` through `cQ` (byte 190881839). In place, so the
+  bind holds: `remote-settings.json` (`open(..., "w")`, byte ~203301020),
+  `policy-limits.json` (`writeFile`, byte ~203076400) and the `.signature.json`
+  sidecars; both halves of the earlier reading stand. Live: a scratch home's
+  `.config.json` changed inode (53037914 to 53037957) across its first
+  `claude -p`, with nine "written atomically" debug lines, and a nested
+  `bwrap --ro-bind` on it refused a write until that rename and allowed it after;
+  a second run rewrote nothing. Only `settings.json` would widen a later cycle,
+  being the honoured source for `sandbox.filesystem.allowWrite` and permissions
+  (`orchestrator.ts:5497-5507`), and neither run rewrote it: its inode held
+  across both. The global config does get rewritten, but the eleven
+  permission-rule sources (byte 193336360) do not include it, so the legacy
+  `projects[cwd].allowedTools` it still parses (byte 192721656) grants nothing;
+  what its lapse opens is an `mcpServers` entry a later work cycle would load,
+  since that argv carries no `--strict-mcp-config` (`cycleInvocation.ts:1188`).
+  `.credentials.json`'s lapse exposes a read, not a widening. Against the open
+  "No sandbox has ever honoured the per-run write set": with
+  `UF_LOCK_CLAUDE_HOME` unset `settings.json` is agent-writable anyway, so the
+  lapse adds no route; with it set the directory is root-owned 0750
+  (`docker-entrypoint.sh:705-707`), no rename into it can succeed from the
+  agent's uid, and `vv` falls back to writing in place, which keeps the bind.
+  Caveat: both runs were unauthenticated and stopped at "Not logged in", so an
+  authenticated cycle's writes were not watched, and the locked half is read
+  from the writer rather than run, like the lock itself.
+  `docs/agent/security.md` states no guarantee that these binds hold.
+
 - **`--agent` / `--agents`, seven probes on CLI 2.1.226:** `--agent` selects a
   definition passed on the same argv, exits 1 on an unregistrable one, keeps
   `--append-system-prompt`, survives `--resume`, and yields to the run's
@@ -4218,6 +4249,20 @@ measurement under *Verified* and cut the item down to what is still open.
   count should reach zero. Read the other two messages separately: if `Can't find
   source path` and `Can't get type of source` survive on these names, something
   is still deleting them and the entry above says what has been ruled out.
+
+- **What an authenticated work cycle replaces under `~/.claude` is unwatched,
+  2026-09-27.** *Verified* above reads each deny-listed file's write method off
+  the binary and reproduces the strip on `.config.json`, but both scratch runs
+  stopped at "Not logged in", so two things rest on the binary alone: that an
+  authenticated headless cycle never rewrites `settings.json`, and that an OAuth
+  refresh strips `.credentials.json`'s read-deny bind. Settle from an
+  authenticated container by recording
+  `stat -c '%n %i' ~/.claude/settings.json ~/.claude/.credentials.json` before
+  and after a real work cycle, and, from inside a sandboxed session there (the
+  credential file reads as a `/dev/null` character device), polling that inode
+  and a one-byte read across a token refresh: the read should stop returning the
+  device in the step the inode changes, and the `settings.json` inode should not
+  move at all.
 
 - **The post-cycle `sweepSandboxTreeRoot` call is unseen, 2026-09-09.** No
   sandboxed cycle since; its log line, the `EBUSY` branch and the interplay
