@@ -131,7 +131,7 @@ function DepList({
           ordering four edges short of itself as a whole one. */}
       {total > refs.length && (
         <div className="text-xs text-ink-faint">
-          and {total - refs.length} more, not shown
+          and {total - refs.length} more
         </div>
       )}
     </div>
@@ -320,10 +320,8 @@ export function TaskDependencies({
           <Empty>
             <div className="font-medium text-ink">No ordering recorded</div>
             <div className="mx-auto mt-1 max-w-[52ch]">
-              Nothing waits for this task and it waits for nothing. An ordering
-              is shown rather than enforced: a task with an open dependency is
-              drawn as blocked and can still be claimed, worked and closed by
-              everything that could before.
+              An ordering is drawn, never enforced: a blocked task can still be
+              claimed, worked and closed.
             </div>
           </Empty>
         ) : (
@@ -336,14 +334,13 @@ export function TaskDependencies({
                 : deps.dependsOnCount > 0
                   ? "Everything this task waits for is done."
                   : "This task waits for nothing."}{" "}
-              Nothing is held back either way: an ordering is drawn, never
-              enforced.
+              An ordering is drawn, never enforced.
             </p>
             <TaskDepGraph anchorId={task.id} nodes={graph.nodes} edges={graph.edges} />
             {graph.clipped && (
               <Notice tone="warn">
-                A task here has more edges than the board sends neighbours for,
-                so the graph is missing nodes.
+                Some nodes are missing: a task here has more edges than the
+                graph draws.
               </Notice>
             )}
           </>
