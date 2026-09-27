@@ -1015,6 +1015,13 @@ export function WorkflowEditor({
     },
     [blocks],
   );
+  // A link's ends are blocks of this draft, since removing a block removes its
+  // links; `run` is what the link panel assumed of both before it asked.
+  const kindOf = useCallback(
+    (id: string): WorkflowNodeKind =>
+      blocks.find((b) => b.id === id)?.kind ?? "run",
+    [blocks],
+  );
 
   return (
     <>
@@ -1135,6 +1142,8 @@ export function WorkflowEditor({
                 link={selectedLink}
                 fromName={nameOf(selectedLink.from)}
                 toName={nameOf(selectedLink.to)}
+                fromKind={kindOf(selectedLink.from)}
+                toKind={kindOf(selectedLink.to)}
                 insideSection={sections.get(selectedLink.from)}
                 carriedFrom={
                   selectedCarrier === undefined
@@ -2483,6 +2492,8 @@ function LinkPanel({
   link,
   fromName,
   toName,
+  fromKind,
+  toKind,
   insideSection,
   carriedFrom,
   onChange,
@@ -2491,6 +2502,8 @@ function LinkPanel({
   link: LinkDraft;
   fromName: string;
   toName: string;
+  fromKind: WorkflowNodeKind;
+  toKind: WorkflowNodeKind;
   /** The loop that repeats both ends of this link, or undefined. */
   insideSection: string | undefined;
   /**
@@ -2509,6 +2522,8 @@ function LinkPanel({
     const statement = sectionLinkStatement(link, {
       from: fromName,
       to: toName,
+      fromKind,
+      toKind,
       carriedFrom,
     });
     return (

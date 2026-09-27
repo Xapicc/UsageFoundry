@@ -887,6 +887,16 @@ export interface SectionLinkStatement {
   refusal: string | null;
 }
 
+/** The two blocks a link inside a section joins, as its panel names them. */
+export interface SectionLinkEnds {
+  from: string;
+  to: string;
+  fromKind: WorkflowNodeKind;
+  toKind: WorkflowNodeKind;
+  /** The block whose branch the target carries through another link, if any. */
+  carriedFrom: string | undefined;
+}
+
 /**
  * What the panel for a link inside a section says about it, where it offers no
  * control to change it.
@@ -903,25 +913,49 @@ export interface SectionLinkStatement {
  * first way out of a block its branch and the first way into one the branch it
  * carries. Where the target carries another link's, saying it cuts its own
  * would tell the operator this link's work is somewhere it is not.
+ *
+ * **The kinds decide before the switch does**, because only a run has a branch
+ * at either end. A merge block cuts none: it lands what its links resolve to,
+ * which through an orchestrator is the runs that block started, and through
+ * another merge block is nothing. An orchestrator works in no checkout, so a
+ * link into or out of one hands no branch over.
  */
 export function sectionLinkStatement(
   link: Pick<LinkDraft, "edge" | "continueBranch">,
-  names: { from: string; to: string; carriedFrom: string | undefined },
+  ends: SectionLinkEnds,
 ): SectionLinkStatement {
   const clause = conditionClause(link.edge);
-  const { from, to, carriedFrom } = names;
   return {
     clause: clause ?? ".",
-    branch: link.continueBranch
-      ? `${to} commits onto ${from}'s branch.`
-      : carriedFrom !== undefined
-        ? `${to} carries on ${carriedFrom}'s branch, not ${from}'s.`
-        : `${to} cuts its own branch, and the section's merge block lands it.`,
+    branch: sectionLinkBranch(link, ends),
     refusal:
       clause === null
         ? "This link has no condition, so the graph is refused. Remove it and draw it again."
         : null,
   };
+}
+
+function sectionLinkBranch(
+  link: Pick<LinkDraft, "continueBranch">,
+  ends: SectionLinkEnds,
+): string {
+  const { from, to, fromKind, toKind, carriedFrom } = ends;
+  if (toKind === "merge") {
+    if (fromKind === "run") return `${to} lands ${from}'s branch.`;
+    if (fromKind === "orchestrator") {
+      return `${to} lands the branches of the runs ${from} starts.`;
+    }
+    return "No branch is handed over.";
+  }
+  if (toKind !== "run") return "No branch is handed over.";
+  if (fromKind !== "run") {
+    return `No branch is handed over: ${to} cuts its own, and the section's merge block lands it.`;
+  }
+  if (link.continueBranch) return `${to} commits onto ${from}'s branch.`;
+  if (carriedFrom !== undefined) {
+    return `${to} carries on ${carriedFrom}'s branch, not ${from}'s.`;
+  }
+  return `${to} cuts its own branch, and the section's merge block lands it.`;
 }
 
 /**

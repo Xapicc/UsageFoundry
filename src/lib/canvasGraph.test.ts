@@ -29,7 +29,11 @@ import {
   type LinkDraft,
   type WorkflowDraftBody,
 } from "./canvasGraph";
-import type { WorkflowEdgeDTO, WorkflowNodeDTO } from "./apiTypes";
+import type {
+  WorkflowEdgeDTO,
+  WorkflowNodeDTO,
+  WorkflowNodeKind,
+} from "./apiTypes";
 import { MAX_LOOP_PASSES, MAX_LOOP_RUNS } from "./apiTypes";
 import { normalizeWorkflowInput } from "./workflowGraph";
 
@@ -1192,7 +1196,13 @@ test("a kind change leaves a branch the operator set outside a frame alone", () 
  * whenever the one before it failed, which is what the link was drawn to avoid.
  */
 test("an either-way link inside a section is stated as drawn, not refused", () => {
-  const names = { from: "a", to: "b", carriedFrom: undefined };
+  const names = {
+    from: "a",
+    to: "b",
+    fromKind: "run",
+    toKind: "run",
+    carriedFrom: undefined,
+  } as const;
   const either = sectionLinkStatement(
     link("a", "b", { edge: "on-finish" }),
     names,
@@ -1226,10 +1236,49 @@ test("a fan-in's second link names the branch its target carries instead", () =>
   const second = sectionLinkStatement(link("c", "b", { edge: "on-success" }), {
     from: "c",
     to: "b",
+    fromKind: "run",
+    toKind: "run",
     carriedFrom: "a",
   });
   assert.match(second.branch, /carries on a's branch, not c's/);
   assert.doesNotMatch(second.branch, /cuts its own/);
+});
+
+/**
+ * Since a kind change away from run clears the branch on a block's section
+ * links, a member switched to merge or orchestrator shows this sentence on every
+ * one of its links, and it used to say that block cuts a branch, which neither
+ * kind does.
+ */
+test("a link into a merge or orchestrator member says what happens to the branch", () => {
+  const ends = (fromKind: WorkflowNodeKind, toKind: WorkflowNodeKind) => ({
+    from: "a",
+    to: "m",
+    fromKind,
+    toKind,
+    carriedFrom: undefined,
+  });
+  const edge = link("a", "m", { edge: "on-success" });
+
+  assert.equal(
+    sectionLinkStatement(edge, ends("run", "merge")).branch,
+    "m lands a's branch.",
+  );
+  assert.equal(
+    sectionLinkStatement(edge, ends("orchestrator", "merge")).branch,
+    "m lands the branches of the runs a starts.",
+  );
+  for (const [fromKind, toKind] of [
+    ["run", "orchestrator"],
+    ["merge", "merge"],
+  ] as const) {
+    const said = sectionLinkStatement(edge, ends(fromKind, toKind)).branch;
+    assert.equal(said, "No branch is handed over.", `${fromKind} to ${toKind}`);
+  }
+  // Out of an orchestrator into a run: the run still cuts its own, but nothing
+  // is carried onto it.
+  const fromDecider = sectionLinkStatement(edge, ends("orchestrator", "run"));
+  assert.match(fromDecider.branch, /^No branch is handed over: m cuts its own/);
 });
 
 test("a block put in an empty frame becomes what each pass starts at", () => {
