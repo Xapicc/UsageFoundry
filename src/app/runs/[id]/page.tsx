@@ -101,6 +101,10 @@ type StateTone = "neutral" | "info" | "ok" | "warn" | "danger";
  * A complete class string per tone, never `border-l-${tone}`: Tailwind scans
  * source as plain text, so an interpolated name emits no rule at all and the
  * edge silently disappears in the shipped container. Same rule as `Badge`.
+ *
+ * The card also carries `uf-state-edge`, which is the only thing keeping this
+ * edge under the ascii skin: `Card`'s `uf-unboxed` paints every border out
+ * there, this one with it. `globals.css` says why, beside the rule.
  */
 const STATE_ACCENT: Record<StateTone, string> = {
   neutral: "border-l-line-strong",
@@ -1336,7 +1340,7 @@ export default function RunDetail({
           //
           // `lg:flex lg:flex-col` and no overflow of its own: the cap is the
           // card's, and the box inside it is what gives way to it and scrolls.
-          className={`max-lg:min-w-0 border-l-[3px] ${STATE_ACCENT[state.tone]} lg:col-start-2 lg:row-start-1 lg:sticky lg:top-4 lg:self-start lg:flex lg:flex-col lg:max-h-[calc(var(--pane-h)-2rem)]`}
+          className={`uf-state-edge max-lg:min-w-0 border-l-[3px] ${STATE_ACCENT[state.tone]} lg:col-start-2 lg:row-start-1 lg:sticky lg:top-4 lg:self-start lg:flex lg:flex-col lg:max-h-[calc(var(--pane-h)-2rem)]`}
         >
           {/* The scroll is this box's and not the card's, because the card is
               what the ascii frame is drawn against. `AsciiFrame` is positioned
