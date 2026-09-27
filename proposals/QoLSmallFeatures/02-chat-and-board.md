@@ -71,7 +71,32 @@ not in this tree) have been read; the hunt itself is under way.
 - Chat stream counts one response's usage once per content block, inflating the live guard estimate — high — `11cf59df-b4ad-479b-99af-3a817ce9cd28`
 - list_tasks narrowed by mountId+folder always returns zero: relative folder compared to stored absolute path — high — `9c4cbf8a-443d-4d8c-82d7-dafdcd6fabc5`
 - Validation boundary reads the run's newest verdict, so a not-finished task is ignored once another task is checked — high — `d82e9d21-50e6-456c-8878-c655c19c523f`
+- Chat turn capability stays live after Stop and after a spawn that throws — normal — `b8305935-b642-4681-91ba-7f1cc3eb6915`
+- A dependsOn that is not an array is read as "no dependency" by propose_run, propose_workflow and emit_runs — normal — `a680431f-1cf0-4eb4-921d-a06b0561bcfd`
+- propose_run reads an omitted folder as the mount root, and drops a folder sent without mountId — normal — `95dbb1ee-439b-498d-b3a7-7fbbc7391089`
+- A server restart during a completion check leaves the task claimed for good — normal — `382b15b1-a454-4c22-9b4e-e996b7843156`
+- Validator's verdict parser drops an unfenced verdict whenever the reply quotes any fenced JSON — normal — `d5e28b71-e37c-4b9d-b596-783e2604829b`
+- Task editor draws "not in the workspace scan" while /api/folders is loading or after it failed — normal — `94ea8ea8-f273-44eb-a6c1-70d98985925a`
+- A task write that changes nothing still bumps updated_at, reordering the board on every run pick-up — low — `dc9b8f02-3658-4c2f-a0b3-690bdb3bee2f`
+- A JSON null body crashes the chat, task-dependency and MCP routes with a 500 — low — `441c43b5-d962-4990-a70c-9e6105f2f183`
+- A validation records the run's branch name as head_sha, so the verdict names no commit — low — `27ad4238-d6b7-4975-bb51-d5f66c837e29`
+
+That is **thirteen, one over the brief's cap of twelve** — a counting mistake made while filing, not a judgement that the thirteenth outranks anything below. Nothing this run holds can drop a task, so it stands; if one has to go, it is the last line above, the least consequential of the thirteen.
+
+The first four and the capability task were confirmed by scratch tests the hunt ran against the real modules (DB-backed, with a faked child where a spawn was involved), plus, for the first, a read of the pinned 2.1.280 binary (`function nte(e){let n=e.costState;…`, `total_cost_usd:em()`, `function em(){return n().costLedger.totalCostUSD()}`) and of this host's own `cost-state` transcript records. No real `claude` was spawned: whether a real resumed chat turn's result carries the restored total end to end is the one link not measured, and the task says so.
 
 ## Bugs not filed
+
+Confirmed, and below the thirteen above on severity. Each says how it was established.
+
+- **Duplicate ids in one approval mark a saved workflow proposal `failed`.** `src/app/api/chat/[id]/proposals/route.ts:75,81` never deduplicates `ids`, and `approveWorkflowProposal` (`src/lib/workflows.ts:388`) and `approveScheduleProposal` (`src/lib/schedules.ts:1149`) do not check that the proposal is still pending. Executed: `ids: [p, p]` saved the workflow once, then left the row `failed` with `workflow_id` null and the thread saying both "Saved 1 workflow(s)" and "Could not save…". The page sends a `Set`, so only a direct API call reaches it. Low.
+- **`complete_task` on a task that is already done answers "recorded as completed by this run".** `closeNow` (`src/lib/validation.ts:613-624`) returns `closed` for done → done, which is a no-move any actor may make, and `src/app/api/mcp/route.ts:3581` then asserts completion by this run. Executed: a run that never held the task was told it completed it. Low.
+- **`list_my_tasks`' `held` half is capped at `MAX_RUN_TASKS` with no count beside it** (`src/lib/tasks.ts:1193-1202`), where `taskboard.md` says both halves carry one. Reachable only if the operator claims more than 20 tasks for one run. Read from source. Low.
+- **A work cycle's `create_task` drops a mistyped `parentTaskId` in silence** (`route.ts:3622`). The documented drop is for a *deleted* inherited parent; a named id that never existed becomes null with nothing in the reply. Executed. Low.
+- **The dependency graph says "the graph is missing nodes" for a task waiting on a popular blocker** (`src/lib/taskDepGraph.ts:161-163` compares the inward side of each neighbour, which the graph never draws). Executed: nodes `[anchor, blocker]`, one edge, `clipped: true`. Low.
+- **`GET /api/chat?offset=1e20` (or `Infinity`) is a 500** — `Math.trunc(Infinity) || 0` stays `Infinity` into SQLite's `OFFSET` (`src/lib/chat.ts:557`). Executed. Low.
+- **The chat page carries one thread's state into the next.** `sendError` is cleared neither by opening another thread (`src/app/chat/page.tsx:1655-1667`) nor by New chat (`page.tsx:847-871`), and New chat does not clear `answerError` although the thread-switch comment beside it argues it must. And `load` applies answers in arrival order (`page.tsx:451-469`): a whole-thread answer for thread A that lands after the operator opened B replaces B on screen. Read from source. Low.
+- **The board's project select reads "Every project" while a filter is still applied**, once the narrowed project's option has disappeared from the rows (`src/app/tasks/page.tsx:376-383`, `:733-751`); re-picking "Every project" fires no change. The empty card's own button recovers. Read from source. Low.
+- **A success notice outlives a later refusal** on the board, the task page and the editor (`tasks/page.tsx:415-431`, `tasks/[id]/page.tsx:142-159`, `TaskEditor.tsx:134-137` clear `actionError` but never `note`), so "“X” is now done" and a refusal are drawn together. Read from source. Low.
 
 ## Seen outside my territory
