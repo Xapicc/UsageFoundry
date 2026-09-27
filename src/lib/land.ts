@@ -27,9 +27,11 @@ import {
   forgetSlotVerdict,
   getRun,
   githubEnv,
+  isShuttingDown,
   overlaps,
   repoSlug,
   resolveWorkspaceFolder,
+  trackLand,
   workDirOf,
   worktreeStore,
   type RunRow,
@@ -1065,6 +1067,16 @@ export type LandOutcome =
   | { ok: false; reason: string; conflicts?: string[] };
 
 /**
+ * What `landRun` says once the process is going down, before anything moves.
+ *
+ * True at both places it is returned from: the only child either has run is
+ * the operator's check, and that runs in the run's own checkout.
+ */
+const LAND_SHUTDOWN_REFUSAL =
+  "The server is shutting down, so nothing was merged and your checkout is untouched. " +
+  "Try again once it has restarted.";
+
+/**
  * Merge the run's branch into its target, in the operator's own checkout.
  *
  * The one write this app makes outside `.uf-worktrees`. Every check is taken
@@ -1102,10 +1114,17 @@ export async function landRun(
     };
   }
 
+  // Read after `landState`, the last `await` before the registration, so a
+  // land this lets through is one the shutdown will find and wait for. Refused
+  // here rather than only at the merge so the operator's check is not started
+  // in a process that is exiting: nothing tracks that child.
+  if (isShuttingDown()) return { ok: false, reason: LAND_SHUTDOWN_REFUSAL };
+
   if (landing.has(folder)) {
     return { ok: false, reason: "Another branch is being landed into this folder." };
   }
   landing.add(folder);
+  const untrack = trackLand();
 
   try {
     // THE OPERATOR'S OWN CHECK, BEFORE ANYTHING MOVES.
@@ -1134,6 +1153,12 @@ export async function landRun(
     // history that points back at these commits, and this is what makes them
     // identifiable afterwards.
     const tip = (await git(folder, ["rev-parse", branch], NO_CLOCK)).stdout;
+
+    // Again where nothing awaits before the spawn, `spawnAssist`'s reason: the
+    // operator's check and the `rev-parse` both await after the read above,
+    // and a merge begun during the grace is one the exit can cut off part-way.
+    // One begun before it is waited on.
+    if (isShuttingDown()) return { ok: false, reason: LAND_SHUTDOWN_REFUSAL };
 
     // No clock on the merge itself, which is the whole of `NO_CLOCK`'s reason:
     // a merge killed part-way through reads here exactly like git refusing one,
@@ -1203,6 +1228,7 @@ export async function landRun(
     };
   } finally {
     landing.delete(folder);
+    untrack();
   }
 }
 

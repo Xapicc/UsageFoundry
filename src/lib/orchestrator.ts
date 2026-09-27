@@ -12017,6 +12017,48 @@ const runLoops = ((globalThis as unknown as { __ufRunLoops?: Map<string, RunLoop
   .__ufRunLoops ??= new Map<string, RunLoop>());
 
 /**
+ * Every land in this process that has not yet written its ending: a `landRun`,
+ * whichever door called it, and a merge-queue row from the moment `drainRepo`
+ * takes it until the status it is given has been written.
+ *
+ * `shutdownRuns` is the reader, and it waits for the ones in flight at the
+ * signal inside the grace it already gives the loops. Nothing it does signals
+ * them, and nothing else here could: the `git merge` is a plain `git()` child
+ * that no registry held, so a SIGTERM mid-land let the process exit as soon as
+ * the cycles had settled, which under Docker takes the merge down with PID 1
+ * and leaves `MERGE_HEAD` or `index.lock` in the operator's own checkout.
+ *
+ * The queue's row is held as well as the `landRun` inside it because a row
+ * can be `landing` before `landRun` is reached, in `landState`, and
+ * `resolving` while its resolution child dies on the ladder and the drain's
+ * two-second poll has still to see it: both end in a status write the boot
+ * would otherwise make for them with "The server restarted while this was
+ * landing".
+ *
+ * Symbols rather than folder names, so a land and the row around it are two
+ * entries that each take off only their own.
+ */
+const landsInFlight = ((globalThis as unknown as { __ufLandsInFlight?: Set<symbol> })
+  .__ufLandsInFlight ??= new Set<symbol>());
+
+/**
+ * Put a land where shutdown will wait for it, and return what takes it off.
+ *
+ * Take it in the same synchronous stretch as the `isShuttingDown()` read that
+ * let the land through, and undo it in a `finally` after its last write: the
+ * shutdown waits only on entries that exist when it starts, so one taken after
+ * an `await` can miss it, and one left behind holds every later shutdown for
+ * its whole grace.
+ */
+export function trackLand(): () => void {
+  const land = Symbol("land");
+  landsInFlight.add(land);
+  return () => {
+    landsInFlight.delete(land);
+  };
+}
+
+/**
  * Rows whose cycle was in flight when everything stopped.
  *
  * `active_started_at` is what makes this answerable from outside `startRun`'s
@@ -12125,7 +12167,8 @@ export async function reconcileInterruptedCycles(): Promise<number> {
  *     `Claude Code exited with code -1`. Every child in `assistProcs` gets the
  *     same ladder, since no run's Stop path reaches it.
  *  3. **The loops are given their grace**, bounded, and return early the moment
- *     every loop it interrupted has written its run's ending.
+ *     every loop it interrupted has written its run's ending and every land
+ *     in flight at the signal has written its own.
  *  4. **Whatever they did not finish is mopped up**, then anything still alive
  *     is killed outright.
  *
@@ -12201,6 +12244,12 @@ export async function shutdownRuns(
   const assists = [...assistProcs];
   for (const child of assists) interruptAssistChild(child);
 
+  // The lands are waited on and never signalled. A merge part-way through is
+  // the one write here that is worse interrupted than left to finish, and the
+  // doors to one read the flag set above before they register, so this is
+  // every land that will write into a checkout before the process exits.
+  const lands = [...landsInFlight];
+
   // Waits for the children to go *and* for the loops behind them to write the
   // run's ending: what the cycle cost, then the status and the stop reason.
   // Asked of the loop rather than read off the row, because the post-cycle
@@ -12210,10 +12259,17 @@ export async function shutdownRuns(
   // row claiming a cycle: a row left over from a crash has no loop coming for
   // it, and waiting the full grace out for one would make every shutdown as
   // slow as the worst one. The mop-up below covers it.
+  //
+  // The lands share the grace rather than holding one of their own, and that
+  // is not a clock on the merge: it signals nothing and fails nothing, and the
+  // process was exiting at this signal whatever the merge was doing. What it
+  // changes is only that the exit now waits for the merge, up to the bound
+  // the platform's own stop deadline was already set against.
   const stillSettling = () =>
     procs.size > 0 ||
     assists.some((child) => assistProcs.has(child)) ||
-    loops.some(({ id, loop }) => runLoops.get(id) === loop);
+    loops.some(({ id, loop }) => runLoops.get(id) === loop) ||
+    lands.some((land) => landsInFlight.has(land));
 
   const until = Date.now() + SHUTDOWN_GRACE_MS;
   while (Date.now() < until && stillSettling()) {
