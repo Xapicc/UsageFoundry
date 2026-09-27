@@ -4,7 +4,7 @@
 // rewrites the path alias at runtime, so a tested component has to import the
 // way src/lib and UsagePeriods.tsx already do.
 import type { RunEventDTO } from "../lib/apiTypes";
-import { Card, CardTitle, Empty } from "./ui/Card";
+import { Card, Empty } from "./ui/Card";
 import { Disclosure } from "./ui/Disclosure";
 import { Hint } from "./ui/Hint";
 import { Notice } from "./ui/Notice";
@@ -35,8 +35,6 @@ export function RunHandoff({ handoff }: { handoff: RunEventDTO | undefined }) {
       summaryClassName="text-xs font-semibold text-ink-muted"
     >
       <Card emphasis="quiet" className="mt-3">
-        <CardTitle>In your own terminal</CardTitle>
-
         {Array.isArray(handoff.payload.commits) &&
         handoff.payload.commits.length > 0 ? (
           <div className="mono max-h-40 overflow-auto rounded-sm border border-line bg-inset p-2.5">
@@ -53,8 +51,8 @@ export function RunHandoff({ handoff }: { handoff: RunEventDTO | undefined }) {
         {Array.isArray(handoff.payload.uncommitted) &&
           handoff.payload.uncommitted.length > 0 && (
             <Notice tone="warn" quiet className="mt-3">
-              <strong>Uncommitted changes left in the checkout.</strong> They are
-              not on the branch, so a merge will not bring them over.
+              <strong>Uncommitted changes left in the checkout.</strong> A merge
+              will not bring them over.
             </Notice>
           )}
 
