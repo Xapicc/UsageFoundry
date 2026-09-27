@@ -1881,6 +1881,111 @@ describe("the sandbox ships off, and its switch reaches the container", () => {
 });
 
 /**
+ * `UF_LOCK_CLAUDE_HOME`'s two file-mode invariants, both of which fail silently.
+ *
+ * The lock gives `$CLAUDE_HOME_DIR` to root so a run cannot rewrite the
+ * `settings.json` it reads its sandbox policy, hooks, permission rules and
+ * environment out of between cycles. But a directory root owns 0750 is one
+ * CLI 2.1.280 cannot keep a login alive in: an OAuth refresh first takes
+ * `<dir>/.oauth_refresh.lock` and every credential write does `mkdir
+ * <dir>/.storage-write.lock`, both beside `.credentials.json`, and both fail
+ * with EACCES in a directory the agents only read (measured 2026-09-27,
+ * docs/verification.md). The refresh token is then never spent, so once the
+ * stored access token expires the install stops authenticating, with no line
+ * anywhere saying why.
+ *
+ * The fix is the mode: `1770`, not `0750`. Group-writable so the agents can
+ * create those two lock files and rename over their own `.credentials.json`,
+ * and **sticky** so the kernel still refuses them an unlink or a rename over
+ * root-owned `settings.json` — the file the lock exists to protect stays out of
+ * reach even though the directory around it is now writable. Drop the group-write
+ * bit and the login dies; drop the sticky bit and a run can delete `settings.json`
+ * and write its own; add an "other" bit and it reaches every uid on the host.
+ * None of the three is visible in a build, a boot or a page.
+ *
+ * The second invariant is the consequence of the first. A group-writable
+ * directory is one a run can create new entries in, so a `settings.json` that
+ * does not exist is one a run can create and own — the lock would be closing a
+ * file that is not there. The entrypoint therefore creates it, root-owned, when
+ * it is missing, which the 0750 layout never had to.
+ */
+describe("UF_LOCK_CLAUDE_HOME lets a login renew while settings.json stays root's", () => {
+  const entrypoint = fs
+    .readFileSync(path.join(root, "docker-entrypoint.sh"), "utf8")
+    .replace(/^\s*#.*$/gm, "");
+
+  /** Every `chmod <octal> "$CLAUDE_HOME_DIR"` in the script, as parsed modes. */
+  function homeDirModes(): number[] {
+    return [...entrypoint.matchAll(/\bchmod\s+(\d{3,4})\s+"\$CLAUDE_HOME_DIR"/g)].map(
+      (m) => parseInt(m[1], 8),
+    );
+  }
+
+  it("locks the directory group-writable and sticky, so a refresh works and settings.json does not", () => {
+    const modes = homeDirModes();
+    assert.ok(
+      modes.length > 0,
+      "docker-entrypoint.sh no longer chmods $CLAUDE_HOME_DIR, so nothing here " +
+        "can speak for the mode the lock applies",
+    );
+    // The lock's own mode is the one carrying the sticky bit; the other chmod of
+    // this directory is the off-switch's 0700 hand-back, which must not.
+    const locked = modes.find((mode) => (mode & 0o1000) !== 0);
+    assert.ok(
+      locked !== undefined,
+      `docker-entrypoint.sh chmods $CLAUDE_HOME_DIR to ${modes
+        .map((m) => m.toString(8))
+        .join(", ")} and none sets the sticky bit. Without it a run can unlink ` +
+        `root-owned settings.json from the now group-writable directory and write ` +
+        `its own, which is the whole boundary the lock exists to hold.`,
+    );
+    assert.equal(
+      locked & 0o020,
+      0o020,
+      `the lock chmods $CLAUDE_HOME_DIR to ${locked.toString(8)}, which is not ` +
+        `group-writable. CLI 2.1.280 cannot take .oauth_refresh.lock or ` +
+        `.storage-write.lock in a directory the agents only read, so the login ` +
+        `silently stops renewing once the access token expires.`,
+    );
+    assert.equal(
+      locked & 0o070,
+      0o070,
+      `the lock chmods $CLAUDE_HOME_DIR to ${locked.toString(8)}, so the agents' ` +
+        `group cannot read, write and enter it — projects/ (every usage figure) ` +
+        `is reached through this directory.`,
+    );
+    assert.equal(
+      locked & 0o007,
+      0,
+      `the lock chmods $CLAUDE_HOME_DIR to ${locked.toString(8)}, which grants ` +
+        `"other" access. On the operator's host this is their own ~/.claude, and ` +
+        `it was 0700 before the lock ran.`,
+    );
+  });
+
+  it("creates settings.json root-owned when it is missing, so a run cannot plant its own", () => {
+    // The 0750 layout could leave a missing settings.json alone: the agents
+    // could not create one in a directory they only read. A group-writable
+    // directory removes that, so the file has to be brought into existence and
+    // taken by root, or the lock closes a policy source that is not there.
+    assert.match(
+      entrypoint,
+      />\s*"\$claude_home_settings"/,
+      "docker-entrypoint.sh no longer creates $claude_home_settings when it is " +
+        "absent. With the directory group-writable, a run can then create " +
+        "~/.claude/settings.json itself, own it, and put a sandbox policy or a " +
+        "hook in it that every later session reads.",
+    );
+    assert.match(
+      entrypoint,
+      /chown\s+"\$claude_home_root"\s+"\$claude_home_settings"/,
+      "docker-entrypoint.sh no longer gives $claude_home_settings to root, so the " +
+        "file it locks stays owned by the uid every agent runs as.",
+    );
+  });
+});
+
+/**
  * The Discord relay's three files agreeing, and the third assertion is the one
  * that matters.
  *

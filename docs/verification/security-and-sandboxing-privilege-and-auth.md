@@ -60,6 +60,45 @@
   Caveat: not the lock's real uid/gid layout, no real provider refresh, and the
   save after a successful refresh (`ENn`) is read, not run.
 
+- **A sticky, group-writable `1770` directory restores the refresh and the
+  credential write the `0550` stand-in kills, simulated on CLI 2.1.280,
+  2026-09-27.** Three throwaway `CLAUDE_CONFIG_DIR`s laid out like the lock
+  (`CLAUDE_HOME_HANDBACK`'s entries present and writable, a fake expired
+  `claudeAiOauth`, `settings.json` created root-owned then measured), each driven
+  with a scrubbed env and `HTTPS_PROXY` at a loopback listener that logged every
+  `CONNECT` and returned 403. `claude -p hi` then `claude mcp add
+  --client-secret` per arm. **control `0750`:** 3 `CONNECT platform.claude.com:443`
+  ("OAuth refresh failed (expected)" ×3 in `--debug-file`) and the credential
+  write replaced `.credentials.json` by rename (inode 54131671→54142650, hash
+  changed). **`0550`** (the stand-in for the old root-owned top level, same
+  `EACCES` on a create beside a file): 0 `platform` attempts, the write failed
+  `EACCES: … mkdir '.storage-write.lock'`, and `.credentials.json` kept its inode,
+  mtime and hash. **`1770`** (the fix's mode): 3 `platform` attempts like the
+  control, the write succeeded by rename (inode 54152089→54170482, hash changed),
+  and `settings.json`'s inode and mtime did not move across either step; the
+  directory ended `drwxrwx--T`. So a `1770` layout renews the login the `0550`
+  one silently kills. Caveat: a single-uid stand-in owns the directory at `1770`
+  rather than `root:agent-gid`, so this arm shows the refresh and the write
+  working, not the cross-uid protection of `settings.json`, which is the entry
+  below; no real provider refresh.
+
+- **The sticky bit refuses a second uid the unlink or rename that `settings.json`
+  is held by, and the sandbox read-only-binds `~/.claude` so the token cannot be
+  renamed out of its deny, 2026-09-27.** In a sticky `1777` directory (`/tmp`)
+  owned by uid 65534, uid 1000 `rename(2)`-over and `rmdir(2)` of a
+  65534-owned entry both returned `EPERM`, which is exactly what stops a run
+  removing or replacing the root-owned `settings.json` in the now group-writable
+  lock directory (it can still create and replace entries it owns, tested against
+  its own files). And the pinned binary constructs its Bash sandbox as
+  `["--ro-bind","/","/"]` with a writable `--bind` only for working directories
+  and explicit `allowWrite` paths, so `~/.claude` is read-only inside any
+  sandboxed command: an agent cannot rename `.credentials.json` to a name the
+  `credentials.files` deny does not cover, which is what keeps the group-writable
+  directory from opening a read path to the token the `0750` layout closed by
+  mode. Caveat: the cross-uid `EPERM` is measured with 65534/1000 on this
+  container's kernel, not with the lock's own `root`/`agent-gid` pair; the
+  sandbox bind shape is read off the binary, not run.
+
 ## Not yet verified by hand
 
 - **What an authenticated work cycle replaces under `~/.claude` is unwatched,
@@ -179,12 +218,29 @@
   sudo chmod 0700 ~/.claude && sudo chmod 0600 ~/.claude/settings.json
   ```
 
-- **That the lock stops a real OAuth refresh is simulated only, 2026-09-27.**
-  *Verified* above found it on a 0550 stand-in with fake tokens; the lock's own
-  root:agent-gid 0750 and a real login were not tried. Settle in a container
-  with `UF_LOCK_CLAUDE_HOME=1` and a login whose access token has expired:
-  record `stat -c '%i %y' ~/.claude/.credentials.json`, run `claude -p hi
-  --debug-file /tmp/r.log` as the agent uid, and expect an auth failure, no
-  "OAuth refresh failed" line and the inode and mtime unchanged; then the same
-  with the lock off, which should rewrite the file. The refresh token is never
-  spent while locked, so turning the lock off recovers the login.
+- **That the `1770` lock lets a real OAuth refresh land while a second uid still
+  cannot replace `settings.json` is simulated only, 2026-09-27.** *Verified*
+  above measured the refresh and the credential write coming back at `1770` on a
+  single-uid stand-in, and the cross-uid `rename`/`rmdir` `EPERM` on a `/tmp`
+  sticky directory with 65534/1000; the lock's own `root:agent-gid 1770` with a
+  separate agent uid, and a real provider refresh, were not tried together.
+  Settle in a container with `UF_LOCK_CLAUDE_HOME=1`, `UF_UID` set, and a login
+  whose access token has expired:
+  ```sh
+  uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
+  docker compose exec usagefoundry sh -c 'ls -ld ~/.claude ~/.claude/settings.json'
+  # expect ~/.claude drwxrwx--T root:<gid>, settings.json -rw-r----- root:<gid>
+  # a run cannot append to, remove or replace settings.json:
+  docker compose exec --user "$uid" usagefoundry sh -c \
+    'echo x >> ~/.claude/settings.json; rm -f ~/.claude/settings.json; \
+     mv /tmp/x ~/.claude/settings.json 2>&1; ls ~/.claude/settings.json'
+                                    # expect all three denied, and still listed
+  # but the login renews: record the inode across an expiry-driven refresh
+  docker compose exec usagefoundry sh -c 'stat -c "%i %y" ~/.claude/.credentials.json'
+  docker compose exec --user "$uid" usagefoundry \
+    claude -p hi --debug-file /tmp/r.log        # expect a normal answer
+  docker compose exec usagefoundry sh -c 'stat -c "%i %y" ~/.claude/.credentials.json'
+                                    # expect the inode to have moved (renewed)
+  ```
+  The refresh token was never spent under the old read-only layout, so an install
+  that stopped authenticating recovers the login on the first boot with this mode.

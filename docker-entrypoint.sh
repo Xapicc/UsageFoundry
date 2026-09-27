@@ -552,9 +552,11 @@ fi
 #
 # Root-owning the *file* does not close it: unlinking a file is a write to the
 # directory that holds it, not to the file, and the agents own that directory.
-# So the directory becomes root's as well, and the entries the CLI writes are
-# handed back one at a time. Never the directory's *contents* wholesale — this
-# block chowns nothing recursively except an entry it found in the wrong hands,
+# So the directory becomes root's as well (sticky, so that the agents can still
+# create entries in it but cannot remove or replace one root owns), and the
+# entries the CLI writes are handed back one at a time. Never the directory's
+# *contents* wholesale — this block chowns nothing recursively except an entry
+# it found in the wrong hands,
 # so every entry not named below keeps the owner it already had, which on a
 # stock install is the agent's.
 #
@@ -601,36 +603,69 @@ claude_home_agent_test() {
     2>/dev/null || echo unknown
 }
 
+# Whether an agent can unlink a file root owns from that directory, which is
+# the sticky bit's whole job and so what stands between a run and replacing
+# settings.json: the kernel checks rename(2) over a file exactly as it checks
+# unlink(2) of it. Asked of a throwaway file root makes for the purpose rather
+# than of settings.json itself, because a "yes" is the file gone. Created under
+# `set -C`, which is O_EXCL, so a name somebody planted after the `rm` is
+# refused rather than written through. Prints yes/no/unknown on the terms of
+# claude_home_agent_test above.
+claude_home_agent_unlink_test() {
+  claude_home_probe="$CLAUDE_HOME_DIR/.usagefoundry-lock-probe"
+  rm -f "$claude_home_probe" 2>/dev/null
+  if ! (set -C; : > "$claude_home_probe") 2>/dev/null; then
+    echo unknown
+    return
+  fi
+  if setpriv --reuid="$UF_AGENT_UID" --regid="${UF_AGENT_GID:-$UF_AGENT_UID}" \
+             --clear-groups \
+       sh -c 'rm -f -- "$1" 2>/dev/null; exit 0' sh "$claude_home_probe" \
+       2>/dev/null; then
+    if [ -e "$claude_home_probe" ]; then echo no; else echo yes; fi
+  else
+    echo unknown
+  fi
+  rm -f "$claude_home_probe" 2>/dev/null
+}
+
 if [ "${UF_LOCK_CLAUDE_HOME:-}" = "1" ] && [ -n "${UF_AGENT_UID:-}" ]; then
   claude_home_agent="${UF_AGENT_UID}:${UF_AGENT_GID:-$UF_AGENT_UID}"
   claude_home_root="0:${UF_AGENT_GID:-$UF_AGENT_UID}"
   claude_home_settings="$CLAUDE_HOME_DIR/settings.json"
   claude_home_refusal=""
   claude_home_settings_was=""
-  claude_home_missing=""
+  claude_home_settings_made=""
 
-  # Three ways this must not start, checked before anything is touched. The
-  # third is the one that matters: a locked directory is one the CLI cannot
-  # create entries in, so a `projects/` that does not exist yet would never
-  # exist, and the failure would be a dashboard of zeros on an install that
-  # looks like it is working. The same is true of the other entries in the list
-  # — `sessions/`, `todos/`, `shell-snapshots/`, `history.jsonl` — but they are
-  # skipped rather than refused, because only `projects/` is silent about it and
-  # because refusing over a `todos/` the CLI has not needed yet would make this
-  # unturnable-on. Sign in and run one real cycle before switching this on; if
-  # something is missing afterwards, create it yourself as the agent's uid, with
-  # the switch off, then turn it on. Take that uid from the container: a
-  # `${UF_UID}` typed at a host shell is expanded by that shell, and .env never
-  # reaches it, so it is 1000 however the install is configured.
+  # Four ways this must not start, checked before anything is touched.
+  #
+  # A missing `projects/` is refused because of the off switch rather than the
+  # CLI. The directory stays writable by the agents' group (below), so the CLI
+  # could make `projects/` itself; but the boot with this off recognises the
+  # lock by root owning the directory while the agents own `projects/`, so a
+  # lock taken before `projects/` exists is one that clearing the variable would
+  # not undo. Sign in and run one real cycle before switching this on. Take the
+  # agents' uid from the container if you make it by hand: a `${UF_UID}` typed
+  # at a host shell is expanded by that shell, and .env never reaches it, so it
+  # is 1000 however the install is configured.
   #
   #     uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
-  #     docker compose exec -u "$uid" usagefoundry mkdir -p ~/.claude/todos
+  #     docker compose exec -u "$uid" usagefoundry mkdir -p ~/.claude/projects
+  #
+  # A symlinked `settings.json` is refused because neither half of the lock
+  # reaches what it points at: the link is a name the agents own, which the
+  # sticky bit lets them replace, and its target is somewhere this block does
+  # not own and must not chown. Checked here, before anything is touched,
+  # because `chown` follows a link and would otherwise have given root a file
+  # outside `~/.claude` before the refusal below noticed.
   if [ ! -d "$CLAUDE_HOME_DIR" ]; then
     claude_home_refusal="$CLAUDE_HOME_DIR is not a directory"
   elif [ "$(id -u)" != "0" ]; then
     claude_home_refusal="this container is not running as root, so nothing here can change an owner"
   elif [ ! -d "$CLAUDE_HOME_DIR/projects" ]; then
-    claude_home_refusal="$CLAUDE_HOME_DIR/projects does not exist yet, and a root-owned directory is one the CLI cannot create it in — sign in and run one work cycle first"
+    claude_home_refusal="$CLAUDE_HOME_DIR/projects does not exist yet, and clearing UF_LOCK_CLAUDE_HOME recognises this lock by it; sign in and run one work cycle first"
+  elif [ -L "$claude_home_settings" ]; then
+    claude_home_refusal="$claude_home_settings is a symbolic link, which a run could replace and whose target this will not take; make it a plain file"
   fi
 
   # Hand back what exists, and check that the hand-back took. Guarded on the
@@ -649,14 +684,10 @@ if [ "${UF_LOCK_CLAUDE_HOME:-}" = "1" ] && [ -n "${UF_AGENT_UID:-}" ]; then
     for claude_home_entry in $CLAUDE_HOME_HANDBACK; do
       claude_home_path="$CLAUDE_HOME_DIR/$claude_home_entry"
       if [ ! -e "$claude_home_path" ]; then
-        # Not created here — this hands entries back, it does not invent them,
-        # and a `sessions/` this app made would be one the CLI never asked for.
-        # Collected instead, and named once on the boot that takes the directory
-        # (below), because after that the CLI cannot create it either. Not
-        # repeated on every later boot: a permanent warning about a `todos/` the
-        # installed CLI has never needed is noise, and noise is what stops the
-        # next line from being read.
-        claude_home_missing="${claude_home_missing:+$claude_home_missing }$claude_home_entry"
+        # Not created here. This hands entries back, it does not invent them,
+        # and a `sessions/` this app made would be one the CLI never asked for;
+        # the CLI makes each of them itself the first time it wants one, which
+        # the directory's group write below still lets it do.
         continue
       fi
       claude_home_have="$(claude_home_owner "$claude_home_path")"
@@ -677,17 +708,31 @@ if [ "${UF_LOCK_CLAUDE_HOME:-}" = "1" ] && [ -n "${UF_AGENT_UID:-}" ]; then
   # it — it carries their hooks, their permission rules and their environment,
   # and a session that cannot read it loses all three silently — and the group
   # is the agent's own, so nothing is opened up to anyone else on the operator's
-  # host. A `settings.json` that does not exist is left alone rather than
-  # created: once the directory below is root's, the agents cannot create one
-  # either, so its absence is closed by the same lock.
-  if [ -z "$claude_home_refusal" ] && [ -e "$claude_home_settings" ]; then
+  # host.
+  #
+  # A `settings.json` that does not exist is created, as `{}`, and then taken
+  # like any other. The directory below stays writable by the agents' group,
+  # so an absent one is a name any run could create and fill, and the lock
+  # would be closing a file that is not there. Empty settings are the CLI's own
+  # reading of no file, so this decides nothing on the operator's behalf. It is
+  # removed again if the lock does not take (at the refusal, at the end).
+  if [ -z "$claude_home_refusal" ] && [ ! -e "$claude_home_settings" ]; then
+    if (set -C; umask 077; printf '{}\n' > "$claude_home_settings") 2>/dev/null; then
+      claude_home_settings_made=1
+    else
+      claude_home_refusal="$claude_home_settings does not exist and could not be created"
+    fi
+  fi
+  if [ -z "$claude_home_refusal" ]; then
     claude_home_have="$(claude_home_owner "$claude_home_settings")"
     if [ "$claude_home_have" != "$claude_home_root" ]; then
       chown "$claude_home_root" "$claude_home_settings" 2>/dev/null
       if [ "$(claude_home_owner "$claude_home_settings")" = "$claude_home_root" ]; then
         # Recorded so a failure on the directory below can put it back exactly
-        # as it was found, rather than leaving half a change behind.
-        claude_home_settings_was="$claude_home_have"
+        # as it was found, rather than leaving half a change behind. A file
+        # this boot made has nothing to be put back to.
+        [ -n "$claude_home_settings_made" ] ||
+          claude_home_settings_was="$claude_home_have"
         chmod 0640 "$claude_home_settings" 2>/dev/null
       else
         claude_home_refusal="settings.json is owned by ${claude_home_have:-a stat that failed} and could not be given to $claude_home_root"
@@ -695,24 +740,28 @@ if [ "${UF_LOCK_CLAUDE_HOME:-}" = "1" ] && [ -n "${UF_AGENT_UID:-}" ]; then
     fi
   fi
 
-  # And the directory. 0750 rather than 0700: root owns it now, and the agents
-  # reach `projects/` through it, so the group bit is what keeps the metering
-  # path readable. Not 0755, because on the operator's host this is their own
-  # `~/.claude` and it was 0700 before this ran.
+  # And the directory. 1770 rather than 0700: root owns it now, and the group
+  # is the agents', so the group write bit is what lets a login keep itself
+  # alive. CLI 2.1.280 cannot refresh an OAuth token or save a credential in a
+  # directory it cannot write: the refresh takes `<dir>/.oauth_refresh.lock` and
+  # every credential write does `mkdir <dir>/.storage-write.lock`, both beside
+  # `.credentials.json`, and both fail with EACCES in a directory the agents
+  # only read (measured 2026-09-27, docs/verification.md). A directory that is
+  # merely group-readable stops the login from renewing, so once the stored
+  # access token expires the install stops authenticating. The sticky bit is
+  # what makes group-writable safe: the agents can create their own entries and
+  # rename over `.credentials.json`, which they own, but the kernel refuses them
+  # an unlink or a rename over root-owned `settings.json`, so the file the lock
+  # exists to protect stays out of reach even though the directory around it is
+  # writable. `projects/` stays readable through the same group bit. Not 0755 or
+  # a world-sticky 1777, because on the operator's host this is their own
+  # `~/.claude`, 0700 before this ran and theirs alone.
   if [ -z "$claude_home_refusal" ]; then
     claude_home_have="$(claude_home_owner "$CLAUDE_HOME_DIR")"
     if [ "$claude_home_have" != "$claude_home_root" ]; then
       chown "$claude_home_root" "$CLAUDE_HOME_DIR" 2>/dev/null
       if [ "$(claude_home_owner "$CLAUDE_HOME_DIR")" = "$claude_home_root" ]; then
-        chmod 0750 "$CLAUDE_HOME_DIR" 2>/dev/null
-        if [ -n "${claude_home_missing:-}" ]; then
-          echo "[usagefoundry] UF_LOCK_CLAUDE_HOME: $CLAUDE_HOME_DIR is now" \
-               "root's and these entries" \
-               "are not in it, so the CLI can no longer create them:" \
-               "$claude_home_missing. If a session needs one, clear" \
-               "UF_LOCK_CLAUDE_HOME, restart, let the CLI make it, and set the" \
-               "variable again." >&2
-        fi
+        chmod 1770 "$CLAUDE_HOME_DIR" 2>/dev/null
       else
         claude_home_refusal="$CLAUDE_HOME_DIR is owned by ${claude_home_have:-a stat that failed} and could not be given to $claude_home_root"
         if [ -n "$claude_home_settings_was" ]; then
@@ -723,12 +772,15 @@ if [ "${UF_LOCK_CLAUDE_HOME:-}" = "1" ] && [ -n "${UF_AGENT_UID:-}" ]; then
     fi
   fi
 
-  # What the agents can actually do now, asked as one of them. The three
-  # answers are not equally serious, so they are not reported together: a
-  # `projects/` that has stopped being writable is a metering outage and is
-  # undone here, where a `settings.json` that is still writable is the hole this
-  # was meant to close still being open — bad, loud, and not worth breaking an
-  # install over.
+  # What the agents can actually do now, asked as one of them. The answers are
+  # not equally serious, so they are not reported together: a `projects/` that
+  # has stopped being writable is a metering outage and is undone here, where a
+  # `settings.json` a run can still write, remove or replace is the hole this was
+  # meant to close still being open: bad, loud, and not worth breaking an
+  # install over. A directory an agent can write is **expected** now, not a hole:
+  # it is what lets the login renew, and the sticky bit is what keeps that from
+  # reaching `settings.json`. So the directory is not probed for writability;
+  # `settings.json` is probed for the three things the lock actually forbids.
   if [ -z "$claude_home_refusal" ]; then
     claude_home_open=""
     claude_home_broke=""
@@ -740,13 +792,19 @@ if [ "${UF_LOCK_CLAUDE_HOME:-}" = "1" ] && [ -n "${UF_AGENT_UID:-}" ]; then
       no) claude_home_broke="cannot write $CLAUDE_HOME_DIR/projects, which is every usage figure and every budget guard" ;;
       unknown) claude_home_unknown=1 ;;
     esac
-    case "$(claude_home_agent_test -w "$CLAUDE_HOME_DIR")" in
-      yes) claude_home_open="the directory itself" ;;
-      unknown) claude_home_unknown=1 ;;
-    esac
     if [ -e "$claude_home_settings" ]; then
+      # In place: settings.json is 0640 root, so a write bit for the agents
+      # would mean the mode did not take.
       case "$(claude_home_agent_test -w "$claude_home_settings")" in
-        yes) claude_home_open="${claude_home_open:+$claude_home_open and }settings.json" ;;
+        yes) claude_home_open="write settings.json in place" ;;
+        unknown) claude_home_unknown=1 ;;
+      esac
+      # And by replacement: in a group-writable directory the only thing
+      # stopping a run deleting settings.json and writing its own is the sticky
+      # bit, so this is the probe that speaks for it. A "yes" means the agent
+      # unlinked a root-owned file, which is the whole boundary gone.
+      case "$(claude_home_agent_unlink_test)" in
+        yes) claude_home_open="${claude_home_open:+$claude_home_open, and }remove or replace files it does not own" ;;
         unknown) claude_home_unknown=1 ;;
       esac
       case "$(claude_home_agent_test -r "$claude_home_settings")" in
@@ -764,15 +822,19 @@ if [ "${UF_LOCK_CLAUDE_HOME:-}" = "1" ] && [ -n "${UF_AGENT_UID:-}" ]; then
       # agents can, which is neither state.
       chown "$claude_home_agent" "$CLAUDE_HOME_DIR" 2>/dev/null
       chmod 0700 "$CLAUDE_HOME_DIR" 2>/dev/null
-      case "$(claude_home_owner "$claude_home_settings")" in
-        0:*) chown "$claude_home_agent" "$claude_home_settings" 2>/dev/null
-             chmod 0600 "$claude_home_settings" 2>/dev/null ;;
-      esac
+      # A settings.json this boot invented is removed at the refusal below, not
+      # handed to the agent, so it is left out of the put-back here.
+      if [ -z "$claude_home_settings_made" ]; then
+        case "$(claude_home_owner "$claude_home_settings")" in
+          0:*) chown "$claude_home_agent" "$claude_home_settings" 2>/dev/null
+               chmod 0600 "$claude_home_settings" 2>/dev/null ;;
+        esac
+      fi
       claude_home_refusal="an agent $claude_home_broke — the lock was undone and $CLAUDE_HOME_DIR is back at $(claude_home_owner "$CLAUDE_HOME_DIR")"
     elif [ -n "$claude_home_open" ]; then
       echo "[usagefoundry] UF_LOCK_CLAUDE_HOME is 1 and the chown reported" \
-           "success, but an agent can still write $claude_home_open — the" \
-           "ownership change did not reach the kernel that enforces it (a" \
+           "success, but an agent can still $claude_home_open — the" \
+           "mode or ownership did not reach the kernel that enforces it (a" \
            "bind mount whose ownership the platform emulates does this). A run" \
            "can still widen its own sandbox policy. See docs/security.md." >&2
     elif [ -n "$claude_home_unknown" ]; then
@@ -796,6 +858,12 @@ if [ "${UF_LOCK_CLAUDE_HOME:-}" = "1" ] && [ -n "${UF_AGENT_UID:-}" ]; then
   fi
 
   if [ -n "$claude_home_refusal" ]; then
+    # An empty settings.json this boot invented, and only that, goes back to not
+    # existing, so a refusal leaves the directory exactly as it was found. A file
+    # that was already there is never touched here.
+    if [ -n "$claude_home_settings_made" ] && [ -f "$claude_home_settings" ]; then
+      rm -f "$claude_home_settings" 2>/dev/null
+    fi
     echo "[usagefoundry] UF_LOCK_CLAUDE_HOME is 1 but $claude_home_refusal." \
          "Nothing was left half-changed: $CLAUDE_HOME_DIR is as it was, so" \
          "metering is unaffected and a run can still rewrite the sandbox" \
@@ -846,7 +914,8 @@ else
           else
             echo "[usagefoundry] UF_LOCK_CLAUDE_HOME is off but" \
                  "$CLAUDE_HOME_DIR is still root's and could not be handed" \
-                 "back — the CLI cannot create anything new in it. Run" \
+                 "back: its settings.json stays locked and you cannot edit it" \
+                 "without sudo. Run" \
                  "\`chown $claude_home_agent $CLAUDE_HOME_DIR\` as root, or" \
                  "start this container as root once." >&2
           fi
