@@ -19,6 +19,7 @@ import {
   type WorkspaceMount,
 } from "./config";
 import { git, gitSync } from "./git";
+import { runningVerifyChildren } from "./landGate";
 import { withRepoAdmin } from "./repoLock";
 import { dataDirRefusal, mayWriteDataDir, requireDataDir } from "./serverLock";
 import { childCredentials, chownForChild, deprioritiseChildForOom } from "./privsep";
@@ -11956,10 +11957,14 @@ export function reopenRun(
  * anything that outlived it. The children in `assistProcs` are swept with the
  * cycles, because they are spawned `detached` for the same reason and a Ctrl-C
  * misses them in the same way.
+ *
+ * So is a land's verify command, and here alone: the lands are waited on and
+ * never signalled, so a check still running when the grace is spent is ended
+ * with everything it started rather than left behind with no timer on it.
  */
 export function killAllAgents(sig: NodeJS.Signals = "SIGTERM"): number {
   let n = 0;
-  for (const child of [...procs.values(), ...assistProcs]) {
+  for (const child of [...procs.values(), ...assistProcs, ...runningVerifyChildren()]) {
     signalTree(child, sig);
     n += 1;
   }

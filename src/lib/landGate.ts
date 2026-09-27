@@ -204,6 +204,27 @@ function signalGroup(child: ChildProcess, sig: NodeJS.Signals): void {
 }
 
 /**
+ * Every verify command this process is running, and nothing else.
+ *
+ * `killAllAgents` is the reader, as the final sweep of `shutdownRuns`, and the
+ * only one. A land in flight at the signal is waited on and never signalled,
+ * so its check is left to finish inside the grace; this is what reaches it once
+ * the grace is spent. Before it existed nothing did, and on a host whose server
+ * was stopped with `kill <pid>` the check outlived the process, unbounded,
+ * since its timer lived in the process that had exited.
+ *
+ * Here rather than beside `trackAssistChild` for `signalGroup`'s reason, and
+ * `orchestrator.ts` importing this file costs nothing. Its own `globalThis` key
+ * for CLAUDE.md's reason about key shapes.
+ */
+const verifyProcs = ((globalThis as unknown as { __ufVerifyProcs?: Set<ChildProcess> })
+  .__ufVerifyProcs ??= new Set<ChildProcess>());
+
+export function runningVerifyChildren(): ChildProcess[] {
+  return [...verifyProcs];
+}
+
+/**
  * Run the configured check in the checkout Land is about to merge into.
  *
  * As the child uid, not the server's: this runs a command an operator wrote
@@ -281,6 +302,7 @@ export function runVerify(
       });
       return;
     }
+    verifyProcs.add(child);
     const timer = setTimeout(() => {
       timedOut = true;
       signalGroup(child, "SIGKILL");
@@ -301,6 +323,7 @@ export function runVerify(
     // press. `error` and `close` both fire for an ENOENT, and the latch is
     // what stops the second one re-answering with a different verdict.
     child.on("error", (err) => {
+      verifyProcs.delete(child);
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -314,6 +337,7 @@ export function runVerify(
     child.on("exit", (code, sig) => {
       exitCode = code;
       signal = sig;
+      verifyProcs.delete(child);
       signalGroup(child, "SIGKILL");
       drainThenFinish();
     });
