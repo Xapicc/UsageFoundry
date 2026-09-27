@@ -2303,9 +2303,9 @@ export async function commitPending(
  * than read from `landed_at`, because `reopenRun` can put commits back on a
  * branch this tool landed weeks ago.
  *
- * Its checkout goes first when one is still registered: git will not delete a
- * branch that a worktree has checked out, and a slot holding uncommitted work
- * is left alone rather than forced.
+ * Its checkout goes first when one is still registered, because the ref is
+ * deleted with `update-ref`, which does not ask whether a checkout is standing
+ * on it; a slot holding uncommitted work is left alone rather than forced.
  */
 export async function deleteBranch(runId: string): Promise<LandOutcome> {
   const run = getRun(runId);
@@ -2347,10 +2347,10 @@ export async function deleteBranch(runId: string): Promise<LandOutcome> {
   }
 
   // A squash rewrites the commits, so git's ancestry test can never call this
-  // branch merged and `branch -d` would refuse it for ever. The tip recorded at
-  // land time is the stronger statement in that case — it says *these exact
-  // commits* are the ones that were taken — and it stops being true the moment
-  // the branch moves, which is precisely when deleting would lose something.
+  // branch merged. The tip recorded at land time is the stronger statement in
+  // that case — it says *these exact commits* are the ones that were taken —
+  // and it stops being true the moment the branch moves, which is precisely
+  // when deleting would lose something.
   if (!state.merged && !state.landedUnchanged) {
     return {
       ok: false,
@@ -2360,13 +2360,45 @@ export async function deleteBranch(runId: string): Promise<LandOutcome> {
     };
   }
 
-  // Which checkout holds the branch is read **inside** the claim that removes
-  // it, not before: the run loop prunes and adds against this same registry at
-  // every isolated run start, so a slot read outside would be a slot another
-  // caller has since taken or freed. `repoLock.ts` says what the claim is for.
+  // Which checkout holds the branch, and which tip is being judged, are read
+  // **inside** the claim that removes them, not before: the run loop prunes and
+  // adds against this same registry at every isolated run start, so a slot read
+  // outside would be a slot another caller has since taken or freed.
+  // `repoLock.ts` says what the claim is for.
+  const ref = `refs/heads/${state.branch}`;
   const freed = await withRepoAdmin(
     repoRoot,
     async (): Promise<{ ok: true; slot: string | null } | { ok: false; reason: string }> => {
+      const read = await git(repoRoot, ["rev-parse", "--verify", ref]);
+      if (!read.ok) {
+        return {
+          ok: false,
+          reason: `Could not read ${state.branch}: ${read.stderr.split("\n")[0]} Nothing was deleted.`,
+        };
+      }
+      const tip = read.stdout;
+      // The check above, asked again of the exact commit about to be deleted
+      // and before anything is removed, so a refusal here changes nothing.
+      // Never `git branch -d`'s own check: that asks whether the branch is in
+      // HEAD of the operator's checkout, which is not the target whenever they
+      // are working on something else, and it refused every merged branch then.
+      const safe =
+        run.landed_tip === tip ||
+        (state.target !== null &&
+          (
+            await git(
+              repoRoot,
+              ["merge-base", "--is-ancestor", tip, `refs/heads/${state.target}`],
+              NO_CLOCK,
+            )
+          ).ok);
+      if (!safe) {
+        return {
+          ok: false,
+          reason: `${state.branch} is no longer in ${state.target ?? "its target"}: one of the two changed while this was being checked. Nothing was deleted.`,
+        };
+      }
+
       const held = await worktreeHolding(repoRoot, state.branch);
       if (held) {
         const status = await git(held, ["status", "--porcelain"]);
@@ -2376,6 +2408,10 @@ export async function deleteBranch(runId: string): Promise<LandOutcome> {
             reason: `Its checkout at ${held} still holds uncommitted work. Clear it first.`,
           };
         }
+        // Load-bearing, not tidiness: `update-ref` below deletes a ref a
+        // checkout is standing on without a word, where `git branch` refused.
+        // Removing the holder — and git refusing to remove the operator's own
+        // checkout — is what stands in for that refusal.
         const removed = await git(repoRoot, ["worktree", "remove", held]);
         if (!removed.ok) {
           return {
@@ -2385,19 +2421,15 @@ export async function deleteBranch(runId: string): Promise<LandOutcome> {
         }
       }
 
-      // `-d` wherever git can see the merge for itself: its check is a second
-      // opinion on the one above, and disagreeing with it is a reason to stop
-      // rather than to force. `-D` only for a squash, where git structurally
-      // cannot see it and the tip comparison above is what stands in for it.
-      const del = await git(repoRoot, [
-        "branch",
-        state.merged ? "-d" : "-D",
-        state.branch,
-      ]);
+      // Compare-and-delete: refused unless the ref still points at the tip just
+      // proved, so a commit made since the proof keeps the branch.
+      const del = await git(repoRoot, ["update-ref", "-d", "--no-deref", ref, tip]);
       if (!del.ok) {
         return {
           ok: false,
-          reason: `git refused to delete the branch: ${del.stderr.split("\n")[0]}`,
+          reason:
+            `git refused to delete the branch: ${del.stderr.split("\n")[0]}` +
+            (held ? ` Its checkout at ${held} had already been removed.` : ""),
         };
       }
       return { ok: true, slot: held };
@@ -2405,6 +2437,7 @@ export async function deleteBranch(runId: string): Promise<LandOutcome> {
   );
   if (!freed.ok) return freed;
   const slot = freed.slot;
+  const leftover = await dropBranchConfig(repoRoot, state.branch);
 
   emitRunEvent({
     runId,
@@ -2415,10 +2448,36 @@ export async function deleteBranch(runId: string): Promise<LandOutcome> {
 
   return {
     ok: true,
-    message: slot
-      ? `Deleted ${state.branch} and freed its checkout slot.`
-      : `Deleted ${state.branch}.`,
+    message:
+      (slot
+        ? `Deleted ${state.branch} and freed its checkout slot.`
+        : `Deleted ${state.branch}.`) +
+      (leftover ? ` Its tracking configuration was left behind: ${leftover}` : ""),
   };
+}
+
+/**
+ * Remove a deleted branch's `[branch "…"]` config section, or say why not.
+ *
+ * `git branch -d` did this as part of deleting; `update-ref` knows nothing of
+ * config. The section is what Deliver's `push --set-upstream` writes, and left
+ * behind it is one stale entry in the operator's `.git/config` per delivered
+ * branch deleted here, and an upstream silently handed to any branch somebody
+ * later makes under that name.
+ */
+async function dropBranchConfig(repoRoot: string, branch: string): Promise<string | null> {
+  const keys = await git(repoRoot, ["config", "--local", "--name-only", "--list"]);
+  if (!keys.ok) return keys.stderr.split("\n")[0];
+  if (!keys.stdout.split("\n").some((key) => key.startsWith(`branch.${branch}.`))) {
+    return null;
+  }
+  const removed = await git(repoRoot, [
+    "config",
+    "--local",
+    "--remove-section",
+    `branch.${branch}`,
+  ]);
+  return removed.ok ? null : removed.stderr.split("\n")[0];
 }
 
 /**

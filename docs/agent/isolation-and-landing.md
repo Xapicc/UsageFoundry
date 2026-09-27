@@ -58,5 +58,6 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 
 - Every branch this app produced is reachable, and the cap is on the page rather than on the set. (was line 24)
 - A squash is landed work that git cannot see. (was line 60)
+- Delete deletes the exact tip it proved, and proves it against the target, never against whatever the operator has checked out.
 - Getting rid of a branch is two doors, and only the careful one is called Delete. (was line 64)
 - The other doors are claimed too, and by a *second* claim, because they are not about that folder. (was lines 126–147)

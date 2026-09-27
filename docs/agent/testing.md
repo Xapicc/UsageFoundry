@@ -181,6 +181,7 @@ Units that are about no test file in the tree:
 | Test file | Also in |
 |---|---|
 | `conflictedPaths.test.ts` |  |
+| `deleteBranch.test.ts` |  |
 | `delivery.test.ts` |  |
 | `git.test.ts` |  |
 | `landGate.test.ts` |  |
