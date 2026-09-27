@@ -179,7 +179,7 @@ function PendingWork({
           ) : pending.merging ? (
             <Hint tone="warn">
               A conflict resolution was cut off here mid-merge, so nothing is
-              offered: run <span className="mono">git merge --abort</span> in
+              offered: run <span className="mono whitespace-nowrap">git merge --abort</span> in
               this checkout, then resolve again
             </Hint>
           ) : (
