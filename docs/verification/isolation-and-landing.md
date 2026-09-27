@@ -130,3 +130,11 @@
   a listener that accepts and never answers (`nc -lk 127.0.0.1 9999`), then
   reading the `run_reviews` row and `git worktree list` after the hour. The CLI
   may give up by itself first, which is worth knowing too.
+
+- **The uncounted Purge, the moved-since-landed Land card and the kept
+  strategy pick have not been rendered** (2026-09-27, `b69e36c`, `b44df6c`,
+  `4418cba`). Each decision is unit-tested in `landView.test.ts` and
+  `land.test.ts`; no browser drew them. Settle by driving `/runs/[id]` per the
+  run-page-states recipe with a `GET /api/runs/<id>/land` of `ahead: null` and
+  of `landedAt` set with `merged: false`, and on `/branches` pick Squash, press
+  a row's Commit, then read the queue POST body for `strategy: "squash"`.

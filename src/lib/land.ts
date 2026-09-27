@@ -199,7 +199,13 @@ export interface LandState {
    */
   targetInferred: boolean;
   branchExists: boolean;
-  ahead: number;
+  /**
+   * Commits on the branch that are not in the target — or, with no target to
+   * count against, not in the commit the run started from. Null when git could
+   * not count them, which is never the same as none: Purge reads this out as
+   * what it is about to destroy.
+   */
+  ahead: number | null;
   behind: number;
   merged: boolean;
   /**
@@ -420,6 +426,49 @@ async function targetOf(
   return descends.ok ? { branch: head, inferred: true } : null;
 }
 
+/**
+ * The range a branch's own commits are counted over, or null when there is
+ * nothing to count them against.
+ *
+ * The target when there is one, because that is what "ahead" means everywhere
+ * a branch is offered for landing. Without one, the commit the run started
+ * from: `worktree_base` is recorded for every isolated run, so a run isolated
+ * from a detached HEAD — which records no target by design — still has a count,
+ * where it used to get a placeholder 0 that the Purge confirmation then read
+ * out as "nothing to lose".
+ */
+export function aheadRangeFor(s: {
+  target: string | null;
+  base: string | null;
+  branch: string;
+}): string | null {
+  const from = s.target ?? s.base;
+  return from ? `${from}..${s.branch}` : null;
+}
+
+/**
+ * One number out of `rev-list --count`, or null when git did not give one.
+ *
+ * The old reading was `Number(stdout) || 0`, and a call git refused has an
+ * empty stdout — so a range naming a target that had since been renamed away
+ * read as a branch with no commits on it.
+ */
+export function parseCount(text: string | null): number | null {
+  if (text === null) return null;
+  const trimmed = text.trim();
+  return /^\d+$/.test(trimmed) ? Number(trimmed) : null;
+}
+
+async function countAhead(
+  repoRoot: string,
+  range: string | null,
+  opts: { timeoutMs?: number } = {},
+): Promise<number | null> {
+  if (!range) return null;
+  const res = await git(repoRoot, ["rev-list", "--count", range], opts);
+  return parseCount(res.ok ? res.stdout : null);
+}
+
 async function checkoutStateOf(folder: string): Promise<CheckoutState> {
   const head = await git(folder, ["rev-parse", "--abbrev-ref", "HEAD"], NO_CLOCK);
   const status = await git(folder, ["status", "--porcelain"], NO_CLOCK);
@@ -465,7 +514,7 @@ export async function landState(
     target: null,
     targetInferred: false,
     branchExists: false,
-    ahead: 0,
+    ahead: null,
     behind: 0,
     merged: false,
     landedUnchanged: false,
@@ -501,11 +550,21 @@ export async function landState(
   // state this answers, and the card has to be able to say so.
   const pending = await pendingWork(run);
   const target = await targetOf(run, repoRoot, checkout);
+  // Both refusals below still leave the branch purgeable, and the Purge sheet
+  // states this figure as what goes — so it is counted from where the run
+  // started rather than left at the placeholder.
+  const aheadOfBase = () =>
+    countAhead(
+      repoRoot,
+      aheadRangeFor({ target: null, base: run.worktree_base, branch }),
+      NO_CLOCK,
+    );
 
   if (!target) {
     return {
       ...base,
       branchExists: true,
+      ahead: await aheadOfBase(),
       checkout,
       pending,
       blocked:
@@ -524,6 +583,7 @@ export async function landState(
     return {
       ...base,
       branchExists: true,
+      ahead: await aheadOfBase(),
       checkout,
       pending,
       target: target.branch,
@@ -537,7 +597,7 @@ export async function landState(
     ["rev-list", "--left-right", "--count", `${target.branch}...${branch}`],
     NO_CLOCK,
   );
-  const [behind = "0", ahead = "0"] = counts.stdout.split(/\s+/);
+  const [behind = "0", ahead = null] = counts.ok ? counts.stdout.split(/\s+/) : [];
 
   const merged = (
     await git(repoRoot, ["merge-base", "--is-ancestor", branch, target.branch], NO_CLOCK)
@@ -571,7 +631,7 @@ export async function landState(
     branchExists: true,
     target: target.branch,
     targetInferred: target.inferred,
-    ahead: Number(ahead) || 0,
+    ahead: parseCount(ahead),
     behind: Number(behind) || 0,
     merged,
     landedUnchanged,
@@ -947,7 +1007,8 @@ export function landRefusal(s: {
   target: string | null;
   merged: boolean;
   landedUnchanged: boolean;
-  ahead: number;
+  /** Null when git could not count the branch's commits. */
+  ahead: number | null;
   /** Uncommitted paths in the run's own checkout. */
   pendingCount: number;
   preview: MergePreview;
@@ -1027,6 +1088,11 @@ export function landRefusal(s: {
     return s.pendingCount > 0
       ? `This branch has no commits of its own, but ${s.pendingCount} path(s) are uncommitted in its checkout. Commit them first.`
       : "This branch has no commits of its own.";
+  }
+  // Not read as "something to land": a count git refused is a repository this
+  // app cannot see clearly, which is the wrong moment to write into a checkout.
+  if (s.ahead === null) {
+    return `Could not count this branch's commits against ${s.target}, so nothing is offered. Check it by hand.`;
   }
 
   if (s.preview.outcome === "conflict") {
@@ -2356,7 +2422,7 @@ export async function deleteBranch(runId: string): Promise<LandOutcome> {
       ok: false,
       reason: run.landed_at
         ? `${state.branch} has gained commits since it was landed. Land those too, or delete it by hand.`
-        : `${state.branch} has ${state.ahead} commit(s) that are not in ${state.target ?? "any branch"}. Deleting it would be the only unrecoverable thing here.`,
+        : `${state.branch} has ${state.ahead ?? "uncounted"} commit(s) that are not in ${state.target ?? "any branch"}. Deleting it would be the only unrecoverable thing here.`,
     };
   }
 
@@ -2609,12 +2675,15 @@ export async function purgeBranch(
   });
   if (refusal) return { ok: false, reason: refusal };
 
-  // A run with no recorded base has no range to count against, and a count is
-  // left out rather than guessed at.
-  const from = run.worktree_base_branch ?? run.worktree_base;
-  const ahead = from
-    ? Number((await git(repoRoot, ["rev-list", "--count", `${from}..${branch}`])).stdout) || 0
-    : 0;
+  // Against the target, and against the base commit when the target has been
+  // renamed away — which is what the Land card counted for the sheet this press
+  // came from. Anything git will not count is null and said to be, never 0.
+  const ahead =
+    (await countAhead(
+      repoRoot,
+      aheadRangeFor({ target: run.worktree_base_branch, base: run.worktree_base, branch }),
+    )) ??
+    (await countAhead(repoRoot, aheadRangeFor({ target: null, base: run.worktree_base, branch })));
 
   // The registry read and both writes in one claim, for `deleteBranch`'s
   // reason: the run loop prunes and adds against this registry at every
@@ -2624,10 +2693,10 @@ export async function purgeBranch(
   const purged = await withRepoAdmin(
     repoRoot,
     async (): Promise<
-      { ok: true; slot: string | null; discarded: number } | { ok: false; reason: string }
+      { ok: true; slot: string | null; discarded: number | null } | { ok: false; reason: string }
     > => {
       const held = await worktreeHolding(repoRoot, branch);
-      let lost = 0;
+      let lost: number | null = 0;
       if (held) {
         const holder = activeRuns().find((r) => r.worktree_path === held);
         if (holder) {
@@ -2638,7 +2707,7 @@ export async function purgeBranch(
         }
 
         const status = await git(held, ["status", "--porcelain", "-z"], { trim: false });
-        lost = status.ok ? parseStatusZ(status.stdout).length : 0;
+        lost = status.ok ? parseStatusZ(status.stdout).length : null;
 
         // `--force` is the whole difference from `deleteBranch`, which leaves a
         // checkout with work in it alone. Here that work is what is being purged.
@@ -2682,17 +2751,32 @@ export async function purgeBranch(
     },
   });
 
+  return { ok: true, message: purgedMessage(branch, ahead, discarded) };
+}
+
+/**
+ * The sentence a purge answers with. Null is a count git would not give, and
+ * it is said as that: this is the only account the operator gets of what was
+ * destroyed, and a sentence that left it out read as nothing having gone.
+ */
+export function purgedMessage(
+  branch: string,
+  commits: number | null,
+  discarded: number | null,
+): string {
   const lost = [
-    ahead > 0 ? `${ahead} commit${ahead === 1 ? "" : "s"}` : null,
-    discarded > 0 ? `${discarded} uncommitted path${discarded === 1 ? "" : "s"}` : null,
+    commits ? `${commits} commit${commits === 1 ? "" : "s"}` : null,
+    discarded ? `${discarded} uncommitted path${discarded === 1 ? "" : "s"}` : null,
   ].filter(Boolean);
 
-  return {
-    ok: true,
-    message: lost.length
-      ? `Purged ${branch}. ${lost.join(" and ")} went with it.`
-      : `Purged ${branch}.`,
-  };
+  return [
+    `Purged ${branch}.`,
+    lost.length ? `${lost.join(" and ")} went with it.` : null,
+    commits === null ? "How many commits went with it could not be counted." : null,
+    discarded === null ? "What was uncommitted in its checkout could not be read." : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 /* ------------------------------------------------------------------ */
@@ -2707,7 +2791,8 @@ export interface BranchSummary {
   repoRoot: string;
   repoLabel: string;
   createdAt: number;
-  ahead: number;
+  /** See `LandState.ahead`: null is "could not count", never "none". */
+  ahead: number | null;
   merged: boolean;
   /** Landed by this tool and unchanged since — how a squash shows as done. */
   landedUnchanged: boolean;
@@ -3204,7 +3289,7 @@ async function mapWithLimit<T, R>(
 interface PendingBranch extends ProbeCandidate {
   summary: Omit<BranchSummary, "ahead" | "uncommitted" | "heldByCheckout">;
   repoRoot: string;
-  /** `<target>..<branch>`, or null when there is nothing to count. */
+  /** See `aheadRangeFor`; null when there is nothing to count. */
   aheadRange: string | null;
 }
 
@@ -3298,7 +3383,9 @@ export async function branchInventory(
 
       pending.push({
         repoRoot,
-        aheadRange: exists && target ? `${target}..${branch}` : null,
+        aheadRange: exists
+          ? aheadRangeFor({ target, base: run.worktree_base, branch })
+          : null,
         slot: (exists ? heldBy.get(branch) : undefined) ?? null,
         summary: {
           runId: run.id,
@@ -3329,13 +3416,10 @@ export async function branchInventory(
   // says why that has to happen before the first one is dispatched.
   const probeTargets = selectProbeTargets(pending, MAX_PENDING_PROBES);
   const [aheads, probed] = await Promise.all([
-    mapWithLimit(pending, BRANCH_GIT_CONCURRENCY, async (p) =>
-      p.aheadRange === null
-        ? 0
-        : Number(
-            (await git(p.repoRoot, ["rev-list", "--count", p.aheadRange])).stdout,
-          ) || 0,
-    ),
+    // One call per row whatever it answers — `MAX_INVENTORY` bounds these — so
+    // a target renamed away is a null here. The Land card, with one branch to
+    // pay for, counts that case against the base instead.
+    mapWithLimit(pending, BRANCH_GIT_CONCURRENCY, (p) => countAhead(p.repoRoot, p.aheadRange)),
     mapWithLimit(probeTargets, BRANCH_GIT_CONCURRENCY, async (i) => {
       // Non-null: `selectProbeTargets` picks only rows a checkout holds.
       const status = await git(pending[i].slot!, ["status", "--porcelain", "-z"], {
