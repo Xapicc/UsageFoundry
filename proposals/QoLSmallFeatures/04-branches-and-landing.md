@@ -53,6 +53,30 @@ At `fee5efb`. Work in progress — this paragraph is rewritten when the hunt end
 - **Not worth it if**: G-5 hides most landed branches anyway.
 
 
+### G-7 Open every file of a diff at once
+- **Friction**: "What changed" draws each file as a closed disclosure (`DiffFileRow`, `src/components/ui/Patch.tsx:140-180`, listed by `src/components/RunDiff.tsx`), so reading a run's whole change before deciding to land it is one click per file — and the patches are already in the response (`selectForPatch` budgets them into `RunDiffDTO`; `docs/agent/git-and-review.md`, "A diff that was shortened says so"). No list in the app has an open-all control (`grep -rn "Expand all\|Open all" src` → nothing).
+- **Change**: an "Open all" / "Close all" button in the card's title row beside Refresh (`RunDiff.tsx`), shown when there are two or more files with patch bodies; implemented by re-keying the rows with `defaultOpen` (the `Disclosure` prop read at mount, `src/components/ui/Disclosure.tsx:64-65`), so no controlled state is added to a component whose `open` is reserved for fetch-on-open. Files listed without contents stay closed and say so, as they do now.
+- **Size**: S.
+- **Touches**: `conventions.md`'s grouping vocabulary — this is one control on an existing card, not a new region. Opening forty patches at once is a long DOM; the card already scrolls its file list above 24 files (`SCROLL_FILE_LIST_ABOVE`, `RunDiff.tsx`), which bounds it.
+- **Value**: medium — reading the diff is the decision Land asks for, and this removes the per-file clicking from it.
+- **Not worth it if**: operators mostly land without reading the diff (not measured).
+
+### G-8 Say on the Land card that a verify command will run first, and which
+- **Friction**: with `landVerifyCommand` set, pressing Land runs the operator's command in the run's checkout for up to 15 minutes (`VERIFY_TIMEOUT_MS`, `src/lib/landGate.ts:165`) before anything merges, while the button reads only "Landing…" (`src/components/RunLand.tsx:653`). The sentence above the button says "Merges into <target> in your own checkout, which has to be clean and standing on it. A conflict is rolled back." (`RunLand.tsx:585-596`) and never mentions the check; the only hint is the Open pull request sentence's "The check Land takes applies here too" (`RunLand.tsx:611`), which refers to a check nothing on the card has named. The land GET does not return the command (`src/app/api/runs/[id]/land/route.ts` GET returns `state`, `defaultStrategy`, `resolution`, `delivery`).
+- **Change**: return `verifyCommand` (the configured string, or null) from the land GET and add one clause to the existing sentence: "Runs `npm test` in the run's checkout first; a failure refuses the land." While a land is in flight with a command set, the button reads "Checking…" rather than "Landing…" — the card does not know when the check ends, so it should say "Checking, then landing…" rather than guess.
+- **Size**: S.
+- **Touches**: `isolation-and-landing.md`, "The check in front of Land": an empty command is not a check, so nothing is said when none is set. The minutes-long wait is also the window in board task `a8a0bd95` (filed by this hunt); telling the operator a check is running is a reason for them not to touch their checkout meanwhile, which is a mitigation, not the fix.
+- **Value**: medium — a multi-minute silent spinner on the button that writes into the operator's checkout is the worst place in the app to leave someone guessing.
+- **Not worth it if**: almost no install sets `landVerifyCommand` (it is empty by default, `src/lib/settings.ts`; install counts not known).
+
+### G-9 Run the land check on a branch without landing it
+- **Friction**: the only way to learn whether a branch passes `landVerifyCommand` is to press Land, which, if it passes, merges immediately (`src/lib/land.ts:1145-1171`). An operator who wants to know "does this pass?" before deciding — or before queueing ten branches — has no button for it, and the merge queue runs each check inline at its turn.
+- **Change**: a "Run check" action on the Land card (a new `action: "verify"` in `src/app/api/runs/[id]/land/route.ts`) that calls the existing `verifyTree` + `runVerify` and returns `landVerdict`'s sentence and tail, drawn in the card's existing note/error slot. It takes nothing in the operator's checkout, so it needs no `landing` claim; it does need the run to be settled, which `landRefusal`'s status test already expresses.
+- **Size**: S to M.
+- **Touches**: `isolation-and-landing.md`, "The check in front of Land" and "Which tree the check runs in…": same tree, same refusals, same child uid and `verifyEnv` (`landGate.ts`). It is one more door that runs agent-written repository code (`npm test` executes the branch's own `package.json`), as the child uid — the same exposure Land already has, reachable without a merge. Should wait for board task `0a3278ff` (filed by this hunt), or it inherits the uncommitted-work hole.
+- **Value**: medium — turns the gate from a trap into a tool, for installs that set it.
+- **Not worth it if**: G-8 is enough for the operators who set a command.
+
 ## Too big for this list
 
 ## Bugs filed
