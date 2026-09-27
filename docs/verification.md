@@ -39,7 +39,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Workflows and schedules | [workflows-and-schedules-general.md](verification/workflows-and-schedules-general.md) — the canvas, instances, schedules, and a loop's region, link and board stop | 11 | 11 |
 | Concurrency and ownership | [concurrency-and-ownership.md](verification/concurrency-and-ownership.md) | 17 | 7 |
 | Isolation and landing | [isolation-and-landing.md](verification/isolation-and-landing.md) | 11 | 9 |
-| Git and review | [git-and-review.md](verification/git-and-review.md) | 7 | 7 |
+| Git and review | [git-and-review.md](verification/git-and-review.md) | 11 | 8 |
 | Agents, templates and models | [agents-templates-and-models.md](verification/agents-templates-and-models.md) | 14 | 7 |
 | Other providers | [other-providers.md](verification/other-providers.md) | 6 | 3 |
 | Knowledge and plugins | [knowledge-and-plugins.md](verification/knowledge-and-plugins.md) | 14 | 11 |

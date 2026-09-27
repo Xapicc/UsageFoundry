@@ -37,7 +37,33 @@
   counts as outside, a command-only `Bash` and a directory `Grep` are excluded.
   `runTouches.test.ts` covers only the pure reconciliation, nine cases.
 
+- **A type change no longer blanks every patch, 2026-09-27, git 2.39.5.** `rm
+  f; ln -s g f; echo y >> g` gives 3 numstat entries and 4 `diff --git`
+  chunks, `f`'s two under one header; the real `runDiff` (orchestrator, config
+  and privsep stubbed) now returns all three patches. Scratch repository only.
+
+- **The byte budget keeps the small file's patch, 2026-09-27, git 2.39.5.**
+  Through the real `runDiff`: a 4.2 MB one-line `dist.min.js` beside a
+  one-line `small.ts` edit gives `small.ts` its patch and `omittedPatches: 1`.
+  2.1M blank lines beside `small.ts` overflowed the read when charged the file
+  alone, reported as `patchFailure`; the per-line marker charge leaves them out.
+
+- **After a merge of the target the diff is the run's own, 2026-09-27, git
+  2.39.5.** One run commit, one unrelated `main` commit, `main` merged into the
+  branch: 4 files +6 −2 from the base, `run.txt +2` and `shared +1 −1` from
+  `measuredFrom.commit`. A later merge of another branch keeps it at the base.
+
+- **The card's new sentences render, 2026-09-27**, standalone build, a seeded
+  run that failed at the spawn, `/api/runs/<id>/diff` answered by Playwright
+  with a `measuredFrom` and a `patchFailure` payload: hint, both notices and
+  the row sentence paint, no console error. 1280px only; not a server's diff.
+
 ## Not yet verified by hand
+
+- **A resolution made through the app, then "What changed".** The range was
+  measured on a hand-made merge; `resolveConflicts`' own merge, the review it
+  then bills and the Files tab over it are unwatched. Settles on a resolved
+  run whose card names `measuredFrom` and lists only the run's files.
 
 - **No work cycle has been spawned by the `core.excludesFile` code,
   2026-09-09.** Unseen: the write to `/run/uf-git`, the block reaching a
