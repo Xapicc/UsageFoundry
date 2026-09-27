@@ -419,7 +419,7 @@ export default function Dashboard() {
         // that no run was ever started as anything.
         hint: data.meta.includeSidechains
           ? "Unmarked names have no definition here: a built-in, a repository's own agent, or a deleted one. (main thread) is a turn with no agent name recorded, which may include a run started as one."
-          : "Sub-agent turns are excluded in Settings, but a session started as an agent still records its name here.",
+          : "Sub-agent turns are excluded in Settings, but a session started as an agent can still record its name here.",
       },
       skill: {
         rows: s.bySkill.map((r) => ({ label: r.skill, cost: r.agg.costUSD })),
