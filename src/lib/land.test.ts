@@ -15,6 +15,7 @@ import {
   selectProbeTargets,
   trackedDirt,
   unresolvedFiles,
+  unsettledBranchRefusal,
   type CheckoutState,
   type ConflictFile,
 } from "./land";
@@ -424,6 +425,111 @@ describe("landRefusal for a branch a chain shares", () => {
       landRefusal({ ...base, runId: "bbbbbbbb", chain, merged: true }) ?? "",
       /Already in main/,
     );
+  });
+});
+
+/**
+ * The run half of `landRefusal`, asked by Deliver too. Deliver pushed the
+ * branch of a running run, of a link with a successor still to commit, and of
+ * a live loop pass, and opened a pull request on part of the work, because it
+ * asked none of these. One decision for both exits is what keeps them agreeing.
+ */
+describe("unsettledBranchRefusal holds both exits while the branch can still move", () => {
+  const member = (
+    runId: string,
+    status: import("./land").ChainMember["status"],
+    iterations = 1,
+  ) => ({ runId, status, iterations });
+  const alone = [member("aaaaaaaa", "completed")];
+
+  it("refuses to deliver while the run can still commit", () => {
+    for (const runStatus of ["running", "queued", "paused"] as const) {
+      assert.equal(
+        unsettledBranchRefusal(
+          { runId: "aaaaaaaa", runStatus, chain: [member("aaaaaaaa", runStatus)] },
+          "deliver",
+        ),
+        "This run is still active. It can commit again at any moment, so anything " +
+          "delivered now would be half its work.",
+        runStatus,
+      );
+    }
+  });
+
+  it("delivers a settled run, a run that asked for review included", () => {
+    // `needs-review` for `landRefusal`'s reason: it cannot commit again unless
+    // somebody reopens it, and its partial work may be worth publishing.
+    for (const runStatus of ["completed", "stopped", "failed", "needs-review"] as const) {
+      assert.equal(
+        unsettledBranchRefusal({ runId: "aaaaaaaa", runStatus, chain: alone }, "deliver"),
+        null,
+        runStatus,
+      );
+    }
+  });
+
+  it("refuses to deliver while a link further along can still commit, naming it", () => {
+    for (const status of ["waiting", "queued", "running", "paused"] as const) {
+      const chain = [member("aaaaaaaa", "completed"), member("bbbbbbbb", status, 0)];
+      const refusal =
+        unsettledBranchRefusal({ runId: "aaaaaaaa", runStatus: "completed", chain }, "deliver") ??
+        "";
+      assert.match(refusal, /^Run bbbbbbbb /, `${status} should hold the branch`);
+      assert.match(refusal, /delivers it|delivered now/);
+    }
+  });
+
+  it("refuses to deliver while a pass of a loop holds the branch, naming the pass", () => {
+    const refusal = unsettledBranchRefusal(
+      {
+        runId: "aaaaaaaa",
+        runStatus: "completed",
+        chain: alone,
+        loopBlock: { blockName: "Iterate", pass: 3 },
+      },
+      "deliver",
+    );
+    assert.match(refusal ?? "", /^Pass 3 of the workflow block “Iterate”/);
+    assert.match(refusal ?? "", /anything delivered now/);
+  });
+
+  it("is the decision landRefusal gives, word for word, when asked for Land", () => {
+    // The drift this split exists to prevent: if Land's copy of the rule ever
+    // stops being this one, the two doors can disagree about the same branch.
+    const settled = {
+      branchExists: true,
+      target: "main",
+      merged: false,
+      landedUnchanged: false,
+      ahead: 1,
+      pendingCount: 0,
+      preview: { outcome: "clean" as const },
+      checkout: { path: "/r", headBranch: "main", dirty: false, readable: true },
+    };
+    const cases = [
+      { runId: "aaaaaaaa", runStatus: "running" as const, chain: alone },
+      {
+        runId: "aaaaaaaa",
+        runStatus: "completed" as const,
+        chain: [member("aaaaaaaa", "completed"), member("bbbbbbbb", "waiting", 0)],
+      },
+      {
+        runId: "bbbbbbbb",
+        runStatus: "completed" as const,
+        chain: [member("aaaaaaaa", "queued"), member("bbbbbbbb", "completed")],
+      },
+      {
+        runId: "aaaaaaaa",
+        runStatus: "completed" as const,
+        chain: alone,
+        loopBlock: { blockName: "Iterate", pass: null },
+      },
+    ];
+    for (const c of cases) {
+      const expected = unsettledBranchRefusal(c, "land");
+      assert.notEqual(expected, null);
+      assert.equal(landRefusal({ ...settled, ...c }), expected);
+    }
   });
 });
 

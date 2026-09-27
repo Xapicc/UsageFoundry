@@ -931,6 +931,91 @@ function loopRefusal(
   );
 }
 
+/** The two ways a branch leaves its run: into the checkout, or off the machine. */
+export type BranchExit = "land" | "deliver";
+
+/** How `unsettledBranchRefusal`'s sentences name the exit they refuse. */
+const EXIT_WORDS: Record<BranchExit, { done: string; does: string; doing: string }> = {
+  land: { done: "landed", does: "lands", doing: "Landing" },
+  deliver: { done: "delivered", does: "delivers", doing: "Delivering" },
+};
+
+/**
+ * Why this branch may not leave by `exit` yet because something can still
+ * commit to it, or null when nothing can.
+ *
+ * The half of `landRefusal` that is about the *run* rather than about git or
+ * the operator's checkout, split out so that `deliverRun` asks the same
+ * question in the same words. Deliver arrived without it: it pushed the branch
+ * of a running, queued or paused run, of a chain link with a successor still
+ * committing, and of a live loop pass, and opened a pull request on half the
+ * work. One function for both exits is what keeps the two doors from drifting
+ * apart again.
+ */
+export function unsettledBranchRefusal(
+  s: {
+    runId: string;
+    runStatus: RunRow["status"];
+    /** Every run on this branch, oldest first. See `ChainMember`. */
+    chain: readonly ChainMember[];
+    /** A live pass of a loop that owns this branch. See `loopStillRepeating`. */
+    loopBlock?: { blockName: string; pass: number | null } | null;
+  },
+  exit: BranchExit,
+): string | null {
+  const words = EXIT_WORDS[exit];
+
+  // `needs-review` is deliberately absent, and it looks like an omission. A run
+  // that asked for review cannot commit again unless somebody reopens it —
+  // exactly like `completed`, `stopped` and `failed`, all three of which are
+  // landable today — and an operator who has read the reason may well decide the
+  // partial work is worth having. Taking the button away would leave them with a
+  // branch and no route to it.
+  if (s.runStatus === "running" || s.runStatus === "queued" || s.runStatus === "paused") {
+    return (
+      "This run is still active. It can commit again at any moment, so anything " +
+      `${words.done} now would be half its work.`
+    );
+  }
+
+  // Before the chain tests rather than inside them: a loop on its first pass is
+  // a chain of one, so the whole block below is skipped and the branch would
+  // read as a finished run's.
+  if (s.loopBlock) {
+    return loopRefusal(
+      s.loopBlock,
+      `anything ${words.done} now would be what it has done so far rather than all of it`,
+    );
+  }
+
+  // One branch, one Land button. Three runs extending each other's work share a
+  // ref, so without this every one of them offers to land it: the operator
+  // merges the first, the second still reads unmerged because the branch has
+  // moved since, and the merge queue would take the same branch three times.
+  // The last link is the one that has all of it. Both refusals name a run,
+  // because "this cannot be landed" with no address is a dead end on a page
+  // whose whole purpose is to get the work merged.
+  if (s.chain.length > 1) {
+    const owner = branchOwner(s.chain);
+    if (owner && owner !== s.runId) {
+      const last = s.chain.find((m) => m.runId === owner)!;
+      return (
+        `Run ${short(owner)} carries this branch on from here and is the one that ${words.does} it ` +
+        `(it is ${last.status}). ${words.doing} from this run would take the same branch a second time, ` +
+        "not a smaller part of it — the whole chain is on one ref."
+      );
+    }
+    const busy = chainBlocker(s.runId, s.chain);
+    if (busy) {
+      return (
+        `Run ${short(busy.runId)} is ${busy.status} on this same branch and can still commit to it, ` +
+        `so anything ${words.done} now would be part of the chain rather than all of it.`
+      );
+    }
+  }
+  return null;
+}
+
 /**
  * Why this branch cannot be landed right now, or null when it can.
  *
@@ -963,54 +1048,8 @@ export function landRefusal(s: {
   if (!s.branchExists) return "This branch no longer exists.";
   if (!s.target) return "There is no recorded branch for this work to land into.";
 
-  // `needs-review` is deliberately absent, and it looks like an omission. A run
-  // that asked for review cannot commit again unless somebody reopens it —
-  // exactly like `completed`, `stopped` and `failed`, all three of which are
-  // landable today — and an operator who has read the reason may well decide the
-  // partial work is worth having. Taking the button away would leave them with a
-  // branch and no route to it.
-  if (s.runStatus === "running" || s.runStatus === "queued" || s.runStatus === "paused") {
-    return (
-      "This run is still active. It can commit again at any moment, so anything " +
-      "landed now would be half its work."
-    );
-  }
-
-  // Before the chain tests rather than inside them: a loop on its first pass is
-  // a chain of one, so the whole block below is skipped and the branch would
-  // read as a finished run's.
-  if (s.loopBlock) {
-    return loopRefusal(
-      s.loopBlock,
-      "anything landed now would be what it has done so far rather than all of it",
-    );
-  }
-
-  // One branch, one Land button. Three runs extending each other's work share a
-  // ref, so without this every one of them offers to land it: the operator
-  // merges the first, the second still reads unmerged because the branch has
-  // moved since, and the merge queue would take the same branch three times.
-  // The last link is the one that has all of it. Both refusals name a run,
-  // because "this cannot be landed" with no address is a dead end on a page
-  // whose whole purpose is to get the work merged.
-  if (s.chain.length > 1) {
-    const owner = branchOwner(s.chain);
-    if (owner && owner !== s.runId) {
-      const last = s.chain.find((m) => m.runId === owner)!;
-      return (
-        `Run ${short(owner)} carries this branch on from here and is the one that lands it ` +
-        `(it is ${last.status}). Landing from this run would take the same branch a second time, ` +
-        "not a smaller part of it — the whole chain is on one ref."
-      );
-    }
-    const busy = chainBlocker(s.runId, s.chain);
-    if (busy) {
-      return (
-        `Run ${short(busy.runId)} is ${busy.status} on this same branch and can still commit to it, ` +
-        "so anything landed now would be part of the chain rather than all of it."
-      );
-    }
-  }
+  const unsettled = unsettledBranchRefusal(s, "land");
+  if (unsettled) return unsettled;
 
   if (s.merged) return `Already in ${s.target} — there is nothing left to land.`;
   // A squash leaves no ancestry to find, so without this the branch reads as
@@ -3414,17 +3453,20 @@ export async function branchInventory(
  * What a Deliver press would do, decided before it is offered.
  *
  * The card's rule is refuse-and-explain rather than show-and-caveat, and every
- * refusal here is a *standing* condition of the install rather than of the
- * press: no GitHub credential for this repository, a remote that is not
- * GitHub, no branch, or a branch that is already the target. All four are
- * decided at boot or by the row, so asking the operator to find out by pressing
- * would be asking them to spend a round trip on an answer this route already
- * has.
+ * refusal here is one the press would give before touching the remote. Most are
+ * *standing* conditions of the install rather than of the press: no GitHub
+ * credential for this repository, a remote that is not GitHub, no branch, or a
+ * branch that is already the target. All four are decided at boot or by the
+ * row, so asking the operator to find out by pressing would be asking them to
+ * spend a round trip on an answer this route already has. The other is
+ * `unsettledBranchRefusal`: a branch its run, a later link or a live loop pass
+ * can still commit to, which lifts when that settles.
  *
- * `planDelivery` decides it, so the button and the endpoint cannot disagree
- * about whether delivery is possible or about why it is not. What it does not
- * pre-empt is the verify gate and the push itself, which are about this
- * branch's state now and belong to the press.
+ * `planDelivery` and `deliverHold` decide it, the same two the press asks, so
+ * the button and the endpoint cannot disagree about whether delivery is
+ * possible or about why it is not. What it does not pre-empt is the verify gate
+ * and the push itself, which are about this branch's state now and belong to
+ * the press.
  */
 export async function deliveryState(
   runId: string,
@@ -3450,6 +3492,26 @@ export async function deliveryState(
     return {
       possible: false,
       reason: "This run has no branch to deliver.",
+      remote: null,
+      head: null,
+      base: null,
+      delivered,
+    };
+  }
+
+  // Asked here as well as at the press, and in the same order the press asks
+  // it, so the card states the refusal the endpoint would give rather than
+  // offering a button that is then refused. Not a standing condition like the
+  // ones below: it lifts when the run or its chain settles.
+  const unsettled = deliverHold({
+    runId,
+    runStatus: state.runStatus,
+    chain: state.chain,
+  });
+  if (unsettled) {
+    return {
+      possible: false,
+      reason: unsettled,
       remote: null,
       head: null,
       base: null,
@@ -3517,6 +3579,29 @@ export function deliveredPullRequest(
   }
 }
 
+/**
+ * `unsettledBranchRefusal` for the Deliver exit, asked as a person.
+ *
+ * `null` for the asker in as many words, `LandAsker`'s rule: nothing in the run
+ * loop reaches Deliver, so no merge block can be the one asking and no live
+ * pass is ever exempt here.
+ */
+function deliverHold(s: {
+  runId: string;
+  runStatus: RunRow["status"];
+  chain: readonly ChainMember[];
+}): string | null {
+  return unsettledBranchRefusal(
+    { ...s, loopBlock: loopStillRepeating(s.chain, null) },
+    "deliver",
+  );
+}
+
+/** `deliverHold` from a fresh read of the run and of its chain. */
+function deliverHoldNow(run: RunRow): string | null {
+  return deliverHold({ runId: run.id, runStatus: run.status, chain: branchChain(run) });
+}
+
 export async function deliverRun(
   runId: string,
   o: { title?: string; body?: string } = {},
@@ -3526,6 +3611,12 @@ export async function deliverRun(
 > {
   const run = getRun(runId);
   if (!run) return { ok: false, reason: "No such run." };
+
+  // Ahead of `landState`, so a refused press has run no git at all. The card
+  // is not polled and may have been open across a Reopen, so its own reading
+  // of the run's status decides nothing here.
+  const unsettled = deliverHoldNow(run);
+  if (unsettled) return { ok: false, reason: unsettled };
 
   const state = await landState(runId);
   if (!state) return { ok: false, reason: "This run has no branch to deliver." };
@@ -3610,6 +3701,15 @@ async function pushAndOpen(a: {
     const verify = await verifyInSlot(run, tree.path, verifyCommand);
     if (!verify.passed) return { ok: false, reason: verify.reason };
   }
+
+  // Asked again because the verify command above may have run for
+  // `VERIFY_TIMEOUT_MS`, long enough for the run to be reopened or a
+  // continuation started on its branch. Synchronous, and nothing is awaited
+  // between it and the push's spawn, so what it read is what is pushed.
+  const current = getRun(runId);
+  if (!current) return { ok: false, reason: "No such run." };
+  const unsettled = deliverHoldNow(current);
+  if (unsettled) return { ok: false, reason: unsettled };
 
   // Never `--force`, and the upstream is set so a second press is an ordinary
   // fast-forward rather than a new branch.

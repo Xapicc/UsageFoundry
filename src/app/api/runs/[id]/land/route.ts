@@ -44,9 +44,9 @@ export async function GET(_req: Request, ctx: Ctx) {
     state,
     defaultStrategy: getSettings().landStrategy,
     // The other exit, decided here rather than at the press for the reason
-    // `deliveryState` gives: every refusal it can return is a standing
-    // condition of the install, so the card can say it instead of offering a
-    // button whose whole answer is that sentence.
+    // `deliveryState` gives: every refusal it can return is one the press would
+    // give, so the card can say it instead of offering a button whose whole
+    // answer is that sentence.
     delivery: await deliveryState(id, state),
     resolution: row
       ? {
