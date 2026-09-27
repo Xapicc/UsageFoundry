@@ -19,6 +19,7 @@ import {
   type WorkspaceMount,
 } from "./config";
 import { git, gitSync } from "./git";
+import { runningVerifyChildren } from "./landGate";
 import { withRepoAdmin } from "./repoLock";
 import { dataDirRefusal, mayWriteDataDir, requireDataDir } from "./serverLock";
 import { childCredentials, chownForChild, deprioritiseChildForOom } from "./privsep";
@@ -44,6 +45,7 @@ import {
   type RunProgress,
   LIVE_ENFORCEABLE_CODES,
   RESUME_MARGIN_MS,
+  cycleCapReason,
   enforceableForRun,
   evaluateBudget,
   normalizePolicy,
@@ -5564,7 +5566,9 @@ const SANDBOX_GLOB_CHARS = /[*?[\]{}!]/;
  * named or the build fails inside a tool call the run loop does not read —
  * `docs/verification.md` names these two by name as the ones the set left out.
  * npm's cache is `$HOME/.npm` and Go's is under `GOPATH`, which the image points
- * at a named volume so it survives a container it is meant to outlive.
+ * at a named volume so it survives a container it is meant to outlive. The XDG
+ * cache has no volume and lives in the writable layer, so a rebuild empties it:
+ * that costs a re-download, and a directory the sandbox refuses costs the build.
  *
  * Read off the *environment* rather than written as literals, because the uid
  * that owns them is not the one asking: the server runs as root under compose
@@ -5579,6 +5583,15 @@ const SANDBOX_GLOB_CHARS = /[*?[\]{}!]/;
 const BUILD_CACHE_DIRS = [
   path.join(os.homedir(), ".npm"),
   process.env.GOPATH || path.join(os.homedir(), "go"),
+  // The XDG cache, which is where the toolchains that are neither npm nor Go
+  // default to — uv, pip, node-gyp, and the clang module cache every `swiftc`
+  // has to populate before it compiles anything. Left out, each of those fails
+  // on EROFS inside a tool call: measured over this install's `run_events` to
+  // 2026-09-27, 20 runs hit it, and a `swiftc` of a two-line file cannot build
+  // `SwiftShims`. One entry for the directory rather than one per tool, for
+  // the reason `state/` below is one tree: the next tool that caches here is
+  // otherwise the next silent failure.
+  process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"),
   // Where every stack's tool keeps its own cache, plugins and config. One
   // entry for the mechanism and not one per stack, which is the reason
   // `state/` is one tree rather than a path each stack chooses. Reading and
@@ -8745,6 +8758,24 @@ export async function startRun(id: string): Promise<void> {
     .run(claimedAt, claimedAt, id);
   if (claim.changes !== 1) return;
 
+  // A live guard's verdict is about a cycle in flight, and this loop has none
+  // yet, so one found here was written for a loop that has already ended —
+  // after that loop's `finally` cleared the map, with no loop left to consume
+  // it and nothing else that deletes it. Left standing, the pre-scan below
+  // applies it and a run just picked up, perhaps with the very limit it names
+  // raised, ends having spawned nothing under a reason that no longer holds.
+  // Only the guard kind: an operator's stop against a `running` row is a
+  // request about this run whenever it landed, and `liveGuardTick`'s identity
+  // test is the first line against the stale verdict; this is the second.
+  const staleGuard = interrupts.get(id);
+  if (staleGuard?.kind === "guard") {
+    interrupts.delete(id);
+    log(
+      id,
+      `Discarded a live budget verdict recorded after this run's last work cycle had ended: ${staleGuard.reason}`,
+    );
+  }
+
   const startedAt = run.started_at ?? claimedAt;
   /**
    * What the UPDATE above just wrote. Hydrated from the row for the same reason
@@ -9007,6 +9038,14 @@ export async function startRun(id: string): Promise<void> {
         );
       }
 
+      // Off the row on every pass rather than hydrated once, because the grant
+      // is written there at the boundary below and the cycle it pays for is
+      // the next pass — and off the row at all so a restart meets the cap the
+      // run was already under. Held for the pass: the post-cycle cap check and
+      // the live guard judge this cycle against the same figure that admitted
+      // it, and nothing writes the column between here and that check.
+      const grantedCycles = getRun(id)?.validation_cycles ?? 0;
+
       const verdict: BudgetVerdict = evaluateBudget(
         policy,
         snapshot,
@@ -9021,6 +9060,7 @@ export async function startRun(id: string): Promise<void> {
           // What this task has cost before. Read here rather than inside the
           // guard so `evaluateBudget` stays a pure function of numbers.
           costBaseline: costBaselineFor(run),
+          grantedCycles,
         },
         Date.now(),
       );
@@ -9536,6 +9576,11 @@ export async function startRun(id: string): Promise<void> {
               spentGuardTokens: spentTokens + spentEstTokens + inFlight.tokens,
               startedAt,
               pausedMs,
+              // Without it a granted cycle reads as over its cap, and since
+              // `iterations` is checked first and is not live-enforceable, the
+              // tick would skip the run — leaving that cycle's spend and time
+              // unguarded mid-flight.
+              grantedCycles,
             };
           },
         });
@@ -10239,11 +10284,9 @@ export async function startRun(id: string): Promise<void> {
       if (
         !heldBack &&
         policy.maxIterations !== null &&
-        iterations >= policy.maxIterations
+        iterations >= policy.maxIterations + grantedCycles
       ) {
-        stopReason = `Used all ${policy.maxIterations} work ${
-          policy.maxIterations === 1 ? "cycle" : "cycles"
-        } allowed for this run.`;
+        stopReason = cycleCapReason(policy.maxIterations, grantedCycles);
         finalStatus = "completed";
         break;
       }
@@ -10701,8 +10744,12 @@ function stopLiveTicker(): void {
  * call, and a row a minute for three days across several runs is tens of
  * thousands of rows plus a proportionally larger stream replay. Only an actual
  * interrupt is worth recording.
+ *
+ * Exported for `orchestrator.test.ts` and for nothing else, on
+ * `checkContextCeilings`' grounds: its only caller is a `setInterval` a spawn
+ * starts, so the alternative to the export is a billed cycle.
  */
-async function liveGuardTick(): Promise<void> {
+export async function liveGuardTick(): Promise<void> {
   // A scan slower than the interval must not stack ticks on top of each other.
   if (timers.ticking) return;
   timers.ticking = true;
@@ -10734,8 +10781,16 @@ async function liveGuardTick(): Promise<void> {
     const now = Date.now();
 
     for (const [id, guard] of pending) {
-      // An operator stop may have landed while the scan was running.
-      if (interrupts.has(id)) continue;
+      // An operator stop may have landed while the scan was running — and so
+      // may the end of the cycle this guard was registered for, since the scan
+      // is coalesced and can take seconds. Identity rather than `has`,
+      // `checkContextCeilings`' test: the entry is re-set per cycle. A stale
+      // guard's `progress()` still reads the loop's live `spentUSD`, which by
+      // now includes that cycle's `result`, and adds telemetry since the same
+      // cycle's start on top — that cycle counted twice, and a run under its
+      // limit stopped for a figure it never spent. With no child left to
+      // signal, the stop would land on the next cycle, or on the next pick-up.
+      if (liveGuards.get(id) !== guard || interrupts.has(id)) continue;
 
       const verdict = evaluateBudget(guard.policy, snapshot, guard.progress(), now);
       if (verdict.allowed) continue;
@@ -11474,6 +11529,10 @@ export async function sweepPaused(): Promise<void> {
           // waiting to resume — which is the whole shape this accumulator
           // exists to stop.
           pausedMs: pausedMsAt(run, now),
+          // A run can park at the pre-cycle guard of a cycle a task check
+          // granted, and this is that guard's re-reading: without the grant it
+          // ends on the cap the loop had just widened, instead of resuming.
+          grantedCycles: run.validation_cycles,
         },
         now,
       );
@@ -12037,10 +12096,14 @@ export function reopenRun(
  * anything that outlived it. The children in `assistProcs` are swept with the
  * cycles, because they are spawned `detached` for the same reason and a Ctrl-C
  * misses them in the same way.
+ *
+ * So is a land's verify command, and here alone: the lands are waited on and
+ * never signalled, so a check still running when the grace is spent is ended
+ * with everything it started rather than left behind with no timer on it.
  */
 export function killAllAgents(sig: NodeJS.Signals = "SIGTERM"): number {
   let n = 0;
-  for (const child of [...procs.values(), ...assistProcs]) {
+  for (const child of [...procs.values(), ...assistProcs, ...runningVerifyChildren()]) {
     signalTree(child, sig);
     n += 1;
   }

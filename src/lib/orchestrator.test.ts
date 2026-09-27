@@ -63,6 +63,10 @@ process.env.CODEX_HOME = path.join(tmp, "codex");
 // asserted the fallback while the code read the variable would pass or fail on
 // whoever ran it. Pinned above the `require` for the same reason as the others.
 process.env.GOPATH = path.join(tmp, "gopath");
+// The XDG cache the other way round: the image leaves XDG_CACHE_HOME unset, so
+// the fallback is the path production takes, and unset here is what makes the
+// test assert that path rather than whatever a developer's shell exports.
+delete process.env.XDG_CACHE_HOME;
 // And TMPDIR, which the write set follows for the same reason: the sandbox
 // creates its sockets under it, and `os.tmpdir()` reads it at every call.
 process.env.TMPDIR = path.join(tmp, "tmp");
@@ -4293,6 +4297,12 @@ describe("sandboxSettings — what one child may write", () => {
       writable(isolated, path.join(process.env.GOPATH as string, "pkg", "mod")),
       true,
     );
+    // And the XDG cache, which uv, pip, node-gyp and swiftc's clang module
+    // cache all default to. Named at a depth a real tool writes, since the
+    // failure this pins was `.cache/clang/ModuleCache/…` refused on EROFS.
+    const xdgCache = path.join(os.homedir(), ".cache");
+    assert.equal(writable(isolated, path.join(xdgCache, "uv")), true);
+    assert.equal(writable(isolated, path.join(xdgCache, "clang", "ModuleCache")), true);
 
     // And the resolver gets them too: it is the other child an operator can
     // point at a build command, through `settings.resolveAllowedTools`.
@@ -4303,6 +4313,7 @@ describe("sandboxSettings — what one child may write", () => {
     });
     assert.equal(writable(resolver, os.tmpdir()), true);
     assert.equal(writable(resolver, path.join(os.homedir(), ".npm")), true);
+    assert.equal(writable(resolver, path.join(xdgCache, "pip")), true);
   });
 
   it("keeps CLAUDE_CONFIG_DIR writable, which is the metering path", () => {
@@ -6256,6 +6267,40 @@ describe("applying the sweeper's decision", () => {
     assert.equal(row.status, "queued");
   });
 
+  it("resumes a run parked at the start of a cycle a task check granted", async () => {
+    // Its cap is 1 and it has used 1: the pre-cycle guard admitted a second
+    // cycle only because the check granted one, and then parked on the window.
+    // Read without the grant, this tick ends it on the cap the loop had just
+    // widened — the grant spent, the task still claimed.
+    const parkedAt = async (grants: number) => {
+      saveSettings({ maxConcurrentRuns: 1 });
+      insertRun({ status: "running", workDir: `${ws}/blocker-${seq}` });
+      const id = insertRun({
+        status: "paused",
+        workDir: `${ws}/parked-granted-${grants}`,
+        budget: '{"maxIterations":1,"maxDurationMinutes":600}',
+      });
+      db()
+        .prepare(
+          "UPDATE runs SET iterations = 1, max_iterations = 1, validation_cycles = ? WHERE id = ?",
+        )
+        .run(grants, id);
+      try {
+        await sweepPaused();
+        return getRun(id)!;
+      } finally {
+        saveSettings({ maxConcurrentRuns: null });
+      }
+    };
+
+    assert.equal((await parkedAt(1)).status, "queued");
+    // The control: the same row with nothing granted is at its cap, so the
+    // fixture does reach the cycle check rather than passing by missing it.
+    const capped = await parkedAt(0);
+    assert.equal(capped.status, "stopped");
+    assert.equal(capped.stop_reason, "Used all 1 work cycle allowed for this run.");
+  });
+
   it("closes the park when the operator stops a parked run", async () => {
     const now = Date.now();
     const parked = insertRun({
@@ -6553,6 +6598,172 @@ describe("the live ticker's two cadences", () => {
     const at = 1_000_000;
     assert.equal(guardScanDue(at, at + 59_990, plan), true);
     assert.equal(guardScanDue(at, at + 60_000, plan), true);
+  });
+});
+
+/**
+ * The live tick's budget half against a cycle that ends while it is scanning.
+ *
+ * `liveGuardTick` takes its list of guards and then awaits `currentSnapshot()`,
+ * a coalesced transcript scan that can take seconds, so a cycle ending inside
+ * that await is ordinary. A guard it then evaluates anyway belongs to a
+ * finished cycle: its `progress()` reads the loop's live spend, which by then
+ * includes that cycle's `result`, and adds telemetry since the same cycle's
+ * start on top — the cycle counted twice. On the brief's figures, $3 reported
+ * and $3 of telemetry for the same cycle read $6 against a $5 limit, and a run
+ * that had spent $3 was stopped. With no child left to signal, the stop landed
+ * on whatever the run did next: its next cycle, or its next pick-up.
+ *
+ * What is pinned is the absence of a write, so the control is half the test,
+ * `contextCeilingRace.test.ts`'s rule for the context half of the same tick.
+ * The scan is held open through the one seam it has — the in-flight promise
+ * `currentSnapshot` hands every caller — and a case asserts the tick really
+ * joined it before the cycle ends, or it could pass for the wrong reason.
+ */
+describe("the live guard against a cycle that ends while it is scanning", () => {
+  const { currentSnapshot, liveGuardTick, startRun } =
+    require("./orchestrator") as typeof import("./orchestrator");
+  type Guard = {
+    policy: BudgetPolicy;
+    progress: () => import("./budget").RunProgress;
+  };
+  type Snapshot = import("./windows").UsageSnapshot;
+  const shared = globalThis as unknown as {
+    __ufLiveGuards: Map<string, Guard>;
+    __ufInterrupts: Map<string, import("./orchestrator").Interrupt>;
+    __ufSnapshotInflight?: Promise<Snapshot> | null;
+    __ufGuardScan: { at: number };
+  };
+  let seq = 0;
+
+  function insertRun(status: string, extra = ""): string {
+    const id = `live-race-${++seq}`;
+    db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations,
+                           iterations, created_at, started_at, work_dir)
+         VALUES (?, ?, 'do the thing', ?, '{"maxIterations":1,"maxDurationMinutes":600}',
+                 1, 1, ?, ?, ?)`,
+      )
+      .run(id, ws, status, Date.now() + seq, Date.now() - 60_000, `${ws}/live-race-${seq}${extra}`);
+    return id;
+  }
+
+  /** A guard over a $5 limit reading $6: $3 reported, and $3 of telemetry for the same cycle. */
+  function register(id: string): Guard {
+    const guard: Guard = {
+      policy: normalizePolicy({ maxIterations: 4, maxRunCostUSD: 5, enforcement: "live" }),
+      progress: () => ({
+        iterations: 0,
+        spentUSD: 3,
+        spentTokens: 0,
+        spentGuardUSD: 6,
+        spentGuardTokens: 0,
+        startedAt: Date.now(),
+      }),
+    };
+    shared.__ufLiveGuards.set(id, guard);
+    return guard;
+  }
+
+  /** One tick, with its scan held open while `meanwhile` runs. */
+  async function tickWhileScanning(meanwhile: () => void): Promise<void> {
+    const snapshot = await currentSnapshot();
+    let release!: (s: Snapshot) => void;
+    let joined = false;
+    const held = new Promise<Snapshot>((resolve) => (release = resolve));
+    // `currentSnapshot` returns this promise to its caller, which then calls
+    // `then` on it — the only sign the tick has taken its list of guards and
+    // is waiting on the scan.
+    const then = held.then.bind(held);
+    held.then = ((...args: Parameters<typeof held.then>) => {
+      joined = true;
+      return then(...args);
+    }) as typeof held.then;
+
+    shared.__ufSnapshotInflight = held;
+    // Due whatever an earlier tick left: the budget half runs on its own cadence.
+    shared.__ufGuardScan.at = 0;
+    try {
+      const tick = liveGuardTick();
+      for (let i = 0; !joined && i < 100; i++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      assert.ok(joined, "the tick never reached its scan, so this proves nothing");
+      meanwhile();
+      release(snapshot);
+      await tick;
+    } finally {
+      shared.__ufSnapshotInflight = null;
+    }
+  }
+
+  it("records no interrupt for a run whose cycle ended during the scan", async () => {
+    const id = insertRun("running");
+    const guard = register(id);
+
+    // `startRun`'s inner `finally`, which is what a cycle ending does to it.
+    await tickWhileScanning(() => shared.__ufLiveGuards.delete(id));
+
+    assert.equal(
+      shared.__ufInterrupts.get(id),
+      undefined,
+      "a finished cycle's guard was evaluated, counting that cycle twice and " +
+        "leaving a stop for whatever the run does next",
+    );
+    assert.equal(guard.progress().spentGuardUSD, 6, "the fixture must be over its limit");
+  });
+
+  it("still stops a run whose cycle is still in flight", async () => {
+    const id = insertRun("running");
+    register(id);
+    try {
+      await tickWhileScanning(() => {});
+
+      const recorded = shared.__ufInterrupts.get(id);
+      assert.ok(recorded, "the live guard stopped acting at all");
+      assert.equal(recorded.kind, "guard");
+      assert.equal(recorded.code, "run_cost");
+    } finally {
+      shared.__ufLiveGuards.delete(id);
+      shared.__ufInterrupts.delete(id);
+    }
+  });
+
+  it("drops a stale guard verdict when the run is picked up again", async () => {
+    // The second line, for an entry the first did not stop: written after the
+    // loop's `finally` cleared the map, where nothing else would clear it. The
+    // run is at its cap, so its own pre-cycle guard ends it before any spawn
+    // — which reason it ends on is the whole assertion.
+    saveSettings({ maxConcurrentRuns: 1 });
+    insertRun("running", "-blocker");
+    const id = insertRun("queued");
+    shared.__ufInterrupts.set(id, {
+      kind: "guard",
+      code: "run_cost",
+      reason: "This run has spent $6.00, reaching its $5.00 spending limit.",
+      pause: false,
+      at: Date.now(),
+    });
+    try {
+      await startRun(id);
+    } finally {
+      saveSettings({ maxConcurrentRuns: null });
+    }
+
+    const row = getRun(id)!;
+    assert.equal(row.status, "stopped");
+    assert.equal(
+      row.stop_reason,
+      "Used all 1 work cycle allowed for this run.",
+      "the run ended on a verdict about a cycle that had finished before it was picked up",
+    );
+    assert.ok(
+      runEvents(id)
+        .events.filter((e) => e.kind === "log")
+        .some((e) => /Discarded a live budget verdict/.test(String(e.payload.message ?? ""))),
+      "a verdict dropped without a word reads as a guard that never fired",
+    );
   });
 });
 
