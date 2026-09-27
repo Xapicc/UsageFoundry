@@ -125,6 +125,7 @@ Seventeen are renderings rather than functions — every `*.test.tsx` in the tre
 | `scheduleFire.test.ts` |  |
 | `schedulePut.test.ts` |  |
 | `src/app/api/workflows/[id]/route.test.ts` |  |
+| `src/app/api/workflows/[id]/schedule/route.test.ts` |  |
 
 ## [Loop blocks and their passes](testing/workflow-loops.md)
 
