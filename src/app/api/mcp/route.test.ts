@@ -25,6 +25,11 @@ import type { Task } from "../../../lib/tasks";
  * in `callTool` is a membership test against the same `toolsFor` — a tool added
  * to the wrong list is reachable, not merely visible.
  *
+ * `list_tasks`' folder filter is pinned here too, from a chat token: the schema
+ * asks for a folder within the mount and the board stores the resolved absolute
+ * path, and the two compared as sent answered zero for every project — the
+ * reading that says a backlog is clear — with nothing thrown anywhere.
+ *
  * `DATA_DIR`, `WORKSPACE_ROOTS` and the Claude paths are read at module load,
  * so they are set before anything is imported; the assertion in `before` is
  * what makes a change to that fail loudly rather than write into the
@@ -54,6 +59,7 @@ let route: typeof import("./route");
 let tasks: typeof import("../../../lib/tasks");
 let chat: typeof import("../../../lib/chat");
 let comments: typeof import("../../../lib/taskComments");
+let taskDeps: typeof import("../../../lib/taskDeps");
 let db: typeof import("../../../lib/db").db;
 
 before(async () => {
@@ -67,6 +73,7 @@ before(async () => {
   tasks = await import("../../../lib/tasks");
   chat = await import("../../../lib/chat");
   comments = await import("../../../lib/taskComments");
+  taskDeps = await import("../../../lib/taskDeps");
   db = (await import("../../../lib/db")).db;
   route = await import("./route");
 });
@@ -297,4 +304,69 @@ test("a work cycle asking for get_task is pointed at get_my_task", async () => {
   assert.equal(refused.isError, true);
   assert.match(refused.text, /get_my_task/);
   assert.match(refused.text, /list_my_tasks/);
+});
+
+test("list_tasks narrows to a project by the folder within its mount", async () => {
+  // `tasks.folder` holds the resolved absolute path and the schema asks for the
+  // path within the mount; compared as sent, every project read back as an
+  // empty backlog, which is the one answer that stops a loop and tells a chat
+  // the work is done.
+  const chatToken = chat.mintCapability({ kind: "chat", chatId: randomUUID() });
+  const project = path.join(ws, "RepoThree");
+  fs.mkdirSync(project);
+  const waiting = file(project, { title: "Waits for the other" });
+  const first = file(project, { title: "Goes first" });
+  file(HERE, { title: "Another project's task" });
+  assert.ok(taskDeps.addTaskDep(waiting.id, first.id).ok);
+
+  const list = async (folder: string) =>
+    JSON.parse((await callTool(chatToken, "list_tasks", { mountId: MOUNT, folder })).text);
+
+  // `get_task`'s refs name a folder within the mount and `list_tasks`' rows name
+  // the absolute one; a model sending either back reaches the same rows.
+  const ref = JSON.parse((await callTool(chatToken, "get_task", { taskId: waiting.id })).text)
+    .dependsOn[0];
+  assert.equal(ref.folder, "RepoThree");
+  const byRef = await list(ref.folder);
+  const byRow = await list(byRef.tasks[0].folder);
+  for (const [shape, listed] of [
+    ["within the mount", byRef],
+    ["absolute", byRow],
+  ] as const) {
+    assert.equal(listed.totalMatching, 2, `a ${shape} folder finds the project's tasks`);
+    assert.deepEqual(
+      listed.tasks.map((t: { taskId: string }) => t.taskId).sort(),
+      [waiting.id, first.id].sort(),
+    );
+    assert.equal(listed.matchedFolder, project, "and says which path it compared");
+    assert.equal(listed.matchedFolderNote, undefined);
+  }
+});
+
+test("list_tasks still finds a folder that no longer resolves, and says so", async () => {
+  const chatToken = chat.mintCapability({ kind: "chat", chatId: randomUUID() });
+  const gone = path.join(ws, "RepoGone");
+  fs.mkdirSync(gone);
+  const filed = file(gone);
+  fs.rmdirSync(gone);
+
+  const listed = JSON.parse(
+    (await callTool(chatToken, "list_tasks", { mountId: MOUNT, folder: "RepoGone" })).text,
+  );
+  assert.deepEqual(
+    listed.tasks.map((t: { taskId: string }) => t.taskId),
+    [filed.id],
+  );
+  assert.equal(listed.matchedFolder, gone);
+  assert.match(listed.matchedFolderNote, /No such folder/);
+});
+
+test("list_tasks refuses a folder within a mount it has no root for", async () => {
+  const chatToken = chat.mintCapability({ kind: "chat", chatId: randomUUID() });
+  const refused = await callTool(chatToken, "list_tasks", {
+    mountId: "no-such-mount",
+    folder: "RepoOne",
+  });
+  assert.equal(refused.isError, true, "an unknown is not a clear backlog");
+  assert.match(refused.text, /list_folders/);
 });

@@ -65,6 +65,7 @@ import {
   listTasks,
   normalizeTaskInput,
   readTaskLinks,
+  resolveTaskFolder,
   runLinksForTasks,
   taskListItemDTO,
   tasksLinkedToRun,
@@ -394,8 +395,10 @@ const SHARED_TOOLS = [
         folder: {
           type: "string",
           description:
-            "Only tasks filed against this folder within that mount. Needs " +
-            "mountId beside it; alone it narrows nothing.",
+            "Only tasks filed against this folder within that mount, as " +
+            "list_folders gives it; the absolute folder a list_tasks row " +
+            "carries works too. Needs mountId beside it; alone it narrows " +
+            "nothing. The reply's matchedFolder is the path compared.",
         },
         origin: {
           type: "string",
@@ -3165,6 +3168,8 @@ function listTasksTool(args: Record<string, unknown>) {
       true,
     );
   }
+  const matched = mountId && folder ? taskListFolder(mountId, folder) : null;
+  if (matched && !matched.ok) return text(matched.error, true);
 
   // Checked by name for the closed sets' reason above: `listTasks` reads
   // anything but a boolean as "both", and a model that sent "true" would read
@@ -3182,7 +3187,7 @@ function listTasksTool(args: Record<string, unknown>) {
     status: (args.status as TaskStatus | undefined) ?? null,
     origin: (args.origin as TaskOrigin | undefined) ?? null,
     mountId,
-    folder,
+    folder: matched?.folder ?? null,
     operatorOnly,
     offset: Number(args.offset) || 0,
   });
@@ -3250,11 +3255,67 @@ function listTasksTool(args: Record<string, unknown>) {
         offset: page.offset,
         returned: page.tasks.length,
         totalMatching: page.total,
+        // The path the rows were compared against, because the folder a model
+        // sent is not it: a zero beside the path that was actually matched is
+        // one a model can check, where a zero beside its own words is not.
+        ...(matched
+          ? { matchedFolder: matched.folder, matchedFolderNote: matched.note ?? undefined }
+          : {}),
       },
       null,
       1,
     ),
   );
+}
+
+/**
+ * The folder `list_tasks` narrows on, in the shape the board stored it.
+ *
+ * `tasks.folder` holds the canonical absolute path `resolveTaskFolder` returned
+ * when the task was filed, and `listTasks` matches it exactly — but the schema
+ * asks for the path *within* the mount, which is what `list_folders` and
+ * `get_task`'s refs hand a model. Passed straight through, `UsageFoundry` is
+ * compared against `/workspace/UsageFoundry` and every project reads back as an
+ * empty backlog: a chat tells the operator the work is done and a block emits
+ * nothing. `countBoardCondition` records the same failure for loop blocks and
+ * fixes it the same way, through the board's own resolver rather than a second
+ * one, so both sides of the comparison went through one door — a mount reached
+ * through a symlink is stored by its real path, and only the resolver knows it.
+ * An absolute folder, the shape `list_tasks`' own rows carry, resolves too.
+ *
+ * The lexical join is the fallback rather than the rule because a read must not
+ * stop answering while a mount is briefly unavailable, and a folder deleted
+ * since its tasks were filed still has tasks. What it cannot do is join a
+ * relative folder to a mount this app has no root for, and that is refused
+ * rather than answered: zero is "the backlog is clear", which is the one thing
+ * an unknown must never read as.
+ */
+function taskListFolder(
+  mountId: string,
+  folder: string,
+): { ok: true; folder: string; note: string | null } | { ok: false; error: string } {
+  const resolved = resolveTaskFolder(mountId, folder);
+  if (resolved.ok && resolved.folder) return { ok: true, folder: resolved.folder, note: null };
+  const why = (resolved.ok ? `"${folder}" did not resolve` : resolved.error).replace(/\.$/, "");
+
+  const mount = mountById(mountId);
+  if (!mount && !path.isAbsolute(folder)) {
+    return {
+      ok: false,
+      error:
+        `${why}. A folder within a mount can only be matched once the mount ` +
+        "is known. Call list_folders for both, or send the absolute folder a " +
+        "list_tasks row carries.",
+    };
+  }
+  const joined = mount ? path.resolve(mount.path, folder) : path.resolve(folder);
+  return {
+    ok: true,
+    folder: joined,
+    note:
+      `${why}. Matched against ${joined} as written, without checking it on ` +
+      "disk, so a task filed while the path resolved elsewhere is not counted.",
+  };
 }
 
 /**

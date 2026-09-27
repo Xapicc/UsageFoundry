@@ -115,7 +115,18 @@ quietly: answering "every task" to "show me the claimed ones" is a board that
 looks like an answer, and on a backlog that reads as an absence of work rather
 than as a failed filter. `mountId` and `folder` are matched against the stored
 columns exactly as held and are deliberately **not** re-resolved on a read — a
-board must not stop listing because a mount is briefly unavailable.
+board must not stop listing because a mount is briefly unavailable. That rule is
+for a reader handed the stored values, and the MCP `list_tasks` is not one: its
+schema asks for the folder *within* the mount, as `list_folders` and `get_task`'s
+refs give it, so `taskListFolder` in the route canonicalises the pair through
+`resolveTaskFolder` first, `countBoardCondition`'s fix for the same defect —
+passed straight through, `UsageFoundry` was compared against
+`/workspace/UsageFoundry` and every project read back as an empty backlog. When
+the resolver refuses, the folder is joined to the mount's configured root
+lexically, so the unavailable mount above still lists, and a relative folder on
+a mount id with no root is refused rather than answered as zero. The reply's
+`matchedFolder` names the absolute path compared, with a note when it was the
+lexical join.
 
 **A `mount_id`/`folder` pair is proved against the app's own mount list at the
 door, through the resolver a run is confined by, and half a pair is refused
