@@ -4973,7 +4973,8 @@ export function revivableDependents(
  * `finally`, both of `stopRun`'s early branches, and the sweeper's
  * never-clearing verdict. Missing one leaves a dependent asleep with nothing
  * that will ever wake it, which is the failure this whole status exists to have
- * none of. `reconcileOnBoot` is the one deliberate exception and says why.
+ * none of. `reconcileOnBoot` is the one deliberate exception: it runs only the
+ * half of the pass that ends runs, and says why.
  *
  * Released runs join the queue rather than starting here, so folder
  * reservation, FIFO order and the concurrency cap stay in `promoteQueued` —
@@ -5004,7 +5005,12 @@ export function releaseDependents(): boolean {
   return changed;
 }
 
-function releasePass(): boolean {
+/**
+ * `holdReleases` is the install-wide hold by default. `reconcileOnBoot` passes
+ * it true, because a boot ends what can never start and puts nothing in the
+ * queue.
+ */
+function releasePass(holdReleases: boolean = newWorkPaused()): boolean {
   const waiting = db()
     .prepare("SELECT * FROM runs WHERE status = 'waiting' ORDER BY created_at")
     .all() as RunRow[];
@@ -5026,7 +5032,7 @@ function releasePass(): boolean {
     )
     .all() as DependencyState[];
 
-  const { release, block } = releasableRuns(states, links, newWorkPaused());
+  const { release, block } = releasableRuns(states, links, holdReleases);
   let acted = false;
 
   for (const { id, reason } of block) {
@@ -12115,24 +12121,34 @@ export function reopenRun(
   const run = getRun(id);
   if (!run) return { ok: false, reason: "No such run." };
 
-  // `blocked` splits two ways and both are pickable — they just rejoin at
-  // different points. The two are told apart by `work_dir`, never by the reason
+  // A run that never started work is picked up by going back to `waiting`, not
+  // by joining the queue: there is no session to continue and, more to the
+  // point, no workspace, and `admitWaiting` is what plans one. That is decided
+  // by what the row holds and never by the status it ended in, because a run
+  // behind a dependency ends three ways without ever being released: `blocked`
+  // by the cascade, `stopped` while it waited (by `stopRun`, and by every boot
+  // until boots stopped writing it, so old databases hold such rows), and
+  // `failed` by `admitWaiting` itself. Queued, the last two worked in
+  // `work_dir ?? folder`, which for such a row is the operator's own folder:
+  // no checkout, and no wait for the run it was chained behind. `work_dir`
+  // alone is not the test, because a row written before that column has none
+  // either and did its work in its folder; a session or a counted cycle is what
+  // says it started, and it rejoins the queue there.
+  const neverStarted =
+    run.work_dir === null && !run.session_id && run.iterations === 0;
+  const waitingAgain =
+    neverStarted && (run.status === "blocked" || REOPENABLE.includes(run.status));
+  // A run its own guard refused before its first work cycle is the other kind
+  // of `blocked`, and it is the case this function's budget argument exists
+  // for: raising the limit is the fix, and refusing it left the operator
+  // retyping the prompt and the budget into the new-run form. `ensureWorktree`
+  // runs before the guard, so it already holds a workspace, and a checkout
+  // whose branch was orphaned for as long as there was no way back to this
+  // row. It therefore rejoins the queue like any other terminal row rather than
+  // going back to `waiting`, where `admitWaiting` would plan a second checkout
+  // slot on top of the first. Told apart by the columns, never by the reason
   // text, which is prose.
-  //
-  // A run blocked behind a dependency is picked up by going back to `waiting`,
-  // not by joining the queue: it never ran, so there is no session to continue
-  // and — more to the point — no workspace, and `admitWaiting` is what plans
-  // one.
-  const waitingAgain = run.status === "blocked" && run.work_dir === null;
-  // A run its own guard refused before its first work cycle is the other kind,
-  // and it is the case this function's budget argument exists for: raising the
-  // limit is the fix, and refusing it left the operator retyping the prompt and
-  // the budget into the new-run form. `ensureWorktree` runs before the guard, so
-  // it already holds a workspace — and a checkout, whose branch was orphaned for
-  // as long as there was no way back to this row. It therefore rejoins the queue
-  // like any other terminal row rather than going back to `waiting`, where
-  // `admitWaiting` would plan a second checkout slot on top of the first.
-  const guardRefused = run.status === "blocked" && run.work_dir !== null;
+  const guardRefused = run.status === "blocked" && !waitingAgain;
   if (!waitingAgain && !guardRefused && !REOPENABLE.includes(run.status)) {
     return {
       ok: false,
@@ -12321,8 +12337,11 @@ export function reopenRun(
     payload: waitingAgain
       ? {
           status: "waiting",
+          // Worded for every ending this branch takes and for either edge: a
+          // row stopped while it waited has never said anything about its
+          // dependencies, and an `on-finish` edge does not wait for success.
           message:
-            "Picked up again. It never started, so it goes back to waiting on the runs ahead of it — it starts by itself if they have since succeeded, and says so again if they have not.",
+            "Picked up again. It never started, so it goes back to waiting on the runs ahead of it. It joins the queue by itself when they let it, and ends with a reason naming any run that cannot.",
         }
       : {
           status: "queued",
@@ -13016,16 +13035,21 @@ export function isRunning(id: string): boolean {
  * the rule above forbids — past it, a stale pause is closed out like any other
  * stale row.
  *
- * Runs waiting on other runs are closed out too, and this is the one place that
- * deliberately does **not** call `releaseDependents`. Two reasons, and either
- * would be enough. What such a run is waiting for is a row this same boot has
- * just marked failed or stopped, so releasing it would promote a days-old
- * prompt into an unattended agent that accepts edits — precisely the rule the
- * queued case above exists to enforce, arrived at from the other side. And a
- * waiting run left alone would be waiting on a dependency that is now terminal
- * and can never satisfy it, which is a row nothing would ever wake. Closed out
- * before the loop below, so no terminal transition it makes can find a waiting
- * row to release.
+ * Runs waiting on other runs are decided *after* that, and on what the boot did
+ * to the run each one waits for rather than all alike. They used to be written
+ * `stopped` first, every one of them, under a sentence saying their dependency
+ * had been closed out by the same restart; that was false whenever the
+ * dependency was a pause this boot kept, or had already completed with the hold
+ * keeping the dependent back. So a waiting row behind a run this boot closed
+ * out is `blocked` with a sentence naming that run, on either edge, since
+ * releasing it would promote a days-old prompt into an unattended agent that
+ * accepts edits, which is the queued rule above arrived at from the other side.
+ * Every other waiting row goes through the ordinary release pass with its
+ * release half held: what can never start ends with a reason naming the run in
+ * front of it, and what is still pending, or ready but held, stays `waiting` for
+ * the pass that decides it later. This is still the one terminal path that does
+ * not call `releaseDependents`, because nothing a boot does may put work in the
+ * queue.
  */
 export function reconcileOnBoot(): void {
   // No cycle is in flight at a boot, on any path: this process has just
@@ -13041,35 +13065,25 @@ export function reconcileOnBoot(): void {
     )
     .run();
 
-  const orphaned = db()
-    .prepare("SELECT * FROM runs WHERE status = 'waiting'")
-    .all() as RunRow[];
+  const waitingIds = () =>
+    new Set(
+      (
+        db().prepare("SELECT id FROM runs WHERE status = 'waiting'").all() as Array<{
+          id: string;
+        }>
+      ).map((r) => r.id),
+    );
+  const waiting = waitingIds();
 
   const stale = activeRuns();
-  if (stale.length === 0 && orphaned.length === 0) return;
+  if (stale.length === 0 && waiting.size === 0) return;
 
   let closed = 0;
   let kept = 0;
   const graceMs = getSettings().resumeGraceHours * 3_600_000;
-
-  for (const run of orphaned) {
-    // Deliberately *not* flagged `restart_closed`, unlike every other row this
-    // pass closes. That flag offers a one-press pick-up, and `reopenRun` puts a
-    // `stopped` row back in the *queue* rather than back to `waiting` — so a run
-    // that never started, whose dependency this same boot has just closed out,
-    // would be started on work that never happened. Which is exactly what
-    // `releasableRuns` and the paragraph above exist to prevent. Its reason says
-    // to start it again if it is still wanted, and that stays a decision about
-    // one run.
-    setStatus(run.id, "stopped", {
-      finished_at: Date.now(),
-      stop_reason:
-        "The server restarted while this run was waiting for another run to " +
-        "finish, and that run was closed out by the same restart. Start it " +
-        "again if it is still wanted.",
-    });
-    closed += 1;
-  }
+  // What this pass closes out, which is what the waiting rows below are decided
+  // against. A row it keeps is not in it.
+  const closedHere = new Set<string>();
 
   for (const run of stale) {
     if (run.status === "paused") {
@@ -13089,6 +13103,7 @@ export function reconcileOnBoot(): void {
         restart_closed: 1,
         ...pauseClosedAt(run, closedAt),
       });
+      closedHere.add(run.id);
       closed += 1;
       continue;
     }
@@ -13099,6 +13114,7 @@ export function reconcileOnBoot(): void {
         stop_reason: "The server restarted before this run started. Start it again.",
         restart_closed: 1,
       });
+      closedHere.add(run.id);
       closed += 1;
       continue;
     }
@@ -13113,7 +13129,45 @@ export function reconcileOnBoot(): void {
       stop_reason: `The server restarted while this run was in progress.${resume}`,
       restart_closed: 1,
     });
+    closedHere.add(run.id);
     closed += 1;
+  }
+
+  if (waiting.size > 0) {
+    // Every edge, not only the edge that would refuse: an `on-finish` edge is
+    // satisfied by a run that did a cycle and then died with the container, so
+    // the ordinary pass would queue this row because of the restart.
+    //
+    // `blocked`, the status the cascade writes, and deliberately *not* flagged
+    // `restart_closed`. The run it names is flagged, and picking that one up is
+    // what brings this one back: `reopenRun` hands it to
+    // `reviveBlockedDependents`, which puts this row back to `waiting` behind
+    // it. Flagging this row as well would put it in the same one-press pick-up
+    // as its dependency, where whichever is reached first decides it: if it is
+    // this one, it goes back to `waiting` while its dependency is still closed
+    // out, and an `on-finish` edge releases it to run beside that dependency
+    // rather than after it.
+    for (const link of allDependencyLinks()) {
+      if (!waiting.has(link.runId) || !closedHere.has(link.dependsOn)) continue;
+      blockWaitingRun(
+        link.runId,
+        `Set to start after run ${shortId(link.dependsOn)}, which the server ` +
+          "restart closed out. Picking that run up puts this one back to " +
+          "waiting for it.",
+      );
+    }
+    // The ordinary pass for everything else, with its release half held: what
+    // it ends is ended with a sentence naming the run in front, including every
+    // run behind one blocked just above, and what it would release stays
+    // `waiting`, because a boot never puts work in the queue. That is the rule
+    // the queued branch keeps, and it is only ever reached by a dependency that
+    // settled in the dependent's favour while new work was held, or in the one
+    // synchronous stretch between a run's ending and the pass `startRun`'s
+    // `finally` makes on it. The next pass releases it: clearing the hold, or
+    // any run ending. Not `releaseDependents`, which also starts a workflow
+    // advance that `reconcileBlocksOnBoot` has to run ahead of.
+    releasePass(true);
+    closed += waiting.size - waitingIds().size;
   }
 
   if (closed > 0) {

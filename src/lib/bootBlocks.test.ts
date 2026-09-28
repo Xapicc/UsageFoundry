@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,7 +8,8 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import type Database from "better-sqlite3";
 
 /**
- * Covers one thing: which unsettled blocks a restart closes out.
+ * Covers one thing: which unsettled blocks a restart closes out, and the same
+ * question asked of a run waiting on another run (the last describe below).
  *
  * `reconcileOnBoot` keeps a run that is `paused` inside `resumeGraceHours`,
  * because it is a run the operator started in a mode chosen precisely so it
@@ -46,6 +48,7 @@ import type Database from "better-sqlite3";
 let root: string;
 let orch: typeof import("./orchestrator");
 let workflows: typeof import("./workflows");
+let settings: typeof import("./settings");
 let dbMod: typeof import("./db");
 
 before(async () => {
@@ -67,6 +70,7 @@ before(async () => {
 
   orch = await import("./orchestrator");
   workflows = await import("./workflows");
+  settings = await import("./settings");
   dbMod = await import("./db");
 });
 
@@ -490,6 +494,125 @@ describe("a looping block with nothing left of its workflow", () => {
     assert.equal(blockOf(instanceId, "L").status, "failed");
     for (const id of ["L#pass-1#b", "L#pass-1#m"]) {
       assert.equal(blockOf(instanceId, id).status, "blocked", id);
+    }
+  });
+});
+
+/**
+ * The same question one level down: a run waiting on another run.
+ *
+ * The boot used to write every `waiting` row `stopped`, before it looked at
+ * anything else, under a sentence saying the run it waited for "was closed out
+ * by the same restart". Two of the three cases below are that sentence being
+ * false: the dependency was a pause the same boot kept, or it had already
+ * completed and the hold was what kept the dependent back. The third is the one
+ * where it was true, and there the sentence named no run at all, and an
+ * `on-finish` edge is what makes the decision dangerous: the ordinary release
+ * pass reads a run that did a cycle and then died with the container as
+ * finished, and would queue the run behind it because of a restart.
+ *
+ * Ids are uuids because the reasons name runs by their first eight characters,
+ * and the assertions look for exactly those.
+ */
+describe("a run waiting on another run across the restart", () => {
+  function runRow(
+    status: string,
+    extra: { pausedAt?: number; iterations?: number } = {},
+  ): string {
+    const id = randomUUID();
+    const now = Date.now();
+    const folder = path.join(root, "workspace", id);
+    dbMod
+      .db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                           created_at, started_at, paused_at, work_dir)
+         VALUES (?, ?, 'do it', ?, '{"maxIterations":1,"permissionMode":"acceptEdits"}', 1, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        folder,
+        status,
+        extra.iterations ?? 0,
+        now,
+        status === "waiting" ? null : now,
+        extra.pausedAt ?? null,
+        // A waiting row has no workspace until its release plans one.
+        status === "waiting" ? null : folder,
+      );
+    return id;
+  }
+
+  function dependOn(runId: string, dependsOn: string, edge = "on-success"): void {
+    dbMod
+      .db()
+      .prepare(
+        "INSERT INTO run_deps (run_id, depends_on, edge, continue_branch, created_at)" +
+          " VALUES (?, ?, ?, 0, ?)",
+      )
+      .run(runId, dependsOn, edge, Date.now());
+  }
+
+  it("stays waiting behind a run the boot kept paused", () => {
+    const a = runRow("paused", { pausedAt: Date.now() - HOUR });
+    const b = runRow("waiting");
+    dependOn(b, a);
+
+    boot();
+
+    assert.equal(orch.getRun(a)!.status, "paused");
+    const row = orch.getRun(b)!;
+    assert.equal(row.status, "waiting", "nothing it waits for was closed out");
+    assert.equal(row.stop_reason, null);
+    assert.equal(row.finished_at, null);
+  });
+
+  it("ends naming the run the boot closed out, and so does everything behind it", () => {
+    const a = runRow("running", { iterations: 1 });
+    const b = runRow("waiting");
+    const c = runRow("waiting");
+    dependOn(b, a, "on-finish");
+    dependOn(c, b);
+
+    boot();
+
+    assert.equal(orch.getRun(a)!.status, "failed");
+    const behindA = orch.getRun(b)!;
+    assert.equal(
+      behindA.status,
+      "blocked",
+      "terminal, and in the status that says nothing ran; never released into the queue",
+    );
+    assert.match(behindA.stop_reason ?? "", new RegExp(a.slice(0, 8)));
+    assert.match(behindA.stop_reason ?? "", /restart/);
+    assert.equal(
+      behindA.restart_closed,
+      0,
+      "picked up through the run it waited for, which carries the flag, not by the same press",
+    );
+    const behindB = orch.getRun(c)!;
+    assert.equal(behindB.status, "blocked");
+    assert.match(
+      behindB.stop_reason ?? "",
+      new RegExp(b.slice(0, 8)),
+      "the cascade names the run in front of it, not the head of the chain",
+    );
+  });
+
+  it("stays waiting behind a completed run while new work is held", () => {
+    const a = runRow("completed", { iterations: 1 });
+    const b = runRow("waiting");
+    dependOn(b, a);
+
+    settings.setNewWorkPaused(true);
+    try {
+      boot();
+
+      const row = orch.getRun(b)!;
+      assert.equal(row.status, "waiting", "the restart closed nothing it waits for");
+      assert.equal(row.work_dir, null, "and the hold still keeps it out of the queue");
+    } finally {
+      settings.setNewWorkPaused(false);
     }
   });
 });

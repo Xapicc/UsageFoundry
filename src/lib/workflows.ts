@@ -4068,9 +4068,11 @@ function haltBlocks(instanceId: string, cause: string): number {
  * The walk holds its event-loop turn from the first member to the last, so this
  * needs a crash *inside* that block — but the residue is a member of a stopped
  * workflow that goes on spending, which is the one outcome the halt exists to
- * have none of. `reconcileOnBoot` closes out `running`, `queued` and `waiting`
- * rows already; what it deliberately spares is a recently `paused` one, and the
- * sweeper would then re-queue it under a workflow the page says is stopped.
+ * have none of. `reconcileOnBoot` closes out `running` and `queued` rows
+ * already, and the `waiting` rows behind them; what it deliberately spares is a
+ * recently `paused` one and whatever still waits on something live or held, and
+ * the sweeper would then re-queue the paused one, or a later release pass admit
+ * the waiting one, under a workflow the page says is stopped.
  *
  * Runs **after** `reconcileOnBoot`, so what is left is only that residue, and it
  * re-uses the recorded cause rather than inventing one: the halt was the
@@ -7678,8 +7680,8 @@ export interface BootBlockPlan {
  * A member is what decides it, because a member is the only thing that can
  * still reach `releaseDependents` and so `advanceInstances`. `LIVE_STATUSES` is
  * the same reading `liveMemberCount` and `reconcileHaltsOnBoot` take, rather
- * than a test for `paused` — which is the only status that can be live at this
- * point in the boot, but by way of a rule in `reconcileOnBoot` that this
+ * than a test for `paused` or `waiting`, which are the only statuses that can be
+ * live at this point in the boot, by way of rules in `reconcileOnBoot` that this
  * function must not restate.
  *
  * An instance that is not `started` is closed out however live its members are.
