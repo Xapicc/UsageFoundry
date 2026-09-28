@@ -100,7 +100,31 @@
   `localCycleEnv` sets both to 900 000. Read, not run: no local cycle has been
   seen waiting past three minutes.
 
+- **Splash's limits, against the live server, 2026-09-28.** `GET /v1/models`
+  reports `context_length` and `max_model_len` 131072 for
+  `incoai/qwen3.8-27b-splash`. It does not reserve `max_tokens`: a 19-token
+  prompt asking for 131,072 and for 200,000 was answered 200. A 187,516-token
+  prompt got `400 invalid_request_error` "prompt is too long: 187516 tokens >
+  131071 maximum input tokens" in 0.3 s, Anthropic's own wording. A
+  128,164-token prompt asked for more than fits streamed 2,908 tokens, exactly
+  to 131,072, and ended `stop_reason: max_tokens` with a clean `message_stop`,
+  in 279 s. One model and one server; another server may refuse where this one
+  clips.
+
+- **The pinned CLI takes the sign-in's window, 2026-09-28.** `claude -p
+  "/context"` in the container against Splash, scratch config directory: without
+  `CLAUDE_CODE_MAX_CONTEXT_TOKENS` it printed the unknown-model notice and
+  `13.7k / 200k`; with 131072 it printed `13.7k / 131.1k` and a 33k autocompact
+  buffer, so compaction near 98,000. Before it, local session 22d3bae3 reached
+  127,833 input tokens without compacting.
+
 ## Not yet verified by hand
+
+- **No local cycle has been seen compacting under a sign-in window
+  (2026-09-28).** The threshold is read off `/context`, not off a compaction,
+  and whether Splash answers the summary request at ~98,000 tokens is open. A
+  local run long enough to pass it settles it: a `compacting` status and a
+  `compact_boundary` in its log, then a next turn that is answered.
 
 - **Why 682ea6fa's requests timed out at ~134 s is unknown (2026-09-28).**
   All nine attempts to LM Studio, with the server on, ended `Request timed

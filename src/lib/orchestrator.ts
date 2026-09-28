@@ -9129,7 +9129,11 @@ export async function startRun(id: string): Promise<void> {
       log(
         id,
         signIn
-          ? `This run's work cycles go to ${signIn.baseUrl} as ${run.model ?? signIn.model}, not to Anthropic. Winnow's intake filter and pruner do not see them, their spend is unknown rather than $0, and the branch cannot land or be delivered until a frontier model's review approves it.`
+          ? `This run's work cycles go to ${signIn.baseUrl} as ${run.model ?? signIn.model}, not to Anthropic. Winnow's intake filter and pruner do not see them, their spend is unknown rather than $0, and the branch cannot land or be delivered until a frontier model's review approves it. ${
+              signIn.contextTokens === null
+                ? "No context window was given at sign-in, so Claude Code assumes 200,000 tokens and compacts against that."
+                : `Claude Code is told the model's context window is ${signIn.contextTokens.toLocaleString("en-US")} tokens and compacts against that.`
+            }`
           : "This run is a local-model run and the local provider is signed out, so its next work cycle will be refused. Sign in under Settings.",
       );
     }

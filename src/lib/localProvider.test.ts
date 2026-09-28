@@ -51,7 +51,12 @@ describe("parseLocalSignIn", () => {
     });
     assert.deepEqual(res, {
       ok: true,
-      value: { baseUrl: "http://192.168.0.190:1234", token: null, model: "qwen3-coder-30b" },
+      value: {
+        baseUrl: "http://192.168.0.190:1234",
+        token: null,
+        model: "qwen3-coder-30b",
+        contextTokens: null,
+      },
     });
   });
 
@@ -78,6 +83,26 @@ describe("parseLocalSignIn", () => {
       assert.equal(mod.parseLocalSignIn({ baseUrl: "http://h", model }).ok, false, model);
     }
   });
+
+  it("reads the context window as a whole number, and blank as none", () => {
+    const at = (contextTokens: unknown) => {
+      const res = mod.parseLocalSignIn({ baseUrl: "http://h", model: "m", contextTokens });
+      return res.ok ? res.value.contextTokens : res.error;
+    };
+    assert.equal(at(" 131072 "), 131072);
+    assert.equal(at(131072), 131072);
+    assert.equal(at(""), null);
+    assert.equal(at(undefined), null);
+  });
+
+  it("refuses a window the CLI would compact inside every turn, or could not use", () => {
+    // 65,535 is one under the floor: 33,000 short of it is below a local
+    // cycle's first request.
+    for (const contextTokens of ["65535", "1000001", "128k", "131072.5", "-1", "abc"]) {
+      const res = mod.parseLocalSignIn({ baseUrl: "http://h", model: "m", contextTokens });
+      assert.equal(res.ok, false, contextTokens);
+    }
+  });
 });
 
 describe("localCycleEnv", () => {
@@ -97,7 +122,7 @@ describe("localCycleEnv", () => {
   it("points the cycle at the local server, past winnow's proxy", () => {
     const env = mod.localCycleEnv(
       claudeCycle,
-      { baseUrl: "http://192.168.0.190:1234", token: "lm-studio" },
+      { baseUrl: "http://192.168.0.190:1234", token: "lm-studio", contextTokens: null },
       "qwen3",
       "/home/node/.claude-local",
     );
@@ -108,7 +133,7 @@ describe("localCycleEnv", () => {
   });
 
   it("carries no Anthropic credential and no route around the base URL", () => {
-    const env = mod.localCycleEnv(claudeCycle, { baseUrl: "http://h", token: "t" }, "m", "/c");
+    const env = mod.localCycleEnv(claudeCycle, { baseUrl: "http://h", token: "t", contextTokens: null }, "m", "/c");
     for (const key of [
       "ANTHROPIC_API_KEY",
       "CLAUDE_CODE_OAUTH_TOKEN",
@@ -124,7 +149,7 @@ describe("localCycleEnv", () => {
   it("turns off the tool search winnow switched on, whose references a local server rejects", () => {
     const env = mod.localCycleEnv(
       { ...claudeCycle, ENABLE_TOOL_SEARCH: "1" },
-      { baseUrl: "http://h", token: "t" },
+      { baseUrl: "http://h", token: "t", contextTokens: null },
       "m",
       "/c",
     );
@@ -132,12 +157,29 @@ describe("localCycleEnv", () => {
   });
 
   it("sets a token even when the server wants none, so the OAuth login is never the fallback", () => {
-    const env = mod.localCycleEnv(claudeCycle, { baseUrl: "http://h", token: null }, "m", "/c");
+    const env = mod.localCycleEnv(claudeCycle, { baseUrl: "http://h", token: null, contextTokens: null }, "m", "/c");
     assert.equal(env.ANTHROPIC_AUTH_TOKEN, mod.LOCAL_TOKEN_PLACEHOLDER);
   });
 
+  it("names the model's window to the CLI only when the sign-in gives one", () => {
+    const sized = mod.localCycleEnv(
+      claudeCycle,
+      { baseUrl: "http://h", token: "t", contextTokens: 131072 },
+      "m",
+      "/c",
+    );
+    assert.equal(sized.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "131072");
+    const unsized = mod.localCycleEnv(
+      claudeCycle,
+      { baseUrl: "http://h", token: "t", contextTokens: null },
+      "m",
+      "/c",
+    );
+    assert.equal(unsized.CLAUDE_CODE_MAX_CONTEXT_TOKENS, undefined);
+  });
+
   it("names the local model for every role Claude Code picks a model for", () => {
-    const env = mod.localCycleEnv(claudeCycle, { baseUrl: "http://h", token: "t" }, "qwen3", "/c");
+    const env = mod.localCycleEnv(claudeCycle, { baseUrl: "http://h", token: "t", contextTokens: null }, "qwen3", "/c");
     for (const key of [
       "ANTHROPIC_MODEL",
       "ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -151,14 +193,14 @@ describe("localCycleEnv", () => {
   });
 
   it("leaves the Claude cycle's own environment untouched", () => {
-    mod.localCycleEnv(claudeCycle, { baseUrl: "http://h", token: "t" }, "m", "/c");
+    mod.localCycleEnv(claudeCycle, { baseUrl: "http://h", token: "t", contextTokens: null }, "m", "/c");
     assert.equal(claudeCycle.ANTHROPIC_API_KEY, "sk-ant-account-key");
     assert.equal(claudeCycle.ANTHROPIC_BASE_URL, "http://127.0.0.1:8789");
   });
 });
 
 describe("probeLocalEndpoint", () => {
-  const signIn = { baseUrl: "http://h:1234", token: "tok", model: "m" };
+  const signIn = { baseUrl: "http://h:1234", token: "tok", model: "m", contextTokens: null };
   const answering =
     (status: number, body: string, seen?: { url?: string; auth?: string | null }) =>
     (async (url: string | URL | Request, init?: RequestInit) => {

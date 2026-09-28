@@ -1249,6 +1249,8 @@ export interface LocalProviderDTO {
   baseUrl: string | null;
   model: string | null;
   hasToken: boolean;
+  /** The model's context window in tokens, or null when none was given. */
+  contextTokens: number | null;
   signedInAt: number | null;
 }
 

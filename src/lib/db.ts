@@ -2643,6 +2643,9 @@ function migrate(db: Database.Database) {
       signed_in_at  INTEGER NOT NULL
     );
   `);
+  // The server's context window, or null for the CLI's own assumption. A row
+  // signed in before this column existed keeps working exactly as it did.
+  addColumn(db, "local_provider", "context_tokens", "INTEGER");
 
   // One row per branch a workflow's review block is judging: which run the
   // branch started from, which link of it is current, how many fix rounds it

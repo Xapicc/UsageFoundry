@@ -1974,6 +1974,7 @@ function LocalModelAccount() {
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [token, setToken] = useState("");
+  const [contextTokens, setContextTokens] = useState("");
   const [busy, setBusy] = useState(false);
   const [flowError, setFlowError] = useState<string | null>(null);
 
@@ -1996,6 +1997,7 @@ function LocalModelAccount() {
     // but never the token, which the page does not have.
     setBaseUrl(state?.baseUrl ?? "");
     setModel(state?.model ?? "");
+    setContextTokens(state?.contextTokens?.toString() ?? "");
     setToken("");
     setFlowError(null);
     setOpen(true);
@@ -2006,7 +2008,7 @@ function LocalModelAccount() {
     setFlowError(null);
     const res = await jsonRequest<LocalProviderDTO>("/api/local-provider", {
       method: "POST",
-      body: { baseUrl, model, token },
+      body: { baseUrl, model, token, contextTokens },
     });
     setBusy(false);
     if (!res.ok) {
@@ -2048,6 +2050,9 @@ function LocalModelAccount() {
           <Badge tone="ok">signed in</Badge>
           <span className="mono break-all">
             {state.model} · {state.baseUrl}
+            {state.contextTokens !== null
+              ? ` · ${state.contextTokens.toLocaleString("en-US")}-token window`
+              : ""}
             {state.hasToken ? " · token set" : ""}
           </span>
           <Button variant="secondary" onClick={begin}>
@@ -2115,6 +2120,23 @@ function LocalModelAccount() {
             autoComplete="off"
             spellCheck={false}
             onChange={(e) => setModel(e.target.value)}
+          />
+        </Field>
+        <Field
+          className="mt-3"
+          label="Context window (optional)"
+          htmlFor="local-context"
+          hint="Your server's context length; blank leaves Claude Code assuming 200,000, which a smaller window never reaches"
+        >
+          <Input
+            id="local-context"
+            type="number"
+            min={65536}
+            className="tabular-nums"
+            unit="tokens"
+            value={contextTokens}
+            placeholder="131072"
+            onChange={(e) => setContextTokens(e.target.value)}
           />
         </Field>
         <Field

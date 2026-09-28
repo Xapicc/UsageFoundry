@@ -39,8 +39,25 @@ export interface LocalSignIn {
   token: string | null;
   /** Handed to `--model` and to every model role Claude Code has. */
   model: string;
+  /**
+   * The model's context window, sent as `CLAUDE_CODE_MAX_CONTEXT_TOKENS`. Null
+   * leaves the CLI assuming 200,000 for a model it does not know.
+   */
+  contextTokens: number | null;
   signedInAt: number;
 }
+
+/**
+ * The smallest context window the sign-in takes.
+ *
+ * The pinned CLI compacts 33,000 tokens short of the window (20,000 held for
+ * output, 13,000 for the summary), and a local cycle's first request is about
+ * 28,500 tokens, every tool's schema included — measured off two local
+ * transcripts on 2026-09-28. Below about 62,000 it would compact on every turn.
+ */
+export const MIN_LOCAL_CONTEXT_TOKENS = 65_536;
+/** The largest window the pinned CLI resolves for any model. */
+export const MAX_LOCAL_CONTEXT_TOKENS = 1_000_000;
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -49,6 +66,7 @@ export function parseLocalSignIn(input: {
   baseUrl?: unknown;
   token?: unknown;
   model?: unknown;
+  contextTokens?: unknown;
 }): Parsed<Omit<LocalSignIn, "signedInAt">> {
   const rawUrl = typeof input.baseUrl === "string" ? input.baseUrl.trim() : "";
   if (!rawUrl) return { ok: false, error: "A base URL is required." };
@@ -92,7 +110,31 @@ export function parseLocalSignIn(input: {
     return { ok: false, error: "The token cannot contain line breaks." };
   }
 
-  return { ok: true, value: { baseUrl, token: rawToken || null, model } };
+  const contextTokens = parseContextTokens(input.contextTokens);
+  if (!contextTokens.ok) return contextTokens;
+
+  return {
+    ok: true,
+    value: { baseUrl, token: rawToken || null, model, contextTokens: contextTokens.value },
+  };
+}
+
+/** Blank is no window; anything else has to be a whole number the CLI can use. */
+function parseContextTokens(raw: unknown): Parsed<number | null> {
+  if (raw === undefined || raw === null) return { ok: true, value: null };
+  const text = typeof raw === "number" ? String(raw) : typeof raw === "string" ? raw.trim() : "";
+  if (text === "") return { ok: true, value: null };
+  const n = Number(text);
+  if (!Number.isInteger(n)) {
+    return { ok: false, error: `The context window has to be a whole number of tokens, not ${text}.` };
+  }
+  if (n < MIN_LOCAL_CONTEXT_TOKENS || n > MAX_LOCAL_CONTEXT_TOKENS) {
+    return {
+      ok: false,
+      error: `The context window has to be between ${MIN_LOCAL_CONTEXT_TOKENS} and ${MAX_LOCAL_CONTEXT_TOKENS} tokens, not ${n}.`,
+    };
+  }
+  return { ok: true, value: n };
 }
 
 /* ------------------------------------------------------------------ */
@@ -103,6 +145,7 @@ interface LocalProviderRow {
   base_url: string;
   token: string | null;
   model: string;
+  context_tokens: number | null;
   signed_in_at: number;
 }
 
@@ -117,13 +160,16 @@ interface LocalProviderRow {
  */
 export function getLocalSignIn(): LocalSignIn | null {
   const row = db()
-    .prepare("SELECT base_url, token, model, signed_in_at FROM local_provider WHERE id = 1")
+    .prepare(
+      "SELECT base_url, token, model, context_tokens, signed_in_at FROM local_provider WHERE id = 1",
+    )
     .get() as LocalProviderRow | undefined;
   if (!row) return null;
   return {
     baseUrl: row.base_url,
     token: row.token,
     model: row.model,
+    contextTokens: row.context_tokens,
     signedInAt: row.signed_in_at,
   };
 }
@@ -132,13 +178,14 @@ export function saveLocalSignIn(value: Omit<LocalSignIn, "signedInAt">): LocalSi
   const signedInAt = Date.now();
   db()
     .prepare(
-      `INSERT INTO local_provider (id, base_url, token, model, signed_in_at)
-       VALUES (1, ?, ?, ?, ?)
+      `INSERT INTO local_provider (id, base_url, token, model, context_tokens, signed_in_at)
+       VALUES (1, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET base_url = excluded.base_url,
          token = excluded.token, model = excluded.model,
+         context_tokens = excluded.context_tokens,
          signed_in_at = excluded.signed_in_at`,
     )
-    .run(value.baseUrl, value.token, value.model, signedInAt);
+    .run(value.baseUrl, value.token, value.model, value.contextTokens, signedInAt);
   return { ...value, signedInAt };
 }
 
@@ -302,7 +349,7 @@ const LOCAL_IDLE_TIMEOUT_MS = 15 * 60_000;
  */
 export function localCycleEnv(
   base: NodeJS.ProcessEnv,
-  signIn: Pick<LocalSignIn, "baseUrl" | "token">,
+  signIn: Pick<LocalSignIn, "baseUrl" | "token" | "contextTokens">,
   model: string,
   configDir: string = LOCAL_CLAUDE_CONFIG_DIR,
 ): NodeJS.ProcessEnv {
@@ -330,6 +377,17 @@ export function localCycleEnv(
   env.ENABLE_TOOL_SEARCH = "false";
   env.CLAUDE_STREAM_IDLE_TIMEOUT_MS = String(LOCAL_IDLE_TIMEOUT_MS);
   env.API_TIMEOUT_MS = String(LOCAL_IDLE_TIMEOUT_MS);
+  // For a model id it does not know the CLI assumes a 200,000-token window and
+  // compacts 33,000 short of it, which a smaller server never lets a
+  // conversation reach: one local session here got to 127,833 tokens of
+  // Splash's 131,072 without compacting. Set, the CLI compacts at the same
+  // distance from the real window. Nothing else is overridden: at the CLI's
+  // default output ceiling a request at that point asks for 1,000 tokens less
+  // than the window, so even a server that refuses an oversized `max_tokens`
+  // takes it.
+  if (signIn.contextTokens !== null) {
+    env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(signIn.contextTokens);
+  }
   return env;
 }
 

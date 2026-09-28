@@ -22,6 +22,7 @@ function toDTO(signIn: LocalSignIn | null): LocalProviderDTO {
     baseUrl: signIn?.baseUrl ?? null,
     model: signIn?.model ?? null,
     hasToken: !!signIn?.token,
+    contextTokens: signIn?.contextTokens ?? null,
     signedInAt: signIn?.signedInAt ?? null,
   };
 }
@@ -56,6 +57,7 @@ async function postHandler(req: Request) {
     provider: "local",
     host: new URL(signIn.baseUrl).host,
     model: signIn.model,
+    contextTokens: signIn.contextTokens,
   });
   return NextResponse.json(toDTO(signIn));
 }
