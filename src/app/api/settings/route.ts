@@ -153,13 +153,65 @@ export async function GET(req: Request) {
   });
 }
 
+/**
+ * A value this route will not store.
+ *
+ * Thrown from `optionalNumber` and the `weeklyAnchor` branch, caught once in
+ * `putHandler` and answered with a 400. Throwing is the only shape that can
+ * refuse on behalf of every caller at once: the parse ends in a single
+ * `saveSettings`, so a throw before it refuses the whole PUT — the other
+ * fields in the same body are not half-saved — the way every other 400 on
+ * this route does, while a sentinel returned from the helper would need one
+ * of those per field to mean the same thing.
+ */
+class FieldRefusal extends Error {}
+
 async function putHandler(req: Request) {
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
-  const optionalNumber = (v: unknown): number | null => {
+  try {
+    return await applySettingsPut(body);
+  } catch (error) {
+    if (error instanceof FieldRefusal) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    throw error;
+  }
+}
+
+async function applySettingsPut(body: Record<string, unknown>): Promise<Response> {
+  // A number the page or an operator typed, with the one shared refusal.
+  //
+  // Blank, `null` and `undefined` are "no limit", the reading every consumer
+  // of a stored value takes, and that stays. Anything else that is not a
+  // non-negative number is refused rather than folded to `null`: `null` is no
+  // limit, so the old fold answered a typo — a -50, a "5O", a 0 a field's own
+  // rule floors — with the removal of a guard and a 200 with a saved badge.
+  // The normalizers in lib/ keep the total fold: they run twice over stored
+  // blobs and have no error channel. This route has one.
+  //
+  // `zeroMeansOff` is the one per-field decision the fold leaves: for the
+  // money and token limits 0 is the same request as off (and a stored 0 would
+  // reach a child as `--max-budget-usd 0`, a budget nothing can satisfy),
+  // while for the caps and horizons 0 is a value the call site then floors.
+  const optionalNumber = (
+    field: string,
+    v: unknown,
+    zeroMeansOff: boolean,
+  ): number | null => {
     if (v === null || v === undefined || v === "") return null;
+    if (typeof v !== "number" && typeof v !== "string") {
+      throw new FieldRefusal(
+        `${field} must be a number or blank; got ${JSON.stringify(v)}.`,
+      );
+    }
     const n = Number(v);
-    return Number.isFinite(n) && n > 0 ? n : null;
+    if (!Number.isFinite(n) || n < 0) {
+      throw new FieldRefusal(
+        `${field} must be a non-negative number or blank; got ${JSON.stringify(v)}.`,
+      );
+    }
+    return zeroMeansOff && n === 0 ? null : n;
   };
 
   const patch: Partial<Settings> = {};
@@ -171,16 +223,16 @@ async function putHandler(req: Request) {
     patch.landVerifyCommand = String(body.landVerifyCommand ?? "").trim();
 
   if ("sessionCostLimit" in body)
-    patch.sessionCostLimit = optionalNumber(body.sessionCostLimit);
+    patch.sessionCostLimit = optionalNumber("sessionCostLimit", body.sessionCostLimit, true);
   if ("weeklyCostLimit" in body)
-    patch.weeklyCostLimit = optionalNumber(body.weeklyCostLimit);
+    patch.weeklyCostLimit = optionalNumber("weeklyCostLimit", body.weeklyCostLimit, true);
   if ("sessionTokenLimit" in body)
-    patch.sessionTokenLimit = optionalNumber(body.sessionTokenLimit);
+    patch.sessionTokenLimit = optionalNumber("sessionTokenLimit", body.sessionTokenLimit, true);
   if ("weeklyTokenLimit" in body)
-    patch.weeklyTokenLimit = optionalNumber(body.weeklyTokenLimit);
+    patch.weeklyTokenLimit = optionalNumber("weeklyTokenLimit", body.weeklyTokenLimit, true);
 
   if ("reservedHeadroomFraction" in body) {
-    const n = optionalNumber(body.reservedHeadroomFraction);
+    const n = optionalNumber("reservedHeadroomFraction", body.reservedHeadroomFraction, true);
     // Accept a percentage typed as 0–100 as well as a 0–1 fraction. Capped at
     // 0.95 so a slip cannot drive the effective ceiling to zero and wedge
     // every run behind a guard that can never pass.
@@ -194,15 +246,21 @@ async function putHandler(req: Request) {
     else {
       const weekday = Number(a.weekday);
       const hourUTC = Number(a.hourUTC);
-      patch.weeklyAnchor =
-        Number.isInteger(weekday) &&
-        weekday >= 0 &&
-        weekday <= 6 &&
-        Number.isInteger(hourUTC) &&
-        hourUTC >= 0 &&
-        hourUTC <= 23
-          ? { weekday, hourUTC }
-          : null;
+      // Out of range is refused rather than folded to `null`: `null` is a
+      // rolling seven days, so a mistyped hour would silently replace the week
+      // the operator meant with a window that moves — the same silent blank
+      // the numbers above used to be.
+      if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6) {
+        throw new FieldRefusal(
+          `weeklyAnchor.weekday must be an integer from 0 (Sunday) to 6; got ${JSON.stringify(a.weekday)}.`,
+        );
+      }
+      if (!Number.isInteger(hourUTC) || hourUTC < 0 || hourUTC > 23) {
+        throw new FieldRefusal(
+          `weeklyAnchor.hourUTC must be an integer from 0 to 23; got ${JSON.stringify(a.hourUTC)}.`,
+        );
+      }
+      patch.weeklyAnchor = { weekday, hourUTC };
     }
   }
 
@@ -405,7 +463,7 @@ async function putHandler(req: Request) {
     // Blank means "no cap", the reading every switchable budget rule here
     // takes. It is the only money bound on the one child this app starts
     // without being asked, so removing it is the operator's explicit act.
-    patch.validationBudgetUSD = optionalNumber(body.validationBudgetUSD);
+    patch.validationBudgetUSD = optionalNumber("validationBudgetUSD", body.validationBudgetUSD, true);
   }
 
   if ("maxValidationCycles" in body) {
@@ -413,7 +471,7 @@ async function putHandler(req: Request) {
     // half of a terminus, so there must be no way to type "no limit". Zero is
     // the off switch and is a real answer — the task is still held open and the
     // operator still sees the verdict; nothing buys a cycle.
-    const n = optionalNumber(body.maxValidationCycles);
+    const n = optionalNumber("maxValidationCycles", body.maxValidationCycles, false);
     patch.maxValidationCycles = n === null ? 0 : Math.max(0, Math.floor(n));
   }
 
@@ -483,14 +541,15 @@ async function putHandler(req: Request) {
   }
 
   if ("contextPruningForkMinColdAge" in body) {
-    // Deliberately not `optionalNumber`. That helper ends `n > 0 ? n : null`,
-    // which is right for every limit above it — a cost ceiling of 0 and no cost
-    // ceiling are the same request, so folding them together loses nothing.
-    // Here they are opposites: 0 is the shipped default and the only value that
-    // ever forks, while null hands the decision to winnow's own hour, which at
-    // a cycle boundary refuses every time. Sending this key through that helper
-    // meant an operator could type 0, get a 200 and a saved settings page, and
-    // have the value arrive as null with the engine still off.
+    // Deliberately not `optionalNumber`. The helper folds 0 to `null` where a
+    // field may — for a limit above it that fold is right: a cost ceiling of 0
+    // and no cost ceiling are the same request, so folding them together loses
+    // nothing. Here they are opposites: 0 is the shipped default and the only
+    // value that ever forks, while null hands the decision to winnow's own
+    // hour, which at a cycle boundary refuses every time. Sending this key
+    // through that fold meant an operator could type 0, get a 200 and a saved
+    // settings page, and have the value arrive as null with the engine still
+    // off.
     //
     // It also made the 400 below unreachable: a negative or unparseable value
     // came back as null and was stored as "blank" rather than refused.
@@ -511,7 +570,7 @@ async function putHandler(req: Request) {
   }
 
   if ("readGuardMaxTokens" in body) {
-    const n = optionalNumber(body.readGuardMaxTokens);
+    const n = optionalNumber("readGuardMaxTokens", body.readGuardMaxTokens, false);
     // Blank means no cap, which is the rule every switchable limit here
     // follows, and leaves the repeat-read half of the guard running alone.
     //
@@ -530,7 +589,7 @@ async function putHandler(req: Request) {
   }
 
   if ("freshStartContextTokens" in body) {
-    const n = optionalNumber(body.freshStartContextTokens);
+    const n = optionalNumber("freshStartContextTokens", body.freshStartContextTokens, false);
     // Blank is off, and off is `--resume` on every cycle — what every install
     // does today. Floored at 20,000 because a threshold under one cycle's
     // opening context would restart every cycle unconditionally, which is not
@@ -539,14 +598,14 @@ async function putHandler(req: Request) {
   }
 
   if ("maxConcurrentRuns" in body) {
-    const n = optionalNumber(body.maxConcurrentRuns);
+    const n = optionalNumber("maxConcurrentRuns", body.maxConcurrentRuns, false);
     // Blank means no limit, matching every other switchable rule. Floor at 1 so
     // a typed 0 cannot wedge every run behind a cap nothing can satisfy.
     patch.maxConcurrentRuns = n === null ? null : Math.max(1, Math.floor(n));
   }
 
   if ("maxConcurrentAssists" in body) {
-    const n = optionalNumber(body.maxConcurrentAssists);
+    const n = optionalNumber("maxConcurrentAssists", body.maxConcurrentAssists, false);
     // Same two rules as the cap above, and the floor of 1 matters more here: a
     // 0 would wedge every review, resolution and chat turn behind a budget
     // nothing can satisfy, and leave a workflow's deciding blocks `waiting`
@@ -555,7 +614,7 @@ async function putHandler(req: Request) {
   }
 
   if ("maxConcurrentLocalRuns" in body) {
-    const n = optionalNumber(body.maxConcurrentLocalRuns);
+    const n = optionalNumber("maxConcurrentLocalRuns", body.maxConcurrentLocalRuns, false);
     // The run cap's two rules: a 0 would leave every local run queued behind a
     // cap nothing can satisfy.
     patch.maxConcurrentLocalRuns = n === null ? null : Math.max(1, Math.floor(n));
@@ -590,7 +649,7 @@ async function putHandler(req: Request) {
   if ("resolutionBudgetUSD" in body) {
     // Blank means "no cap", as `validationBudgetUSD` reads it: the only bound on
     // a child with no clock, so removing it is the operator's explicit act.
-    patch.resolutionBudgetUSD = optionalNumber(body.resolutionBudgetUSD);
+    patch.resolutionBudgetUSD = optionalNumber("resolutionBudgetUSD", body.resolutionBudgetUSD, true);
   }
 
   if ("isolationCopyGlobsByRepo" in body) {
@@ -634,7 +693,7 @@ async function putHandler(req: Request) {
   }
 
   if ("liveGuardIntervalSeconds" in body) {
-    const n = optionalNumber(body.liveGuardIntervalSeconds);
+    const n = optionalNumber("liveGuardIntervalSeconds", body.liveGuardIntervalSeconds, false);
     // Blank restores the default rather than meaning "no limit", unlike
     // maxConcurrentRuns above. There is no such thing as "no interval": a live
     // run is either checked on some cadence or it is not a live run. Floored at
@@ -645,7 +704,7 @@ async function putHandler(req: Request) {
   }
 
   if ("maxCycleSilenceMinutes" in body) {
-    const n = optionalNumber(body.maxCycleSilenceMinutes);
+    const n = optionalNumber("maxCycleSilenceMinutes", body.maxCycleSilenceMinutes, false);
     // Blank restores the default rather than meaning "no deadline", for the
     // reason above and one more: a work cycle with no deadline is the defect
     // this setting exists to fix, so there has to be no way to type it. The
@@ -656,7 +715,7 @@ async function putHandler(req: Request) {
   }
 
   if ("resumeGraceHours" in body) {
-    const n = optionalNumber(body.resumeGraceHours);
+    const n = optionalNumber("resumeGraceHours", body.resumeGraceHours, false);
     patch.resumeGraceHours = n === null ? 24 : Math.max(1, Math.floor(n));
   }
 
@@ -712,7 +771,7 @@ async function putHandler(req: Request) {
     // it can express. Floored at 1 for the same reason `maxConcurrentRuns` is —
     // a typed 0 would otherwise read as "delete a finished run's log the moment
     // it finishes", which is a retention policy nobody asked for.
-    const n = optionalNumber(body.eventRetentionDays);
+    const n = optionalNumber("eventRetentionDays", body.eventRetentionDays, false);
     patch.eventRetentionDays = n === null ? null : Math.max(1, Math.floor(n));
   }
 
@@ -720,7 +779,7 @@ async function putHandler(req: Request) {
     // Same reading as the horizon above. Floored at 1 for a sharper version of
     // its reason: a 0 here would reclaim a checkout the moment its run ended,
     // which is the slot the *next* run on that repository was going to reuse.
-    const n = optionalNumber(body.checkoutRetentionDays);
+    const n = optionalNumber("checkoutRetentionDays", body.checkoutRetentionDays, false);
     patch.checkoutRetentionDays = n === null ? null : Math.max(1, Math.floor(n));
   }
 
@@ -730,7 +789,7 @@ async function putHandler(req: Request) {
     // card states from this very number. It is not clamped up to that history:
     // making the horizon a year would defeat the retention, so the card says
     // what is incomplete instead.
-    const n = optionalNumber(body.transcriptRetentionDays);
+    const n = optionalNumber("transcriptRetentionDays", body.transcriptRetentionDays, false);
     patch.transcriptRetentionDays = n === null ? null : Math.max(1, Math.floor(n));
   }
 
@@ -738,14 +797,14 @@ async function putHandler(req: Request) {
     // Blank means "no cap", the same reading every switchable budget rule here
     // takes. It is the one guard on a chat turn other than the clock, so an
     // operator turning it off should have to type the blank themselves.
-    patch.chatTurnBudgetUSD = optionalNumber(body.chatTurnBudgetUSD);
+    patch.chatTurnBudgetUSD = optionalNumber("chatTurnBudgetUSD", body.chatTurnBudgetUSD, true);
   }
 
   if ("installDailyCostLimitUSD" in body) {
     // Blank means "no cap", the same reading every switchable budget rule here
     // takes — and the shipped default, so an operator turning it *on* is the
     // deliberate act rather than turning it off.
-    patch.installDailyCostLimitUSD = optionalNumber(body.installDailyCostLimitUSD);
+    patch.installDailyCostLimitUSD = optionalNumber("installDailyCostLimitUSD", body.installDailyCostLimitUSD, true);
   }
 
   const settings = saveSettings(patch);
