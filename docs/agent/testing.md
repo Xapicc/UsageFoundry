@@ -268,6 +268,7 @@ Units that are about no test file in the tree:
 | `http.test.ts` | [harnesses] |
 | `loginLimiter.test.ts` |  |
 | `otlp.test.ts` |  |
+| `readOnlyBanner.test.ts` |  |
 | `requestLog.test.ts` |  |
 | `sessionToken.test.ts` |  |
 | `settings.test.ts` |  |
