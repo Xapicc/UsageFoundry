@@ -1,21 +1,26 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { after, before, describe, it } from "node:test";
 
 import {
   diffAsText,
   diffRange,
   parseLsTreeSizes,
+  parseMerges,
   parseNameStatus,
-  parseNewestMerge,
   parseNumstat,
   selectForPatch,
   splitPatches,
+  targetMergeOn,
   truncatePatch,
   type RunDiff,
 } from "./diff";
 
 /**
- * Covers the parsing and the budgeting, and only those.
+ * Covers the parsing, the budgeting and where the diff is measured from.
  *
  * Every one of them fails silently and expensively. A mis-parsed record shifts
  * every following file by one, so a rename in the middle of a change renames
@@ -23,6 +28,12 @@ import {
  * about work that happened somewhere else. The budget is the no-silent-caps
  * rule made executable: a diff that quietly shows twelve of forty files reads
  * as a run that touched twelve.
+ *
+ * `targetMergeOn` is the one case against a real repository, on
+ * `conflictedPaths.test.ts`' grounds: the defect was in which merges git was
+ * asked for, so a parser test over pasted output passes with `-n1` still on the
+ * argv. Under it, a branch that merged the target and then another branch was
+ * measured from its base, and the target's files were counted as the run's.
  */
 
 /* ------------------------------------------------------------------ */
@@ -164,7 +175,7 @@ describe("splitPatches", () => {
 describe("diffRange", () => {
   const base = "b".repeat(40);
   const head = "h".repeat(40);
-  // `git rev-list --first-parent --merges --parents -n1 base..head` after
+  // `git rev-list --first-parent --merges --parents base..head` after
   // `git merge main` on the run's branch, on git 2.39.5: the merge, then the
   // branch before it, then main as it was merged in.
   const revList =
@@ -176,7 +187,7 @@ describe("diffRange", () => {
     // From the base, every commit the target gained before the merge is in
     // the range: measured on that repository, `base...head` listed main's two
     // files as the run's and doubled its count on the file both touched.
-    const merge = parseNewestMerge(revList);
+    const [merge] = parseMerges(revList);
     assert.ok(merge);
     assert.deepEqual(diffRange(base, head, { ...merge, target: "main" }), {
       from: "bd820da6100d630ec3a530cdd61d7595c7dda54d",
@@ -187,18 +198,118 @@ describe("diffRange", () => {
   it("reads the merged-in side as the second parent, never the first", () => {
     // The first parent is the branch before the merge; measured from there
     // the run's own commits disappear from its diff.
-    assert.deepEqual(parseNewestMerge(revList), {
-      merge: "8e9bedec455d8e3f153a17d9c401177a12efec7a",
-      commit: "bd820da6100d630ec3a530cdd61d7595c7dda54d",
-    });
+    assert.deepEqual(parseMerges(revList), [
+      {
+        merge: "8e9bedec455d8e3f153a17d9c401177a12efec7a",
+        commit: "bd820da6100d630ec3a530cdd61d7595c7dda54d",
+      },
+    ]);
+  });
+
+  it("returns every merge, newest first, so an older one of the target is reachable", () => {
+    // The same command after `git merge main` and then `git merge side` on
+    // the run's branch, on git 2.39.5: side's merge first, whose first parent
+    // is main's merge on the next line. Reading only the first line measured
+    // that branch from its base, main's files and all.
+    const twoMerges =
+      "d60755b48afc1c96a434d7866eb014ace14c2cd0 " +
+      "88f0a937ab1af2791e67a9cf61c5dffd2aa3ba04 " +
+      "6b0a531d4504f09de6bc4d2359511794c62cc0d8\n" +
+      "88f0a937ab1af2791e67a9cf61c5dffd2aa3ba04 " +
+      "d76aa5166d8f33e8ff41cb9663fb8830ca53d06a " +
+      "1e74aaaa9a1bcb90d31832f5e1cf0b29a6ec52a8\n";
+    assert.deepEqual(parseMerges(twoMerges), [
+      {
+        merge: "d60755b48afc1c96a434d7866eb014ace14c2cd0",
+        commit: "6b0a531d4504f09de6bc4d2359511794c62cc0d8",
+      },
+      {
+        merge: "88f0a937ab1af2791e67a9cf61c5dffd2aa3ba04",
+        commit: "1e74aaaa9a1bcb90d31832f5e1cf0b29a6ec52a8",
+      },
+    ]);
   });
 
   it("measures from the base when the branch has no merge", () => {
-    assert.equal(parseNewestMerge(""), null);
+    assert.deepEqual(parseMerges(""), []);
     assert.deepEqual(diffRange(base, head, null), {
       from: base,
       range: `${base}...${head}`,
     });
+  });
+});
+
+describe("targetMergeOn", () => {
+  let root: string;
+  let repo: string;
+  let base: string;
+  let head: string;
+
+  const git = (...args: string[]) =>
+    execFileSync("git", args, {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@example.com",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@example.com",
+      },
+    }).trim();
+  const commit = (message: string, files: Record<string, string>) => {
+    for (const [name, text] of Object.entries(files)) {
+      fs.writeFileSync(path.join(repo, name), text);
+    }
+    git("add", "-A");
+    git("commit", "-q", "-m", message);
+  };
+
+  before(() => {
+    root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-target-merge-")));
+    repo = path.join(root, "repo");
+    fs.mkdirSync(repo);
+
+    git("init", "-q", "-b", "main");
+    commit("base", { shared: "base\n" });
+    base = git("rev-parse", "HEAD");
+
+    git("checkout", "-q", "-b", "run");
+    commit("run", { "run.txt": "run\n", shared: "run\n" });
+
+    git("checkout", "-q", "main");
+    commit("main a", { "main-a.txt": "a\n" });
+    commit("main b", { "main-b.txt": "b\n" });
+
+    git("checkout", "-q", "run");
+    git("merge", "-q", "--no-edit", "main");
+
+    git("checkout", "-q", "-b", "side", base);
+    commit("side", { "side.txt": "side\n" });
+
+    git("checkout", "-q", "run");
+    git("merge", "-q", "--no-edit", "side");
+    head = git("rev-parse", "HEAD");
+  });
+
+  after(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("finds the target's merge under a newer merge of another branch", async () => {
+    const merge = await targetMergeOn(repo, "main", base, head);
+
+    assert.ok(merge, "no merge of main was found on the branch");
+    assert.equal(merge.merge, git("rev-parse", "HEAD^1"));
+    assert.equal(merge.commit, git("rev-parse", "main"));
+    // What landing this branch onto main would bring: the run's two files and
+    // side's, and none of what main already had.
+    const { range } = diffRange(base, head, merge);
+    assert.deepEqual(git("diff", "--name-only", range).split("\n"), [
+      "run.txt",
+      "shared",
+      "side.txt",
+    ]);
   });
 });
 
