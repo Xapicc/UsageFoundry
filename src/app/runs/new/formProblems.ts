@@ -97,29 +97,7 @@ export function runFormProblems(v: RunFormState): Problem[] {
     });
   }
   problems.push(...limitProblems(v));
-  // Above 100 is not a stricter guard, it is a hundredth of one: the form sends
-  // a fraction and `normalizePolicy` divides anything over 1 by a hundred
-  // again, so a typed 150 arrives as 1.5%.
-  if (
-    v.maxSessionFraction !== "" &&
-    !(v.effSessionPct !== null && v.effSessionPct <= 100)
-  ) {
-    problems.push({
-      focus: "sess",
-      message: "The 5-hour guard has to be between 1 and 100 percent.",
-      immediate: true,
-    });
-  }
-  if (
-    v.maxWeeklyFraction !== "" &&
-    !(v.effWeeklyPct !== null && v.effWeeklyPct <= 100)
-  ) {
-    problems.push({
-      focus: "wk",
-      message: "The weekly guard has to be between 1 and 100 percent.",
-      immediate: true,
-    });
-  }
+  problems.push(...guardProblems(v));
   return problems;
 }
 
@@ -175,6 +153,55 @@ export function limitProblems(v: LimitState): Problem[] {
       focus: "cycles-on",
       message:
         "Nothing would end this run. Set a time limit, or cap the work cycles.",
+      immediate: true,
+    });
+  }
+  return problems;
+}
+
+/** What `guardProblems` reads: the two window guards, and nothing about where the run works. */
+export type GuardState = Pick<
+  RunFormState,
+  | "maxSessionFraction"
+  | "effSessionPct"
+  | "maxWeeklyFraction"
+  | "effWeeklyPct"
+>;
+
+/**
+ * The refusals about the window guards alone, in the order `runFormProblems`
+ * gives them.
+ *
+ * Split out because Save reads them too. A template is saved from this form and
+ * inherited by the chat and the canvas with no form in front of them, so a
+ * guard typed past the range has to be refused at Save in the same words as at
+ * Start. Here the stakes are worse than a blank limit's, because nothing
+ * refuses the stored value at read time: above 100 is not a stricter guard, it
+ * is a hundredth of one — the form sends a fraction and `normalizePolicy`
+ * divides anything over 1 by a hundred again, so a typed 150 is stored as 1.5%
+ * and parks every run the template hands out almost at once.
+ */
+export function guardProblems(v: GuardState): Problem[] {
+  const problems: Problem[] = [];
+  // A box with something typed in that `positive` cannot read — a 0, a word —
+  // or that sits above 100 is refused; blank is how these two are switched off.
+  if (
+    v.maxSessionFraction !== "" &&
+    !(v.effSessionPct !== null && v.effSessionPct <= 100)
+  ) {
+    problems.push({
+      focus: "sess",
+      message: "The 5-hour guard has to be between 1 and 100 percent.",
+      immediate: true,
+    });
+  }
+  if (
+    v.maxWeeklyFraction !== "" &&
+    !(v.effWeeklyPct !== null && v.effWeeklyPct <= 100)
+  ) {
+    problems.push({
+      focus: "wk",
+      message: "The weekly guard has to be between 1 and 100 percent.",
       immediate: true,
     });
   }

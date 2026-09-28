@@ -4,6 +4,7 @@ import { readWindowGuard } from "../../../lib/budget";
 import type { WindowState } from "../../../lib/windows";
 import {
   type RunFormState,
+  guardProblems,
   limitProblems,
   runFormProblems,
   windowGuardUnreadable,
@@ -143,6 +144,74 @@ test("Save refuses the limits in Start's own words, and nothing about the target
   assert.deepEqual(limitProblems(form), atStart);
   assert.deepEqual(limitProblems(form).map((p) => p.focus), ["cost", "dur"]);
   assert.deepEqual(limitProblems(CLEAN), []);
+});
+
+test("Save refuses the guards in Start's own words, and allows 1 and 100", () => {
+  // Save reads `guardProblems` and Start reads `runFormProblems`; a template
+  // saved past a guard Start would give is inherited by the chat and the
+  // canvas with no form in front of them, so the two must not drift apart.
+  // Here the stakes are worse than a blank limit's, because the stored value
+  // is read back through `normalizePolicy`, which divides anything over 1 by
+  // a hundred again: a typed 150 is stored as 1.5% and parks every run the
+  // template hands out almost at once, with no refusal anywhere to say why.
+  const form: RunFormState = {
+    ...CLEAN,
+    maxSessionFraction: "150",
+    effSessionPct: 150,
+    maxWeeklyFraction: "150",
+    effWeeklyPct: 150,
+  };
+  const atStart = runFormProblems(form).filter((p) =>
+    ["sess", "wk"].includes(p.focus),
+  );
+  assert.deepEqual(guardProblems(form), atStart);
+  // The exact sentences, so a rewording at one door drifts from the other.
+  assert.deepEqual(guardProblems(form), [
+    {
+      focus: "sess",
+      message: "The 5-hour guard has to be between 1 and 100 percent.",
+      immediate: true,
+    },
+    {
+      focus: "wk",
+      message: "The weekly guard has to be between 1 and 100 percent.",
+      immediate: true,
+    },
+  ]);
+  // One box at a time, so a clean weekly guard cannot hide a refused 5-hour one.
+  assert.deepEqual(
+    guardProblems({ ...CLEAN, maxSessionFraction: "150", effSessionPct: 150 }),
+    [
+      {
+        focus: "sess",
+        message: "The 5-hour guard has to be between 1 and 100 percent.",
+        immediate: true,
+      },
+    ],
+  );
+  assert.deepEqual(
+    guardProblems({ ...CLEAN, maxWeeklyFraction: "150", effWeeklyPct: 150 }),
+    [
+      {
+        focus: "wk",
+        message: "The weekly guard has to be between 1 and 100 percent.",
+        immediate: true,
+      },
+    ],
+  );
+  // 1 and 100 are the window and its edge — guards, not refusals.
+  for (const [raw, pct] of [["1", 1], ["100", 100]] as const) {
+    assert.deepEqual(
+      guardProblems({ ...CLEAN, maxSessionFraction: raw, effSessionPct: pct }),
+      [],
+    );
+    assert.deepEqual(
+      guardProblems({ ...CLEAN, maxWeeklyFraction: raw, effWeeklyPct: pct }),
+      [],
+    );
+  }
+  // 80 is a guard and the blank weekly one is off, so a clean form says nothing.
+  assert.deepEqual(guardProblems(CLEAN), []);
 });
 
 test("a run with no terminus is refused at the switch, not at the box", () => {

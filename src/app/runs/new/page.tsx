@@ -57,6 +57,7 @@ import {
   modelFromForm,
 } from "./budgetPayload";
 import {
+  guardProblems,
   limitProblems,
   runFormProblems,
   windowGuardUnreadable,
@@ -1104,19 +1105,31 @@ export default function NewRunPage() {
   }
 
   async function saveTemplate() {
-    // Start's refusals about the limits, said the way Start says them. The
-    // server refuses a blank limit as well, but a template saved past one would
-    // carry no cap into the chat and the canvas, and only here can the sentence
-    // land beside the box that caused it.
-    const refused = limitProblems({
-      iterationsCapped,
-      effIterations,
-      costLimited,
-      effCost,
-      timeLimited,
-      effMinutes,
-      noTerminus,
-    });
+    // Start's refusals about the limits and the window guards, said the way
+    // Start says them. The server refuses a blank limit as well, but a template
+    // saved past one would carry no cap into the chat and the canvas, and only
+    // here can the sentence land beside the box that caused it; a guard typed
+    // above 100 is refused here for a worse reason, because nothing refuses it
+    // anywhere else — `normalizePolicy` divides anything over 1 by a hundred
+    // again, so the stored template parks every run the chat or the canvas
+    // inherits from it almost at once.
+    const refused = [
+      ...limitProblems({
+        iterationsCapped,
+        effIterations,
+        costLimited,
+        effCost,
+        timeLimited,
+        effMinutes,
+        noTerminus,
+      }),
+      ...guardProblems({
+        maxSessionFraction,
+        effSessionPct,
+        maxWeeklyFraction,
+        effWeeklyPct,
+      }),
+    ];
     if (refused.length > 0) {
       setTouched((t) => ({
         ...t,
