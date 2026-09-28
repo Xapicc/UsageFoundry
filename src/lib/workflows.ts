@@ -12,7 +12,14 @@ import {
   type ChatProcess,
   type TurnResult,
 } from "./chat";
-import { assistBudgetFull, windowRefusal } from "./review";
+import { assistBudgetFull, getAssist, startReview, windowRefusal } from "./review";
+import {
+  afterFixRun,
+  fixRunPrompt,
+  nextReviewStep,
+  reviewBlockSummary,
+} from "./reviewBlock";
+import { addTaskComment } from "./taskComments";
 import { installBudgetRefusal } from "./installBudget";
 import {
   DEPENDENCY_EDGES,
@@ -37,6 +44,7 @@ import {
   RUN_ORIGINS,
   type CreateRunInput,
   type RunOrigin,
+  type RunRow,
   type DependencyEdge,
   type DependencyLink,
   type DependencyState,
@@ -58,13 +66,17 @@ import {
   type BudgetVerdict,
   type InstanceBudgetPolicy,
   type InstanceProgress,
+  normalizePolicy,
+  providerTerminusRefusal,
 } from "./budget";
+import { getLocalSignIn } from "./localProvider";
 import {
   agentDefinition,
   agentKnowledgeOf,
   agentRefusal,
   currentAgentKnowledge,
   getAgent,
+  parseRunAgent,
   getAgentByName,
   listAgents,
   type AgentDefinition,
@@ -78,6 +90,8 @@ import {
   listTasks,
   readTaskLinks,
   resolveTaskFolder,
+  tasksLinkedToRun,
+  updateTask,
   type TaskLinkReading,
 } from "./tasks";
 import { telemetrySpendSince } from "./otlp";
@@ -86,6 +100,7 @@ import {
   chatGuards,
   getSettings,
   newWorkPaused,
+  type PermissionMode,
   type RunGuards,
 } from "./settings";
 import { getTemplate, listTemplates, type RunTemplate } from "./templates";
@@ -348,7 +363,7 @@ export function summarizeProposedGraph(
     name: node.name,
     kind: node.kind,
     guardsLabel:
-      node.kind === "merge"
+      node.kind === "merge" || node.kind === "review"
         ? "no agent"
         : node.templateId === null
           ? untemplatedLabel
@@ -359,7 +374,7 @@ export function summarizeProposedGraph(
       ? (known.agents.get(node.agentId)?.name ?? "agent deleted")
       : null,
     folderLabel:
-      node.kind === "merge"
+      node.kind === "merge" || node.kind === "review"
         ? null
         : `${mountById(node.mountId)?.label ?? node.mountId}${
             node.folder ? `/${node.folder}` : " (mount root)"
@@ -479,6 +494,13 @@ export function planNode(
   const guards = guardsFor(template, defaults);
   const base = node.promptOverride?.trim() || template?.prompt || null;
 
+  // Truthy for `agentId`'s reason: a graph blob copied onto an instance before
+  // the field existed has no key here. The terminus rule is the run form's and
+  // the chat's, asked of the guards this run will actually start under.
+  const provider = node.provider || null;
+  const terminus = providerTerminusRefusal(provider, guards.budget);
+  if (terminus) return { ok: false, reason: `“${node.name}”: ${terminus}` };
+
   return {
     ok: true,
     input: {
@@ -500,9 +522,39 @@ export function planNode(
       // the template is where the question was asked. A node deliberately does
       // not grow one — it names a template for the model exactly as it does for
       // the guards, which is what `db.ts`'s "no model on a node" now means.
-      model: template?.model ?? null,
+      //
+      // Never on a Codex or local run, whose CLI or server knows none of the
+      // Claude ids a template holds: Codex runs its own default, and a local
+      // run is given the sign-in's model by `localReady`.
+      model: provider === "codex" || provider === "local" ? null : (template?.model ?? null),
+      provider,
     },
   };
+}
+
+/**
+ * A planned run, finished for the local provider: the sign-in's model frozen
+ * onto it, or a refusal naming the block when nobody is signed in.
+ *
+ * Impure, which is why it is not in `planNode`: the sign-in is a row. Read when
+ * the run is created, as the run form's door reads it, so a block created an
+ * hour into an instance is refused by name rather than started on nothing.
+ */
+function localReady(
+  input: Omit<CreateRunInput, "dependsOn" | "origin">,
+  blockName: string,
+): NodePlan {
+  if (input.provider !== "local") return { ok: true, input };
+  const signIn = getLocalSignIn();
+  if (!signIn) {
+    return {
+      ok: false,
+      reason:
+        `“${blockName}” runs on the local model, and the local provider is ` +
+        "signed out. Sign in under Settings and start it again.",
+    };
+  }
+  return { ok: true, input: { ...input, model: input.model ?? signIn.model } };
 }
 
 /**
@@ -569,8 +621,14 @@ export function planEmittedRun(
     // `planNode`'s inheritance, for its reason. A spec has no model on it and
     // never will — which is what makes `RunSpec`'s "the block's own template
     // already answered all of those" true of the model rather than an absence
-    // with nowhere to come from.
-    model: template?.model ?? null,
+    // with nowhere to come from. Dropped for Codex and local, `planNode`'s rule.
+    model:
+      node.provider === "codex" || node.provider === "local"
+        ? null
+        : (template?.model ?? null),
+    // The block's, never the spec's: a person saved it, and `emit_runs` has no
+    // field that could carry one.
+    provider: node.provider || null,
   };
 }
 
@@ -1492,6 +1550,12 @@ export interface InstanceStep {
   spawn: string[];
   /** Merge blocks whose branches may now be queued. */
   merge: InstanceMerge[];
+  /**
+   * Review blocks whose branches may now be reviewed, in `InstanceMerge`'s
+   * shape and for its reason: which runs an orchestrator block turned out to
+   * emit is a fact only `edgeVerdict` has.
+   */
+  review: InstanceMerge[];
   /** Run blocks that may now be created. */
   create: InstanceCreation[];
   /**
@@ -1581,7 +1645,14 @@ export function planInstanceStep(
     live.set(node.id, state.get(node.id) ?? { run: null, block: null });
   }
 
-  const step: InstanceStep = { spawn: [], merge: [], create: [], loop: [], block: [] };
+  const step: InstanceStep = {
+    spawn: [],
+    merge: [],
+    review: [],
+    create: [],
+    loop: [],
+    block: [],
+  };
   const decided = new Set<string>();
 
   for (;;) {
@@ -1627,6 +1698,14 @@ export function planInstanceStep(
         // whose branches meet again at the merge block. Queueing a branch twice
         // is refused by `enqueue` anyway, which would refuse the *whole* merge.
         step.merge.push({
+          nodeId: node.id,
+          runIds: [...new Set(dependsOn.map((d) => d.runId))],
+        });
+      } else if (node.kind === "review") {
+        // Deduplicated for the merge block's reason: a diamond meeting again
+        // here would review one branch twice, and the item table would refuse
+        // the second.
+        step.review.push({
           nodeId: node.id,
           runIds: [...new Set(dependsOn.map((d) => d.runId))],
         });
@@ -1702,6 +1781,8 @@ function edgeVerdict(
   }
 
   if (from.kind === "loop") return loopVerdict(from, state, edge);
+
+  if (from.kind === "review") return reviewVerdict(from, state, edge, dependsOn);
 
   if (from.kind === "run") {
     if (!state.run) {
@@ -1843,6 +1924,55 @@ function loopVerdict(
     };
   }
   // Emitted. Nothing is pushed onto `dependsOn` — see above.
+  return SATISFIED;
+}
+
+/**
+ * What a review block says to the block behind it: the branches it approved,
+ * and nothing it set aside.
+ *
+ * It resolves to the **approved** runs — each one the last link of its branch,
+ * which after a fix round is the fix run rather than the run the review began
+ * with — and a successor depends on those, so a merge block behind it lands
+ * exactly what a frontier model signed off on. A branch it set aside is simply
+ * not in the list: that is the outcome the operator asked for, "ignored by the
+ * merge", and it is why a block that set everything aside is satisfied with no
+ * runs rather than blocked — the merge behind it then settles with nothing to
+ * land, and a loop around it carries on instead of stopping on a pass whose
+ * work was reviewed and turned down. `edgeSatisfied` is not asked of an
+ * approved run: the review is the verdict on it, and a branch whose last run
+ * asked for review is still one a frontier model approved.
+ *
+ * A review block that **failed** — the machinery around it rather than a
+ * verdict, a restart mid-review for instance — resolves to nothing either way,
+ * blocked on both conditions: nothing it was given has been judged, and
+ * landing unjudged work is the one thing this block exists to prevent.
+ */
+function reviewVerdict(
+  from: WorkflowNode,
+  state: InstanceNodeState,
+  edge: WorkflowDependencyEdge,
+  dependsOn: InstanceCreation["dependsOn"],
+): EdgeVerdict {
+  const block = state.block;
+  if (!block || block.status === "waiting" || block.status === "thinking") {
+    return PENDING;
+  }
+  if (block.status === "blocked") {
+    return {
+      kind: "blocked",
+      reason: `“${from.name}” never ran: ${block.error ?? "no reason recorded."}`,
+    };
+  }
+  if (block.status === "failed") {
+    return {
+      kind: "blocked",
+      reason: `“${from.name}” could not review what was in front of it: ${block.error ?? "the block failed."}`,
+    };
+  }
+  for (const run of block.emitted) {
+    dependsOn.push({ runId: run.id, edge: edge.edge, continueBranch: false });
+  }
   return SATISFIED;
 }
 
@@ -3197,7 +3327,7 @@ export function startWorkflow(
   const defaults = chatGuards();
   const plans = new Map<string, Omit<CreateRunInput, "dependsOn" | "origin">>();
   for (const node of graph.nodes) {
-    if (node.kind === "merge" || node.kind === "loop") continue;
+    if (node.kind === "merge" || node.kind === "loop" || node.kind === "review") continue;
     const plan = planNode(
       node,
       node.templateId ? getTemplate(node.templateId) : null,
@@ -3210,7 +3340,11 @@ export function startWorkflow(
       node.agentId ? getAgent(node.agentId) : null,
     );
     if (!plan.ok) return { ok: false, reason: plan.reason };
-    plans.set(node.id, plan.input);
+    // An orchestrator block's plan is only asked for its refusals — its runs
+    // are planned again when it emits — so the sign-in is read for run blocks.
+    const ready = node.kind === "run" ? localReady(plan.input, node.name) : plan;
+    if (!ready.ok) return { ok: false, reason: ready.reason };
+    plans.set(node.id, ready.input);
   }
 
   // The same resolution `createRun` performs, run early so a folder that has
@@ -4947,13 +5081,14 @@ function advanceInstance(instanceId: string): void {
       // starting a run that is quietly not the thing the graph named.
       node.agentId ? getAgent(node.agentId) : null,
     );
-    if (!plan.ok) {
-      upsertBlock(instanceId, node, "blocked", plan.reason);
+    const ready = plan.ok ? localReady(plan.input, node.name) : plan;
+    if (!ready.ok) {
+      upsertBlock(instanceId, node, "blocked", ready.reason);
       continue;
     }
     try {
       const run = createRun({
-        ...plan.input,
+        ...ready.input,
         dependsOn: creation.dependsOn,
         // The instance's own, not this moment's: a node created hours after the
         // press of Run that authorised it belongs to that press, and a
@@ -5054,6 +5189,21 @@ function advanceInstance(instanceId: string): void {
       });
     });
   }
+
+  // The merge's shape and its claim, for its reason: the block awaits reviews
+  // and runs, and two advances arriving together would otherwise both review
+  // the same branches.
+  for (const review of step.review) {
+    if (!claimBlock(instanceId, review.nodeId)) continue;
+    void startReviewBlock(instanceId, review.nodeId, review.runIds).catch((err) => {
+      finishMergeBlock(instanceId, review.nodeId, {
+        ok: false,
+        note: `This block could not start reviewing: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      });
+    });
+  }
 }
 
 /** Every node of an instance, in the terms `planInstanceStep` reads. */
@@ -5124,8 +5274,13 @@ function instanceState(
       run: null,
       block: {
         status: block.status,
-        emitted: emitted.get(block.nodeId) ?? [],
-        leftBehind: emittedLeftBehind.get(block.nodeId) ?? 0,
+        // A review block hands on what it approved, which is not the runs it
+        // started — those are its fix runs — so it is read from its items.
+        emitted:
+          block.kind === "review"
+            ? approvedRunsOf(instance.id, block.nodeId)
+            : (emitted.get(block.nodeId) ?? []),
+        leftBehind: block.kind === "review" ? 0 : (emittedLeftBehind.get(block.nodeId) ?? 0),
         error: block.error,
       },
     });
@@ -5379,7 +5534,12 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
   return groupPasses(
     rows.map(({ member }) => ({
       ...member,
-      emitted: emitted.get(member.memberId) ?? [],
+      // `instanceState`'s reading, one loop along: a review member hands on
+      // what it approved rather than the fix runs it started.
+      emitted:
+        member.kind === "review"
+          ? approvedRunsOf(instanceId, member.memberId)
+          : (emitted.get(member.memberId) ?? []),
     })),
   );
 }
@@ -5728,14 +5888,15 @@ function stepPass(
       // starting a run that is not the thing the graph named.
       node.agentId ? getAgent(node.agentId) : null,
     );
-    if (!plan.ok) {
-      upsertBlock(instanceId, passNode(node, pass, memberId(node.id)), "blocked", plan.reason);
+    const ready = plan.ok ? localReady(plan.input, node.name) : plan;
+    if (!ready.ok) {
+      upsertBlock(instanceId, passNode(node, pass, memberId(node.id)), "blocked", ready.reason);
       wrote = true;
       continue;
     }
     plans.push({
       nodeId: node.id,
-      input: plan.input,
+      input: ready.input,
       // The section's entry is the only member with nothing in front of it, so
       // it is the only one that can carry what released the loop. Every pass
       // after the first carries nothing: its entry is an ordinary queued run,
@@ -5831,6 +5992,20 @@ function stepPass(
       finishMergeBlock(instanceId, id, {
         ok: false,
         note: `This block could not start merging: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      });
+    });
+  }
+
+  for (const review of step.review) {
+    const id = memberId(review.nodeId);
+    if (!claimBlock(instanceId, id)) continue;
+    wrote = true;
+    void startReviewBlock(instanceId, id, review.runIds).catch((err) => {
+      finishMergeBlock(instanceId, id, {
+        ok: false,
+        note: `This block could not start reviewing: ${
           err instanceof Error ? err.message : String(err)
         }`,
       });
@@ -5946,6 +6121,31 @@ async function startBlockTurn(instanceId: string, nodeId: string): Promise<void>
     const missing = agentRefusal(node.agentId, agentKnowledgeOf(own));
     if (missing) {
       settleBlock(instanceId, nodeId, { status: "failed", error: missing });
+      return;
+    }
+  }
+
+  // The runs this turn would emit, asked before it is paid for. A Codex or
+  // local run needs a work-cycle or time limit from the guards it starts under,
+  // and a local one needs somebody signed in; a turn that decided on runs
+  // which could then never start would be a billed decision nothing acts on.
+  if (node.provider === "codex" || node.provider === "local") {
+    const guards = guardsFor(
+      node.templateId ? getTemplate(node.templateId) : null,
+      chatGuards(),
+    );
+    const terminus = providerTerminusRefusal(node.provider, guards.budget);
+    if (terminus) {
+      settleBlock(instanceId, nodeId, { status: "failed", error: terminus });
+      return;
+    }
+    if (node.provider === "local" && !getLocalSignIn()) {
+      settleBlock(instanceId, nodeId, {
+        status: "failed",
+        error:
+          "The runs this block emits go to the local model, and the local " +
+          "provider is signed out. Sign in under Settings and start it again.",
+      });
       return;
     }
   }
@@ -6612,6 +6812,352 @@ function finishMergeBlock(
   advanceInstances();
 }
 
+/* ------------------------------------------------------------------ */
+/* Review blocks                                                       */
+/* ------------------------------------------------------------------ */
+
+/** A review block's branches, as they stand. The instance page reads these. */
+interface ReviewItemRow {
+  origin_run_id: string;
+  run_id: string;
+  position: number;
+  round: number;
+  status: "reviewing" | "fixing" | "approved" | "set-aside";
+  review_id: string | null;
+  note: string | null;
+  cost_usd: number;
+}
+
+export function reviewItemsOf(instanceId: string, blockId: string): ReviewItemRow[] {
+  return db()
+    .prepare(
+      `SELECT origin_run_id, run_id, position, round, status, review_id, note, cost_usd
+         FROM workflow_review_items
+        WHERE instance_id = ? AND block_id = ?
+        ORDER BY position`,
+    )
+    .all(instanceId, blockId) as ReviewItemRow[];
+}
+
+/**
+ * The runs a review block hands on: each approved branch's last link.
+ *
+ * `LoopRunState`'s shape because a loop pass reads it as well as the top level,
+ * and a pass also asks whether a run reported done.
+ */
+function approvedRunsOf(instanceId: string, blockId: string): LoopRunState[] {
+  const rows = db()
+    .prepare(
+      `SELECT r.id AS id, r.status AS status, r.iterations AS iterations,
+              r.reported_done AS reportedDone
+         FROM workflow_review_items i
+         JOIN runs r ON r.id = i.run_id
+        WHERE i.instance_id = ? AND i.block_id = ? AND i.status = 'approved'
+        ORDER BY i.position`,
+    )
+    .all(instanceId, blockId) as Array<{
+    id: string;
+    status: RunStatus;
+    iterations: number;
+    reportedDone: number | null;
+  }>;
+  return rows.map((row) => ({
+    id: row.id,
+    status: row.status,
+    iterations: row.iterations,
+    reportedDone: !!row.reportedDone,
+    leftBehind: false,
+  }));
+}
+
+function updateReviewItem(
+  instanceId: string,
+  blockId: string,
+  originRunId: string,
+  patch: Partial<Pick<ReviewItemRow, "run_id" | "round" | "status" | "review_id" | "note">> & {
+    addCost?: number;
+  },
+): void {
+  const row = db()
+    .prepare(
+      "SELECT * FROM workflow_review_items WHERE instance_id=? AND block_id=? AND origin_run_id=?",
+    )
+    .get(instanceId, blockId, originRunId) as ReviewItemRow | undefined;
+  if (!row) return;
+  db()
+    .prepare(
+      `UPDATE workflow_review_items
+          SET run_id=?, round=?, status=?, review_id=?, note=?,
+              cost_usd = cost_usd + ?, updated_at=?
+        WHERE instance_id=? AND block_id=? AND origin_run_id=?`,
+    )
+    .run(
+      patch.run_id ?? row.run_id,
+      patch.round ?? row.round,
+      patch.status ?? row.status,
+      patch.review_id === undefined ? row.review_id : patch.review_id,
+      patch.note === undefined ? row.note : patch.note,
+      patch.addCost ?? 0,
+      Date.now(),
+      instanceId,
+      blockId,
+      originRunId,
+    );
+}
+
+/** Whether the block is still the one this loop is driving — a halt ends it. */
+function reviewStillOpen(instanceId: string, blockId: string): boolean {
+  if (isShuttingDown()) return false;
+  return getBlock(instanceId, blockId)?.status === "thinking";
+}
+
+const pause = () =>
+  new Promise((resolve) => setTimeout(resolve, MERGE_POLL_MS).unref?.());
+
+/**
+ * Review every branch in front of this block, send the rejected ones back for
+ * fixes, and hand on the ones a frontier model approved.
+ *
+ * `startMergeBlock`'s shape: one async function per block, claimed `thinking`
+ * by the caller, polling what it waits on and giving up the moment the block is
+ * no longer `thinking` — which is how a halt reaches it — and settling through
+ * the same latch. The branches are driven side by side, each through
+ * `reviewBlock.ts`'s decisions, because one slow fix run must not hold the
+ * reviews of the others.
+ *
+ * Its fix runs are this instance's runs — registered under this block — so the
+ * instance budget, a halt and the page all cover them with no new code, and its
+ * reviews' cost lands on the block's own row, which the instance total reads.
+ */
+// Exported for `reviewBlockRun.test.ts` and nothing else: the scheduler is
+// the only caller, and the alternative seam is a whole instance of billed runs.
+export async function startReviewBlock(
+  instanceId: string,
+  nodeId: string,
+  runIds: readonly string[],
+): Promise<void> {
+  const instance = getInstance(instanceId);
+  const node = instance ? blockNode(instance, nodeId) : undefined;
+  if (!instance || !node || node.kind !== "review") {
+    finishMergeBlock(instanceId, nodeId, {
+      ok: false,
+      note: "This block is no longer in the workflow this run was started from.",
+    });
+    return;
+  }
+  const fixRounds = node.fixRounds ?? 0;
+
+  // Seeded once. `INSERT OR IGNORE` because a retried block finds its rows.
+  const now = Date.now();
+  runIds.forEach((runId, position) => {
+    db()
+      .prepare(
+        `INSERT OR IGNORE INTO workflow_review_items
+           (instance_id, block_id, origin_run_id, run_id, position, round, status, updated_at)
+         VALUES (?, ?, ?, ?, ?, 0, 'reviewing', ?)`,
+      )
+      .run(instanceId, nodeId, runId, runId, position, now);
+  });
+
+  await Promise.all(
+    runIds.map((runId) =>
+      driveReviewItem(instance, node, nodeId, runId, fixRounds).catch((err) => {
+        updateReviewItem(instanceId, nodeId, runId, {
+          status: "set-aside",
+          note: `this app could not carry on reviewing it: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        });
+      }),
+    ),
+  );
+
+  if (!reviewStillOpen(instanceId, nodeId)) return;
+  const items = reviewItemsOf(instanceId, nodeId);
+  finishMergeBlock(instanceId, nodeId, {
+    ok: true,
+    note: reviewBlockSummary(
+      items.map((item) => ({
+        branch: branchLabel(item.origin_run_id),
+        status: item.status,
+        note: item.note,
+      })),
+    ),
+    costUSD: items.reduce((sum, item) => sum + item.cost_usd, 0),
+  });
+}
+
+/** One branch, from its first review to approved or set aside. */
+async function driveReviewItem(
+  instance: WorkflowInstance,
+  node: WorkflowNode,
+  blockId: string,
+  originRunId: string,
+  fixRounds: number,
+): Promise<void> {
+  const instanceId = instance.id;
+  const item = () =>
+    reviewItemsOf(instanceId, blockId).find((i) => i.origin_run_id === originRunId);
+
+  for (;;) {
+    const current = item();
+    if (!current || current.status === "approved" || current.status === "set-aside") return;
+    if (!reviewStillOpen(instanceId, blockId)) return;
+
+    // Waited for rather than refused: a full assist queue is a shortage that
+    // clears in minutes, and a branch set aside over it would be judged by the
+    // queue rather than by a review.
+    if (assistBudgetFull()) {
+      await pause();
+      continue;
+    }
+    const started = await startReview(current.run_id, { requireVerdict: true });
+    if (!started.ok) {
+      // Nothing committed is a fact about the run — the model did nothing
+      // worth merging — and anything else is this app unable to review at this
+      // moment. Neither is a frontier verdict, so neither marks the tasks.
+      updateReviewItem(instanceId, blockId, originRunId, {
+        status: "set-aside",
+        note: started.nothingToReview
+          ? "it committed nothing to review"
+          : `it could not be reviewed: ${started.reason}`,
+      });
+      return;
+    }
+    updateReviewItem(instanceId, blockId, originRunId, { review_id: started.id });
+
+    let review = getAssist(started.id);
+    while (review && review.status === "running") {
+      if (!reviewStillOpen(instanceId, blockId)) return;
+      await pause();
+      review = getAssist(started.id);
+    }
+    if (!review) return;
+    updateReviewItem(instanceId, blockId, originRunId, { addCost: review.cost_usd });
+
+    const step = nextReviewStep(
+      { status: review.status === "completed" ? "completed" : "failed", text: review.text, error: review.error },
+      current.round,
+      fixRounds,
+    );
+    if (step.kind === "approve") {
+      updateReviewItem(instanceId, blockId, originRunId, { status: "approved", note: null });
+      return;
+    }
+    if (step.kind === "set-aside") {
+      setAside(instanceId, blockId, originRunId, current.run_id, step.reason, step.needsFrontier, node.name);
+      return;
+    }
+
+    // A fix round: the same branch carried on, on the same provider and model,
+    // under the guards the run it continues was started with — never wider —
+    // briefed with the review it has to answer.
+    const prev = getRun(current.run_id);
+    if (!prev) {
+      updateReviewItem(instanceId, blockId, originRunId, {
+        status: "set-aside",
+        note: "the run it would carry on has been deleted",
+      });
+      return;
+    }
+    const stored = JSON.parse(prev.budget) as { permissionMode?: PermissionMode };
+    let fix: RunRow;
+    try {
+      fix = createRun({
+        folder: prev.folder,
+        prompt: fixRunPrompt(prev.prompt, review.text ?? "", step.round, fixRounds),
+        model: prev.model,
+        provider: prev.provider,
+        permissionMode: stored.permissionMode,
+        isolate: true,
+        agent: parseRunAgent(prev.agent),
+        budget: normalizePolicy(stored),
+        dependsOn: [{ runId: prev.id, edge: "on-finish", continueBranch: true }],
+        origin: instance.origin ?? "workflow",
+        originRef: instance.originRef ?? instanceId,
+      });
+    } catch (err) {
+      updateReviewItem(instanceId, blockId, originRunId, {
+        status: "set-aside",
+        note: `its fix run could not be started: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      return;
+    }
+    recordMember(instanceId, {
+      nodeId: `${blockId}#fix-${fix.id.slice(0, 8)}`,
+      nodeName: `${node.name} · fix ${step.round}`,
+      position: nextPosition(instanceId),
+      runId: fix.id,
+      emittedBy: blockId,
+    });
+    updateReviewItem(instanceId, blockId, originRunId, {
+      status: "fixing",
+      round: step.round,
+      note: `fix round ${step.round} of ${fixRounds}: ${fix.id.slice(0, 8)}`,
+    });
+
+    let run = getRun(fix.id);
+    while (run && !TERMINAL_STATUSES.includes(run.status)) {
+      if (!reviewStillOpen(instanceId, blockId)) return;
+      await pause();
+      run = getRun(fix.id);
+    }
+    if (!run) return;
+    const after = afterFixRun(run.status, run.iterations);
+    if (after.kind === "set-aside") {
+      setAside(instanceId, blockId, originRunId, run.id, after.reason, after.needsFrontier, node.name);
+      return;
+    }
+    updateReviewItem(instanceId, blockId, originRunId, {
+      status: "reviewing",
+      run_id: run.id,
+    });
+  }
+}
+
+/**
+ * Set one branch aside, and — when a frontier model turned it down — mark every
+ * task it was for as needs-frontier, with a note saying why on each.
+ *
+ * The mark and nothing more. A task the rejected run already closed stays
+ * closed: `done → open` is the operator's move and no one else's, so the note
+ * is what tells them the work behind the tick was never landed.
+ */
+function setAside(
+  instanceId: string,
+  blockId: string,
+  originRunId: string,
+  lastRunId: string,
+  reason: string,
+  needsFrontier: boolean,
+  blockName: string,
+): void {
+  updateReviewItem(instanceId, blockId, originRunId, {
+    status: "set-aside",
+    run_id: lastRunId,
+    note: needsFrontier ? `${reason} — its tasks are marked needs-frontier` : reason,
+  });
+  if (!needsFrontier) return;
+  const actor = { kind: "block" as const };
+  for (const task of tasksLinkedToRun(originRunId)) {
+    if (!task.status) continue;
+    updateTask(task.id, { needsFrontier: true }, actor);
+    addTaskComment(
+      task.id,
+      {
+        body:
+          `“${blockName}” set run ${originRunId.slice(0, 8)}'s branch aside: ${reason}. ` +
+          "Its work was not merged, and no local-model run will take this task on " +
+          "until the mark is cleared." +
+          (task.status === "done"
+            ? " The task was already closed by that run; re-open it if the work still needs doing."
+            : ""),
+      },
+      actor,
+    );
+  }
+}
+
 /**
  * Create the runs a block emitted, in one synchronous pass.
  *
@@ -6677,8 +7223,16 @@ function createEmitted(
       // over the whole live graph regardless, which is what keeps acyclicity a
       // property of the data now that a graph written by a model reaches it;
       // `planEmission` has already refused a cyclic emission by name.
+      const ready = localReady(
+        planEmittedRun(node, spec, template, defaults, agent),
+        node.name,
+      );
+      if (!ready.ok) {
+        failures.push(`“${spec.title}” was not started: ${ready.reason}`);
+        continue;
+      }
       const run = createRun({
-        ...planEmittedRun(node, spec, template, defaults, agent),
+        ...ready.input,
         dependsOn: spec.dependsOn.map((d) => ({
           runId: runIds.get(d.id)!,
           edge: d.edge,
@@ -6859,6 +7413,27 @@ export function emitBlockRuns(
     };
   }
 
+  // Before the plan rather than inside it: `planEmission` is shared with every
+  // provider, and this is the one where naming an agent is a spec that would
+  // start as nobody. Refused whole, as `planEmission` refuses, so the turn can
+  // emit again without the names.
+  if (
+    node.provider === "codex" &&
+    Array.isArray(raw) &&
+    raw.some(
+      (spec) =>
+        spec !== null &&
+        typeof spec === "object" &&
+        String((spec as { agent?: unknown }).agent ?? "").trim() !== "",
+    )
+  ) {
+    const reason =
+      "Every run this block emits goes to Codex, which a saved agent's prompt " +
+      "does not reach. Emit the runs again without `agent`.";
+    noteBlock(instanceId, nodeId, `It tried to emit runs and was refused: ${reason}`);
+    return { ok: false, reason };
+  }
+
   const plan = planEmission(raw, {
     blockName: node.name,
     fanOut: node.fanOut,
@@ -6882,7 +7457,11 @@ export function emitBlockRuns(
     // make two specs in one list disagree about what exists.
     taskLinks: (() => {
       const knowledge = currentTaskKnowledge();
-      return (fields, text) => readTaskLinks(fields, text, knowledge);
+      // A block whose runs go to the local model may not link a task a
+      // frontier review already turned the local model down on — the
+      // needs-frontier mark a review block leaves — and is told so by name.
+      const localRun = node.provider === "local";
+      return (fields, text) => readTaskLinks(fields, text, knowledge, { localRun });
     })(),
   });
   if (!plan.ok) {
@@ -6952,7 +7531,10 @@ function blockSystemPrompt(
   // reaches the run that names it, on its own argv, when it spawns. An unusable
   // row is left out: the CLI will not register it, so offering it would be
   // offering a run that cannot start.
-  const choices = registry.filter((a) => a.usable);
+  // A Codex run cannot be started as a saved agent — the prompt reaches Claude
+  // Code's `--agent` only — so the list is not offered to a block whose runs go
+  // to Codex, and `emit_runs` refuses a name there.
+  const choices = node.provider === "codex" ? [] : registry.filter((a) => a.usable);
   const agentChoices =
     choices.length === 0
       ? []
@@ -7005,6 +7587,19 @@ function blockSystemPrompt(
     ...folderBounds,
     `- Every run gets its guards — budget, work-cycle limit, permission mode,`,
     `  whether it works in a checkout of its own — from ${guards}.`,
+    ...(node.provider === "local"
+      ? [
+          "- Every run you emit goes to a local model, not to Claude. Pick work it",
+          "  can finish unsupervised, and never a task marked needsFrontier: a",
+          "  frontier review already turned the local model down on it, and",
+          "  emit_runs refuses it in taskIds.",
+        ]
+      : node.provider === "codex"
+        ? [
+            "- Every run you emit runs on Codex, not Claude Code. It cannot be",
+            "  started as a saved agent, so leave `agent` out.",
+          ]
+        : []),
     ...(own
       ? [
           `- You are the “${own.name}” agent: the operator gave this block that`,
@@ -7135,7 +7730,7 @@ export function reconcileBlocksOnBoot(): void {
   const thinking = db()
     .prepare(
       "UPDATE workflow_instance_blocks SET status='failed', finished_at=?," +
-        " error = CASE kind WHEN 'merge' THEN ? ELSE ? END" +
+        " error = CASE kind WHEN 'merge' THEN ? WHEN 'review' THEN ? ELSE ? END" +
         " WHERE status='thinking'",
     )
     .run(
@@ -7145,6 +7740,11 @@ export function reconcileBlocksOnBoot(): void {
       // never resumed: a server coming back up must not merge into a checkout
       // somebody works in. So the block really is finished, however far it got.
       "The server restarted while this block was landing branches. Its queued merges were cancelled — check the branches before queueing them again.",
+      // A review block's reviews and fix runs are reconciled by their own
+      // tables' boot passes; what is lost is the loop driving them, and nothing
+      // behind it may land work it had not finished judging — `reviewVerdict`
+      // blocks on a failed review block for that reason.
+      "The server restarted while this block was reviewing branches, so nothing it had not yet approved was handed on. Review the branches on their run pages, or run the workflow again.",
       "The server restarted while this block was deciding what to start.",
     ).changes;
 

@@ -112,6 +112,7 @@ export const KIND_LABEL: Record<WorkflowNodeKind, string> = {
   // Not "repeats a task": a loop holds no task of its own any more, and the
   // model refuses the field by name. What it repeats is the section inside it.
   loop: "Repeats a section",
+  review: "Reviews the branches",
 };
 
 /** A kind that is drawn as a card. A loop is drawn as its frame — see above. */
@@ -139,6 +140,9 @@ const CARD_REST: Record<CardKind, string> = {
   run: "border-line shadow-e1",
   orchestrator: "border-warn-line shadow-e1",
   merge: "border-accent-line shadow-e1",
+  // The line colour a run block wears: a review block writes nothing and
+  // starts nothing without a rejection, so it carries no standing alarm.
+  review: "border-line shadow-e1",
 };
 
 /**

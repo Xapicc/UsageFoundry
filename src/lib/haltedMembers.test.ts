@@ -310,6 +310,8 @@ function node(id: string, kind: WorkflowNode["kind"]): WorkflowNode {
     maxLoopCostUSD: null,
     stopWhenTasks: null,
     bodyNodeIds: [],
+    provider: null,
+    fixRounds: null,
   };
 }
 

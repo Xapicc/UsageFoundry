@@ -1791,7 +1791,14 @@ export const MAX_LOOP_RUNS = 60;
  * task until the agent reports it done, a pass fails, or one of its two caps is
  * reached — a fresh run per pass, each carrying on the previous pass's branch.
  */
-export type WorkflowNodeKind = "run" | "orchestrator" | "merge" | "loop";
+export type WorkflowNodeKind = "run" | "orchestrator" | "merge" | "loop" | "review";
+
+/**
+ * How many times a review block may send a rejected branch back for a fix. Each
+ * round is a billed run and a billed review per branch, so it is small and it
+ * is set on the block by a person.
+ */
+export const MAX_REVIEW_FIX_ROUNDS = 3;
 
 /** How a branch is put onto its target. `settings.landStrategy`'s vocabulary. */
 export type MergeStrategyDTO = "merge" | "squash";
@@ -1917,6 +1924,18 @@ export interface WorkflowNodeDTO {
    * would be reading them off the wrong record.
    */
   bodyNodeIds: string[];
+  /**
+   * Which agent CLI does the work: a run block's own run, or every run an
+   * orchestrator block emits. Null is the ordinary Claude run. Set by a person
+   * on the node and never by a model — an emitted spec cannot name one — and
+   * refused on the kinds that start no run.
+   */
+  provider?: RunProviderDTO | null;
+  /**
+   * A review block's fix rounds: how many times a branch its frontier review
+   * rejects is sent back for a fix and reviewed again. Null on every other kind.
+   */
+  fixRounds?: number | null;
 }
 
 /**
@@ -4317,6 +4336,11 @@ export interface TaskDTO {
    * an operator-only task is still `open`, and no run may claim it.
    */
   operatorOnly: boolean;
+  /**
+   * A local model's work on it was rejected by a frontier review after every
+   * fix round, so no local-model run may take it on. Only the operator clears it.
+   */
+  needsFrontier: boolean;
   /**
    * Runs started *for* this task, newest first, capped at `MAX_TASK_RUN_LINKS`.
    *

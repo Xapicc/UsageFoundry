@@ -1332,6 +1332,30 @@ test("taking the entry out moves the frame onto what followed it", () => {
   );
 });
 
+test("the worst case counts a review member's fix runs for every branch a pass cuts", () => {
+  // A review member sends each rejected branch back for a fix every round, so
+  // at worst every branch the pass cut is fixed every round: a run member's
+  // own and each run an orchestrator member may emit, never its deciding turn.
+  // Left out, the editor would state a pass of three branches with two fix
+  // rounds as three runs and the bill would say nine.
+  assert.equal(
+    worstCaseRuns(2, [
+      { kind: "run", fanOut: null },
+      { kind: "orchestrator", fanOut: 2 },
+      { kind: "review", fanOut: null, fixRounds: 2 },
+      { kind: "merge", fanOut: null },
+    ]),
+    2 * (1 + 3 + 2 * 3),
+  );
+  assert.equal(
+    worstCaseRuns(1, [
+      { kind: "run", fanOut: null },
+      { kind: "review", fanOut: null, fixRounds: 0 },
+    ]),
+    1,
+  );
+});
+
 test("the worst case counts a fan-out again on every pass", () => {
   // The number an operator cannot do in their head, and the one a press of Run
   // is approved against: four passes of one block reads as four runs and is

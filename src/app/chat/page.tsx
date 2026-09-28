@@ -268,6 +268,7 @@ const BLOCK_KIND: Record<ProposedBlockDTO["kind"], string> = {
   orchestrator: "decides what to run",
   merge: "lands branches",
   loop: "repeats a task",
+  review: "reviews branches",
 };
 
 /**

@@ -265,7 +265,16 @@ export function reconcileReviewsOnBoot(): ReviewRow[] {
 
 export type ReviewOutcome =
   | { ok: true; id: string }
-  | { ok: false; reason: string };
+  | {
+      ok: false;
+      reason: string;
+      /**
+       * Set when the refusal is that the run committed nothing — a fact about
+       * the run rather than about this moment, which a workflow's review block
+       * answers differently from a full assist queue.
+       */
+      nothingToReview?: true;
+    };
 
 /**
  * Start a review, and return as soon as it is on its way.
@@ -274,7 +283,17 @@ export type ReviewOutcome =
  * connection open for it would fail behind any proxy. The row is the handle —
  * the page polls it, exactly as it polls the run.
  */
-export async function startReview(runId: string): Promise<ReviewOutcome> {
+export async function startReview(
+  runId: string,
+  opts: {
+    /**
+     * Ask for the APPROVE/REJECT verdict whatever provider did the work. A
+     * workflow's review block reads it to decide what passes on to the merge,
+     * so its reviews ask for one on a Claude branch too.
+     */
+    requireVerdict?: boolean;
+  } = {},
+): Promise<ReviewOutcome> {
   // A review is a billed child and a `run_reviews` row, so it is a write like
   // any other. Refused first, before the diff is rendered: everything below it
   // costs subprocesses against a repository this process does not own the
@@ -295,6 +314,7 @@ export async function startReview(runId: string): Promise<ReviewOutcome> {
       reason:
         diff.reason ??
         "There is no committed change to review, so a review would have nothing to read.",
+      nothingToReview: true,
     };
   }
 
@@ -317,9 +337,10 @@ export async function startReview(runId: string): Promise<ReviewOutcome> {
   // review's approval (`localCertification.ts`), so the reviewer is asked for a
   // verdict and the verdict is read back. Every other review is unchanged.
   const certifying =
-    run.repo_root !== null &&
-    run.worktree_branch !== null &&
-    localRunsOnBranch(run.repo_root, run.worktree_branch).length > 0;
+    opts.requireVerdict === true ||
+    (run.repo_root !== null &&
+      run.worktree_branch !== null &&
+      localRunsOnBranch(run.repo_root, run.worktree_branch).length > 0);
 
   return startAssist({
     run,

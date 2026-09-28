@@ -161,6 +161,8 @@ function block(
     maxLoopCostUSD: null,
     stopWhenTasks: null,
     bodyNodeIds: [],
+    provider: null,
+    fixRounds: null,
     ...over,
   };
 }

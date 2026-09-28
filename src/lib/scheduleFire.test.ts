@@ -125,6 +125,8 @@ function graphIn(folder: string): WorkflowGraph {
         maxLoopCostUSD: null,
         stopWhenTasks: null,
         bodyNodeIds: [],
+        provider: null,
+        fixRounds: null,
       },
     ],
     edges: [],

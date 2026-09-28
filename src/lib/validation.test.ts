@@ -350,6 +350,7 @@ describe("buildValidationPrompt", () => {
     completedByRunId: null,
     parentTaskId: null,
     operatorOnly: false,
+    needsFrontier: false,
     createdAt: 1,
     updatedAt: 2,
     closedAt: null,

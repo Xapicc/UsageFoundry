@@ -152,6 +152,13 @@ export interface Task {
    * `operatorOnlyRefusal` for who may set and clear it.
    */
   operatorOnly: boolean;
+  /**
+   * A local model could not get this past a frontier review, so no local-model
+   * run may take it on. Not a status, operator-only's shape one lane over: set
+   * by a workflow's review block when it sets a branch aside, or by the
+   * operator; cleared by the operator alone. See `needsFrontierRefusal`.
+   */
+  needsFrontier: boolean;
   createdAt: number;
   updatedAt: number;
   /** When it reached `done` or `dropped`, and null again if it left. */
@@ -385,6 +392,26 @@ function holderRefusal(
   );
 }
 
+/**
+ * Why this actor may not set or clear `needs_frontier`, or null when it may.
+ *
+ * `operatorOnlyRefusal`'s rule without the claim half: anyone may mark a task
+ * as beyond the local model, and only the operator may take the mark off. A
+ * model clearing it would be a local run put straight back on work a frontier
+ * review already turned down.
+ */
+export function needsFrontierRefusal(
+  actor: TaskActor,
+  from: boolean,
+  to: boolean,
+): string | null {
+  if (from === to || actor.kind === "operator" || to) return null;
+  return (
+    "Only the operator clears needs-frontier. If a local model could do this " +
+    "after all, say so in a comment and let the operator decide."
+  );
+}
+
 /** A proposed change to `operator_only`, in the terms `operatorOnlyRefusal` decides on. */
 export interface OperatorOnlyChange {
   actor: TaskActor;
@@ -513,6 +540,8 @@ export interface TaskFacts {
   status: TaskStatus;
   /** Refused in `taskIds`: a run linked to it would claim it. */
   operatorOnly: boolean;
+  /** Refused in `taskIds` for a local-model run. See `readTaskLinks`. */
+  needsFrontier: boolean;
 }
 
 /**
@@ -633,6 +662,12 @@ export function readTaskLinks(
   fields: { taskIds?: unknown; relatedTaskIds?: unknown; taskId?: unknown },
   text: string,
   knowledge: ReadonlyMap<string, TaskFacts>,
+  /**
+   * Whether the run these links are for goes to the local model. A task marked
+   * needs-frontier is refused for one by name, where the refusal can still be
+   * acted on, rather than claimed by a run that will be set aside again.
+   */
+  opts: { localRun?: boolean } = {},
 ): TaskLinkReading {
   if (fields.taskId !== undefined && fields.taskId !== null) {
     return {
@@ -679,6 +714,20 @@ export function readTaskLinks(
         "has, so no run may claim it. Take it out of taskIds. If the brief " +
         "only mentions it, put it in relatedTaskIds; if a run should work it " +
         "after all, the operator clears the mark on the board first.",
+    };
+  }
+
+  const frontier = opts.localRun
+    ? taskIds.ids.find((id) => knowledge.get(id)?.needsFrontier)
+    : undefined;
+  if (frontier) {
+    return {
+      ok: false,
+      reason:
+        `“${knowledge.get(frontier)?.title ?? frontier}” (${frontier}) is marked ` +
+        "needs-frontier: a local model's work on it was already rejected by a " +
+        "frontier review, so no local-model run may take it on. Leave it out, or " +
+        "name it in relatedTaskIds if the brief only mentions it.",
     };
   }
 
@@ -733,8 +782,14 @@ function idList(
  */
 export function currentTaskKnowledge(): Map<string, TaskFacts> {
   const rows = db()
-    .prepare("SELECT id, title, status, operator_only FROM tasks")
-    .all() as Array<{ id: string; title: string; status: string; operator_only: number }>;
+    .prepare("SELECT id, title, status, operator_only, needs_frontier FROM tasks")
+    .all() as Array<{
+    id: string;
+    title: string;
+    status: string;
+    operator_only: number;
+    needs_frontier: number;
+  }>;
   return new Map(
     rows.map((row) => [
       row.id,
@@ -742,6 +797,7 @@ export function currentTaskKnowledge(): Map<string, TaskFacts> {
         title: row.title,
         status: isTaskStatus(row.status) ? row.status : ("open" as TaskStatus),
         operatorOnly: row.operator_only === 1,
+        needsFrontier: row.needs_frontier === 1,
       },
     ]),
   );
@@ -1051,6 +1107,16 @@ export function normalizeTaskPatch(
     patch.operatorOnly = o.operatorOnly;
   }
 
+  if (o.needsFrontier !== undefined) {
+    if (typeof o.needsFrontier !== "boolean") {
+      return {
+        ok: false,
+        error: `needsFrontier must be true or false; got ${JSON.stringify(o.needsFrontier)}.`,
+      };
+    }
+    patch.needsFrontier = o.needsFrontier;
+  }
+
   return { ok: true, value: patch };
 }
 
@@ -1187,6 +1253,7 @@ interface TaskRow {
   completed_by_run_id: string | null;
   parent_task_id: string | null;
   operator_only: number;
+  needs_frontier: number;
   created_at: number;
   updated_at: number;
   closed_at: number | null;
@@ -1194,7 +1261,7 @@ interface TaskRow {
 
 const COLUMNS = `id, title, body, status, priority, origin, mount_id, folder,
   created_by_run_id, claimed_by_run_id, completed_by_run_id, parent_task_id,
-  operator_only, created_at, updated_at, closed_at`;
+  operator_only, needs_frontier, created_at, updated_at, closed_at`;
 
 /**
  * A stored row as the rest of the app sees it.
@@ -1223,6 +1290,7 @@ export function rowToTask(row: TaskRow): Task {
     completedByRunId: row.completed_by_run_id,
     parentTaskId: row.parent_task_id,
     operatorOnly: row.operator_only === 1,
+    needsFrontier: row.needs_frontier === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     closedAt: row.closed_at,
@@ -1523,6 +1591,8 @@ export interface TaskPatch {
   claimRunId?: string | null;
   /** Who may change it is `operatorOnlyRefusal`, asked against the row. */
   operatorOnly?: boolean;
+  /** Who may change it is `needsFrontierRefusal`. */
+  needsFrontier?: boolean;
 }
 
 /**
@@ -1541,6 +1611,7 @@ const WRITTEN_TASK_FIELDS = [
   "completedByRunId",
   "parentTaskId",
   "operatorOnly",
+  "needsFrontier",
   "closedAt",
 ] as const satisfies readonly (keyof Task)[];
 
@@ -1632,6 +1703,12 @@ export function updateTask(
     next.operatorOnly = patch.operatorOnly;
   }
 
+  if (patch.needsFrontier !== undefined) {
+    const refusal = needsFrontierRefusal(actor, task.needsFrontier, patch.needsFrontier);
+    if (refusal) return { ok: false, kind: "refused", error: refusal };
+    next.needsFrontier = patch.needsFrontier;
+  }
+
   const now = Date.now();
 
   if (patch.status !== undefined && patch.status !== task.status) {
@@ -1681,8 +1758,8 @@ export function updateTask(
       `UPDATE tasks
           SET title = ?, body = ?, status = ?, priority = ?, mount_id = ?,
               folder = ?, claimed_by_run_id = ?, completed_by_run_id = ?,
-              parent_task_id = ?, operator_only = ?, updated_at = ?,
-              closed_at = ?
+              parent_task_id = ?, operator_only = ?, needs_frontier = ?,
+              updated_at = ?, closed_at = ?
         WHERE id = ?`,
     )
     .run(
@@ -1696,6 +1773,7 @@ export function updateTask(
       next.completedByRunId,
       next.parentTaskId,
       next.operatorOnly ? 1 : 0,
+      next.needsFrontier ? 1 : 0,
       now,
       next.closedAt,
       id,
@@ -1897,6 +1975,7 @@ export function taskDTO(
     completedByRunId: task.completedByRunId,
     parentTaskId: task.parentTaskId,
     operatorOnly: task.operatorOnly,
+    needsFrontier: task.needsFrontier,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
     closedAt: task.closedAt,

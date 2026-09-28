@@ -3291,6 +3291,10 @@ function listTasksTool(args: Record<string, unknown>) {
             // task is `open`, and a model reading "open" alone proposes a run
             // `propose_run` then refuses.
             operatorOnly: row.operatorOnly,
+            // Beside it for the same reason: a needs-frontier task is `open`,
+            // and a block whose runs go to the local model would emit one that
+            // `emit_runs` then refuses.
+            needsFrontier: row.needsFrontier,
             // Two numbers rather than the neighbours themselves, which is the
             // whole of what a *list* can afford: the ids are in `get_task`, and
             // a page carrying two ref lists per row is the payload the board's
@@ -3502,6 +3506,7 @@ function wholeBrief(task: Task) {
     commentsTotal: thread.total,
     status: task.status,
     operatorOnly: task.operatorOnly,
+    needsFrontier: task.needsFrontier,
     priority: task.priority,
   };
 }

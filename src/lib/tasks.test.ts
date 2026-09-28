@@ -70,6 +70,7 @@ const {
   normalizeTaskInput,
   normalizeTaskListQuery,
   normalizeTaskPatch,
+  needsFrontierRefusal,
   operatorOnlyRefusal,
   readTaskLinks,
   recordRunTasks,
@@ -729,9 +730,9 @@ test("an id that is not on the board is refused, and a closed task is not", () =
   // dropped instead of refusing produces a proposal that said "for the
   // flaky-auth task" and is bit-for-bit one that named none.
   const board = new Map([
-    ["t-open", { title: "Open one", status: "open" as const, operatorOnly: false }],
-    ["t-done", { title: "Closed one", status: "done" as const, operatorOnly: false }],
-    ["t-dropped", { title: "Dropped one", status: "dropped" as const, operatorOnly: false }],
+    ["t-open", { title: "Open one", status: "open" as const, operatorOnly: false, needsFrontier: false }],
+    ["t-done", { title: "Closed one", status: "done" as const, operatorOnly: false, needsFrontier: false }],
+    ["t-dropped", { title: "Dropped one", status: "dropped" as const, operatorOnly: false, needsFrontier: false }],
   ]);
 
   assert.equal(taskRefusal("t-open", board), null);
@@ -841,10 +842,10 @@ const DONE_ID = "dfa89779-71cd-41d5-bae3-7c417807a96d";
 const SHORT_ID = "0f146cc6-1c9a-4a8e-9d0e-5b2f1f2c0e11";
 
 const BRIEFED = new Map([
-  [OPEN_ID, { title: "The merge tool opens with no conflicts in it", status: "open" as const, operatorOnly: false }],
-  [CLAIMED_ID, { title: "Shell.run deadlocks forever on a loud child", status: "claimed" as const, operatorOnly: false }],
-  [DONE_ID, { title: "git diff on a conflicted repo traps the app", status: "done" as const, operatorOnly: false }],
-  [SHORT_ID, { title: "Fix the README", status: "open" as const, operatorOnly: false }],
+  [OPEN_ID, { title: "The merge tool opens with no conflicts in it", status: "open" as const, operatorOnly: false, needsFrontier: false }],
+  [CLAIMED_ID, { title: "Shell.run deadlocks forever on a loud child", status: "claimed" as const, operatorOnly: false, needsFrontier: false }],
+  [DONE_ID, { title: "git diff on a conflicted repo traps the app", status: "done" as const, operatorOnly: false, needsFrontier: false }],
+  [SHORT_ID, { title: "Fix the README", status: "open" as const, operatorOnly: false, needsFrontier: false }],
 ]);
 
 test("a task is named by its whole id, its eight-character prefix, or its whole title", () => {
@@ -908,7 +909,7 @@ test("the task link fields are refused by name when they cannot mean what was se
   const tooMany = Array.from({ length: MAX_RUN_TASKS + 1 }, () => OPEN_ID).map(
     (id, n) => `${id.slice(0, -2)}${String(n).padStart(2, "0")}`,
   );
-  const board = new Map(tooMany.map((id) => [id, { title: id, status: "open" as const, operatorOnly: false }]));
+  const board = new Map(tooMany.map((id) => [id, { title: id, status: "open" as const, operatorOnly: false, needsFrontier: false }]));
   const capped = readTaskLinks({ taskIds: tooMany }, "", board);
   assert.match(capped.ok ? "" : capped.reason, new RegExp(`at most ${MAX_RUN_TASKS}`));
 
@@ -1205,11 +1206,43 @@ test("a board request narrows on the flag, and says nothing when it is not asked
   assert.equal(normalizeTaskListQuery({}).operatorOnly, null);
 });
 
+/**
+ * A needs-frontier task, the mark a workflow's review block leaves when a local
+ * model's branch was set aside after its last fix round. Refused for a
+ * local-model run by name, so the next pass's orchestrator block drops it rather
+ * than handing the same task back to the model that failed it; any other run may
+ * still take it on. Only the operator clears the mark.
+ */
+test("a needs-frontier task is refused for a local run and allowed for any other", () => {
+  const HARD = "c0ffee00-2222-4222-8333-444455556666";
+  const board = new Map([
+    ...BRIEFED,
+    [HARD, { title: "Untangle the rename bookkeeping", status: "open" as const, operatorOnly: false, needsFrontier: true }],
+  ]);
+  const brief = "Do “Untangle the rename bookkeeping”.";
+  const local = readTaskLinks({ taskIds: [HARD] }, brief, board, { localRun: true });
+  assert.equal(local.ok, false);
+  assert.match(local.ok ? "" : local.reason, /needs-frontier/);
+  assert.equal(readTaskLinks({ taskIds: [HARD] }, brief, board).ok, true);
+  assert.equal(
+    readTaskLinks({ relatedTaskIds: [HARD] }, brief, board, { localRun: true }).ok,
+    true,
+    "naming it as context is still allowed",
+  );
+});
+
+test("anyone may mark a task needs-frontier, and only the operator clears it", () => {
+  assert.equal(needsFrontierRefusal({ kind: "block" }, false, true), null);
+  assert.equal(needsFrontierRefusal({ kind: "operator" }, true, false), null);
+  assert.match(needsFrontierRefusal({ kind: "block" }, true, false) ?? "", /Only the operator/);
+  assert.match(needsFrontierRefusal({ kind: "run", runId: "r" }, true, false) ?? "", /Only the operator/);
+});
+
 test("a brief may name an operator-only task as context and never as work", () => {
   const RESERVED = "c0ffee00-1111-4222-8333-444455556666";
   const board = new Map([
     ...BRIEFED,
-    [RESERVED, { title: "Notarise the macOS installer by hand", status: "open" as const, operatorOnly: true }],
+    [RESERVED, { title: "Notarise the macOS installer by hand", status: "open" as const, operatorOnly: true, needsFrontier: false }],
   ]);
   const brief = "Build the Linux half. The macOS half is “Notarise the macOS installer by hand”.";
 

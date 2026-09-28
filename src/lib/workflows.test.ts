@@ -562,6 +562,93 @@ describe("normalizeWorkflowInput — templates and mounts", () => {
  * accepting it silently would be this app performing the CLI's own silent drop
  * at the one door built to stop it.
  */
+/**
+ * A block's provider and a review block, as a saved graph states them.
+ *
+ * The provider is on the node because nothing a model emits may name one, so a
+ * value accepted here is a value every emitted run starts as; one accepted on a
+ * block that starts no run is a choice no process acts on. A review block's fix
+ * rounds are billed runs per branch, so they are capped where the graph is
+ * saved rather than discovered on the bill.
+ */
+describe("normalizeWorkflowInput — providers and review blocks", () => {
+  const reviewer = (id: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    name: id.toUpperCase(),
+    kind: "review",
+    fixRounds: 2,
+    ...extra,
+  });
+
+  it("keeps a provider on a run block and on an orchestrator block", () => {
+    const saved = value(
+      graph([node("a", { provider: "local" }), decider("d", { provider: "codex" })]),
+    );
+    assert.equal(saved.graph.nodes[0].provider, "local");
+    assert.equal(saved.graph.nodes[1].provider, "codex");
+    assert.equal(value(graph([node("a")])).graph.nodes[0].provider, null);
+  });
+
+  it("refuses a provider nothing can run and one on a block that starts no run", () => {
+    assert.match(error(graph([node("a", { provider: "gemini" })])), /no adapter for: gemini/);
+    assert.match(
+      error(graph([node("a"), merger("m", { provider: "local" })], [edge("a", "m")])),
+      /starts no run of its own/,
+    );
+  });
+
+  it("refuses a Codex run block started as a saved agent", () => {
+    assert.match(
+      error(graph([node("a", { provider: "codex", agentId: "a-rev" })])),
+      /runs on Codex, which a saved agent's prompt does not reach/,
+    );
+  });
+
+  it("saves a review block with its fix rounds and nothing else", () => {
+    const saved = value(
+      graph(
+        [node("a"), reviewer("r", { task: "ignored", mountId: "work" }), merger("m")],
+        [edge("a", "r"), edge("r", "m")],
+      ),
+    );
+    const r = saved.graph.nodes.find((n) => n.id === "r")!;
+    assert.equal(r.fixRounds, 2);
+    assert.equal(r.task, "");
+    assert.equal(r.mountId, "");
+  });
+
+  it("caps a review block's fix rounds", () => {
+    assert.match(
+      error(graph([node("a"), reviewer("r", { fixRounds: 4 })], [edge("a", "r")])),
+      /0 to 3 fix rounds/,
+    );
+  });
+
+  it("refuses a review block with nothing in front of it that cuts a branch", () => {
+    assert.match(error(graph([reviewer("r")])), /no block in front of it whose branches it could review/);
+    assert.match(
+      error(graph([node("a", { templateId: "t-flat" }), reviewer("r")], [edge("a", "r")])),
+      /leaves no branch for “R” to review/,
+    );
+  });
+
+  it("refuses an agent on a review block and a branch carried through one", () => {
+    assert.match(
+      error(graph([node("a"), reviewer("r", { agentId: "a-rev" })], [edge("a", "r")])),
+      /frontier model this app chooses/,
+    );
+    assert.match(
+      error(
+        graph(
+          [node("a"), reviewer("r"), node("b")],
+          [edge("a", "r"), edge("r", "b", { continueBranch: true })],
+        ),
+      ),
+      /no branch of its own to hand over/,
+    );
+  });
+});
+
 describe("normalizeWorkflowInput — the agent a block's child is started as", () => {
   it("carries an agent the registry has", () => {
     const v = value(graph([node("a", { agentId: "a-rev" })]));
@@ -2298,8 +2385,8 @@ function limits(over: Partial<EmissionLimits> = {}): EmissionLimits {
 }
 
 const EMISSION_BOARD = new Map([
-  ["task-known", { title: "The known task on the board", status: "open" as const, operatorOnly: false }],
-  ["task-other", { title: "Another open task the brief quotes", status: "open" as const, operatorOnly: false }],
+  ["task-known", { title: "The known task on the board", status: "open" as const, operatorOnly: false, needsFrontier: false }],
+  ["task-other", { title: "Another open task the brief quotes", status: "open" as const, operatorOnly: false, needsFrontier: false }],
 ]);
 
 /** One emitted spec with everything filled in. */
@@ -2349,6 +2436,8 @@ const RUN_BLOCK: WorkflowNode = {
   maxLoopCostUSD: null,
   stopWhenTasks: null,
   bodyNodeIds: [],
+  provider: null,
+  fixRounds: null,
 };
 
 /** A template as `planNode` takes one, with every field it reads different. */
@@ -2405,6 +2494,37 @@ const BLOCK_DEFAULTS: RunGuards = {
  * the same case so a passing model assertion cannot be one read off the wrong
  * record.
  */
+/**
+ * A block's provider reaching its run, and the two things planNode settles for
+ * one that is not Claude: a template's Claude model is never handed to it, and
+ * guards with no work-cycle or time limit refuse it — the run form's rule — at
+ * the moment the run would be created, since a template's guards are live.
+ */
+describe("planNode — a block that names a provider", () => {
+  it("starts the run as the block's provider, without the template's Claude model", () => {
+    for (const provider of ["codex", "local"] as const) {
+      const plan = planNode({ ...RUN_BLOCK, provider }, BLOCK_TEMPLATE, BLOCK_DEFAULTS, null);
+      assert.ok(plan.ok, provider);
+      if (!plan.ok) continue;
+      assert.equal(plan.input.provider, provider);
+      assert.equal(plan.input.model, null, provider);
+    }
+    const ordinary = planNode(RUN_BLOCK, BLOCK_TEMPLATE, BLOCK_DEFAULTS, null);
+    assert.equal(ordinary.ok && ordinary.input.provider, null);
+  });
+
+  it("refuses a Codex or local block whose guards would never end its run", () => {
+    const endless = {
+      ...BLOCK_TEMPLATE,
+      budget: { ...BLOCK_TEMPLATE.budget, maxIterations: null, maxDurationMinutes: null },
+    };
+    const plan = planNode({ ...RUN_BLOCK, provider: "local" }, endless, BLOCK_DEFAULTS, null);
+    assert.equal(plan.ok, false);
+    assert.match(plan.ok ? "" : plan.reason, /needs a work-cycle limit or a time limit/);
+    assert.equal(planNode(RUN_BLOCK, endless, BLOCK_DEFAULTS, null).ok, true);
+  });
+});
+
 describe("planNode — what a block takes from its template", () => {
   it("runs a block on its template's model", () => {
     const plan = planNode(RUN_BLOCK, BLOCK_TEMPLATE, BLOCK_DEFAULTS, null);
@@ -3365,6 +3485,8 @@ function graphNode(
     maxLoopCostUSD: null,
     stopWhenTasks: null,
     bodyNodeIds: [],
+    provider: null,
+    fixRounds: null,
     ...extra,
   };
 }
@@ -3582,6 +3704,87 @@ describe("planInstanceStep — what an instance may do next", () => {
     );
     assert.deepEqual(dead.spawn, []);
     assert.match(dead.block[0].reason, /“Build”, which ended failed/);
+  });
+});
+
+/**
+ * A review block between the work and the merge: it hands on the branches a
+ * frontier review approved — the last link of each, which after a fix round is
+ * the fix run — and nothing it set aside.
+ *
+ * Every case here is silent when wrong. A merge handed the run the review began
+ * with, rather than the fix it approved, lands the rejected attempt. A merge
+ * blocked behind a review that set everything aside stops a loop the operator
+ * asked to carry on. A merge released behind a review that failed lands work
+ * nobody judged.
+ */
+describe("planInstanceStep — a review block between the work and the merge", () => {
+  const REVIEWED: WorkflowGraph = {
+    nodes: [
+      graphNode("build", "Build it"),
+      graphNode("check", "Check it", { kind: "review", task: "", fixRounds: 1 }),
+      graphNode("land", "Land it", {
+        kind: "merge",
+        task: "",
+        mergeStrategy: "merge",
+      }),
+    ],
+    edges: [
+      edge("build", "check", { edge: "on-success" }),
+      edge("check", "land", { edge: "on-success" }),
+    ],
+  };
+  const step = (state: Record<string, InstanceNodeState>) => stepOf(state, REVIEWED);
+
+  it("starts reviewing once the work in front of it has finished", () => {
+    const s = step({ build: ran("r-1", "completed"), check: decided("waiting") });
+    assert.deepEqual(s.review, [{ nodeId: "check", runIds: ["r-1"] }]);
+    assert.deepEqual(s.merge, []);
+  });
+
+  it("holds the merge while the review is in flight", () => {
+    const s = step({ build: ran("r-1", "completed"), check: decided("thinking") });
+    assert.deepEqual(s.merge, []);
+    assert.deepEqual(s.block, []);
+  });
+
+  it("lands what the review approved — the fix run, not the attempt it rejected", () => {
+    const s = step({
+      build: ran("r-1", "completed"),
+      check: decided("emitted", [["r-fix", "completed"]]),
+      land: decided("waiting"),
+    });
+    assert.deepEqual(s.merge, [{ nodeId: "land", runIds: ["r-fix"] }]);
+  });
+
+  it("hands on an approved branch whose last run asked for review", () => {
+    const s = step({
+      build: ran("r-1", "completed"),
+      check: decided("emitted", [["r-1", "needs-review"]]),
+      land: decided("waiting"),
+    });
+    assert.deepEqual(s.merge, [{ nodeId: "land", runIds: ["r-1"] }]);
+  });
+
+  it("lets the merge settle with nothing to land when every branch was set aside", () => {
+    const s = step({
+      build: ran("r-1", "completed"),
+      check: decided("emitted", []),
+      land: decided("waiting"),
+    });
+    assert.deepEqual(s.merge, [{ nodeId: "land", runIds: [] }]);
+    assert.deepEqual(s.block, []);
+  });
+
+  it("blocks the merge behind a review that failed, on either condition", () => {
+    const s = step({
+      build: ran("r-1", "completed"),
+      check: decided("failed", [], "The server restarted while this block was reviewing branches."),
+      land: decided("waiting"),
+    });
+    assert.deepEqual(s.merge, []);
+    assert.equal(s.block[0]?.nodeId, "land");
+    assert.match(s.block[0]?.reason ?? "", /could not review what was in front of it/);
   });
 });
 

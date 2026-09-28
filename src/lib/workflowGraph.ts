@@ -24,11 +24,14 @@ import {
   MAX_LOOP_BOARD_THRESHOLDS,
   MAX_LOOP_PASSES,
   MAX_LOOP_RUNS,
+  MAX_REVIEW_FIX_ROUNDS,
   MAX_WORKFLOW_NAME,
   MAX_WORKFLOW_NODES,
   boardThresholds,
   type LoopBoardConditionDTO,
   type LoopBoardThresholdDTO,
+  RUN_PROVIDERS,
+  type RunProviderDTO,
   type TaskPriorityDTO,
   type TaskStatusDTO,
   type WorkflowNodeKind,
@@ -249,6 +252,21 @@ export interface WorkflowNode {
    * them.
    */
   bodyNodeIds: string[];
+  /**
+   * Which agent CLI does the work — a run block's run, or every run an
+   * orchestrator block emits — or null for the ordinary Claude run.
+   *
+   * On the node for the reason the fan-out cap is: an orchestrator block's runs
+   * start with nobody looking, so what they run as is fixed by the person who
+   * saved the graph, and `emit_runs` has no field for it. The deciding turn
+   * itself stays Claude Code either way; this is about the runs, not the planner.
+   */
+  provider: RunProviderDTO | null;
+  /**
+   * How many fix rounds a review block gives a rejected branch. Null on every
+   * other kind, and never null on a review block.
+   */
+  fixRounds: number | null;
 }
 
 /** Which tasks a loop counts, and the numbers it stops at. See the DTO. */
@@ -422,7 +440,7 @@ export const NODE_ID = /^[A-Za-z0-9_-]{1,64}$/;
  * scheduler has no branch for — the `as const` makes every reader exhaustive
  * against `WorkflowNodeKind` at the same time.
  */
-const NODE_KINDS = ["run", "orchestrator", "merge", "loop"] as const satisfies readonly WorkflowNodeKind[];
+const NODE_KINDS = ["run", "orchestrator", "merge", "loop", "review"] as const satisfies readonly WorkflowNodeKind[];
 
 const MAX_NODE_NAME = 60;
 
@@ -618,9 +636,13 @@ export function normalizeWorkflowInput(
                   "lands its own work, so it holds no branch to hand over or " +
                   "carry on — the last one it had was landed, and may since " +
                   "have been deleted. Start after it without carrying a branch."
-                : `“${node.name}” lands other blocks' branches rather than ` +
-                  "working in a checkout of its own, so it has no branch to " +
-                  "hand over or carry on.",
+                : node.kind === "review"
+                  ? `“${node.name}” reviews other blocks' branches and hands on ` +
+                    "the ones it approves, so it has no branch of its own to hand " +
+                    "over or carry on. Start after it without carrying a branch."
+                  : `“${node.name}” lands other blocks' branches rather than ` +
+                    "working in a checkout of its own, so it has no branch to " +
+                    "hand over or carry on.",
         };
       }
 
@@ -981,7 +1003,10 @@ function normalizeNode(
     // that describe one. They get there differently — a merge block has these
     // coerced away, a loop has them refused by name above — and past this point
     // the two are the same block: nothing to run, and nowhere to run it.
-    const startsNoRun = kind === "merge" || kind === "loop";
+    // A review block is the third: its reviews and its fix runs are this app's,
+    // started on branches the blocks in front of it cut, and it names no
+    // workspace, template, task or agent of its own.
+    const startsNoRun = kind === "merge" || kind === "loop" || kind === "review";
 
     // A merge block is told nothing. What it lands is whatever the blocks in
     // front of it left on a branch, and where each branch belongs was recorded
@@ -1056,6 +1081,45 @@ function normalizeNode(
       }
       mergeStrategy = raw;
       mergeAutoResolve = n.mergeAutoResolve === true;
+    }
+
+    // A review block's fix rounds: required, for the fan-out cap's reason —
+    // every round is a billed fix run and a billed review per branch — and
+    // small, because a branch a frontier model rejects three times is one the
+    // local model is not going to get past it.
+    let fixRounds: number | null = null;
+    if (kind === "review") {
+      const raw = Number(n.fixRounds ?? 0);
+      if (!Number.isInteger(raw) || raw < 0 || raw > MAX_REVIEW_FIX_ROUNDS) {
+        return {
+          ok: false,
+          error:
+            `“${nodeName}” may send a rejected branch back for 0 to ` +
+            `${MAX_REVIEW_FIX_ROUNDS} fix rounds; it is set to ${String(n.fixRounds)}.`,
+        };
+      }
+      fixRounds = raw;
+    }
+
+    // Which CLI does the work, on the two kinds whose work is runs. Refused by
+    // name anywhere else, on `agentId`'s grounds below: a provider named on a
+    // block that starts no run is a choice no process will ever act on.
+    const rawProvider =
+      n.provider === null || n.provider === undefined ? "" : String(n.provider).trim();
+    if (rawProvider && !(RUN_PROVIDERS as readonly string[]).includes(rawProvider)) {
+      return {
+        ok: false,
+        error: `“${nodeName}” names a provider this app has no adapter for: ${rawProvider}.`,
+      };
+    }
+    const provider = (rawProvider || null) as RunProviderDTO | null;
+    if (provider !== null && kind !== "run" && kind !== "orchestrator") {
+      return {
+        ok: false,
+        error:
+          `“${nodeName}” starts no run of its own, so there is nothing for a ` +
+          "provider to run. Put it on the block that does the work.",
+      };
     }
 
     // The pass cap and the loop's own spending cap, on a loop block and nowhere
@@ -1212,13 +1276,28 @@ function normalizeNode(
       n.agentId === null || n.agentId === undefined || String(n.agentId).trim() === ""
         ? null
         : String(n.agentId).trim();
-    if (namedAgent !== null && kind === "merge") {
+    if (namedAgent !== null && (kind === "merge" || kind === "review")) {
       return {
         ok: false,
         error:
-          `“${nodeName}” lands the branches in front of it and starts no agent ` +
-          "of its own, so there is nothing for that agent to be. Remove it, or " +
-          "put it on the block that does the work.",
+          kind === "merge"
+            ? `“${nodeName}” lands the branches in front of it and starts no agent ` +
+              "of its own, so there is nothing for that agent to be. Remove it, or " +
+              "put it on the block that does the work."
+            : `“${nodeName}” reviews the branches in front of it with a frontier ` +
+              "model this app chooses, so there is nothing for that agent to be. " +
+              "Remove it, or put it on the block that does the work.",
+      };
+    }
+    // A saved agent's prompt reaches Claude Code's `--agent` and nothing else,
+    // so a Codex run block "as the reviewer" would be a run that is not the
+    // reviewer — the silent drop the agent door refuses everywhere.
+    if (namedAgent !== null && kind === "run" && provider === "codex") {
+      return {
+        ok: false,
+        error:
+          `“${nodeName}” runs on Codex, which a saved agent's prompt does not ` +
+          "reach. Remove the agent, or the provider.",
       };
     }
     const agentId = startsNoRun ? null : namedAgent;
@@ -1252,6 +1331,8 @@ function normalizeNode(
           maxLoopCostUSD,
           stopWhenTasks,
           bodyNodeIds,
+          provider,
+          fixRounds,
     },
   };
 }
@@ -1735,6 +1816,38 @@ function graphRefusal(
   // contributes none: each of its passes lands its own work through the
   // section's own exit, so by the time the loop hands on there is no branch of
   // its own left to land.
+  // A review block reviews branches, so it needs a block in front of it that
+  // cuts one — the merge rule below, asked of the review's own sources — and
+  // every such source has to work in a checkout of its own: a review is judged
+  // against the branch tip it was shown, and a run that worked in the folder
+  // has none, so it could never be approved and every pass would set it aside.
+  for (const node of nodes) {
+    if (node.kind !== "review") continue;
+    const sources = edges
+      .filter((e) => e.to === node.id && isDependencyEdge(e))
+      .map((e) => byId.get(e.from)!);
+    const producers = sources.filter(
+      (s) => s.kind === "run" || s.kind === "orchestrator" || s.kind === "review",
+    );
+    if (producers.length === 0) {
+      return (
+        `“${node.name}” has no block in front of it whose branches it could ` +
+        "review. A review block reviews what its predecessors built, so it " +
+        "needs at least one predecessor that runs something."
+      );
+    }
+    const bare = producers.find(
+      (s) => s.kind !== "review" && !isolatedTemplate(s.templateId, known),
+    );
+    if (bare) {
+      return (
+        `“${bare.name}” leaves no branch for “${node.name}” to review — its ` +
+        "guards work directly in the folder rather than in a checkout of " +
+        "their own."
+      );
+    }
+  }
+
   for (const node of nodes) {
     if (node.kind !== "merge") continue;
     const sources = edges
@@ -1750,7 +1863,12 @@ function graphRefusal(
         "needs at least one predecessor that runs something."
       );
     }
-    const bare = producers.find((s) => !isolatedTemplate(s.templateId, known));
+    // A review block produces branches too — the approved ones in front of it —
+    // and its own sources are held to this rule by the review rule below, so it
+    // is not asked about a template it does not have.
+    const bare = producers.find(
+      (s) => s.kind !== "review" && !isolatedTemplate(s.templateId, known),
+    );
     if (bare) {
       return (
         `“${bare.name}” leaves no branch for “${node.name}” to land — its ` +
@@ -1876,7 +1994,7 @@ export function folderRefusal(graph: WorkflowGraph): string | null {
     // run. A loop names none either — it frames the blocks it repeats and each
     // of those resolves its own, so asking here would be resolving `""` against
     // no mount at all and refusing the graph over a folder nobody chose.
-    if (node.kind === "merge" || node.kind === "loop") continue;
+    if (node.kind === "merge" || node.kind === "loop" || node.kind === "review") continue;
     try {
       resolveWorkspaceFolder(node.folder, node.mountId);
     } catch (err) {

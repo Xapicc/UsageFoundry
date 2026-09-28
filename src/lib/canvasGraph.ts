@@ -1233,19 +1233,39 @@ export function linkRefusal(
  */
 export function worstCaseRuns(
   passes: number | null,
-  members: readonly { kind: WorkflowNodeKind; fanOut: number | null }[],
+  members: readonly {
+    kind: WorkflowNodeKind;
+    fanOut: number | null;
+    fixRounds?: number | null;
+  }[],
 ): number | null {
   if (passes === null || !Number.isInteger(passes) || passes <= 0) return null;
   let perPass = 0;
+  // Branches a review member could send back: every run the pass can cut one
+  // on — a run member's own, and each run an orchestrator member may emit. Its
+  // deciding turn cuts none.
+  let branches = 0;
   for (const member of members) {
-    if (member.kind === "run") perPass += 1;
-    else if (member.kind === "orchestrator") {
+    if (member.kind === "run") {
+      perPass += 1;
+      branches += 1;
+    } else if (member.kind === "orchestrator") {
       const fanOut = member.fanOut;
       if (fanOut === null || !Number.isInteger(fanOut) || fanOut <= 0) {
         return null;
       }
       perPass += 1 + fanOut;
+      branches += fanOut;
     }
+  }
+  // A review member starts a fix run per rejected branch per round, so at
+  // worst every branch the pass cut is sent back every round. Its reviews are
+  // billed too, but they are not runs and this figure counts runs.
+  for (const member of members) {
+    if (member.kind !== "review") continue;
+    const rounds = member.fixRounds ?? 0;
+    if (!Number.isInteger(rounds) || rounds < 0) return null;
+    perPass += rounds * branches;
   }
   return passes * perPass;
 }

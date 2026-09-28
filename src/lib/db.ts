@@ -2611,6 +2611,11 @@ function migrate(db: Database.Database) {
   // claim nothing recorded. Additive, so no version bump.
   addColumn(db, "tasks", "operator_only", "INTEGER NOT NULL DEFAULT 0");
 
+  // A local model's work on this task was set aside by a workflow's review
+  // block, so no local-model run may take it on. `NOT NULL DEFAULT 0` for
+  // `operator_only`'s reason: every older row was work anyone could do.
+  addColumn(db, "tasks", "needs_frontier", "INTEGER NOT NULL DEFAULT 0");
+
   // JSON `string[]`, read through `proposalTaskIds`, for `depends_on`'s reason:
   // nothing queries a proposal by task, so a table would be a join for no read.
   addColumn(db, "chat_proposals", "task_ids", "TEXT");
@@ -2636,6 +2641,29 @@ function migrate(db: Database.Database) {
       token         TEXT,
       model         TEXT NOT NULL,
       signed_in_at  INTEGER NOT NULL
+    );
+  `);
+
+  // One row per branch a workflow's review block is judging: which run the
+  // branch started from, which link of it is current, how many fix rounds it
+  // has had and where it stands. Keyed on the block's own id — a pass member's
+  // spelling inside a loop — so two passes never share a row. What the block
+  // hands on is read from here (`approved` rows' current run), not from the
+  // runs it started, because the fix runs are not all of what it approved.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflow_review_items (
+      instance_id    TEXT NOT NULL REFERENCES workflow_instances(id) ON DELETE CASCADE,
+      block_id       TEXT NOT NULL,
+      origin_run_id  TEXT NOT NULL,
+      run_id         TEXT NOT NULL,
+      position       INTEGER NOT NULL,
+      round          INTEGER NOT NULL DEFAULT 0,
+      status         TEXT NOT NULL,
+      review_id      TEXT,
+      note           TEXT,
+      cost_usd       REAL NOT NULL DEFAULT 0,
+      updated_at     INTEGER NOT NULL,
+      PRIMARY KEY (instance_id, block_id, origin_run_id)
     );
   `);
 
