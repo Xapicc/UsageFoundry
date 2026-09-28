@@ -12087,24 +12087,34 @@ export function reopenRun(
   const run = getRun(id);
   if (!run) return { ok: false, reason: "No such run." };
 
-  // `blocked` splits two ways and both are pickable — they just rejoin at
-  // different points. The two are told apart by `work_dir`, never by the reason
+  // A run that never started work is picked up by going back to `waiting`, not
+  // by joining the queue: there is no session to continue and, more to the
+  // point, no workspace, and `admitWaiting` is what plans one. That is decided
+  // by what the row holds and never by the status it ended in, because a run
+  // behind a dependency ends three ways without ever being released: `blocked`
+  // by the cascade, `stopped` while it waited (by `stopRun`, and by every boot
+  // until boots stopped writing it, so old databases hold such rows), and
+  // `failed` by `admitWaiting` itself. Queued, the last two worked in
+  // `work_dir ?? folder`, which for such a row is the operator's own folder:
+  // no checkout, and no wait for the run it was chained behind. `work_dir`
+  // alone is not the test, because a row written before that column has none
+  // either and did its work in its folder; a session or a counted cycle is what
+  // says it started, and it rejoins the queue there.
+  const neverStarted =
+    run.work_dir === null && !run.session_id && run.iterations === 0;
+  const waitingAgain =
+    neverStarted && (run.status === "blocked" || REOPENABLE.includes(run.status));
+  // A run its own guard refused before its first work cycle is the other kind
+  // of `blocked`, and it is the case this function's budget argument exists
+  // for: raising the limit is the fix, and refusing it left the operator
+  // retyping the prompt and the budget into the new-run form. `ensureWorktree`
+  // runs before the guard, so it already holds a workspace, and a checkout
+  // whose branch was orphaned for as long as there was no way back to this
+  // row. It therefore rejoins the queue like any other terminal row rather than
+  // going back to `waiting`, where `admitWaiting` would plan a second checkout
+  // slot on top of the first. Told apart by the columns, never by the reason
   // text, which is prose.
-  //
-  // A run blocked behind a dependency is picked up by going back to `waiting`,
-  // not by joining the queue: it never ran, so there is no session to continue
-  // and — more to the point — no workspace, and `admitWaiting` is what plans
-  // one.
-  const waitingAgain = run.status === "blocked" && run.work_dir === null;
-  // A run its own guard refused before its first work cycle is the other kind,
-  // and it is the case this function's budget argument exists for: raising the
-  // limit is the fix, and refusing it left the operator retyping the prompt and
-  // the budget into the new-run form. `ensureWorktree` runs before the guard, so
-  // it already holds a workspace — and a checkout, whose branch was orphaned for
-  // as long as there was no way back to this row. It therefore rejoins the queue
-  // like any other terminal row rather than going back to `waiting`, where
-  // `admitWaiting` would plan a second checkout slot on top of the first.
-  const guardRefused = run.status === "blocked" && run.work_dir !== null;
+  const guardRefused = run.status === "blocked" && !waitingAgain;
   if (!waitingAgain && !guardRefused && !REOPENABLE.includes(run.status)) {
     return {
       ok: false,
@@ -12293,8 +12303,11 @@ export function reopenRun(
     payload: waitingAgain
       ? {
           status: "waiting",
+          // Worded for every ending this branch takes and for either edge: a
+          // row stopped while it waited has never said anything about its
+          // dependencies, and an `on-finish` edge does not wait for success.
           message:
-            "Picked up again. It never started, so it goes back to waiting on the runs ahead of it — it starts by itself if they have since succeeded, and says so again if they have not.",
+            "Picked up again. It never started, so it goes back to waiting on the runs ahead of it. It joins the queue by itself when they let it, and ends with a reason naming any run that cannot.",
         }
       : {
           status: "queued",

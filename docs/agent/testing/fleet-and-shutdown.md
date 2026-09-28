@@ -20,6 +20,8 @@ A third describe covers the per-run exemption from the bulk pick-ups, and it is 
 
 Every one of those failures ends the same way and none of them throws: an agent that accepts edits, back at work in a folder somebody had finished with.
 
+A fourth covers a run picked up before it ever had a workspace, because both doors that reach `reopenRun` are here. A run created behind another one has no `work_dir` and no isolation until `admitWaiting` plans them, and it can end `stopped` while it waits or `failed` by that release; a pick-up that queued it worked in the operator's own folder, with no checkout and no wait for its dependency. Three cases, stopped then reopened by hand, failed by a release that found every checkout slot held, and stopped then reopened through `reopenFleet`, each asserting the row goes back to `waiting` and is admitted into a checkout of a real repository once its dependency completes. `maxConcurrentRuns` is set to 0 rather than the hold, since the hold would suppress the release under test.
+
 `shutdown.test.ts` is the nineteenth of the twenty that open the database and the only one here whose subject is a *promise the process makes on the way out*: it drives a real run to `running` against a child that stays alive until it is signalled, calls the real `shutdownRuns`, and reads the row.
 
 Nothing short of that says what it needs to say — `reconcileKilledCycle` was always correct and was reachable from exactly one place, inside `startRun`'s loop, which a `process.exit(0)` two lines after `killAllAgents` meant no suspended frame ever reached.

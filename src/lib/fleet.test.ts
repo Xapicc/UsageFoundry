@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -41,7 +42,10 @@ let fleet: typeof import("./fleet");
 let dbMod: typeof import("./db");
 
 before(async () => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), "uf-fleet-"));
+  // Resolved, because `probeIsolation` compares a repository's real root with
+  // the folder it was handed, and a temp directory behind a symlink (macOS's
+  // `/var`) would read as a subdirectory and plan no checkout at all.
+  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-fleet-")));
   workspace = path.join(root, "workspace");
   fs.mkdirSync(workspace, { recursive: true });
   process.env.DATA_DIR = path.join(root, "data");
@@ -552,5 +556,161 @@ describe("what a fleet budget does to each run's own", () => {
       "stopped",
       "refused by name and left exactly as it ended",
     );
+  });
+});
+
+/**
+ * A run picked up that never got as far as a workspace.
+ *
+ * A run created behind another one is `waiting` with nothing planned: no
+ * `work_dir`, no isolation, no checkout, because `admitWaiting` plans all of
+ * that when it is released. It can end without ever being released, stopped
+ * while it waited or failed by the release itself, and `reopenRun` used to put
+ * either back in the *queue*. `startRun` then works in `work_dir ?? folder`,
+ * which for this row is the operator's own folder: no checkout, and no wait for
+ * the run it was chained behind. Nothing throws and the run page looks like any
+ * other pick-up; the evidence is an agent editing the operator's checkout.
+ *
+ * Here because both doors are here: the run page's own pick-up, and the fleet's
+ * `reopenFleet`, which calls it. The folder is a real repository, so that the
+ * plan a release makes is a checkout and cannot be mistaken for the folder.
+ */
+describe("a run picked up before it ever had a workspace", () => {
+  const BUDGET = { maxIterations: 3 };
+  let cap: number | null;
+
+  // The cap rather than the hold, because the hold would suppress the release
+  // that is under test. Nothing may be promoted: several rows earlier in this
+  // file are still `queued`, and a spawn is what the missing `CLAUDE_BIN` is
+  // only the backstop for.
+  before(() => {
+    settings.setNewWorkPaused(false);
+    cap = settings.getSettings().maxConcurrentRuns;
+    settings.saveSettings({ maxConcurrentRuns: 0 });
+  });
+  after(() => settings.saveSettings({ maxConcurrentRuns: cap }));
+
+  /** git for the fixture, with an identity of its own so a commit cannot refuse. */
+  function fixtureGit(cwd: string, args: string[]): void {
+    execFileSync(
+      "git",
+      ["-c", "user.email=test@example.invalid", "-c", "user.name=Test", ...args],
+      { cwd, stdio: "ignore" },
+    );
+  }
+
+  /**
+   * A running, and B behind it exactly as `createRun` leaves a run with a
+   * dependency: `waiting`, and nothing about its workspace decided yet.
+   */
+  function chain(name: string): { a: string; b: string; repo: string } {
+    const repo = path.join(workspace, name);
+    fs.mkdirSync(repo, { recursive: true });
+    fixtureGit(repo, ["init", "-q", "-b", "main"]);
+    fs.writeFileSync(path.join(repo, "README.md"), "seed\n");
+    fixtureGit(repo, ["add", "-A"]);
+    fixtureGit(repo, ["commit", "-q", "-m", "seed"]);
+
+    const a = run(`${name}-a`, "running", { folder: repo });
+    const b = `${name}-b`;
+    const now = Date.now() + seq++;
+    const db = dbMod.db();
+    db.prepare(
+      `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations,
+                         iterations, created_at, work_dir, isolation)
+       VALUES (?, ?, 'then this', 'waiting', '{"maxIterations":1,"permissionMode":"acceptEdits"}',
+               1, 0, ?, NULL, NULL)`,
+    ).run(b, repo, now);
+    db.prepare(
+      "INSERT INTO run_deps (run_id, depends_on, edge, continue_branch, created_at)" +
+        " VALUES (?, ?, 'on-success', 0, ?)",
+    ).run(b, a, now);
+    return { a, b, repo };
+  }
+
+  /** A finishes its one work cycle and the release pass that follows runs. */
+  function complete(id: string): void {
+    dbMod
+      .db()
+      .prepare("UPDATE runs SET status='completed', iterations=1, finished_at=? WHERE id=?")
+      .run(Date.now(), id);
+    orch.releaseDependents();
+  }
+
+  function assertBackBehind(b: string): void {
+    const row = orch.getRun(b)!;
+    assert.equal(
+      row.status,
+      "waiting",
+      "a run that never started goes back behind its dependency, not into the queue",
+    );
+    assert.equal(row.work_dir, null, "and holds nothing while it waits");
+  }
+
+  /** Admitted by the release, with the checkout it was always going to get. */
+  function assertAdmitted(b: string, repo: string): void {
+    const row = orch.getRun(b)!;
+    assert.equal(row.status, "queued");
+    assert.equal(row.isolation, "worktree", "the release planned its workspace");
+    assert.ok(row.worktree_path, "a checkout slot was allocated");
+    assert.equal(row.work_dir, row.worktree_path, "and the run works in it");
+    assert.notEqual(row.work_dir, repo, "never in the operator's own folder");
+  }
+
+  it("goes back to waiting when it was stopped while it waited", () => {
+    const { a, b, repo } = chain("pickup-stopped");
+    assert.equal(orch.stopRun(b), "cancelled");
+    assert.equal(statusOf(b), "stopped");
+
+    assert.deepEqual(orch.reopenRun(b, BUDGET), { ok: true });
+    assertBackBehind(b);
+
+    complete(a);
+    assertAdmitted(b, repo);
+  });
+
+  it("goes back to waiting when its release could not prepare a workspace", () => {
+    const { a, b, repo } = chain("pickup-failed");
+    // Every checkout slot the repository may have, held by live runs, so the
+    // release that A's completion triggers has nowhere to put B.
+    const store = orch.worktreeStore(repo);
+    assert.ok(store, "the fixture repository must be inside the mount");
+    const holders: string[] = [];
+    for (let slot = 1; slot <= orch.MAX_WORKTREE_SLOTS; slot++) {
+      const holder = run(`pickup-failed-slot-${slot}`, "paused");
+      dbMod
+        .db()
+        .prepare("UPDATE runs SET worktree_path=? WHERE id=?")
+        .run(path.join(store, `${orch.repoSlug(repo)}-${slot}`), holder);
+      holders.push(holder);
+    }
+
+    complete(a);
+    const failed = orch.getRun(b)!;
+    assert.equal(failed.status, "failed");
+    assert.match(failed.stop_reason ?? "", /workspace could not be prepared/);
+    assert.equal(failed.work_dir, null);
+
+    // The slots come free, and the operator picks B up.
+    for (const holder of holders) {
+      dbMod.db().prepare("DELETE FROM runs WHERE id=?").run(holder);
+    }
+    assert.deepEqual(orch.reopenRun(b, BUDGET), { ok: true });
+
+    // Its dependency has already succeeded, so going back to waiting admits it
+    // in the same call, through the release that plans a workspace.
+    assertAdmitted(b, repo);
+  });
+
+  it("goes back to waiting when the fleet's pick-up is the door", () => {
+    const { a, b, repo } = chain("pickup-fleet");
+    assert.equal(orch.stopRun(b), "cancelled");
+
+    const report = fleet.reopenFleet([b], BUDGET);
+    assert.deepEqual(report.reopened, [b]);
+    assertBackBehind(b);
+
+    complete(a);
+    assertAdmitted(b, repo);
   });
 });
