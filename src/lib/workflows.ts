@@ -2977,7 +2977,7 @@ function rowToInstance(row: InstanceRow): WorkflowInstance {
     error: row.error,
     stoppedAt: row.stopped_at,
     stopCause:
-      row.stop_cause === "operator" || row.stop_cause === "guard"
+      row.stop_cause === "operator" || row.stop_cause === "guard" || row.stop_cause === "fleet"
         ? row.stop_cause
         : null,
     stopReason: row.stop_reason,

@@ -225,6 +225,10 @@ describe("stopFleet", () => {
     // A third cause, not `operator`: afterwards it is the only thing telling a
     // workflow somebody stopped from one that went down with everything else.
     assert.equal(instance.stop_cause, "fleet");
+    // And back through the reader the pages get, not just the row: a cause
+    // `getInstance` drops is a cause the instance page and the workflow page
+    // cannot show, and the page then says "by you".
+    assert.equal(workflows.getInstance("inst-fleet")?.stopCause, "fleet");
     assert.equal(statusOf(member), "stopped");
     assert.match(orch.getRun(member)!.stop_reason ?? "", /Nightly sweep/);
     // Halted by its instance, so the standalone pass must not claim it too.
