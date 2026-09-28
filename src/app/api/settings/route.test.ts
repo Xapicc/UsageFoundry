@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { after, before, test } from "node:test";
+import { after, before, describe, test } from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -279,9 +279,9 @@ for (const key of Object.keys(PROBES) as (keyof Settings)[]) {
 /**
  * The one key here whose `0` and blank are opposites rather than synonyms.
  *
- * Everywhere else on this route a number is a limit, and `optionalNumber`'s
- * closing `n > 0 ? n : null` is right for all of them: a cost ceiling of zero
- * and no cost ceiling are the same request. This key is a threshold, not a
+ * Everywhere else on this route a number is a limit, and `optionalNumber`
+ * folds a typed 0 to `null` where that is the field's rule: a cost ceiling of
+ * zero and no cost ceiling are the same request. This key is a threshold, not a
  * limit. `0` is the shipped default and the only value that ever forks; blank
  * defers to winnow's own hour, and an hour at a cycle boundary refuses every
  * time. Sharing that helper meant typing 0 returned 200, redrew the form as
@@ -431,4 +431,216 @@ test("the answer names which settings this install has moved, per control", asyn
     !restored.nonDefaultKeys.includes("continuationPrompt"),
     "a prompt restored to the shipped default is still reported as moved",
   );
+});
+
+/**
+ * A number that is not a positive one.
+ *
+ * Every number on this route is one of three kinds, and the route has to
+ * answer each one differently:
+ *
+ *  - a **money or token limit**, where 0 is the same request as blank — no
+ *    ceiling — because every consumer of a stored ceiling reads `null` as off,
+ *    and for the three budget fields a stored 0 would reach a child as
+ *    `--max-budget-usd 0`, a budget no child can satisfy. 0 stores `null`.
+ *  - a **cap or horizon**, where 0 has no meaning: a concurrency cap of 0
+ *    wedges every run behind a slot nothing can satisfy, and a retention of 0
+ *    days deletes the moment a run ends. 0 stores the floor the field's own
+ *    rule names.
+ *  - a **value that happens to be 0**: `maxValidationCycles`, where 0 is the
+ *    real off switch and is a real answer.
+ *
+ * What none of them may do is answer 200 for a number they will not store.
+ * While the shared helper folded everything but a positive number to `null`,
+ * every one of these inputs — a 0 that meant a floor, a -50 that meant a
+ * ceiling the operator never intended, a `"5O"` from a hand that slipped —
+ * arrived as "no limit" with a 200 and a saved badge, and the page wrote that
+ * answer back over the form.
+ */
+describe("PUT /api/settings with a number that is not a positive one", () => {
+  // 0 is a value; the call site's floor decides what it becomes.
+  const ZERO_IS_A_VALUE = [
+    { key: "maxConcurrentRuns", stored: 1 },
+    { key: "maxConcurrentAssists", stored: 1 },
+    { key: "maxConcurrentLocalRuns", stored: 1 },
+    { key: "eventRetentionDays", stored: 1 },
+    { key: "checkoutRetentionDays", stored: 1 },
+    { key: "transcriptRetentionDays", stored: 1 },
+    { key: "liveGuardIntervalSeconds", stored: 15 },
+    { key: "maxCycleSilenceMinutes", stored: 5 },
+    { key: "resumeGraceHours", stored: 1 },
+    { key: "freshStartContextTokens", stored: 20_000 },
+    { key: "readGuardMaxTokens", stored: 500 },
+    { key: "maxValidationCycles", stored: 0 },
+  ] as const;
+
+  // 0 is off; what is stored is `null`, the reading every consumer takes.
+  const ZERO_IS_OFF = [
+    "sessionCostLimit",
+    "weeklyCostLimit",
+    "sessionTokenLimit",
+    "weeklyTokenLimit",
+    "reservedHeadroomFraction",
+    "validationBudgetUSD",
+    "resolutionBudgetUSD",
+    "chatTurnBudgetUSD",
+    "installDailyCostLimitUSD",
+  ] as const;
+
+  const EVERY_NUMBER = [
+    ...ZERO_IS_A_VALUE.map((f) => f.key),
+    ...ZERO_IS_OFF,
+  ];
+
+  /** The shape the negative and unparseable cases share: a direct PUT. */
+  async function refuse(key: keyof Settings, value: unknown) {
+    const { PUT } = await import("./route");
+    const res = await PUT(
+      new Request("http://localhost/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ [key]: value }),
+      }),
+    );
+    const body = (await res.json()) as { error?: string };
+    return { status: res.status, error: String(body.error ?? "") };
+  }
+
+  for (const { key, stored } of ZERO_IS_A_VALUE) {
+    test(`a typed 0 ${key} is stored as its floor, ${stored}`, async () => {
+      const answered = await write(key, 0);
+      assert.equal(
+        answered[key],
+        stored,
+        `a 0 ${key} came back as ${JSON.stringify(answered[key])} — the ` +
+          `helper's fold to "no limit" swallows a 0 the field's own rule ` +
+          `floors, and the page writes the answer back over the form`,
+      );
+      assert.equal((await read())[key], stored, `a 0 ${key} was stored another way`);
+    });
+  }
+
+  for (const key of ZERO_IS_OFF) {
+    test(`a typed 0 ${key} is stored as no limit`, async () => {
+      const answered = await write(key, 0);
+      assert.equal(
+        answered[key],
+        null,
+        `a 0 ${key} came back as ${JSON.stringify(answered[key])} — a 0 on a ` +
+          `money limit is the same request as off, and off is stored as null`,
+      );
+      assert.equal((await read())[key], null, `a 0 ${key} was stored another way`);
+    });
+  }
+
+  test("a negative number is refused for every numeric field, and nothing is stored", async () => {
+    for (const key of EVERY_NUMBER) {
+      const before = (await read())[key];
+      // The two inputs the defect report names, verbatim; the rest use -1.
+      const bad =
+        key === "installDailyCostLimitUSD" ? -50 : key === "maxConcurrentRuns" ? -2 : -1;
+      const { status, error } = await refuse(key, bad);
+      assert.equal(status, 400, `a negative ${key} (${bad}) was accepted`);
+      assert.match(
+        error,
+        new RegExp(key),
+        `the refusal does not name the field: ${error}`,
+      );
+      assert.equal((await read())[key], before, `a refused ${key} was stored anyway`);
+    }
+  });
+
+  test("a value that is not a number is refused for every numeric field, and nothing is stored", async () => {
+    for (const key of EVERY_NUMBER) {
+      const before = (await read())[key];
+      const { status, error } = await refuse(key, "5O");
+      assert.equal(status, 400, `"5O" for ${key} was accepted`);
+      assert.match(
+        error,
+        new RegExp(key),
+        `the refusal does not name the field: ${error}`,
+      );
+      assert.equal((await read())[key], before, `a refused ${key} was stored anyway`);
+    }
+  });
+
+  // A blank's one meaning per field: `null`, or the field's own answer to the
+  // absence of a number — 0 for the cycle cap that may never be null, and the
+  // shipped default for the three cadences that have no "no limit".
+  const BLANK_STORES: { key: keyof Settings; stored: number | null }[] = [
+    ...ZERO_IS_OFF.map((key) => ({ key, stored: null as number | null })),
+    { key: "maxConcurrentRuns", stored: null },
+    { key: "maxConcurrentAssists", stored: null },
+    { key: "maxConcurrentLocalRuns", stored: null },
+    { key: "eventRetentionDays", stored: null },
+    { key: "checkoutRetentionDays", stored: null },
+    { key: "transcriptRetentionDays", stored: null },
+    { key: "freshStartContextTokens", stored: null },
+    { key: "readGuardMaxTokens", stored: null },
+    { key: "maxValidationCycles", stored: 0 },
+    { key: "liveGuardIntervalSeconds", stored: 60 },
+    { key: "maxCycleSilenceMinutes", stored: 120 },
+    { key: "resumeGraceHours", stored: 24 },
+  ];
+
+  test("a blank value is answered as each field's own rule says", async () => {
+    for (const { key, stored } of BLANK_STORES) {
+      const answered = await write(key, "");
+      assert.equal(
+        answered[key],
+        stored,
+        `a blank ${key} came back as ${JSON.stringify(answered[key])}, not ` +
+          `${JSON.stringify(stored)} — blank must keep its one meaning per ` +
+          `field, whatever the other two kinds of input are`,
+      );
+    }
+  });
+
+  // `null` is the one shape whose answer is the same for the anchor as for
+  // every number: no anchor, a rolling seven days.
+  test("a null weeklyAnchor still means no anchor", async () => {
+    const answered = await write("weeklyAnchor", null);
+    assert.equal(answered.weeklyAnchor, null);
+  });
+
+  // The anchor's two numbers are ranges, not magnitudes: an hour of 24 is not
+  // "a late hour", it is a different day, and a weekday of 7 is a day that
+  // does not exist. Folding either to `null` was the old answer — a 200, a
+  // saved badge, and the operator's anchored week silently replaced by a
+  // rolling seven days.
+  test("a weeklyAnchor whose hour is not 0–23 is refused", async () => {
+    const before = (await read()).weeklyAnchor;
+    const { status, error } = await refuse("weeklyAnchor", { weekday: 3, hourUTC: 24 });
+    assert.equal(status, 400, "an out-of-range hour was accepted");
+    assert.match(error, /hourUTC/, `the refusal does not name the field: ${error}`);
+    assert.deepEqual(
+      (await read()).weeklyAnchor,
+      before,
+      "a refused anchor was stored anyway",
+    );
+  });
+
+  test("a weeklyAnchor whose weekday is not 0–6 is refused", async () => {
+    const before = (await read()).weeklyAnchor;
+    const { status, error } = await refuse("weeklyAnchor", { weekday: 7, hourUTC: 9 });
+    assert.equal(status, 400, "an out-of-range weekday was accepted");
+    assert.match(error, /weekday/, `the refusal does not name the field: ${error}`);
+    assert.deepEqual(
+      (await read()).weeklyAnchor,
+      before,
+      "a refused anchor was stored anyway",
+    );
+  });
+
+  test("a weeklyAnchor with a fractional hour is refused", async () => {
+    const before = (await read()).weeklyAnchor;
+    const { status, error } = await refuse("weeklyAnchor", { weekday: 3, hourUTC: 7.5 });
+    assert.equal(status, 400, "a fractional hour was accepted");
+    assert.match(error, /hourUTC/, `the refusal does not name the field: ${error}`);
+    assert.deepEqual(
+      (await read()).weeklyAnchor,
+      before,
+      "a refused anchor was stored anyway",
+    );
+  });
 });
