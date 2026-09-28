@@ -223,6 +223,19 @@ function describeQueued(run: RunDTO): RunState {
     };
   }
 
+  if (blocker?.kind === "localCap") {
+    return {
+      tone: "info",
+      headline: "Waiting for the local model",
+      detail: (
+        <>
+          {blocker.running} of {blocker.cap} local model runs going. The cap is{" "}
+          <Link href="/settings#runs">Local model runs at the same time</Link>.
+        </>
+      ),
+    };
+  }
+
   const ahead = blocker?.kind === "folder" ? blocker.ahead : (run.queuePosition ?? 0);
   return {
     tone: "info",

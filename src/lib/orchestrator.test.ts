@@ -464,6 +464,50 @@ describe("queue blockers", () => {
 });
 
 /**
+ * Covers the second cap, over local-provider runs alone. Silent both ways: a
+ * local run that skips it sends a second cycle to a server that answers each
+ * of them later, and a local run it holds that still took a regular slot would
+ * park the Claude runs behind it for a shortage on another machine.
+ */
+describe("local model slots", () => {
+  type Row = import("./orchestrator").RunRow;
+  let seq = 0;
+  const row = (status: Row["status"], dir: string, provider: Row["provider"] = null): Row =>
+    ({ id: `l${++seq}`, status, folder: dir, work_dir: dir, created_at: seq, provider }) as Row;
+
+  it("holds a second local run, and the Claude run behind it still starts", () => {
+    const live = row("running", `${ws}/A`, "local");
+    const local = row("queued", `${ws}/B`, "local");
+    const claude = row("queued", `${ws}/C`, "claude");
+    const { promote, blocked } = walkQueue([live, local, claude], 4, false, 1);
+    assert.deepEqual(promote, [claude.id]);
+    assert.deepEqual(blocked.get(local.id), { kind: "localCap", cap: 1, running: 1 });
+  });
+
+  it("counts a local run it starts against the rest of the same walk", () => {
+    const first = row("queued", `${ws}/A`, "local");
+    const second = row("queued", `${ws}/B`, "local");
+    const { promote, blocked } = walkQueue([first, second], 4, false, 1);
+    assert.deepEqual(promote, [first.id]);
+    assert.deepEqual(blocked.get(second.id), { kind: "localCap", cap: 1, running: 1 });
+  });
+
+  it("still takes a regular slot when it starts", () => {
+    const live = row("running", `${ws}/A`, "claude");
+    const local = row("queued", `${ws}/B`, "local");
+    const claude = row("queued", `${ws}/C`, "claude");
+    const { promote, blocked } = walkQueue([live, local, claude], 2, false, 1);
+    assert.deepEqual(promote, [local.id]);
+    assert.deepEqual(blocked.get(claude.id), { kind: "cap", cap: 2, running: 2 });
+  });
+
+  it("leaves local runs to the regular cap alone when it is off", () => {
+    const runs = [row("running", `${ws}/A`, "local"), row("queued", `${ws}/B`, "local")];
+    assert.deepEqual(walkQueue(runs, 4, false, null).promote, [runs[1].id]);
+  });
+});
+
+/**
  * Covers which waiting runs may join the queue, and which can never start.
  *
  * Pure, and it earns a test on the same grounds as the two above: both failure

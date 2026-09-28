@@ -24,6 +24,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 
 - Concurrency multiplies overshoot — `maxRunCostUSD` is per run, so N runs at $5 is a $25 worst case — and `maxConcurrentRuns` bounds N.
 - The concurrency cap is a bound on the host, so it ships as a number and it covers every kind of `claude` child.
+- A local run needs a slot under two caps, and the second is about another machine.
 - And a cap on N still bounds nothing about the total, so there is one ceiling that is about the install rather than about a spender.
 - `installSpend` reads a fifth place, and the reason it did not before stopped being true.
 - Counting a spender and refusing it are two halves, and the install ceiling had only the first for assists.

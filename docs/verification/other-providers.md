@@ -90,7 +90,25 @@
   yet re-run in the container or against LM Studio; whether the rules change
   the next review's verdict is the open question.
 
+- **What a local cycle's idle timeout has to set, read out of the pinned
+  2.1.280 binary, 2026-09-28.** `CLAUDE_STREAM_IDLE_TIMEOUT_MS` is floored at
+  300 000 ms and clamped at 1 800 000; set, it replaces the byte-stream idle
+  watchdog's 180 000 first-party default (the host's cached
+  `tengu_byte_stream_idle_timeout_ms` says the same) and is the default
+  first-byte wait. That wait is capped at `API_TIMEOUT_MS` − 1 000, and
+  `API_TIMEOUT_MS` (default 600 000) is also the SDK's request timeout, so
+  `localCycleEnv` sets both to 900 000. Read, not run: no local cycle has been
+  seen waiting past three minutes.
+
 ## Not yet verified by hand
+
+- **Why 682ea6fa's requests timed out at ~134 s is unknown (2026-09-28).**
+  All nine attempts to LM Studio, with the server on, ended `Request timed
+  out.` 134–136 s after dispatch with `noResponse` null, so not the first-byte
+  watchdog, and none of the defaults above is that short. The fifteen-minute
+  setting may not reach it. Settles with one local cycle against the running
+  server and the spacing of its `api_retry` events: still ~134 s means the
+  bound is somewhere `localCycleEnv` does not set.
 
 - **No local-provider work cycle has run through this app or against a real
   server (2026-09-27).** The CLI half is measured (above) against a stub on

@@ -4257,12 +4257,16 @@ export function queueCompare(a: QueueRank, b: QueueRank): number {
   return (b.priority ?? 0) - (a.priority ?? 0) || a.created_at - b.created_at;
 }
 
-/** What the queue walk needs of a row: its rank, its state and its folder. */
+/**
+ * What the queue walk needs of a row: its rank, its state, its folder and which
+ * pool of slots it draws on.
+ */
 export interface QueueMember extends QueueRank {
   id: string;
   status: RunStatus;
   folder: string;
   work_dir?: string | null;
+  provider?: RunProviderDTO | null;
 }
 
 /** What one walk of the queue decided: who starts, and why the rest do not. */
@@ -4299,6 +4303,12 @@ export function walkQueue(
    * answer to the same question.
    */
   newWorkPaused = false,
+  /**
+   * `maxConcurrentLocalRuns`: a second cap over local-provider runs alone. A
+   * local run needs a slot under both, and one this holds takes neither, so it
+   * never stands in front of a Claude run.
+   */
+  localCap: number | null = null,
 ): QueueWalk {
   const blocked = new Map<string, QueueBlockerDTO>();
 
@@ -4325,6 +4335,7 @@ export function walkQueue(
 
   const promote: string[] = [];
   let live = reserved.length;
+  let liveLocal = runs.filter((r) => r.status === "running" && r.provider === "local").length;
 
   // Priority order, not arrival order. `reserved` above is computed from the
   // RUNNING runs and does not depend on this, but the loop below claims folders
@@ -4351,6 +4362,13 @@ export function walkQueue(
       blocked.set(run.id, { kind: "folder", ahead: aheadForFolder(runs, run, keys) });
       continue;
     }
+    // Before the install-wide cap for the folder's reason: it is the narrower
+    // wait, and the one the operator set for this run's kind.
+    const isLocal = run.provider === "local";
+    if (isLocal && localCap !== null && liveLocal >= localCap) {
+      blocked.set(run.id, { kind: "localCap", cap: localCap, running: liveLocal });
+      continue;
+    }
     if (capBound) {
       // Never `queuePosition`'s number here: it counts folder-overlapping runs
       // only, and this run overlaps none — it would always be 0, which is the
@@ -4360,6 +4378,7 @@ export function walkQueue(
     }
 
     live += 1;
+    if (isLocal) liveLocal += 1;
     promote.push(run.id);
   }
   return { promote, blocked };
@@ -4397,8 +4416,9 @@ export function selectPromotable(
   runs: readonly RunRow[],
   cap: number | null,
   newWorkPaused = false,
+  localCap: number | null = null,
 ): string[] {
-  return walkQueue(runs, cap, newWorkPaused).promote;
+  return walkQueue(runs, cap, newWorkPaused, localCap).promote;
 }
 
 /**
@@ -4422,8 +4442,13 @@ export function promoteQueued(): void {
   // agent for each one, seconds before the process exits.
   if (shutdown.active) return;
 
-  const cap = getSettings().maxConcurrentRuns;
-  for (const id of selectPromotable(activeRuns(), cap, newWorkPaused())) {
+  const { maxConcurrentRuns, maxConcurrentLocalRuns } = getSettings();
+  for (const id of selectPromotable(
+    activeRuns(),
+    maxConcurrentRuns,
+    newWorkPaused(),
+    maxConcurrentLocalRuns,
+  )) {
     void startRun(id).catch(() => {
       /* terminal state is recorded by startRun's own finally block */
     });
@@ -4460,7 +4485,8 @@ export function queuePosition(id: string): number {
  * whole install either way, and a list route holds a hundred of them.
  */
 export function queueBlockers(): Map<string, QueueBlockerDTO> {
-  return walkQueue(activeRuns(), getSettings().maxConcurrentRuns, newWorkPaused())
+  const { maxConcurrentRuns, maxConcurrentLocalRuns } = getSettings();
+  return walkQueue(activeRuns(), maxConcurrentRuns, newWorkPaused(), maxConcurrentLocalRuns)
     .blocked;
 }
 

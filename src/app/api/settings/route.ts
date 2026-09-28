@@ -554,6 +554,13 @@ async function putHandler(req: Request) {
     patch.maxConcurrentAssists = n === null ? null : Math.max(1, Math.floor(n));
   }
 
+  if ("maxConcurrentLocalRuns" in body) {
+    const n = optionalNumber(body.maxConcurrentLocalRuns);
+    // The run cap's two rules: a 0 would leave every local run queued behind a
+    // cap nothing can satisfy.
+    patch.maxConcurrentLocalRuns = n === null ? null : Math.max(1, Math.floor(n));
+  }
+
   if ("isolationCopyGlobs" in body) {
     const raw = body.isolationCopyGlobs;
     const list = Array.isArray(raw)

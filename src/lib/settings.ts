@@ -390,6 +390,20 @@ export interface Settings {
    */
   maxConcurrentAssists: number | null;
   /**
+   * How many runs on the local provider may work at once, on top of
+   * `maxConcurrentRuns` rather than instead of it. Null means no limit.
+   *
+   * The regular cap bounds this container, and a local cycle is still a
+   * `claude` child in it, so a local run takes one of those slots as well. This
+   * one bounds the machine the local server runs on, which has its own limit:
+   * a server that several cycles reach at once answers each of them later, and
+   * a cycle waiting on it is silent — what `LOCAL_IDLE_TIMEOUT_MS` is for. 1
+   * because one server is the case the provider was built for. A local run this
+   * holds takes no regular slot, so the Claude runs queued behind it still
+   * start.
+   */
+  maxConcurrentLocalRuns: number | null;
+  /**
    * Tool patterns a conflict resolution may run to check the merge it wrote.
    *
    * **Not a gate on anything, which is why it no longer says "verify".** It was
@@ -1037,6 +1051,7 @@ export const DEFAULTS: Settings = {
   freshStartContextTokens: null,
   maxConcurrentRuns: 4,
   maxConcurrentAssists: 2,
+  maxConcurrentLocalRuns: 1,
   resolveAllowedTools: [],
   resolutionBudgetUSD: 20,
   landVerifyCommand: "",

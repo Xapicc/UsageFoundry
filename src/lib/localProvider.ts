@@ -278,6 +278,21 @@ const LOCAL_MODEL_ROLES = [
 ] as const;
 
 /**
+ * How long a local cycle's request may go without a byte before the CLI gives
+ * up on it and retries from scratch.
+ *
+ * A local server is silent while it reads the prompt, and a local cycle's prompt
+ * carries every tool's schema (see `ENABLE_TOOL_SEARCH` below); a run queued
+ * behind another on the same server is silent too. The CLI reads both as a dead
+ * connection. Two variables, because either alone leaves a shorter bound in
+ * force — read out of the pinned 2.1.280 binary: `CLAUDE_STREAM_IDLE_TIMEOUT_MS`
+ * replaces the three-minute default between bytes and is also the default wait
+ * for the first one, but that first wait is capped a second short of
+ * `API_TIMEOUT_MS`, which defaults to ten minutes.
+ */
+const LOCAL_IDLE_TIMEOUT_MS = 15 * 60_000;
+
+/**
  * A work cycle's environment, turned from a Claude cycle's into a local one's.
  *
  * Applied to what `childEnv` built rather than instead of it, so every strip
@@ -313,6 +328,8 @@ export function localCycleEnv(
   // Off, every tool's schema rides every request, which is what a server that
   // cannot resolve a reference needs.
   env.ENABLE_TOOL_SEARCH = "false";
+  env.CLAUDE_STREAM_IDLE_TIMEOUT_MS = String(LOCAL_IDLE_TIMEOUT_MS);
+  env.API_TIMEOUT_MS = String(LOCAL_IDLE_TIMEOUT_MS);
   return env;
 }
 

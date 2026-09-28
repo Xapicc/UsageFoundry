@@ -107,6 +107,7 @@ const PROBES: Record<keyof Settings, Probe> = {
   freshStartContextTokens: { send: 150_000 },
   maxConcurrentRuns: { send: 3 },
   maxConcurrentAssists: { send: 5 },
+  maxConcurrentLocalRuns: { send: 2 },
   resolveAllowedTools: { send: ["Bash(npm run typecheck:*)"] },
   resolutionBudgetUSD: { send: 12 },
   isolationCopyGlobs: { send: [".env.local"] },

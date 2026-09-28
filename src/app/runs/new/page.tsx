@@ -237,6 +237,9 @@ function queuedNotice(run: RunDTO): string {
   if (blocker?.kind === "cap") {
     return `Queued for a run slot — ${blocker.running} of ${blocker.cap} running. It starts on its own.`;
   }
+  if (blocker?.kind === "localCap") {
+    return `Queued for the local model — ${blocker.running} of ${blocker.cap} local model runs going. It starts on its own.`;
+  }
   const ahead = blocker?.kind === "folder" ? blocker.ahead : (run.queuePosition ?? 0);
   return `Queued behind ${ahead} other run${ahead === 1 ? "" : "s"} for that folder — it starts on its own.`;
 }

@@ -355,6 +355,7 @@ const EDITABLE_PATHS = [
   "defaultPermissionMode",
   "maxConcurrentRuns",
   "maxConcurrentAssists",
+  "maxConcurrentLocalRuns",
   "isolationCopyGlobs",
   "isolationCopyGlobsByRepo",
   "landStrategy",
@@ -3695,6 +3696,32 @@ export default function SettingsPage() {
                 onChange={(e) =>
                   patch({
                     maxConcurrentRuns: e.target.value
+                      ? Number(e.target.value)
+                      : null,
+                  })
+                }
+              />
+            </div>
+          </SettingRow>
+
+          <SettingRow
+            htmlFor="conclocal"
+            edited={isEdited("maxConcurrentLocalRuns")}
+            label="Local model runs at the same time"
+            description="Runs on the local model also take a slot above. Extra ones wait, and the Claude runs behind them still start"
+          >
+            <div className="w-32">
+              <Input
+                id="conclocal"
+                type="number"
+                min={1}
+                className="tabular-nums"
+                unit="runs"
+                placeholder="No limit"
+                value={effective.maxConcurrentLocalRuns ?? ""}
+                onChange={(e) =>
+                  patch({
+                    maxConcurrentLocalRuns: e.target.value
                       ? Number(e.target.value)
                       : null,
                   })

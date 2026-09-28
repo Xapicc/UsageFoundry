@@ -224,6 +224,9 @@ function queuedDetail(run: RunListItemDTO): string {
   if (blocker?.kind === "cap") {
     return `waiting for a slot — ${blocker.running} of ${blocker.cap} running`;
   }
+  if (blocker?.kind === "localCap") {
+    return `waiting for the local model — ${blocker.running} of ${blocker.cap} running`;
+  }
   const ahead = blocker?.kind === "folder" ? blocker.ahead : (run.queuePosition ?? 0);
   return ahead === 0
     ? "next up — starts when the folder frees"

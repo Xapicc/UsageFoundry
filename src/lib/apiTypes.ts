@@ -1199,7 +1199,12 @@ export type QueueBlockerDTO =
    */
   | { kind: "folder"; ahead: number }
   /** Every slot is taken. `running` is what is live, `cap` is the ceiling. */
-  | { kind: "cap"; cap: number; running: number };
+  | { kind: "cap"; cap: number; running: number }
+  /**
+   * A local-provider run, and every local slot is taken. The same two numbers,
+   * counted over local runs only, under `maxConcurrentLocalRuns`.
+   */
+  | { kind: "localCap"; cap: number; running: number };
 
 /** Every provider the run form offers, in the order it offers them. */
 export const RUN_PROVIDERS: readonly RunProviderDTO[] = ["claude", "codex", "local"];
@@ -3233,6 +3238,11 @@ export interface SettingsDTO {
    * limit.
    */
   maxConcurrentAssists: number | null;
+  /**
+   * Work cycles on the local provider, which also count against
+   * `maxConcurrentRuns`. Null means no limit.
+   */
+  maxConcurrentLocalRuns: number | null;
   isolationCopyGlobs: string[];
   /** Folders whose seeding list replaces the one above. */
   isolationCopyGlobsByRepo: Record<string, string[]>;
