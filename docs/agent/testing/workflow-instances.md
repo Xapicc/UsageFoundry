@@ -14,6 +14,8 @@ Its own controls are again half of it, and one of them is the halt bound: a stal
 
 It asks the same question of a `looping` block, whose survivor is the loop's own current pass, because that sweep read no instance at all: the row went `failed`, `advanceLoops` only ever selects `looping`, and `loopVerdict` then wrote every successor off while the pass was still committing to their branch — so what the two positive cases pin is a row left *unchanged*, which is the one outcome no page and no status ever shows.
 
+It asks it once more of a run `waiting` on another run, which the boot used to stop unconditionally under a sentence saying its dependency had been closed out by the same restart. Three cases: behind a pause the boot kept it stays `waiting`; behind a run the boot failed, on an `on-finish` edge that the ordinary release would read as satisfied, it and the run behind it end `blocked`, each naming the run in front; and behind a completed run while new work is held it stays `waiting` with nothing planned.
+
 `instanceReading.test.ts` is the twentieth of the twenty that open the database, and it is the half of one word that no pure function can be asked about.
 
 `instanceStatus` decides which of the six readings a stored row is and is tested beside `haltPlan`; what it decides *from* is a count over two tables, because a graph is half runs and half a ledger of blocks that are not runs yet — and both halves can be live, and both can be written off.

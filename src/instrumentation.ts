@@ -208,10 +208,11 @@ export async function register() {
 
       // Last, because it reads what the others left: a workflow instance the
       // process died half way through halting. `reconcileOnBoot` has already
-      // closed out its running, queued and waiting members; a *paused* one
-      // inside the resume grace period survives that on purpose, and without
-      // this the sweeper would re-queue it under a workflow the page says is
-      // stopped.
+      // closed out its running and queued members and the waiting ones behind
+      // them; a *paused* one inside the resume grace period survives that on
+      // purpose, and so does a waiting one behind it or behind held work, and
+      // without this the sweeper would re-queue the one, or a release pass
+      // admit the other, under a workflow the page says is stopped.
       const { reconcileBlocksOnBoot, reconcileHaltsOnBoot } = await import(
         "./lib/workflows"
       );
