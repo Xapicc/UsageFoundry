@@ -258,12 +258,13 @@ export function touchedMapView(
   const changedSet = changedSetOf(diff);
   const changed = changedSet.known ? changedSet.changed : [];
   const uncommitted = changedSet.known ? changedSet.uncommitted : [];
+  const renamedAway = changedSet.known ? changedSet.renamedAway : [];
 
   if (touched.kind === "empty") {
     if (changed.length === 0) return { kind: "idle", cycles: touched.cycles };
     return {
       kind: "map",
-      report: reconcileTouches([], changed, uncommitted),
+      report: reconcileTouches([], changed, uncommitted, renamedAway),
       cycles: touched.cycles,
       changedKnown: true,
       diffReason: null,
@@ -273,7 +274,12 @@ export function touchedMapView(
 
   return {
     kind: "map",
-    report: reconcileTouches(touched.touches, changed, uncommitted),
+    report: reconcileTouches(
+      touched.touches,
+      changed,
+      uncommitted,
+      renamedAway,
+    ),
     cycles: touched.cycles,
     changedKnown: changedSet.known,
     diffReason: changedSet.known ? null : changedSet.reason,

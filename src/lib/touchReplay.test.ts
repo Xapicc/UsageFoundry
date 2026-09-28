@@ -73,7 +73,7 @@ function planFor(
         }),
       );
   }
-  const report = reconcileTouches([...distinct.values()], options.changed ?? [], []);
+  const report = reconcileTouches([...distinct.values()], options.changed ?? [], [], []);
   return planTouchedMap(buildTouchTree(report), {
     budget: options.budget ?? 200,
     expanded: options.expanded,

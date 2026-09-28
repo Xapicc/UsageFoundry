@@ -71,7 +71,9 @@ const changedFiles = (paths: string[]): RunDiffDTO["files"] =>
 
 /** A tree over `paths`, all read once, with nothing in the diff. */
 function treeOf(paths: string[]) {
-  return buildTouchTree(reconcileTouches(paths.map((path) => touch({ path })), [], []));
+  return buildTouchTree(
+    reconcileTouches(paths.map((path) => touch({ path })), [], [], []),
+  );
 }
 
 describe("path arithmetic", () => {
@@ -134,6 +136,7 @@ describe("buildTouchTree", () => {
         [touch({ path: "src/a.ts" }), touch({ path: "/tmp/scratch.txt", outside: true })],
         [],
         [],
+        [],
       ),
     );
 
@@ -157,6 +160,7 @@ describe("buildTouchTree", () => {
         touch({ path: "src/both.ts", tool: "Edit" }),
       ],
       ["src/wrote.ts", "src/both.ts", "src/bashed.ts"],
+      [],
       [],
     );
     const tree = buildTouchTree(report);
@@ -401,6 +405,41 @@ describe("touchedMapView", () => {
     assert.deepEqual(
       view.report.touchedNotChanged.map((f) => f.path),
       ["src/read.ts"],
+    );
+  });
+
+  it("marks a renamed-away file the run read as in the diff", () => {
+    // The page's inspector reads `inDiff` off this same report, and it once
+    // said "not changed" over a path that is gone from the branch.
+    const view = touchedMapView(
+      { kind: "report", touches: [touch({ path: "src/old.ts" })], cycles: 1 },
+      diff({
+        files: [
+          {
+            path: "src/new.ts",
+            oldPath: "src/old.ts",
+            status: "renamed",
+            added: 1,
+            deleted: 1,
+            binary: false,
+            patch: null,
+            patchTruncated: false,
+          },
+        ],
+      }),
+    );
+
+    assert.equal(view.kind, "map");
+    if (view.kind !== "map") return;
+    assert.equal(view.changedKnown, true);
+    assert.deepEqual(
+      view.report.touchedAndChanged.map((f) => f.path),
+      ["src/old.ts"],
+    );
+    assert.deepEqual(view.report.touchedNotChanged, []);
+    assert.deepEqual(
+      view.report.changedNotTouched.map((f) => f.path),
+      ["src/new.ts"],
     );
   });
 
