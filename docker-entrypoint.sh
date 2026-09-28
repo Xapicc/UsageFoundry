@@ -97,6 +97,21 @@ if [ -n "${UF_AGENT_UID:-}" ] && [ -d "$PY_TOOLS_VOLUME" ]; then
   fi
 fi
 
+# Local-model runs' Claude Code home, in its own named volume so a picked-up
+# local run still has the session it resumes. The same ownership guard:
+# `ensureLocalConfigDir` re-owns the directory itself every cycle, but not the
+# sessions inside it, which a changed UF_AGENT_UID would leave unwritable. `-R`
+# does not follow the two links into ~/.claude that directory holds.
+CLAUDE_LOCAL_VOLUME=/home/node/.claude-local
+if [ -n "${UF_AGENT_UID:-}" ] && [ -d "$CLAUDE_LOCAL_VOLUME" ]; then
+  want="${UF_AGENT_UID}:${UF_AGENT_GID:-$UF_AGENT_UID}"
+  have="$(stat -c '%u:%g' "$CLAUDE_LOCAL_VOLUME" 2>/dev/null || echo '')"
+  if [ "$have" != "$want" ] && ! chown -R "$want" "$CLAUDE_LOCAL_VOLUME" 2>/dev/null; then
+    echo "[usagefoundry] cannot give $CLAUDE_LOCAL_VOLUME to $want — a local-model" \
+         "run will fail on a session directory it cannot write." >&2
+  fi
+fi
+
 # The Playwright browsers, and the one part of them that is not the image's.
 #
 # `/opt/playwright/browsers` ships with its contents root-owned and the directory

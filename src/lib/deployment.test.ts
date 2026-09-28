@@ -2297,3 +2297,57 @@ describe("the rotation cost of every environment-sourced value is recorded", () 
     );
   });
 });
+
+/**
+ * Where a local-model run's sessions live, pinned across the four places that
+ * have to agree for a picked-up local run to find the session it resumes.
+ *
+ * `config.ts` derives the directory from `CLAUDE_CONFIG_DIR`, compose mounts a
+ * volume over it, the image creates it and the entrypoint re-owns it. While it
+ * was the writable layer, an `up --build` left every local run's session gone
+ * and picking one up failed within a second on "No conversation found with
+ * session ID". Any one of the four moving puts it back there, with nothing
+ * failing until the next rebuild.
+ */
+describe("a local-model run's session survives the rebuild", () => {
+  const entrypoint = fs.readFileSync(path.join(root, "docker-entrypoint.sh"), "utf8");
+
+  /** The directory the entrypoint treats as the local config home. */
+  function claudeLocalVolume(): string {
+    const match = /^CLAUDE_LOCAL_VOLUME=(\S+)$/m.exec(entrypoint);
+    assert.ok(match, "docker-entrypoint.sh no longer names the local config directory");
+    return match[1];
+  }
+
+  it("is the directory config.ts derives from the container's CLAUDE_CONFIG_DIR", () => {
+    const configDir = /^\s*CLAUDE_CONFIG_DIR:\s*(\S+)\s*$/m.exec(compose)?.[1];
+    assert.ok(configDir, "docker-compose.yml no longer sets CLAUDE_CONFIG_DIR");
+    assert.equal(
+      claudeLocalVolume(),
+      path.posix.join(path.posix.dirname(configDir), ".claude-local"),
+      "LOCAL_CLAUDE_CONFIG_DIR is the sibling .claude-local of CLAUDE_CONFIG_DIR, " +
+        "and the volume is not mounted there",
+    );
+  });
+
+  it("mounts a named volume over that directory", () => {
+    const target = claudeLocalVolume();
+    assert.match(
+      compose,
+      new RegExp(`^\\s*-\\s*[A-Za-z0-9][\\w.-]*:${target}\\s*$`, "m"),
+      `${target} is not a named volume in docker-compose.yml. Without one it ` +
+        `is the image's writable layer, which \`docker compose up --build\` ` +
+        `discards along with every local run's session.`,
+    );
+  });
+
+  it("ships that directory in the image, so a fresh volume is not root's", () => {
+    const target = claudeLocalVolume();
+    assert.match(
+      dockerfile,
+      new RegExp(`mkdir -p[^\\n]*(\\\\\\s*\\n[^\\n]*)*${target}`),
+      `the image never creates ${target}, so the volume created over it belongs ` +
+        `to root until the first local cycle re-owns it`,
+    );
+  });
+});

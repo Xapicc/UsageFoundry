@@ -137,9 +137,10 @@ export const CLAUDE_CONFIG_DIR = env("CLAUDE_CONFIG_DIR", CLAUDE_HOME);
  * operator's own host tree, which `sandboxMountPoints.ts` refuses to do for
  * anything outside a closed list.
  *
- * On a stock install it is `/home/node/.claude-local`, the container's writable
- * layer — the same place `CODEX_HOME` lives, with the same cost: a parked local
- * run's session does not survive `docker compose up --build`.
+ * On a stock install it is `/home/node/.claude-local`, which compose mounts as
+ * the `usagefoundry-claude-local` volume, so a local run's session survives
+ * `docker compose up --build` and can be picked up again. Moving this path
+ * without moving that mount puts the sessions back in the writable layer.
  */
 export const LOCAL_CLAUDE_CONFIG_DIR = path.join(
   path.dirname(CLAUDE_CONFIG_DIR),

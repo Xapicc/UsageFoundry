@@ -550,6 +550,16 @@ services:
       # one built for a different ref rather than needing to start over.
       - usagefoundry-winnow-venv:/home/node/.winnow-venv
 
+      # Local-model runs' Claude Code home, `LOCAL_CLAUDE_CONFIG_DIR`: the
+      # sessions a picked-up local run resumes. A named volume for the reason
+      # the ones above are — the default location is the writable layer — and
+      # losing it is a run that cannot be continued: after an `up --build`,
+      # picking one up failed within a second on "No conversation found with
+      # session ID" (5c71e3e2, 2026-09-28). A sibling of the ~/.claude bind
+      # mount rather than inside it, because these transcripts are kept out of
+      # every meter that scans that tree.
+      - usagefoundry-claude-local:/home/node/.claude-local
+
       # Where `scripts/backup-db.mjs` writes, and the one thing here that is
       # deliberately *not* the named volume above: a snapshot kept inside the
       # volume dies with `docker compose down -v`, which is the command this
@@ -860,4 +870,5 @@ volumes:
   usagefoundry-pytools:
   usagefoundry-winnow:
   usagefoundry-winnow-venv:
+  usagefoundry-claude-local:
   usagefoundry-stacks:

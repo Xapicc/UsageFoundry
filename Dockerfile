@@ -684,6 +684,11 @@ COPY scripts/apply-stacks.mjs ./scripts/
 # agents' ownership — `docker-entrypoint.sh` re-asserts both, because a volume
 # an older release created keeps what it was made with.
 #
+# `/home/node/.claude-local` is the children's once more, as gh's and pytools'
+# are: local-model work cycles run Claude Code with it as their config
+# directory, so it ships owned by `node` and a fresh volume inherits that.
+# Nothing is put in it here; `ensureLocalConfigDir` fills it per cycle.
+#
 # **`/app` is not on that list and must never be put back on it.** It is this
 # server's own bundle — `server.js`, `.next/`, the standalone `node_modules/`
 # and `scripts/` — and root is what executes it, so `node:node` there made the
@@ -708,7 +713,7 @@ COPY scripts/apply-stacks.mjs ./scripts/
 RUN mkdir -p /data /workspace /workspace2 /workspace3 /workspace4 /home/node/.claude \
       /home/node/go/build-cache /home/node/.local/share/gh/extensions \
       /home/node/pytools/tools /home/node/pytools/bin /home/node/pytools/python \
-      /var/lib/winnow \
+      /var/lib/winnow /home/node/.claude-local \
  && chown -R node:node /workspace /workspace2 /workspace3 /workspace4 /home/node \
  && chown root:root /data \
  && chmod 0700 /data
