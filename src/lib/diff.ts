@@ -119,6 +119,14 @@ const MAX_PATCH_BYTES = 3_000_000;
  * thousands of pathspecs on one argv.
  */
 const MAX_SIZED_FILES = 200;
+/**
+ * First-parent merges `targetMergeOn` walks looking for the target's. Each
+ * costs one git child on every diff read, and the page, every review and every
+ * validation read one. A run's branch merges a handful of times; past this many
+ * the diff stays measured from `base`, and the card then says nothing, which is
+ * true.
+ */
+const MAX_MERGES_WALKED = 20;
 
 const PATCH_LIMITS = {
   maxFiles: MAX_PATCH_FILES,
@@ -295,17 +303,18 @@ export interface TargetMerge {
 }
 
 /**
- * Read the newest merge off `git rev-list --first-parent --merges --parents
- * -n1`, which prints `<merge> <first parent> <second parent>…` or nothing.
+ * Read every merge off `git rev-list --first-parent --merges --parents`, which
+ * prints `<merge> <first parent> <second parent>…` per line, newest first.
  *
  * The second parent and never the first: the first is the branch before the
  * merge, and measured from there the run's own commits vanish from its diff.
  */
-export function parseNewestMerge(
-  revList: string,
-): Pick<TargetMerge, "merge" | "commit"> | null {
-  const [merge, , commit] = revList.trim().split(/\s+/);
-  return merge && commit ? { merge, commit } : null;
+export function parseMerges(revList: string): Pick<TargetMerge, "merge" | "commit">[] {
+  return revList
+    .split("\n")
+    .map((line) => line.trim().split(/\s+/))
+    .filter(([merge, , commit]) => merge && commit)
+    .map(([merge, , commit]) => ({ merge, commit }));
 }
 
 /**
@@ -573,14 +582,17 @@ async function rangeDiff(run: RunRow): Promise<RunDiff> {
 /**
  * The newest merge of `target` into the branch between `base` and `head`.
  *
- * Only the newest, and only along the first-parent line: that is the branch's
- * own history, and a later merge of the target carries everything an earlier
- * one did. Its second parent must be on the target: another branch's tip can
- * stand where the target never was, and a diff from there is not what landing
- * this branch would bring. Anything git cannot answer here leaves the diff
- * measured from `base`, which is what the card then says it is.
+ * The newest, and only along the first-parent line: that is the branch's own
+ * history, and a later merge of the target carries everything an earlier one
+ * did. Its second parent must be on the target: another branch's tip can stand
+ * where the target never was, and a diff from there is not what landing this
+ * branch would bring. So a merge of some other branch on top is walked past,
+ * not taken as the end of the search: stopping there measured the branch from
+ * `base` and counted everything the target gained as the run's work. Anything
+ * git cannot answer here leaves the diff measured from `base`, which is what
+ * the card then says it is.
  */
-async function targetMergeOn(
+export async function targetMergeOn(
   repoRoot: string,
   target: string | null,
   base: string,
@@ -592,14 +604,19 @@ async function targetMergeOn(
     "--first-parent",
     "--merges",
     "--parents",
-    "-n1",
+    `-n${MAX_MERGES_WALKED}`,
     `${base}..${head}`,
   ]);
-  const newest = merges.ok ? parseNewestMerge(merges.stdout) : null;
-  if (!newest) return null;
+  if (!merges.ok) return null;
 
-  const onTarget = await git(repoRoot, ["merge-base", "--is-ancestor", newest.commit, target]);
-  return onTarget.ok ? { ...newest, target } : null;
+  // One at a time and newest first: the first merge on the target is the
+  // answer, and asking about the older ones as well would spend their
+  // children for nothing.
+  for (const merge of parseMerges(merges.stdout)) {
+    const onTarget = await git(repoRoot, ["merge-base", "--is-ancestor", merge.commit, target]);
+    if (onTarget.ok) return { ...merge, target };
+  }
+  return null;
 }
 
 /**
