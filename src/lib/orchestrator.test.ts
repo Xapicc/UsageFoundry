@@ -5821,6 +5821,53 @@ describe("picking up a blocked run", () => {
         "in its first cycle would be sent past the orphaned-branch guard",
     );
   });
+
+  it("re-blocks a woken dependent that another dependency still fails", () => {
+    // A and C both ended `failed`, and B, behind both of them on-success, is
+    // the blocked row their cascade wrote. Picking A up unsets only A: C still
+    // fails B, so B must come back `blocked` naming C in the same call — not
+    // sit `waiting` with a null reason until an unrelated transition runs the
+    // pass, or a restart closes it out with a sentence about itself.
+    const a = insertRun({ status: "failed", workDir: `${ws}/RepoOne` });
+    const c = insertRun({ status: "failed", workDir: `${ws}/Other` });
+    const b = insertRun({ status: "blocked", workDir: null });
+    const link = db()
+      .prepare(
+        "INSERT INTO run_deps (run_id, depends_on, edge, continue_branch, created_at)" +
+          " VALUES (?, ?, 'on-success', 0, ?)",
+      );
+    link.run(b, a, Date.now());
+    link.run(b, c, Date.now());
+    // A occupies its folder, so the `promoteQueued` at the end of the reopen
+    // has nothing to start. The subject here is the row, not the spawn.
+    insertRun({ status: "running", workDir: `${ws}/RepoOne` });
+
+    assert.equal(reopenRun(a, RAISED).ok, true);
+    assert.equal(
+      getRun(a)!.status,
+      "queued",
+      "picked up from a terminal status, so it joins the queue",
+    );
+
+    const row = getRun(b)!;
+    assert.equal(
+      row.status,
+      "blocked",
+      "the woken row is decided in the pass that follows the revive, on what is true now",
+    );
+    // The app names a run by its first eight characters, and the test ids
+    // carry no regex metacharacters, so the raw slice is a safe pattern.
+    assert.match(
+      row.stop_reason ?? "",
+      new RegExp(c.slice(0, 8)),
+      "the reason names the dependency that still stands",
+    );
+    assert.doesNotMatch(
+      row.stop_reason ?? "",
+      new RegExp(a.slice(0, 8)),
+      "…not the one that has since been undone",
+    );
+  });
 });
 
 /**

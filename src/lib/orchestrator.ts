@@ -5085,11 +5085,13 @@ export function haltedWorkflowOf(runId: string): string | null {
  * pass decides it again on what is true now.
  *
  * Deliberately not a release: this reopens the *question*, and `releasePass`
- * still answers it. A dependency that is now satisfied admits the run; one that
- * is still terminal re-blocks it within the same call, with a sentence about
- * the current ending rather than the one that has since been undone. So the
- * worst this can do is rewrite a stale reason, and the row never skips the
- * admission that plans its workspace.
+ * still answers it — the caller runs that pass, `reopenRun` whenever this call
+ * woke anything, because a woken row left undecided is a row nothing else
+ * re-decides. A dependency that is now satisfied admits the run; one that is
+ * still terminal re-blocks it in the pass, with a sentence about the current
+ * ending rather than the one that has since been undone. So the worst the pair
+ * can do is rewrite a stale reason, and the row never skips the admission that
+ * plans its workspace.
  *
  * `work_dir IS NULL` is one half of the safety condition and
  * `revivableDependents` says why: a run refused by its own guard is `blocked`
@@ -12311,11 +12313,20 @@ export function reopenRun(
   // Whatever this run's own ending blocked is asked again too, transitively:
   // the reason those rows carry is a sentence about an ending that is now being
   // undone, and nothing else would ever revisit it.
-  reviveBlockedDependents([id]);
+  const woken = reviveBlockedDependents([id]);
 
-  if (waitingAgain) {
+  if (waitingAgain || woken > 0) {
     // Decides this row and everything just woken behind it, in one pass and on
     // what is true now — admitting what can start and re-blocking what cannot.
+    //
+    // The pass must run whenever the revive woke anything, not only when this
+    // row went back to waiting: a run picked up from a terminal status joins
+    // the queue, and a woken dependent that another dependency still fails
+    // would otherwise sit `waiting` with a null reason — its own answer
+    // deferred to this row's next ending, which a run that never promotes
+    // never reaches. Nothing behind this row is released early: it is
+    // non-terminal now, and a run is admitted only once every one of its
+    // dependencies has satisfied it.
     releaseDependents();
   }
 
