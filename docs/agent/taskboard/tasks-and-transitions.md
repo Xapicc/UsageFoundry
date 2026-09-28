@@ -56,10 +56,10 @@ Eight edges exist and every pair not on the list is refused:
 | `open` | `claimed` | any actor, and the claim names the run that will hold it — **nobody** while the task is operator-only |
 | `open` | `done` | operator only — a run claims first |
 | `open` | `dropped` | operator only |
-| `claimed` | `open` | operator, or the run that holds it (releasing, through `release_task`) |
+| `claimed` | `open` | operator, or the run that holds it (releasing, through `release_task`) — or a review block, for a rejected run's claim (`reopenRejectedTask`) |
 | `claimed` | `done` | operator, or the run that holds it |
 | `claimed` | `dropped` | operator only |
-| `done` | `open` | operator only (re-opening) |
+| `done` | `open` | operator (re-opening) — or a review block, for a tick a rejected run left (`reopenRejectedTask`) |
 | `dropped` | `open` | operator only |
 
 Four of those are load-bearing beyond their own row. **A run may complete only

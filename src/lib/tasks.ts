@@ -393,6 +393,78 @@ function holderRefusal(
 }
 
 /**
+ * Whether a task goes back to `open` because the work that claimed or closed it
+ * was rejected by a workflow's review block, or why it stays where it is.
+ *
+ * The one move off the transition table that is not made by an actor asking,
+ * and it is narrow on purpose. A review block sets a branch aside when a
+ * frontier model still rejects it after the last fix round; the task that
+ * branch was for is then claimed by, or closed as done by, a run whose work was
+ * never merged — a claim nobody is working and a tick nobody earned. So the
+ * task is reopened **only** when the run holding it is one of the rejected
+ * runs: a task another run holds or closed, and one the operator dropped, are
+ * someone's decision about different work, and are left alone. Pure, so the
+ * rule is tested apart from the write.
+ */
+export function rejectedWorkReopen(
+  task: Pick<Task, "status" | "claimedByRunId" | "completedByRunId">,
+  rejectedRunIds: readonly string[],
+): { reopen: true } | { reopen: false; why: string } {
+  if (task.status === "open") return { reopen: false, why: "it is already open" };
+  if (task.status === "dropped") {
+    return { reopen: false, why: "the operator dropped it" };
+  }
+  const holder = task.status === "claimed" ? task.claimedByRunId : task.completedByRunId;
+  if (holder !== null && rejectedRunIds.includes(holder)) return { reopen: true };
+  return {
+    reopen: false,
+    why:
+      task.status === "claimed"
+        ? "another run holds it"
+        : "it was closed by the operator or by another run",
+  };
+}
+
+/**
+ * Reopen a task whose work a review block rejected, when `rejectedWorkReopen`
+ * says so. The move's effects are `updateTask`'s re-opening ones — both run
+ * columns and `closed_at` cleared — and the write is guarded on the status and
+ * holder it was decided against, so a task moved in between is left as it is.
+ */
+export function reopenRejectedTask(
+  id: string,
+  rejectedRunIds: readonly string[],
+):
+  | { ok: true; task: Task; reopened: true }
+  | { ok: true; task: Task; reopened: false; why: string }
+  | { ok: false; error: string } {
+  const task = getTask(id);
+  if (!task) return { ok: false, error: "No such task." };
+  const decision = rejectedWorkReopen(task, rejectedRunIds);
+  if (!decision.reopen) return { ok: true, task, reopened: false, why: decision.why };
+  const changed = db()
+    .prepare(
+      `UPDATE tasks
+          SET status = 'open', claimed_by_run_id = NULL, completed_by_run_id = NULL,
+              closed_at = NULL, updated_at = ?
+        WHERE id = ? AND status = ?
+          AND COALESCE(claimed_by_run_id, '') = ?
+          AND COALESCE(completed_by_run_id, '') = ?`,
+    )
+    .run(
+      Date.now(),
+      id,
+      task.status,
+      task.claimedByRunId ?? "",
+      task.completedByRunId ?? "",
+    ).changes;
+  if (changed === 0) {
+    return { ok: true, task: getTask(id) ?? task, reopened: false, why: "it moved while this was deciding" };
+  }
+  return { ok: true, task: getTask(id)!, reopened: true };
+}
+
+/**
  * Why this actor may not set or clear `needs_frontier`, or null when it may.
  *
  * `operatorOnlyRefusal`'s rule without the claim half: anyone may mark a task

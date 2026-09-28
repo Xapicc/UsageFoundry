@@ -27,6 +27,8 @@ let root: string;
 const MOUNT_DIR = "review-block-mount";
 const INSTANCE = "inst-review-1";
 const TASK = "task-hard-one";
+const DONE_TASK = "task-closed-by-bad";
+const OTHERS_TASK = "task-closed-by-other";
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, {
@@ -110,11 +112,20 @@ before(async () => {
   insertRun.run("run-good", repoRoot(), "Do it. APPROVE-ME", Date.now(), "uf/repo-good", base, repoRoot());
   insertRun.run("run-bad", repoRoot(), "Do it badly.", Date.now(), "uf/repo-bad", base, repoRoot());
 
-  db.prepare(
-    `INSERT INTO tasks (id, title, body, status, priority, origin, created_at, updated_at)
-     VALUES (?, 'The hard one', 'brief', 'claimed', 'normal', 'operator', 0, 0)`,
-  ).run(TASK);
-  db.prepare("INSERT INTO run_tasks (run_id, task_id, position) VALUES ('run-bad', ?, 0)").run(TASK);
+  // One task the rejected run still holds, one it closed as done, and one
+  // another run closed: the first two come back open, the third is left.
+  const insertTask = db.prepare(
+    `INSERT INTO tasks (id, title, body, status, priority, origin, claimed_by_run_id,
+       completed_by_run_id, closed_at, created_at, updated_at)
+     VALUES (?, ?, 'brief', ?, 'normal', 'operator', ?, ?, ?, 0, 0)`,
+  );
+  insertTask.run(TASK, "The hard one", "claimed", "run-bad", null, null);
+  insertTask.run(DONE_TASK, "The one it closed", "done", null, "run-bad", 1);
+  insertTask.run(OTHERS_TASK, "Someone else's", "done", null, "run-other", 1);
+  const link = db.prepare("INSERT INTO run_tasks (run_id, task_id, position) VALUES ('run-bad', ?, ?)");
+  link.run(TASK, 0);
+  link.run(DONE_TASK, 1);
+  link.run(OTHERS_TASK, 2);
 
   const node = (id: string, kind: string, extra: Record<string, unknown> = {}) => ({
     id,
@@ -199,14 +210,36 @@ describe("a review block with no fix rounds", () => {
     assert.match(block.error, /Approved 1 of 2 branch\(es\); set aside/);
     assert.ok(block.cost_usd > 0, "the reviews' cost lands on the block");
 
-    const task = db
-      .prepare("SELECT needs_frontier FROM tasks WHERE id=?")
-      .get(TASK) as { needs_frontier: number };
-    assert.equal(task.needs_frontier, 1);
-    const comments = db
-      .prepare("SELECT body FROM task_comments WHERE task_id=?")
-      .all(TASK) as Array<{ body: string }>;
-    assert.equal(comments.length, 1);
-    assert.match(comments[0].body, /set run run-bad's branch aside/);
+    const tasks = db
+      .prepare(
+        "SELECT id, status, needs_frontier, claimed_by_run_id, completed_by_run_id, closed_at FROM tasks ORDER BY id",
+      )
+      .all() as Array<{
+      id: string;
+      status: string;
+      needs_frontier: number;
+      claimed_by_run_id: string | null;
+      completed_by_run_id: string | null;
+      closed_at: number | null;
+    }>;
+    const byId = new Map(tasks.map((t) => [t.id, t]));
+    for (const id of [TASK, DONE_TASK]) {
+      const t = byId.get(id)!;
+      assert.deepEqual(
+        [t.status, t.claimed_by_run_id, t.completed_by_run_id, t.closed_at, t.needs_frontier],
+        ["open", null, null, null, 1],
+        id,
+      );
+    }
+    const others = byId.get(OTHERS_TASK)!;
+    assert.equal(others.status, "done", "another run's closed task is left alone");
+    assert.equal(others.needs_frontier, 1);
+
+    const comment = (id: string) =>
+      (db.prepare("SELECT body FROM task_comments WHERE task_id=?").all(id) as Array<{ body: string }>)
+        .map((c) => c.body)
+        .join("\n");
+    assert.match(comment(TASK), /set run run-bad's branch aside.*so this task is open again/);
+    assert.match(comment(OTHERS_TASK), /left done because it was closed by the operator or by another run/);
   });
 });

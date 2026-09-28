@@ -89,6 +89,7 @@ import {
   currentTaskKnowledge,
   listTasks,
   readTaskLinks,
+  reopenRejectedTask,
   resolveTaskFolder,
   tasksLinkedToRun,
   updateTask,
@@ -7117,11 +7118,13 @@ async function driveReviewItem(
 
 /**
  * Set one branch aside, and — when a frontier model turned it down — mark every
- * task it was for as needs-frontier, with a note saying why on each.
+ * task it was for as needs-frontier, reopen it, and say why on each.
  *
- * The mark and nothing more. A task the rejected run already closed stays
- * closed: `done → open` is the operator's move and no one else's, so the note
- * is what tells them the work behind the tick was never landed.
+ * Reopened because the claim or the tick the rejected run left on it is now
+ * false: nobody is working it and the work was never merged. Only through
+ * `reopenRejectedTask`, which moves a task back only when the run holding it is
+ * one of the rejected ones — a task another run holds or closed, or one the
+ * operator dropped, is left alone and the note says so.
  */
 function setAside(
   instanceId: string,
@@ -7139,19 +7142,29 @@ function setAside(
   });
   if (!needsFrontier) return;
   const actor = { kind: "block" as const };
+  // The runs whose work was turned down: the one the branch began with, which
+  // is the one that claimed its tasks, and the last link, in case it was the
+  // one that closed them.
+  const rejected = [...new Set([originRunId, lastRunId])];
   for (const task of tasksLinkedToRun(originRunId)) {
     if (!task.status) continue;
+    // The mark before the reopen, so the task is never open and unmarked — a
+    // local pass reading the board in between would take it straight back.
     updateTask(task.id, { needsFrontier: true }, actor);
+    const reopened = reopenRejectedTask(task.id, rejected);
+    const state =
+      reopened.ok && reopened.reopened
+        ? "so this task is open again"
+        : reopened.ok
+          ? `and this task was left ${reopened.task.status} because ${reopened.why}`
+          : "and this task could not be read back";
     addTaskComment(
       task.id,
       {
         body:
           `“${blockName}” set run ${originRunId.slice(0, 8)}'s branch aside: ${reason}. ` +
-          "Its work was not merged, and no local-model run will take this task on " +
-          "until the mark is cleared." +
-          (task.status === "done"
-            ? " The task was already closed by that run; re-open it if the work still needs doing."
-            : ""),
+          `Its work was not merged, ${state}. It is marked needs-frontier, so no ` +
+          "local-model run will take it on until the mark is cleared.",
       },
       actor,
     );

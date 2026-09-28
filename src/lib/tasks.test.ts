@@ -72,6 +72,7 @@ const {
   normalizeTaskPatch,
   needsFrontierRefusal,
   operatorOnlyRefusal,
+  rejectedWorkReopen,
   readTaskLinks,
   recordRunTasks,
   runLinksForTasks,
@@ -1229,6 +1230,38 @@ test("a needs-frontier task is refused for a local run and allowed for any other
     true,
     "naming it as context is still allowed",
   );
+});
+
+/**
+ * A task goes back to open when the run holding it was rejected by a review
+ * block, and not otherwise. Wrong one way, a claim nobody is working and a tick
+ * nobody earned stay on the board; wrong the other, a review block undoes work
+ * another run finished or a task the operator dropped on purpose.
+ */
+test("a rejected run's claim or tick is reopened, and nobody else's", () => {
+  const rejected = ["run-bad", "run-fix"];
+  const task = (
+    status: TaskStatus,
+    claimedByRunId: string | null,
+    completedByRunId: string | null,
+  ) => ({ status, claimedByRunId, completedByRunId });
+  assert.deepEqual(rejectedWorkReopen(task("claimed", "run-bad", null), rejected), {
+    reopen: true,
+  });
+  assert.deepEqual(rejectedWorkReopen(task("done", null, "run-fix"), rejected), {
+    reopen: true,
+  });
+  for (const [t, why] of [
+    [task("claimed", "run-other", null), /another run holds it/],
+    [task("done", null, "run-other"), /closed by the operator or by another run/],
+    [task("done", null, null), /closed by the operator or by another run/],
+    [task("dropped", null, null), /the operator dropped it/],
+    [task("open", null, null), /already open/],
+  ] as const) {
+    const decision = rejectedWorkReopen(t, rejected);
+    assert.equal(decision.reopen, false, JSON.stringify(t));
+    assert.match(decision.reopen ? "" : decision.why, why);
+  }
 });
 
 test("anyone may mark a task needs-frontier, and only the operator clears it", () => {
