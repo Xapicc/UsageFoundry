@@ -44,12 +44,14 @@ function diff(over: Partial<RunDiffDTO> = {}): RunDiffDTO {
     reason: null,
     base: "main",
     branch: "uf/x",
+    measuredFrom: null,
     head: null,
     files: [],
     filesChanged: 0,
     added: 0,
     deleted: 0,
     omittedPatches: 0,
+    patchFailure: null,
     uncommitted: [],
     caveat: null,
     ...over,
@@ -68,12 +70,36 @@ const changedFiles = (list: string[]): RunDiffDTO["files"] =>
     patchTruncated: false,
   }));
 
+/** One renamed file: `git mv` committed as a single diff entry. */
+const renamedFile = (oldPath: string, path: string): RunDiffDTO["files"][number] => ({
+  path,
+  oldPath,
+  status: "renamed",
+  added: 1,
+  deleted: 1,
+  binary: false,
+  patch: null,
+  patchTruncated: false,
+});
+
+/** One copied file: unlike a rename, its source stays where it was. */
+const copiedFile = (oldPath: string, path: string): RunDiffDTO["files"][number] => ({
+  path,
+  oldPath,
+  status: "copied",
+  added: 1,
+  deleted: 0,
+  binary: false,
+  patch: null,
+  patchTruncated: false,
+});
+
 /** `reconcileTouches` the way both surfaces call it: through `changedSetOf`. */
 function reconcileAgainst(touches: RunTouchDTO[], against: RunDiffDTO) {
   const set = changedSetOf(against);
   return set.known
-    ? reconcileTouches(touches, set.changed, set.uncommitted)
-    : reconcileTouches(touches, [], []);
+    ? reconcileTouches(touches, set.changed, set.uncommitted, set.renamedAway)
+    : reconcileTouches(touches, [], [], []);
 }
 
 describe("reconcileTouches", () => {
@@ -84,6 +110,7 @@ describe("reconcileTouches", () => {
         touch({ path: "src/b.ts", tool: "Edit" }),
       ],
       ["src/b.ts", "src/c.ts"],
+      [],
       [],
     );
 
@@ -106,6 +133,7 @@ describe("reconcileTouches", () => {
       ],
       ["src/a.ts"],
       [],
+      [],
     );
 
     assert.deepEqual(paths(report.outsideCheckout), ["/tmp/scratch.txt"]);
@@ -124,6 +152,7 @@ describe("reconcileTouches", () => {
         touch({ path: "src/busy.ts", tool: "Read", calls: 3 }),
         touch({ path: "src/busy.ts", tool: "Edit", calls: 1 }),
       ],
+      [],
       [],
       [],
     );
@@ -145,6 +174,7 @@ describe("reconcileTouches", () => {
       [touch({ path: "src/a.ts", subagent: "Explore", parentToolUseId: "toolu_1" })],
       [],
       [],
+      [],
     );
     assert.deepEqual(report.touchedNotChanged[0].by, ["Explore"]);
   });
@@ -159,6 +189,7 @@ describe("reconcileTouches", () => {
       ],
       [],
       [],
+      [],
     );
     assert.deepEqual(report.touchedNotChanged[0].by, ["Explore", "main"]);
   });
@@ -166,7 +197,7 @@ describe("reconcileTouches", () => {
   it("puts every touch in touchedNotChanged when nothing changed", () => {
     // A run whose branch has no commits on it. The empty side must not read as
     // "everything the run touched was also changed".
-    const report = reconcileTouches([touch({ path: "src/a.ts" })], [], []);
+    const report = reconcileTouches([touch({ path: "src/a.ts" })], [], [], []);
 
     assert.deepEqual(report.changedNotTouched, []);
     assert.deepEqual(report.touchedAndChanged, []);
@@ -185,6 +216,7 @@ describe("reconcileTouches", () => {
       ],
       [],
       [],
+      [],
     );
 
     assert.equal(report.touchedNotChanged.length, 1);
@@ -196,7 +228,7 @@ describe("reconcileTouches", () => {
   it("orders a group with no counts by path rather than by arrival", () => {
     // `changedNotTouched` has no calls to rank by, and the diff's own order
     // varies between two reads of the same run.
-    const report = reconcileTouches([], ["z.ts", "a.ts", "m.ts"], []);
+    const report = reconcileTouches([], ["z.ts", "a.ts", "m.ts"], [], []);
     assert.deepEqual(paths(report.changedNotTouched), ["a.ts", "m.ts", "z.ts"]);
     assert.equal(report.distinctTouched, 0);
   });
@@ -207,6 +239,7 @@ describe("reconcileTouches", () => {
     const report = reconcileTouches(
       [touch({ path: "src/a.ts", tool: "SomeFutureTool", calls: 2 })],
       ["src/a.ts"],
+      [],
       [],
     );
     assert.deepEqual(paths(report.touchedAndChanged), ["src/a.ts"]);
@@ -220,7 +253,12 @@ describe("changedSetOf", () => {
     const set = changedSetOf(
       diff({ files: changedFiles(["src/a.ts"]), uncommitted: [" M src/b.ts"] }),
     );
-    assert.deepEqual(set, { known: true, changed: ["src/a.ts"], uncommitted: ["src/b.ts"] });
+    assert.deepEqual(set, {
+      known: true,
+      changed: ["src/a.ts"],
+      renamedAway: [],
+      uncommitted: ["src/b.ts"],
+    });
   });
 
   it("gives a run that worked in the operator's checkout its own sentence", () => {
@@ -232,6 +270,31 @@ describe("changedSetOf", () => {
     );
     assert.equal(set.known, false);
     assert.match(set.known ? "" : (set.reason ?? ""), /worked directly in your checkout/);
+  });
+
+  it("carries a rename's old name on its own, out of the changed list", () => {
+    // The split is the whole of the rule: the new name is what the diff lists,
+    // and the old one rides along separately so a touched file matching it can
+    // be marked changed without being listed as changed-not-touched.
+    const set = changedSetOf(
+      diff({ files: [renamedFile("src/old.ts", "src/new.ts")] }),
+    );
+    assert.deepEqual(set, {
+      known: true,
+      changed: ["src/new.ts"],
+      renamedAway: ["src/old.ts"],
+      uncommitted: [],
+    });
+  });
+
+  it("carries no renamed-away name for a copy, whose source still stands", () => {
+    const set = changedSetOf(diff({ files: [copiedFile("src/src.ts", "src/copy.ts")] }));
+    assert.deepEqual(set, {
+      known: true,
+      changed: ["src/copy.ts"],
+      renamedAway: [],
+      uncommitted: [],
+    });
   });
 
   it("passes the diff route's own reason on when there is no diff", () => {
@@ -306,6 +369,42 @@ describe("reconciling against a range diff with uncommitted work", () => {
     assert.deepEqual(paths(report.touchedNotChanged), ["src/app.ts"]);
     assert.deepEqual(report.touchedUncommitted, []);
     assert.equal(report.touchedNotChanged[0].inDiff, false);
+  });
+});
+
+describe("reconciling against a rename", () => {
+  it("marks a renamed-away file the run read as changed rather than not changed", () => {
+    // The run read `src/old.ts` and then committed a rename of it to
+    // `src/new.ts` — via `git mv` in a `Bash`, or a `Write` of the new name
+    // plus a delete of the old. On the branch the old path no longer exists,
+    // so "not changed" over it is the same false claim an uncommitted file is
+    // kept out of.
+    const report = reconcileAgainst(
+      [touch({ path: "src/old.ts" })],
+      diff({ files: [renamedFile("src/old.ts", "src/new.ts")] }),
+    );
+
+    assert.deepEqual(paths(report.touchedAndChanged), ["src/old.ts"]);
+    assert.equal(report.touchedAndChanged[0].inDiff, true);
+    assert.deepEqual(report.touchedNotChanged, []);
+    // Not "changed, never named" either: that group iterates the changed list,
+    // and the old name is not in it — a path no tool call named, and listing
+    // it would claim a file that was never there under that name.
+    assert.deepEqual(paths(report.changedNotTouched), ["src/new.ts"]);
+  });
+
+  it("keeps a copy's source under not changed: it still stands on the branch", () => {
+    // A rename's old name is gone from the branch; a copy's is not. A run that
+    // read the source of a copy changed nothing about it, and the two statuses
+    // are the whole difference between the two cases.
+    const report = reconcileAgainst(
+      [touch({ path: "src/src.ts" })],
+      diff({ files: [copiedFile("src/src.ts", "src/copy.ts")] }),
+    );
+
+    assert.deepEqual(paths(report.touchedNotChanged), ["src/src.ts"]);
+    assert.deepEqual(report.touchedAndChanged, []);
+    assert.deepEqual(paths(report.changedNotTouched), ["src/copy.ts"]);
   });
 });
 

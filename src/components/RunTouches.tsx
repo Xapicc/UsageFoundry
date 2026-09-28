@@ -151,8 +151,13 @@ export function RunTouches({ run, diff }: { run: RunDTO; diff: RunDiffDTO }) {
   const report = useMemo(() => {
     if (touched?.kind !== "report") return null;
     return changedSet.known
-      ? reconcileTouches(touched.touches, changedSet.changed, changedSet.uncommitted)
-      : reconcileTouches(touched.touches, [], []);
+      ? reconcileTouches(
+          touched.touches,
+          changedSet.changed,
+          changedSet.uncommitted,
+          changedSet.renamedAway,
+        )
+      : reconcileTouches(touched.touches, [], [], []);
   }, [touched, changedSet]);
 
   return (

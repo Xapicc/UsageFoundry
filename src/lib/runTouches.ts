@@ -24,7 +24,11 @@ export interface TouchedFile {
   reads: number;
   /** Calls that wrote it. */
   writes: number;
-  /** Listed by the branch diff. */
+  /**
+   * Listed by the branch diff, or the source of a file it renamed: a rename's
+   * old name is matched rather than listed, and the branch changed it all the
+   * same — it took the path away.
+   */
   inDiff: boolean;
   /**
    * Left uncommitted in the run's own checkout, so changed but not on the
@@ -143,6 +147,18 @@ export type ChangedSet =
       known: true;
       /** What the branch diff lists. */
       changed: string[];
+      /**
+       * The `oldPath` of every renamed file — the one side of a rename the
+       * diff lists only under its new name.
+       *
+       * Never folded into `changed`: that list feeds "changed, never named",
+       * and an old name in it would claim a file no tool call named. It is
+       * carried on its own so a *touched* file that matches one is marked
+       * changed in `reconcileTouches` — on the branch that path no longer
+       * exists, so "not changed" over it is false — while the old name itself
+       * is never listed as changed-not-touched.
+       */
+      renamedAway: string[];
       /** `uncommittedPaths` over the checkout's status lines. */
       uncommitted: string[];
     }
@@ -171,6 +187,13 @@ export function changedSetOf(diff: RunDiffDTO | null): ChangedSet {
       // would have named, and listing it would put a file in "changed, never
       // named" that was never there under that name.
       changed: diff.files.map((f) => f.path),
+      // The renamed-away names, on their own for the reason above. Renames
+      // only, never copies: a rename's old name is gone from the branch, so a
+      // touched one is changed, while a copy's source still stands there
+      // unchanged — the same `R`/`C` difference the uncommitted side keeps.
+      renamedAway: diff.files.flatMap((f) =>
+        f.status === "renamed" && f.oldPath ? [f.oldPath] : [],
+      ),
       uncommitted: uncommittedPaths(diff.uncommitted),
     };
   }
@@ -272,13 +295,23 @@ function unquoteC(body: string): string {
  * a run edited and never committed back under "not changed". A trailing `/` on
  * one of its paths covers everything under it, which is how git lists an
  * untracked directory.
+ *
+ * `renamedAway` is the `oldPath` of every renamed file, from `changedSetOf`,
+ * and it has no default either: a caller that left it out would put every file
+ * a run renamed away back under "not changed" — on the branch that path no
+ * longer exists, so that is false. It marks a touched file as changed and
+ * nothing else: the list feeds `inDiff` only, because `changedNotTouched`
+ * iterates `changed`, and an old name in there would claim a file no tool
+ * call named.
  */
 export function reconcileTouches(
   touches: readonly RunTouchDTO[],
   changed: readonly string[],
   uncommitted: readonly string[],
+  renamedAway: readonly string[],
 ): TouchReport {
   const changedSet = new Set(changed);
+  const renamedAwaySet = new Set(renamedAway);
   const uncommittedFiles = new Set(uncommitted.filter((p) => !p.endsWith("/")));
   const uncommittedDirs = uncommitted.filter((p) => p.endsWith("/"));
   const isUncommitted = (path: string) =>
@@ -300,7 +333,9 @@ export function reconcileTouches(
         path: row.path,
         reads: 0,
         writes: 0,
-        inDiff: !row.outside && changedSet.has(row.path),
+        inDiff:
+          !row.outside &&
+          (changedSet.has(row.path) || renamedAwaySet.has(row.path)),
         uncommitted: !row.outside && isUncommitted(row.path),
         outside: row.outside,
         by: [],
