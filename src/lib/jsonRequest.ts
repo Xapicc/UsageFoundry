@@ -26,12 +26,27 @@
  * `error: null` means the response carried no message of its own. The caller
  * supplies that sentence, because that copy belongs beside the button that
  * failed.
+ *
+ * `body` is the parsed body of a non-2xx answer that had one, and it is kept
+ * because one caller needs a field `error` does not carry: the health route
+ * names a database it cannot write in `checks.databaseError` and leaves
+ * `error` absent, and `readOnlyBanner` renders that sentence above every page.
+ * A transport failure never got a body, and a body that will not parse leaves
+ * the key absent rather than `null`, so the shape every other caller reads —
+ * `status` and `error` — is unchanged.
  */
 export type JsonFailure = {
   ok: false;
   /** `null` when the request never got an answer at all. */
   status: number | null;
   error: string | null;
+  /**
+   * The parsed body of the answer, when it was JSON and not 2xx: `error` is
+   * read off its `error` key, and the rest is kept for a caller that reads a
+   * field `error` does not carry. Absent when the answer had none it could
+   * parse, or never arrived at all.
+   */
+  body?: unknown;
 };
 
 export type JsonResult<T> = { ok: true; data: T } | JsonFailure;
@@ -74,7 +89,13 @@ export async function jsonRequest<T>(
       ? (body as { error: string }).error
       : null;
 
-  if (!res.ok) return { ok: false, status: res.status, error: explained };
+  if (!res.ok)
+    return {
+      ok: false,
+      status: res.status,
+      error: explained,
+      ...(body !== null ? { body } : {}),
+    };
   if (typeof body !== "object" || body === null) {
     return { ok: false, status: res.status, error: "the answer was not JSON" };
   }

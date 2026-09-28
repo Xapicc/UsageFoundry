@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Notice } from "@/components/ui/Notice";
 import { jsonRequest } from "@/lib/jsonRequest";
+import { readOnlyBanner } from "@/lib/readOnlyBanner";
 
 /**
  * How often the claim is re-read.
@@ -36,13 +37,13 @@ export function ReadOnlyNotice() {
 
     async function read() {
       // The refusal *is* the failure branch: the route answers 503 so a load
-      // balancer can act on it, and `jsonRequest` folds that into `error` — the
-      // sentence the server wrote next to the check that refused. Anything else
-      // that failed (a dropped fetch, a proxy's own 503 with no body) leaves
-      // `error` null and shows nothing.
+      // balancer can act on it. `readOnlyBanner` decides what that 503 may say
+      // — the sentence the server wrote, out of `checks` or out of `error` —
+      // and what it must not: a dropped fetch, and a 503 whose body a proxy
+      // ate, are not statements about the server and show nothing.
       const res = await jsonRequest<unknown>("/api/health");
       if (!live) return;
-      setRefusal(res.ok ? null : res.error);
+      setRefusal(readOnlyBanner(res));
     }
 
     void read();

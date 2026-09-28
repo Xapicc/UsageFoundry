@@ -69,10 +69,13 @@ test("a refusal keeps the server's own words and its status", async () => {
         method: "POST",
         body: { action: "land" },
       });
+      // The parsed body rides on the failure beside the sentence read off it,
+      // for the one caller that reads a field `error` does not carry.
       assert.deepEqual(result, {
         ok: false,
         status: 400,
         error: "Your checkout is not clean.",
+        body: { error: "Your checkout is not clean." },
       });
     },
   );
