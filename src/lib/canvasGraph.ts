@@ -1,5 +1,6 @@
 import type {
   MergeStrategyDTO,
+  RunProviderDTO,
   TaskPriorityDTO,
   TaskStatusDTO,
   WorkflowEdgeDTO,
@@ -119,6 +120,13 @@ export interface BlockDraft {
   stopWhenTasksStatuses: string;
   /** The numbers it stops at, any one of which ends the loop. */
   stopWhenTasksThresholds: ThresholdDraft[];
+  /**
+   * Run and orchestrator blocks only: which CLI does the work. `""` is the
+   * ordinary Claude run, `templateId`'s shape for an absence a select holds.
+   */
+  provider: string;
+  /** Review blocks only: how many fix rounds a rejected branch gets, as typed. */
+  fixRounds: string;
 }
 
 /** One of a board condition's numbers, held as the panel holds it. */
@@ -1380,7 +1388,7 @@ export function draftToGraph(draft: CanvasDraft): WireGraph {
     // the panel is about to stop showing. Either way this is the same treatment
     // `mergeStrategy`, `fanOut` and `stopWhenTasks` below get: a value only ever
     // goes over the wire for the kind that holds it.
-    const startsNoRun = b.kind === "merge" || b.kind === "loop";
+    const startsNoRun = b.kind === "merge" || b.kind === "loop" || b.kind === "review";
     return {
       id: b.id,
       name: b.name.trim(),
@@ -1439,6 +1447,14 @@ export function draftToGraph(draft: CanvasDraft): WireGraph {
       // kind.
       bodyNodeIds:
         b.kind === "loop" ? sectionOf(b.id, draft.blocks, draft.links) : [],
+      // Sent only by the two kinds that do work, `stopWhenTasks`' reason: on any
+      // other kind it is refused by name, and a block switched to a merge with a
+      // provider still picked would be unsavable over a control no longer shown.
+      provider:
+        (b.kind === "run" || b.kind === "orchestrator") && b.provider !== ""
+          ? (b.provider as RunProviderDTO)
+          : null,
+      fixRounds: b.kind === "review" ? Number(b.fixRounds) : null,
     };
   });
   const edges = draft.links.map((l) => ({

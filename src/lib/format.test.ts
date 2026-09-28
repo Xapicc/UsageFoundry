@@ -372,6 +372,7 @@ const passBlock = (
   notes: [],
   branchesLanded: 0,
   branchesFailed: 0,
+  reviewItems: [],
   error: null,
   waitsFor: [],
   bodyNodeIds: [],

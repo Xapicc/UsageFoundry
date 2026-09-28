@@ -78,6 +78,8 @@ function block(id: string, over: Partial<BlockDraft> = {}): BlockDraft {
     stopWhenTasksIncludeSubfolders: false,
     stopWhenTasksStatuses: "open",
     stopWhenTasksThresholds: [{ priority: "any", atMost: "0" }],
+    provider: "",
+    fixRounds: "1",
     ...over,
   };
 }

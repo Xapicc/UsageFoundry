@@ -536,6 +536,25 @@ export default function WorkflowPage() {
                             : " — a conflicting branch is left alone"}
                         </div>
                       )}
+                      {n.kind === "review" && (
+                        // Its fix rounds are billed runs with nobody watching,
+                        // so they are stated where Run is pressed.
+                        <div className="mt-0.5 text-warn">
+                          A frontier model reviews every branch in front of it;
+                          only approved branches go on
+                          {(n.fixRounds ?? 0) > 0
+                            ? ` — a rejected one gets up to ${n.fixRounds} fix round(s), each billed`
+                            : ""}
+                        </div>
+                      )}
+                      {(n.kind === "run" || n.kind === "orchestrator") &&
+                        n.provider &&
+                        n.provider !== "claude" && (
+                          <div className="mt-0.5 text-warn">
+                            {n.kind === "orchestrator" ? "Its runs go to " : "Runs on "}
+                            {n.provider === "local" ? "the local model" : "Codex"}
+                          </div>
+                        )}
                       {n.kind === "loop" && (
                         // And again: the caps are the number of runs the
                         // operator agrees to when they press Run — and this is
@@ -587,7 +606,7 @@ export default function WorkflowPage() {
                           task at all — the model refuses both fields by name,
                           so printing them draws an empty path under a block
                           that never had one. */}
-                      {n.kind !== "merge" && n.kind !== "loop" && (
+                      {n.kind !== "merge" && n.kind !== "loop" && n.kind !== "review" && (
                         <>
                           <div className="mono mt-0.5 break-words text-ink-muted">
                             {n.mountId} / {n.folder || "."}

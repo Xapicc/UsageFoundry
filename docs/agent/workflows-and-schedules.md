@@ -84,3 +84,11 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - The Repeat gesture is a mark and a press, and marking is canvas state rather than the editor's selection.
 - The one refusal this surface states in its own words is the link drawn into a frame, and it is stated at the release.
 - `/workflows/[id]` is the page Run is pressed from, so its loop row must state the same number the editor's statement does.
+
+## [Review blocks and a block's provider](workflows-and-schedules/review-blocks-and-providers.md)
+
+- A run block and an orchestrator block may name the provider their runs use, and only a person saving the graph can.
+- A review block hands on the branches a frontier model approved, and nothing it set aside.
+- A set-aside branch marks its tasks needs-frontier, and only when a frontier model turned it down.
+- Its fix runs are the instance's runs and its reviews' cost is the block's.
+- It is one async function per block, the merge block's shape.

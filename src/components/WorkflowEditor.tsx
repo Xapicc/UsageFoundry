@@ -21,8 +21,11 @@ import {
   MAX_FAN_OUT,
   MAX_LOOP_BOARD_THRESHOLDS,
   MAX_LOOP_PASSES,
+  MAX_REVIEW_FIX_ROUNDS,
   MAX_WORKFLOW_NAME,
   MAX_WORKFLOW_NODES,
+  RUN_PROVIDER_LABEL,
+  RUN_PROVIDERS,
   boardThresholds,
 } from "@/lib/apiTypes";
 import {
@@ -268,6 +271,13 @@ function projectLabel(mountLabel: string, folder: string): string {
  */
 const DEFAULT_MERGE_STRATEGY: MergeStrategyDTO = "merge";
 
+/**
+ * How many fix rounds a new review block offers. One: a single second attempt
+ * catches the rejections that were one oversight, and every further round is a
+ * billed run per branch the operator should choose rather than inherit.
+ */
+const DEFAULT_FIX_ROUNDS = "1";
+
 /** The width a control takes in the inspector's rows. See `ui/Field`'s note:
  *  a width never goes on the control, because two width utilities on one
  *  element resolve by stylesheet order rather than class order. */
@@ -303,6 +313,8 @@ function emptyBlock(id: string, mountId: string, kind: WorkflowNodeKind): BlockD
     stopWhenTasksIncludeSubfolders: false,
     stopWhenTasksStatuses: DEFAULT_STOP_STATUSES,
     stopWhenTasksThresholds: defaultThresholds(),
+    provider: "",
+    fixRounds: DEFAULT_FIX_ROUNDS,
   };
 }
 
@@ -345,6 +357,10 @@ function toBlocks(workflow: WorkflowDTO): BlockDraft[] {
           atMost: t.atMost.toString(),
         }))
       : defaultThresholds(),
+    // Absent on every graph saved before the field existed, which is the
+    // ordinary Claude run — the reading `normalizeNode` gives it.
+    provider: n.provider ?? "",
+    fixRounds: n.fixRounds?.toString() ?? DEFAULT_FIX_ROUNDS,
   }));
 }
 
@@ -1373,6 +1389,25 @@ function BlockStatement({
     );
   }
 
+  if (block.kind === "review") {
+    const rounds = Number(block.fixRounds);
+    return (
+      <p className="mb-3.5 text-sm leading-normal text-ink-muted">
+        Has a frontier model review every branch in front of it and hands on{" "}
+        <strong className="font-semibold text-ink">only the approved ones</strong>.{" "}
+        {rounds > 0 ? (
+          <span className="text-warn">
+            A rejected branch gets up to {rounds} fix round{rounds === 1 ? "" : "s"}{" "}
+            on its own provider, each a billed run and a billed review.
+          </span>
+        ) : (
+          "A rejected branch is not sent back."
+        )}{" "}
+        One still rejected is set aside, and its tasks are marked needs-frontier.
+      </p>
+    );
+  }
+
   if (block.kind === "orchestrator") {
     const cap = Number(block.fanOut);
     return (
@@ -1721,6 +1756,10 @@ function BlockPanel({
   // whichever repository each branch came from; and no task, because what it
   // lands is whatever the blocks in front of it left behind.
   const merge = block.kind === "merge";
+  // A review block holds one field, its fix rounds, for the merge block's
+  // reason: it starts no child of its own, so there is nothing to guard, place
+  // or brief.
+  const review = block.kind === "review";
 
   // The section in the order a pass will create it, which is the order the
   // statement reads out and the rows below number. Empty on every kind but a
@@ -2208,7 +2247,68 @@ function BlockPanel({
           frames the blocks it repeats and each of those names its own — so a
           control here would be a field an operator can fill in and then be
           refused for at Save, over a value nothing was ever going to read. */}
-      {!merge && !loop && (
+      {review && (
+        <ListGroup
+          className="mb-4"
+          label="What it does"
+          footnote="Each fix round is a billed run and a billed review for every branch sent back"
+        >
+          <ListRow
+            label="Fix rounds per rejected branch"
+            htmlFor={`${block.id}-fixrounds`}
+          >
+            <div className={ROW_CONTROL_NARROW}>
+              <Select
+                id={`${block.id}-fixrounds`}
+                value={block.fixRounds}
+                onChange={(e) => onChange({ fixRounds: e.target.value })}
+              >
+                {Array.from({ length: MAX_REVIEW_FIX_ROUNDS + 1 }, (_, n) => (
+                  <option key={n} value={String(n)}>
+                    {n}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </ListRow>
+        </ListGroup>
+      )}
+
+      {/* Which CLI does the work, on the two kinds whose work is runs. Its own
+          group rather than a row under the guards, for the agent's reason: it
+          bounds nothing, though it changes which of Claude's guarantees the run
+          keeps, which the description says where it is chosen. */}
+      {(block.kind === "run" || orchestrator) && (
+        <ListGroup className="mb-4" label="Who does the work">
+          <ListRow
+            label={orchestrator ? "Its runs go to" : "Runs on"}
+            htmlFor={`${block.id}-provider`}
+            description={
+              block.provider === "local"
+                ? "Needs a work-cycle or time limit in its guards; its branches land only after a frontier review approves them"
+                : block.provider === "codex"
+                  ? "Needs a work-cycle or time limit in its guards; no agent role, plugins or taskboard"
+                  : undefined
+            }
+          >
+            <div className={ROW_CONTROL}>
+              <Select
+                id={`${block.id}-provider`}
+                value={block.provider}
+                onChange={(e) => onChange({ provider: e.target.value })}
+              >
+                {RUN_PROVIDERS.map((p) => (
+                  <option key={p} value={p === "claude" ? "" : p}>
+                    {RUN_PROVIDER_LABEL[p]}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </ListRow>
+        </ListGroup>
+      )}
+
+      {!merge && !loop && !review && (
         <>
           {/* The task is the rest of "what it does", so it sits with the caps
               that bound it rather than at the foot of the panel — a run block,

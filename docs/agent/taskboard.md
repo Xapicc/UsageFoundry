@@ -37,6 +37,7 @@ The paragraphs themselves live in `docs/agent/taskboard/`, one topic file per he
 - Where an agent is shown open work, the flag rides beside the status.
 - A loop's board count leaves operator-only tasks out.
 - A run gives back a task it cannot finish with `release_task`, and the move and the reason commit together or not at all.
+- Needs-frontier is operator-only's shape one lane over: a flag, not a status, saying a local model may not do the work.
 
 ## [Task comments](taskboard/comments.md)
 

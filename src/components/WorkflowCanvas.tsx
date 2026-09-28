@@ -1449,7 +1449,7 @@ export function WorkflowCanvas({
                   </button>
 
                   <div className="mono truncate text-ink-muted">
-                    {block.kind === "merge"
+                    {block.kind === "merge" || block.kind === "review"
                       ? "every branch in front of it"
                       : `${block.mountId || "—"} / ${block.folder || "."}`}
                   </div>
@@ -1457,7 +1457,9 @@ export function WorkflowCanvas({
                     <span className="line-clamp-2">
                       {block.kind === "merge"
                         ? null
-                        : block.task.trim() || "No task yet"}
+                        : block.kind === "review"
+                          ? "A frontier model approves or sends it back"
+                          : block.task.trim() || "No task yet"}
                     </span>
                   </div>
 
@@ -1474,7 +1476,7 @@ export function WorkflowCanvas({
                         block's strategy is what it does to the operator's
                         checkout, and neither stops being true for being inside
                         a frame. */}
-                    {inSection || block.kind !== "run" ? (
+                    {inSection || block.kind !== "run" || block.provider !== "" ? (
                       <Badge
                         tone={
                           block.kind === "merge" &&
@@ -1493,6 +1495,17 @@ export function WorkflowCanvas({
                             ? `${block.mergeStrategy}${
                                 block.mergeAutoResolve ? " · AI resolve" : ""
                               }`
+                            : null,
+                          block.kind === "review"
+                            ? `${block.fixRounds || "0"} fix round${block.fixRounds === "1" ? "" : "s"}`
+                            : null,
+                          // Where the work goes when it is not Claude, which
+                          // is a fact about the run worth seeing at a glance.
+                          (block.kind === "run" || block.kind === "orchestrator") &&
+                          block.provider !== ""
+                            ? block.provider === "local"
+                              ? "local model"
+                              : block.provider
                             : null,
                         ]
                           .filter((part) => part)

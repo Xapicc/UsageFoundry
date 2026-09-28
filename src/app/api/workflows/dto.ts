@@ -14,6 +14,7 @@ import {
   liveBlocksOf,
   liveRunsOf,
   pickUpsOf,
+  reviewItemsOf,
   runStateOf,
   type Workflow,
   type WorkflowInstance,
@@ -152,6 +153,19 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
       notes: b.notes,
       branchesLanded: b.branchesLanded,
       branchesFailed: b.branchesFailed,
+      // Read here rather than carried on the block row, because it is a table
+      // of its own and only a review block has rows in it.
+      reviewItems:
+        b.kind === "review"
+          ? reviewItemsOf(instance.id, b.nodeId).map((i) => ({
+              originRunId: i.origin_run_id,
+              runId: i.run_id,
+              status: i.status,
+              round: i.round,
+              note: i.note,
+              reviewId: i.review_id,
+            }))
+          : [],
       error: b.error,
       // A block can be a member of a pass too, now that a loop repeats a section
       // rather than a task: an orchestrator member and the merge block every

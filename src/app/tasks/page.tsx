@@ -531,6 +531,14 @@ export default function TasksPage() {
                 <Badge tone="neutral">operator only</Badge>
               </span>
             )}
+            {/* Warn rather than neutral: it is set when a local model's work on
+                the task was reviewed and turned down, which is worth seeing
+                from the board. */}
+            {task.needsFrontier && (
+              <span className="mt-1 block">
+                <Badge tone="warn">needs frontier</Badge>
+              </span>
+            )}
             {/* No brief here at all, which is a measurement rather than a
                 preference. This cell is `w-full` over a table whose other six
                 columns are min-widths, so it is whatever they leave: about

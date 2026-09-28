@@ -1793,6 +1793,19 @@ export const MAX_LOOP_RUNS = 60;
  */
 export type WorkflowNodeKind = "run" | "orchestrator" | "merge" | "loop" | "review";
 
+/** One branch a review block is judging, as the instance page draws it. */
+export interface ReviewItemDTO {
+  originRunId: string;
+  runId: string;
+  status: "reviewing" | "fixing" | "approved" | "set-aside";
+  /** Fix rounds started on it so far. */
+  round: number;
+  /** Why it was set aside, or which fix run is working, or null. */
+  note: string | null;
+  /** The latest review of it, by id, for a link to its card. */
+  reviewId: string | null;
+}
+
 /**
  * How many times a review block may send a rejected branch back for a fix. Each
  * round is a billed run and a billed review per branch, so it is small and it
@@ -2329,6 +2342,12 @@ export interface WorkflowInstanceBlockDTO {
    * landed three of four is not the same fact as one that landed three of three.
    */
   branchesFailed: number;
+  /**
+   * A review block's branches, one per run it was handed. Empty on every other
+   * kind. `runId` is the branch's current last link — a fix run once one has
+   * been started — and `originRunId` the run the review began with.
+   */
+  reviewItems: ReviewItemDTO[];
   error: string | null;
   waitsFor: string[];
   /**

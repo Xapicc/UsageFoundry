@@ -1332,13 +1332,16 @@ const CHAT_TOOLS = [
               name: { type: "string", description: "What this step is called." },
               kind: {
                 type: "string",
-                enum: ["run", "orchestrator", "merge"],
+                enum: ["run", "orchestrator", "merge", "review"],
                 description:
                   "run (default) is a fixed task. orchestrator is a short turn " +
                   "that decides, when the workflow gets there, which runs to " +
                   "start next — they start with no approval, so it needs " +
                   "fanOut. merge lands the branches the blocks in front of it " +
-                  "left, and takes no task, folder or template.",
+                  "left, and takes no task, folder or template. review has a " +
+                  "frontier model approve or reject every branch in front of " +
+                  "it and hands on only the approved ones — put it before a " +
+                  "merge; it takes fixRounds and no task, folder or template.",
               },
               templateId: {
                 type: "string",
@@ -1394,6 +1397,23 @@ const CHAT_TOOLS = [
                 description:
                   "Let a merge block pay a model to reconcile a conflict. " +
                   "Costs money on its own, so leave it out unless asked.",
+              },
+              fixRounds: {
+                type: "number",
+                description:
+                  "A review block's fix rounds, 0 to 3: how many times a " +
+                  "rejected branch is sent back for a fix and reviewed again. " +
+                  "Each round is a billed run and a billed review per branch.",
+              },
+              provider: {
+                type: "string",
+                enum: ["claude", "codex", "local"],
+                description:
+                  "On a run block, what runs it; on an orchestrator block, " +
+                  "what runs every run it emits. Omit for Claude Code. codex " +
+                  "and local need a work-cycle or time limit in the guards; " +
+                  "a local branch cannot land until a frontier review approves " +
+                  "it, so pair local work with a review block.",
               },
               dependsOn: {
                 type: "array",
@@ -2706,7 +2726,8 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
     // other would silently put a block on the whole workspace, which is the one
     // selection that blocks every other run in the tree. So it is required
     // here, exactly as `propose_run` requires a folder beside a mountId.
-    if (String(b.kind ?? "run") !== "merge" && b.folder === undefined) {
+    const startsNoRun = ["merge", "review"].includes(String(b.kind ?? "run"));
+    if (!startsNoRun && b.folder === undefined) {
       return text(
         `“${String(b.name ?? to)}” names no folder. Pass it exactly as ` +
           'list_folders gives it, or "" if you really mean the whole ' +

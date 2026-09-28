@@ -118,7 +118,27 @@
   equal to its directory name, so this does not exercise a mount whose
   configured label differs from its path.
 
+- **A review block and a local-provider block save, render and edit, 2026-09-28**,
+  a production build driven by Playwright against a throwaway install: a graph
+  of a run block on `provider: "local"`, a review block at 2 fix rounds and a
+  merge block saved through `POST /api/workflows` with both fields intact; the
+  same review block at 5 rounds refused with its own sentence; `/workflows/[id]`
+  stating the review line and "Runs on the local model"; the editor drawing the
+  review card with its "2 fix rounds" badge, its inspector with the statement
+  and the fix-rounds select, and the run block's "Runs on: Local model". No
+  console error. Nothing was run.
+
 ## Not yet verified by hand
+
+- **No review block has run against a real model (2026-09-28).** The block's
+  loop is driven end to end only by `reviewBlockRun.test.ts`, against a stub
+  reviewer and with no fix rounds: no real frontier review has been read by
+  it, no fix run has been started by it, and none has been inside a loop pass.
+  Open: whether a real reviewer ends on the bare `APPROVE`/`REJECT` the parser
+  requires, whether a fix run on the local model answers a review well enough
+  to be approved, and what the merge queue does with a batch the review block
+  thinned. Settles with one loop pass of a local orchestrator block, a review
+  block at 1 fix round and a merge block, and the instance page read after.
 
 - **The pager has not met live instances**: all rows were inserted `finished`
   with no member runs, and none arrived while a page was open.

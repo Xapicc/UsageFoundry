@@ -52,7 +52,7 @@ What follows is routing and nothing else: **if you are about to touch anything n
 - **`land.ts`, `mergeQueue.ts`, `conflictMap.ts`, `resolveIsolation`/`ensureWorktree`** → `docs/agent/isolation-and-landing.md` — when a run may land, which isolation it gets, and why landing has no clock.
 - **`agents.ts`, `agentRegistry.ts`, `templates.ts`, `modelCatalogue.ts`, every field that names a model** → `docs/agent/agents-and-templates.md` — what an agent may carry, and which list a model id is validated against.
 - **`chat.ts`, `chatThread.ts`, `src/app/chat/page.tsx`'s questions, `src/app/api/mcp/`** → `docs/agent/chat.md` — what a model may propose, what approval freezes, and how a chat turn ends.
-- **`workflows.ts`, `schedules.ts`, `canvasGraph.ts`** → `docs/agent/workflows-and-schedules.md` — why instantiation is all-or-nothing, how a loop block unrolls and stops, and what is schedulable.
+- **`workflows.ts`, `schedules.ts`, `canvasGraph.ts`, `reviewBlock.ts`** → `docs/agent/workflows-and-schedules.md` — why instantiation is all-or-nothing, how a loop block unrolls and stops, and what is schedulable.
 - **`review.ts`, `git.ts`, `diff.ts`, `patch.ts`, `runTouches.ts`, `runTouchScan.ts`** → `docs/agent/git-and-review.md` — the flags every `git diff` carries, and how touched and changed files reconcile.
 - **auth, path containment, spawn argv, anything holding a credential** → `docs/agent/security.md` — why both containment checks are load-bearing, why never a shell, and which children get credentials.
 - **`src/components/`, route handlers, `globals.css`** → `docs/agent/conventions.md` — the rules for variants, colours, polls and route handlers, and recording an interface defect.

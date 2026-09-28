@@ -170,6 +170,33 @@ export default function TaskDetail({
    * next save of an unrelated field — a run started on work that run just said
    * needs a Mac. Sent alone, from the row as last read, and re-read after.
    */
+  /**
+   * The needs-frontier mark, `markOperatorOnly`'s shape and for its reason: sent
+   * alone from the row as last read. Only the operator clears it — a review
+   * block sets it when a local model's branch for this task was set aside.
+   */
+  async function markNeedsFrontier(next: boolean) {
+    if (!task || marking) return;
+    setMarking(true);
+    setActionError(null);
+    const res = await jsonRequest<{ task: TaskDTO }>(`/api/tasks/${task.id}`, {
+      method: "PATCH",
+      body: { needsFrontier: next },
+    });
+    setMarking(false);
+    if (!res.ok) {
+      setActionError(actionFailureMessage(res, "Could not change which model may do the task."));
+      await load();
+      return;
+    }
+    setNote(
+      next
+        ? `“${res.data.task.title}” needs a frontier model`
+        : `“${res.data.task.title}” may go to the local model again`,
+    );
+    await load();
+  }
+
   async function markOperatorOnly(next: boolean) {
     if (!task || marking) return;
     setMarking(true);
@@ -259,6 +286,7 @@ export default function TaskDetail({
           <Badge tone={TASK_PRIORITY_TONE[task.priority]}>{task.priority}</Badge>
           <Badge tone={TASK_STATUS_TONE[task.status]}>{task.status}</Badge>
           {task.operatorOnly && <Badge tone="neutral">operator only</Badge>}
+          {task.needsFrontier && <Badge tone="warn">needs frontier</Badge>}
         </h1>
         {/* The operator's own rows of the edge table, with no Claim among them:
             a claim names the run that will hold the task, and the operator is
@@ -329,6 +357,19 @@ export default function TaskDetail({
         />
         <Hint>
           No run may claim it while this is on
+        </Hint>
+      </div>
+
+      <div className="mb-5">
+        <Toggle
+          id="task-needs-frontier"
+          checked={task.needsFrontier}
+          onChange={(next) => void markNeedsFrontier(next)}
+          disabled={marking}
+          label="Needs a frontier model"
+        />
+        <Hint>
+          No local-model run may take it on while this is on
         </Hint>
       </div>
 

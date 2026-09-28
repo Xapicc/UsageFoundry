@@ -788,6 +788,18 @@ function blockSummary(b: BlockDTO, waits: string[]): string {
     // Only for a merge that finished: one that failed with nothing queued has
     // not established that there was nothing to land, and its error says more.
     if (b.status === "emitted") return "no branches to land";
+  } else if (b.kind === "review") {
+    const items = b.reviewItems;
+    const approved = items.filter((i) => i.status === "approved").length;
+    const aside = items.filter((i) => i.status === "set-aside").length;
+    if (b.status === "thinking") {
+      return `reviewing ${items.length} branch(es) — ${approved} approved so far`;
+    }
+    if (b.status === "emitted") {
+      return aside > 0
+        ? `approved ${approved} of ${items.length} branch(es); ${aside} set aside`
+        : `approved all ${approved} branch(es)`;
+    }
   } else if (b.kind === "loop") {
     // A pass is not a work cycle: it is a whole run, with its own cycles and
     // its own spend. The two must never share a word. Read on every status but
@@ -1031,6 +1043,14 @@ export default function WorkflowInstancePage() {
           <Hint key="merge">
             A merge block&rsquo;s branches are in the merge queue on Branches,
             with git&rsquo;s answer for each
+          </Hint>,
+        ]
+      : []),
+    ...(instance.blocks.some((b) => b.kind === "review")
+      ? [
+          <Hint key="review">
+            A review block&rsquo;s reviews are on each run&rsquo;s Review tab, and a
+            set-aside branch stays on Branches, unmerged
           </Hint>,
         ]
       : []),
@@ -1281,6 +1301,45 @@ export default function WorkflowInstancePage() {
                               {note}
                             </div>
                           ))}
+                          {/* A review block's branches, one line each, so a
+                              branch set aside is named with its reason and
+                              its run rather than only counted. */}
+                          {b.kind === "review" && b.reviewItems.length > 0 && (
+                            <ul className="mt-1.5 space-y-1 text-xs">
+                              {b.reviewItems.map((item) => (
+                                <li key={item.originRunId} className="leading-normal">
+                                  <Link
+                                    href={`/runs/${item.runId}`}
+                                    className="mono"
+                                  >
+                                    {item.runId.slice(0, 8)}
+                                  </Link>{" "}
+                                  <span
+                                    className={
+                                      item.status === "approved"
+                                        ? "text-ok"
+                                        : item.status === "set-aside"
+                                          ? "text-warn"
+                                          : "text-ink-muted"
+                                    }
+                                  >
+                                    {item.status === "set-aside"
+                                      ? "set aside"
+                                      : item.status}
+                                  </span>
+                                  {item.round > 0 && (
+                                    <span className="text-ink-muted">
+                                      {" "}
+                                      after {item.round} fix round(s)
+                                    </span>
+                                  )}
+                                  {item.note && (
+                                    <span className="text-ink-muted"> — {item.note}</span>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
                           {b.reply && (
                             <div className="mt-2 max-w-[80ch] rounded-sm border-l-[3px] border-line-strong bg-inset px-3 py-2">
                               <Markdown text={b.reply} />
@@ -1302,7 +1361,9 @@ export default function WorkflowInstancePage() {
                           label="Spent"
                           className="whitespace-nowrap align-top"
                         >
-                          {(b.kind === "orchestrator" || b.kind === "merge") &&
+                          {(b.kind === "orchestrator" ||
+                            b.kind === "merge" ||
+                            b.kind === "review") &&
                           b.costUSD !== null
                             ? fmtUSD(b.costUSD)
                             : "—"}
