@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
+// Relative, not "@/…" — see the note in the login route.
 import {
   fleetState,
   reopenFleet,
   setFleetPaused,
   stopFleet,
-} from "@/lib/fleet";
-import { auditMutation, recordDurableMutation } from "@/lib/requestLog";
+} from "../../../lib/fleet";
+import { readJsonObject } from "../../../lib/http";
+import { auditMutation, recordDurableMutation } from "../../../lib/requestLog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,7 +30,9 @@ export async function GET() {
 }
 
 async function postHandler(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const read = await readJsonObject(req);
+  if (!read.ok) return read.response;
+  const body = read.body;
   const action = String(body.action ?? "");
 
   if (action === "stop") {

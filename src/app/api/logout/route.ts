@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 // Relative, not "@/…" — see the note in the login route.
 import { AUTH_TOKEN, COOKIE_SECURE, authEnabled } from "../../../lib/config";
+import { isJsonObject } from "../../../lib/http";
 import { recordDurableMutation } from "../../../lib/requestLog";
 import { revokeAllSessions, revokeSession } from "../../../lib/sessions";
 import {
@@ -59,7 +60,13 @@ export const dynamic = "force-dynamic";
  * browsers"; it is not yet the right button for "a cookie got out".
  */
 export async function POST(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as { all?: boolean };
+  // No body is the ordinary sign-out, not a malformed one, so this does not go
+  // through `readJsonObject`. A body that is not an object asks for no options
+  // either: only `all: true` widens what this does, and `null` used to throw
+  // before the cookie was cleared — a 500 and a stack trace for anyone who can
+  // reach the port, and a sign-out that never happened.
+  const parsed: unknown = await req.json().catch(() => ({}));
+  const body = isJsonObject(parsed) ? parsed : {};
 
   if (authEnabled()) {
     const cookie = readCookie(req);

@@ -18,6 +18,14 @@ import { after, before, test } from "node:test";
  * `DATA_DIR` and the Claude paths are read at module load, so they are set
  * before anything is imported, and nothing here reaches a spawn: every request
  * below is refused before the handler looks at anything but its body.
+ *
+ * Not every such door is here. `POST /api/tasks`, `POST /api/tasks/[id]/comments`,
+ * `POST /api/agents`, `PUT /api/agents/[id]`, `POST /api/templates`,
+ * `PUT /api/templates/[id]`, `POST /api/workflows`, `PUT /api/workflows/[id]` and
+ * `PUT /api/workflows/[id]/schedule` kept the old line because the normaliser
+ * behind each reads `raw ?? {}` and refuses what it finds with a 400. `/api/login`
+ * and `/api/logout` are answerable without a credential and answer `null` their
+ * own way, which `login/route.test.ts` pins.
  */
 
 const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-json-body-")));
@@ -38,6 +46,7 @@ type Handler = (req: Request, ctx: Ctx) => Promise<Response>;
 
 let chatId: string;
 let taskId: string;
+let runId: string;
 
 before(async () => {
   const config = await import("../../lib/config");
@@ -60,6 +69,15 @@ before(async () => {
   const created = tasks.createTask(parsed.value);
   if (!created.ok) throw new Error(`fixture refused by the store: ${created.error}`);
   taskId = created.task.id;
+
+  const { db } = await import("../../lib/db");
+  runId = "run-json-body";
+  db()
+    .prepare(
+      "INSERT INTO runs (id, folder, prompt, status, budget, created_at)" +
+        " VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .run(runId, path.join(root, "ws"), "task", "stopped", "{}", Date.now());
 });
 
 async function send(
@@ -129,6 +147,97 @@ const DOORS: {
     load: async () => (await import("./tasks/[id]/deps/route")).DELETE,
     url: () => `/api/tasks/${taskId}/deps`,
     id: () => taskId,
+  },
+  {
+    name: "POST /api/runs",
+    method: "POST",
+    load: async () => (await import("./runs/route")).POST,
+    url: () => "/api/runs",
+    id: () => "",
+  },
+  {
+    name: "POST /api/runs/[id]/land",
+    method: "POST",
+    load: async () => (await import("./runs/[id]/land/route")).POST,
+    url: () => `/api/runs/${runId}/land`,
+    id: () => runId,
+  },
+  {
+    name: "POST /api/runs/[id]/reopen",
+    method: "POST",
+    load: async () => (await import("./runs/[id]/reopen/route")).POST,
+    url: () => `/api/runs/${runId}/reopen`,
+    id: () => runId,
+  },
+  {
+    name: "POST /api/branches/queue",
+    method: "POST",
+    load: async () => (await import("./branches/queue/route")).POST,
+    url: () => "/api/branches/queue",
+    id: () => "",
+  },
+  {
+    name: "DELETE /api/branches/queue",
+    method: "DELETE",
+    load: async () => (await import("./branches/queue/route")).DELETE,
+    url: () => "/api/branches/queue",
+    id: () => "",
+  },
+  {
+    name: "POST /api/fleet",
+    method: "POST",
+    load: async () => (await import("./fleet/route")).POST,
+    url: () => "/api/fleet",
+    id: () => "",
+  },
+  {
+    name: "PUT /api/settings",
+    method: "PUT",
+    load: async () => (await import("./settings/route")).PUT,
+    url: () => "/api/settings",
+    id: () => "",
+  },
+  {
+    name: "POST /api/plugins",
+    method: "POST",
+    load: async () => (await import("./plugins/route")).POST,
+    url: () => "/api/plugins",
+    id: () => "",
+  },
+  {
+    name: "POST /api/knowledge/skill",
+    method: "POST",
+    load: async () => (await import("./knowledge/skill/route")).POST,
+    url: () => "/api/knowledge/skill",
+    id: () => "",
+  },
+  {
+    name: "POST /api/workflows/validate",
+    method: "POST",
+    load: async () => (await import("./workflows/validate/route")).POST,
+    url: () => "/api/workflows/validate",
+    id: () => "",
+  },
+  {
+    name: "POST /api/claude-auth/login/code",
+    method: "POST",
+    load: async () => (await import("./claude-auth/login/code/route")).POST,
+    url: () => "/api/claude-auth/login/code",
+    id: () => "",
+  },
+  {
+    name: "POST /api/codex-auth/api-key",
+    method: "POST",
+    load: async () => (await import("./codex-auth/api-key/route")).POST,
+    url: () => "/api/codex-auth/api-key",
+    id: () => "",
+  },
+  {
+    name: "POST /api/local-provider",
+    method: "POST",
+    load: async () => (await import("./local-provider/route")).POST,
+    url: () => "/api/local-provider",
+    id: () => "",
   },
 ];
 

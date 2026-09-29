@@ -142,6 +142,25 @@ test("a sign-out revokes the session it was given", async () => {
   assert.match(header, /Max-Age=0/i);
 });
 
+// `null` threw on the first property read, so an anonymous caller got a 500 and
+// left a stack trace in the log; the sign-out it sent never cleared the cookie.
+test("a sign-out whose body is not an object is still the ordinary sign-out", async () => {
+  const value = cookieValue(setCookie(await post(TOKEN)));
+  const claim = await sessionToken.readSessionCookie(value, TOKEN, Date.now());
+  assert.ok(claim);
+
+  const res = await logout.POST(
+    new Request("http://localhost/api/logout", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: `uf_session=${value}` },
+      body: "null",
+    }),
+  );
+  assert.equal(res.status, 200);
+  assert.notEqual(sessions.getSession(claim.id)?.revokedAt ?? null, null);
+  assert.match(res.headers.get("set-cookie") ?? "", /Max-Age=0/i);
+});
+
 test("signing out everywhere is refused to a caller holding no credential", async () => {
   const value = cookieValue(setCookie(await post(TOKEN)));
   const claim = await sessionToken.readSessionCookie(value, TOKEN, Date.now());
@@ -237,6 +256,24 @@ test("a wrong token is refused", async () => {
   const res = await post("wrong");
   assert.equal(res.status, 401);
   assert.equal(res.headers.get("set-cookie"), null);
+});
+
+// Not a 400: every caller without the token gets the one answer, and a second
+// refusal would be a way through this door that the failure count never sees.
+test("a body that is not an object is a wrong guess, counted as one", async () => {
+  const attempts = await import("../../../lib/loginAttempts");
+  const failures = attempts.loginFailureSummary().failures;
+
+  const res = await route.POST(
+    new Request("http://localhost/api/login", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-forwarded-for": newSource() },
+      body: "null",
+    }),
+  );
+  assert.equal(res.status, 401);
+  assert.deepEqual(await res.json(), { error: "Invalid token" });
+  assert.equal(attempts.loginFailureSummary().failures, failures + 1);
 });
 
 test("consecutive failures from one source lock it out", async () => {

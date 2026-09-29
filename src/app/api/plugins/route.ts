@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 // does: `node --test` runs the compiled output, and nothing resolves `@/` there.
 import type { PluginsReportDTO } from "../../../lib/apiTypes";
 import { recentCycleInits } from "../../../lib/db";
+import { readJsonObject } from "../../../lib/http";
 import { pluginMcpSightings } from "../../../lib/mcpStatus";
 import { discoverPlugins, setPluginEnabled } from "../../../lib/plugins";
 import { auditMutation } from "../../../lib/requestLog";
@@ -53,7 +54,9 @@ function report(): PluginsReportDTO {
 }
 
 async function postHandler(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const read = await readJsonObject(req);
+  if (!read.ok) return read.response;
+  const body = read.body;
 
   const dir = typeof body.path === "string" ? body.path.trim() : "";
   if (!dir) {

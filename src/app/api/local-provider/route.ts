@@ -10,6 +10,7 @@ import {
   saveLocalSignIn,
   type LocalSignIn,
 } from "../../../lib/localProvider";
+import { readJsonObject } from "../../../lib/http";
 import { auditMutation, recordDurableMutation } from "../../../lib/requestLog";
 
 export const runtime = "nodejs";
@@ -44,7 +45,9 @@ export async function GET() {
  * discovering it, inside a run the operator has already walked away from.
  */
 async function postHandler(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const read = await readJsonObject(req);
+  if (!read.ok) return read.response;
+  const body = read.body;
   const parsed = parseLocalSignIn(body);
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
 

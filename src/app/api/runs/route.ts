@@ -19,7 +19,7 @@ import {
 } from "../../../lib/orchestrator";
 import { pruneSavingsByRun } from "../../../lib/contextPruning";
 import { recentOpsEvents } from "../../../lib/ops";
-import { jsonMaybeGzipped } from "../../../lib/http";
+import { jsonMaybeGzipped, readJsonObject } from "../../../lib/http";
 import {
   MAX_LIST_PROMPT,
   RUN_PROVIDERS,
@@ -268,7 +268,9 @@ function readDependencies(
 }
 
 async function postHandler(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const read = await readJsonObject(req);
+  if (!read.ok) return read.response;
+  const body = read.body;
 
   // This value reaches `--permission-mode` on a process that edits files, so it
   // is narrowed against the allowed set rather than trusted from the wire.

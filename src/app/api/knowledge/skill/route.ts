@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 // Relative rather than aliased, which is what every route with a test here
 // does: `node --test` runs the compiled output, and nothing resolves `@/` there.
+import { readJsonObject } from "../../../../lib/http";
 import { auditMutation } from "../../../../lib/requestLog";
 import { setVaultSkillEnabled, vaultSkillEnabled } from "../../../../lib/vaultSkill";
 
@@ -8,7 +9,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 async function postHandler(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const read = await readJsonObject(req);
+  if (!read.ok) return read.response;
+  const body = read.body;
 
   // Narrowed against the literal rather than coerced, exactly as `/api/plugins`
   // does: `Boolean(body.enabled)` would read a missing field as "switch it
