@@ -126,6 +126,7 @@ const {
   refusalResumeAt,
   reopenPrompt,
   reopenRun,
+  resumeRun,
   runEvents,
   sandboxArgs,
   sandboxSettings,
@@ -6555,6 +6556,118 @@ describe("applying the sweeper's decision", () => {
     assert.ok(
       row.paused_ms >= 15 * 60_000 + 2 * HOUR,
       `both parks are on the row (${row.paused_ms}ms)`,
+    );
+  });
+
+  // The end branch is the flip's race with more at stake: the sweep read these
+  // rows before its scan, and the operator's press lands during it. Written
+  // unconditionally, the ending took a resumed run's row out from under its own
+  // loop and replaced an operator's stop with the sweeper's reason.
+  const PARK_REASON = "The 5-hour window is full.";
+
+  /**
+   * A parked row this sweep ends on its cap: 110 worked minutes against 60,
+   * carrying the reason a park leaves on the row.
+   */
+  function parkedPastItsCap(name: string): string {
+    const now = Date.now();
+    const id = insertRun({
+      status: "paused",
+      workDir: `${ws}/${name}`,
+      budget: ONE_HOUR_CAP,
+      startedAt: now - 2 * HOUR,
+      pausedAt: now - 10 * 60_000,
+    });
+    db().prepare("UPDATE runs SET stop_reason = ? WHERE id = ?").run(PARK_REASON, id);
+    return id;
+  }
+
+  /**
+   * Sweep once with an operator's press landing mid-scan, and nothing able to
+   * start: both the press and the sweep end in `promoteQueued`, and the cap and
+   * the occupant are `sweepAlone`'s device for keeping that from spawning.
+   * `check` is handed whatever `press` read straight after pressing.
+   */
+  async function sweepWhile<T>(
+    press: () => T,
+    check: (pressed: T) => void,
+  ): Promise<void> {
+    saveSettings({ maxConcurrentRuns: 1 });
+    insertRun({ status: "running", workDir: `${ws}/blocker-${seq}` });
+    try {
+      // Synchronous as far as the scan, which the stop case above relies on
+      // too: `press` lands after the sweep has read its rows as `paused` and
+      // before the snapshot it is waiting on resolves.
+      const sweeping = sweepPaused();
+      const pressed = press();
+      await sweeping;
+      // Under the cap rather than after it. A run an earlier case promoted is
+      // still in flight, can settle in the same turn as this sweep, and ends
+      // in `promoteQueued` — which, past the reset below, starts the queued
+      // run this case is about to read.
+      check(pressed);
+    } finally {
+      saveSettings({ maxConcurrentRuns: null });
+    }
+  }
+
+  const stoppedEvents = (id: string) =>
+    runEvents(id).events.filter(
+      (e) => e.kind === "status" && e.payload.status === "stopped",
+    );
+
+  it("leaves a run the operator resumed during the scan in the queue", async () => {
+    const resumed = parkedPastItsCap("resumed-mid-scan");
+    // The same fixture left alone. Without it this case passes just as well
+    // for a sweep that never planned `end` for these rows at all.
+    const untouched = parkedPastItsCap("untouched-mid-scan");
+
+    await sweepWhile(
+      () => assert.equal(resumeRun(resumed), "requeued"),
+      () => {
+        assert.equal(getRun(untouched)!.status, "stopped", "the control is ended on its cap");
+        const row = getRun(resumed)!;
+        assert.equal(
+          row.status,
+          "queued",
+          "a `stopped` row under a run its operator resumed is a live loop on a " +
+            "row reading ended, and a folder `promoteQueued` reads as free",
+        );
+        assert.equal(row.stop_reason, PARK_REASON, "the sweeper's reason was never written");
+        assert.equal(row.finished_at, null, "a run in the queue has not finished");
+        assert.deepEqual(
+          stoppedEvents(resumed),
+          [],
+          "nothing announced an ending the row does not hold — `emit` is what reaches a webhook",
+        );
+      },
+    );
+  });
+
+  it("keeps the operator's stop on a run stopped during the scan", async () => {
+    const stopped = parkedPastItsCap("stopped-mid-scan");
+
+    await sweepWhile(
+      () => {
+        assert.equal(stopRun(stopped), "cancelled");
+        return getRun(stopped)!;
+      },
+      (operators) => {
+        const row = getRun(stopped)!;
+        assert.equal(row.status, "stopped");
+        assert.equal(
+          row.stop_reason,
+          operators.stop_reason,
+          "the operator's reason, not the cap the sweeper would have named",
+        );
+        assert.equal(row.finished_at, operators.finished_at);
+        assert.equal(
+          stoppedEvents(stopped).length,
+          1,
+          "one ending, announced once — a second `stopped` event is a second " +
+            "webhook for a run that ended once",
+        );
+      },
     );
   });
 });

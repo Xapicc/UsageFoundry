@@ -1324,7 +1324,20 @@ export function subscribe(
   return () => void bus.off(runId, fn);
 }
 
-function setStatus(id: string, status: RunStatus, patch: Partial<RunRow> = {}) {
+/**
+ * `onlyFrom` is for a writer that read the row before an `await`: the write
+ * lands only while the row still holds that status, and on a miss nothing is
+ * emitted and `false` comes back. The emit is skipped as well as the write
+ * because an event announcing a status the row does not hold is the same false
+ * statement, and it is the one that reaches a webhook. Without `onlyFrom` the
+ * write is unconditional and always emits, as it always has.
+ */
+function setStatus(
+  id: string,
+  status: RunStatus,
+  patch: Partial<RunRow> = {},
+  onlyFrom?: RunStatus,
+): boolean {
   const fields: string[] = ["status = ?"];
   const values: unknown[] = [status];
   for (const [k, v] of Object.entries(patch)) {
@@ -1332,8 +1345,17 @@ function setStatus(id: string, status: RunStatus, patch: Partial<RunRow> = {}) {
     values.push(v);
   }
   values.push(id);
-  db().prepare(`UPDATE runs SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  let where = "id = ?";
+  if (onlyFrom !== undefined) {
+    where += " AND status = ?";
+    values.push(onlyFrom);
+  }
+  const written = db()
+    .prepare(`UPDATE runs SET ${fields.join(", ")} WHERE ${where}`)
+    .run(...values);
+  if (onlyFrom !== undefined && written.changes !== 1) return false;
   emit({ runId: id, ts: Date.now(), kind: "status", payload: { status, ...patch } });
+  return true;
 }
 
 /**
@@ -11824,12 +11846,25 @@ export async function sweepPaused(): Promise<void> {
         }
 
         case "end": {
-          setStatus(run.id, "stopped", {
-            finished_at: now,
-            stop_reason: plan.reason,
-            resume_at: null,
-            ...pauseClosedAt(run, now),
-          });
+          // Conditional for the flip's reason: this row was read before the
+          // scan, and a resume or stop the operator pressed during it must
+          // win. Unconditional, it wrote `stopped` over a run its operator had
+          // just resumed — a live loop on a row reading stopped, its folder
+          // free to `promoteQueued` — and replaced an operator's stop reason
+          // with this one. On a miss the transition that won has already
+          // released and promoted for itself, so nothing below is ours to do.
+          const ended = setStatus(
+            run.id,
+            "stopped",
+            {
+              finished_at: now,
+              stop_reason: plan.reason,
+              resume_at: null,
+              ...pauseClosedAt(run, now),
+            },
+            "paused",
+          );
+          if (!ended) break;
           // A parked run that ends here is a settled dependency like any other.
           releaseDependents();
           freed = true;
