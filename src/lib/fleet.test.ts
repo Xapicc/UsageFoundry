@@ -607,7 +607,10 @@ describe("a run picked up before it ever had a workspace", () => {
    * A running, and B behind it exactly as `createRun` leaves a run with a
    * dependency: `waiting`, and nothing about its workspace decided yet.
    */
-  function chain(name: string): { a: string; b: string; repo: string } {
+  function chain(
+    name: string,
+    edge: "on-success" | "on-finish" = "on-success",
+  ): { a: string; b: string; repo: string } {
     const repo = path.join(workspace, name);
     fs.mkdirSync(repo, { recursive: true });
     fixtureGit(repo, ["init", "-q", "-b", "main"]);
@@ -627,8 +630,8 @@ describe("a run picked up before it ever had a workspace", () => {
     ).run(b, repo, now);
     db.prepare(
       "INSERT INTO run_deps (run_id, depends_on, edge, continue_branch, created_at)" +
-        " VALUES (?, ?, 'on-success', 0, ?)",
-    ).run(b, a, now);
+        " VALUES (?, ?, ?, 0, ?)",
+    ).run(b, a, edge, now);
     return { a, b, repo };
   }
 
@@ -712,6 +715,27 @@ describe("a run picked up before it ever had a workspace", () => {
 
     const report = fleet.reopenFleet([b], BUDGET);
     assert.deepEqual(report.reopened, [b]);
+    assertBackBehind(b);
+
+    complete(a);
+    assertAdmitted(b, repo);
+  });
+
+  // The page sends its ids newest first, so a dependent comes before the run it
+  // waits for. Taken in that order, B's release pass reads A as it ended — a
+  // cycle run and terminal, which is all `on-finish` asks — and admits B before
+  // A is picked up beside it, so both would work at once.
+  it("stays behind a dependency the same press picks up, whatever order it names them", () => {
+    const { a, b, repo } = chain("pickup-both", "on-finish");
+    assert.equal(orch.stopRun(b), "cancelled");
+    dbMod
+      .db()
+      .prepare("UPDATE runs SET status='failed', iterations=1, finished_at=? WHERE id=?")
+      .run(Date.now(), a);
+
+    const report = fleet.reopenFleet([b, a], BUDGET);
+    assert.deepEqual([...report.reopened].sort(), [a, b].sort());
+    assert.equal(statusOf(a), "queued");
     assertBackBehind(b);
 
     complete(a);

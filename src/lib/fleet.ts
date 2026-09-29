@@ -7,6 +7,7 @@ import {
   releaseDependents,
   reopenRun,
   stopRun,
+  topologicalOrder,
   type RunRow,
   type RunStatus,
 } from "./orchestrator";
@@ -191,6 +192,50 @@ export function fleetState(): FleetState {
   };
 }
 
+/**
+ * The ids in the order they have to be picked up: every run after any run in the
+ * same list that it waits for, and otherwise oldest first.
+ *
+ * The page sends its ids newest first, which puts a dependent ahead of the run it
+ * waits for, and taken in that order the pair can end up working at once. A
+ * dependent that never started goes back to `waiting` and is decided on the
+ * spot, and at that moment its dependency is still exactly as it ended — a run
+ * that did a cycle and failed or was stopped, which is everything an `on-finish`
+ * edge asks for — so it is admitted to the queue, and then the dependency is
+ * queued beside it. Picked up first, the dependency has left the terminal set by
+ * the time the dependent is decided, and the dependent stays behind it.
+ *
+ * `topologicalOrder` over the `run_deps` rows among these ids rather than a sort
+ * on `created_at`, although a dependency is always created first: the stamp is a
+ * millisecond and a workflow creates a chain inside one, so a tie would leave
+ * the order to `id`, which is random. `created_at` is the tie-break instead —
+ * `restartClosedRuns`' order, and the one the queue promotes in, since each pick
+ * up promotes before the next is decided. Only edges inside the list matter: a
+ * run that is not being picked up does not change while this loop runs, except
+ * through `reviveBlockedDependents`, which already follows a chain transitively.
+ *
+ * Ids with no row come last, where `reopenFleet` refuses them by name.
+ */
+function dependenciesFirst(ids: readonly string[]): string[] {
+  const unique = [...new Set(ids)];
+  if (unique.length < 2) return unique;
+  const marks = unique.map(() => "?").join(",");
+  const nodes = db()
+    .prepare(`SELECT id FROM runs WHERE id IN (${marks}) ORDER BY created_at, id`)
+    .all(...unique) as Array<{ id: string }>;
+  const edges = db()
+    .prepare(
+      `SELECT depends_on AS "from", run_id AS "to" FROM run_deps
+        WHERE run_id IN (${marks}) AND depends_on IN (${marks})`,
+    )
+    .all(...unique, ...unique) as Array<{ from: string; to: string }>;
+  // `unplaced` can only be a loop, which admission refuses; kept rather than
+  // dropped, because an id the page sent must come back reopened or refused.
+  const { order, unplaced } = topologicalOrder({ nodes, edges });
+  const known = new Set(nodes.map((n) => n.id));
+  return [...order, ...unplaced, ...unique.filter((id) => !known.has(id))];
+}
+
 export interface FleetReopenReport {
   reopened: string[];
   refused: Array<{ id: string; reason: string }>;
@@ -234,19 +279,17 @@ export interface FleetReopenReport {
  * Sequential and synchronous, `approveProposal`'s rule: `createRun`'s folder
  * claim and `reopenRun`'s checkout check are only atomic inside one event-loop
  * turn, and two runs reopened into one checkout is exactly what that check
- * exists to stop.
+ * exists to stop. And in dependency order rather than the order the page sent,
+ * for the reason `dependenciesFirst` gives.
  */
 export function reopenFleet(
   ids: readonly string[],
   budget: unknown,
 ): FleetReopenReport {
   const report: FleetReopenReport = { reopened: [], refused: [] };
-  const seen = new Set<string>();
   const wire = (budget ?? {}) as Record<string, unknown>;
 
-  for (const id of ids) {
-    if (seen.has(id)) continue;
-    seen.add(id);
+  for (const id of dependenciesFirst(ids)) {
     const run = getRun(id);
     if (!run) {
       report.refused.push({ id, reason: "No such run." });
