@@ -45,6 +45,7 @@ let mergeQueue: typeof import("./mergeQueue");
 let land: typeof import("./land");
 let dbMod: typeof import("./db");
 let orchestrator: typeof import("./orchestrator");
+let workflows: typeof import("./workflows");
 let root: string;
 let repo: string;
 /** A second repository, so a second worker can be mid-land beside the first. */
@@ -148,6 +149,7 @@ before(async () => {
   land = await import("./land");
   dbMod = await import("./db");
   orchestrator = await import("./orchestrator");
+  workflows = await import("./workflows");
 });
 
 after(() => {
@@ -177,10 +179,10 @@ function breakLandEvent(): () => void {
   };
 }
 
-/** A completed isolated run whose branch is one commit ahead of `main`. */
-function makeRun(id: string, file: string, repoRoot = repo): string {
+/** A completed isolated run whose branch is one commit ahead of `from`, `main` unless told. */
+function makeRun(id: string, file: string, repoRoot = repo, from = "main"): string {
   const branch = `uf/repo-${id}`;
-  git(repoRoot, "checkout", "-q", "-b", branch);
+  git(repoRoot, "checkout", "-q", "-b", branch, from);
   fs.writeFileSync(path.join(repoRoot, file), `${file}\n`);
   git(repoRoot, "add", "-A");
   git(repoRoot, "commit", "-q", "-m", `work ${id}`);
@@ -270,6 +272,34 @@ describe("the merge worker", () => {
 
     const rows = await settle(queued.batchId);
     assert.equal(rows[0].status, "landed", rows[0].message ?? "");
+  });
+
+  it("records a branch already on its target at its turn as already landed, not failed", async () => {
+    // The second row's commit is under the first row's branch, so landing the
+    // first puts the second on `main` before its turn: the shape of a chain
+    // link whose successor landed first, or of a branch merged by hand. It was
+    // failed, and a workflow merge block over the batch failed with it.
+    const inner = makeRun("hhhhhhhh", "i.txt");
+    makeRun("iiiiiiii", "j.txt", repo, inner);
+    const queued = mergeQueue.enqueue(["iiiiiiii", "hhhhhhhh"], {
+      strategy: "merge",
+      autoResolve: false,
+    });
+    assert.ok(queued.ok, JSON.stringify(queued));
+
+    const rows = await settle(queued.batchId);
+    assert.equal(rows[0].status, "landed", rows[0].message ?? "");
+    assert.equal(rows[1].status, "already-landed", rows[1].message ?? "");
+    assert.match(rows[1].message ?? "", /Already in main/);
+
+    // Read back the way the merge block reads its own batch.
+    const outcomes = rows.map((row) => workflows.queuedBranchOutcome(row, row.run_id));
+    assert.deepEqual(
+      outcomes.filter((o) => o.result === "failed"),
+      [],
+      "a merge block over this batch records a failed landing",
+    );
+    assert.equal(workflows.mergeBlockOutcome(outcomes).ok, true);
   });
 });
 

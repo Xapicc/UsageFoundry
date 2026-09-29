@@ -1133,6 +1133,30 @@ export function unsettledBranchRefusal(
 }
 
 /**
+ * Why a branch whose work is already on its target has nothing left to land,
+ * or null when it is not there.
+ *
+ * Apart from `landRefusal` because the merge queue asks it on its own: a queued
+ * branch can reach its target before its turn, and the queue records that as
+ * already landed rather than as a refusal — which `landRefusal` cannot say for
+ * a chain link, since it names the branch's owner first.
+ */
+export function alreadyOnTargetRefusal(s: {
+  target: string;
+  merged: boolean;
+  landedUnchanged: boolean;
+}): string | null {
+  if (s.merged) return `Already in ${s.target} — there is nothing left to land.`;
+  // A squash leaves no ancestry to find, so without this the branch reads as
+  // unmerged and would be offered for landing a second time — which replays a
+  // change that is already in the target.
+  if (s.landedUnchanged) {
+    return `Already squashed into ${s.target}, and nothing new has been committed to it since.`;
+  }
+  return null;
+}
+
+/**
  * Why this branch cannot be landed right now, or null when it can.
  *
  * Pure, and separated from everything that touches a filesystem, because this
@@ -1168,13 +1192,8 @@ export function landRefusal(s: {
   const unsettled = unsettledBranchRefusal(s, "land");
   if (unsettled) return unsettled;
 
-  if (s.merged) return `Already in ${s.target} — there is nothing left to land.`;
-  // A squash leaves no ancestry to find, so without this the branch reads as
-  // unmerged and would be offered for landing a second time — which replays a
-  // change that is already in the target.
-  if (s.landedUnchanged) {
-    return `Already squashed into ${s.target}, and nothing new has been committed to it since.`;
-  }
+  const onTarget = alreadyOnTargetRefusal({ ...s, target: s.target });
+  if (onTarget) return onTarget;
   // An empty branch with a full checkout behind it is not an empty run — it is
   // an agent that wrote everything and committed none of it, which is what
   // `commitPending` exists for. Saying only "no commits" sends the operator

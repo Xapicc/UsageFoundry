@@ -21,6 +21,7 @@ import {
   instanceStatus,
   loopBody,
   mergeBlockOutcome,
+  queuedBranchOutcome,
   normalizeWorkflowInput,
   pickDuplicateName,
   planEmission,
@@ -52,6 +53,7 @@ import {
 import type { LoopBoardCondition } from "./workflowGraph";
 import { topologicalOrder, type RunStatus } from "./orchestrator";
 import { readTaskLinks } from "./tasks";
+import type { QueueStatus } from "./mergeQueue";
 import {
   MAX_WORKFLOW_NAME,
   type RunProviderDTO,
@@ -1127,6 +1129,55 @@ describe("mergeBlockOutcome — what a merge block reports", () => {
     const out = mergeBlockOutcome([]);
     assert.equal(out.ok, true);
     assert.match(out.note ?? "", /no branch to land/);
+  });
+});
+
+/**
+ * How a merge block reads one row of the batch it queued.
+ *
+ * The queue writes `skipped` for a branch it never attempted because the
+ * checkout stopped that repository, and `already-landed` for one whose work
+ * was on its target by its turn. Only the second is the block's skip: the first
+ * is a branch that did not get where it was going, and reading it as nothing
+ * to land starts the blocks behind a merge on a target that never received the
+ * work.
+ */
+describe("queuedBranchOutcome — what a merge block makes of a queue row", () => {
+  const row = (status: QueueStatus, message: string | null) => ({ status, message });
+
+  it("counts a branch already on its target as having nothing to land", () => {
+    const out = queuedBranchOutcome(
+      row("already-landed", "Already in main — there is nothing left to land."),
+      "uf/a",
+    );
+    assert.deepEqual(out, {
+      branch: "uf/a",
+      result: "skipped",
+      reason: "Already in main — there is nothing left to land.",
+    });
+  });
+
+  it("fails a branch the queue never attempted because the repository halted", () => {
+    const out = queuedBranchOutcome(
+      row("skipped", "Not attempted — The checkout has uncommitted changes."),
+      "uf/a",
+    );
+    assert.equal(out.result, "failed");
+    assert.match(out.reason ?? "", /uncommitted changes/);
+  });
+
+  it("fails a branch still in the queue when the workflow was stopped", () => {
+    for (const status of ["queued", "landing", "resolving"] as const) {
+      const out = queuedBranchOutcome(row(status, null), "uf/a");
+      assert.equal(out.result, "failed", status);
+      assert.match(out.reason ?? "", /still in the merge queue/);
+    }
+  });
+
+  it("lands a landed row and fails a failed one", () => {
+    assert.equal(queuedBranchOutcome(row("landed", "Merged."), "uf/a").result, "landed");
+    assert.equal(queuedBranchOutcome(row("failed", "It conflicts."), "uf/a").result, "failed");
+    assert.equal(queuedBranchOutcome(row("cancelled", null), "uf/a").result, "failed");
   });
 });
 
