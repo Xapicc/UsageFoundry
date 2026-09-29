@@ -21,7 +21,8 @@ import {
  * being one of the four literals; a template that can be saved but never
  * instantiated, because `maxIterations: null` with no time limit is refused by
  * `POST /api/runs` and again as `no_terminus`; a limit switched on with its
- * box left blank, which `normalizePolicy` would store as no limit at all; and
+ * box left blank, which `normalizePolicy` would store as no limit at all; a
+ * window guard above 1, which it would divide by a hundred a second time; and
  * a folder whose "not recorded" collapses into "the whole workspace", which is
  * the one selection that blocks every other run in the tree.
  */
@@ -201,13 +202,38 @@ describe("normalizeTemplateInput — budget", () => {
     );
   });
 
-  it("stores window guards as fractions, however they arrive", () => {
+  it("stores window guards sent as fractions unchanged, up to and including 1", () => {
     const v = value({
       ...OK,
-      budget: { ...OK.budget, maxSessionFraction: 0.8, maxWeeklyFraction: 60 },
+      budget: { ...OK.budget, maxSessionFraction: 0.8, maxWeeklyFraction: 1 },
     });
     assert.equal(v.budget.maxSessionFraction, 0.8);
-    assert.equal(v.budget.maxWeeklyFraction, 0.6);
+    assert.equal(v.budget.maxWeeklyFraction, 1);
+  });
+
+  // `normalizePolicy` would divide these by a hundred a second time: 1.5 — an
+  // old form's 150% — would be stored as a 1.5% guard, with nothing refusing it.
+  it("refuses a window guard above 1, naming the field and the value", () => {
+    for (const [key, sent] of [
+      ["maxSessionFraction", 1.5],
+      ["maxSessionFraction", "150"],
+      ["maxWeeklyFraction", 60],
+    ] as const) {
+      const message = error({ ...OK, budget: { ...OK.budget, [key]: sent } });
+      assert.match(message, new RegExp(`^${key} \\(.+\\) is ${sent},`));
+      assert.match(message, /fraction from 0 to 1/);
+    }
+  });
+
+  it("still saves a window guard left off", () => {
+    for (const off of [null, undefined, ""]) {
+      const v = value({
+        ...OK,
+        budget: { ...OK.budget, maxSessionFraction: off, maxWeeklyFraction: off },
+      });
+      assert.equal(v.budget.maxSessionFraction, null);
+      assert.equal(v.budget.maxWeeklyFraction, null);
+    }
   });
 });
 

@@ -157,6 +157,12 @@ const BLANK_LIMIT_REFUSALS: ReadonlyArray<readonly [keyof BudgetPolicy, string]>
     ],
   ];
 
+/** The two window guards, and how a refusal names each one. */
+const WINDOW_GUARDS: ReadonlyArray<readonly [keyof BudgetPolicy, string]> = [
+  ["maxSessionFraction", "the 5-hour guard"],
+  ["maxWeeklyFraction", "the weekly guard"],
+];
+
 /**
  * Read a template off the wire, refusing anything that could not be run.
  *
@@ -230,6 +236,28 @@ export function normalizeTemplateInput(
       (rawBudget[key] as string).trim() === "",
   );
   if (blankLimit) return { ok: false, error: blankLimit[1] };
+
+  // The form sends a window guard as a 0–1 fraction, and `normalizePolicy`
+  // reads anything above 1 as a percentage and divides it by a hundred — the
+  // dual reading every other caller keeps. At this door that second division
+  // is silent and permanent: 1.5 from an old build of the form, meaning 150%,
+  // is stored as a 1.5% guard that parks every run the template hands out
+  // almost at once. Nothing on the wire says which reading was meant, so a
+  // value `normalizePolicy` would fold is refused rather than guessed at.
+  const foldedGuard = WINDOW_GUARDS.find(([key]) => {
+    const n = Number(rawBudget[key]);
+    return Number.isFinite(n) && n > 1;
+  });
+  if (foldedGuard) {
+    const [key, label] = foldedGuard;
+    return {
+      ok: false,
+      error:
+        `${key} (${label}) is ${String(rawBudget[key])}, but a window guard is ` +
+        "a fraction from 0 to 1 — 0.8 for 80%. Above 1 it would be read as a " +
+        "percentage and divided by 100.",
+    };
+  }
 
   const budget = normalizePolicy(rawBudget);
 
