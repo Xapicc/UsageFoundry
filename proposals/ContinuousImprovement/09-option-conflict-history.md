@@ -298,9 +298,9 @@ contains a byte outside printable ASCII.
 **Half (a) has a precedent that can be measured rather than estimated.**
 `repoSpend` is 189 lines of module, a 30-line route, a 202-line card and a
 159-line test — 580 lines across four files, and `groupRunSpend` is named in the
-tested list at `docs/agent/testing.md:8`. This is smaller on every axis: the
-grouping is a `json_each` and two counts, with none of `repoSpend`'s
-mount-identity work. Call it two thirds, with the pure function unit-tested to
+tested list, in `docs/agent/testing/stacks-and-tool-inventory.md` under "With
+`githubSlug` in `workspace.ts`". This is smaller on every axis: the grouping is
+a `json_each` and two counts, with none of `repoSpend`'s mount-identity work. Call it two thirds, with the pure function unit-tested to
 the same bar — a contention ranking that silently drops the `NULL`-path row or
 double-counts a multi-path resolution is exactly the failure mode CLAUDE.md's
 rule exists for. Its running cost is one indexed read, measured at 1 ms over the

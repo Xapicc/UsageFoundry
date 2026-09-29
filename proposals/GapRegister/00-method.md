@@ -831,7 +831,7 @@ $ grep -ran "globalThis as unknown" src/ | wc -l
 $ grep -rn  "globalThis as unknown" src/ | wc -l
 29      # six files reported "binary file matches" and excluded, orchestrator.ts among them
 $ find src -name '*.test.ts' -o -name '*.test.tsx' | wc -l
-128     # docs/agent/testing.md:310 carries this command and "# 109 as this is written"
+128     # docs/agent/testing.md, "Checking this page is complete", carries this command and "# 109 as this is written"
 $ grep -aoE 'id: "[a-z-]+"' src/components/shell/panes.ts   # PANES, src/components/shell/panes.ts:42-70
 10      # docs/agent/conventions.md says "closed at ten" — current, #163 stayed fixed
 ```
