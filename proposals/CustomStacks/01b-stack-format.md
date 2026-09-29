@@ -73,7 +73,7 @@ does. There is no shell, so there is no `$VAR`, no backtick and no `$( )`.
 Each step is an object with a `kind` drawn from a closed list. This is
 `11-option-allowlisted-installer.md`'s closed verb list with constant argv
 templates, applied where it belongs, and it is what keeps *"never a shell"*
-(`docs/agent/security.md:14`) true of an artifact a third party wrote.
+(`docs/agent/security/path-containment-and-spawn-argv.md`) true of an artifact a third party wrote.
 
 **`archive`** - the general one, and the one the operator's own example needs.
 

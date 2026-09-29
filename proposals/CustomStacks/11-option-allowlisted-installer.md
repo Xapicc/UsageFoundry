@@ -12,7 +12,7 @@ going to be used for and refuses the fifth.
 ## 1. The strongest case
 
 This is the only option in the directory that does not have to reconcile with
-`docs/agent/security.md:14` — because there is nothing to reconcile. *"never a
+`docs/agent/security/path-containment-and-spawn-argv.md`'s never-a-shell paragraph — because there is nothing to reconcile. *"never a
 shell"*, at every spawn site, is a rule this option *obeys* rather than one
 it argues its way around: the argv is a constant template, the operator's input
 lands in a validated field, and `08-` §4's test is passed without a paragraph of
@@ -63,7 +63,7 @@ The verbs, and the closed list is the design:
   front. §10 is where that choice gets made; `04-` §2's reconcile-host question is
   inherited whole and is not re-argued here.
 - **UI**: a sub-route with a card per verb and a `ui/Log` transcript per run.
-  Entirely inside the seven affordances (`conventions.md:50`) — a card, a
+  Entirely inside the seven affordances (`docs/agent/conventions/design-language-and-grouping.md`'s *"grouping has a closed vocabulary"* paragraph) — a card, a
   `ListGroup` of installed things, a `Disclosure` for the transcript. **The only
   option in this file set that adds no new UI shape at all.**
 
@@ -138,7 +138,7 @@ needs a login has to `docker compose exec` anyway**, which is `13-`.
 The one new boundary it *does* need is `resolveInMount`-shaped and narrower: the
 tarball extractor must refuse an absolute or `..`-bearing member path before it
 writes, which is the same double-check discipline as
-`docs/agent/security.md:11` applied to an archive instead of a symlink. A
+`docs/agent/security/path-containment-and-spawn-argv.md`'s `resolveInMount` paragraph applied to an archive instead of a symlink. A
 tar-slip is this option's only novel attack surface and it is a solved problem
 with a unit test.
 

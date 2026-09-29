@@ -103,7 +103,7 @@ docker compose up -d && docker compose logs -f usagefoundry
 
 **The `cat` is the security model**, and this design's whole claim is that it is a
 realistic act rather than a ritual. A `stack.json` is on the order of thirty
-lines, there is no shell in it (`01b-` §2, and `docs/agent/security.md:14`'s
+lines, there is no shell in it (`01b-` §2, and `docs/agent/security/path-containment-and-spawn-argv.md`'s
 *"spawned with an argument array … **never a shell**, so prompt metacharacters
 are inert"* is what makes that enforceable), and every URL, digest, environment
 variable and granted command is a literal on its own line. The five things to look at are §4's checklist.

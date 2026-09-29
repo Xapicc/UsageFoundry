@@ -78,7 +78,7 @@ the third. Either count forbids a pane.
 
 **Settings rather than Agents, and Agents is refused by name.** A toolchain looks
 like it belongs beside the things that decide what an agent can do, and that is
-exactly the placement `docs/agent/agents-and-templates.md:10` forbids: *"A saved
+exactly the placement `docs/agent/agents-and-templates/saved-agents.md` forbids: *"A saved
 agent … carries a role rather than a capability"*, and the field that would make
 it one - `tools` - *"is refused at save"*. A stack is install-wide (`01c-` §3, on
 `14-stack-object-model.md` §7's finding that all three per-run doors are closed),
@@ -112,7 +112,7 @@ row that can hold 4 KB of stderr is a row that has stopped being a row.
 
 This tree has already argued the same fork and taken the same side:
 *"The editor is a route, not a card the board opens above itself"*
-(`docs/agent/taskboard.md:779`). The Tools section links out for the same
+(`docs/agent/taskboard/task-page.md`). The Tools section links out for the same
 reason and **is never filled from the list row** - the detail page fetches the
 receipt itself, which is the second half of that argument.
 
@@ -176,7 +176,7 @@ that is where the operator-declared things the container loads already sit.
 
 **Three groups, one per source, in this order: stacks, `UF_PY_TOOLS`,
 `UF_GH_EXTENSIONS`.** *"Grouping has a closed vocabulary, and it is seven
-things"* (`docs/agent/conventions.md:51`, which routes the reasoning to
+things"* (`docs/agent/conventions/design-language-and-grouping.md`, which routes the reasoning to
 `docs/agent/ui-density-audit.md`), and `ListGroup`
 (`src/components/ui/List.tsx:43`) is the one of the seven this is: three sources,
 labelled, in one list. The order is most-configurable first. One `ListGroup`
@@ -223,7 +223,7 @@ on without reading further.
 `01a-` §7, and under this design it earns a second meaning: `01c-` §3's grant can
 be missing while the install is perfect, and `unverified` is exactly what that
 looks like from here. The shape is the metering rule's - *"Unknown must not
-render as zero"* (`docs/agent/metering.md:8`).
+render as zero"* (`docs/agent/metering/unknown-and-percentages.md`).
 
 **`failing` names no cause, on purpose.** A count cannot tell a missing grant
 from a tool that ran and did not like its arguments, and a word that claims a

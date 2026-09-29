@@ -131,17 +131,17 @@ loud at the one moment somebody can fix it. `01g-` §5.2 is the finding; the
 refusal joins `01b-` §3's list and is the only one there about two fields
 disagreeing rather than one field being wrong.
 
-### 2.5 A quotation attributed to `docs/agent/security.md:14` that it does not contain · **reference**
+### 2.5 A quotation attributed to the never-a-shell paragraph that it does not contain · **reference**
 
-`docs/agent/security.md:14`'s words are: *"The agent is spawned with an argument
+The never-a-shell paragraph's words, now in `docs/agent/security/path-containment-and-spawn-argv.md`, are: *"The agent is spawned with an argument
 array and `stdio: ["ignore", "pipe", "pipe"]`, **never a shell**, so prompt
 metacharacters are inert."* The phrase **"Never a shell. Argv arrays only"** is
 `CLAUDE.md`'s routing paraphrase and appears nowhere in `docs/agent/`.
 
 Two files in this directory quoted the paraphrase as if it were the doc's, both
 of them written by this run, and both now quote the doc's own sentence. **Every
-other `docs/agent/security.md:14` citation in the directory is correct** - they
-quote the two words *"never a shell"*, which the line does contain.
+other citation of that paragraph in the directory is correct** - they
+quote the two words *"never a shell"*, which the paragraph does contain.
 
 **This is a house-style trap worth naming, because the paraphrase is loose in the
 tree**: `proposals/ContinuousImprovement/01-constraints.md:159` and
@@ -163,12 +163,12 @@ Both fixed.
 Three claims in `01e-` and `01f-` cited a `docs/agent/` file without a line, and
 in one case paraphrased it:
 
-- the agent-placement refusal is `docs/agent/agents-and-templates.md:10` -
+- the agent-placement refusal is `docs/agent/agents-and-templates/saved-agents.md`'s *"a saved agent is the fourth thing here that is form input"* paragraph -
   *"A saved agent … carries a role rather than a capability"*, and the field that
   would make it one is `tools`, which *"is refused at save"*;
-- the route-not-a-card decision is `docs/agent/taskboard.md:779` - *"The editor
+- the route-not-a-card decision is `docs/agent/taskboard/task-page.md` - *"The editor
   is a route, not a card the board opens above itself"*;
-- the grouping rule is `docs/agent/conventions.md:51` - *"Grouping has a closed
+- the grouping rule is `docs/agent/conventions/design-language-and-grouping.md` - *"Grouping has a closed
   vocabulary, and it is seven things"* - and the component is `ListGroup`
   (`src/components/ui/List.tsx:43`).
 

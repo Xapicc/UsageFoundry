@@ -135,7 +135,7 @@ the process mid-reconciliation and the failure is exactly the one
 > not one of the suspended `startRun` frames ever resumed and nothing after
 > `await runIteration(...)` ever ran. Every in-flight cycle's spend went with it
 
-`docs/agent/concurrency-and-ownership.md:16` names the half of that which fails
+`docs/agent/concurrency-and-ownership/shutdown-and-restart.md`'s *"A shutdown accounts for the cycles it kills, and it is the only reason the process lingers"* names the half of that which fails
 **open**: `active_started_at` left set on cycles whose agents are gone, which
 `installBudget` and a workflow instance's budget both bound
 `telemetrySpendSince` below by — so a shutdown that does not finish widens two
@@ -225,8 +225,8 @@ it nightly from cron present identically — on every page, on the status
 endpoint, and in every one of `README.md`'s fifteen alertable conditions.
 
 **This row does not ask for a scheduler and the distinction is the whole of why
-it is filed.** Shipping one is refused, on the record, at
-`docs/agent/environment.md:13`: *"`scripts/backup-db.mjs` is run by hand or by
+it is filed.** Shipping one is refused, on the record, in
+`docs/agent/environment/workspace-and-bind-mounts.md`'s `UF_BACKUP_DIR` paragraph: *"`scripts/backup-db.mjs` is run by hand or by
 the operator's own cron, which the README states in words rather than shipping a
 scheduler, because a timer that spends nothing still needs somewhere to put a
 file that grows without bound."* That argument is about **writing**. It says
@@ -389,7 +389,7 @@ export function lockVerdict(
 }
 ```
 
-`docs/agent/concurrency-and-ownership.md:18`, verbatim, and the same sentence is
+`docs/agent/concurrency-and-ownership/server-lock.md`'s *"The owner asks every beat whether the directory is still its own"*, verbatim, and the same sentence is
 in the `STALE_MS` docblock at `serverLock.ts:66-71`:
 
 > The margin itself is stated where the constant is: staleness is the *last*
@@ -510,7 +510,7 @@ exists to say `/api/status` did not receive.
 Eight candidates that look like operational gaps and are documented decisions.
 Named so a future sweep does not rediscover them.
 
-1. **Nothing schedules a backup.** Decided at `docs/agent/environment.md:13`:
+1. **Nothing schedules a backup.** Decided in `docs/agent/environment/workspace-and-bind-mounts.md`'s `UF_BACKUP_DIR` paragraph:
    run by hand or by the operator's own cron, *"because a timer that spends
    nothing still needs somewhere to put a file that grows without bound."*
    [O4](#o4--nothing-in-the-app-knows-the-backup-directory-exists-so-no-surface-can-say-when-the-install-was-last-backed-up)

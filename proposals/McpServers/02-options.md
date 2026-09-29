@@ -120,7 +120,7 @@ switched and contained — as a second mechanism beside them. It needs the C1
 decoupling and the C2 and C3 fixes that B gets from the CLI for free, a new
 mount (C10, and the deployment pins), a parser with tests, and a UI group. A
 credential written into the per-cycle file is readable by the agent uid, as the
-taskboard token is (`docs/agent/security.md:33`); that is the existing bound,
+taskboard token is (`docs/agent/security/child-uid-and-credentials.md`'s *"a work cycle can now write to this app's database"* paragraph); that is the existing bound,
 not a new one, but it is not secrecy from the agent.
 
 **What it costs.** Roughly stacks' phases 1 and 2 over again.

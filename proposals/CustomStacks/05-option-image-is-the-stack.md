@@ -79,7 +79,7 @@ same reason it deliberately does not cover the agents' git branches
 
 It also sidesteps the volume-masking trap in `01-constraints.md` §2 completely,
 because there is no volume to mask — the trap that forced `/opt/winnow`
-(`Dockerfile:303-309`) and the Playwright browsers (`docs/agent/environment.md:33`)
+(`Dockerfile:303-309`) and the Playwright browsers (`docs/agent/environment/image-binaries.md`'s Playwright paragraph)
 out of volumes in the first place. **This option is the same decision those two
 already took, generalised.**
 

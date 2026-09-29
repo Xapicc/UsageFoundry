@@ -7,7 +7,7 @@ them, in descending order of how much field they remove.
 
 ## C1. One focus treatment, stated in one place, and a component may change only its colour
 
-`docs/agent/conventions.md:53`:
+`docs/agent/conventions/styling-tokens-and-variants.md`:
 
 > **One focus treatment, stated in one place.** `@layer base` draws
 > `outline: 2px solid var(--ring)` at 2px offset on everything focusable, so a

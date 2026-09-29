@@ -36,17 +36,18 @@ operator will type. This is what you build when you have read their sentence.
   ```
   `08-` §4's test — no value the server holds may be concatenated into a child's
   command line — is passed by an argv array and **failed by `sh -c command`**, in
-  exactly the shape `docs/agent/security.md:14` names. Splitting a string server-side fails it
+  exactly the shape `docs/agent/security/path-containment-and-spawn-argv.md`'s never-a-shell paragraph names. Splitting a string server-side fails it
   worse: a hand-rolled shell lexer is a shell with a bug in it.
 - **The spawn**: `spawn("/usr/bin/setpriv", ["--reuid", …, "--regid", …,
   "--clear-groups", ...argv], { env: terminalEnv(), cwd, stdio: ["ignore",
   "pipe", "pipe"] })` — the entrypoint's own idiom (`docker-entrypoint.sh:145-153`),
-  `stdio` matching every other spawn site here (`docs/agent/security.md:14`).
+  `stdio` matching every other spawn site here (`docs/agent/security/path-containment-and-spawn-argv.md`'s
+  never-a-shell paragraph).
 - **`terminalEnv()`** stripping the same six: `UF_*`, `OTEL_*`,
   `ANTHROPIC_ADMIN_KEY`, `CLAUDE_CODE_ENABLE_TELEMETRY`, `DATA_DIR` and
   `NODE_OPTIONS`, beside the four that exist (`01-constraints.md` §3).
 - **`cwd`** through `resolveInMount()` — containment on the resolved path **and
-  again after `realpathSync`**, both load-bearing (`docs/agent/security.md:11`).
+  again after `realpathSync`**, both load-bearing (`docs/agent/security/path-containment-and-spawn-argv.md`'s `resolveInMount` paragraph).
 - **Output**: an SSE stream on the existing pattern, with an **explicit byte cap**
   this time (`08-` §5's inherited backpressure gap), truncating loudly.
 - **UI**: a sub-route, an input, a `ui/Log` transcript (`Log.tsx:39-54` is already

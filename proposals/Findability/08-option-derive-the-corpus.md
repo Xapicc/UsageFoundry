@@ -24,7 +24,7 @@ docstring, `:194-200`:
 > `SettingName` records. Nine sections are anchors on one long page, so all of
 > them are in the DOM at once and a walk over it is the whole corpus.
 
-And the reason, at `docs/agent/conventions.md:16`:
+And the reason, in `docs/agent/conventions/polling-dtos-and-settings-save.md`'s *"a control that narrows what is on screen narrows the data"* paragraph:
 
 > Not a declared index: that would duplicate sixty labels and their help text
 > with nothing keeping the two in step, and **a search naming a field the page no

@@ -23,9 +23,10 @@
  *
  * ## Never a shell
  *
- * `docs/agent/security.md:14` — the agent is spawned with an argument array,
- * never a shell. The same rule holds here and for a stronger reason: every URL,
- * filename and digest in the argv below came out of a file a stranger wrote.
+ * `docs/agent/security/path-containment-and-spawn-argv.md`'s never-a-shell
+ * paragraph — the agent is spawned with an argument array, never a shell. The
+ * same rule holds here and for a stronger reason: every URL, filename and
+ * digest in the argv below came out of a file a stranger wrote.
  * There is no `exec`, no `sh -c` and no string interpolation into a command;
  * `run()` takes an array and `spawnSync` gets `shell: false` by construction.
  * The format has four expansion tokens and no `$VAR`, no backtick and no `$( )`

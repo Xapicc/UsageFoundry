@@ -55,8 +55,8 @@ whose comment five lines above describes exactly the resulting failure.
 
 **Precedent:** the app already derives one corpus rather than declaring it — the
 settings field search walks the rendered page for `[data-setting-name]`
-(`src/app/settings/page.tsx:194-222`), and `docs/agent/conventions.md:16` records
-why: a declared index "would duplicate sixty labels and their help text with
+(`src/app/settings/page.tsx:194-222`), and `docs/agent/conventions/polling-dtos-and-settings-save.md`'s *"a control that narrows what is on screen narrows the data"* paragraph
+records why: a declared index "would duplicate sixty labels and their help text with
 nothing keeping the two in step, and a search naming a field the page no longer
 has is worse than no search". `PANES` is the same hazard on the smaller and more
 consequential list, and it has already failed where settings has not.
@@ -88,7 +88,7 @@ scanning. The goal is met; the mechanism is not needed. Cost: a paragraph in
 |---|---|
 | **A cross-kind FTS5 index** (§05) | The scan it would replace is 4.1 ms over 50,000 rows, measured in the tree at `orchestrator.ts:1024`; it needs feeding by 36 tables growing at one per 1.5 days; and "index every `TEXT` column" indexes `run_events.payload`, which is raw agent stdout. |
 | **A query language** (§07) | Outside `limit`/`offset`/`q` the whole API accepts fourteen filter parameters, most appearing once on one route. A grammar over that has two working keywords, four maintenance sites per field, and a mistyped key that must be an error rather than zero results. |
-| **A generic client-side per-page filter component** (§06) | `docs/agent/conventions.md:16` already states the rule: "The narrowing happens in the query, never in the client over an already-capped page." Three of the four text inputs that exist are *server* searches, and `QuickOpen.tsx:241-246` documents why client re-filtering drops matches. Over a capped list — 100 runs, 100 chats, 500 notes, 60 branches — a client filter reports "3 matches" when the truth is "3 in the first page". Silently wrong, and already forbidden. |
+| **A generic client-side per-page filter component** (§06) | `docs/agent/conventions/polling-dtos-and-settings-save.md`'s *"a list route ships the list's own DTO"* paragraph already states the rule: "The narrowing happens in the query, never in the client over an already-capped page." Three of the four text inputs that exist are *server* searches, and `QuickOpen.tsx:241-246` documents why client re-filtering drops matches. Over a capped list — 100 runs, 100 chats, 500 notes, 60 branches — a client filter reports "3 matches" when the truth is "3 in the first page". Silently wrong, and already forbidden. |
 | **Corpus-widening as *the* answer** (§04) | Refused as a shape, not as an act. Six edit sites per source in a component with no registry and two divergent return paths; and agents, templates and schedules have no page for a jump-to surface to jump to. Quick open consuming item 1's `q=` is welcome and is not this. |
 | **A schema-derived content index** (§08) | Safe for routes, unsafe for columns: a column carries no signal about whether its contents are for the operator, and the per-table decision that fixes it is the registration the derivation existed to avoid — failing in the leaking direction. |
 

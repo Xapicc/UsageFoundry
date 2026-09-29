@@ -320,13 +320,13 @@ app's.
   installed tools inherits that rule.
 - **`--add-dir` grants write, and a stored path is proved contained in a mount
   again at use time**, because what an enabled plugin becomes is *"a directory
-  whose hooks the container executes"* (`docs/agent/architecture.md:59`, routed
+  whose hooks the container executes"* (`docs/agent/architecture/module-map.md`'s `plugins.ts` entry, routed
   from `CLAUDE.md:53`). **A stack directory reachable by `--add-dir` is a stack
   directory an agent can rewrite.**
 - **Never a shell.** The agent is spawned with an argument array and
   `stdio: ["ignore", "pipe", "pipe"]`, **never a shell**, so prompt
-  metacharacters are inert (`docs/agent/security.md:14`, routed from
-  `CLAUDE.md:59`). Any install surface that takes operator text and runs it
+  metacharacters are inert (`docs/agent/security/path-containment-and-spawn-argv.md`'s
+  never-a-shell paragraph, routed from `CLAUDE.md:59`). Any install surface that takes operator text and runs it
   answers to this line, and the only shape that never has to argue with it is a
   closed verb list with constant argv templates.
 

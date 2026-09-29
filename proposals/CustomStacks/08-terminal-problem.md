@@ -38,8 +38,8 @@ What the credential buys today:
 | Surface | What it runs | As whom | Bounded by |
 |---|---|---|---|
 | `POST /api/runs` (`src/app/api/runs/route.ts:358`) | a `claude` child with `Bash`, prompt from the wire | `UF_AGENT_UID` | permission mode, budget guards, `run_events` |
-| `POST /api/chat/[id]/message` (`route.ts:33`) | a `claude` child at **`bypassPermissions`**, `--add-dir` on every mount, `UF_GITHUB_TOKEN` in env (`src/lib/chat.ts:1652-1653`, `:1667-1670`) | `UF_AGENT_UID`, `UF_CHAT_GID` | `--max-budget-usd`, a 10-minute timeout, and *"the system prompt is the boundary"* (`docs/agent/chat.md:24`) |
-| `POST /api/plugins` | registers a directory *"whose hooks the container executes"* (`docs/agent/architecture.md:59`) | `UF_AGENT_UID`, inside a `claude` child | containment re-proved at use time |
+| `POST /api/chat/[id]/message` (`route.ts:33`) | a `claude` child at **`bypassPermissions`**, `--add-dir` on every mount, `UF_GITHUB_TOKEN` in env (`src/lib/chat.ts:1652-1653`, `:1667-1670`) | `UF_AGENT_UID`, `UF_CHAT_GID` | `--max-budget-usd`, a 10-minute timeout, and *"the system prompt is the boundary"* (`docs/agent/chat/child-permissions-and-sandbox.md`) |
+| `POST /api/plugins` | registers a directory *"whose hooks the container executes"* (`docs/agent/architecture/module-map.md`'s `plugins.ts` entry) | `UF_AGENT_UID`, inside a `claude` child | containment re-proved at use time |
 
 So arbitrary execution is not new, the agent uid is not new, and write access to
 every mount is not new. **Four things are new, and only four.** They are what an
@@ -64,8 +64,8 @@ consequences of the idea:
 **And one thing that is *not* a delta, which is worth stating because it is the
 first objection anyone will raise.** The credential does not reach the agents:
 `childEnv`, `chatEnv`, `reviewEnv`, `authEnv` and `gitEnv` all strip `UF_*`
-(`01-constraints.md` §3 for the first two; `docs/agent/security.md:14` and
-`review.ts:760-770` / `claudeAuth.ts:258-268` / `git.ts:51-61` for the rest), so
+(`01-constraints.md` §3 for the first two; `docs/agent/security/path-containment-and-spawn-argv.md`'s never-a-shell
+paragraph and `review.ts:760-770` / `claudeAuth.ts:258-268` / `git.ts:51-61` for the rest), so
 `UF_AUTH_TOKEN` is not in any child's environment and a work-cycle agent cannot
 POST to a terminal route to escape its own uid. That strip is load-bearing for
 this feature specifically, and any option that introduces a *second* credential
@@ -98,7 +98,7 @@ Neither is an argument that the terminal must not exist. Both are arguments that
 
 There is no CSRF token, no double-submit and no origin check anywhere in `src/`
 (zero `csrf` hits). The stand-in is stated: *"`httpOnly` and `sameSite: "lax"` are
-unchanged and are what stands in for CSRF protection"* (`docs/agent/security.md:25`).
+unchanged and are what stands in for CSRF protection"* (`docs/agent/security/middleware-login-and-sessions.md`'s *"the session cookie is a handle"* paragraph).
 `Lax` withholds the cookie from a cross-site `POST` and **sends it on a top-level
 `GET` navigation**. So:
 
@@ -162,8 +162,8 @@ directions.
 
 ## 4. "Never a shell" — the rule, and the only reconciliation that holds
 
-`CLAUDE.md:59` routes it, and the rule itself lives at
-`docs/agent/security.md:14` — *"spawned with an
+`CLAUDE.md:59` routes it, and the rule itself lives in
+`docs/agent/security/path-containment-and-spawn-argv.md`'s never-a-shell paragraph — *"spawned with an
 argument array and `stdio: ["ignore", "pipe", "pipe"]`, **never a shell**, so
 prompt metacharacters are inert"* — and the tree keeps it: **`shell: true`
 appears nowhere in this repository**, and all eight production spawn sites pass
@@ -204,7 +204,7 @@ as `/usr/bin/tini -- /usr/local/bin/uf-entrypoint node server.js`; `/proc/1/envi
 is `-r-------` and returned `Permission denied`. The repository already depends on
 this asymmetry twice — `src/lib/privsep.ts:41-55` invents `UF_CHAT_GID` precisely
 because *"`--mcp-config <path>` is an argv element, `/proc/<pid>/cmdline` is
-world-readable"*, and `docs/agent/chat.md:22` puts the capability *"in a 0600 file
+world-readable"*, and `docs/agent/chat/mcp-tools-and-capability.md`'s *"the chat's child authenticates with a capability"* paragraph puts the capability *"in a 0600 file
 rather than into argv (where `ps` would show it)"*.
 
 The consequence inverts the intuition: **a one-shot exec route publishes the
@@ -293,15 +293,15 @@ a `SegmentedControl` view on an existing pane — never a tenth row. Every optio
 file below assumes that and none of them re-argues it.
 
 **A correction the tree needs and that this proposal cannot make** (it is under
-`docs/`, which run 2 may not edit): `docs/agent/conventions.md:50` still says the
+`docs/`, which run 2 may not edit): `docs/agent/conventions/design-language-and-grouping.md`'s *"grouping has a closed vocabulary"* paragraph still says the
 list is *"closed at eight, because ⌘1…⌘8 has eight digits"* and forbids *"a ninth
-pane"*, while `conventions.md:57` in the same file says *"The set covers the nine
+pane"*, while `docs/agent/conventions/component-kit.md`'s `SegmentedControl` paragraph says *"The set covers the nine
 panes"* and `panes.ts:15` says nine. `ui-density-audit.md:115` also still says
 *"Eight."* The ban is right and the number is one behind in two places.
 
 ### Against the seven affordances
 
-`conventions.md:50` closes grouping at seven — pane, sub-route, card, labelled
+`docs/agent/conventions/design-language-and-grouping.md`'s *"grouping has a closed vocabulary"* paragraph closes grouping at seven — pane, sub-route, card, labelled
 `ListGroup`, `Disclosure`, `SegmentedControl` tab strip, `Sheet` — and forbids
 seven more, and states that *"a **region** is not an eighth affordance"*.
 
@@ -328,7 +328,7 @@ each is a real cost rather than a formality:
    `<input>`, `<textarea>`, `<select>` and `contentEditable`. xterm.js keeps a
    hidden textarea and is therefore covered; a bare focusable `<div>` is not, and
    ⌘1 typed into it navigates away mid-command.
-2. **Colour.** `conventions.md:64`'s canvas rules apply to any canvas or WebGL
+2. **Colour.** `docs/agent/conventions/canvas-and-charts.md`'s *"a `<canvas>` settles three things the DOM already answered"* paragraph's canvas rules apply to any canvas or WebGL
    renderer: a colour may never be read from a custom property, because every
    token is a `light-dark()` no `@property` registers and `getComputedStyle`
    returns source text a 2D context rejects **silently**. An emulator needs
@@ -361,7 +361,7 @@ because *"`POST /api/login` carries the master token in its body"*). The cap is
 `RETENTION_ROWS = 20_000` (`:68`) and eviction is unconditional on **every**
 insert (`:118-121`).
 
-`docs/agent/chat.md:22` already names that as a weapon: auditing `/api/mcp`'s
+`docs/agent/chat/mcp-tools-and-capability.md`'s *"the chat's child authenticates with a capability"* paragraph already names that as a weapon: auditing `/api/mcp`'s
 credential-free 401 *"made `request_log`'s 20,000-row cap a lever anyone who could
 reach the path could pull — twenty thousand refusals and every line naming a run
 that was started or a sign-in that failed is evicted."* The fix was to wrap only
@@ -393,7 +393,7 @@ Three rules follow, and they are the same three for every option:
 **A terminal is invisible to the folder claim.** Occupancy is a synchronous
 check-then-insert over SQLite rows, `createRun` runs entry-to-INSERT with no
 `await`, and *"never key occupancy on `isRunning()`"*
-(`docs/agent/concurrency-and-ownership.md:10`). Nothing watches the filesystem —
+(`docs/agent/concurrency-and-ownership/folder-claim-and-slot-walk.md`, *"The folder claim is a synchronous check-then-insert"*). Nothing watches the filesystem —
 there is no `fs.watch`, no `chokidar`, no `inotify` anywhere in `src/`. The only
 filesystem probe is `git status --porcelain` against **candidate `.uf-worktrees`
 slots for a new run**, capped at `MAX_SLOT_PROBES_PER_ADMISSION` and memoised
@@ -404,8 +404,8 @@ there is undetected by every mechanism in this app. The run's agent sees a tree 
 did not produce; `land.ts` merges whatever is there; and the landing path's
 precondition — the operator's checkout clean and standing on the recorded target
 branch (`docs/agent/isolation-and-landing.md`) — is broken by the easiest thing to
-type. `docs/agent/concurrency-and-ownership.md:14`'s *"`unclaimed` is not a
-refusal"* is precisely the door a terminal-launched process walks through.
+type. The *"`unclaimed` is not a
+refusal"* in `docs/agent/concurrency-and-ownership/server-lock.md`'s *"…and exactly one process may write, which is enforced rather than assumed"* is precisely the door a terminal-launched process walks through.
 
 **And the suicide case is not hypothetical — it happened, from an agent, and it
 was counted** (`src/lib/orchestrator.ts:5147-5150`):
@@ -491,7 +491,7 @@ option file's cost estimate depends on the first two.
    ```
 5. **Nothing about a real terminal emulator.** No xterm.js was installed, no PTY
    was opened, no theme probe was written. The colour cost in §6 is reasoned from
-   `conventions.md:64` and has not been paid by anyone here.
+   `docs/agent/conventions/canvas-and-charts.md`'s *"a `<canvas>` settles three things the DOM already answered"* paragraph and has not been paid by anyone here.
 
 And one thing that is a gap in the tree rather than in this survey:
 **`Dockerfile:10` is stale.** It says of `python3 make g++` that *"They stay in

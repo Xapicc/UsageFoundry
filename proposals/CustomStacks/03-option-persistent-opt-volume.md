@@ -38,7 +38,7 @@ matter.
 `/opt/playwright/browsers` (`Dockerfile:440`) and `/opt/winnow`
 (`Dockerfile:303-314`): `/home/node` is recursively chowned in the Dockerfile,
 and a recursive chown over a large tree writes a second copy of it into the image
-(`docs/agent/environment.md:33`).
+(`docs/agent/environment/image-binaries.md`'s Playwright paragraph).
 
 ## 3. What persists it, and what discards it
 

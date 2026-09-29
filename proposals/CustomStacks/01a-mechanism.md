@@ -339,8 +339,8 @@ writes `/var/lib/uf-stacks/env` as `KEY=VALUE` lines and
 `src/instrumentation.ts` merges it into `process.env` at server start, before any
 child can be spawned. It goes through the server rather than through the
 entrypoint because the entrypoint would have to `export` text that came from a
-third party's file, and *"never a shell"* (`docs/agent/security.md:14`) is easier
-to keep true if no generated text is ever handed to one.
+third party's file, and *"never a shell"* (`docs/agent/security/path-containment-and-spawn-argv.md`)
+is easier to keep true if no generated text is ever handed to one.
 
 **`state/` persists on exactly the same terms as the binary**: same volume,
 survives `up --build`, destroyed by `down -v`. A tool that caches a gigabyte of
@@ -404,7 +404,7 @@ the appended system prompt**, because `runs.file_cost_notice` is a cached prefix
 generated once at `createRun` and text that differed between two cycles would
 cold-start a large context. `--add-dir`: no stack path is ever passed to it, so
 no stack directory becomes *"a directory whose hooks the container executes"*
-(`docs/agent/architecture.md:59`). *Never a shell*: the applier builds argument
+(`docs/agent/architecture/module-map.md`'s `plugins.ts` entry). *Never a shell*: the applier builds argument
 arrays; the three install verbs have constant argv templates with substitution
 only into a single argument position; there is no `postinstall`, no `script`
 field and no `run` verb, which is `11-option-allowlisted-installer.md`'s closed

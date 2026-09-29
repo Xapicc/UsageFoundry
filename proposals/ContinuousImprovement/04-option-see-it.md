@@ -124,7 +124,7 @@ the only one another option cannot skip.
 `export const runtime = "nodejs"` and `export const dynamic = "force-dynamic"`,
 because it touches SQLite and, through `conflictKey`, the filesystem; the
 precedent is `src/app/api/repo-spend/route.ts:4`–`:5`, and
-`docs/agent/conventions.md:11` states the rule. Second, and larger:
+`docs/agent/conventions/route-handlers-and-server-modules.md`'s route-handlers paragraph states the rule. Second, and larger:
 
 **It must not group on `conflictKey(repo_root)` without naming the no-repo
 bucket, because `repo_root` is not a repository field at all.** It is written
@@ -243,7 +243,7 @@ bind. A table stacking below `md` needs `Table stack` **and** a `label` on every
 `Td`, or it is a column of unnamed figures — which four columns of read counts
 would be exactly. And a heading over the two cards is a **region**: a `<div>`
 with an `<h2>`, never a `<section>`, drawing no figure, meter or total of its
-own (`docs/agent/conventions.md:46`).
+own (`docs/agent/conventions/design-language-and-grouping.md`'s *"grouping has a closed vocabulary"* paragraph).
 
 Reading (3) goes on the run page, and where is decided by a fact worth checking
 first. The log's `cycle` voice is a **sticky one-line group header** whose

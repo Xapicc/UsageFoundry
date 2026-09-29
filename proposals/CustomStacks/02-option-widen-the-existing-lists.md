@@ -153,7 +153,7 @@ They asked for a button. This is a text file and a restart.
   (`.env.example:222-226`).
 - **A typo in a variable name is total silence** — compose has no `env_file`, so
   a name `docker-compose.yml` does not forward never reaches the container
-  (`docs/agent/environment.md:27`). `deployment.test.ts:961` is what catches it.
+  (`docs/agent/environment/sandbox-and-claude-home.md`'s `UF_LOCK_CLAUDE_HOME` paragraph). `deployment.test.ts:961` is what catches it.
 - **A tool installed but not invokable** under `acceptEdits` fails inside a tool
   call the run loop does not read (§4). The run finishes `completed`.
 - **Loud, at least:** a checksum mismatch, a 404 on a release URL, and a

@@ -18,7 +18,7 @@ extract what exists, apply it everywhere.
 
 ## The refusal is not this survey's opinion — it is already a stated invariant
 
-`docs/agent/conventions.md:16`, on list routes, verbatim:
+`docs/agent/conventions/polling-dtos-and-settings-save.md`'s *"a list route ships the list's own DTO"* paragraph, verbatim:
 
 > **The narrowing happens in the query, never in the client over an
 > already-capped page.**
@@ -75,7 +75,7 @@ max 200 (`knowledge.ts:1447,1450`). `listNotes` caps at 500
 A filter over the fetched page reports "3 matches" when the truth is "3 matches
 in the first hundred". It is not a weaker search than the server one; it is a
 **wrong** one, and it is wrong silently — the failure mode `CLAUDE.md` names as
-this app's characteristic hazard, and the one `conventions.md:16` calls
+this app's characteristic hazard, and the one `docs/agent/conventions/polling-dtos-and-settings-save.md`'s *"a list route ships the list's own DTO"* paragraph calls
 "indistinguishable from right". F2's own text is about a cap; answering a cap
 with a filter that only sees inside the cap answers nothing.
 
