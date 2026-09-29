@@ -337,4 +337,30 @@ describe("the check runs against what the land would carry", () => {
     );
     assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
   });
+
+  it("refuses when the branch gained a commit during the check", async () => {
+    // A continuation adopting the slot, or the card's Commit button, commits
+    // while the command runs. The merge is by name, so without the comparison
+    // it carried a commit the command never saw.
+    const s = scene("moved");
+    verifyWith("wait", s.signals);
+
+    const landing = land.landRun(s.runId, "merge");
+    await until(path.join(s.signals, "started"));
+    fs.writeFileSync(path.join(s.slot, "late.txt"), "never checked\n");
+    git(s.slot, "add", "late.txt");
+    git(s.slot, "commit", "-qm", "committed during the check");
+    const late = git(s.slot, "rev-parse", "HEAD").trim();
+    fs.writeFileSync(path.join(s.signals, "go"), "");
+    const landed = await landing;
+
+    assert.equal(landed.ok, false);
+    assert.match(
+      landed.ok ? "" : landed.reason,
+      /uf\/moved moved while the verify command ran/,
+    );
+    assert.equal(contains(s.repo, "main", late), false, "main holds a commit the check never saw");
+    assert.equal(git(s.repo, "rev-parse", "main").trim(), s.base);
+    assert.equal(landedAt(s.runId), null);
+  });
 });

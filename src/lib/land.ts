@@ -1359,7 +1359,7 @@ export async function landRun(
     if (verifyCommand.trim()) {
       const tree = await verifyTree(run);
       if (!tree.ok) return { ok: false, reason: tree.reason };
-      const verify = await verifyInSlot(run, tree.path, verifyCommand);
+      const verify = await verifyInSlot(tree.path, branch, verifyCommand, "land");
       if (!verify.passed) return { ok: false, reason: verify.reason };
     }
 
@@ -2523,11 +2523,21 @@ async function verifyTree(run: RunRow): Promise<VerifyTree> {
  * its tree. Refused rather than run when a run already holds the slot: one can
  * have been given it after `verifyTree` read the branch and before its
  * `checkout -b`, and the check would then run in a tree about to change hands.
+ *
+ * A pass also proves the branch still points at the commit the command ran
+ * against. Both exits act on the branch by **name** afterwards, and the hold
+ * does not keep commits off it: a continuation of this run adopts the slot in
+ * `planWorkspace` without going through `allocateSlotPath`, and the card's
+ * Commit button writes into it, either of which can move the branch while the
+ * command runs — and the land then merged, or the delivery pushed, commits the
+ * check never saw. Comparing the ref rather than refusing continuations
+ * covers every writer, including one this file does not know about.
  */
 async function verifyInSlot(
-  run: RunRow,
   slot: string,
+  branch: string,
   command: string,
+  exit: BranchExit,
 ): Promise<{ passed: boolean; reason: string }> {
   const release = holdSlot(slot);
   if (!release) {
@@ -2535,13 +2545,40 @@ async function verifyInSlot(
       passed: false,
       reason:
         `A verify command is configured, but a later run has just been given ` +
-        `${slot}, where ${run.worktree_branch ?? "this run's branch"} is checked ` +
+        `${slot}, where ${branch} is checked ` +
         `out, so there is nowhere to run the check against this work. Nothing ` +
         `was landed. Clear the command in Settings to land without a check.`,
     };
   }
   try {
-    return await runVerify(slot, command);
+    // HEAD rather than the branch: it is what the command's tree is, and
+    // `verifyTree` proved the slot clean on this branch. If the two had parted
+    // since, the comparison below refuses, which is the right answer.
+    const checked = await git(slot, ["rev-parse", "--verify", "-q", "HEAD"], NO_CLOCK);
+    if (!checked.ok) {
+      return {
+        passed: false,
+        reason:
+          `A verify command is configured, but git could not read which commit ` +
+          `${slot} holds, so there would be no telling afterwards whether the ` +
+          `check saw what ${branch} points at. Nothing was ${EXIT_WORDS[exit].done}.`,
+      };
+    }
+    const verdict = await runVerify(slot, command);
+    if (!verdict.passed) return verdict;
+    const tip = await git(slot, ["rev-parse", "--verify", "-q", branch], NO_CLOCK);
+    if (!tip.ok || tip.stdout !== checked.stdout) {
+      return {
+        passed: false,
+        reason:
+          `${branch} moved while the verify command ran — it was checked at ` +
+          `${checked.stdout.slice(0, 8)} and now points at ` +
+          `${tip.ok ? tip.stdout.slice(0, 8) : "nothing git can read"} — so what ` +
+          `passed is not what would leave. Nothing was ${EXIT_WORDS[exit].done}. ` +
+          `Try again once nothing is committing to it.`,
+      };
+    }
+    return verdict;
   } finally {
     release();
   }
@@ -4167,7 +4204,7 @@ async function pushAndOpen(a: {
   if (verifyCommand.trim()) {
     const tree = await verifyTree(run);
     if (!tree.ok) return { ok: false, reason: tree.reason };
-    const verify = await verifyInSlot(run, tree.path, verifyCommand);
+    const verify = await verifyInSlot(tree.path, state.branch, verifyCommand, "deliver");
     if (!verify.passed) return { ok: false, reason: verify.reason };
   }
 

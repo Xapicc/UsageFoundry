@@ -66,8 +66,21 @@ goes through `verifyInSlot`, which takes `holdSlot` around `runVerify`:
 synchronous, refusing when an active run was given the slot between
 `verifyTree`'s read and the hold, and counted so that one release can never end
 another's hold. `allocateSlotPath` skips a held slot as it skips an occupied
-one. A continuation of the run being landed inherits its slot without going
-through `allocateSlotPath` and is not covered by the hold.
+one. **The hold keeps other runs out, not commits, so what passed is proved to
+be what leaves.** A continuation of the run being landed inherits its slot in
+`planWorkspace` without going through `allocateSlotPath`, and the card's Commit
+button writes into it, and both exits act on the branch by *name*: a commit made
+during the check was merged or pushed unverified. So `verifyInSlot` reads the
+slot's `HEAD` under the hold before the command, and after a pass refuses unless
+`rev-parse <branch>` still names it. That was chosen over making
+`inheritedSlot` respect the hold, which covers one writer and would have meant
+refusing to create a continuation of a run with a land in flight — a fresh
+slot fails at `worktree add` while the branch is checked out in the held one.
+It leaves two things open: the milliseconds between that read and the merge's
+spawn, in which `landRun` still awaits its tip `rev-parse` and `landRecheck`'s
+status read, and a continuation created during the check that has not yet
+committed, which Deliver's second `unsettledBranchRefusal` refuses and Land,
+which does not ask it again, lets through with the tip that was checked.
 
 **The other exit.** `deliverRun` pushes a run's branch and opens a pull request
 on the checkout's GitHub remote. It is reached from one endpoint on one press
