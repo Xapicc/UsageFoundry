@@ -1,10 +1,16 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Notice } from "@/components/ui/Notice";
 import { Sheet } from "@/components/ui/Sheet";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
+import {
+  restartClosedView,
+  type Refusal,
+  type RestartClosedPress,
+} from "@/lib/restartClosedView";
 
 interface Restarted {
   count: number;
@@ -13,7 +19,7 @@ interface Restarted {
 
 interface Reopened {
   reopened: number;
-  refused: { id: string; reason: string }[];
+  refused: Refusal[];
 }
 
 /**
@@ -37,8 +43,7 @@ export function RestartClosed({ onReopened }: { onReopened: () => void }) {
   const [state, setState] = useState<Restarted | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [outcome, setOutcome] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [press, setPress] = useState<RestartClosedPress | null>(null);
 
   const load = useCallback(async () => {
     const res = await jsonRequest<Restarted>("/api/runs/restarted");
@@ -54,49 +59,55 @@ export function RestartClosed({ onReopened }: { onReopened: () => void }) {
 
   async function pickUpAll() {
     setBusy(true);
-    setError(null);
+    setPress(null);
     const res = await jsonRequest<Reopened>("/api/runs/restarted", { method: "POST" });
     setBusy(false);
     setConfirming(false);
 
     if (!res.ok) {
-      setError(
-        actionFailureMessage(res, "Could not pick those runs up. Try again."),
-      );
+      setPress({
+        ok: false,
+        message: actionFailureMessage(res, "Could not pick those runs up. Try again."),
+      });
+      // Read the list again rather than trust the count from before the press:
+      // a request that never reached the server may still have been carried
+      // out, and the count is what the failure message tells the operator to
+      // check before pressing a second time.
+      await load();
       return;
     }
 
-    const { reopened, refused } = res.data;
-    setOutcome(
-      refused.length === 0
-        ? `${reopened} run${reopened === 1 ? "" : "s"} back in the queue.`
-        : `${reopened} back in the queue. ${refused.length} refused: ${refused
-            .map((r) => `${r.id.slice(0, 8)} — ${r.reason}`)
-            .join(" ")}`,
-    );
+    setPress({ ok: true, reopened: res.data.reopened, refused: res.data.refused });
     await load();
     onReopened();
   }
 
-  if (error) {
-    return (
-      <Notice tone="danger" live>
-        {error}
-      </Notice>
-    );
-  }
+  const { offer: count, report } = restartClosedView(state?.count ?? null, press);
 
-  if (outcome && (state === null || state.count === 0)) {
-    return (
-      <Notice tone="info" live>
-        {outcome}
-      </Notice>
-    );
-  }
+  const reportNotice = report && (
+    <Notice tone={report.tone} live>
+      <p>{report.summary}</p>
+      {report.refused.length > 0 && (
+        // `anywhere` rather than `break-words`: a reason can carry a branch
+        // name with no break in it, and only `anywhere` lowers the min-content
+        // width a flex item is sized from, so at 390px the other one still
+        // pushes the pane sideways.
+        <ul className="mt-2 flex flex-col gap-1 [overflow-wrap:anywhere]">
+          {report.refused.map((r) => (
+            <li key={r.id}>
+              <Link href={`/runs/${r.id}`} className="mono">
+                {r.name}
+              </Link>{" "}
+              — {r.reason}
+            </li>
+          ))}
+        </ul>
+      )}
+      {report.followUp && <p className="mt-2">{report.followUp}</p>}
+    </Notice>
+  );
 
-  if (!state || state.count === 0) return null;
-
-  const { count } = state;
+  if (count === null) return reportNotice;
 
   return (
     <>
@@ -112,6 +123,8 @@ export function RestartClosed({ onReopened }: { onReopened: () => void }) {
           </Button>
         </div>
       </Notice>
+
+      {reportNotice}
 
       <Sheet
         open={confirming}

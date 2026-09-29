@@ -19,6 +19,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - There is one install-wide stop, one install-wide hold, and neither is a new way for a run to end.
 - The hold is a settings row of its own, and four separate call sites read it.
 - A control that acts on a set needs a per-run way to say no, and `runs.set_aside_at` is it.
+- A refused run is still in the restart notice's count, so the answer to a press is drawn beside the button, never in place of it.
 
 ## [Parking, refusals and the rate-limit ladder](run-lifecycle/parking-and-refusals.md)
 
