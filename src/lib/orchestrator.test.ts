@@ -82,6 +82,7 @@ const {
   childEnv,
   clampRunOffset,
   compactionNotice,
+  currentSnapshot,
   conflictKey,
   contextShapingEnv,
   cycleCutByRestart,
@@ -6263,6 +6264,7 @@ describe("the parked sweeper's decision", () => {
       assert.deepEqual(planPausedRun(parks(5_000), null), {
         action: "park",
         resumeAt: 5_000,
+        reason: "The 5-hour window is full.",
       });
     });
 
@@ -6272,6 +6274,7 @@ describe("the parked sweeper's decision", () => {
       assert.deepEqual(planPausedRun(parks(5_000), "holder-1"), {
         action: "park",
         resumeAt: 5_000,
+        reason: "The 5-hour window is full.",
       });
     });
   });
@@ -6756,6 +6759,72 @@ describe("applying the sweeper's decision", () => {
         );
       },
     );
+  });
+
+  it("gives a held run the window's reason back when it re-parks for it", async () => {
+    // Held for its folder, then refused again when the run in that folder
+    // filled the window: the park wrote only `resume_at`, so the row went on
+    // saying the window had cleared, under a card saying it waits for it.
+    const shared = globalThis as unknown as {
+      __ufSnapshotInflight?: Promise<import("./windows").UsageSnapshot> | null;
+    };
+    const real = await currentSnapshot();
+    const sweepReading = async (fraction: number) => {
+      shared.__ufSnapshotInflight = Promise.resolve({
+        ...real,
+        session: {
+          ...real.session,
+          fraction,
+          guardFraction: fraction,
+          endsAt: Date.now() + HOUR,
+        },
+      });
+      try {
+        await sweepPaused();
+      } finally {
+        shared.__ufSnapshotInflight = null;
+      }
+    };
+
+    const workDir = `${ws}/held-then-reparked`;
+    // The run that took the folder, and `sweepAlone`'s cap: rows earlier cases
+    // left parked are due in these sweeps too, and must stay `queued`.
+    saveSettings({ maxConcurrentRuns: 1 });
+    insertRun({ status: "running", workDir });
+    const held = insertRun({
+      status: "paused",
+      workDir,
+      budget:
+        '{"maxIterations":5,"maxDurationMinutes":600,"maxSessionFraction":0.5,"enforcement":"live-resume"}',
+    });
+    const reasonLogs = () =>
+      runEvents(held).events.filter(
+        (e) => e.kind === "log" && e.payload.message === getRun(held)!.stop_reason,
+      );
+
+    try {
+      await sweepReading(0.2);
+      const holdReason = getRun(held)!.stop_reason;
+      assert.match(holdReason ?? "", /folder/, "the fixture has to reach the hold first");
+
+      await sweepReading(0.9);
+      const reparked = getRun(held)!;
+      assert.equal(reparked.status, "paused");
+      assert.ok((reparked.resume_at ?? 0) > Date.now(), "parked for the window, not held");
+      assert.notEqual(reparked.stop_reason, holdReason, "the hold's reason is gone");
+      assert.match(reparked.stop_reason ?? "", /Waiting for the next 5-hour window/);
+      const parkReason = reparked.stop_reason;
+
+      // Due again, on a different reading. The verdict's reason carries the
+      // figure, so a write guarded on it alone would rewrite the row and log a
+      // line every 60 seconds; this one replaces only the hold's.
+      db().prepare("UPDATE runs SET resume_at = ? WHERE id = ?").run(Date.now() - 1, held);
+      await sweepReading(0.95);
+      assert.equal(getRun(held)!.stop_reason, parkReason, "changed exactly once");
+      assert.equal(reasonLogs().length, 1, "and said so once");
+    } finally {
+      saveSettings({ maxConcurrentRuns: null });
+    }
   });
 });
 

@@ -11804,7 +11804,7 @@ export type PausedRunPlan =
   /** Its guard cleared, but a run started while it waited holds the folder. */
   | { action: "hold"; reason: string; heldBy: string }
   /** Still refused, by the one refusal that clears on its own. */
-  | { action: "park"; resumeAt: number }
+  | { action: "park"; resumeAt: number; reason: string }
   /** Refused by something that can never clear: end it. */
   | { action: "end"; reason: string };
 
@@ -11874,7 +11874,9 @@ export function planPausedRun(
   // Narrowed by the branch above: an allowed verdict has already returned.
   if (verdict.allowed) return { action: "resume" };
 
-  if (verdict.disposition === "pause") return { action: "park", resumeAt: verdict.resumeAt };
+  if (verdict.disposition === "pause") {
+    return { action: "park", resumeAt: verdict.resumeAt, reason: verdict.reason };
+  }
 
   // A guard that never clears — the clock, this run's own spend, the weekly
   // window — has caught up with a parked run. End it rather than leave it
@@ -12030,6 +12032,17 @@ export async function sweepPaused(): Promise<void> {
               "UPDATE runs SET resume_at = ? WHERE id = ? AND status='paused'",
             )
             .run(plan.resumeAt, run.id);
+          // A run held for its folder and then refused again still said its
+          // window had cleared, under a card saying it waits for the window.
+          // Only the hold's reason is replaced, never the verdict's own: that
+          // one carries the reading, so matching on it would rewrite the row
+          // and log every 60 seconds.
+          const reparked = db()
+            .prepare(
+              "UPDATE runs SET stop_reason=? WHERE id=? AND status='paused' AND stop_reason IS ?",
+            )
+            .run(plan.reason, run.id, FOLDER_TAKEN_REASON);
+          if (reparked.changes === 1) log(run.id, plan.reason);
           break;
         }
 
