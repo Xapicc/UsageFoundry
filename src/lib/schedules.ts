@@ -964,7 +964,8 @@ async function fireIfDue(schedule: WorkflowSchedule, now: number): Promise<void>
 
   // Re-checked at every fire rather than only at creation: clearing the
   // workflow's own limits is one edit away, and nothing about that edit knows a
-  // schedule exists.
+  // schedule exists. Asked before the snapshot as well as after it only so a
+  // refused fire does not pay for one; the check after it is the one that binds.
   const refusal = scheduleRefusal(workflow);
   if (refusal) {
     recordOutcome(schedule, "unbudgeted", refusal, action.fireAt, null, now);
@@ -973,6 +974,19 @@ async function fireIfDue(schedule: WorkflowSchedule, now: number): Promise<void>
 
   const snapshot = await currentSnapshot();
   if (!isUnchangedSince(schedule)) return;
+
+  // Asked again on a fresh read, because the answer above is as stale as the
+  // schedule row and clearing the limits writes the workflow's row, not this
+  // one, so `isUnchangedSince` cannot see it. `startWorkflow` does not ask.
+  // Nothing is awaited from here to the start, so this is the budget it starts
+  // under. A deleted workflow took its schedule with it and was answered above.
+  const current = getWorkflow(schedule.workflowId);
+  if (!current) return;
+  const lateRefusal = scheduleRefusal(current);
+  if (lateRefusal) {
+    recordOutcome(schedule, "unbudgeted", lateRefusal, action.fireAt, null, now);
+    return;
+  }
 
   // Named as the schedule's, so the runs this fire creates are distinguishable
   // from the same graph started by hand. This is the one press of Run with

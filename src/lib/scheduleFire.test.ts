@@ -219,6 +219,28 @@ describe("a schedule's fire, against what the operator presses during it", () =>
     assert.deepEqual(rowOf(id), { cursor_at: editedAt, last_code: null });
   });
 
+  it("starts nothing for a workflow whose limits were cleared during its own snapshot", async () => {
+    const id = dueSchedule("Nightly", "one");
+    pressDuringSnapshot = () => {
+      // An edit to the workflow, not the schedule, so the schedule row's
+      // `updated_at` is untouched and the row still reads as unchanged.
+      workflows.updateWorkflow(id, {
+        name: "Nightly",
+        graph: graphIn("one"),
+        instanceBudget: {
+          maxInstanceCostUSD: null,
+          maxSessionFraction: null,
+          maxWeeklyFraction: null,
+        },
+      });
+    };
+
+    await schedules.tickSchedules();
+
+    assert.equal(instancesOf(id), 0, "a workflow with no instance budget was started unattended");
+    assert.equal(rowOf(id)?.last_code, "unbudgeted");
+  });
+
   it("starts nothing for a later schedule paused during an earlier one's snapshot", async () => {
     // Both due at once — "every day at 09:00" twice — and read together at the
     // top of the tick, so the second row is stale for the whole of the first
