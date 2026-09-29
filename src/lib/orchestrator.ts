@@ -6701,6 +6701,10 @@ export function runIteration(
   // adapter is Claude's, so without this the cycle would go to Anthropic under
   // a model id Anthropic does not have. `localProvider.ts` says what it changes.
   local: { signIn: LocalSignIn; model: string } | null = null,
+  // What this child's first `result` row is measured from. Display only, so
+  // it is defaulted: omitting it measures from zero, which is right for a
+  // child that resumed nothing and overstates only the feed for one that did.
+  resumedLedger: IterationResult["resumedLedger"] = null,
 ): Promise<IterationResult> {
   return new Promise((resolve) => {
     // Before the spawn and not before the run, because what has to be true is
@@ -6787,6 +6791,7 @@ export function runIteration(
     const result: IterationResult = {
       exitCode: -1,
       costUSD: 0,
+      resumedLedger,
       tokens: 0,
       contextTokens: 0,
       firstContextTokens: 0,
@@ -8470,7 +8475,21 @@ function handleStreamLine(
     // and the other is not.
     const before = acc.costUSD;
     acc.costUSD = cycleCostAfterResult(acc.costUSD, ev.total_cost_usd);
-    const cost = acc.costUSD - before;
+    // What this stretch added, for the row below. A second result is measured
+    // from this child's own first. The first is measured from the resumed
+    // session's last total, on `cycleSpendOf`'s rules, because a `--resume`d
+    // child reports its session's running total while `acc` starts at zero —
+    // measured from zero, three resumed cycles of $3, $5 and $2 read $3, $8 and
+    // $10 on rows a reader adds up.
+    const ledger = acc.resumedLedger;
+    const cost =
+      before > 0
+        ? acc.costUSD - before
+        : turnCostOf(
+            ledger?.costUSD ?? null,
+            acc.costUSD,
+            ledger !== null && acc.sessionId === ledger.sessionId,
+          );
 
     const usage = (ev.usage ?? {}) as Record<string, unknown>;
     const n = (v: unknown) => (typeof v === "number" ? v : 0);
@@ -8530,7 +8549,9 @@ function handleStreamLine(
         // renders one of these per stretch and a reader adds them up, so on the
         // two-result cycle `cycleCostAfterResult` describes the raw figure would
         // put the whole session's total on the second row and invite exactly the
-        // double-count the field above no longer makes.
+        // double-count the field above no longer makes. A resumed cycle's first
+        // row is the same double-count across children, which `cost` above
+        // measures away.
         costUSD: cost,
         numTurns: ev.num_turns,
         durationMs: ev.duration_ms,
@@ -9975,6 +9996,11 @@ export async function startRun(id: string): Promise<void> {
           },
           github.token,
           local,
+          // The baseline `cycleSpendOf` banks this cycle against below, handed
+          // over so the feed's "cycle done" row agrees with it.
+          resumeTarget !== null && sessionCostUSD !== null
+            ? { sessionId: resumeTarget, costUSD: sessionCostUSD }
+            : null,
         );
       } finally {
         liveGuards.delete(id);

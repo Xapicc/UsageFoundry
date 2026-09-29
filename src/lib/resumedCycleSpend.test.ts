@@ -52,7 +52,7 @@ assert.equal(
     "run against the real database",
 );
 
-const { createRun, getRun } = require("./orchestrator") as typeof import("./orchestrator");
+const { createRun, getRun, runEvents } = require("./orchestrator") as typeof import("./orchestrator");
 const { saveSettings } = require("./settings") as typeof import("./settings");
 
 interface Cycle {
@@ -183,6 +183,15 @@ describe("a run whose work cycles resume one session", () => {
     // The CLI reported $3, $8 and $10. Added whole they are $21.
     assert.equal(row.spent_usd, 10);
     assert.equal(row.session_cost_usd, 10, "the next resume is measured from here");
+    // And each "cycle done" row, which the feed shows and `run.cycle_finished`
+    // logs, is that cycle's own figure. Measured from zero they read $3, $8
+    // and $10, and a reader adding up the feed gets the same $21.
+    assert.deepEqual(
+      runEvents(row.id)
+        .events.filter((e) => e.kind === "result")
+        .map((e) => e.payload.costUSD),
+      [3, 5, 2],
+    );
   });
 
   it("lets the cost guard read that same figure", async () => {
@@ -231,6 +240,13 @@ describe("a run whose work cycles resume one session", () => {
       // from it would bank $2 — then $7 less that $6.
       assert.equal(row.spent_usd, 11);
       assert.equal(row.session_cost_usd, 7);
+      // The feed's rows follow the same baseline, the fresh session's whole.
+      assert.deepEqual(
+        runEvents(row.id)
+          .events.filter((e) => e.kind === "result")
+          .map((e) => e.payload.costUSD),
+        [4, 6, 1],
+      );
     } finally {
       saveSettings({ freshStartContextTokens: null });
     }
