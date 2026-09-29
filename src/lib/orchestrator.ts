@@ -21,6 +21,7 @@ import {
 import { git, gitSync } from "./git";
 import { runningVerifyChildren } from "./landGate";
 import { withRepoAdmin } from "./repoLock";
+import { checkoutWriter } from "./checkoutClaim";
 import { dataDirRefusal, mayWriteDataDir, requireDataDir } from "./serverLock";
 import { childCredentials, chownForChild, deprioritiseChildForOom } from "./privsep";
 import { currentSandbox, sandboxRefusal } from "./sandbox";
@@ -12261,19 +12262,24 @@ const RESTART_KILLED_NOTICE =
   "whole. Then continue the task from there.";
 
 /**
- * Why a conflict resolution or the merge queue holds this run's branch, or null.
+ * Why a conflict resolution, a Commit or the merge queue holds this run's
+ * branch, or null.
  *
- * Neither is an active run, so `activeRuns()` does not see them. Read off
- * their rows rather than asked of `land.ts`, which imports this module; the
- * resolution's in-memory claim is the one half that cannot be read from here,
- * and it covers only the few git calls before its row is written.
+ * None of them is an active run, so `activeRuns()` does not see them. Read off
+ * their rows, and off the checkout claim `land.ts` takes, which is what covers
+ * a resolution for the git calls before its row is written and a Commit for
+ * the whole of its write. It is read here in the same turn that queues the run,
+ * so a resolution entering afterwards finds the run active and refuses itself.
  */
 function branchHolderRefusal(runId: string): string | null {
-  const resolution = db()
-    .prepare(
-      "SELECT 1 FROM run_reviews WHERE run_id = ? AND kind = 'resolve' AND status = 'running' LIMIT 1",
-    )
-    .get(runId);
+  const writer = checkoutWriter(runId);
+  const resolution =
+    writer === "resolution" ||
+    db()
+      .prepare(
+        "SELECT 1 FROM run_reviews WHERE run_id = ? AND kind = 'resolve' AND status = 'running' LIMIT 1",
+      )
+      .get(runId);
   const queued = db()
     .prepare(
       "SELECT status FROM merge_queue WHERE run_id = ? AND status IN ('landing','resolving') LIMIT 1",
@@ -12283,6 +12289,12 @@ function branchHolderRefusal(runId: string): string | null {
     return (
       "Claude is resolving a conflict on its branch, with the merge open in the " +
       "checkout this run would pick up in. Wait for the resolution to finish."
+    );
+  }
+  if (writer === "commit") {
+    return (
+      "Its uncommitted work is being committed to its branch right now, from the " +
+      "checkout this run would pick up in. Wait for that commit to finish."
     );
   }
   if (queued) {
