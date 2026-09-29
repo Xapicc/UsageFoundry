@@ -3350,6 +3350,13 @@ export interface BranchSummary {
    * work it could not see, and reads both as a run that wrote nothing.
    */
   heldByCheckout: boolean;
+  /**
+   * The probe saw a merge in progress in that checkout — the state
+   * `commitRefusal` refuses — so the page can withhold Commit rather than have
+   * the press find out. False is "not seen": a row nothing probed, or one git
+   * could not answer for, which leaves the door to the server's own refusal.
+   */
+  merging: boolean;
   exists: boolean;
   active: boolean;
   landedAt: number | null;
@@ -3825,7 +3832,7 @@ async function mapWithLimit<T, R>(
  * answer, or on anything the collecting loop writes.
  */
 interface PendingBranch extends ProbeCandidate {
-  summary: Omit<BranchSummary, "ahead" | "uncommitted" | "heldByCheckout">;
+  summary: Omit<BranchSummary, "ahead" | "uncommitted" | "heldByCheckout" | "merging">;
   repoRoot: string;
   /** See `aheadRangeFor`; null when there is nothing to count. */
   aheadRange: string | null;
@@ -3960,23 +3967,32 @@ export async function branchInventory(
     mapWithLimit(pending, BRANCH_GIT_CONCURRENCY, (p) => countAhead(p.repoRoot, p.aheadRange)),
     mapWithLimit(probeTargets, BRANCH_GIT_CONCURRENCY, async (i) => {
       // Non-null: `selectProbeTargets` picks only rows a checkout holds.
-      const status = await git(pending[i].slot!, ["status", "--porcelain", "-z"], {
-        trim: false,
-      });
-      return status.ok ? parseStatusZ(status.stdout).length : null;
+      const slot = pending[i].slot!;
+      const [status, mergeHead] = await Promise.all([
+        git(slot, ["status", "--porcelain", "-z"], { trim: false }),
+        mergeHeadIn(slot),
+      ]);
+      const files = status.ok ? parseStatusZ(status.stdout) : null;
+      return {
+        uncommitted: files ? files.length : null,
+        // Either sign alone, as `commitRefusal` reads them: a merge whose paths
+        // were all staged has `MERGE_HEAD` and no unmerged path.
+        merging: mergeHead === true || (files ?? []).some((f) => isUnmerged(f.code)),
+      };
     }),
   ]);
 
-  const uncommittedByRow = new Map<number, number | null>();
-  probeTargets.forEach((row, i) => uncommittedByRow.set(row, probed[i]));
+  const probedByRow = new Map<number, { uncommitted: number | null; merging: boolean }>();
+  probeTargets.forEach((row, i) => probedByRow.set(row, probed[i]));
 
   const branches: BranchSummary[] = pending.map((p, i) => ({
     ...p.summary,
     ahead: aheads[i],
     // A row nothing probed stays null, which the page reads as "not asked" —
     // the same answer a failed probe gives, and never a claim of clean.
-    uncommitted: uncommittedByRow.get(i) ?? null,
+    uncommitted: probedByRow.get(i)?.uncommitted ?? null,
     heldByCheckout: p.slot !== null,
+    merging: probedByRow.get(i)?.merging ?? false,
   }));
 
   // Back into the order the selection listed them in, rather than re-sorted by

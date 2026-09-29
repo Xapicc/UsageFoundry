@@ -2978,6 +2978,12 @@ export interface BranchSummaryDTO {
    * status` — which is the state the page must not draw as an empty checkout.
    */
   heldByCheckout: boolean;
+  /**
+   * The probe saw a merge in progress in that checkout: `MERGE_HEAD`, or a
+   * path git left unmerged. False is "not seen" — nothing probed it, or git
+   * could not say — and never a claim about what else is in the checkout.
+   */
+  merging: boolean;
   exists: boolean;
   /** The producing run can still commit to it. */
   active: boolean;

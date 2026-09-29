@@ -4,6 +4,7 @@
 // rewrites the path alias at runtime, so a tested component has to import the
 // way src/lib and RunHandoff.tsx already do.
 import type { BranchSummaryDTO } from "../lib/apiTypes";
+import { Button } from "./ui/Button";
 
 /**
  * What the branches table says about work sitting in a run's own checkout.
@@ -30,6 +31,24 @@ import type { BranchSummaryDTO } from "../lib/apiTypes";
  * mid-phrase.
  */
 export function UncommittedNote({ branch }: { branch: BranchSummaryDTO }) {
+  return (
+    <>
+      <CountNote branch={branch} />
+      {/* Why the row has no Commit, where the button would have been the
+          only way to find out. "Mid-merge" is `RunLand`'s word for the same
+          checkout, not a new one; the fix is on the run's own card, which the
+          branch name links to. Drawn whatever the count, because a merge whose
+          paths are all staged is still one. */}
+      {branch.merging && (
+        <div className="mt-1 text-balance text-2xs font-semibold uppercase tracking-wide text-warn">
+          Mid-merge, so no Commit
+        </div>
+      )}
+    </>
+  );
+}
+
+function CountNote({ branch }: { branch: BranchSummaryDTO }) {
   if (branch.uncommitted === null) {
     if (!branch.heldByCheckout) return null;
     // Muted, not `warn`: it is the absence of a reading rather than work at
@@ -58,9 +77,42 @@ export function UncommittedNote({ branch }: { branch: BranchSummaryDTO }) {
  * the note above exists: withholding it there hides the only door out of the
  * state, on a row that still offers Purge and Delete. Not offered when nothing
  * holds the branch, because there is then no checkout to commit from.
+ *
+ * Nor on a checkout seen mid-merge, which `commitRefusal` refuses and the Land
+ * card does not draw a button for: a Commit there would put the half-done merge
+ * on the branch. Withheld only on a positive reading — `merging` false is also
+ * what an unprobed row says, and that row keeps its door.
  */
 export function offersCommit(branch: BranchSummaryDTO): boolean {
   return (
-    branch.exists && !branch.active && branch.heldByCheckout && branch.uncommitted !== 0
+    branch.exists &&
+    !branch.active &&
+    branch.heldByCheckout &&
+    !branch.merging &&
+    branch.uncommitted !== 0
+  );
+}
+
+/**
+ * The row's Commit button, or nothing where `offersCommit` withholds it.
+ *
+ * Drawn here rather than in the page so the rule is pinned where the button
+ * is: a gate that answers correctly beside a page that draws the button anyway
+ * would pass a test of the gate alone.
+ */
+export function CommitAction({
+  branch,
+  working,
+  onCommit,
+}: {
+  branch: BranchSummaryDTO;
+  working: boolean;
+  onCommit: () => void;
+}) {
+  if (!offersCommit(branch)) return null;
+  return (
+    <Button variant="secondary" className="min-w-[92px]" onClick={onCommit} disabled={working}>
+      {working ? "Working…" : "Commit"}
+    </Button>
   );
 }

@@ -26,7 +26,7 @@ import {
 } from "@/lib/format";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
 import { nextStrategyChoice, purgeLabel, strategyToSend } from "@/lib/landView";
-import { UncommittedNote, offersCommit } from "@/components/BranchWork";
+import { CommitAction, UncommittedNote } from "@/components/BranchWork";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonRow } from "@/components/ui/Button";
 import {
@@ -1595,16 +1595,11 @@ function BranchTable({
                         {/* Puts what the agent wrote onto the branch, under the
                             run's own task as the subject. Also what frees the
                             checkout slot: one with work in it is not reusable. */}
-                        {offersCommit(b) && (
-                          <Button
-                            variant="secondary"
-                            className="min-w-[92px]"
-                            onClick={() => onAct?.(b, "commit")}
-                            disabled={working}
-                          >
-                            {working ? "Working…" : "Commit"}
-                          </Button>
-                        )}
+                        <CommitAction
+                          branch={b}
+                          working={working}
+                          onCommit={() => onAct?.(b, "commit")}
+                        />
 
                         {/* Delete is the safe door — git can see the work is in
                             the target. Purge is the other one, and it takes a
