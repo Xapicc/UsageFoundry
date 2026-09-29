@@ -3572,6 +3572,23 @@ describe("planInstanceStep — what an instance may do next", () => {
     assert.match(step.block[0].reason, /“Pick the work” decided there was nothing to start/);
   });
 
+  it("blocks what is behind an emission none of which could be started, saying so", () => {
+    // Still blocked — there is nothing to follow — but the model decided to
+    // start work and this app failed to, and a sentence blaming its decision
+    // sends the operator to read a reply that was right.
+    const pick = decided("emitted", []);
+    pick.block!.decided = 1;
+    pick.block!.notes = [
+      "“E3” could not be started: No such folder in the \"Scratch\" mount: project/sub",
+    ];
+    const step = stepOf({ pick });
+    assert.equal(step.block.length, 1);
+    assert.equal(step.block[0].nodeId, "review");
+    assert.doesNotMatch(step.block[0].reason, /decided there was nothing/);
+    assert.match(step.block[0].reason, /“Pick the work” decided on 1 run\(s\), but none of them could be started/);
+    assert.match(step.block[0].reason, /“E3” could not be started: No such folder/);
+  });
+
   it("blocks what is behind a turn that failed, carrying its reason", () => {
     const step = stepOf({
       pick: decided("failed", [], "This block produced nothing for 15 minutes and was stopped."),

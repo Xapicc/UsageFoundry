@@ -1063,7 +1063,10 @@ export interface LoopPassMember {
   /** The run this member became, or null when it is a block or has gone. */
   run: LoopRunState | null;
   /** The ledger row, for a member that is not a run or has not become one. */
-  block: { status: BlockStatus; error: string | null } | null;
+  block: Pick<
+    NonNullable<InstanceNodeState["block"]>,
+    "status" | "error" | "decided" | "notes"
+  > | null;
   /** The runs an orchestrator member started, as their rows stand now. */
   emitted: readonly LoopRunState[];
 }
@@ -1515,6 +1518,13 @@ export interface InstanceNodeState {
     emitted: readonly DependencyState[];
     /** How many of the block's runs were left behind, and so are not above. */
     leftBehind?: number;
+    /**
+     * How many runs its turn decided on — the accepted emission, whether or not
+     * each could then be created. Absent reads as none.
+     */
+    decided?: number;
+    /** This app's notes on the turn, which say why a decided run never started. */
+    notes?: readonly string[];
     /** Why it ended this way, for the sentence its successors carry. */
     error: string | null;
   } | null;
@@ -1840,6 +1850,22 @@ function edgeVerdict(
   // A block whose every run was left behind is not that: it did start work, and
   // the operator chose to carry on without it, so it resolves to no run at all.
   if (block.emitted.length === 0 && !block.leftBehind) {
+    // Blocked either way, since there is nothing to follow — but a block that
+    // decided on runs this app then failed to create is this app's failure, not
+    // the model's decision, and the sentence is how an operator tells the two
+    // apart. The notes are where `createEmitted` wrote why.
+    const decided = block.decided ?? 0;
+    if (decided > 0) {
+      const notes = (block.notes ?? []).join(" ");
+      return {
+        kind: "blocked",
+        reason:
+          `“${from.name}” decided on ${decided} run(s), but none of them could ` +
+          `be started, so there is no work for this block to follow. ${
+            notes || "No reason was recorded."
+          }`,
+      };
+    }
     return {
       kind: "blocked",
       reason:
@@ -4372,9 +4398,10 @@ function getBlock(instanceId: string, nodeId: string): BlockRow | null {
 /**
  * Add one line to what this app recorded about a turn.
  *
- * Appended rather than set, because these arrive one at a time from three places
+ * Appended rather than set, because these arrive one at a time from four places
  * across the life of a turn — the guard before it spawns, each `emit_runs` this
- * app refuses while it runs, `settleBlock` when it ends — and the operator is
+ * app refuses while it runs, `settleBlock` when it ends, and `createEmitted`
+ * after that for each decided run it could not create — and the operator is
  * reading them to find out why nothing started. A note that overwrote the last
  * one would answer that question with whichever refusal happened to be last.
  */
@@ -5284,6 +5311,10 @@ function instanceState(
             ? approvedRunsOf(instance.id, block.nodeId)
             : (emitted.get(block.nodeId) ?? []),
         leftBehind: block.kind === "review" ? 0 : (emittedLeftBehind.get(block.nodeId) ?? 0),
+        // `blocksOf` counts an orchestrator block's accepted specs as `emitted`
+        // and a loop's passes under the same name; only the first is a decision.
+        decided: block.kind === "orchestrator" ? block.emitted : 0,
+        notes: block.notes,
         error: block.error,
       },
     });
@@ -5465,7 +5496,8 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
   const blockRows = db()
     .prepare(
       `SELECT node_id AS memberId, node_name AS name, position AS position,
-              kind AS kind, status AS status, error AS error
+              kind AS kind, status AS status, error AS error,
+              emitted_specs AS specs, notes AS notes
          FROM workflow_instance_blocks
         WHERE instance_id = ? AND substr(node_id, 1, ?) = ?
         ORDER BY position`,
@@ -5477,6 +5509,8 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
     kind: WorkflowNodeKind;
     status: BlockStatus;
     error: string | null;
+    specs: string | null;
+    notes: string | null;
   }>;
 
   const runOf = (row: (typeof runRows)[number]): LoopRunState | null =>
@@ -5527,7 +5561,14 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
         name: row.name,
         kind: row.kind,
         run: null,
-        block: { status: row.status, error: row.error },
+        block: {
+          status: row.status,
+          error: row.error,
+          // Only an orchestrator member ever writes `emitted_specs`, so every
+          // other kind reads as having decided on nothing, which it did.
+          decided: parseSpecs(row.specs).length,
+          notes: splitNotes(row.notes),
+        },
         emitted: [],
       },
     });
@@ -7186,7 +7227,7 @@ function setAside(
  * here each spec is an independent piece of work that a block decided on
  * separately, and throwing away four runs because a fifth named a folder that
  * has since gone would lose the whole point of the block. A spec that cannot be
- * created is logged against the block instead — including for the specs behind
+ * created is noted against the block instead — including for the specs behind
  * it, whose edges now name a run that does not exist.
  */
 function createEmitted(
@@ -7289,14 +7330,10 @@ function createEmitted(
     }
   }
 
-  if (failures.length > 0) {
-    db()
-      .prepare(
-        "UPDATE workflow_instance_blocks SET error = TRIM(COALESCE(error, '') || ' ' || ?)" +
-          " WHERE instance_id=? AND node_id=?",
-      )
-      .run(failures.join(" "), instanceId, nodeId);
-  }
+  // Notes, not `error`: the turn did not fail — it decided, and this app could
+  // not do what it decided. `error` is the one voice kept for the turn itself,
+  // and a failure written there reads as the model's.
+  for (const failure of failures) noteBlock(instanceId, nodeId, failure);
 }
 
 export type EmissionOutcome =

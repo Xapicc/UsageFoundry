@@ -455,3 +455,69 @@ describe("picking a run up again", () => {
     );
   });
 });
+
+/**
+ * An orchestrator block whose runs this app could not create.
+ *
+ * Here rather than in the pure suite because both halves of the failure are
+ * what `settleBlock` writes — the block's own row and the verdict the advance
+ * pass writes onto the block behind it — and this is the file that already
+ * drives an emission through `emitBlockRuns` and `settleBlock` against a real
+ * mount. Silent both ways: the row read as the turn having failed, and the block
+ * behind it said the model had decided to start nothing, when it had decided on
+ * work that was then lost to a folder removed between the decision and the start.
+ */
+describe("an orchestrator block none of whose decided runs could be started", () => {
+  it("notes why on itself and says so to the block behind it", async () => {
+    fs.mkdirSync(path.join(workspace, "project", "sub"), { recursive: true });
+    const workflow = workflows.createWorkflow({
+      name: "Decide into a folder that goes",
+      graph: {
+        nodes: [block("O", "orchestrator"), block("B", "run")],
+        edges: [{ from: "O", to: "B", edge: "on-finish", continueBranch: false }],
+      },
+      instanceBudget: {
+        maxInstanceCostUSD: null,
+        maxSessionFraction: null,
+        maxWeeklyFraction: null,
+      },
+    });
+    const outcome = workflows.startWorkflow(workflow.id, await orch.currentSnapshot());
+    assert.ok(outcome.ok, `start refused: ${!outcome.ok && outcome.reason}`);
+    const instanceId = outcome.instance.id;
+
+    dbMod
+      .db()
+      .prepare(
+        "UPDATE workflow_instance_blocks SET status='thinking' WHERE instance_id=? AND node_id=?",
+      )
+      .run(instanceId, "O");
+    const emission = workflows.emitBlockRuns(instanceId, "O", [
+      { id: "E3", title: "E3", task: "do the emitted thing", folder: "project/sub" },
+    ]);
+    assert.ok(emission.ok, `emission refused: ${!emission.ok && emission.reason}`);
+    // Between the decision and the start, which is the window a spec is
+    // re-resolved across.
+    fs.rmSync(path.join(workspace, "project", "sub"), { recursive: true });
+    workflows.settleBlock(instanceId, "O", { status: "idle", text: "Started E3." });
+
+    const rowOf = (nodeId: string) =>
+      dbMod
+        .db()
+        .prepare(
+          "SELECT status, error, notes FROM workflow_instance_blocks WHERE instance_id=? AND node_id=?",
+        )
+        .get(instanceId, nodeId) as { status: string; error: string | null; notes: string | null };
+
+    const decider = rowOf("O");
+    assert.equal(decider.status, "emitted");
+    assert.equal(decider.error, null, "the turn did not fail; this app did");
+    assert.match(decider.notes ?? "", /“E3” could not be started: .*project\/sub/);
+
+    const follower = rowOf("B");
+    assert.equal(follower.status, "blocked");
+    assert.doesNotMatch(follower.error ?? "", /decided there was nothing/);
+    assert.match(follower.error ?? "", /“Do O” decided on 1 run\(s\), but none of them could be started/);
+    assert.match(follower.error ?? "", /“E3” could not be started: .*project\/sub/);
+  });
+});
