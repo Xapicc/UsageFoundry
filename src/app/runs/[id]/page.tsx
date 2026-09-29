@@ -415,25 +415,49 @@ function describeRun(
       // signal is the budget event's own payload, never the wording of
       // `stop_reason`. The two are told apart because the way on differs: the
       // reopen form raises a limit and carries the window guards over as they
-      // were.
-      return ctx.stoppedBy === "guard"
-        ? {
+      // were. It raises only this run's own limits, so a stop on the install's
+      // or the workflow's says where that one is set instead.
+      switch (ctx.stoppedBy) {
+        case "guard":
+          return {
             tone: "neutral",
             headline: "Stopped by a window guard",
             detail:
               "Resuming keeps its window guards, so wait for the window to fall back below the guard.",
-          }
-        : ctx.stoppedBy === "limit"
-          ? {
-              tone: "neutral",
-              headline: "Stopped by one of your limits",
-              detail: "Resume it with more room to carry on.",
-            }
-          : {
-              tone: "neutral",
-              headline: "Stopped",
-              detail: "It will not start another work cycle on its own.",
-            };
+          };
+        case "limit":
+          return {
+            tone: "neutral",
+            headline: "Stopped by one of your limits",
+            detail: "Resume it with more room to carry on.",
+          };
+        case "install_limit":
+          return {
+            tone: "neutral",
+            headline: "Stopped by the install's spending limit",
+            detail: (
+              <>
+                That limit is set in Settings, not on this run:{" "}
+                <Link href="/settings#guards">Install limit, rolling 24 hours</Link>.
+                Raise it, or wait for spend to age out of the window, before
+                resuming.
+              </>
+            ),
+          };
+        case "workflow_limit":
+          return {
+            tone: "neutral",
+            headline: "Stopped by its workflow's spending limit",
+            detail:
+              "That limit is the workflow's, set in its editor, and each workflow run keeps the one it started with.",
+          };
+        case null:
+          return {
+            tone: "neutral",
+            headline: "Stopped",
+            detail: "It will not start another work cycle on its own.",
+          };
+      }
 
     case "needs-review":
       // Says what the state means and what to do about it, never what the agent

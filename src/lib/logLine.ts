@@ -924,8 +924,11 @@ export function parkTrigger(events: readonly RunEventDTO[]): ParkTrigger | null 
   return null;
 }
 
-/** Whether a run was ended by a window guard or by one of its limits. */
-export type StopCause = "guard" | "limit";
+/**
+ * Whether a run was ended by a window guard, by one of its own limits, or by a
+ * limit set somewhere other than on this run: the install's, or the workflow's.
+ */
+export type StopCause = "guard" | "limit" | "install_limit" | "workflow_limit";
 
 const WINDOW_GUARD_CODES: ReadonlySet<unknown> = new Set([
   "weekly_fraction",
@@ -943,6 +946,12 @@ const WINDOW_GUARD_CODES: ReadonlySet<unknown> = new Set([
  * codes is a limit: a count, a clock or a sum of money on this run, its
  * workflow or this install, or `no_terminus`, which is about the limits.
  *
+ * The install's and the workflow's limits are answers of their own because the
+ * advice for the rest — resume with more room — cannot act on them either: the
+ * reopen form raises only this run's limits, so a run picked up under the
+ * install's limit is refused again at its next pre-cycle check, and a workflow
+ * run keeps the limit its press of Run copied onto the instance.
+ *
  * `parkTrigger`'s reading, for the same reasons: off the payload, newest first
  * because a reopened run carries its earlier refusals, and a verdict the run
  * carried past (`enforceable: false`, a `no_ceiling`) ended nothing — so a run
@@ -958,7 +967,10 @@ export function stopCause(events: readonly RunEventDTO[]): StopCause | null {
       p.disposition !== "pause" &&
       p.enforceable !== false
     ) {
-      return WINDOW_GUARD_CODES.has(p.code) ? "guard" : "limit";
+      if (WINDOW_GUARD_CODES.has(p.code)) return "guard";
+      if (p.code === "install_cost") return "install_limit";
+      if (p.code === "instance_cost") return "workflow_limit";
+      return "limit";
     }
   }
   return null;

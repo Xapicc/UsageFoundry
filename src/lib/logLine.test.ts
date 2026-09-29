@@ -505,12 +505,19 @@ describe("stopCause — whether a window guard or a limit ended a run", () => {
       "run_cost",
       "run_cost_outlier",
       "run_tokens",
-      "instance_cost",
-      "install_cost",
       "no_terminus",
     ]) {
       assert.equal(stopCause([stop(code)]), "limit", code);
     }
+  });
+
+  it("names where the limit lives when the reopen form cannot raise it", () => {
+    // Resuming with more room is advice about this run's own limits; these two
+    // are set in Settings and in the workflow, and a resume carries them over.
+    assert.equal(stopCause([stop("install_cost", { scope: "install" })]), "install_limit");
+    assert.equal(stopCause([stop("instance_cost", { scope: "workflow" })]), "workflow_limit");
+    assert.equal(stopCause([stop("install_cost"), stop("run_cost")]), "limit");
+    assert.equal(stopCause([stop("run_cost"), stop("install_cost")]), "install_limit");
   });
 
   it("does not credit anything with a verdict the run carried past", () => {
