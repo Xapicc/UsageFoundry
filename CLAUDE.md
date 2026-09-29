@@ -49,7 +49,7 @@ What follows is routing and nothing else: **if you are about to touch anything n
 - **`createRun`/`promoteQueued`, `serverLock.ts`, `db.ts`, `instrumentation.ts`** → `docs/agent/concurrency-and-ownership.md` — the no-`await` window, what occupancy is never keyed on, and when writers ask the lock.
 - **`retention.ts`** → `docs/agent/retention.md` — what expires, on which horizon, and what never does.
 - **`releasableRuns`/`admitDependencies`/`releaseDependents`** → `docs/agent/dependencies.md` — what satisfies an edge, and what wakes a dependent.
-- **`land.ts`, `mergeQueue.ts`, `conflictMap.ts`, `resolveIsolation`/`ensureWorktree`** → `docs/agent/isolation-and-landing.md` — when a run may land, which isolation it gets, and why landing has no clock.
+- **`land.ts`, `mergeQueue.ts`, `conflictMap.ts`, `checkoutClaim.ts`, `resolveIsolation`/`ensureWorktree`** → `docs/agent/isolation-and-landing.md` — when a run may land, which isolation it gets, and why landing has no clock.
 - **`agents.ts`, `agentRegistry.ts`, `templates.ts`, `modelCatalogue.ts`, every field that names a model** → `docs/agent/agents-and-templates.md` — what an agent may carry, and which list a model id is validated against.
 - **`chat.ts`, `chatThread.ts`, `src/app/chat/page.tsx`'s questions, `src/app/api/mcp/`** → `docs/agent/chat.md` — what a model may propose, what approval freezes, and how a chat turn ends.
 - **`workflows.ts`, `schedules.ts`, `canvasGraph.ts`, `reviewBlock.ts`** → `docs/agent/workflows-and-schedules.md` — why instantiation is all-or-nothing, how a loop block unrolls and stops, and what is schedulable.

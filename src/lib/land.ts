@@ -4,6 +4,7 @@ import { openPullRequest, planDelivery, type DeliveryRequest } from "./delivery"
 import path from "node:path";
 import { git } from "./git";
 import { withRepoAdmin } from "./repoLock";
+import { checkoutWriter, claimCheckout, releaseCheckout } from "./checkoutClaim";
 import { db } from "./db";
 import { passMemberOf, passNumberOf } from "./passIds";
 import { commitDiff, type DiffFile } from "./diff";
@@ -1783,30 +1784,16 @@ async function rollBackResolution(
 }
 
 /**
- * Runs whose resolution is being set up.
- *
- * `assistRunning` is the durable guard and stays the one that answers for a
- * resolution already under way, but it reads a row `startAssist` has not
- * inserted yet: two callers for one run — the merge queue draining it while the
- * operator presses the button — both pass it, and the second's checkout setup
- * then deletes the first's. Held only as far as the row, never for the life of
- * the child, so a spawn that fails cannot lock a run out of resolving. On
- * `globalThis` for the reason `landing` above is.
- */
-const resolving = ((globalThis as unknown as { __ufResolving?: Set<string> })
-  .__ufResolving ??= new Set<string>());
-
-/**
  * Whether a conflict resolution holds this run's branch right now.
  *
- * Both halves, because each covers a stretch the other does not: the claim
- * from entry until `startAssist` writes the row, which is where the merge is
- * made, and the row from then until `after` has finished or rolled it back.
+ * Both halves, because each covers a stretch the other does not: the checkout
+ * claim from entry until `startAssist` writes the row, which is where the merge
+ * is made, and the row from then until `after` has finished or rolled it back.
  * While either holds, the run's own checkout can be mid-merge with a billed
  * agent editing the conflicted files, and nothing else may write to it.
  */
 function resolutionHolds(runId: string): boolean {
-  return resolving.has(runId) || assistRunning(runId, "resolve");
+  return checkoutWriter(runId) === "resolution" || assistRunning(runId, "resolve");
 }
 
 /**
@@ -1835,16 +1822,30 @@ export async function resolveConflicts(
    */
   asker: LandAsker | null = null,
 ): Promise<LandOutcome> {
-  // Checked and taken in one turn — `createRun`'s folder-claim property — so
-  // two callers arriving together cannot both get past it.
-  if (resolving.has(runId)) {
+  // `assistRunning` is the durable guard and stays the one that answers for a
+  // resolution already under way, but it reads a row `startAssist` has not
+  // inserted yet: two callers for one run — the merge queue draining it while
+  // the operator presses the button — both pass it, and the second's checkout
+  // setup then deletes the first's. So the checkout is claimed from here, and
+  // held only as far as the row, never for the life of the child, so a spawn
+  // that fails cannot lock a run out of resolving.
+  const holder = claimCheckout(runId, "resolution");
+  if (holder === "resolution") {
     return { ok: false, reason: "A resolution for this run is already being started." };
   }
-  resolving.add(runId);
+  if (holder === "commit") {
+    return {
+      ok: false,
+      reason:
+        "A commit is being made in this run's checkout right now, and a merge opened " +
+        "under it could put the conflict markers into that commit. Resolve again once " +
+        "the commit has finished.",
+    };
+  }
   try {
     return await startResolution(runId, asker);
   } finally {
-    resolving.delete(runId);
+    releaseCheckout(runId);
   }
 }
 
@@ -2719,7 +2720,6 @@ export async function commitPending(
   if (refusal) return { ok: false, reason: refusal };
 
   const dir = slot.path!;
-  const branch = run.worktree_branch!;
 
   // The status proves the slot still holds this run's branch; this proves
   // nobody is about to start writing in it. A run records its slot when it is
@@ -2733,6 +2733,34 @@ export async function commitPending(
     };
   }
 
+  // Taken in the turn that asked `resolutionHolds` above, and held until the
+  // commit is made. Reading it once was not enough: a resolution entering
+  // during `add -A` found a slot whose pending work was untracked only, which
+  // `resolveCheckout` lets through, and opened its merge in it — and the
+  // `add -A` then staged the conflicted files, markers and all. So a
+  // resolution is refused for as long as this holds, and so is `reopenRun`.
+  // Nothing but a second Commit can be holding it here, since a resolution's
+  // claim was refused above in this same turn.
+  if (claimCheckout(run.id, "commit")) {
+    return { ok: false, reason: "A commit from that checkout is already being made." };
+  }
+  try {
+    return await commitClaimedSlot(run, dir, resolved, slot.files.length);
+  } finally {
+    releaseCheckout(run.id);
+  }
+}
+
+/** The body of `commitPending`, bracketed by its claim on the checkout. */
+async function commitClaimedSlot(
+  run: RunRow,
+  dir: string,
+  message: string,
+  count: number,
+): Promise<LandOutcome> {
+  const runId = run.id;
+  const branch = run.worktree_branch!;
+
   const staged = await git(dir, ["add", "-A"], NO_CLOCK);
   if (!staged.ok) {
     return {
@@ -2743,7 +2771,7 @@ export async function commitPending(
 
   const commit = await git(
     dir,
-    ["commit", "-m", resolved.trim(), "-m", `Committed from UsageFoundry run ${run.id}.`],
+    ["commit", "-m", message.trim(), "-m", `Committed from UsageFoundry run ${run.id}.`],
     NO_CLOCK,
   );
   if (!commit.ok) {
@@ -2761,7 +2789,6 @@ export async function commitPending(
   }
 
   const head = await git(dir, ["rev-parse", "--short", "HEAD"], NO_CLOCK);
-  const count = slot.files.length;
 
   // Freeing the slot is half of what this button is for, and admission
   // remembers which slots it found unusable — so say the answer has changed

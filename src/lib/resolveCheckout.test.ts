@@ -20,6 +20,16 @@ import { after, describe, it } from "node:test";
  * Nothing about it fails loudly: both children run to completion and write
  * `run_reviews` rows describing work that was overwritten.
  *
+ * It also covers who else may write to that checkout while a resolution is
+ * being set up, which needs the same real repository for the same reason: the
+ * fault is an interleaving of git calls, and it is only real once a merge has
+ * been opened in a slot and something else has staged it. Commit and `reopenRun`
+ * each read the resolution's claim once and went on awaiting git, or could not
+ * read it at all, so a Commit pressed as a resolution started committed the
+ * open merge, conflict markers and all, and a pick-up queued a work cycle into
+ * the checkout the merge was about to be opened in. Each is interleaved here by
+ * holding one git call of the first caller until the second has run.
+ *
  * Its own file for `slotProbes.test.ts`'s reason: it needs a real git repository
  * inside a real mount, and `DATA_DIR` and `CLAUDE_HOME` set before anything is
  * required, which `land.test.ts` — pure functions, static imports — cannot give.
@@ -49,9 +59,13 @@ assert.equal(
   "config was already loaded by another test file in this process — refusing to run against the real database",
 );
 
-const { createRun } = require("./orchestrator") as typeof import("./orchestrator");
+const { createRun, getRun, reopenRun } = require("./orchestrator") as typeof import("./orchestrator");
 const { saveSettings } = require("./settings") as typeof import("./settings");
-const { resolveCheckout } = require("./land") as typeof import("./land");
+const land = require("./land") as typeof import("./land");
+const { resolveCheckout } = land;
+const gitModule = require("./git") as typeof import("./git");
+const { db } = require("./db") as typeof import("./db");
+const { assistRunning } = require("./review") as typeof import("./review");
 
 after(() => {
   fs.rmSync(tmp, { recursive: true, force: true });
@@ -166,5 +180,135 @@ describe("the checkout a resolution is given", () => {
     // Refused, not repaired: whether the open merge is a resolution's or the
     // operator's own is not something this can tell.
     assert.ok(fixtureGit(slot, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]));
+  });
+});
+
+/**
+ * A finished run whose own slot still holds its branch, and whose branch
+ * conflicts with `main` in `README.md`: the checkout a resolution reuses rather
+ * than replaces, and the one Commit writes in.
+ */
+function conflictingRunInSlot(name: string, status: "completed" | "stopped") {
+  const branch = `uf/${name}`;
+  const repo = makeRepo(name, [branch]);
+  // The app's own commit runs with no `-c` of its own, and this throwaway
+  // repository's identity is the only one it may use.
+  fixtureGit(repo, ["config", "user.email", "test@example.invalid"]);
+  fixtureGit(repo, ["config", "user.name", "Test"]);
+  const base = fixtureGit(repo, ["rev-parse", "main"]);
+  const slot = path.join(ws, ".uf-worktrees", `${name}-slot`);
+  fixtureGit(repo, ["worktree", "add", "-q", slot, branch]);
+  fs.writeFileSync(path.join(slot, "README.md"), "branch side\n");
+  fixtureGit(slot, ["commit", "-q", "-am", "branch side"]);
+  fs.writeFileSync(path.join(repo, "README.md"), "main side\n");
+  fixtureGit(repo, ["commit", "-q", "-am", "main side"]);
+
+  const runId = `race-${name}`;
+  db()
+    .prepare(
+      `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                         created_at, finished_at, work_dir, isolation, repo_root, worktree_path,
+                         worktree_branch, worktree_base, worktree_base_branch)
+       VALUES (?, ?, 'change the readme', ?, '{"maxIterations":1}', 1, 1, ?, ?, ?, 'worktree',
+               ?, ?, ?, ?, 'main')`,
+    )
+    .run(runId, repo, status, Date.now(), Date.now(), slot, repo, slot, branch, base);
+  return { runId, repo, slot, branch };
+}
+
+/** Until no resolution of this run is running, so its `after` cannot outlive the test. */
+async function settledResolution(runId: string): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  while (assistRunning(runId, "resolve")) {
+    assert.ok(Date.now() < deadline, "the resolution never settled");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+type Outcome = Awaited<ReturnType<typeof land.resolveConflicts>>;
+
+describe("the other writers of a run's checkout while a resolution is set up", () => {
+  it("a Commit pressed as a resolution starts cannot put its conflict markers on the branch", async (t) => {
+    const { runId, repo, slot, branch } = conflictingRunInSlot("commit-race", "completed");
+    // Pending work that is untracked only, which `resolveCheckout` lets through
+    // because an untracked file cannot reach a resolution's own commit.
+    fs.writeFileSync(path.join(slot, "notes.txt"), "the run's last notes\n");
+
+    const realGit = gitModule.git;
+    let resolution = null as Outcome | null;
+    let commitSettled = () => {};
+    const committing = new Promise<void>((resolve) => {
+      commitSettled = resolve;
+    });
+    t.mock.method(gitModule, "git", async (...call: Parameters<typeof realGit>) => {
+      const [cwd, args] = call;
+      // Resolve, pressed while Commit's `add -A` is on its way to git.
+      if (resolution === null && cwd === slot && args[0] === "add" && args[1] === "-A") {
+        resolution = await land.resolveConflicts(runId);
+      }
+      // A resolution that did start has no child to run — `CLAUDE_BIN` cannot
+      // spawn — so it goes straight to rolling back. Held until the commit is
+      // made, or the abort could close the merge before `add -A` staged it and
+      // the fixture would lose the race it is here to run.
+      if (args[0] === "merge" && args[1] === "--abort") await committing;
+      return realGit(...call);
+    });
+
+    let committed: Outcome;
+    try {
+      committed = await land.commitPending(runId, "Keep the run's notes");
+    } finally {
+      commitSettled();
+    }
+    await settledResolution(runId);
+
+    assert.doesNotMatch(
+      fixtureGit(repo, ["show", `${branch}:README.md`]),
+      /^<<<<<<< /m,
+      "the conflict markers reached the branch",
+    );
+    assert.equal(
+      fixtureGit(repo, ["rev-list", "--parents", "-n", "1", branch]).split(" ").length,
+      2,
+      "the Commit made a merge commit out of the resolution's open merge",
+    );
+    assert.ok(resolution, "the fixture never pressed Resolve, so this proves nothing");
+    assert.equal(resolution.ok, false, "a resolution opened its merge under a commit");
+    assert.match(resolution.ok ? "" : resolution.reason, /commit is being made/);
+    // And the Commit did what it was pressed for.
+    assert.equal(committed.ok, true, committed.ok ? "" : committed.reason);
+    assert.equal(fixtureGit(repo, ["show", `${branch}:notes.txt`]), "the run's last notes");
+  });
+
+  it("a pick-up while a resolution is being set up is refused, and the run left alone", async (t) => {
+    const { runId, repo, slot, branch } = conflictingRunInSlot("reopen-race", "stopped");
+    const tipBefore = fixtureGit(repo, ["rev-parse", branch]);
+
+    const realGit = gitModule.git;
+    let pickUp = null as ReturnType<typeof reopenRun> | null;
+    t.mock.method(gitModule, "git", async (...call: Parameters<typeof realGit>) => {
+      const [cwd, args] = call;
+      // The last moment before the merge is opened, and well before the row
+      // `reopenRun` could always read has been written.
+      if (pickUp === null && cwd === slot && args[0] === "merge" && args[1] === "--no-edit") {
+        pickUp = reopenRun(runId, { maxIterations: 5, maxDurationMinutes: 60 });
+      }
+      return realGit(...call);
+    });
+
+    const resolution = await land.resolveConflicts(runId);
+    await settledResolution(runId);
+
+    assert.ok(pickUp, "the fixture never picked the run up, so this proves nothing");
+    assert.equal(
+      pickUp.ok,
+      false,
+      "picked up into the checkout a resolution was opening its merge in",
+    );
+    assert.match(pickUp.ok ? "" : pickUp.reason, /resolving a conflict/);
+    assert.equal(getRun(runId)!.status, "stopped");
+    // The resolution went ahead, and with no child to run it rolled back.
+    assert.equal(resolution.ok, true, resolution.ok ? "" : resolution.reason);
+    assert.equal(fixtureGit(repo, ["rev-parse", branch]), tipBefore);
   });
 });
