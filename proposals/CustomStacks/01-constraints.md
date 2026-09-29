@@ -320,7 +320,7 @@ app's.
   installed tools inherits that rule.
 - **`--add-dir` grants write, and a stored path is proved contained in a mount
   again at use time**, because what an enabled plugin becomes is *"a directory
-  whose hooks the container executes"* (`docs/agent/architecture.md:59`, routed
+  whose hooks the container executes"* (`docs/agent/architecture/module-map.md`'s `plugins.ts` entry, routed
   from `CLAUDE.md:53`). **A stack directory reachable by `--add-dir` is a stack
   directory an agent can rewrite.**
 - **Never a shell.** The agent is spawned with an argument array and

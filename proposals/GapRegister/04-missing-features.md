@@ -475,7 +475,7 @@ in this repository reads a doc.
 
 **Two that are wrong at `66fdbab`, both of them previously filed and closed.**
 
-`docs/agent/architecture.md:190` opens the `db.ts` entry with *"every table
+`docs/agent/architecture/module-map.md` opens the `db.ts` entry with *"every table
 `migrate()` creates, and there are 22 —"*, names twenty-two tables at
 `:191-196`, and then states at `:196-197` that *"the list is a completeness
 claim"* and hands the reader a command to check it with (`:198-200`):
@@ -569,7 +569,7 @@ output is quoted above. **Medium** on the sixteen: their titles were read from
 the tree.
 
 **A measurement worth carrying, because it makes the doc's own self-check useless
-in this container.** The command `docs/agent/architecture.md:198-200` gives the
+in this container.** The command `docs/agent/architecture/module-map.md`'s `db.ts` entry gives the
 reader is written without `-a`, and GNU grep 3.8 here reports
 `src/lib/db.ts: binary file matches` and prints **nothing** to stdout, so the
 check answers `0` rather than 34 — see

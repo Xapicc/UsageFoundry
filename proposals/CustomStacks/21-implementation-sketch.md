@@ -145,8 +145,8 @@ rather than a redesign - *"which is why it is built assuming the worse answer"*
   behind a 60-second `globalThis` cache in `src/lib/fileCostNotice.ts:310-315`'s
   shape.
 - **`GET /api/tools`** - `runtime = "nodejs"`, `dynamic = "force-dynamic"`
-  (`docs/agent/conventions.md:11`), through `jsonMaybeGzipped` like the other
-  eighteen (`:18`), with a list DTO in `src/lib/apiTypes.ts`.
+  (`docs/agent/conventions/route-handlers-and-server-modules.md`'s route-handlers paragraph), through
+  `jsonMaybeGzipped` like the other eighteen (`docs/agent/conventions/route-handlers-and-server-modules.md`'s `jsonMaybeGzipped` paragraph), with a list DTO in `src/lib/apiTypes.ts`.
 - **a `Tools` section on Settings**, `01e-` §2 and §4. Two groups in this phase -
   `UF_PY_TOOLS` and `UF_GH_EXTENSIONS` - and the stacks group arrives in phase 2
   with nothing about the section changing to admit it.

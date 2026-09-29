@@ -403,7 +403,7 @@ that initialiser and `:7512-7513`, and nothing else.
 **The parser without the guard is the one on nearly every cycle.**
 `runs.provider` is written once, by `POST /api/runs`, and is `null` for every
 other caller — a workflow node, a chat proposal, a reopened run
-(`docs/agent/run-lifecycle.md:69`) — and `selectCycleAdapter`
+(`docs/agent/run-lifecycle/cycle-argv-and-notices.md`'s `runs.provider` paragraph) — and `selectCycleAdapter`
 (`src/lib/orchestrator.ts:5916`) answers the Claude adapter for `null`. So the
 argument in the docblock lands the wrong way round: the announcing parser is on
 the opt-in and the silent one is on the default.
@@ -412,7 +412,7 @@ the opt-in and the silent one is on the default.
 `injectionFates` reports a flag it has never been taught as `unclassified`
 rather than dropping it, and `orchestrator.test.ts` pins zero such rows by
 running the widest real `buildArgs` output through it
-(`docs/agent/run-lifecycle.md:117`) — *"So the next flag added to `buildArgs`
+(`docs/agent/run-lifecycle/autocompact-and-compaction.md`'s *"when a compaction happens the run says what it took"* paragraph) — *"So the next flag added to `buildArgs`
 fails a test instead of silently leaving the record short."* There is no
 equivalent for a stream event.
 
@@ -432,7 +432,7 @@ four the code handles and not observed against a running CLI.
 **Cost of leaving it.** Zero until a pin moves, and then exactly what the
 docblock says: a cycle with no cost, no session id and no stop reason, which
 reads on the run page, in the log and in the exit code as a cycle that had
-nothing to say. `docs/agent/run-lifecycle.md:37` is the same failure from the
+nothing to say. `docs/agent/run-lifecycle/reopen-and-resume.md`'s `session_id` paragraph is the same failure from the
 other side — a session id that never lands leaves `reopenRun` re-sending the
 original task over the previous attempt's commits.
 
@@ -449,7 +449,7 @@ that a caller cannot read one provider's stdout with another's parser, and that
 uses `adapter.bin` two lines apart at `:6020` and `:6100`. A Codex cycle that
 hangs is ended with a sentence naming Claude Code on the run's own log. It is
 one interpolation and it is not a row: nothing decides differently because of
-it, and `docs/agent/run-lifecycle.md:67` requires each provider difference to be
+it, and `docs/agent/run-lifecycle/cycle-argv-and-notices.md`'s *"which CLI a cycle is"* paragraph requires each provider difference to be
 *disclosed*, which this misstates rather than hides.
 
 ---

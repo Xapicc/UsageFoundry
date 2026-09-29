@@ -6,7 +6,7 @@ The "Checked here" column says whether this assembly re-read the item's evidence
 
 Two values differ from the hunts' own:
 
-- **R-1** is lowered from high to medium-high. Its premise, "`maxIterations` defaults to 1", quotes `docs/agent/run-lifecycle.md:35`. That holds for `narrowGuards` (`src/lib/settings.ts:1277-1279`) and for workflow blocks. It does not hold for the new-run form, which defaults to 5 (`src/app/runs/new/page.tsx:215`), or for chat guards, which default to 4 (`src/lib/settings.ts:988`). The friction is real for every run that stopped on its own limit, but not for "the ordinary pick-up of the default run, every time".
+- **R-1** is lowered from high to medium-high. Its premise, "`maxIterations` defaults to 1", quotes `docs/agent/run-lifecycle/reopen-and-resume.md`'s *"a reopened run carries one message"* paragraph. That holds for `narrowGuards` (`src/lib/settings.ts:1277-1279`) and for workflow blocks. It does not hold for the new-run form, which defaults to 5 (`src/app/runs/new/page.tsx:215`), or for chat guards, which default to 4 (`src/lib/settings.ts:988`). The friction is real for every run that stopped on its own limit, but not for "the ordinary pick-up of the default run, every time".
 - **U-9** keeps its hunt's "high", with a caveat: dreaming is off by default (`src/lib/settings.ts:1066`).
 
 ## S
@@ -215,7 +215,7 @@ Each note was checked against the open tasks and against every "Bugs filed" line
 | 02 | `src/lib/review.ts:239-247`: `reconcileReviewsOnBoot` fails a validate row and closes nothing | Covered by `382b15b1`, whose fix may land there |
 | 02 | `src/lib/schedules.ts:172`: `Math.trunc(Number(o.hours))` coerces `true` and `[5]` | Covered by `83a5eeba`, which is about schedule input that coerces rather than refuses |
 | 02 | `docs/taskboard.md:185-186` says the board announces an outgrown page; it no longer does | Not filed. Doc drift, over the cap |
-| 02 | `docs/agent/chat.md:69` says a thread's title is written by the model | Not filed. Doc drift. C-7 has to rewrite that sentence anyway |
+| 02 | `docs/agent/chat/chat-api-and-poll.md`'s *"`GET /api/chat` answers two different questions"* paragraph says a thread's title is written by the model | Not filed. Doc drift. C-7 has to rewrite that sentence anyway |
 | 03 | `src/lib/orchestrator.ts:11728`: picking up a once-waiting run queues it with no checkout | **Filed as `b403b8b4`** (high). Read at `:11728`, `:431-433`, `:8779`, `:8886`, `:10483-10491`. The boot's own comment at `:12620-12627` names the mechanism |
 | 03 | `src/lib/orchestrator.ts:12608-12633`: the boot stops every waiting run | **Filed as `d2c5ecb6`** (high). Read at `:12608-12642`. The grace branch that keeps a paused dependency runs after its dependents are already stopped |
 | 03 | `src/lib/orchestrator.ts:9751-9765`: the ceiling refund can take a first cycle to `iterations = 0`, so a later guard writes `blocked` | Not filed. Over the cap, and not re-read here. It is the same refund site as `6e6736b7` and `55ee6a0a`, so whoever fixes either should check it |
@@ -225,7 +225,7 @@ Each note was checked against the open tasks and against every "Bugs filed" line
 | 04 | `src/lib/retention.ts:545,568`: worktree remove and prune run outside `withRepoAdmin` | Not filed. Verified: there is no `withRepoAdmin` in `retention.ts`, and `repoLock.ts:12-16` lists four registry callers without it. It is low, because `repoLock.ts` itself records that no collision was ever reproduced. Over the cap |
 | 04 | `orchestrator.ts:11706-11776`: `reopenRun` accepts a run that is still landing or resolving | Covered by a note on `c3199f70` |
 | 04 | `src/lib/workflows.ts:~6364`: `startMergeBlock` counts an already-landed branch as a failed landing | **Filed as `f3a2f4f6`** (normal), together with 04's unfiled item 1(c). Read at `mergeQueue.ts:140-178`, `land.ts:1014` and `workflows.ts:6364` |
-| 05 | `docs/agent/metering.md:60` contradicts `:32` on weekly buckets | Not filed. Doc drift, over the cap |
+| 05 | `docs/agent/metering/windows-and-periods.md`'s *"a calendar period is history, so its percentage is a pace and never a guard"* paragraph contradicts the *"calendar buckets"* paragraph beside it on weekly buckets | Not filed. Doc drift, over the cap |
 | 05 | `src/components/TaskEditor.tsx` registers no leave guard | Covered by item C-10, which it was merged into |
 | 05 | `src/app/api/mcp/route.ts:2868`: `list_recurring_failures` inherits `668dd86e` | Covered: that task names it |
 | 05 | `docs/agent/testing.md:47`, `:279`: the dangling-link counts were probably inflated by `d0e67076` | Not filed. The hunt assumed it and did not re-measure |

@@ -80,7 +80,7 @@ the results because "a capped list that does not say it is capped reads as the
 whole answer" (`:186-189`).
 
 This is the app's only **derived** corpus, and §08 returns to it: the reason for
-the derivation is written out at `docs/agent/conventions.md:16` and it is the
+the derivation is written out in `docs/agent/conventions/polling-dtos-and-settings-save.md`'s *"a control that narrows what is on screen narrows the data"* paragraph and it is the
 same argument this survey makes from a different direction.
 
 ## Quick open reaches three kinds

@@ -170,7 +170,7 @@ And nothing anywhere proves `invokable` without spending money.
 and implies state 3.** The honest rendering is the one the metering rules already
 require of every meter in this app: *"Unknown must not render as zero… a hatched
 indeterminate meter ('no ceiling set'), never an empty 0% bar"*
-(`docs/agent/metering.md:8`). Applied here that is one word:
+(`docs/agent/metering/unknown-and-percentages.md`). Applied here that is one word:
 a tool whose invocation has never been observed reads **`unverified`**, never
 `installed`. It is the difference between the read-back being true and being the
 fourth silent failure.
@@ -184,7 +184,7 @@ fourth silent failure.
    work. A stack that declared four tools and found three belongs on it.
 2. **A refusal at the door.** This app refuses by name rather than degrading:
    a deleted agent is *"refused by name at every door and never falls back to
-   none"* (`docs/agent/agents-and-templates.md:18`), and `no_ceiling` is refused
+   none"* (`docs/agent/agents-and-templates/agent-references-and-ambient-agents.md`'s *"a run records the agent it was started as"* paragraph), and `no_ceiling` is refused
    at the door and never acted on afterwards (`CLAUDE.md`). A run
    whose template names a stack that is not present can be refused the same way,
    before a token is spent.
@@ -252,12 +252,12 @@ times in three places:
 
 - **Not on an agent.** *"A saved agent … carries a role rather than a
   capability"*, and *"a `tools` field is refused at save, and the refusal is the
-  decision"* (`docs/agent/agents-and-templates.md:10`). The schema mirrors it:
+  decision"* (`docs/agent/agents-and-templates/saved-agents.md`). The schema mirrors it:
   no `tools` column, no `permission_mode` column, no budget — *"the absence of a
   column is the strongest form of it"* (`src/lib/db.ts:269-274`).
 - **Not on a workflow node.** *"A node holds no permission mode, no isolation
   choice, no model and no budget blob"*
-  (`docs/agent/workflows-and-schedules.md:47`).
+  (`docs/agent/workflows-and-schedules/loop-termination.md`'s *"a loop's two caps are termini"* paragraph).
 - **Not chosen at admission.** `createRun` entry-to-INSERT with no `await`
   (§4 above).
 
@@ -277,7 +277,7 @@ guards already are.
 ### The frozen-copy question, which has a different answer here than for agents
 
 `runs.agent` is a frozen copy and `run_templates.agent_id` is a reference
-(`docs/agent/agents-and-templates.md:18`; the column is
+(`docs/agent/agents-and-templates/agent-references-and-ambient-agents.md`'s *"a run records the agent it was started as"* paragraph; the column is
 `src/lib/db.ts:778`). The reason freezing is right for an agent
 is that the agent's text *is* what the run was given, so the frozen copy makes
 the run legible after the agent changes.

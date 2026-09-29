@@ -135,8 +135,8 @@ a run early, which is the right direction), and it needs no new table.
 
 ## Where the figure may go, and where it may not
 
-`docs/agent/architecture.md:10`: **three data sources, never summed or mixed in
-the UI.** `docs/agent/metering.md:50`: "three routes to overlapping work, and
+`docs/agent/architecture/data-sources.md`: **three data sources, never summed or mixed in
+the UI.** `docs/agent/metering/run-spend-readings.md`'s *"what each repository cost is a fifth reading"* paragraph: "three routes to overlapping work, and
 any sum double-counts."
 
 A Codex figure is a fourth population. The precedent for admitting one without

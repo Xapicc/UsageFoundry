@@ -326,9 +326,9 @@ The file is 77 lines (`wc -l CLAUDE.md`), so every `CLAUDE.md:134`,
 `CLAUDE.md:95` and `CLAUDE.md:35` in the tree pointed past its end. The rules
 moved into `docs/agent/`, and the fixes point at where they live now:
 *"never a shell"* in `docs/agent/security/path-containment-and-spawn-argv.md`, routed from `CLAUDE.md:59`;
-*"a directory whose hooks the container executes"* at
-`docs/agent/architecture.md:59`, routed from `CLAUDE.md:53`; and the "four
-modules" claim at `docs/agent/architecture.md:222`.
+*"a directory whose hooks the container executes"* in
+`docs/agent/architecture/module-map.md`'s `plugins.ts` entry, routed from `CLAUDE.md:53`; and the "four
+modules" claim in `docs/agent/architecture/run-loop-and-child-processes.md`'s *"four kinds of agent child process"* paragraph.
 
 **The thirteen current files were fully re-validated on 2026-09-12 against
 `68a8aa7`, and `22-validation.md` is that pass**: 292 citations resolved

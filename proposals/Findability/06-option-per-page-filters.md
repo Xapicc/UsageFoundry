@@ -18,7 +18,7 @@ extract what exists, apply it everywhere.
 
 ## The refusal is not this survey's opinion — it is already a stated invariant
 
-`docs/agent/conventions.md:16`, on list routes, verbatim:
+`docs/agent/conventions/polling-dtos-and-settings-save.md`'s *"a list route ships the list's own DTO"* paragraph, verbatim:
 
 > **The narrowing happens in the query, never in the client over an
 > already-capped page.**

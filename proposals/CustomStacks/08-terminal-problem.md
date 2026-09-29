@@ -38,8 +38,8 @@ What the credential buys today:
 | Surface | What it runs | As whom | Bounded by |
 |---|---|---|---|
 | `POST /api/runs` (`src/app/api/runs/route.ts:358`) | a `claude` child with `Bash`, prompt from the wire | `UF_AGENT_UID` | permission mode, budget guards, `run_events` |
-| `POST /api/chat/[id]/message` (`route.ts:33`) | a `claude` child at **`bypassPermissions`**, `--add-dir` on every mount, `UF_GITHUB_TOKEN` in env (`src/lib/chat.ts:1652-1653`, `:1667-1670`) | `UF_AGENT_UID`, `UF_CHAT_GID` | `--max-budget-usd`, a 10-minute timeout, and *"the system prompt is the boundary"* (`docs/agent/chat.md:24`) |
-| `POST /api/plugins` | registers a directory *"whose hooks the container executes"* (`docs/agent/architecture.md:59`) | `UF_AGENT_UID`, inside a `claude` child | containment re-proved at use time |
+| `POST /api/chat/[id]/message` (`route.ts:33`) | a `claude` child at **`bypassPermissions`**, `--add-dir` on every mount, `UF_GITHUB_TOKEN` in env (`src/lib/chat.ts:1652-1653`, `:1667-1670`) | `UF_AGENT_UID`, `UF_CHAT_GID` | `--max-budget-usd`, a 10-minute timeout, and *"the system prompt is the boundary"* (`docs/agent/chat/child-permissions-and-sandbox.md`) |
+| `POST /api/plugins` | registers a directory *"whose hooks the container executes"* (`docs/agent/architecture/module-map.md`'s `plugins.ts` entry) | `UF_AGENT_UID`, inside a `claude` child | containment re-proved at use time |
 
 So arbitrary execution is not new, the agent uid is not new, and write access to
 every mount is not new. **Four things are new, and only four.** They are what an
@@ -204,7 +204,7 @@ as `/usr/bin/tini -- /usr/local/bin/uf-entrypoint node server.js`; `/proc/1/envi
 is `-r-------` and returned `Permission denied`. The repository already depends on
 this asymmetry twice — `src/lib/privsep.ts:41-55` invents `UF_CHAT_GID` precisely
 because *"`--mcp-config <path>` is an argv element, `/proc/<pid>/cmdline` is
-world-readable"*, and `docs/agent/chat.md:22` puts the capability *"in a 0600 file
+world-readable"*, and `docs/agent/chat/mcp-tools-and-capability.md`'s *"the chat's child authenticates with a capability"* paragraph puts the capability *"in a 0600 file
 rather than into argv (where `ps` would show it)"*.
 
 The consequence inverts the intuition: **a one-shot exec route publishes the
@@ -293,9 +293,9 @@ a `SegmentedControl` view on an existing pane — never a tenth row. Every optio
 file below assumes that and none of them re-argues it.
 
 **A correction the tree needs and that this proposal cannot make** (it is under
-`docs/`, which run 2 may not edit): `docs/agent/conventions.md:50` still says the
+`docs/`, which run 2 may not edit): `docs/agent/conventions/design-language-and-grouping.md`'s *"grouping has a closed vocabulary"* paragraph still says the
 list is *"closed at eight, because ⌘1…⌘8 has eight digits"* and forbids *"a ninth
-pane"*, while `conventions.md:57` in the same file says *"The set covers the nine
+pane"*, while `docs/agent/conventions/component-kit.md`'s `SegmentedControl` paragraph says *"The set covers the nine
 panes"* and `panes.ts:15` says nine. `ui-density-audit.md:115` also still says
 *"Eight."* The ban is right and the number is one behind in two places.
 
@@ -361,7 +361,7 @@ because *"`POST /api/login` carries the master token in its body"*). The cap is
 `RETENTION_ROWS = 20_000` (`:68`) and eviction is unconditional on **every**
 insert (`:118-121`).
 
-`docs/agent/chat.md:22` already names that as a weapon: auditing `/api/mcp`'s
+`docs/agent/chat/mcp-tools-and-capability.md`'s *"the chat's child authenticates with a capability"* paragraph already names that as a weapon: auditing `/api/mcp`'s
 credential-free 401 *"made `request_log`'s 20,000-row cap a lever anyone who could
 reach the path could pull — twenty thousand refusals and every line naming a run
 that was started or a sign-in that failed is evicted."* The fix was to wrap only

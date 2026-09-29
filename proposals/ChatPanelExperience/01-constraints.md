@@ -12,7 +12,7 @@ No value off a proposal sets a budget, a permission mode, a work-cycle limit or
 an isolation choice. Guards come from the named template or from
 `settings.chatDefaultGuards`, and `planProposal` refuses a proposal naming a
 deleted template rather than falling back
-(`docs/agent/chat.md:9`, `src/lib/chat.ts:814`).
+(`docs/agent/chat/proposals-and-guards.md`'s *"the orchestrator chat picks what work to do"* paragraph, `src/lib/chat.ts:814`).
 
 **What this rules out.** Any option that lets the operator adjust a guard on the
 card, and any option that lets the *chat* fill one in. It does not rule out
@@ -84,7 +84,7 @@ that just arrived" behaviour triggered by a poll.
 A chat with an open question is `idle`, the composer is neither disabled nor
 pre-filled, and sending an ordinary message supersedes every open question —
 which is a real answer, drawn as neither a failure nor an acceptance
-(`docs/agent/chat.md:39`, `:43`; `page.tsx:1425-1440`).
+(`docs/agent/chat/operator-questions.md`'s composer paragraph and its *"an ordinary message supersedes every open question"* paragraph; `page.tsx:1425-1440`).
 
 **What this rules out.** Blocking the composer to force an answer, and treating
 a superseded question as an error.

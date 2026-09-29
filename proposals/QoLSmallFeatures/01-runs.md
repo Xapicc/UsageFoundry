@@ -25,7 +25,7 @@ I did not run `npm test` or `npm run typecheck`, because nothing in `src/` chang
 - **Friction**: Anyone picking up a run that used its cycles or its money hits this on the first press.
   - `openReopen` copies the stored caps into the Resume sheet verbatim (`src/app/runs/[id]/page.tsx:1153-1158`).
   - `reopenRun` refuses a cap at or below what was already used: "Raise the cycle limit above that to carry on." (`src/lib/orchestrator.ts:11800-11812`).
-  - `maxIterations` defaults to 1 (`docs/agent/run-lifecycle.md:35`), so the ordinary `completed` run that used its one cycle is refused on the first press with the values the sheet chose. So is a run stopped by its spending limit.
+  - `maxIterations` defaults to 1 (`docs/agent/run-lifecycle/reopen-and-resume.md`'s *"a reopened run carries one message"* paragraph), so the ordinary `completed` run that used its one cycle is refused on the first press with the values the sheet chose. So is a run stopped by its spending limit.
 - **Change**: When a stored limit is already reached, pre-fill a raised value instead: `iterations + max(1, original cap)` for cycles, and the spend so far plus the original cap for money. Mark each raised field with its hint ("was 1 — used up"), so the raised number is visibly the form's suggestion. Share one pure helper between the sheet and the door, e.g. `reachedLimits(run)` next to `pausedMsAt` in `apiTypes.ts`, so the sheet and `reopenRun`'s three checks cannot disagree.
 - **Size**: S.
 - **Touches**: `run-lifecycle.md:33` ("re-queueing under the limits that stopped it just reproduces the stop"). This item applies that reasoning to the form as well as the door. `permissionMode` stays off the wire. The risk is that a pre-filled higher spending cap is a money decision, so it must show as a changed value, never silently.
@@ -184,7 +184,7 @@ These are over the cap of twelve or below its severity bar. Each one names who e
   - Established: read by a sub-agent.
 - **`liveGuardTick` runs the ceiling check's winnow subprocesses serially ahead of the budget scan**, which can delay the live guard. The comment at `orchestrator.ts:~10634` ("cheap enough to run first") predates the subprocesses (low; magnitude not measured). Read by a sub-agent.
 - **The run page's "still running" tool strip goes stale after an SSE reconnect** (normal).
-  - Where: `src/app/api/runs/[id]/stream/route.ts:169` sends the open-tool set only when non-empty. The page never clears `liveTools` on reconnect (`src/app/runs/[id]/page.tsx:849-854`). `docs/agent/architecture.md:291` says the frame is sent unconditionally.
+  - Where: `src/app/api/runs/[id]/stream/route.ts:169` sends the open-tool set only when non-empty. The page never clears `liveTools` on reconnect (`src/app/runs/[id]/page.tsx:849-854`). `docs/agent/architecture/run-loop-and-child-processes.md`'s events-flow paragraph says the frame is sent unconditionally.
   - Established: read by a sub-agent.
 - **"Stopped by one of your limits" shows on a run the operator stopped after a guard-stop and a pick-up**, and it ignores `enforceable: false` (normal/low).
   - Where: `src/app/runs/[id]/page.tsx:1043-1052`. `src/lib/notify.ts:~232` already applies the right rule.

@@ -28,7 +28,7 @@ security objection is real and it is not new: this app already exposes
 `POST /api/chat/[id]/message`, which spawns a child at `bypassPermissions` with
 `--add-dir` on every mount and `UF_GITHUB_TOKEN` in its environment
 (`chat.ts:1652-1653`, `:1667-1670`), bounded by nothing but a system prompt
-(`docs/agent/chat.md:24`). A shell dropped to `UF_AGENT_UID` is *narrower than a
+(`docs/agent/chat/child-permissions-and-sandbox.md`'s *"the chat runs with no tool allowlist that bounds anything"* paragraph). A shell dropped to `UF_AGENT_UID` is *narrower than a
 surface this app already ships behind the same cookie.*
 
 ## 2. Shape

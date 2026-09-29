@@ -404,7 +404,7 @@ the appended system prompt**, because `runs.file_cost_notice` is a cached prefix
 generated once at `createRun` and text that differed between two cycles would
 cold-start a large context. `--add-dir`: no stack path is ever passed to it, so
 no stack directory becomes *"a directory whose hooks the container executes"*
-(`docs/agent/architecture.md:59`). *Never a shell*: the applier builds argument
+(`docs/agent/architecture/module-map.md`'s `plugins.ts` entry). *Never a shell*: the applier builds argument
 arrays; the three install verbs have constant argv templates with substitution
 only into a single argument position; there is no `postinstall`, no `script`
 field and no `run` verb, which is `11-option-allowlisted-installer.md`'s closed

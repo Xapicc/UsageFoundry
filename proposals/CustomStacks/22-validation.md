@@ -163,12 +163,12 @@ Both fixed.
 Three claims in `01e-` and `01f-` cited a `docs/agent/` file without a line, and
 in one case paraphrased it:
 
-- the agent-placement refusal is `docs/agent/agents-and-templates.md:10` -
+- the agent-placement refusal is `docs/agent/agents-and-templates/saved-agents.md`'s *"a saved agent is the fourth thing here that is form input"* paragraph -
   *"A saved agent … carries a role rather than a capability"*, and the field that
   would make it one is `tools`, which *"is refused at save"*;
-- the route-not-a-card decision is `docs/agent/taskboard.md:779` - *"The editor
+- the route-not-a-card decision is `docs/agent/taskboard/task-page.md` - *"The editor
   is a route, not a card the board opens above itself"*;
-- the grouping rule is `docs/agent/conventions.md:51` - *"Grouping has a closed
+- the grouping rule is `docs/agent/conventions/design-language-and-grouping.md` - *"Grouping has a closed
   vocabulary, and it is seven things"* - and the component is `ListGroup`
   (`src/components/ui/List.tsx:43`).
 

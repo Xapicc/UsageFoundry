@@ -732,7 +732,7 @@ returning the same 34. So it is a property of this container's filesystem under
 GNU grep 3.8, most likely a sparse-file probe, and **no row rests on it**. It is
 recorded because it is why every command quoted on this pass carries `-a`, and
 because two things the repository hands a reader as self-checks are written
-without one: `docs/agent/architecture.md:198-200`'s table count, and
+without one: the table count in `docs/agent/architecture/module-map.md`'s `db.ts` entry, and
 `CLAUDE.md:61`'s `globalThis` grep. Both answer short here, silently. Whether
 they answer short on the operator's own machine is unknown from this container
 and is not claimed.
@@ -775,7 +775,7 @@ $ node -e '<import .test-build/lib/db.js with DATA_DIR=scratch>'
 34
 ```
 
-Thirty-four tables, against the twenty-two `docs/agent/architecture.md:190` names
+Thirty-four tables, against the twenty-two `docs/agent/architecture/module-map.md`'s `db.ts` entry names
 and calls a completeness claim. This is
 [M7](04-missing-features.md#m7--nothing-checks-a-completeness-claim-and-docsagent-is-built-out-of-them)'s
 first number, confirmed two ways: the doc's own grep with `-a` added, and the
@@ -930,7 +930,7 @@ So the reader after this one knows, in the same terms this file was given.
   `jitterMs`, `maxRetriesFor`, `transientBackoffMs`, `refusalDisposition`,
   `refusalStopReason`, `waitUnlessInterrupted`, `refusalResumeAt`. **The largest
   coherent unread block with rows plausibly in it**, and the one this pass would
-  read next: `docs/agent/run-lifecycle.md:19-29` states eleven separate things
+  read next: `docs/agent/run-lifecycle/parking-and-refusals.md`'s six paragraphs from *"a run parks on two triggers"* to the rate-limit ladder state eleven separate things
   about it, which is the density that produced both of the register's documented
   violations.
 - `:1979-3084` — `resolveIsolation`, `probeIsolation`, the worktree store,

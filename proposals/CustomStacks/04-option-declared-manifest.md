@@ -148,7 +148,7 @@ cleanly.**
   not become the second. **Any route added here must be excluded from the MCP
   tool surface by name.**
 - **`auditMutation`** wraps 33 exports and every mutation should be one
-  (`docs/agent/run-lifecycle.md:11`), so an install is an audit row — which is a
+  (`docs/agent/run-lifecycle/origin-queue-and-request-log.md`'s *"every mutating request leaves a line"* paragraph), so an install is an audit row — which is a
   genuine improvement over both A and B, where an install is a log line at most.
 - **The `createRun` no-`await` rule** — nothing in this option may be consulted
   during admission (`docs/agent/concurrency-and-ownership.md`).
