@@ -84,6 +84,22 @@ export interface DiscoveredPlugin extends PluginManifest {
   enabled: boolean;
 }
 
+export interface PluginProblem {
+  message: string;
+  /**
+   * The stored entry, when the problem is an enabled plugin the list cannot
+   * show — the string a switch-off sends back, because such a plugin has no
+   * row and so no switch of its own. Null when there is nothing to switch off.
+   */
+  enabledPath: string | null;
+}
+
+/** An enabled plugin withheld from spawns because its manifest stopped parsing. */
+export interface BrokenPlugin {
+  path: string;
+  error: string;
+}
+
 /**
  * Read a `plugin.json` the way the CLI would reject it.
  *
@@ -233,6 +249,45 @@ function storedPaths(): string[] {
   return raw.map((p) => String(p)).filter(Boolean);
 }
 
+type StoredPlugin =
+  | { kind: "loadable"; stored: string; dir: string }
+  | { kind: "missing"; stored: string }
+  | { kind: "broken"; stored: string; error: string };
+
+/**
+ * What one stored entry is at the moment it would be used.
+ *
+ * Every proof enabling ran, run again: containment in both phases, the
+ * manifest's presence, and its parsing. One answer for both readers — a spawn's
+ * argv and the page's problems — because an entry the two judge differently is
+ * either loaded with no row to switch it from, or reported with no effect.
+ */
+function classifyStored(stored: string): StoredPlugin {
+  const resolved = mountFor(stored);
+  if (!resolved || !isPluginDir(resolved.real)) return { kind: "missing", stored };
+  const manifest = readManifestAt(resolved.real);
+  if ("error" in manifest) return { kind: "broken", stored, error: manifest.error };
+  return { kind: "loadable", stored, dir: resolved.real };
+}
+
+/**
+ * The sentence the page shows for an enabled entry it has no row for.
+ *
+ * `loadable` is reachable because enabling proves containment and a manifest,
+ * not discovery: a plugin deeper than `MAX_DEPTH` can be switched on by a
+ * request naming it, and is then loaded into every cycle with no row showing it.
+ */
+function strandedMessage(entry: StoredPlugin): string {
+  switch (entry.kind) {
+    case "missing":
+      return `Enabled plugin is no longer present: ${entry.stored}`;
+    case "broken":
+      return `Enabled plugin is not being loaded: ${entry.stored} — ${entry.error}`;
+    case "loadable":
+      return `Enabled plugin is loaded but outside the folders searched for plugins: ${entry.stored}`;
+  }
+}
+
 /**
  * Every plugin directory under the workspace mounts, with its on/off state.
  *
@@ -241,10 +296,10 @@ function storedPaths(): string[] {
  * operator staring at a mounted plugin that never appears with nothing to
  * explain why.
  */
-export function discoverPlugins(): { plugins: DiscoveredPlugin[]; problems: string[] } {
+export function discoverPlugins(): { plugins: DiscoveredPlugin[]; problems: PluginProblem[] } {
   const enabled = new Set(storedPaths());
   const plugins: DiscoveredPlugin[] = [];
-  const problems: string[] = [];
+  const problems: PluginProblem[] = [];
   const seen = new Set<string>();
 
   for (const mount of WORKSPACE_MOUNTS) {
@@ -252,7 +307,10 @@ export function discoverPlugins(): { plugins: DiscoveredPlugin[]; problems: stri
     try {
       root = fs.realpathSync(mount.path);
     } catch {
-      problems.push(`Mount "${mount.label}" is not available at ${mount.path}.`);
+      problems.push({
+        message: `Mount "${mount.label}" is not available at ${mount.path}.`,
+        enabledPath: null,
+      });
       continue;
     }
 
@@ -277,7 +335,14 @@ export function discoverPlugins(): { plugins: DiscoveredPlugin[]; problems: stri
           seen.add(child);
           const manifest = readManifestAt(child);
           if ("error" in manifest) {
-            problems.push(`${path.relative(root, child)}: ${manifest.error}`);
+            // An enabled one is reported below, once and with its switch-off;
+            // a second line here would be the same problem with no control.
+            if (!enabled.has(child)) {
+              problems.push({
+                message: `${path.relative(root, child)}: ${manifest.error}`,
+                enabledPath: null,
+              });
+            }
             continue;
           }
           plugins.push({
@@ -318,8 +383,9 @@ export function discoverPlugins(): { plugins: DiscoveredPlugin[]; problems: stri
   // a repository renamed or unmounted otherwise takes its plugin with it and
   // the only symptom is agents quietly behaving differently.
   const found = new Set(plugins.map((p) => p.path));
-  for (const p of enabled) {
-    if (!found.has(p)) problems.push(`Enabled plugin is no longer present: ${p}`);
+  for (const stored of enabled) {
+    if (found.has(stored)) continue;
+    problems.push({ message: strandedMessage(classifyStored(stored)), enabledPath: stored });
   }
 
   plugins.sort((a, b) => a.name.localeCompare(b.name));
@@ -329,12 +395,24 @@ export function discoverPlugins(): { plugins: DiscoveredPlugin[]; problems: stri
 /**
  * Switch one plugin on or off.
  *
- * The path is proved contained **before** it is stored, so a path that never
- * belonged in a mount cannot sit in the row waiting to be handed to a spawn.
- * It is proved again on the way out, in `enabledPluginDirs` — a mount can be
- * repointed under a stored path, and only the check at use time sees that.
+ * On, the path is proved contained **before** it is stored, so a path that
+ * never belonged in a mount cannot sit in the row waiting to be handed to a
+ * spawn. It is proved again on the way out, in `enabledPluginDirs` — a mount
+ * can be repointed under a stored path, and only the check at use time sees
+ * that.
+ *
+ * Off proves nothing. Removing an entry can only narrow what a spawn loads, and
+ * the entries that most need switching off are the ones whose folder has gone
+ * or whose manifest has stopped parsing — which is exactly what the enable
+ * proofs refuse. Run on both directions, they left such an entry stored with
+ * no switch that worked, and a different plugin later written to that path was
+ * loaded into every cycle without anyone pressing anything.
  */
 export function setPluginEnabled(input: string, enabled: boolean): string {
+  return enabled ? enablePlugin(input) : disablePlugin(input);
+}
+
+function enablePlugin(input: string): string {
   const resolved = mountFor(input);
   if (!resolved) {
     throw new Error(`Plugin directory is not inside a workspace mount: ${input}`);
@@ -348,30 +426,50 @@ export function setPluginEnabled(input: string, enabled: boolean): string {
   }
 
   const next = new Set(storedPaths());
-  if (enabled) next.add(resolved.real);
-  else next.delete(resolved.real);
+  next.add(resolved.real);
   setJSON(KEY, [...next].sort());
   return resolved.real;
+}
+
+function disablePlugin(input: string): string {
+  const next = new Set(storedPaths());
+  // The stored string first: it is what the page sends, and for an entry whose
+  // folder has gone it is the only spelling left that names anything. Any other
+  // spelling — relative to a mount root, say — is matched by what it resolves
+  // to, which is the canonical form enabling stored.
+  const target = next.has(input) ? input : (mountFor(input)?.real ?? input);
+  next.delete(target);
+  setJSON(KEY, [...next].sort());
+  return target;
 }
 
 /**
  * The directories to hand a spawn, and the enabled ones that did not survive.
  *
- * `missing` is returned rather than swallowed so the caller can put it where an
- * operator will see it. A plugin that stops being passed is invisible from the
- * outside — the agent simply behaves as it did before the plugin existed — and
- * that is the whole failure mode this feature has to avoid reproducing.
+ * `missing` and `broken` are returned rather than swallowed so the caller can
+ * put them where an operator will see them. A plugin that stops being passed is
+ * invisible from the outside — the agent simply behaves as it did before the
+ * plugin existed — and that is the whole failure mode this feature has to avoid
+ * reproducing.
+ *
+ * A manifest that has stopped parsing is withheld rather than passed, because
+ * enabling refuses exactly that manifest and a stored entry must not reach a
+ * spawn in a state the switch would have refused. Whether the CLI would still
+ * run such a plugin's hooks has not been measured; withholding it makes the
+ * answer not matter.
  */
-export function enabledPluginDirs(): { dirs: string[]; missing: string[] } {
+export function enabledPluginDirs(): {
+  dirs: string[];
+  missing: string[];
+  broken: BrokenPlugin[];
+} {
   const dirs: string[] = [];
   const missing: string[] = [];
-  for (const stored of storedPaths()) {
-    const resolved = mountFor(stored);
-    if (!resolved || !isPluginDir(resolved.real)) {
-      missing.push(stored);
-      continue;
-    }
-    dirs.push(resolved.real);
+  const broken: BrokenPlugin[] = [];
+  for (const entry of storedPaths().map(classifyStored)) {
+    if (entry.kind === "loadable") dirs.push(entry.dir);
+    else if (entry.kind === "missing") missing.push(entry.stored);
+    else broken.push({ path: entry.stored, error: entry.error });
   }
-  return { dirs, missing };
+  return { dirs, missing, broken };
 }

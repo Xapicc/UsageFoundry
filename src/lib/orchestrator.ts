@@ -9524,6 +9524,12 @@ export async function startRun(id: string): Promise<void> {
           `Enabled plugin${plugins.missing.length === 1 ? "" : "s"} not loaded for this cycle — no longer inside a workspace mount, or no longer a plugin directory: ${plugins.missing.join(", ")}`,
         );
       }
+      for (const broken of plugins.broken) {
+        log(
+          id,
+          `Enabled plugin not loaded for this cycle — its manifest is refused: ${broken.path} (${broken.error})`,
+        );
+      }
 
       // Same cycle, same reason, and deliberately *not* the run-scoped
       // `settings` a few lines up: the switch and the mount behind it are read

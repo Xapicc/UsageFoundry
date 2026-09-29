@@ -3382,6 +3382,18 @@ export interface PluginMcpDTO {
   servers: McpServerStatusDTO[];
 }
 
+/** One entry of `PluginsReportDTO.problems`; mirrors `PluginProblem` in `plugins.ts`. */
+export interface PluginProblemDTO {
+  message: string;
+  /**
+   * The stored entry, when the problem is an enabled plugin the list has no row
+   * for — what the problem's "Switch off" posts as `path`. Without it, a plugin
+   * whose folder went or whose manifest broke would stay switched on with no
+   * control anywhere to switch it off. Null when nothing is enabled.
+   */
+  enabledPath: string | null;
+}
+
 export interface PluginsReportDTO {
   plugins: PluginDTO[];
   /**
@@ -3391,7 +3403,7 @@ export interface PluginsReportDTO {
    * silently omits them cannot explain why what an operator is looking for is
    * not there.
    */
-  problems: string[];
+  problems: PluginProblemDTO[];
 }
 
 /**
