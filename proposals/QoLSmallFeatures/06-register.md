@@ -228,4 +228,4 @@ Each note was checked against the open tasks and against every "Bugs filed" line
 | 05 | `docs/agent/metering.md:60` contradicts `:32` on weekly buckets | Not filed. Doc drift, over the cap |
 | 05 | `src/components/TaskEditor.tsx` registers no leave guard | Covered by item C-10, which it was merged into |
 | 05 | `src/app/api/mcp/route.ts:2868`: `list_recurring_failures` inherits `668dd86e` | Covered: that task names it |
-| 05 | `docs/agent/testing.md:47`, `:279`: the dangling-link counts were probably inflated by `d0e67076` | Not filed. The hunt assumed it and did not re-measure |
+| 05 | `docs/agent/testing/components-meter-markdown-and-kit.md` ("`Markdown.test.tsx`'s wikilink cases"), `docs/agent/testing/knowledge-vault-and-graph.md` ("The broken-link cases"): the dangling-link counts were probably inflated by `d0e67076` | Not filed. The hunt assumed it and did not re-measure |

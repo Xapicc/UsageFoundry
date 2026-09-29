@@ -516,8 +516,8 @@ closed.** The sentence around the grep still says thirty-odd; the answer is
 fifty-eight.
 
 **The repository has a form of this that does not decay, in the same
-directory.** `docs/agent/testing.md:310` ships the command with its answer
-beside it and dates it in the same breath:
+directory.** `docs/agent/testing.md`, under "Checking this page is complete",
+ships the command with its answer beside it and dates it in the same breath:
 
 ```
 find src -name '*.test.ts' -o -name '*.test.tsx' | wc -l          # 109 as this is written
