@@ -2,21 +2,22 @@
  * Who is writing to a finished run's checkout from outside a work cycle.
  *
  * A conflict resolution being set up and a Commit pressed on the Land card
- * both write into the run's own slot, and neither is a run, so `activeRuns()`
- * does not see them. Each has git calls to make before anything durable says
- * it is there — the resolution's `run_reviews` row comes after its merge, and
- * a commit writes no row at all — so this claim is the only thing that can
- * answer for that stretch. Two of them at once is the markers reaching the
- * branch: a merge opened under a Commit's `add -A` is staged and committed,
- * conflict markers included, as a two-parent merge that then lands as a
- * fast-forward.
+ * both write into the run's own slot, and a Purge removes it, and none of them
+ * is a run, so `activeRuns()` does not see them. Each has git calls to make
+ * before anything durable says it is there — the resolution's `run_reviews`
+ * row comes after its merge, and a commit and a purge write no row at all — so
+ * this claim is the only thing that can answer for that stretch. Two of them at
+ * once is the markers reaching the branch: a merge opened under a Commit's
+ * `add -A` is staged and committed, conflict markers included, as a two-parent
+ * merge that then lands as a fast-forward. Or it is a billed resolution child
+ * spawned into a checkout a Purge then force-removes.
  *
  * Its own module because `reopenRun` has to read it as well, and `land.ts`,
  * which takes it, imports `orchestrator.ts`. It imports nothing, so both can.
  * On `globalThis` for the reason `landing` in `land.ts` is.
  */
 
-export type CheckoutWriter = "resolution" | "commit";
+export type CheckoutWriter = "resolution" | "commit" | "purge";
 
 const writers = ((globalThis as unknown as {
   __ufCheckoutWriters?: Map<string, CheckoutWriter>;
