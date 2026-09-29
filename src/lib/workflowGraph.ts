@@ -1726,26 +1726,59 @@ function loopBodyRefusal(
     // it. A review block counts because what it sets aside it sets aside on
     // purpose.
     //
+    // An orchestrator or review member hands on branches it did not cut — the
+    // runs it emitted, the runs it approved — and resolves them to its
+    // successors with `continueBranch: false` whatever the link says, so only a
+    // merge or review block right behind it takes them. An orchestrator's runs
+    // take its guards, so it is asked only when those isolate: a template that
+    // works in the folder cuts no branch, and requiring the link to the exit
+    // there would trip the merge rule's "leaves no branch to land". A review is
+    // always asked, since it reviews only isolated work.
+    //
     // Refused here rather than mended in the editor, because the editor is one
     // of three doors a graph is saved through, and because the exit may not be
     // drawn yet when the fan-in link is. The sentence names the link to draw.
-    const unlanded = [...members].find((id) => {
-      if (byId.get(id)!.kind !== "run") return false;
-      return !within.some(
-        (e) =>
-          e.from === id &&
-          (e.continueBranch ||
-            byId.get(e.to)!.kind === "merge" ||
-            byId.get(e.to)!.kind === "review"),
+    const handsOnBranches = (member: WorkflowNode) =>
+      member.kind === "run" ||
+      member.kind === "review" ||
+      (member.kind === "orchestrator" && isolatedTemplate(member.templateId, known));
+    const unlanded = [...members]
+      .map((id) => byId.get(id)!)
+      .find(
+        (member) =>
+          handsOnBranches(member) &&
+          !within.some(
+            (e) =>
+              e.from === member.id &&
+              (e.continueBranch ||
+                byId.get(e.to)!.kind === "merge" ||
+                byId.get(e.to)!.kind === "review"),
+          ),
       );
-    });
     if (unlanded) {
-      const member = byId.get(unlanded)!;
+      const where = `in the section “${loop.name}” repeats`;
+      const fix =
+        `Link “${unlanded.name}” to “${exit.name}” as well, or that work is ` +
+        "committed on branches nothing ever lands.";
+      if (unlanded.kind === "orchestrator") {
+        return (
+          `Nothing lands the runs “${unlanded.name}” starts ${where}: a block ` +
+          "after it starts fresh rather than carrying their branches on, and " +
+          `no link out of it leads to a merge block. ${fix}`
+        );
+      }
+      if (unlanded.kind === "review") {
+        return (
+          `Nothing lands the branches “${unlanded.name}” approves ${where}: a ` +
+          "block after it starts fresh rather than carrying them on, and no " +
+          `link out of it leads to a merge block. ${fix}`
+        );
+      }
       return (
-        `Nothing lands “${member.name}”'s branch in the section ` +
-        `“${loop.name}” repeats: no link out of it carries that branch on, and ` +
-        `none leads to a merge block. Link “${member.name}” to “${exit.name}” ` +
-        "as well, or its work is committed on a branch nothing ever lands."
+        `Nothing lands “${unlanded.name}”'s branch ${where}: no link out of it ` +
+        `carries that branch on, and none leads to a merge block. Link ` +
+        `“${unlanded.name}” to “${exit.name}” as well, or its work is ` +
+        "committed on a branch nothing ever lands."
       );
     }
 
