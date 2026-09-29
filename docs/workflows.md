@@ -76,7 +76,9 @@ doing" is a real answer and the block is allowed to give it. But a block set to
 start after it is there to review, land or follow up on work that did not
 happen — started anyway, it spends a work cycle finding that out — so it is
 `blocked` instead, with a reason naming the block that decided there was nothing
-to do. The same is true if the turn fails.
+to do. The same is true if the turn fails, and if it decided on runs of which
+none could be started — a folder removed in between, say — in which case the
+reason says that, and why, rather than blaming the decision.
 
 **So the instance page says what it decided and why.** A block that starts
 nothing ends that whole branch of the graph, and until you know which of the
@@ -87,7 +89,7 @@ what it deliberately left out, and that answer is rendered under the block.
 What **this tool** did to it, in its own line: an `emit_runs` call refused
 because a folder was outside the block's workspace or the fan-out was over the
 cap, a tool call the CLI declined on its own, a workflow limit that could not be
-read at that moment. And the **status line**, which separates the endings that
+read at that moment, a run it decided on that could not then be started. And the **status line**, which separates the endings that
 otherwise read alike — *decided there was nothing to start* means it called the
 emit tool and named nothing, *ended without emitting anything* means it never
 called it at all, and those are different problems.
