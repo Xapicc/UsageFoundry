@@ -1207,13 +1207,25 @@ export function clampRunOffset(offset: number, total: number): number {
  *
  * That poll used to be the unfiltered first page, and the runs page cut its two
  * bands out of it — which lost every active run older than the newest hundred.
- * It is three narrower pages now, and the settled-since-the-boundary one is the
- * page that scans: nothing indexes the `COALESCE`, so it reads every row. Measured
- * at 200 rows a page, 1.07ms against 5,000 runs and 9.3ms against 50,000, where
- * the unfiltered page was 0.23ms and 0.27ms; the two status sets seek
- * `idx_runs_status` and stay under 0.15ms. Nothing prunes this table, so the
- * scan grows with history — an expression index on that instant measured 1.3ms
- * at 50,000 and leaves the older-runs page where it was, and is the lever.
+ * It is three narrower pages now. The settled-since-the-boundary one used to be
+ * the page that scanned, 1.07ms against 5,000 runs and 9.3ms against 50,000 on
+ * the first fixture that measured it, and since nothing prunes this table that
+ * grew with history on every poll of every open tab. It seeks
+ * `idx_runs_settled_at` now, an index on exactly the `COALESCE` below. Measured
+ * through this function, median of 101 calls, runs spread over 180 days in
+ * groups of 25 sharing a millisecond plus 250 queued, without the index and then
+ * with it:
+ *
+ *   5,000 runs, 25 settled in the day   recent band (200)  0.80ms -> 0.15ms
+ *                                        older-runs fold    0.61ms -> 0.61ms
+ *   50,000 runs, 276 settled in the day recent band (200)  3.50ms -> 0.63ms
+ *                                        older-runs fold    3.46ms -> 3.46ms
+ *
+ * The fold matches most rows, so the planner keeps it on `idx_runs_created`
+ * and it does not move; with all 5,000 settled inside the day, the case that
+ * inverts the selectivity, the recent band held at 0.77ms and the fold fell to
+ * 0.06ms. The two status sets seek `idx_runs_status`: 0.07ms for what is
+ * executing and 0.49ms for the 250 queued.
  */
 export function listRunsPage(query: RunListQuery = {}): RunListPage {
   const filters = normalizeRunListQuery(query);
@@ -1228,6 +1240,9 @@ export function listRunsPage(query: RunListQuery = {}): RunListPage {
     where.push(`status IN (${TERMINAL_STATUSES.map(() => "?").join(",")})`);
     args.push(...TERMINAL_STATUSES);
   }
+  // Both spelled exactly as `idx_runs_settled_at` is in `db.ts`. SQLite matches
+  // an expression index on its text, so a respelling here scans the whole table
+  // again and still returns the right rows.
   if (filters.settledBefore !== null) {
     where.push("COALESCE(finished_at, started_at, created_at) < ?");
     args.push(filters.settledBefore);
