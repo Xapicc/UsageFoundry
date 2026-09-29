@@ -448,7 +448,10 @@ function ResetToBaseline({
   what,
   onReset,
 }: {
-  /** "template" / "that run", or null when the baseline is the form's defaults. */
+  /**
+   * "the template" / "that run", article included because the two differ, or
+   * null when the baseline is the form's defaults.
+   */
   from: string | null;
   what: string;
   onReset: () => void;
@@ -459,7 +462,7 @@ function ResetToBaseline({
       variant="secondary"
       size="compact"
       onClick={onReset}
-      aria-label={`Reset ${what} to ${from ? `the ${from}` : "the default"}`}
+      aria-label={`Reset ${what} to ${from ?? "the default"}`}
     >
       Reset
     </Button>
@@ -928,12 +931,12 @@ export default function NewRunPage() {
   const rowChanged = (row: RowId) =>
     ROW_FIELDS[row].some((k) => current[k] !== baseline.values[k]);
 
-  /** "template" / "that run", or null when the form is on its own defaults. */
+  /** "the template" / "that run", or null when the form is on its own defaults. */
   const baselineFrom =
     baseline.kind === "defaults"
       ? null
       : baseline.kind === "template"
-        ? "template"
+        ? "the template"
         : "that run";
 
   function restoreRow(row: RowId) {
