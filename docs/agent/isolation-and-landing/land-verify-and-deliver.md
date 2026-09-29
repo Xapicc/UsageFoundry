@@ -73,10 +73,13 @@ on the branch by name, so a commit made during the check left unverified.
 `verifyInSlot` reads the slot's `HEAD` under the hold before the command and,
 after a pass, refuses unless `rev-parse <branch>` still names it — chosen over
 making `inheritedSlot` respect the hold, which covers one writer and would mean
-refusing a continuation while a land is in flight. Still open: the milliseconds
-between that read and the merge's spawn, and a continuation created mid-check
-that has not yet committed, which Deliver's second `unsettledBranchRefusal`
-refuses and Land lets through with the tip that was checked.
+refusing a continuation while a land is in flight. A continuation created
+mid-check that has not committed, or a run reopened mid-check, leaves the tip
+where the check saw it and this run no longer the one that lands the branch,
+so `landRun` asks `unsettledBranchRefusal` again from a fresh `getRun` and
+`branchChain`, beside `landRecheck` with nothing awaited before the merge's
+spawn, as Deliver does. Still open: the milliseconds between the `HEAD`
+comparison and the merge's spawn.
 
 **The other exit.** `deliverRun` pushes a run's branch and opens a pull request
 on the checkout's GitHub remote. It is reached from one endpoint on one press

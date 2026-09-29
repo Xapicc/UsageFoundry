@@ -876,6 +876,11 @@ function branchOwner(chain: readonly ChainMember[]): string | null {
   return worked.at(-1)?.runId ?? chain[0]?.runId ?? null;
 }
 
+/** `branchOwner` from a fresh read of this run's chain, for `enqueue`. */
+export function branchOwnerOf(run: RunRow): string | null {
+  return branchOwner(branchChain(run));
+}
+
 /**
  * Another run on this branch that can still add to it, if there is one.
  *
@@ -1382,6 +1387,26 @@ export async function landRun(
     });
     if (refusal) return { ok: false, reason: refusal };
 
+    // The run half of `landState`'s verdict, asked again for `deliverRun`'s
+    // reason: the check may have run for `VERIFY_TIMEOUT_MS`, long enough for
+    // the run to be reopened or a continuation to be started on this branch.
+    // One that has not committed yet leaves the tip where the check saw it, so
+    // `verifyInSlot` passes it, and this run is no longer the one that lands
+    // the branch. Synchronous from the reads to the merge's spawn.
+    const current = getRun(runId);
+    if (!current) return { ok: false, reason: "No such run." };
+    const chain = branchChain(current);
+    const unsettled = unsettledBranchRefusal(
+      {
+        runId,
+        runStatus: current.status,
+        chain,
+        loopBlock: loopStillRepeating(chain, asker),
+      },
+      "land",
+    );
+    if (unsettled) return { ok: false, reason: unsettled };
+
     // Again where nothing awaits before the spawn, `spawnAssist`'s reason: the
     // operator's check and the `rev-parse` both await after the read above,
     // and a merge begun during the grace is one the exit can cut off part-way.
@@ -1840,6 +1865,14 @@ export async function resolveConflicts(
         "A commit is being made in this run's checkout right now, and a merge opened " +
         "under it could put the conflict markers into that commit. Resolve again once " +
         "the commit has finished.",
+    };
+  }
+  if (holder === "purge") {
+    return {
+      ok: false,
+      reason:
+        "This run's branch is being purged right now, together with the checkout a " +
+        "resolution would open its merge in. Nothing was started.",
     };
   }
   try {
@@ -2739,9 +2772,16 @@ export async function commitPending(
   // `resolveCheckout` lets through, and opened its merge in it — and the
   // `add -A` then staged the conflicted files, markers and all. So a
   // resolution is refused for as long as this holds, and so is `reopenRun`.
-  // Nothing but a second Commit can be holding it here, since a resolution's
-  // claim was refused above in this same turn.
-  if (claimCheckout(run.id, "commit")) {
+  // Only a second Commit or a Purge can be holding it here, since a
+  // resolution's claim was refused above in this same turn.
+  const writer = claimCheckout(run.id, "commit");
+  if (writer === "purge") {
+    return {
+      ok: false,
+      reason: "This run's branch is being purged right now, together with that checkout. Nothing was committed.",
+    };
+  }
+  if (writer) {
     return { ok: false, reason: "A commit from that checkout is already being made." };
   }
   try {
@@ -3240,6 +3280,33 @@ export async function purgeBranch(
   });
   if (refusal) return { ok: false, reason: refusal };
 
+  // Taken in the turn that asked `resolutionHolds` above, and held until the
+  // branch is gone, `commitPending`'s reason: reading it once let a resolution
+  // enter during the awaits below, open its merge in the checkout and spawn a
+  // billed child there, for `worktree remove --force` to take the checkout out
+  // from under it. A resolution's own claim was refused above in this same
+  // turn, so only a Commit or a second Purge can be holding it here.
+  const writer = claimCheckout(run.id, "purge");
+  if (writer === "commit") {
+    return {
+      ok: false,
+      reason: "A commit is being made in this run's checkout right now. Nothing was deleted.",
+    };
+  }
+  if (writer) return { ok: false, reason: `${branch} is already being purged.` };
+  try {
+    return await purgeClaimedBranch(run, repoRoot, branch);
+  } finally {
+    releaseCheckout(run.id);
+  }
+}
+
+/** The body of `purgeBranch`, bracketed by its claim on the checkout. */
+async function purgeClaimedBranch(
+  run: RunRow,
+  repoRoot: string,
+  branch: string,
+): Promise<LandOutcome> {
   // Against the target, and against the base commit when the target has been
   // renamed away — which is what the Land card counted for the sheet this press
   // came from. Anything git will not count is null and said to be, never 0.
@@ -3303,7 +3370,7 @@ export async function purgeBranch(
   const discarded = purged.discarded;
 
   emitRunEvent({
-    runId,
+    runId: run.id,
     ts: Date.now(),
     kind: "land",
     payload: {

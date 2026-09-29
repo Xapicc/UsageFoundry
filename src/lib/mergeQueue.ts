@@ -3,6 +3,7 @@ import { db } from "./db";
 import {
   abortInterruptedResolutions,
   alreadyOnTargetRefusal,
+  branchOwnerOf,
   landRun,
   landState,
   resolveConflicts,
@@ -508,6 +509,22 @@ export function enqueue(
 
   if (items.length === 0) return { ok: false, reason: "Nothing was selected." };
 
+  // One branch, one row. Two links of a `continueBranch` chain share a ref and
+  // only the chain's owner may land it, so a batch holding both — a workflow
+  // merge block wired to both ends of the link queues exactly that — failed
+  // the other link with the owner refusal whenever it came first, and under a
+  // squash when it came second too, since `landed_tip` is written on the owner
+  // alone. A merge block counts that row against itself over work its owner
+  // carried to the target. Settled here rather than at the link's turn because
+  // at that turn the owner has not landed yet, and the row would have to say it
+  // had. A link whose owner was not selected is queued as asked: its turn is
+  // where the refusal naming the owner belongs.
+  const selected = new Set(items.map((run) => run.id));
+  const owned = items.filter((run) => {
+    const owner = branchOwnerOf(run);
+    return owner === null || owner === run.id || !selected.has(owner);
+  });
+
   const batchId = opts.batchId ?? randomUUID();
   const now = Date.now();
   const insert = db().prepare(
@@ -515,7 +532,7 @@ export function enqueue(
        (id, batch_id, run_id, position, strategy, auto_resolve, status, created_at)
      VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)`,
   );
-  items.forEach((run, i) => {
+  owned.forEach((run, i) => {
     insert.run(
       randomUUID(),
       batchId,
@@ -528,7 +545,7 @@ export function enqueue(
   });
 
   startWorker();
-  return { ok: true, batchId, queued: items.length };
+  return { ok: true, batchId, queued: owned.length };
 }
 
 /**

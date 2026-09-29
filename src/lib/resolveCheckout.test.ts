@@ -311,4 +311,41 @@ describe("the other writers of a run's checkout while a resolution is set up", (
     assert.equal(resolution.ok, true, resolution.ok ? "" : resolution.reason);
     assert.equal(fixtureGit(repo, ["rev-parse", branch]), tipBefore);
   });
+
+  it("a resolution pressed while Purge is under way is refused, and Purge finishes", async (t) => {
+    const { runId, repo, slot, branch } = conflictingRunInSlot("purge-race", "completed");
+
+    const realGit = gitModule.git;
+    let pressed = false;
+    let resolution = null as Outcome | null;
+    t.mock.method(gitModule, "git", async (...call: Parameters<typeof realGit>) => {
+      const [cwd, args] = call;
+      // Resolve, pressed once Purge has passed its refusal and is counting the
+      // commits it is about to destroy — before the checkout is removed, which
+      // is the checkout a resolution would open its merge and spawn its child in.
+      if (!pressed && cwd === repo && args[0] === "rev-list" && args[1] === "--count") {
+        pressed = true;
+        resolution = await land.resolveConflicts(runId);
+      }
+      return realGit(...call);
+    });
+
+    const purged = await land.purgeBranch(runId, branch);
+    await settledResolution(runId);
+
+    assert.ok(pressed, "the fixture never pressed Resolve, so this proves nothing");
+    assert.ok(resolution);
+    assert.equal(resolution.ok, false, "a resolution started on a branch being purged");
+    assert.match(resolution.ok ? "" : resolution.reason, /being purged/);
+    // Nothing was started, so nothing was billed: a resolution's row is written
+    // once its merge is open and its child is on its way.
+    const started = db()
+      .prepare("SELECT COUNT(*) AS n FROM run_reviews WHERE run_id = ?")
+      .get(runId) as { n: number };
+    assert.equal(started.n, 0, "a resolution was started in the checkout Purge removes");
+    // And the Purge did all of what it was pressed for.
+    assert.equal(purged.ok, true, purged.ok ? "" : purged.reason);
+    assert.equal(fs.existsSync(slot), false, "the checkout was left behind");
+    assert.throws(() => fixtureGit(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]));
+  });
 });

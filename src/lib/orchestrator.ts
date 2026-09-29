@@ -12308,14 +12308,15 @@ const RESTART_KILLED_NOTICE =
   "whole. Then continue the task from there.";
 
 /**
- * Why a conflict resolution, a Commit or the merge queue holds this run's
- * branch, or null.
+ * Why a conflict resolution, a Commit, a Purge or the merge queue holds this
+ * run's branch, or null.
  *
  * None of them is an active run, so `activeRuns()` does not see them. Read off
  * their rows, and off the checkout claim `land.ts` takes, which is what covers
- * a resolution for the git calls before its row is written and a Commit for
- * the whole of its write. It is read here in the same turn that queues the run,
- * so a resolution entering afterwards finds the run active and refuses itself.
+ * a resolution for the git calls before its row is written and a Commit or a
+ * Purge for the whole of its write. It is read here in the same turn that
+ * queues the run, so a resolution entering afterwards finds the run active and
+ * refuses itself.
  */
 function branchHolderRefusal(runId: string): string | null {
   const writer = checkoutWriter(runId);
@@ -12341,6 +12342,12 @@ function branchHolderRefusal(runId: string): string | null {
     return (
       "Its uncommitted work is being committed to its branch right now, from the " +
       "checkout this run would pick up in. Wait for that commit to finish."
+    );
+  }
+  if (writer === "purge") {
+    return (
+      "Its branch is being purged right now, together with the checkout this run " +
+      "would pick up in."
     );
   }
   if (queued) {

@@ -201,6 +201,33 @@ function makeRun(id: string, file: string, repoRoot = repo, from = "main"): stri
   return branch;
 }
 
+/**
+ * A completed run carrying `of`'s branch on with one commit of its own, the
+ * way `continueBranch` leaves it: the same ref, the chain's base, and
+ * `continues_run` naming the link before it.
+ */
+function continueRun(id: string, of: string, file: string): void {
+  const { worktree_branch: branch, worktree_base: base } = dbMod
+    .db()
+    .prepare("SELECT worktree_branch, worktree_base FROM runs WHERE id = ?")
+    .get(of) as { worktree_branch: string; worktree_base: string };
+  git(repo, "checkout", "-q", branch);
+  fs.writeFileSync(path.join(repo, file), `${file}\n`);
+  git(repo, "add", "-A");
+  git(repo, "commit", "-q", "-m", `work ${id}`);
+  git(repo, "checkout", "-q", "main");
+
+  dbMod
+    .db()
+    .prepare(
+      `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                         created_at, isolation, repo_root, worktree_branch, worktree_base,
+                         worktree_base_branch, continues_run)
+       VALUES (?, ?, 'task', 'completed', '{}', 1, 1, ?, 'worktree', ?, ?, ?, 'main', ?)`,
+    )
+    .run(id, repo, Date.now() + 1, repo, branch, base, of);
+}
+
 /** Wait for the worker to owe the batch nothing, or give up and report. */
 async function settle(batchId: string, ms = 30_000) {
   const deadline = Date.now() + ms;
@@ -301,6 +328,57 @@ describe("the merge worker", () => {
     );
     assert.equal(workflows.mergeBlockOutcome(outcomes).ok, true);
   });
+
+  // Two links of one `continueBranch` chain in one batch, which a workflow
+  // merge block wired to both ends of the link queues. Only the later link may
+  // land the branch, so the earlier one was failed with the owner refusal —
+  // ahead of the owner because nothing had landed yet, and behind it under a
+  // squash because `landed_tip` is written on the owner alone — and the block
+  // counted a failed landing over work that reached its target.
+  for (const [n, order, strategy] of [
+    [1, "first link first", "merge"],
+    [2, "owner first", "merge"],
+    [3, "first link first", "squash"],
+    [4, "owner first", "squash"],
+  ] as const) {
+    it(`lands a two-link chain once and fails neither link (${order}, ${strategy})`, async () => {
+      const first = `chain${n}a0`;
+      const owner = `chain${n}b0`;
+      const branch = makeRun(first, `chain${n}-a.txt`);
+      continueRun(owner, first, `chain${n}-b.txt`);
+
+      const queued = mergeQueue.enqueue(
+        order === "first link first" ? [first, owner] : [owner, first],
+        { strategy, autoResolve: false },
+      );
+      assert.ok(queued.ok, JSON.stringify(queued));
+
+      const rows = await settle(queued.batchId);
+      assert.deepEqual(
+        rows.filter((r) => r.status === "failed").map((r) => `${r.run_id}: ${r.message}`),
+        [],
+        "a link was failed for a branch its owner landed",
+      );
+      assert.deepEqual(
+        rows.filter((r) => r.status === "landed").map((r) => r.run_id),
+        [owner],
+        "the branch was not landed exactly once, by the run that owns it",
+      );
+      // Both links' work is on the target, whichever strategy took it there.
+      assert.equal(git(repo, "show", `main:chain${n}-a.txt`), `chain${n}-a.txt\n`);
+      assert.equal(git(repo, "show", `main:chain${n}-b.txt`), `chain${n}-b.txt\n`);
+      if (strategy === "merge") {
+        git(repo, "merge-base", "--is-ancestor", branch, "main");
+      }
+
+      const outcomes = rows.map((row) => workflows.queuedBranchOutcome(row, row.run_id));
+      assert.equal(
+        workflows.mergeBlockOutcome(outcomes).ok,
+        true,
+        "a merge block over this batch records a failed landing",
+      );
+    });
+  }
 });
 
 /**

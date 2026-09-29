@@ -363,4 +363,37 @@ describe("the check runs against what the land would carry", () => {
     assert.equal(git(s.repo, "rev-parse", "main").trim(), s.base);
     assert.equal(landedAt(s.runId), null);
   });
+
+  for (const status of ["queued", "running"] as const) {
+    it(`refuses when a continuation became the branch's owner during the check (${status})`, async () => {
+      // A run told to carry this branch on, created while the command runs and
+      // handed the slot the way `planWorkspace`'s `inheritedSlot` hands it, with
+      // nothing committed yet — so the branch has not moved, and only the chain
+      // says this run is no longer the one that lands it.
+      const s = scene(`continued-${status}`);
+      verifyWith("wait", s.signals);
+
+      const landing = land.landRun(s.runId, "merge");
+      await until(path.join(s.signals, "started"));
+      dbMod
+        .db()
+        .prepare(
+          `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                             created_at, isolation, repo_root, worktree_path, work_dir,
+                             worktree_branch, worktree_base, worktree_base_branch, continues_run)
+           VALUES ('run-successor', ?, 'carry on', ?, '{}', 1, 0, ?, 'worktree', ?, ?, ?, ?, ?, 'main', ?)`,
+        )
+        .run(s.repo, status, Date.now(), s.repo, s.slot, s.slot, s.branch, s.base, s.runId);
+      fs.writeFileSync(path.join(s.signals, "go"), "");
+      const landed = await landing;
+
+      assert.equal(landed.ok, false, "the land went ahead under a run that now owns the branch");
+      assert.match(
+        landed.ok ? "" : landed.reason,
+        /Run run-succ carries this branch on from here and is the one that lands it/,
+      );
+      assert.equal(git(s.repo, "rev-parse", "main").trim(), s.base);
+      assert.equal(landedAt(s.runId), null);
+    });
+  }
 });
