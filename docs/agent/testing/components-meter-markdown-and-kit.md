@@ -4,7 +4,7 @@
 
 Read before adding or editing tests of `Meter`, `LiveTelemetry`, `Markdown`, and the `ui/` kit (`Table`, `Disclosure`, `LimitField`, `ListView`, `AsciiFrame`, `AsciiBar`).
 
-Four of the seventeen renderings are `Meter.test.tsx`, `LiveTelemetry.test.tsx`, `Markdown.test.tsx` and `ui/Table.test.tsx`, and they clear the same bar by the same argument: what they pin is *something the reader would act on*, wrong in a way that throws nothing and typechecks (a solid green bar that means "we don't know"; a first-party figure that reads as an addend to the transcript-derived meter beside it; a report that ends in silence because the cycle was killed with a code fence still open).
+Four of the renderings are `Meter.test.tsx`, `LiveTelemetry.test.tsx`, `Markdown.test.tsx` and `ui/Table.test.tsx`, and they clear the same bar by the same argument: what they pin is *something the reader would act on*, wrong in a way that throws nothing and typechecks (a solid green bar that means "we don't know"; a first-party figure that reads as an addend to the transcript-derived meter beside it; a report that ends in silence because the cycle was killed with a code fence still open).
 
 The fourth is `Meter`'s argument at a second breakpoint-shaped invariant, and it fails in two directions rather than one.
 
