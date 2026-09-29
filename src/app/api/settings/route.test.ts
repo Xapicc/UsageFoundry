@@ -45,9 +45,22 @@ process.env.DATA_DIR = DATA_DIR;
 // to have bind-mounted.
 process.env.WORKSPACE_ROOTS = `Probe Vault=${MOUNT_DIR}`;
 
+// The provider-usage cases at the bottom need a reading to keep, and
+// `planUsage` fetches only once it has found a token. A throwaway credential
+// rather than this machine's, so no case can reach a real account.
+const CLAUDE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "uf-settings-claude-"));
+process.env.CLAUDE_CONFIG_DIR = CLAUDE_DIR;
+fs.writeFileSync(
+  path.join(CLAUDE_DIR, ".credentials.json"),
+  JSON.stringify({
+    claudeAiOauth: { accessToken: "probe-token", expiresAt: Date.now() + 24 * 60 * 60 * 1000 },
+  }),
+);
+
 after(() => {
   fs.rmSync(DATA_DIR, { recursive: true, force: true });
   fs.rmSync(MOUNT_DIR, { recursive: true, force: true });
+  fs.rmSync(CLAUDE_DIR, { recursive: true, force: true });
 });
 
 /**
@@ -642,5 +655,122 @@ describe("PUT /api/settings with a number that is not a positive one", () => {
       before,
       "a refused anchor was stored anyway",
     );
+  });
+});
+
+/**
+ * A Save that leaves the usage source alone keeps the provider's reading.
+ *
+ * The page PUTs the whole effective object on every Save, so
+ * `planUsageFromApi` is in the body of a prompt edit as much as of a flip.
+ * Dropping the cache on its mere presence threw away the two things
+ * `planUsage` keeps across a refusal: the last good reading, re-served for up
+ * to an hour while the endpoint answers 429, and the back-off that keeps a 429
+ * from being answered with another request. With the reading gone the fraction
+ * guards have nothing to read and are recorded rather than acted on, so a Save
+ * pressed during a refusal spell switched `maxSessionFraction` and
+ * `maxWeeklyFraction` off with nothing on screen to say so.
+ *
+ * `fetch` answers 200 once and 429 after that, which is the spell. The times
+ * are passed to `planUsage` rather than waited out: its clock is its argument.
+ */
+describe("PUT /api/settings and the cached provider usage reading", () => {
+  const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
+  const FIVE_HOURS = 5 * 60 * 60 * 1000;
+  const WEEK = 7 * 24 * 60 * 60 * 1000;
+  const realFetch = globalThis.fetch;
+  let usageRequests = 0;
+
+  before(() => {
+    globalThis.fetch = async (input: string | URL | Request) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url !== USAGE_URL) {
+        throw new Error(`the settings route test fetched ${url}, expected only ${USAGE_URL}`);
+      }
+      usageRequests += 1;
+      if (usageRequests > 1) return new Response("rate limited", { status: 429 });
+      return Response.json({
+        five_hour: { utilization: 91, resets_at: new Date(Date.now() + FIVE_HOURS).toISOString() },
+        seven_day: { utilization: 40, resets_at: new Date(Date.now() + WEEK).toISOString() },
+      });
+    };
+  });
+
+  after(() => {
+    globalThis.fetch = realFetch;
+  });
+
+
+  /**
+   * One reading taken at `t0`, then a refused refresh six minutes later that
+   * re-served it — the state the defect report was measured in.
+   */
+  async function seedReadingUnderRefusal(t0: number) {
+    const { planUsage, invalidatePlanUsage, REFRESH_MS } = await import(
+      "../../../lib/planUsage"
+    );
+    invalidatePlanUsage();
+    usageRequests = 0;
+
+    const seeded = await planUsage(t0);
+    assert.equal(seeded?.session?.utilization, 0.91, "the stub's reading was not taken");
+
+    const underRefusal = await planUsage(t0 + REFRESH_MS + 60_000);
+    assert.equal(usageRequests, 2, "the refresh past REFRESH_MS was never attempted");
+    assert.deepEqual(underRefusal, seeded, "a refused refresh did not re-serve the kept reading");
+    return seeded;
+  }
+
+  async function put(body: Record<string, unknown>) {
+    const { PUT } = await import("./route");
+    const res = await PUT(
+      new Request("http://localhost/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    );
+    assert.equal(res.status, 200, `PUT /api/settings refused ${JSON.stringify(body)}`);
+  }
+
+  test("a Save that re-sends an unchanged source keeps the reading and the back-off", async () => {
+    const { planUsage, REFRESH_MS } = await import("../../../lib/planUsage");
+    await write("planUsageFromApi", true);
+    const t0 = Date.now();
+    const seeded = await seedReadingUnderRefusal(t0);
+
+    await put({ planUsageFromApi: true, continuationPrompt: "CHANGED during a 429 spell" });
+
+    const afterSave = await planUsage(t0 + REFRESH_MS + 65_000);
+    assert.deepEqual(
+      afterSave,
+      seeded,
+      "a Save that did not change the usage source dropped the provider's " +
+        "reading, so every fraction guard is left with nothing to read",
+    );
+    assert.equal(
+      usageRequests,
+      2,
+      "the read after the Save went back to the endpoint inside the back-off, " +
+        "which is how a transient 429 becomes a lasting one",
+    );
+  });
+
+  test("switching the source off drops the reading", async () => {
+    const { planUsage, REFRESH_MS } = await import("../../../lib/planUsage");
+    await write("planUsageFromApi", true);
+    const t0 = Date.now();
+    await seedReadingUnderRefusal(t0);
+
+    await put({ planUsageFromApi: false });
+
+    // Still 429, so a reading here could only have come out of the cache.
+    assert.equal(
+      await planUsage(t0 + REFRESH_MS + 65_000),
+      null,
+      "switching the source off kept the provider's reading, which reads as " +
+        "the switch not working",
+    );
+    assert.equal(usageRequests, 3, "the cache was not dropped, so nothing was requested");
   });
 });
