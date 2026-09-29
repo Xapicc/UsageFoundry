@@ -247,3 +247,10 @@ nothing about it.
   could not be satisfied. Found by reading the source and React's
   `updateOptions`; fixed with a disabled "Choose a workspace" option carrying
   the current value, and checked in Chromium for all three seeds.
+- **2026-09-29, `811136f`, class A.** The workflow instance page said
+  "started 1 run(s)" under an orchestrator block none of whose decided specs
+  could be created: `blockSummary` read `emitted`, which for that kind counts
+  the accepted specs, not the runs. Found by reading the source; fixed by
+  carrying `started`, the instance's member rows whose `emitted_by` is the
+  block, and saying "decided on N run(s), none could be started" when fewer
+  started than were decided on.
