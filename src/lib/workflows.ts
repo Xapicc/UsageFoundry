@@ -2291,8 +2291,18 @@ export interface WorkflowInstanceBlock {
    */
   costUnknown: boolean;
   tokens: number;
-  /** How many runs it started. 0 is an answer, not "not yet". */
+  /**
+   * What it decided on: an orchestrator block's accepted specs, a loop's
+   * passes. 0 is an answer, not "not yet". Not how many runs exist — see
+   * `started`.
+   */
   emitted: number;
+  /**
+   * How many runs name this block as the one that created them — for an
+   * orchestrator block, how many of `emitted` became runs. Fewer is a decided
+   * spec `createEmitted` could not create, and its note says why.
+   */
+  started: number;
   /**
    * Whether the turn ever called `emit_runs`. What separates the two ways a
    * block starts nothing: one decided there was nothing worth doing, the other
@@ -2863,7 +2873,13 @@ export function blocksOf(instanceId: string): WorkflowInstanceBlock[] {
               (SELECT COUNT(*) FROM merge_queue q
                 WHERE q.batch_id = b.merge_batch_id
                   AND q.status NOT IN ('landed', 'already-landed'))
-                AS branchesFailed
+                AS branchesFailed,
+              -- The mapping rows rather than the runs they point at: a run
+              -- deleted since was still started, and "started fewer than it
+              -- decided on" must mean a spec that never became a run.
+              (SELECT COUNT(*) FROM workflow_instance_runs w
+                WHERE w.instance_id = b.instance_id AND w.emitted_by = b.node_id)
+                AS started
          FROM workflow_instance_blocks b
         WHERE instance_id = ? ORDER BY position`,
     )

@@ -315,6 +315,11 @@ describe("every creation path records the gate it came through", () => {
       origin: "orchestrator-block",
       ref: "A",
     });
+    const decider = workflows.blocksOf(outcome.instance.id).find((b) => b.nodeId === "A");
+    assert.deepEqual(
+      { emitted: decider?.emitted, started: decider?.started },
+      { emitted: 1, started: 1 },
+    );
   });
 });
 
@@ -513,6 +518,12 @@ describe("an orchestrator block none of whose decided runs could be started", ()
     assert.equal(decider.status, "emitted");
     assert.equal(decider.error, null, "the turn did not fail; this app did");
     assert.match(decider.notes ?? "", /“E3” could not be started: .*project\/sub/);
+    // What the instance page's status line reads: decided on one, started none.
+    const deciderBlock = workflows.blocksOf(instanceId).find((b) => b.nodeId === "O");
+    assert.deepEqual(
+      { emitted: deciderBlock?.emitted, started: deciderBlock?.started },
+      { emitted: 1, started: 0 },
+    );
 
     const follower = rowOf("B");
     assert.equal(follower.status, "blocked");

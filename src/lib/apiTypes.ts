@@ -2318,10 +2318,19 @@ export interface WorkflowInstanceBlockDTO {
    */
   costUnknown: boolean;
   /**
-   * How many runs this block started — passes, for a loop block. 0 is a real
-   * answer, not "not yet".
+   * How many runs this block decided on — passes, for a loop block. 0 is a real
+   * answer, not "not yet". An orchestrator block's figure counts every spec it
+   * emitted whether or not the spec then became a run; `started` counts those
+   * that did.
    */
   emitted: number;
+  /**
+   * How many runs exist that this block created. Below `emitted` on an
+   * orchestrator block when a decided spec could not be started, and `notes`
+   * then says why. A review block's fix runs and a loop's members count here
+   * too, and the page reads it for neither.
+   */
+  started: number;
   /**
    * Whether the turn ever called `emit_runs`. The two ways a block starts
    * nothing read alike without it: one decided there was nothing worth doing,

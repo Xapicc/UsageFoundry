@@ -1178,6 +1178,9 @@ test("a member switched away from a run block stops carrying a branch", () => {
     ["c", "m"],
     // What lands `e`'s branch once `b` is no longer a run to carry it on.
     ["e", "m"],
+    // And what lands the runs `b` starts once it is an orchestrator: `c`
+    // starts fresh rather than carrying their branches on.
+    ["b", "m"],
   ]);
   for (const kind of ["orchestrator", "merge"] as const) {
     const switched = blocks.map((b) => (b.id === "b" ? { ...b, kind } : b));

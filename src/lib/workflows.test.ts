@@ -1641,6 +1641,47 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
     assert.equal(v.graph.nodes[0].bodyNodeIds.length, 5);
   });
 
+  it("refuses an orchestrator member whose runs reach the exit through a run", () => {
+    // “O” resolves to its emitted runs without their branches, so “J” starts
+    // fresh, “M” lands “J” alone, and whatever “O” started lands nowhere.
+    // `e → m` is there so that “E”, whose only other way on is “O”, is not the
+    // member refused first. The same shape with a flat-template “O” saves:
+    // that is "exempts an orchestrator member from that test, by name" above.
+    const nodes = [repeater("l"), node("e"), decider("o"), node("j"), merger("m")];
+    const links = [
+      repeats("l", "e"),
+      edge("e", "o"),
+      edge("o", "j"),
+      edge("j", "m"),
+      edge("e", "m"),
+    ];
+    const refusal = error(graph(nodes, links));
+    assert.match(refusal, /Nothing lands the runs “O” starts in the section “L” repeats/);
+    assert.match(refusal, /Link “O” to “M” as well/);
+
+    const v = value(graph(nodes, [...links, edge("o", "m")]));
+    assert.deepEqual([...v.graph.nodes[0].bodyNodeIds].sort(), ["e", "j", "m", "o"]);
+  });
+
+  it("refuses a review member whose approved branches reach the exit through a run", () => {
+    // Always asked of a review, unlike an orchestrator: it reviews only work
+    // that was cut on a branch, and hands on what it approved without it.
+    const nodes = [
+      repeater("l"),
+      node("e"),
+      { id: "v", name: "V", kind: "review", fixRounds: 1 },
+      node("j"),
+      merger("m"),
+    ];
+    const links = [repeats("l", "e"), edge("e", "v"), edge("v", "j"), edge("j", "m")];
+    const refusal = error(graph(nodes, links));
+    assert.match(refusal, /Nothing lands the branches “V” approves in the section “L” repeats/);
+    assert.match(refusal, /Link “V” to “M” as well/);
+
+    const v = value(graph(nodes, [...links, edge("v", "m")]));
+    assert.deepEqual([...v.graph.nodes[0].bodyNodeIds].sort(), ["e", "j", "m", "v"]);
+  });
+
   it("refuses a section that does not end at a merge block", () => {
     const refusal = error(
       graph(
