@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import type {
   AgentDTO,
   AmbientAgentDTO,
+  FoldersResponse,
   LoopBoardReadingDTO,
   MergeStrategyDTO,
   RunTemplateDTO,
@@ -49,6 +50,7 @@ import {
   type ThresholdDraft,
   type WorkflowDraftBody,
 } from "@/lib/canvasGraph";
+import { jsonRequest } from "@/lib/jsonRequest";
 import { exitHref, leaving, registerLeaveGuard } from "@/lib/unsavedWork";
 import {
   EDGE_OPTION_LABEL,
@@ -517,24 +519,26 @@ export function WorkflowEditor({
   /* What the install offers                                           */
   /* ---------------------------------------------------------------- */
 
+  // Through `jsonRequest` because a non-2xx answer carries a JSON body
+  // (`middleware.ts` answers 401 with one), so a raw `r.json()` resolved it as
+  // an empty install: no mounts and no templates, with no error said.
   useEffect(() => {
     let live = true;
-    Promise.all([
-      fetch("/api/templates", { cache: "no-store" }).then((r) => r.json()),
-      fetch("/api/folders", { cache: "no-store" }).then((r) => r.json()),
-    ])
-      .then(([t, f]) => {
-        if (!live) return;
-        setTemplates((t.templates ?? []) as RunTemplateDTO[]);
-        setMounts((f.mounts ?? []) as WorkspaceMountDTO[]);
-        setFolders((f.folders ?? []) as WorkspaceFolderDTO[]);
-      })
-      .catch(() => {
-        if (live) setError("The workspace and templates could not be read.");
-      })
-      .finally(() => {
-        if (live) setLoaded(true);
-      });
+    void (async () => {
+      const [t, f] = await Promise.all([
+        jsonRequest<{ templates?: RunTemplateDTO[] }>("/api/templates"),
+        jsonRequest<FoldersResponse>("/api/folders"),
+      ]);
+      if (!live) return;
+      if (t.ok && f.ok) {
+        setTemplates(t.data.templates ?? []);
+        setMounts(f.data.mounts ?? []);
+        setFolders(f.data.folders ?? []);
+      } else {
+        setError("The workspace and templates could not be read.");
+      }
+      setLoaded(true);
+    })();
     return () => {
       live = false;
     };
