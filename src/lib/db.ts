@@ -1211,9 +1211,12 @@ function migrate(db: Database.Database) {
   // a verdict about work nobody is waiting for.
   addColumn(db, "run_reviews", "task_id", "TEXT");
 
-  // What was judged, on `resolved_commit`'s precedent. A verdict outlives the
-  // checkout by 23 days and the branch possibly for ever, and one that cannot
-  // name the commits it read is an opinion nobody can re-check.
+  // What was judged, on `resolved_commit`'s precedent, by a validation and a
+  // review alike. A verdict outlives the checkout by 23 days and the branch
+  // possibly for ever, and one that cannot name the commits it read is an
+  // opinion nobody can re-check. A review's `head_sha` is also what a local
+  // branch's land gate compares with its tip, so an approval certifies the
+  // commit the reviewer read and nothing committed after it.
   addColumn(db, "run_reviews", "base_sha", "TEXT");
   addColumn(db, "run_reviews", "head_sha", "TEXT");
 
