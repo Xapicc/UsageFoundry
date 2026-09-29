@@ -393,7 +393,7 @@ Three rules follow, and they are the same three for every option:
 **A terminal is invisible to the folder claim.** Occupancy is a synchronous
 check-then-insert over SQLite rows, `createRun` runs entry-to-INSERT with no
 `await`, and *"never key occupancy on `isRunning()`"*
-(`docs/agent/concurrency-and-ownership.md:10`). Nothing watches the filesystem —
+(`docs/agent/concurrency-and-ownership/folder-claim-and-slot-walk.md`, *"The folder claim is a synchronous check-then-insert"*). Nothing watches the filesystem —
 there is no `fs.watch`, no `chokidar`, no `inotify` anywhere in `src/`. The only
 filesystem probe is `git status --porcelain` against **candidate `.uf-worktrees`
 slots for a new run**, capped at `MAX_SLOT_PROBES_PER_ADMISSION` and memoised
@@ -404,8 +404,8 @@ there is undetected by every mechanism in this app. The run's agent sees a tree 
 did not produce; `land.ts` merges whatever is there; and the landing path's
 precondition — the operator's checkout clean and standing on the recorded target
 branch (`docs/agent/isolation-and-landing.md`) — is broken by the easiest thing to
-type. `docs/agent/concurrency-and-ownership.md:14`'s *"`unclaimed` is not a
-refusal"* is precisely the door a terminal-launched process walks through.
+type. The *"`unclaimed` is not a
+refusal"* in `docs/agent/concurrency-and-ownership/server-lock.md`'s *"…and exactly one process may write, which is enforced rather than assumed"* is precisely the door a terminal-launched process walks through.
 
 **And the suicide case is not hypothetical — it happened, from an agent, and it
 was counted** (`src/lib/orchestrator.ts:5147-5150`):

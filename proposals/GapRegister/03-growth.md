@@ -146,7 +146,7 @@ default for a list, not a decision about how much history to keep.
 > position, and the nearest thing to one is a note that four merge workers is "a
 > real ceiling" living in `docker-compose.yml` (`docs/install.md:794`). What the
 > tree *does* now document is the read-only second process
-> (`docs/agent/concurrency-and-ownership.md:14`), which is the mechanism and not
+> (`docs/agent/concurrency-and-ownership/server-lock.md`, *"…and exactly one process may write, which is enforced rather than assumed"*), which is the mechanism and not
 > the product position this row asks for. Nothing here has a cost today, which is
 > why it stays last.
 

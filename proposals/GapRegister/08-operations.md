@@ -135,7 +135,7 @@ the process mid-reconciliation and the failure is exactly the one
 > not one of the suspended `startRun` frames ever resumed and nothing after
 > `await runIteration(...)` ever ran. Every in-flight cycle's spend went with it
 
-`docs/agent/concurrency-and-ownership.md:16` names the half of that which fails
+`docs/agent/concurrency-and-ownership/shutdown-and-restart.md`'s *"A shutdown accounts for the cycles it kills, and it is the only reason the process lingers"* names the half of that which fails
 **open**: `active_started_at` left set on cycles whose agents are gone, which
 `installBudget` and a workflow instance's budget both bound
 `telemetrySpendSince` below by — so a shutdown that does not finish widens two
@@ -389,7 +389,7 @@ export function lockVerdict(
 }
 ```
 
-`docs/agent/concurrency-and-ownership.md:18`, verbatim, and the same sentence is
+`docs/agent/concurrency-and-ownership/server-lock.md`'s *"The owner asks every beat whether the directory is still its own"*, verbatim, and the same sentence is
 in the `STALE_MS` docblock at `serverLock.ts:66-71`:
 
 > The margin itself is stated where the constant is: staleness is the *last*
