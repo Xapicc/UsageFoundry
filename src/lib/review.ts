@@ -354,8 +354,10 @@ export async function startReview(
     prompt: buildPrompt(run, diff, text, certifying),
     counts: { files: diff.files.length, shown, truncated },
     // What the reviewer was shown, so an approval certifies that commit and
-    // not whatever the branch has moved to since.
-    baseSha: diff.base,
+    // not whatever the branch has moved to since. After a merge of the target
+    // the diff is measured from that merge rather than the run's base, which
+    // is `completeTaskWithValidation`'s reason for the same expression.
+    baseSha: diff.measuredFrom?.commit ?? diff.base,
     headSha: diff.head,
     after: certifying
       ? async (result) =>
