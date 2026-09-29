@@ -53,6 +53,28 @@ function branchWithCommit(branch: string, file: string): void {
   git(repoRoot(), "switch", "-q", "main");
 }
 
+/**
+ * `promise`, or a failure naming `what` once `ms` have passed without it
+ * settling.
+ *
+ * `startReviewBlock` waits on its reviews through `pause()`, an unref'd timer —
+ * deliberately, so a poll never keeps a server that is shutting down alive —
+ * and in the app the HTTP server is what holds the event loop open meanwhile.
+ * Here nothing does once the stub reviewers have exited, so the loop drained
+ * mid-poll with both reviews already written, and `node:test` cancelled the
+ * case as "Promise resolution is still pending" every time it ran. This timer
+ * is the ref'd handle standing in for the server, and it rejects rather than
+ * only holding on, so a review row really stranded `running` fails here by name
+ * instead of hanging the suite.
+ */
+function settledWithin<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} had not settled after ${ms} ms`)), ms);
+  });
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
+
 function writeStub(dir: string): string {
   const stub = path.join(dir, "claude-reviewer-stub.js");
   fs.writeFileSync(
@@ -173,7 +195,11 @@ after(() => {
 
 describe("a review block with no fix rounds", () => {
   it("hands on the approved branch, sets the rejected one aside and marks its task", async () => {
-    await workflows.startReviewBlock(INSTANCE, "r", ["run-good", "run-bad"]);
+    await settledWithin(
+      workflows.startReviewBlock(INSTANCE, "r", ["run-good", "run-bad"]),
+      30_000,
+      "startReviewBlock",
+    );
     const db = dbMod.db();
 
     const items = workflows.reviewItemsOf(INSTANCE, "r");
