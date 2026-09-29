@@ -23,7 +23,7 @@ it stays `iteration`.
 ### The guarantee, stated honestly
 
 **No mode here is a hard cap.** Each run picks one of three, under *When a limit
-is reached*:
+or guard is reached*:
 
 **Between cycles** — the default, and the original behaviour.
 Guards are checked **between** iterations, not during one, so what this gives you

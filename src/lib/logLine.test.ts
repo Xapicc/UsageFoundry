@@ -8,6 +8,7 @@ import {
   logFilterActive,
   matchesLogFilter,
   parkTrigger,
+  stopCause,
   toolArgs,
   type LogFilter,
 } from "./logLine";
@@ -484,6 +485,59 @@ describe("parkTrigger — which of the two parks put a run where it is", () => {
 
   it("says nothing before the events that would say have arrived", () => {
     assert.equal(parkTrigger([]), null);
+  });
+});
+
+describe("stopCause — whether a window guard or a limit ended a run", () => {
+  const stop = (code: string, extra: Record<string, unknown> = {}) =>
+    budgetEvent({ allowed: false, code, disposition: "stop", reason: "x", ...extra });
+
+  it("names the guard for either window, and for the mid-cycle emit", () => {
+    assert.equal(stopCause([stop("weekly_fraction")]), "guard");
+    assert.equal(stopCause([stop("session_fraction")]), "guard");
+    assert.equal(stopCause([stop("weekly_fraction", { live: true })]), "guard");
+  });
+
+  it("names a limit for every other code the run was ended on", () => {
+    for (const code of [
+      "iterations",
+      "duration",
+      "run_cost",
+      "run_cost_outlier",
+      "run_tokens",
+      "instance_cost",
+      "install_cost",
+      "no_terminus",
+    ]) {
+      assert.equal(stopCause([stop(code)]), "limit", code);
+    }
+  });
+
+  it("does not credit anything with a verdict the run carried past", () => {
+    // A `no_ceiling` stop verdict is recorded with `enforceable: false` and the
+    // next cycle starts anyway, so a later operator stop is nobody's guard.
+    const carried = stop("no_ceiling", { enforceable: false });
+    assert.equal(stopCause([carried]), null);
+    assert.equal(stopCause([stop("run_cost"), carried]), "limit");
+  });
+
+  it("does not read a park as a stop", () => {
+    assert.equal(
+      stopCause([
+        budgetEvent({
+          allowed: false,
+          code: "session_fraction",
+          disposition: "pause",
+          reason: "x",
+        }),
+      ]),
+      null,
+    );
+  });
+
+  it("answers with the newest stop when a reopened run carries an earlier one", () => {
+    assert.equal(stopCause([stop("run_cost"), stop("weekly_fraction")]), "guard");
+    assert.equal(stopCause([stop("weekly_fraction"), stop("iterations")]), "limit");
   });
 });
 

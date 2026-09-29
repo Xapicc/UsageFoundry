@@ -148,7 +148,7 @@ const ROW_LABEL: Record<RowId, string> = {
   time: "the time limit",
   session: "the 5-hour window guard",
   weekly: "the weekly window guard",
-  enforcement: "when a limit is acted on",
+  enforcement: "how limits and guards are enforced",
   afterDone: "what happens after DONE",
 };
 
@@ -1341,10 +1341,10 @@ export default function NewRunPage() {
   // cannot offer.
   const enforcementLine =
     enforcement === "between-cycles"
-      ? "Limits are read before each cycle, so the cycle already running always finishes — and the run can end up one cycle past a limit."
+      ? "Limits and guards are read before each cycle, so the cycle already running always finishes — and the run can overshoot by one cycle."
       : resuming
-        ? `Limits are also read about every ${guardInterval}s while Claude is working, and that cycle's work is lost — tighter than waiting for the cycle to end, but still not an exact cut-off. A full 5-hour window parks the run instead of ending it; every other limit still ends it.`
-        : `Limits are also read about every ${guardInterval}s while Claude is working, and that cycle's work is lost. Tighter than waiting for the cycle to end, but still not an exact cut-off.`;
+        ? `Limits and guards are also read about every ${guardInterval}s while Claude is working, and that cycle's work is lost — tighter than waiting for the cycle to end, but still not an exact cut-off. The 5-hour guard parks the run instead of ending it; the weekly guard and every limit still end it.`
+        : `Limits and guards are also read about every ${guardInterval}s while Claude is working, and that cycle's work is lost. Tighter than waiting for the cycle to end, but still not an exact cut-off.`;
 
   const folderLabel = folder || activeMount?.label || "this workspace";
   const permission = permissionConsequence(permissionMode);
@@ -2051,8 +2051,8 @@ export default function NewRunPage() {
               {resuming
                 ? "“Stop, then resume”"
                 : "“Stop mid-cycle”"}{" "}
-              reads your limits mid-cycle and kills the agent when one trips, so
-              that cycle&rsquo;s work is thrown away.
+              reads your limits and guards mid-cycle and kills the agent when one
+              trips, so that cycle&rsquo;s work is thrown away.
               <ButtonRow className="mt-2.5">
                 <Button
                   type="button"
@@ -2409,7 +2409,7 @@ export default function NewRunPage() {
               </>
             }
           >
-            <ListRow label="When a limit is reached">
+            <ListRow label="When a limit or guard is reached">
               {mark("enforcement")}
               {/* Three options of prose come to 352px, which is wider than the
                   294px this row leaves on a 390px screen, and
@@ -2435,7 +2435,7 @@ export default function NewRunPage() {
                     setEnforcement(v);
                     setCarriedEnforcement(false);
                   }}
-                  label="When a limit is reached"
+                  label="When a limit or guard is reached"
                 />
               </div>
             </ListRow>
@@ -2446,7 +2446,7 @@ export default function NewRunPage() {
               description={
                 <>
                   {continueAfterDone
-                    ? "Claude is asked to verify and tighten rather than invent work, and the run can then only end at a limit"
+                    ? "Claude is asked to verify and tighten rather than invent work, and the run can then only end at a limit or guard"
                     : "The run ends as soon as Claude replies DONE"}
                   {/* The consequence of *this* switch on *this* folder. It was
                       under the card, where it read as a fact about the run

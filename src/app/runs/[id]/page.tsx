@@ -63,8 +63,10 @@ import {
   logFilterActive,
   matchesLogFilter,
   parkTrigger,
+  stopCause,
   type LogFilterKind,
   type ParkTrigger,
+  type StopCause,
 } from "@/lib/logLine";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
 import { RunAgentCost } from "@/components/RunAgentCost";
@@ -165,7 +167,8 @@ function publishSplitTop(split: HTMLElement, pane: HTMLElement) {
 }
 
 /**
- * When this run's limits are acted on — in the run form's own words, verbatim.
+ * When this run's limits and guards are acted on — in the run form's own words,
+ * verbatim.
  * An operator who chose "Stop, then resume" on that form should read it back
  * here rather than a synonym they have to map onto what they picked.
  */
@@ -253,7 +256,7 @@ function describeRun(
   ctx: {
     now: number;
     cycleInFlight: string | null;
-    stoppedByGuard: boolean;
+    stoppedBy: StopCause | null;
     parkedBy: ParkTrigger | null;
     /** The run the sweeper is holding this parked one behind, if any. */
     heldBy: string | null;
@@ -389,19 +392,29 @@ function describeRun(
       };
 
     case "stopped":
-      // A guard is not a fault, and must not be dressed as one. The signal is
-      // the budget event's own payload, never the wording of `stop_reason`.
-      return ctx.stoppedByGuard
+      // A guard or a limit is not a fault, and must not be dressed as one. The
+      // signal is the budget event's own payload, never the wording of
+      // `stop_reason`. The two are told apart because the way on differs: the
+      // reopen form raises a limit and carries the window guards over as they
+      // were.
+      return ctx.stoppedBy === "guard"
         ? {
             tone: "neutral",
-            headline: "Stopped by one of your limits",
-            detail: "Resume it with more room to carry on.",
+            headline: "Stopped by a window guard",
+            detail:
+              "Resuming keeps its window guards, so wait for the window to fall back below the guard.",
           }
-        : {
-            tone: "neutral",
-            headline: "Stopped",
-            detail: "It will not start another work cycle on its own.",
-          };
+        : ctx.stoppedBy === "limit"
+          ? {
+              tone: "neutral",
+              headline: "Stopped by one of your limits",
+              detail: "Resume it with more room to carry on.",
+            }
+          : {
+              tone: "neutral",
+              headline: "Stopped",
+              detail: "It will not start another work cycle on its own.",
+            };
 
     case "needs-review":
       // Says what the state means and what to do about it, never what the agent
@@ -1099,19 +1112,10 @@ export default function RunDetail({
     if (!active) setLiveTools([]);
   }, [active]);
 
-  // Whether a guard ended this run, read off the budget event's own payload
-  // rather than off the wording of `stop_reason` — that is user-facing prose
-  // and parsing it would break the first time it is reworded.
-  const stoppedByGuard = useMemo(
-    () =>
-      events.some(
-        (e) =>
-          e.kind === "budget" &&
-          e.payload?.allowed === false &&
-          e.payload?.disposition !== "pause",
-      ),
-    [events],
-  );
+  // Whether a guard or a limit ended this run, read off the budget event's own
+  // payload rather than off the wording of `stop_reason` — that is user-facing
+  // prose and parsing it would break the first time it is reworded.
+  const stoppedBy = useMemo(() => stopCause(events), [events]);
 
   const parkedBy = useMemo(() => parkTrigger(events), [events]);
 
@@ -1330,7 +1334,7 @@ export default function RunDetail({
   const state = describeRun(run, {
     now: nowTick,
     cycleInFlight,
-    stoppedByGuard,
+    stoppedBy,
     parkedBy,
     // Only for a paused run, because on any other the walk runs back to the
     // last status event through every line since, once a second.
@@ -1641,7 +1645,7 @@ export default function RunDetail({
                         ? // The one fact this run's operator needs and no other
                           // branch carries: nothing here overrides the guard that
                           // refused it, and a window percentage is not on this form.
-                          "Added to its original task; its guards are checked again first, so raise whatever refused it or it stops again"
+                          "Added to its original task; its limits and guards are checked again first, so raise whatever refused it or it stops again"
                         : !run.session_id
                           ? "Added to the end of the original task"
                           : saidDone
@@ -1721,8 +1725,8 @@ export default function RunDetail({
                 </Field>
 
                 <Hint>
-                  Everything else carries over: the window guards, how limits are
-                  enforced, what happens after DONE, the permission mode
+                  Everything else carries over: the window guards, how limits and
+                  guards are enforced, what happens after DONE, the permission mode
                   {run.agent ? `, the ${run.agent.name} agent` : ""}, its folder
                   {isolated ? ` and its checkout on ${run.worktree_branch}` : ""}
                 </Hint>
@@ -1748,7 +1752,7 @@ export default function RunDetail({
             )}
 
             <Region title="Against its limits">
-              <Section title="Guards">
+              <Section title="Limits and guards">
                 {bars.length > 0 && (
                   <div className="mb-3">
                     {bars.map((b) => (
@@ -1787,7 +1791,7 @@ export default function RunDetail({
                       </GuardValue>
                     </ListRow>
                   )}
-                  <ListRow label="When a limit is acted on">
+                  <ListRow label="When a limit or guard is reached">
                     <GuardValue>{ENFORCEMENT[run.budget.enforcement]}</GuardValue>
                   </ListRow>
                   <ListRow label="After DONE">
@@ -1884,7 +1888,7 @@ export default function RunDetail({
                     <span className="text-lg font-medium text-ink-muted">
                       {run.max_iterations > 0
                         ? `/${run.max_iterations}`
-                        : " · no cap"}
+                        : " · no limit"}
                     </span>
                   </Stat>
                   <div className={SUB}>

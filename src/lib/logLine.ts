@@ -924,6 +924,46 @@ export function parkTrigger(events: readonly RunEventDTO[]): ParkTrigger | null 
   return null;
 }
 
+/** Whether a run was ended by a window guard or by one of its limits. */
+export type StopCause = "guard" | "limit";
+
+const WINDOW_GUARD_CODES: ReadonlySet<unknown> = new Set([
+  "weekly_fraction",
+  "session_fraction",
+]);
+
+/**
+ * What ended a run, read off the newest budget refusal that ended one; null
+ * when none has arrived.
+ *
+ * The run page's stopped card said "Stopped by one of your limits" for every
+ * refusal, the weekly guard's included, and told the operator to resume with
+ * more room — which a resume cannot give a guard, because the reopen form
+ * carries the window guards over unchanged. Everything but the two window
+ * codes is a limit: a count, a clock or a sum of money on this run, its
+ * workflow or this install, or `no_terminus`, which is about the limits.
+ *
+ * `parkTrigger`'s reading, for the same reasons: off the payload, newest first
+ * because a reopened run carries its earlier refusals, and a verdict the run
+ * carried past (`enforceable: false`, a `no_ceiling`) ended nothing — so a run
+ * the operator stopped during a provider outage is not credited to a guard.
+ */
+export function stopCause(events: readonly RunEventDTO[]): StopCause | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    const p = e.payload ?? {};
+    if (
+      e.kind === "budget" &&
+      p.allowed === false &&
+      p.disposition !== "pause" &&
+      p.enforceable !== false
+    ) {
+      return WINDOW_GUARD_CODES.has(p.code) ? "guard" : "limit";
+    }
+  }
+  return null;
+}
+
 /**
  * The run a parked run is being held behind, when `sweepPaused` is keeping it
  * `paused` for its folder rather than for its window; null otherwise.
