@@ -7389,6 +7389,79 @@ describe("listRunsPage", () => {
     assert.ok(!before.includes("bands-on-boundary"));
     assert.ok(!before.includes("bands-old-finished"));
   });
+
+  /**
+   * Past the 200 rows a band asks for. Each band's rows past its cap used to be
+   * on no part of the runs page: the queue's were the ones that start next,
+   * and the recent band's were excluded from the fold by the very boundary
+   * that defines it. Both fixtures share milliseconds on purpose, because a
+   * tiebreak missing from either order is a row a page drops or shows twice.
+   */
+  describe("past a band's ceiling", () => {
+    const ceiling = `${ws}/RunListCeiling`;
+    const QUEUED = 250;
+    const SETTLED = 210;
+    const pad = (i: number) => String(i).padStart(3, "0");
+
+    before(() => {
+      const insert = db().prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations,
+                           iterations, created_at, started_at, finished_at)
+         VALUES (?, ?, 'page the bands', ?, '{}', 5, 0, ?, ?, ?)`,
+      );
+      // Holds the folder, so nothing reached from elsewhere starts the queue.
+      insert.run("ceiling-running", ceiling, "running", now - 48 * hour, now - 48 * hour, null);
+      // Inserted last to first, so the rowid order SQLite falls back on inside
+      // a shared millisecond is the reverse of the id order the page promises.
+      for (let i = QUEUED - 1; i >= 0; i--) {
+        const created = now - hour + Math.floor(i / 5);
+        insert.run(`ceiling-queued-${pad(i)}`, ceiling, "queued", created, null, null);
+      }
+      for (let i = 0; i < SETTLED; i++) {
+        const created = now - 20 * hour + Math.floor(i / 25);
+        insert.run(`ceiling-settled-${pad(i)}`, ceiling, "completed", created, created, now - 10 * hour);
+      }
+      // Raised by an operator, so it starts first although it was queued last.
+      db().prepare("UPDATE runs SET priority = 1 WHERE id = ?").run(`ceiling-queued-${pad(QUEUED - 1)}`);
+    });
+
+    after(() => {
+      db().prepare("DELETE FROM runs WHERE folder = ?").run(ceiling);
+    });
+
+    it("puts the runs that start next on a capped queue page asked for in queue order", () => {
+      const statuses: RunStatus[] = ["queued", "waiting"];
+      // The shape the band used to ask for: newest first, the cap keeps the
+      // runs that start last and drops the oldest, which start next.
+      const newest = listRunsPage({ q: ceiling, statuses, limit: 200 });
+      assert.equal(newest.total, QUEUED);
+      assert.ok(!ids(newest).includes("ceiling-queued-000"));
+
+      const queue = listRunsPage({ q: ceiling, statuses, limit: 200, order: "queue" });
+      assert.equal(queue.total, QUEUED);
+      // `queueCompare`'s order: the raised run, then age, then id inside a
+      // shared millisecond.
+      assert.deepEqual(ids(queue), [
+        `ceiling-queued-${pad(QUEUED - 1)}`,
+        ...Array.from({ length: 199 }, (_, i) => `ceiling-queued-${pad(i)}`),
+      ]);
+    });
+
+    it("reaches every run settled since the boundary across the band's pages", () => {
+      const first = listRunsPage({ q: ceiling, settledAfter: boundary, limit: 200 });
+      assert.equal(first.total, SETTLED);
+      assert.equal(first.rows.length, 200);
+      const second = listRunsPage({
+        q: ceiling,
+        settledAfter: boundary,
+        limit: 200,
+        offset: first.offset + first.limit,
+      });
+      assert.equal(second.rows.length, SETTLED - 200);
+      const seen = new Set([...ids(first), ...ids(second)]);
+      assert.equal(seen.size, SETTLED);
+    });
+  });
 });
 
 describe("clampRunOffset", () => {

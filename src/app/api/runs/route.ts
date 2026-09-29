@@ -8,6 +8,7 @@ import {
   currentSnapshot,
   dependenciesOf,
   describeFolder,
+  isRunListOrder,
   isRunStatus,
   listRunsPage,
   queueBlockerOf,
@@ -62,7 +63,8 @@ function clipPrompt(prompt: string): string {
 
 /**
  * One page of runs: `?offset=`, `?limit=`, `?status=` (one status or a
- * comma-separated set), `?q=`, `?settledBefore=`, `?settledAfter=`.
+ * comma-separated set), `?q=`, `?settledBefore=`, `?settledAfter=`, and
+ * `?order=` (`newest`, the default, or `queue`).
  *
  * These are what make the whole set reachable rather than only its newest page,
  * which is the principle `/api/branches` states at `:19-23` and this route did
@@ -100,6 +102,17 @@ export async function GET(req: Request) {
     );
   }
 
+  // Refused on `status`'s grounds rather than defaulted on a `sort`'s: over a
+  // capped page the order decides which rows are on it, so reading a typo as
+  // `newest` answers "what starts next" with the runs that start last.
+  const askedOrder = params.get("order") || null;
+  if (askedOrder !== null && !isRunListOrder(askedOrder)) {
+    return NextResponse.json(
+      { error: `Unknown run order: ${JSON.stringify(askedOrder)}` },
+      { status: 400 },
+    );
+  }
+
   const page = listRunsPage({
     offset: Number(params.get("offset") ?? 0),
     limit: Number(params.get("limit") ?? 0),
@@ -107,6 +120,7 @@ export async function GET(req: Request) {
     q: params.get("q"),
     settledBefore: Number(params.get("settledBefore") ?? 0),
     settledAfter: Number(params.get("settledAfter") ?? 0),
+    order: askedOrder,
   });
   const rows = page.rows;
   const deps = dependenciesOf(rows.map((r) => r.id));

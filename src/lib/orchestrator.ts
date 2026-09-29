@@ -1047,6 +1047,23 @@ const MAX_RUN_PAGE = 200;
  */
 const MAX_RUN_QUERY = 200;
 
+/**
+ * The orders a run list can be asked for.
+ *
+ * `newest` is creation order, newest first, and what every list here was until
+ * the queue band. `queue` is `queueCompare`'s order — priority, then age — and
+ * exists because a capped page keeps whatever sorts first: over a queue longer
+ * than a page, newest-first keeps the runs that start *last* and drops the ones
+ * that start next.
+ */
+export const RUN_LIST_ORDERS = ["newest", "queue"] as const;
+export type RunListOrder = (typeof RUN_LIST_ORDERS)[number];
+
+/** Whether a value off a query string names an order. `isRunStatus`' shape. */
+export function isRunListOrder(value: unknown): value is RunListOrder {
+  return RUN_LIST_ORDERS.includes(value as RunListOrder);
+}
+
 export interface RunListQuery {
   /** Rows to skip. Clamped into the list rather than refused. */
   offset?: number;
@@ -1083,6 +1100,8 @@ export interface RunListQuery {
    * files a run that ended on it in exactly one list rather than in neither.
    */
   settledAfter?: number | null;
+  /** Absent or null is `newest`. Narrowed by the caller, as `statuses` is. */
+  order?: RunListOrder | null;
 }
 
 /** A run-list request in the terms the query below is written in. */
@@ -1095,6 +1114,7 @@ export interface RunListFilters {
   like: string | null;
   settledBefore: number | null;
   settledAfter: number | null;
+  order: RunListOrder;
 }
 
 export interface RunListPage {
@@ -1166,6 +1186,7 @@ export function normalizeRunListQuery(query: RunListQuery = {}): RunListFilters 
     like: text ? likeNeedle(text) : null,
     settledBefore: boundary(query.settledBefore),
     settledAfter: boundary(query.settledAfter),
+    order: query.order ?? "newest",
   };
 }
 
@@ -1182,7 +1203,8 @@ export function clampRunOffset(offset: number, total: number): number {
 }
 
 /**
- * One page of runs, newest first, with the count the page is a slice of.
+ * One page of runs, newest first or in `RUN_LIST_ORDERS`' queue order, with the
+ * count the page is a slice of.
  *
  * `total` is counted over every matching row rather than over the page, for the
  * reason `branchInventory` counts over every branch-bearing run: a count that is
@@ -1267,11 +1289,15 @@ export function listRunsPage(query: RunListQuery = {}): RunListPage {
   ).n;
   const offset = clampRunOffset(filters.offset, total);
 
+  // `queueCompare` in SQL, with `id` last for the tiebreak reason above. A
+  // different comparator here would be a band listing the queue in an order
+  // `promoteQueued` does not start it in.
+  const order =
+    filters.order === "queue"
+      ? "priority DESC, created_at ASC, id ASC"
+      : "created_at DESC, id DESC";
   const rows = db()
-    .prepare(
-      `SELECT * FROM runs${clause}` +
-        " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
-    )
+    .prepare(`SELECT * FROM runs${clause} ORDER BY ${order} LIMIT ? OFFSET ?`)
     .all(...args, filters.limit, offset) as RunRow[];
 
   return { rows, total, offset, limit: filters.limit };
