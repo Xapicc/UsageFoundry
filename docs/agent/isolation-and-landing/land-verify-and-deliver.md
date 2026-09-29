@@ -67,20 +67,16 @@ synchronous, refusing when an active run was given the slot between
 `verifyTree`'s read and the hold, and counted so that one release can never end
 another's hold. `allocateSlotPath` skips a held slot as it skips an occupied
 one. **The hold keeps other runs out, not commits, so what passed is proved to
-be what leaves.** A continuation of the run being landed inherits its slot in
-`planWorkspace` without going through `allocateSlotPath`, and the card's Commit
-button writes into it, and both exits act on the branch by *name*: a commit made
-during the check was merged or pushed unverified. So `verifyInSlot` reads the
-slot's `HEAD` under the hold before the command, and after a pass refuses unless
-`rev-parse <branch>` still names it. That was chosen over making
-`inheritedSlot` respect the hold, which covers one writer and would have meant
-refusing to create a continuation of a run with a land in flight — a fresh
-slot fails at `worktree add` while the branch is checked out in the held one.
-It leaves two things open: the milliseconds between that read and the merge's
-spawn, in which `landRun` still awaits its tip `rev-parse` and `landRecheck`'s
-status read, and a continuation created during the check that has not yet
-committed, which Deliver's second `unsettledBranchRefusal` refuses and Land,
-which does not ask it again, lets through with the tip that was checked.
+be what leaves.** A continuation inherits the slot in `planWorkspace` without
+`allocateSlotPath`, the card's Commit button writes into it, and both exits act
+on the branch by name, so a commit made during the check left unverified.
+`verifyInSlot` reads the slot's `HEAD` under the hold before the command and,
+after a pass, refuses unless `rev-parse <branch>` still names it — chosen over
+making `inheritedSlot` respect the hold, which covers one writer and would mean
+refusing a continuation while a land is in flight. Still open: the milliseconds
+between that read and the merge's spawn, and a continuation created mid-check
+that has not yet committed, which Deliver's second `unsettledBranchRefusal`
+refuses and Land lets through with the tip that was checked.
 
 **The other exit.** `deliverRun` pushes a run's branch and opens a pull request
 on the checkout's GitHub remote. It is reached from one endpoint on one press
@@ -107,7 +103,12 @@ check**, which it arrived without: it resolves the *same* folder `landRun`
 guards — the operator's checkout — and then writes that checkout's
 `.git/config` with `push --set-upstream`, so a delivery racing a land is the
 collision the claim exists to stop. That was survivable while nothing could
-press it and stopped being when the Land card grew a button.
+press it and stopped being when the Land card grew a button. **A shutdown
+gates and waits for it as it does Land**: `isShuttingDown()` is read after
+`landState` and again where nothing awaits before the push, and `trackLand`
+holds it from the claim to the row write, because an exit between the push and
+that write published a branch with no pull request and no record. Nothing reads
+the flag after the push, where refusing would leave exactly that.
 
 **Deliver refuses a branch that can still move, in Land's own words.** It
 pushed the branch of a `running`, `queued` or `paused` run, of a chain link with

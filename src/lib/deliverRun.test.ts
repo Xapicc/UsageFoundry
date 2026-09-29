@@ -417,3 +417,109 @@ describe("migrate carries a pull request delivered before the column existed", (
     assert.deepEqual(read("run-unnumbered"), { url: null, number: null, at: null });
   });
 });
+
+/**
+ * A SIGTERM that arrives while two deliveries are in flight.
+ *
+ * `landRun` reads `isShuttingDown()` and registers with `trackLand`, and
+ * Deliver did neither: the shutdown did not wait for a push it had started, so
+ * the process could exit with the branch published and the pull request never
+ * opened, and it let a delivery whose check was still running go on to push
+ * during the grace. One is held at the pull request, the other in its check.
+ *
+ * Held with a gate and a release file rather than timed with sleeps, so the
+ * shutdown is certain to begin inside both. Last in the file because
+ * `shutdownRuns` sets a flag nothing clears, and every case after it would run
+ * in a process that is going down.
+ */
+describe("deliverRun at a shutdown", () => {
+  it("finishes the delivery that has pushed, and pushes nothing for the one still in its check", async () => {
+    const pushing = scene("pushing");
+    const checking = scene("checking");
+    const signals = path.join(root, "signals");
+    fs.mkdirSync(signals, { recursive: true });
+    const probe = path.join(root, "wait-probe.js");
+    fs.writeFileSync(
+      probe,
+      `const fs = require("node:fs");
+const path = require("node:path");
+const dir = process.argv[2];
+fs.writeFileSync(path.join(dir, "started"), "");
+const deadline = Date.now() + 20000;
+while (!fs.existsSync(path.join(dir, "go"))) {
+  if (Date.now() > deadline) process.exit(3);
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+}
+`,
+    );
+
+    let releasePullRequest!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releasePullRequest = resolve;
+    });
+    let reachedPullRequest = false;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      reachedPullRequest = true;
+      await gate;
+      return stubFetch(input, init);
+    }) as typeof fetch;
+
+    try {
+      // Pushed, and waiting on the API for its pull request. No command, so
+      // nothing but the push stands between the press and that call.
+      const pushed = land.deliverRun(pushing.runId);
+      const deadline = Date.now() + 20_000;
+      while (!reachedPullRequest) {
+        if (Date.now() > deadline) assert.fail("the first delivery never reached its pull request");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      assert.equal(remoteTip(pushing), git(pushing.slot, "rev-parse", "HEAD").trim());
+
+      // In its check: the command is read after the claim, so setting it now
+      // reaches only the second press.
+      settings.saveSettings({ landVerifyCommand: `${process.execPath} ${probe} ${signals}` });
+      const held = land.deliverRun(checking.runId);
+      while (!fs.existsSync(path.join(signals, "started"))) {
+        if (Date.now() > deadline) assert.fail("the second delivery's check never started");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+
+      let returned = false;
+      const shutdown = orchestrator.shutdownRuns("SIGTERM").finally(() => {
+        returned = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      assert.equal(returned, false, "the shutdown returned with a pushed branch and no pull request");
+
+      releasePullRequest();
+      const delivered = await pushed;
+      assert.equal(delivered.ok, true, delivered.ok ? "" : delivered.reason);
+      const row = dbMod
+        .db()
+        .prepare("SELECT delivered_pr_url AS url FROM runs WHERE id = ?")
+        .get(pushing.runId) as { url: string | null };
+      assert.equal(row.url, delivered.ok ? delivered.url : "");
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      assert.equal(returned, false, "the shutdown returned with a delivery still in its check");
+
+      fs.writeFileSync(path.join(signals, "go"), "");
+      const refused = await held;
+      await shutdown;
+
+      assert.equal(refused.ok, false);
+      assert.equal(
+        refused.ok ? "" : refused.reason,
+        "The server is shutting down, so nothing was pushed and no pull request was opened. " +
+          "Try again once it has restarted.",
+      );
+      assert.equal(remoteTip(checking), null);
+      assert.deepEqual(
+        opened.map(({ head }) => head),
+        [pushing.branch],
+      );
+    } finally {
+      globalThis.fetch = stubFetch;
+      releasePullRequest();
+    }
+  });
+});

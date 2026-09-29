@@ -4153,16 +4153,35 @@ export async function deliverRun(
         `it writes would publish a tree that is still moving.`,
     };
   }
+
+  // `landRun`'s first read, for its reason: after `landState`, the last `await`
+  // before the registration, so a delivery this lets through is one the
+  // shutdown waits for, and no check is started in a process that is exiting.
+  if (isShuttingDown()) return { ok: false, reason: DELIVER_SHUTDOWN_REFUSAL };
+
   if (landing.has(folder)) {
     return { ok: false, reason: "Another branch is being landed into this folder." };
   }
   landing.add(folder);
+  // Held to the row write rather than to the push: a process that exits
+  // between the two leaves a published branch with no pull request and nothing
+  // on the run saying it was pushed.
+  const untrack = trackLand();
   try {
     return await pushAndOpen({ run, state, folder, o });
   } finally {
     landing.delete(folder);
+    untrack();
   }
 }
+
+/**
+ * Deliver's `LAND_SHUTDOWN_REFUSAL`, returned from the two places that
+ * precede the push: before either nothing has left the machine.
+ */
+const DELIVER_SHUTDOWN_REFUSAL =
+  "The server is shutting down, so nothing was pushed and no pull request was opened. " +
+  "Try again once it has restarted.";
 
 /** The delivery itself, so the folder claim above is one `try`/`finally`. */
 async function pushAndOpen(a: {
@@ -4216,6 +4235,12 @@ async function pushAndOpen(a: {
   if (!current) return { ok: false, reason: "No such run." };
   const unsettled = deliverHoldNow(current);
   if (unsettled) return { ok: false, reason: unsettled };
+
+  // Again where nothing awaits before the push's spawn, `landRun`'s second
+  // read: a push begun during the grace is one the exit can cut off before the
+  // pull request is opened. One begun before it is waited on. Deliberately not
+  // read again after the push, where refusing would leave exactly that.
+  if (isShuttingDown()) return { ok: false, reason: DELIVER_SHUTDOWN_REFUSAL };
 
   // Never `--force`, and the upstream is set so a second press is an ordinary
   // fast-forward rather than a new branch.

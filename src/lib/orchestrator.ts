@@ -12629,7 +12629,10 @@ const runLoops = ((globalThis as unknown as { __ufRunLoops?: Map<string, RunLoop
 /**
  * Every land in this process that has not yet written its ending: a `landRun`,
  * whichever door called it, and a merge-queue row from the moment `drainRepo`
- * takes it until the status it is given has been written.
+ * takes it until the status it is given has been written. A `deliverRun` too,
+ * from its folder claim to the row write that records its pull request: an
+ * exit between its push and that write publishes a branch with no pull request
+ * and no record that it left.
  *
  * `shutdownRuns` is the reader, and it waits for the ones in flight at the
  * signal inside the grace it already gives the loops. Nothing it does signals
