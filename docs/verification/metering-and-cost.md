@@ -110,6 +110,17 @@
   to the restore was not traced. The chat's `turnCostOf` banks the increase on
   this reading.
 
+- **A `-p` child saves its cost ledger at exit, and `--max-budget-usd` counts
+  from the restore: read off the 2.1.280 binary, no turn spawned, 2026-09-29.**
+  Headless mode registers the `cost-state` writer (`nyt`) only as an exit
+  provider. It is written after `error_during_execution` and after SIGINT,
+  whose handler exits gracefully. Only SIGKILL or a crash skips it, and the
+  previous record is then restored. The print-mode `--resume` branch calls
+  `nte` with no condition beyond a record whose `sessionId` matches. The budget
+  check reads `em() - restoredCostUSD()`. Caveat: that
+  `error_during_execution` exits by the normal route was inferred, not traced.
+  `cycleSpendOf` banks each resumed work cycle's increase on this reading.
+
 ## Not yet verified by hand
 
 - **No real resumed chat turn has been compared with its transcript.** The
@@ -120,6 +131,16 @@
   `$DATA_DIR/usagefoundry.db` with that session's deduped per-message usage in
   `~/.claude/projects/*/<session>.jsonl` priced by `pricing.ts`, and read the
   second turn's `result.usage` against the first's.
+
+- **No real run resumed across work cycles has been reconciled since
+  `cycleSpendOf`, 2026-09-29.** The loop is pinned only by
+  `resumedCycleSpend.test.ts`, against a stub that restores its ledger the way
+  the 2026-09-29 *Verified* entry reads the binary. Settle it with one three-cycle run on one
+  session, `telemetryForRuns` on, then in `$DATA_DIR/usagefoundry.db`:
+  `SELECT r.spent_usd, r.session_cost_usd, (SELECT SUM(cost_usd) FROM
+  otlp_requests o WHERE o.run_id = r.id) FROM runs r WHERE r.id = '<id>'`.
+  The three should agree to the cent. Rows written earlier keep their
+  inflated `spent_usd`.
 
 - **No Fable 5.1 / Mythos 5.1 turn has been metered here.** A transcript not
   spelling `claude-fable-5-1` / `claude-mythos-5-1` would price silently at the

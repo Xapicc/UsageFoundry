@@ -72,8 +72,10 @@ async function postHandler(req: Request) {
   try {
     setPluginEnabled(dir, body.enabled);
   } catch (err) {
-    // Containment failures and malformed manifests both arrive here as a
-    // sentence naming the directory, because the page has to show it.
+    // Only switching on can land here — switching off proves nothing, so a
+    // plugin whose folder or manifest has gone can always be turned off.
+    // Containment failures and malformed manifests both arrive as a sentence
+    // naming the directory, because the page has to show it.
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },
       { status: 400 },

@@ -26,9 +26,10 @@ export interface IterationResult {
    * What this child reported spending, over every `result` event it emitted.
    *
    * Not a sum of them: `total_cost_usd` is the session's running total and one
-   * child can emit two. `cycleCostAfterResult` owns that and says why. Across
-   * children it *is* summed, by the `+=` in the run loop, because a restart
-   * begins a fresh CLI accumulator.
+   * child can emit two. `cycleCostAfterResult` owns that and says why. It is
+   * still the running total across children too: a `--resume`d child restores
+   * the session's ledger, so this figure includes every earlier cycle of that
+   * session, and the run loop banks only the increase — see `cycleSpendOf`.
    */
   costUSD: number;
   /**

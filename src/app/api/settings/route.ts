@@ -477,10 +477,6 @@ async function applySettingsPut(body: Record<string, unknown>): Promise<Response
 
   if ("planUsageFromApi" in body) {
     patch.planUsageFromApi = Boolean(body.planUsageFromApi);
-    // The cached reading outlives the setting otherwise: switching this off
-    // and reloading would keep showing provider percentages for up to five
-    // minutes, which reads as the switch not working.
-    invalidatePlanUsage();
   }
 
   if ("includeSidechains" in body) {
@@ -807,7 +803,17 @@ async function applySettingsPut(body: Record<string, unknown>): Promise<Response
     patch.installDailyCostLimitUSD = optionalNumber("installDailyCostLimitUSD", body.installDailyCostLimitUSD, true);
   }
 
+  const planUsageWasFromApi = getSettings().planUsageFromApi;
   const settings = saveSettings(patch);
+
+  // The cached reading outlives the setting otherwise: switching the source
+  // off and reloading would keep showing provider percentages for up to five
+  // minutes, which reads as the switch not working. Only on a real change,
+  // though — the page re-sends every field on every Save, and dropping the
+  // cache also drops the last good reading and the 429 back-off with it, so a
+  // prompt edit during a refusal spell would leave the fraction guards with
+  // nothing to read and send the next request straight back to the endpoint.
+  if (settings.planUsageFromApi !== planUsageWasFromApi) invalidatePlanUsage();
 
   // After the save, because both read the stored value. `startDreaming` used to
   // run at boot alone, so switching Dreaming on here produced a switch that

@@ -111,6 +111,7 @@ const {
   isUsageLimit,
   copyGlobsFor,
   cycleCostAfterResult,
+  cycleSpendOf,
   logLifecycle,
   maxRetriesFor,
   transientBackoffMs,
@@ -126,6 +127,7 @@ const {
   refusalResumeAt,
   reopenPrompt,
   reopenRun,
+  resumeRun,
   runEvents,
   sandboxArgs,
   sandboxSettings,
@@ -5463,16 +5465,91 @@ describe("cycleCostAfterResult", () => {
     assert.equal(cycleCostAfterResult(9.330155, 7.025419), 9.330155);
   });
 
-  it("is scoped to one child, so a restart still sums", () => {
-    // Not a property of this function but of where it is called: a cycle that
-    // died at `error_during_execution` and resumed gets a second child with a
-    // CLI accumulator that starts at zero, and the run loop's own `+=` across
-    // children is what makes those runs reconcile to the cent. Pinned as the
-    // arithmetic that must survive: each child folds its own results, and only
-    // then are the children added.
-    const died = cycleCostAfterResult(0, 3.8235865);
-    const resumed = cycleCostAfterResult(0, 13.6167145);
-    assert.equal(Number((died + resumed).toFixed(4)), 17.4403);
+  it("is scoped to one child, so a new session's lower total is not swallowed", () => {
+    // Not a property of this function but of where it is called. Each child
+    // folds its own results from zero, and what a child adds to the run is
+    // `cycleSpendOf`'s question. A fold carried across the run would answer it
+    // wrongly for a child that opened a fresh session, whose running total
+    // starts again below the last one's.
+    const before = cycleCostAfterResult(0, 7.025419);
+    const fresh = cycleCostAfterResult(0, 2.5);
+    assert.equal(fresh, 2.5);
+    assert.equal(
+      cycleSpendOf({
+        sessionCostUSD: before,
+        resumedSessionId: null,
+        reportedSessionId: "fresh",
+        reportedUSD: fresh,
+      }).costUSD,
+      2.5,
+    );
+  });
+});
+
+describe("cycleSpendOf", () => {
+  // Both ways of getting this wrong are silent and both are money: too much
+  // and a run is stopped at a fraction of its limit, too little and it runs
+  // past one. The premise — a resumed child reports its session's running
+  // total — was read off the pinned binary, not run.
+  const bank = (
+    sessionCostUSD: number | null,
+    resumedSessionId: string | null,
+    reportedSessionId: string | null,
+    reportedUSD: number,
+  ) => cycleSpendOf({ sessionCostUSD, resumedSessionId, reportedSessionId, reportedUSD });
+
+  it("banks each resumed cycle's increase, and measures the next from its total", () => {
+    // The `cost-state` records of one UsageFoundry run, three work cycles on
+    // one session. Added whole they came to $30.73 for $11.97 of work.
+    let baseline: number | null = null;
+    let resumed: string | null = null;
+    const banked = [8.415, 10.34, 11.97].map((reported) => {
+      const cycle = bank(baseline, resumed, "s", reported);
+      baseline = cycle.sessionCostUSD;
+      resumed = "s";
+      return Number(cycle.costUSD.toFixed(6));
+    });
+    assert.deepEqual(banked, [8.415, 1.925, 1.63]);
+    assert.equal(baseline, 11.97);
+  });
+
+  it("banks the whole figure when the cycle resumed nothing", () => {
+    // The first cycle, a fresh start, or a pick-up whose session has expired:
+    // a new ledger starts at zero, so the old one's total is not in it.
+    assert.deepEqual(bank(8, null, "t", 6), { costUSD: 6, sessionCostUSD: 6 });
+  });
+
+  it("banks the whole figure when the CLI answered under another session", () => {
+    assert.deepEqual(bank(8, "s", "t", 6), { costUSD: 6, sessionCostUSD: 6 });
+  });
+
+  it("banks the whole figure when there is nothing to subtract", () => {
+    // A run whose row predates the column: the old over-count, once.
+    assert.deepEqual(bank(null, "s", "s", 6), { costUSD: 6, sessionCostUSD: 6 });
+  });
+
+  it("banks the whole figure when the running total went down", () => {
+    // A ledger that was not restored — the one way `turnCostOf`'s rule can see
+    // it — and the difference would bank nothing for a cycle that cost $3.
+    assert.deepEqual(bank(8, "s", "s", 3), { costUSD: 3, sessionCostUSD: 3 });
+  });
+
+  it("measures nothing from a figure no session was named for", () => {
+    assert.deepEqual(bank(8, "s", null, 9), { costUSD: 9, sessionCostUSD: null });
+  });
+
+  it("keeps the baseline across a cycle that reported nothing on the same ledger", () => {
+    // Killed before `result`: the estimate goes to its own column, and the
+    // next resume restores this same ledger.
+    assert.deepEqual(bank(8, "s", "s", 0), { costUSD: 0, sessionCostUSD: 8 });
+    assert.deepEqual(bank(8, "s", null, 0), { costUSD: 0, sessionCostUSD: 8 });
+  });
+
+  it("clears the baseline when a cycle that reported nothing opened another ledger", () => {
+    // Nobody saw that ledger's total, so the next figure is banked whole
+    // rather than measured from a total that belongs to another session.
+    assert.deepEqual(bank(8, null, "t", 0), { costUSD: 0, sessionCostUSD: null });
+    assert.deepEqual(bank(8, "s", "t", 0), { costUSD: 0, sessionCostUSD: null });
   });
 });
 
@@ -6555,6 +6632,118 @@ describe("applying the sweeper's decision", () => {
     assert.ok(
       row.paused_ms >= 15 * 60_000 + 2 * HOUR,
       `both parks are on the row (${row.paused_ms}ms)`,
+    );
+  });
+
+  // The end branch is the flip's race with more at stake: the sweep read these
+  // rows before its scan, and the operator's press lands during it. Written
+  // unconditionally, the ending took a resumed run's row out from under its own
+  // loop and replaced an operator's stop with the sweeper's reason.
+  const PARK_REASON = "The 5-hour window is full.";
+
+  /**
+   * A parked row this sweep ends on its cap: 110 worked minutes against 60,
+   * carrying the reason a park leaves on the row.
+   */
+  function parkedPastItsCap(name: string): string {
+    const now = Date.now();
+    const id = insertRun({
+      status: "paused",
+      workDir: `${ws}/${name}`,
+      budget: ONE_HOUR_CAP,
+      startedAt: now - 2 * HOUR,
+      pausedAt: now - 10 * 60_000,
+    });
+    db().prepare("UPDATE runs SET stop_reason = ? WHERE id = ?").run(PARK_REASON, id);
+    return id;
+  }
+
+  /**
+   * Sweep once with an operator's press landing mid-scan, and nothing able to
+   * start: both the press and the sweep end in `promoteQueued`, and the cap and
+   * the occupant are `sweepAlone`'s device for keeping that from spawning.
+   * `check` is handed whatever `press` read straight after pressing.
+   */
+  async function sweepWhile<T>(
+    press: () => T,
+    check: (pressed: T) => void,
+  ): Promise<void> {
+    saveSettings({ maxConcurrentRuns: 1 });
+    insertRun({ status: "running", workDir: `${ws}/blocker-${seq}` });
+    try {
+      // Synchronous as far as the scan, which the stop case above relies on
+      // too: `press` lands after the sweep has read its rows as `paused` and
+      // before the snapshot it is waiting on resolves.
+      const sweeping = sweepPaused();
+      const pressed = press();
+      await sweeping;
+      // Under the cap rather than after it. A run an earlier case promoted is
+      // still in flight, can settle in the same turn as this sweep, and ends
+      // in `promoteQueued` — which, past the reset below, starts the queued
+      // run this case is about to read.
+      check(pressed);
+    } finally {
+      saveSettings({ maxConcurrentRuns: null });
+    }
+  }
+
+  const stoppedEvents = (id: string) =>
+    runEvents(id).events.filter(
+      (e) => e.kind === "status" && e.payload.status === "stopped",
+    );
+
+  it("leaves a run the operator resumed during the scan in the queue", async () => {
+    const resumed = parkedPastItsCap("resumed-mid-scan");
+    // The same fixture left alone. Without it this case passes just as well
+    // for a sweep that never planned `end` for these rows at all.
+    const untouched = parkedPastItsCap("untouched-mid-scan");
+
+    await sweepWhile(
+      () => assert.equal(resumeRun(resumed), "requeued"),
+      () => {
+        assert.equal(getRun(untouched)!.status, "stopped", "the control is ended on its cap");
+        const row = getRun(resumed)!;
+        assert.equal(
+          row.status,
+          "queued",
+          "a `stopped` row under a run its operator resumed is a live loop on a " +
+            "row reading ended, and a folder `promoteQueued` reads as free",
+        );
+        assert.equal(row.stop_reason, PARK_REASON, "the sweeper's reason was never written");
+        assert.equal(row.finished_at, null, "a run in the queue has not finished");
+        assert.deepEqual(
+          stoppedEvents(resumed),
+          [],
+          "nothing announced an ending the row does not hold — `emit` is what reaches a webhook",
+        );
+      },
+    );
+  });
+
+  it("keeps the operator's stop on a run stopped during the scan", async () => {
+    const stopped = parkedPastItsCap("stopped-mid-scan");
+
+    await sweepWhile(
+      () => {
+        assert.equal(stopRun(stopped), "cancelled");
+        return getRun(stopped)!;
+      },
+      (operators) => {
+        const row = getRun(stopped)!;
+        assert.equal(row.status, "stopped");
+        assert.equal(
+          row.stop_reason,
+          operators.stop_reason,
+          "the operator's reason, not the cap the sweeper would have named",
+        );
+        assert.equal(row.finished_at, operators.finished_at);
+        assert.equal(
+          stoppedEvents(stopped).length,
+          1,
+          "one ending, announced once — a second `stopped` event is a second " +
+            "webhook for a run that ended once",
+        );
+      },
     );
   });
 });

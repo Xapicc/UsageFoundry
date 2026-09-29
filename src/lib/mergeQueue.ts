@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "./db";
 import {
   abortInterruptedResolutions,
+  alreadyOnTargetRefusal,
   landRun,
   landState,
   resolveConflicts,
@@ -56,6 +57,12 @@ export type QueueStatus =
   | "landing"
   | "resolving"
   | "landed"
+  /**
+   * Not merged, because its work was on its target by its turn. Apart from
+   * `skipped`, which a merge block has to read as a branch that did not get
+   * there: see `queuedBranchOutcome`.
+   */
+  | "already-landed"
   | "failed"
   /** Not attempted: the queue gave up on this repository, or it was cancelled. */
   | "skipped"
@@ -115,6 +122,8 @@ export type ItemPlan =
   | { action: "land" }
   /** It conflicts, and a resolution is authorised and possible. */
   | { action: "resolve" }
+  /** Its work is already on its target, so there is nothing to land. */
+  | { action: "skip"; reason: string }
   /** This branch cannot be landed; the ones behind it still can. */
   | { action: "fail"; reason: string }
   /** Nothing in this repository can be landed until a person intervenes. */
@@ -140,6 +149,17 @@ export function planItem(
 ): ItemPlan {
   if (!state) return { action: "fail", reason: "This run has no branch to land." };
   if (state.blocked === null) return { action: "land" };
+
+  // Asked apart from `blocked`, which names a chain's owner before it asks
+  // whether the branch is in: a link whose successor landed ahead of it in the
+  // same batch is refused as not the one that lands the branch, and its
+  // commits are on the target all the same. Ahead of the checkout, which a
+  // branch with nothing to merge never needed. Never for a run that can still
+  // commit — a branch with nothing on it yet is an ancestor of its target too.
+  if (state.target && !isRunActive(state.runStatus)) {
+    const onTarget = alreadyOnTargetRefusal({ ...state, target: state.target });
+    if (onTarget) return { action: "skip", reason: onTarget };
+  }
 
   // Anything wrong with the checkout refuses every branch in this repository
   // identically, so it stops the repository rather than this row.
@@ -929,6 +949,7 @@ async function processOne(
 
   if (plan.action === "halt") return { status: "skipped", message: plan.reason, halt: true };
   if (plan.action === "fail") return { status: "failed", message: plan.reason };
+  if (plan.action === "skip") return { status: "already-landed", message: plan.reason };
 
   let resolveCost = 0;
   if (plan.action === "resolve") {

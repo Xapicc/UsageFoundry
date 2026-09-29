@@ -159,12 +159,78 @@ describe("planItem", () => {
     }
   });
 
-  it("fails a branch that is already in, without touching anything", () => {
+  // A branch can reach its target between being queued and its turn: a later
+  // row in the same batch carried its commits, or somebody merged it by hand.
+  // Failing it failed the workflow merge block that queued it, and stopped the
+  // loop around that block, over work that was already where it belonged.
+  const alreadyIn = "Already in main — there is nothing left to land.";
+
+  it("skips a branch that is already in its target, without touching anything", () => {
     const plan = planItem(
-      { ...base, merged: true, ahead: 0, blocked: "Already in main — there is nothing left to land." },
+      {
+        ...base,
+        merged: true,
+        ahead: 0,
+        preview: { outcome: "already-merged" },
+        blocked: alreadyIn,
+      },
       open,
     );
-    assert.equal(plan.action, "fail");
+    assert.deepEqual(plan, { action: "skip", reason: alreadyIn });
+  });
+
+  it("skips a branch squashed into its target and unchanged since", () => {
+    const plan = planItem(
+      { ...base, landedUnchanged: true, blocked: "Already squashed into main." },
+      open,
+    );
+    assert.equal(plan.action, "skip");
+    assert.match(plan.action === "skip" ? plan.reason : "", /Already squashed into main/);
+  });
+
+  it("skips a chain link whose successor already landed the branch they share", () => {
+    // `landRefusal` names the branch's owner before it asks whether the branch
+    // is in, so this link's refusal is about who may land it — but its commits
+    // are on the target all the same.
+    const plan = planItem(
+      {
+        ...base,
+        chain: [
+          { runId: "r1", status: "completed", iterations: 1 },
+          { runId: "r2", status: "completed", iterations: 1 },
+        ],
+        merged: true,
+        preview: { outcome: "already-merged" },
+        blocked: "Run r2 carries this branch on from here and is the one that lands it (it is completed).",
+      },
+      open,
+    );
+    assert.deepEqual(plan, { action: "skip", reason: alreadyIn });
+  });
+
+  it("skips a branch already in behind a dirty checkout, which it never needed", () => {
+    const plan = planItem(
+      {
+        ...base,
+        merged: true,
+        checkout: { ...base.checkout!, dirty: true },
+        blocked: alreadyIn,
+      },
+      open,
+    );
+    assert.equal(plan.action, "skip");
+  });
+
+  it("never skips a branch whose run can still commit to it", () => {
+    // A branch nothing has been committed to yet is an ancestor of its target
+    // too, so "already in" says nothing about a run that is still going.
+    for (const runStatus of ["running", "queued", "paused"] as const) {
+      const plan = planItem(
+        { ...base, runStatus, merged: true, ahead: 0, blocked: "This run is still active." },
+        open,
+      );
+      assert.equal(plan.action, "fail", `${runStatus} should fail, not skip`);
+    }
   });
 
   it("fails a run that never had a branch", () => {

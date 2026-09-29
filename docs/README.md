@@ -63,7 +63,10 @@ without being listed in it, which read as an operator page nobody had indexed:
   settles — `docs/agent/conventions.md` cites it as the reasoning behind the
   closed grouping vocabulary.
 - The **external validator** pitch and the baseline measurement it rests on are
-  [`proposals/ExternalValidator/`](../proposals/ExternalValidator/README.md). A
+  no longer in the tree: 36a0416 moved the implemented proposals out to the
+  operator's Knowledge Vault as summary notes, and the files as written are
+  `git show a74a1bb:"proposals/implemented - ExternalValidator/README.md"`
+  (`external-validator.md` and `validator-baseline.md` beside it). A
   validator has since shipped, in a shape that pitch argues against — the
   operator's half is *Checking the work before the task closes* in
   [`taskboard.md`](taskboard.md) and the reasoning is in

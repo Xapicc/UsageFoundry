@@ -50,6 +50,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 ## [A run's spend and the other spend readings](metering/run-spend-readings.md)
 
 - Per-iteration spend comes from the CLI's own `result` event
+- A resumed cycle's `total_cost_usd` is its session's running total, so the run loop banks the increase.
 - A killed cycle's spend is reconciled, into its own column.
 - The cycle in flight is on the row, in its own column, and it is not a count.
 - What a run is spending *now* is a third reading on the dashboard, never a correction to the meters.
