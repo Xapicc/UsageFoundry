@@ -32,21 +32,21 @@ measurement under *Verified* and cut the item down to what is still open.
 | Context control | [context-control-intake-filter.md](verification/context-control-intake-filter.md) — the intake filter and its ledger | 8 | 4 |
 | Context control | [context-control-occupancy-and-composition.md](verification/context-control-occupancy-and-composition.md) — the occupancy and composition series | 8 | 5 |
 | Orchestrator chat | [orchestrator-chat.md](verification/orchestrator-chat.md) | 12 | 22 |
-| Taskboard | [taskboard-board-and-tools.md](verification/taskboard-board-and-tools.md) — the board, its MCP tools and validation | 8 | 5 |
+| Taskboard | [taskboard-board-and-tools.md](verification/taskboard-board-and-tools.md) — the board, its MCP tools and validation | 11 | 5 |
 | Taskboard | [taskboard-comments.md](verification/taskboard-comments.md) — task comments and threads | 7 | 2 |
 | Taskboard | [taskboard-dependencies.md](verification/taskboard-dependencies.md) — task dependencies and their drawing | 5 | 4 |
 | Workflows and schedules | [workflows-and-schedules-loop-sections.md](verification/workflows-and-schedules-loop-sections.md) — a loop's repeated section: frames, marking, passes and pick-ups | 18 | 4 |
 | Workflows and schedules | [workflows-and-schedules-general.md](verification/workflows-and-schedules-general.md) — the canvas, instances, schedules, and a loop's region, link and board stop, review blocks | 12 | 12 |
 | Concurrency and ownership | [concurrency-and-ownership.md](verification/concurrency-and-ownership.md) | 17 | 7 |
 | Isolation and landing | [isolation-and-landing.md](verification/isolation-and-landing.md) | 12 | 11 |
-| Git and review | [git-and-review.md](verification/git-and-review.md) | 11 | 8 |
+| Git and review | [git-and-review.md](verification/git-and-review.md) | 11 | 9 |
 | Agents, templates and models | [agents-templates-and-models.md](verification/agents-templates-and-models.md) | 14 | 7 |
-| Other providers | [other-providers.md](verification/other-providers.md) — Codex, and the local provider | 11 | 6 |
+| Other providers | [other-providers.md](verification/other-providers.md) — Codex, and the local provider | 14 | 8 |
 | Knowledge and plugins | [knowledge-and-plugins.md](verification/knowledge-and-plugins.md) | 16 | 11 |
 | Dreaming | [dreaming.md](verification/dreaming.md) | 2 | 1 |
 | Retention | [retention.md](verification/retention.md) | 2 | 2 |
-| Security and sandboxing | [security-and-sandboxing-cli-sandbox.md](verification/security-and-sandboxing-cli-sandbox.md) — the CLI's sandbox, bwrap, seccomp, mount points and the write set | 16 | 11 |
-| Security and sandboxing | [security-and-sandboxing-privilege-and-auth.md](verification/security-and-sandboxing-privilege-and-auth.md) — the privilege split, credentials, auth and containment | 7 | 7 |
+| Security and sandboxing | [security-and-sandboxing-cli-sandbox.md](verification/security-and-sandboxing-cli-sandbox.md) — the CLI's sandbox, bwrap, seccomp, mount points and the write set | 17 | 12 |
+| Security and sandboxing | [security-and-sandboxing-privilege-and-auth.md](verification/security-and-sandboxing-privilege-and-auth.md) — the privilege split, credentials, auth and containment | 9 | 7 |
 | Security and sandboxing | [security-and-sandboxing-stacks.md](verification/security-and-sandboxing-stacks.md) — a stack's tool grants and permissions | 8 | 1 |
 | Container and environment | [container-and-environment-resources.md](verification/container-and-environment-resources.md) — memory, CPU, cgroup limits, OOM and the filter launcher | 6 | 5 |
 | Container and environment | [container-and-environment-stacks.md](verification/container-and-environment-stacks.md) — the stacks carrier, its installs, receipts and invocation counts | 20 | 6 |
@@ -58,4 +58,4 @@ measurement under *Verified* and cut the item down to what is still open.
 | Interface | [interface-narrow-viewports.md](verification/interface-narrow-viewports.md) — pages at 390px, layout sweeps and smoke-pages | 15 | 9 |
 | Interface | [interface-canvases.md](verification/interface-canvases.md) — the graph canvases, touched map and replay | 5 | 2 |
 | Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads | 13 | 10 |
-| **Total** | | **369** | **236** |
+| **Total** | | **379** | **242** |
