@@ -10627,9 +10627,12 @@ export async function startRun(id: string): Promise<void> {
         // container does.
         recordValidationCycle(id);
         pendingPushback = heldBack.pushback;
+        // Worded so it names no count: `reason` is one task's finding bare or
+        // several tasks' by title, and the validator's own lines just above
+        // this one already said which tasks were checked.
         log(
           id,
-          `The task this run holds was checked and is not closed: ${heldBack.reason}. Giving it another work cycle to finish what is missing.`,
+          `Checked and not closed: ${heldBack.reason}. Giving this run another work cycle to finish what is missing.`,
         );
       }
 
