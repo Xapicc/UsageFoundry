@@ -7183,6 +7183,9 @@ async function pruneAtBoundary(
     // because the window after the resume is not lower than before the cut and
     // the tick's below-the-mark reset never fires.
     ceilingMeasuredAt.delete(id);
+    // And whether a decline has been explained: the one it explained was about
+    // the conversation this cut just replaced.
+    earlyEndDeclined.delete(id);
   }
   return outcome;
 }
@@ -9523,6 +9526,9 @@ export async function startRun(id: string): Promise<void> {
         // too. Kept, it would hold the fresh conversation's first crossing back
         // until it had grown 25,000 tokens past a figure it never had.
         ceilingMeasuredAt.delete(id);
+        // A decline explained against that conversation explained nothing about
+        // this one, so the next is written out in full rather than as a follow-up.
+        earlyEndDeclined.delete(id);
       }
 
       const prompt = nextPrompt({
@@ -11523,9 +11529,13 @@ function predictedPayback(runId: string): number | null {
  * between the full explanation and the short form that carries the numbers.
  * See `ceilingDeclineMessage`.
  *
- * Cleared when a cut actually happens, so the next decline — taken against a
- * conversation that has since been cut — explains itself again rather than
- * arriving as a follow-up to a line about the old one.
+ * Cleared wherever the conversation the explanation was about stops existing —
+ * the ceiling's own cut, a cut at a natural boundary in `pruneAtBoundary`, and
+ * the fresh-start branch in `startRun` — so the next decline, taken against the
+ * conversation that replaced it, explains itself again rather than arriving as
+ * a follow-up to a line about the old one. `ceilingMeasuredAt` is cleared at
+ * the same three sites for the same reason; a new path that cuts or replaces a
+ * conversation clears both.
  *
  * A `Set` on `globalThis` for `__ufInterrupts`' reason, and cleared with the
  * run's other per-run state when its loop ends.
