@@ -35,7 +35,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 ## [The writer: a run, its spend limit and its prompt](dreaming/the-writer.md)
 
 - The writer is a run, never an assist.
-- `dreamingMaxCostUSD` has no way to express "no ceiling".
+- `dreamingMaxCostUSD` has no way to express "no limit".
 - Everything the licence rests on lives in `buildDreamingPrompt`, which is why it is pure and tested.
 
 ## [The nightly clock](dreaming/the-clock.md)

@@ -14,7 +14,7 @@ feature sidesteps by not being an assist. It is also never isolated: an isolated
 run works in a copy and lands a branch, the vault is not a repository, and a note
 written into a worktree that is later discarded is a note nobody ever sees.
 
-**`dreamingMaxCostUSD` has no way to express "no ceiling",** on
+**`dreamingMaxCostUSD` has no way to express "no limit",** on
 `scheduleRefusal`'s reasoning quoted word for word: every other press of Run is
 bounded by a person being there to see what it cost and decide whether to press
 it again, and a clock removes the person and keeps the press. The settings door

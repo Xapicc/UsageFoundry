@@ -254,7 +254,7 @@ function Summary({
             A nightly pass runs at {hhmm(data.fireAtMinutes)} {data.timeZone}, writing up to{" "}
             {data.maxPerNight} note(s) into <strong>{data.vaultLabel}</strong> for failures
             seen on {data.minDays} or more separate days, under a ${data.maxCostUSD.toFixed(2)}{" "}
-            ceiling.
+            spend limit.
           </Notice>
         )}
       </div>
