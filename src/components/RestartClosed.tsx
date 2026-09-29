@@ -82,7 +82,10 @@ export function RestartClosed({ onReopened }: { onReopened: () => void }) {
     onReopened();
   }
 
-  const { offer: count, report } = restartClosedView(state?.count ?? null, press);
+  const { offer: count, report } = restartClosedView(
+    state ? state.runs.map((r) => r.id) : null,
+    press,
+  );
 
   const reportNotice = report && (
     <Notice tone={report.tone} live>

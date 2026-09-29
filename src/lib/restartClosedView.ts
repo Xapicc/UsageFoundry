@@ -34,8 +34,8 @@ export interface RestartClosedView {
 }
 
 /**
- * What `RestartClosed` draws, given the last read of the list and the last
- * press.
+ * What `RestartClosed` draws, given the ids the last read of the list returned
+ * and the last press.
  *
  * The component used to choose one of three returns, and each hid something:
  *
@@ -50,16 +50,32 @@ export interface RestartClosedView {
  *    the button, and the only thing that cleared the error was the button. The
  *    message said "try again" over a page with nothing to press until a reload.
  *
- * So the offer and the report are independent here: the button is drawn
- * whenever runs are waiting, and the answer to the last press is drawn beside
- * it whenever there is one.
+ * So the answer to the last press is drawn whenever there is one, and the
+ * button beside it whenever runs are waiting — unless one of them is a run
+ * that press just refused. The offer is a sentence saying the runs "can resume
+ * where they left off" over a button that picks them up, and for a run just
+ * refused that is false: a refusal can be permanent, and pressing again only
+ * asks again. The answer already names each of them with the way out, which is
+ * on its own page.
+ *
+ * No offer at all rather than one for the runs that were not refused, because
+ * the press does not take a list: it picks up everything `restartClosedRuns`
+ * returns, the refused runs included, and the sheet's count is the promise
+ * about how many agents one press may start. After a press the list is read
+ * again at once and is exactly what it refused, so the two only mix when a run
+ * joins the list between the press and that read; it is then offered on the
+ * next load of the page. A failed press refused nothing anybody knows of, so
+ * it keeps the button, which is how its error is cleared.
  */
 export function restartClosedView(
-  count: number | null,
+  waiting: readonly string[] | null,
   press: RestartClosedPress | null,
 ): RestartClosedView {
+  const justRefused = new Set(press?.ok ? press.refused.map((r) => r.id) : []);
+  const offerable =
+    waiting !== null && waiting.length > 0 && !waiting.some((id) => justRefused.has(id));
   return {
-    offer: count !== null && count > 0 ? count : null,
+    offer: offerable ? waiting.length : null,
     report: press === null ? null : pressReport(press),
   };
 }
