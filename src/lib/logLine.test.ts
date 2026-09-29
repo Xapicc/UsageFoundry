@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import type { RunEventDTO } from "./apiTypes";
 import {
   describeEvent,
+  folderHolder,
   logFilterActive,
   matchesLogFilter,
   parkTrigger,
@@ -483,6 +484,73 @@ describe("parkTrigger — which of the two parks put a run where it is", () => {
 
   it("says nothing before the events that would say have arrived", () => {
     assert.equal(parkTrigger([]), null);
+  });
+});
+
+describe("folderHolder — a parked run the sweeper is holding for its folder", () => {
+  const status = (value: string): RunEventDTO => ({
+    id: 4,
+    runId: "r",
+    ts: 0,
+    kind: "status",
+    payload: { status: value },
+  });
+  const waitingFor = (holder: string): RunEventDTO => ({
+    id: 5,
+    runId: "r",
+    ts: 0,
+    kind: "log",
+    payload: { message: "Waiting for the folder.", waitingFor: holder },
+  });
+  const now = 1_000_000;
+  const past = now - 60_000;
+
+  it("names the run in the folder once the sweep has held this one", () => {
+    const held = [status("paused"), waitingFor("occupant")];
+    assert.equal(folderHolder(held, past, now), "occupant");
+    assert.equal(folderHolder(held, null, now), "occupant");
+  });
+
+  it("holds from the instant the run is due, which is when the sweep looks", () => {
+    assert.equal(folderHolder([status("paused"), waitingFor("occupant")], now, now), "occupant");
+  });
+
+  it("reads nothing while the run is still waiting for its window", () => {
+    // Parked, not yet swept: the park is the newest thing that happened.
+    assert.equal(folderHolder([waitingFor("occupant"), status("paused")], past, now), null);
+  });
+
+  it("drops a hold the sweep has since re-parked for the window", () => {
+    // That write moves `resume_at` ahead and emits nothing.
+    assert.equal(
+      folderHolder([status("paused"), waitingFor("occupant")], now + 60_000, now),
+      null,
+    );
+  });
+
+  it("does not carry a hold from an earlier park into this one", () => {
+    const events = [
+      status("paused"),
+      waitingFor("earlier"),
+      status("queued"),
+      status("running"),
+      status("paused"),
+    ];
+    assert.equal(folderHolder(events, past, now), null);
+  });
+
+  it("does not read the queue wait logged at creation as a hold", () => {
+    const events = [status("queued"), waitingFor("ahead"), status("running"), status("paused")];
+    assert.equal(folderHolder(events, past, now), null);
+  });
+
+  it("looks past ordinary lines to the hold", () => {
+    const events = [status("paused"), waitingFor("occupant"), logEvent("npm test")];
+    assert.equal(folderHolder(events, past, now), "occupant");
+  });
+
+  it("says nothing before the events that would say have arrived", () => {
+    assert.equal(folderHolder([], past, now), null);
   });
 });
 
