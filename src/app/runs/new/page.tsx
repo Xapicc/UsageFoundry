@@ -713,28 +713,35 @@ export default function NewRunPage() {
       }
     })();
 
-    fetch("/api/usage")
-      .then((r) => r.json())
-      .then(setUsage)
-      .catch(() => void 0);
+    // The next three through `jsonRequest` for the same non-2xx body. A 401's
+    // `{ error }` stored as the usage snapshot made `usage?.snapshot.session`
+    // throw during render.
+    void (async () => {
+      const res = await jsonRequest<UsageResponse>("/api/usage");
+      if (res.ok) setUsage(res.data);
+    })();
 
-    fetch("/api/templates", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => setTemplates(d.templates ?? []))
-      .catch(() => void 0);
+    void (async () => {
+      const res = await jsonRequest<{ templates?: RunTemplateDTO[] }>(
+        "/api/templates",
+      );
+      if (res.ok) setTemplates(res.data.templates ?? []);
+    })();
 
-    fetch("/api/agents", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => {
-        setAgents(d.agents ?? []);
-        setAmbientAgents(d.ambient ?? []);
-        setAgentsLoaded(true);
-      })
+    void (async () => {
+      const res = await jsonRequest<{
+        agents?: AgentDTO[];
+        ambient?: AmbientAgentDTO[];
+      }>("/api/agents");
       // A failed read leaves the picker empty and `agentsLoaded` false, so a
       // template naming an agent is never reported as naming a missing one on
       // the strength of a list that did not arrive. The run door still refuses
       // it by name, which is the answer that guards anything.
-      .catch(() => void 0);
+      if (!res.ok) return;
+      setAgents(res.data.agents ?? []);
+      setAmbientAgents(res.data.ambient ?? []);
+      setAgentsLoaded(true);
+    })();
 
     if (seedRunId) {
       fetch(`/api/runs/${seedRunId}`, { cache: "no-store" })
