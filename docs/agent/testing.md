@@ -362,23 +362,18 @@ Units that are about no test file in the tree:
 
 ## Checking this page is complete
 
-The rest of the suite is named by *subject* in the topic files rather than by filename, which is the right way round for deciding whether something is already covered and the wrong way round for checking that this page is complete — so the filenames are here too, and nothing else is claimed about them: `budgetPayload.test.ts`, `agentRegistry.test.ts`, `agents.test.ts`, `authGuard.test.ts`, `budget.test.ts`, `canvasGraph.test.ts`, `chatRequest.test.ts`, `claudeAuth.test.ts`, `config.test.ts`, `configCheck.test.ts`, `contextPruningReporting.test.ts`, `cycles.test.ts`, `diff.test.ts`, `forkAttempts.test.ts`, `format.test.ts`, `formProblems.test.ts`, `formSeed.test.ts`, `git.test.ts`, `http.test.ts`, `jsonRequest.test.ts`, `land.test.ts`, `loginLimiter.test.ts`, `logLine.test.ts`, `patch.test.ts`, `planUsage.test.ts`, `plugins.test.ts`, `privsep.test.ts`, `repoSpend.test.ts`, `retention.test.ts`, `review.test.ts`, `sandbox.test.ts`, `sandboxMountPoints.test.ts`, `schedules.test.ts`, `serverLock.test.ts`, `sessionToken.test.ts`, `stacks.test.ts`, `templates.test.ts`, `toolInventory.test.ts`, `applyStacks.test.ts`, `transcriptForkDedupe.test.ts`, `unsavedWork.test.ts`, `windows.test.ts` and `workflows.test.ts`.
-
-The completeness `CLAUDE.md` promises for this page is therefore checkable rather than asserted, and a test added without a paragraph here fails it:
+Every test file is named in the paragraph that holds its grounds, in the topic file for its area — by basename, or by path for the `route.test.ts` files, which all share one — and that name is the whole of what the check below looks for. It reads the topic files and never this page. The tables above name every test file by design, so a check that read them would pass a test whose row was added and whose paragraph never was, which is how it once printed nothing while four files had no grounds anywhere. For the same reason a paragraph that names only its subject, a function or a module, is invisible to it: when you write one, put the file's name in it too.
 
 ```
-find src -name '*.test.ts' -o -name '*.test.tsx' | wc -l          # 147 as this is written
+find src -name '*.test.ts' -o -name '*.test.tsx' | wc -l          # 182 as this is written, 2026-09-29
 for f in $(find src -name '*.test.ts' -o -name '*.test.tsx' | sort); do
-  grep -qF "$(basename "$f")" docs/agent/testing.md || echo "unnamed: $f"
-done                              # names any test whose grounds are not on this page
+  name=$(basename "$f")
+  [ "$name" = route.test.ts ] && name=$f          # every route handler's test has that basename
+  grep -qF "$name" docs/agent/testing/*.md || echo "no grounds: $f"
+done                              # names any test no topic file names
 ```
 
-**It prints three, as this is written, and they are deliberately not listed
-here.** Each was written on a sibling branch and merged in without its
-paragraph; naming them in this file would satisfy the `grep` and silence the
-check, which is the one thing that must not happen to it — the tool is worth
-having only because a mention is what it looks for. Run it, and whoever owns
-what it names owes this page the grounds that test earned.
+It prints nothing as this is written. Whoever owns a file it names owes that file's topic file the paragraph stating what it earned against the bar above, and this page its row. Do not put the name in a topic file before the paragraph exists — not in a list, not in another test's paragraph — because a mention is all the check can see, and that would silence it for a test nobody wrote grounds for. It is a floor rather than a proof: it cannot tell a paragraph from a passing mention.
 
 [queue]: testing/run-queue-and-admission.md
 [cycle]: testing/work-cycle-prompts-and-endings.md

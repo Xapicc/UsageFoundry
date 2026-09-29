@@ -10,11 +10,11 @@ Three of the entries on the list of what `npm test` covers are not pure function
 
 `sendChatMessage`'s claim on a chat is the second, driven against a temporary database with `spawn` replaced by a counter — what it decides is not a value but whether a second billed child joins a conversation that already has one, and the only assertion that says so is the number of children.
 
-`jsonRequest` is the third, and it is the one that makes the request: what it pins is that it *returns*, whatever happens, because an unguarded `fetch` rejecting out of a handler reports nothing at all — the chat page's flag disabling the composer, Approve, Reject and Select-all stayed set with no way back but a reload; the branches page's Land, Purge and Delete re-enabled their button and left the table exactly as it was, which is what a press that did nothing also looks like; and the land card's poll went on rendering a conflict resolution as in flight long after it had finished.
+`jsonRequest` (`jsonRequest.test.ts`) is the third, and it is the one that makes the request: what it pins is that it *returns*, whatever happens, because an unguarded `fetch` rejecting out of a handler reports nothing at all — the chat page's flag disabling the composer, Approve, Reject and Select-all stayed set with no way back but a reload; the branches page's Land, Purge and Delete re-enabled their button and left the table exactly as it was, which is what a press that did nothing also looks like; and the land card's poll went on rendering a conflict resolution as in flight long after it had finished.
 
 The status it carries is the other half — `null` is nobody answered and a number is somebody refused, which is the split between `pollFailureMessage` on a poll and `actionFailureMessage` beside a press that may or may not have landed.
 
-`chatRequest` is a caller of it and keeps its own test, because the chat page reads a thread off the answer and that shape is its own.
+`chatRequest` (`chatRequest.test.ts`) is a caller of it and keeps its own test, because the chat page reads a thread off the answer and that shape is its own.
 
 The first of the twenty that open the database, `src/app/api/chat/[id]/route.test.ts`, names a throwaway `DATA_DIR` and calls the handler, because what it pins is a *payload key*: the chat page polls that one route, so a list left out of its answer is frozen on screen until a reload, which is exactly what it did for as long as a comment claimed otherwise.
 
