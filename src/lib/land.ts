@@ -1387,6 +1387,26 @@ export async function landRun(
     });
     if (refusal) return { ok: false, reason: refusal };
 
+    // The run half of `landState`'s verdict, asked again for `deliverRun`'s
+    // reason: the check may have run for `VERIFY_TIMEOUT_MS`, long enough for
+    // the run to be reopened or a continuation to be started on this branch.
+    // One that has not committed yet leaves the tip where the check saw it, so
+    // `verifyInSlot` passes it, and this run is no longer the one that lands
+    // the branch. Synchronous from the reads to the merge's spawn.
+    const current = getRun(runId);
+    if (!current) return { ok: false, reason: "No such run." };
+    const chain = branchChain(current);
+    const unsettled = unsettledBranchRefusal(
+      {
+        runId,
+        runStatus: current.status,
+        chain,
+        loopBlock: loopStillRepeating(chain, asker),
+      },
+      "land",
+    );
+    if (unsettled) return { ok: false, reason: unsettled };
+
     // Again where nothing awaits before the spawn, `spawnAssist`'s reason: the
     // operator's check and the `rev-parse` both await after the read above,
     // and a merge begun during the grace is one the exit can cut off part-way.
