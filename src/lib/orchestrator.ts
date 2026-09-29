@@ -11922,6 +11922,13 @@ export async function sweepPaused(): Promise<void> {
     if (due.length === 0) return; // nothing to decide, so no scan
 
     const snapshot = await currentSnapshot();
+    // Asked again, on the entry check's rule: the scan can take seconds, a beat
+    // that finds the lock taken can land inside it, and every decision below is
+    // a write to rows that would then be the new owner's.
+    if (!mayWriteDataDir()) {
+      stopSweeper();
+      return;
+    }
     const now = Date.now();
     let freed = false;
     let resumeSlots = MAX_RESUMES_PER_SWEEP;
