@@ -6,10 +6,10 @@ import {
   queueHistory,
   queueView,
   type QueueRow,
-} from "@/lib/mergeQueue";
-import { getRun } from "@/lib/orchestrator";
-import { getSettings } from "@/lib/settings";
-import { jsonNoStore } from "../../../../lib/http";
+} from "../../../../lib/mergeQueue";
+import { getRun } from "../../../../lib/orchestrator";
+import { getSettings } from "../../../../lib/settings";
+import { jsonNoStore, readJsonObject } from "../../../../lib/http";
 import { auditMutation } from "../../../../lib/requestLog";
 
 export const runtime = "nodejs";
@@ -104,7 +104,9 @@ export async function GET(req: Request) {
  * for the same reason a review does.
  */
 async function postHandler(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const read = await readJsonObject(req);
+  if (!read.ok) return read.response;
+  const body = read.body;
 
   const runIds = Array.isArray(body.runIds)
     ? body.runIds.filter((v): v is string => typeof v === "string")
@@ -132,7 +134,9 @@ async function postHandler(req: Request) {
 
 /** Drop everything still waiting. What is in flight is left to finish. */
 async function deleteHandler(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const read = await readJsonObject(req);
+  if (!read.ok) return read.response;
+  const body = read.body;
   const batchId = typeof body.batchId === "string" ? body.batchId : null;
   if (!batchId) {
     return NextResponse.json({ error: "No batch was named." }, { status: 400 });

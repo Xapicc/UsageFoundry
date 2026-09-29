@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 // rewrites the path alias at runtime, so a module a test loads has to import
 // the way src/lib and the chat route already do.
 import { AUTH_TOKEN, COOKIE_SECURE, authEnabled } from "../../../lib/config";
+import { isJsonObject } from "../../../lib/http";
 import {
   checkLoginAllowed,
   clearLoginFailures,
@@ -96,8 +97,15 @@ async function postHandler(req: Request) {
     );
   }
 
-  const body = (await req.json().catch(() => ({}))) as { token?: string };
-  if (!tokenMatches(body.token)) {
+  // A body that is not an object carries no token, so it is a wrong guess —
+  // counted and delayed like one — rather than a 400. This door answers every
+  // caller without the token the same way, and a second refusal would be a
+  // path through it that skips the failure count. `null` used to throw here,
+  // which was a 500 and a stack trace in the log for anyone who can reach
+  // the port.
+  const parsed: unknown = await req.json().catch(() => ({}));
+  const offered = isJsonObject(parsed) ? parsed.token : undefined;
+  if (!tokenMatches(offered)) {
     recordLoginFailure(source);
     // Uniform delay keeps a wrong token from being distinguishable by timing.
     // It is not the rate limit and never was: it is an `await` on a timer, so

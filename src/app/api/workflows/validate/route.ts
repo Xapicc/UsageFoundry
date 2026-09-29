@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
+// Relative, not "@/…" — see the note in the login route.
 import {
   boardReadings,
   currentKnowledge,
   folderRefusal,
   normalizeWorkflowInput,
-} from "@/lib/workflows";
+} from "../../../../lib/workflows";
+import { readJsonObject } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,7 +45,9 @@ export const dynamic = "force-dynamic";
  * function `advanceLoop` reads it through.
  */
 export async function POST(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const read = await readJsonObject(req);
+  if (!read.ok) return read.response;
+  const body = read.body;
   const known = currentKnowledge();
   const boards = boardReadings(body, known);
 

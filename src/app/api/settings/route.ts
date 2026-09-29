@@ -15,7 +15,7 @@ import {
   type Settings,
 } from "../../../lib/settings";
 import { normalizePolicy } from "../../../lib/budget";
-import { jsonMaybeGzipped } from "../../../lib/http";
+import { jsonMaybeGzipped, readJsonObject } from "../../../lib/http";
 import { normalizeSubpath } from "../../../lib/knowledge";
 import { agentKnowledgeOf, agentRefusal, getAgent } from "../../../lib/agents";
 import {
@@ -167,7 +167,9 @@ export async function GET(req: Request) {
 class FieldRefusal extends Error {}
 
 async function putHandler(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const read = await readJsonObject(req);
+  if (!read.ok) return read.response;
+  const body = read.body;
 
   try {
     return await applySettingsPut(body);

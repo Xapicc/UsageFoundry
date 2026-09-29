@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 // Relative, not "@/…" — see the note in the login route.
 import type { CodexAuthDTO } from "../../../../lib/apiTypes";
 import { submitApiKey } from "../../../../lib/codexAuth";
+import { readJsonObject } from "../../../../lib/http";
 import { auditMutation, recordDurableMutation } from "../../../../lib/requestLog";
 
 export const runtime = "nodejs";
@@ -35,7 +36,9 @@ export const dynamic = "force-dynamic";
  * a different one.
  */
 async function postHandler(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as { apiKey?: unknown };
+  const read = await readJsonObject(req);
+  if (!read.ok) return read.response;
+  const body = read.body;
   const res = await submitApiKey(body.apiKey);
   if (!res.ok) return NextResponse.json({ error: res.error }, { status: 400 });
   const auth: CodexAuthDTO = res.value;

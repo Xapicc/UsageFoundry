@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+// Relative, not "@/…" — see the note in the login route.
 import {
   commitPending,
   deleteBranch,
@@ -9,10 +10,11 @@ import {
   resolutionChange,
   resolveConflicts,
   type LandStrategy,
-} from "@/lib/land";
-import { latestAssist, reviewPaths } from "@/lib/review";
-import { getRun } from "@/lib/orchestrator";
-import { getSettings } from "@/lib/settings";
+} from "../../../../../lib/land";
+import { readJsonObject } from "../../../../../lib/http";
+import { latestAssist, reviewPaths } from "../../../../../lib/review";
+import { getRun } from "../../../../../lib/orchestrator";
+import { getSettings } from "../../../../../lib/settings";
 import { auditMutation } from "../../../../../lib/requestLog";
 
 export const runtime = "nodejs";
@@ -88,7 +90,9 @@ async function postHandler(req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   if (!getRun(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const read = await readJsonObject(req);
+  if (!read.ok) return read.response;
+  const body = read.body;
   const action = String(body.action ?? "land");
 
   if (action === "delete") {

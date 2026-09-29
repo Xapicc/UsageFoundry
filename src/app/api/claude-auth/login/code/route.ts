@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 // Relative, not "@/…" — see the note in the login route.
 import type { ClaudeAuthDTO } from "../../../../../lib/apiTypes";
 import { submitCode } from "../../../../../lib/claudeAuth";
+import { readJsonObject } from "../../../../../lib/http";
 import {
   auditMutation,
   recordDurableMutation,
@@ -27,7 +28,9 @@ export const dynamic = "force-dynamic";
  * code already redeemed — is one the operator fixes by starting again.
  */
 async function postHandler(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as { code?: unknown };
+  const read = await readJsonObject(req);
+  if (!read.ok) return read.response;
+  const body = read.body;
   const res = await submitCode(body.code);
   if (!res.ok) {
     // `stillPending` is what tells the page whether to leave the field open for
