@@ -16,7 +16,7 @@ than asserted.** Every other axis file reports gaps in areas `docs/agent/` never
 had an opinion about; here there are opinions, and a gap can therefore be a
 contradiction rather than an omission. One of the five is:
 [S1](#s1-the-all-sessions-branch-of-the-logout-route-takes-no-credential-and-revoking-a-session-does-not-end-it)
-contradicts `docs/agent/security.md:26` in the sentence that justifies the
+contradicts `docs/agent/security/middleware-login-and-sessions.md`'s edge-runtime paragraph in the sentence that justifies the
 route's exemption from the edge gate. That is the strongest kind of row this
 directory can carry and it is the reason the register's closing observation had
 to be rewritten.
@@ -38,7 +38,7 @@ was opened, closed or commented on.
 `POST /api/logout` is exempt from the edge gate unconditionally
 (`src/middleware.ts:52-54`), which is correct and argued: signing out must not
 require a valid session, or a stale cookie becomes the one state an operator can
-never leave. `docs/agent/security.md:26` states the exemption's whole
+never leave. `docs/agent/security/middleware-login-and-sessions.md`'s edge-runtime paragraph states the exemption's whole
 justification in one clause:
 
 > `/api/logout` is the third, and it is the one that grants nothing: it revokes
@@ -84,7 +84,7 @@ revocation.** `middleware.ts:122-125` validates the cookie through
 the reason the file states at `:2-4`: it runs in the edge runtime and cannot
 reach SQLite.
 
-`docs/agent/security.md:28` records that limitation for the ordinary case and is
+`docs/agent/security/middleware-login-and-sessions.md`'s *"the session cookie is a handle"* paragraph records that limitation for the ordinary case and is
 explicit that closing it means moving the gate off the edge runtime. What it
 does not say, and what the route says instead, is
 `src/app/api/logout/route.ts:22-23`:
@@ -142,7 +142,7 @@ works, so an operator with a browser session does not have to find the monitor's
 credential to read this page's data."*
 
 **`uf_session` has not equalled `UF_AUTH_TOKEN` since the cookie was reshaped.**
-`docs/agent/security.md:28` records the change in its first sentence: the cookie
+`docs/agent/security/middleware-login-and-sessions.md`'s *"the session cookie is a handle"* paragraph records the change in its first sentence: the cookie
 "used to be `UF_AUTH_TOKEN` byte for byte" and is now
 `v1.<32 random bytes>.<expiry>.<HMAC-SHA256 keyed by the token>`. The comparison
 above is over the raw cookie value, so it can never succeed against a cookie
@@ -254,7 +254,7 @@ had the line, and the line for a credential rotation was never written.
 **One of the nine has an argument already written against wrapping it, and it is
 not on the list because it is `/api/mcp`.** That route *is* wrapped, on the
 handler that already holds a subject and not on the refusal, and
-`docs/agent/security.md:26` sets out why at length: wrapping a route the
+`docs/agent/security/middleware-login-and-sessions.md`'s edge-runtime paragraph sets out why at length: wrapping a route the
 middleware exempts hands an unauthenticated caller a lever on the audit table
 itself, twenty thousand correctly-refused requests at a time, and every line
 naming a run that was started or a sign-in that failed is evicted with them.
@@ -281,8 +281,9 @@ install has more than one operator.
 
 ## S4. The no-literal rule is pinned by an assertion whose fixture omits the one notice that carries figures
 
-`docs/agent/security.md:22` is the longest paragraph in that file and the only
-one with two dated incidents in it: a literal in `--append-system-prompt` is on
+`docs/agent/security/process-signals-and-appended-prompt.md`'s no-literal
+paragraph was the only one in `docs/agent/security.md`, before that file was
+split, with two dated incidents in it: a literal in `--append-system-prompt` is on
 every concurrently running agent's command line, so it is a pattern that selects
 the whole fleet, and `pgrep -f 3100` killed siblings twice. Its closing rule is
 general:
@@ -327,7 +328,7 @@ assertion whose message is *"it is on every sibling's command line"* is scoped
 to a fixture where that clause is not true.
 
 **The rule itself is not violated, and saying otherwise would be the easy
-mistake.** `docs/agent/security.md:22` anticipates the price list by name and
+mistake.** `docs/agent/security/process-signals-and-appended-prompt.md`'s no-literal paragraph anticipates the price list by name and
 argues it is safe on different grounds: what keeps it inert is not that the
 strings differ but that nothing near them offers a pattern, no verb beside them
 is `kill`, and the block names no command.
@@ -384,10 +385,10 @@ SQLite.
 
 **The caller is not a stranger.** The ingest token is minted per run and lives in
 that run's own environment so its OTLP exporter can use it, which is why
-`docs/agent/security.md:26` describes the exemption as safe: the credential
+`docs/agent/security/middleware-login-and-sessions.md`'s edge-runtime paragraph describes the exemption as safe: the credential
 opens nothing but that run's telemetry. That is true of what it *writes* and says
 nothing about what it *costs to read*, and the holder is the unattended child
-the whole privsep design at `docs/agent/security.md:10` treats as the party to
+the whole privsep design in `docs/agent/security/child-uid-and-credentials.md`'s *"the server is root and every child it spawns is not"* paragraph treats as the party to
 be excluded.
 
 **Two boundaries in this repository already bound their input, with the reason on
@@ -467,12 +468,12 @@ through; the six that were dropped are in
   but counts"*. That is the pattern the rest of this register keeps asking for:
   the justification for a decision written as an assertion.
 - **`permissionMode` is narrowed at every route that can carry one**, and there
-  are three rather than the two `docs/agent/security.md:19` counts:
+  are three rather than the two `docs/agent/security/path-containment-and-spawn-argv.md`'s *"a named agent is not a capability surface"* paragraph counts:
   `POST /api/runs`, `chatDefaultGuards` in `PUT /api/settings`
   (`src/app/api/settings/route.ts:585-625`), and a template
   (`src/lib/templates.ts:190-192`, against `PERMISSION_MODES`). All three narrow
   against the same four literals, so the third route is a counting difference
-  against `docs/agent/security.md:19`'s *"the routes to `--permission-mode` stay
+  against that paragraph's *"the routes to `--permission-mode` stay
   the two they were"* and not a hole.
 - **`gitEnv()`'s `UF_` strip makes every credentialed git call greppable.** The
   scrub drops the whole namespace, so `UF_GITHUB_TOKEN` cannot be *left in* and
@@ -497,11 +498,11 @@ input schema (`src/app/api/mcp/route.ts:265-306`) has no `permissionMode`
 property, and no handler in that file writes one from a payload: the only
 occurrences are `:1002` reading a saved template's value out, `:1676` taking it
 from the operator's `chatDefaultGuards`, and `:1730` stating it back to the model
-in the confirmation text. `docs/agent/security.md:19` is the reasoning and it
+in the confirmation text. `docs/agent/security/path-containment-and-spawn-argv.md`'s *"a named agent is not a capability surface"* paragraph is the reasoning and it
 holds.
 
 **A revoked session's captured cookie staying valid until its own expiry.**
-Documented at `docs/agent/security.md:28` as the price of an edge gate that
+Documented in `docs/agent/security/middleware-login-and-sessions.md`'s *"the session cookie is a handle"* paragraph as the price of an edge gate that
 cannot read SQLite, with the fix named as a change to what `middleware.ts` is.
 [S1](#s1-the-all-sessions-branch-of-the-logout-route-takes-no-credential-and-revoking-a-session-does-not-end-it)
 cites this rather than refiling it: the row is that one branch of the route
@@ -517,8 +518,8 @@ child's environment with the rest.
 when stored and is not when used.** Refuted above: both phases, at both times,
 with the re-prove's reason written down.
 
-**`safe.directory=*` on every git this app runs.** A deliberate waiver, argued at
-`docs/agent/security.md:15`: git's ownership refusal reaches `probeIsolation` as
+**`safe.directory=*` on every git this app runs.** A deliberate waiver, argued in
+`docs/agent/security/path-containment-and-spawn-argv.md`'s `safe.directory=*` paragraph: git's ownership refusal reaches `probeIsolation` as
 an unreadable repository, indistinguishable from "not a repository", so isolation
 would switch itself off and say the wrong thing about why. Every path reaching
 `gitSync` has already been proved inside a mount.
@@ -530,7 +531,7 @@ one thing only their own text forbids is stated as such in
 discovered. A row here would be re-filing a decision that names itself.
 
 **Sibling children sharing one uid, so one agent can read another's environment.**
-Real, and stated at `docs/agent/security.md:10` (*"every child still shares one
+Real, and stated in `docs/agent/security/child-uid-and-credentials.md`'s *"the server is root and every child it spawns is not"* paragraph (*"every child still shares one
 uid, so the group above is the only thing separating them"*) with
 `docs/security.md` named as where the residue is written down. It is also **one
 run against another**, which is
@@ -586,7 +587,7 @@ survey's output as the rows are.
    No row here rests on a count of real requests.
 6. **Whether the five notices `--append-system-prompt` ships today contain a
    usable kill pattern.** Reading them says they do not, which is
-   also what `docs/agent/security.md:22` argues.
+   also what `docs/agent/security/process-signals-and-appended-prompt.md`'s no-literal paragraph argues.
    [S4](#s4-the-no-literal-rule-is-pinned-by-an-assertion-whose-fixture-omits-the-one-notice-that-carries-figures)
    is therefore about the scope of the check and not about a live pattern, and it
    says so in its confidence line.

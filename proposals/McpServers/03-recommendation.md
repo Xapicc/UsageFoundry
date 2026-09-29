@@ -61,7 +61,8 @@ instructions name the tools without the prefix, as they did under `uf_local`.
   that lists zero tools. The last case is the local reader when its model is
   not loaded, which the trial counts as not offered. A wrong count here would
   pass silently, which is the case the testing rule for pure functions is for
-  (`docs/agent/testing.md:6`).
+  (`docs/agent/testing/the-bar.md`, "Every one earns it on the same grounds —
+  pure functions whose failure modes are silent and expensive").
 - **Two read sites, both derived when read.** Nothing is stored twice, which is
   stacks' reason for keeping no table (`src/lib/stacks.ts:26`).
   - The run page shows one line per cycle, for example `MCP: uf 5 ·

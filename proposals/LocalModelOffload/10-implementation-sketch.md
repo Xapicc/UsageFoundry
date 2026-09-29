@@ -44,7 +44,7 @@ The tool descriptions, and one sentence on the appended system prompt beside
 (reading and locating, not deciding or editing), that its answers come from a
 weaker model and should be checked against the cited lines before an edit, and
 that a busy refusal means "do it yourself". That sentence inherits the appended
-prompt's rule: no literal an agent could match on (`docs/agent/security.md:22`).
+prompt's rule: no literal an agent could match on (`docs/agent/security/process-signals-and-appended-prompt.md`'s no-literal paragraph).
 
 ## 2. Where it lives
 
@@ -103,7 +103,7 @@ tool listed, no config entry, no argv change, no notice — the same rule as
 
 ## 4. Containment: the rule that is new
 
-The server is root (`docs/agent/security.md:10`); the files it reads are in a
+The server is root (`docs/agent/security/child-uid-and-credentials.md`); the files it reads are in a
 checkout the calling agent can write. So:
 
 1. Resolve the requested path against **the run's checkout** (its worktree, or

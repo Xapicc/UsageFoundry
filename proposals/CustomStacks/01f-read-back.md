@@ -281,7 +281,7 @@ switch, because two of them are the ways a sandbox lies about itself"*
 `broken`, `failing`, `shadowed` - are ways an install lies about itself: the
 receipt says `ok` in every one.
 
-**Unknown must not render as zero** (`docs/agent/metering.md:8`). A layer that
+**Unknown must not render as zero** (`docs/agent/metering/unknown-and-percentages.md`). A layer that
 could not be read is its own thing and never a `0` or an `ok`: receipts
 unreadable is a page-level error, not six `unverified` rows.
 
@@ -331,14 +331,14 @@ handler here is per subject; one rather than three because the two `UF_*` lists
 have no receipt behind them and never will (`01e-` §4).
 
 Both: `runtime = "nodejs"`,
-`dynamic = "force-dynamic"` - both required, per `docs/agent/conventions.md:11`:
+`dynamic = "force-dynamic"` - both required, per `docs/agent/conventions/route-handlers-and-server-modules.md`'s route-handlers paragraph:
 *"Route handlers that touch SQLite or the filesystem need … Every existing data
 route has both."* Through `jsonMaybeGzipped` like the other eighteen
-(`docs/agent/conventions.md:18`), with a list DTO in `src/lib/apiTypes.ts` and
+(`docs/agent/conventions/route-handlers-and-server-modules.md`'s `jsonMaybeGzipped` paragraph), with a list DTO in `src/lib/apiTypes.ts` and
 `Cache-Control` written at the call site, *"because the helper knows nothing
-about caching"* (same line).
+about caching"* (same paragraph).
 
-The detail is **never filled from the list row** - `docs/agent/taskboard.md:779`
+The detail is **never filled from the list row** - `docs/agent/taskboard/task-page.md`'s *"the editor is a route, not a card"* paragraph
 makes the same call for the task editor, and here it is load-bearing rather than
 stylistic, because the list deliberately does not carry the 4 KB of stderr.
 
@@ -406,7 +406,7 @@ separates from that shape and which stays true here.
 - **Never a cause for a `tool_error`.** §2.4 limit 3.
 - **Never a number it did not measure.** A cap that bit is said out loud, in
   both places one can: the 4 KB stderr cap and the retention horizon.
-- **Never `0` for a layer it could not read.** §3, on `docs/agent/metering.md:8`.
+- **Never `0` for a layer it could not read.** §3, on `docs/agent/metering/unknown-and-percentages.md`'s *"unknown must not render as zero"* paragraph.
 - **Never the host path of a stack directory.** `01e-` §6: the container does not
   know it, and inventing it is worse than the hedge.
 - **Never a fact about a stack in `/api/status`'s payload.** Two integers, on

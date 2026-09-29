@@ -217,7 +217,7 @@ run should do with the file.
 | [05-…image-is-the-stack](05-option-image-is-the-stack.md) | D | **input, and the one to rule on first** | The closest thing here to R1, R2 and R4 met at once: a `Dockerfile.stack` that `FROM`s `usagefoundry:${UF_IMAGE_TAG:-latest}` (`docker-compose.yml:37`) layers on top without editing the published image, and it is a file a third party can hand you. **But it layers at build time, where assumption A1 says boot or run time.** That ruling decides whether `05-` is the answer or is out |
 | [06-…build-nothing](06-option-build-nothing.md) | E | **dead** | It is "build nothing new". The decision forecloses it by name. Its three code-comment corrections are worth keeping as chores and are not a stack mechanism |
 | [07-…make-it-runnable](07-option-make-it-runnable.md) | F | **input** | The only file in the directory that addresses R3's third link, permission to invoke. Its §10 probe costs one work cycle and **no design should be finalised without it** |
-| [08-terminal-problem.md](08-terminal-problem.md) | framing | **input, question superseded** | Nobody is asking for a terminal now, so its surface question is moot. Its uid trap, its transport survey and its reconciliation of *"never a shell"* (`docs/agent/security.md:14`) are constraints on any install surface. **Correction: its `terminalEnv()` does not exist in `src/`**; the real strip list is `childEnv`'s |
+| [08-terminal-problem.md](08-terminal-problem.md) | framing | **input, question superseded** | Nobody is asking for a terminal now, so its surface question is moot. Its uid trap, its transport survey and its reconciliation of *"never a shell"* (`docs/agent/security/path-containment-and-spawn-argv.md`) are constraints on any install surface. **Correction: its `terminalEnv()` does not exist in `src/`**; the real strip list is `childEnv`'s |
 | [09-…full-pty](09-option-full-pty.md) | G | **dead** | A PTY installs by typing, into the writable layer, which R4a discards and R2 cannot share. It also carries the directory's only cost estimate with an unbounded tail. The decision is about a mechanism, not a console |
 | [10-…one-shot-exec](10-option-one-shot-exec.md) | H | **dead** | Same as `09-` against R2 and R4: a typed command is not a unit. Its exit code as a read-back is the one piece worth carrying into R5 |
 | [11-…allowlisted-installer](11-option-allowlisted-installer.md) | I | **input, standalone superseded** | Its closed verb list and constant argv templates are the shape any install surface must take under *"never a shell"*, and `16-` and `18-` both borrow them. As a standalone answer it fails R2: typed verbs are actions, not a shareable artifact |
@@ -325,10 +325,10 @@ run.**
 The file is 77 lines (`wc -l CLAUDE.md`), so every `CLAUDE.md:134`,
 `CLAUDE.md:95` and `CLAUDE.md:35` in the tree pointed past its end. The rules
 moved into `docs/agent/`, and the fixes point at where they live now:
-*"never a shell"* at `docs/agent/security.md:14`, routed from `CLAUDE.md:59`;
-*"a directory whose hooks the container executes"* at
-`docs/agent/architecture.md:59`, routed from `CLAUDE.md:53`; and the "four
-modules" claim at `docs/agent/architecture.md:222`.
+*"never a shell"* in `docs/agent/security/path-containment-and-spawn-argv.md`, routed from `CLAUDE.md:59`;
+*"a directory whose hooks the container executes"* in
+`docs/agent/architecture/module-map.md`'s `plugins.ts` entry, routed from `CLAUDE.md:53`; and the "four
+modules" claim in `docs/agent/architecture/run-loop-and-child-processes.md`'s *"four kinds of agent child process"* paragraph.
 
 **The thirteen current files were fully re-validated on 2026-09-12 against
 `68a8aa7`, and `22-validation.md` is that pass**: 292 citations resolved

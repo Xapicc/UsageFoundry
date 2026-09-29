@@ -76,7 +76,7 @@ one is *reported* rather than silently chained to something older.
 | `maxIterations`/`maxDurationMinutes` are the only monotone termini | `:86`–`:91` |
 | `PRICES` has 20 keys and all 20 begin `claude-` | `src/lib/pricing.ts:31`–`:59`; counted by `node -e` over the literal → `count 20`, `non-claude: (none)` |
 | `guardCostOf` substitutes `UNKNOWN_MODEL_PRICE = { input: 10, output: 50 }` | `:194`, `:198`, `:84` |
-| three data sources, never summed or mixed in the UI | `docs/agent/architecture.md:10`; `docs/agent/metering.md:50` |
+| three data sources, never summed or mixed in the UI | `docs/agent/architecture/data-sources.md`'s *"three data sources"* paragraph; `docs/agent/metering/run-spend-readings.md`'s *"what each repository cost is a fifth reading"* paragraph |
 | `byAgent.counterfactualUSD` is the precedent for a further figure that reaches no meter | `src/lib/windows.ts:703`, `:1150`; `src/lib/windows.test.ts:1004`, `:1031`–`:1032` |
 
 ### 1d. This machine

@@ -97,7 +97,7 @@ C lost on three things:
 
 **Option B is not the runner-up and should not be built even if C is.** Its unit
 is a cycle, which makes alternation possible, disclosure structurally hard, and
-a run's headline spend a sum of two populations `docs/agent/architecture.md:10`
+a run's headline spend a sum of two populations `docs/agent/architecture/data-sources.md`'s *"three data sources"* paragraph
 forbids summing.
 
 ## What is refused by name

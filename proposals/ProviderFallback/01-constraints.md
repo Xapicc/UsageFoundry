@@ -15,12 +15,12 @@ names it.
 ## C1. The three cost sources may not become four, and a Codex figure may never be summed with any of them
 
 This is the constraint most likely to be broken by accident, because breaking it
-produces a number rather than an error. `docs/agent/architecture.md:10` states
+produces a number rather than an error. `docs/agent/architecture/data-sources.md` states
 it as a property of the app:
 
 > **Three** data sources now, still **never summed or mixed in the UI**.
 
-and `docs/agent/metering.md:50` says why:
+and `docs/agent/metering/run-spend-readings.md`'s *"what each repository cost is a fifth reading"* paragraph says why:
 
 > three routes to overlapping work, and any sum double-counts
 

@@ -184,7 +184,7 @@ Still silent, and the list is short because the option adds so little:
   — but it is still wrong on a page.
 - **A typo in a variable name.** Compose has no `env_file`, so a name
   `docker-compose.yml` does not forward never reaches the container
-  (`docs/agent/environment.md:27`) — the card then shows an empty list, which
+  (`docs/agent/environment/sandbox-and-claude-home.md`'s `UF_LOCK_CLAUDE_HOME` paragraph) — the card then shows an empty list, which
   looks identical to declaring nothing. `deployment.test.ts:961` is what catches
   it in the tree and nothing catches it on the card.
 - **State 3.** `unverified` is honest and it is not an answer. Nothing here

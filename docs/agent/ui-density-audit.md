@@ -1149,7 +1149,9 @@ per-file conflict summary unchanged.
   tabs on its own. See §5.4. **One label has since been reworded** — the third
   reads *Files* rather than *Changes*, because three of the four groups the
   touched/changed reconciliation adds under it are about files that did **not**
-  change, and `conventions.md:50` requires a label to cover what is under it.
+  change, and the *"grouping has a closed vocabulary"* paragraph of
+  `docs/agent/conventions/design-language-and-grouping.md` requires a label to
+  cover what is under it.
   The `RunTab` value is still `"changes"`, so no reader of the selection moved.
   What this line froze is the **count and the order**, and both stand: a sixth
   segment is still refused, and so is a sub-strip inside a tab (§4.2, `:178`).

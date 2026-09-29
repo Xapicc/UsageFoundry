@@ -66,7 +66,7 @@ is the only emitter; `src/lib/review.ts:734` builds the assists' argv without it
 
 **C7. An agent carries a role, never a capability.** A `tools` field is refused
 at save (`src/lib/agents.ts:278`–`src/lib/agents.ts:280`), and the doc calls the
-refusal the decision (`docs/agent/agents-and-templates.md:10`). Stacks are
+refusal the decision (`docs/agent/agents-and-templates/saved-agents.md`'s *"a saved agent is the fourth thing here that is form input"* paragraph). Stacks are
 "install-wide and never per run" for the same kind of reason
 (`src/lib/orchestrator.ts:9326`–`src/lib/orchestrator.ts:9328`). A per-agent or
 per-run list of MCP servers would reopen both.

@@ -234,7 +234,7 @@ These were found after the twelve-task cap, and each ranked below the twelve fil
   - Measured with `find` / arithmetic, not rendered.
 
 ## Seen outside my territory
-- `docs/agent/metering.md:60` contradicts `:32` and the code (`src/lib/windows.ts:323-342`). It says weekly buckets follow `weeklyAnchor` "or the local Monday", where `effectiveWeeklyReset` puts the provider's reset first. This is documentation drift.
+- `docs/agent/metering/windows-and-periods.md`'s *"a calendar period is history, so its percentage is a pace and never a guard"* paragraph contradicts the *"calendar buckets are cut in the browser's zone"* paragraph beside it and the code (`src/lib/windows.ts:323-342`). It says weekly buckets follow `weeklyAnchor` "or the local Monday", where `effectiveWeeklyReset` puts the provider's reset first. This is documentation drift.
 - `src/components/TaskEditor.tsx` registers no leave guard and no `beforeunload`; `grep -n 'registerLeaveGuard\|beforeunload'` finds neither. A brief typed at `/tasks/new` is lost on ⌘1…⌘9, quick open or a reload, against the pattern `src/lib/unsavedWork.ts:12-15` sets.
 - `src/app/api/mcp/route.ts:2868`: `list_recurring_failures` reads the same dreaming scan, so it inherits bug `668dd86e`. That task names it.
-- `docs/agent/testing.md:47` ("183 dangling links") and `:279` ("212") were probably inflated by bug `d0e67076`. Assumed; not re-measured.
+- `docs/agent/testing/components-meter-markdown-and-kit.md`, "`Markdown.test.tsx`'s wikilink cases are the same bar reached from the knowledge page" ("183 dangling links"), and `docs/agent/testing/knowledge-vault-and-graph.md`, "The broken-link cases are there because the tempting implementation drops what it cannot resolve" ("212"), were probably inflated by bug `d0e67076`. Assumed; not re-measured.

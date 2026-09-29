@@ -28,7 +28,7 @@ security objection is real and it is not new: this app already exposes
 `POST /api/chat/[id]/message`, which spawns a child at `bypassPermissions` with
 `--add-dir` on every mount and `UF_GITHUB_TOKEN` in its environment
 (`chat.ts:1652-1653`, `:1667-1670`), bounded by nothing but a system prompt
-(`docs/agent/chat.md:24`). A shell dropped to `UF_AGENT_UID` is *narrower than a
+(`docs/agent/chat/child-permissions-and-sandbox.md`'s *"the chat runs with no tool allowlist that bounds anything"* paragraph). A shell dropped to `UF_AGENT_UID` is *narrower than a
 surface this app already ships behind the same cookie.*
 
 ## 2. Shape
@@ -224,13 +224,13 @@ Invariants that move: `docs/agent/security.md` (a fourth kind of non-agent child
 and the first that is not a `claude`); `docs/agent/architecture.md`'s child count;
 `docs/agent/conventions.md` (a sub-route with a raw-keystroke region);
 `docs/agent/concurrency-and-ownership.md` (a writer outside the folder claim).
-And `docs/agent/security.md:14`'s spawn rule needs the §4 reconciliation written
+And the spawn rule in `docs/agent/security/path-containment-and-spawn-argv.md`'s never-a-shell paragraph needs the §4 reconciliation written
 into that file rather than left in this proposal.
 
 Plus the colour work: sixteen ANSI colours plus foreground, background and cursor,
 each probed off a real element and re-probed on theme change, because
 `getComputedStyle` on a `light-dark()` token returns source text a 2D context
-rejects **silently** (`conventions.md:64`). Invisible until somebody switches
+rejects **silently** (`docs/agent/conventions/canvas-and-charts.md`'s *"a `<canvas>` settles three things the DOM already answered"* paragraph). Invisible until somebody switches
 theme, and not small.
 
 ## 10. What would have to be true

@@ -6,7 +6,7 @@ The "Checked here" column says whether this assembly re-read the item's evidence
 
 Two values differ from the hunts' own:
 
-- **R-1** is lowered from high to medium-high. Its premise, "`maxIterations` defaults to 1", quotes `docs/agent/run-lifecycle.md:35`. That holds for `narrowGuards` (`src/lib/settings.ts:1277-1279`) and for workflow blocks. It does not hold for the new-run form, which defaults to 5 (`src/app/runs/new/page.tsx:215`), or for chat guards, which default to 4 (`src/lib/settings.ts:988`). The friction is real for every run that stopped on its own limit, but not for "the ordinary pick-up of the default run, every time".
+- **R-1** is lowered from high to medium-high. Its premise, "`maxIterations` defaults to 1", quotes `docs/agent/run-lifecycle/reopen-and-resume.md`'s *"a reopened run carries one message"* paragraph. That holds for `narrowGuards` (`src/lib/settings.ts:1277-1279`) and for workflow blocks. It does not hold for the new-run form, which defaults to 5 (`src/app/runs/new/page.tsx:215`), or for chat guards, which default to 4 (`src/lib/settings.ts:988`). The friction is real for every run that stopped on its own limit, but not for "the ordinary pick-up of the default run, every time".
 - **U-9** keeps its hunt's "high", with a caveat: dreaming is off by default (`src/lib/settings.ts:1066`).
 
 ## S
@@ -16,7 +16,7 @@ Two values differ from the hunts' own:
 | 1 | R-2 | Fleet pick-up sheet keeps each run's spending cap and seeds a passable cycle cap | high | 01 | yes: `FleetControls.tsx:55-56`, `:191-196`, `:222`; `fleet.ts:274` spreads `{ ...stored, ...wire }`, which settles the hunt's open assumption about an absent key | Top ten. Same run as R-3. Goes after `b403b8b4` |
 | 2 | G-1 | Name the paths when Land refuses a dirty checkout | high | 04 | yes: `land.ts:423-435` keeps a boolean; `:1040-1041`; `DIRT_NAMED` at `:1332` | Top ten. Goes before G-2. `landRefusal` needs a new test case |
 | 3 | R-4 + W-1 | A run's page links to the workflow run (or other origin) that started it | high | 01, 03 | yes: `runs/[id]/page.tsx:1330`; `grep -c "/workflows/"` gives 0; `origin_ref` is read nowhere in `src/app` or `src/components` | Top ten. **Merged from R-4 and W-1.** W-1's route is the one to take: `origin_ref` holds a node id for some origins (`workflows.ts:4887-4888`, per W-1), so resolve through `workflow_instance_runs`, indexed at `db.ts:901`. The schedule and chat halves of R-4 make it S–M |
-| 4 | C-1 | A decided proposal card says what its run did | high | 02 | yes: `chat/page.tsx:2651-2676`; `chat/dto.ts:268-290` has `runId` and no run field | Top ten. One batched query per poll (`chat.md:71`). Same run as C-6 |
+| 4 | C-1 | A decided proposal card says what its run did | high | 02 | yes: `chat/page.tsx:2651-2676`; `chat/dto.ts:268-290` has `runId` and no run field | Top ten. One batched query per poll (`docs/agent/chat/chat-api-and-poll.md`'s *"the poll asks for the messages it does not have"* paragraph). Same run as C-6 |
 | 5 | C-10 | Warn before an unsaved task brief or note is thrown away | high | 02 (and 05, outside note) | yes: no `registerLeaveGuard` or `beforeunload` in `TaskEditor.tsx` or `TaskThread.tsx`; `autoFocus` at `TaskEditor.tsx:210`; `unsavedWork.ts:36` exists | Top ten. **Merged with 05's "Seen outside my territory" note** on the same missing guard. Its "send only changed fields" part goes before C-15 |
 | 6 | C-8 | Show the status of the run that holds a claim | high | 02 | yes: `tasks/page.tsx:214-223` and `tasks/[id]/page.tsx:54-63` draw a short id only; no holder status on the DTO | Top ten |
 | 7 | W-2 | The instance page says each wait's condition | high | 03 | yes: `workflows/dto.ts:87-95` keeps `edge.from` and drops `edge.edge` | Top ten. Same run as W-3 |
@@ -34,7 +34,7 @@ Two values differ from the hunts' own:
 | 19 | C-4 | The browser tab says when a turn has landed or a question is waiting | medium | 02 | yes: `grep -rn document.title src` finds nothing | It would be the first page to set a title |
 | 20 | C-5 | Keep the composer's draft per thread, and do not overwrite it | medium | 02 | — | Closes the rest of ChatPanelExperience C7 |
 | 21 | C-6 | A proposal card's task links to the task | medium | 02 | — | The template half moved to R-8. Same run as C-1 |
-| 22 | C-7 | Name the open thread on the page, from its first message | medium | 02 | yes: the heading is the literal "Orchestrator" (`chat/page.tsx:1039`) | S; M with rename. Rewrites `chat.md:69` |
+| 22 | C-7 | Name the open thread on the page, from its first message | medium | 02 | yes: the heading is the literal "Orchestrator" (`chat/page.tsx:1039`) | S; M with rename. Rewrites `docs/agent/chat/chat-api-and-poll.md`'s *"`GET /api/chat` answers two different questions"* paragraph |
 | 23 | C-12 | Keep the board's project filter, and file new tasks into it | medium | 02 | — | Same run as C-15 |
 | 24 | C-14 | Show what was filed while working a task | medium | 02 | yes: `grep -ci parent src/app/api/tasks/route.ts` gives 0 | |
 | 25 | C-15 | Change a task's priority from its board row | medium | 02 | — | After C-10's changed-fields Save |
@@ -82,8 +82,8 @@ Two values differ from the hunts' own:
 
 | # | ID | Title | Value | From | Checked here | Notes |
 |---|---|---|---|---|---|---|
-| 60 | C-9 | Start a run from a task, linked to it | high | 02 | — | After R-8. `taskIds` go *into* `createRun`, never after it (`taskboard.md:755-768`) |
-| 61 | C-2 | Say on the chat page that another thread is waiting on the operator | high | 02 | — | Proposals and questions stay two counts (`chat.md:65`) |
+| 60 | C-9 | Start a run from a task, linked to it | high | 02 | — | After R-8. `taskIds` go *into* `createRun`, never after it (`docs/agent/taskboard/runs-from-tasks.md`'s *"the links have to be written before the run can be promoted"* paragraph) |
+| 61 | C-2 | Say on the chat page that another thread is waiting on the operator | high | 02 | — | Proposals and questions stay two counts (`docs/agent/chat/operator-questions.md`'s *"a chat waiting on an answer is drawn as waiting"* paragraph) |
 | 62 | U-5 | Settings: send only what changed | high | 05 | — | It bends `metering.md`'s default-agent decision and has to argue with that decision's reasoning. `modelCatalogue` joins `EDITABLE_PATHS` first |
 | 63 | G-5 | Stop listing deleted branches as rows for ever | high | 04 | — | Migration (`runs.branch_removed_at`). Pager counts go over the filtered set |
 | 64 | U-1 | Project exhaustion from Anthropic's own reading on a stock install | high | 05 | — | Same run as `8b47ae9a` |
@@ -190,7 +190,7 @@ These are gathered from the five files. The reasons are given there.
 - **01:** One install-wide stop that also reaches assist children (reviews, resolutions, chat turns, validations). It needs a stop path for assists first.
 - **01:** A per-segment history of a run, where each pick-up, park and restart is a row with its own worked minutes and spend.
 - **02:** Tell an operator who is not looking that the chat asked them something. It needs the webhook's closed, run-only field list reopened, and a per-thread URL.
-- **02:** Bulk moves on the board. It needs a selection column, and `taskboard.md:962-966` refuses a seventh column.
+- **02:** Bulk moves on the board. It needs a selection column, and `docs/agent/taskboard/board-page.md`'s *"the count goes inside a cell the board already has"* paragraph refuses a seventh column.
 - **02:** Start a run from several tasks at once. This is C-9 plus the bulk selection.
 - **03:** A per-edge "why did or did not this start" timeline across an instance. That is RunDecisionTree's `run_events`.
 - **03:** Inputs at the press of Run. The run route reads no body, by design.
@@ -215,7 +215,7 @@ Each note was checked against the open tasks and against every "Bugs filed" line
 | 02 | `src/lib/review.ts:239-247`: `reconcileReviewsOnBoot` fails a validate row and closes nothing | Covered by `382b15b1`, whose fix may land there |
 | 02 | `src/lib/schedules.ts:172`: `Math.trunc(Number(o.hours))` coerces `true` and `[5]` | Covered by `83a5eeba`, which is about schedule input that coerces rather than refuses |
 | 02 | `docs/taskboard.md:185-186` says the board announces an outgrown page; it no longer does | Not filed. Doc drift, over the cap |
-| 02 | `docs/agent/chat.md:69` says a thread's title is written by the model | Not filed. Doc drift. C-7 has to rewrite that sentence anyway |
+| 02 | `docs/agent/chat/chat-api-and-poll.md`'s *"`GET /api/chat` answers two different questions"* paragraph says a thread's title is written by the model | Not filed. Doc drift. C-7 has to rewrite that sentence anyway |
 | 03 | `src/lib/orchestrator.ts:11728`: picking up a once-waiting run queues it with no checkout | **Filed as `b403b8b4`** (high). Read at `:11728`, `:431-433`, `:8779`, `:8886`, `:10483-10491`. The boot's own comment at `:12620-12627` names the mechanism |
 | 03 | `src/lib/orchestrator.ts:12608-12633`: the boot stops every waiting run | **Filed as `d2c5ecb6`** (high). Read at `:12608-12642`. The grace branch that keeps a paused dependency runs after its dependents are already stopped |
 | 03 | `src/lib/orchestrator.ts:9751-9765`: the ceiling refund can take a first cycle to `iterations = 0`, so a later guard writes `blocked` | Not filed. Over the cap, and not re-read here. It is the same refund site as `6e6736b7` and `55ee6a0a`, so whoever fixes either should check it |
@@ -225,7 +225,7 @@ Each note was checked against the open tasks and against every "Bugs filed" line
 | 04 | `src/lib/retention.ts:545,568`: worktree remove and prune run outside `withRepoAdmin` | Not filed. Verified: there is no `withRepoAdmin` in `retention.ts`, and `repoLock.ts:12-16` lists four registry callers without it. It is low, because `repoLock.ts` itself records that no collision was ever reproduced. Over the cap |
 | 04 | `orchestrator.ts:11706-11776`: `reopenRun` accepts a run that is still landing or resolving | Covered by a note on `c3199f70` |
 | 04 | `src/lib/workflows.ts:~6364`: `startMergeBlock` counts an already-landed branch as a failed landing | **Filed as `f3a2f4f6`** (normal), together with 04's unfiled item 1(c). Read at `mergeQueue.ts:140-178`, `land.ts:1014` and `workflows.ts:6364` |
-| 05 | `docs/agent/metering.md:60` contradicts `:32` on weekly buckets | Not filed. Doc drift, over the cap |
+| 05 | `docs/agent/metering/windows-and-periods.md`'s *"a calendar period is history, so its percentage is a pace and never a guard"* paragraph contradicts the *"calendar buckets"* paragraph beside it on weekly buckets | Not filed. Doc drift, over the cap |
 | 05 | `src/components/TaskEditor.tsx` registers no leave guard | Covered by item C-10, which it was merged into |
 | 05 | `src/app/api/mcp/route.ts:2868`: `list_recurring_failures` inherits `668dd86e` | Covered: that task names it |
-| 05 | `docs/agent/testing.md:47`, `:279`: the dangling-link counts were probably inflated by `d0e67076` | Not filed. The hunt assumed it and did not re-measure |
+| 05 | `docs/agent/testing/components-meter-markdown-and-kit.md` ("`Markdown.test.tsx`'s wikilink cases"), `docs/agent/testing/knowledge-vault-and-graph.md` ("The broken-link cases"): the dangling-link counts were probably inflated by `d0e67076` | Not filed. The hunt assumed it and did not re-measure |

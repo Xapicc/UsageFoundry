@@ -145,8 +145,8 @@ rather than a redesign - *"which is why it is built assuming the worse answer"*
   behind a 60-second `globalThis` cache in `src/lib/fileCostNotice.ts:310-315`'s
   shape.
 - **`GET /api/tools`** - `runtime = "nodejs"`, `dynamic = "force-dynamic"`
-  (`docs/agent/conventions.md:11`), through `jsonMaybeGzipped` like the other
-  eighteen (`:18`), with a list DTO in `src/lib/apiTypes.ts`.
+  (`docs/agent/conventions/route-handlers-and-server-modules.md`'s route-handlers paragraph), through
+  `jsonMaybeGzipped` like the other eighteen (`docs/agent/conventions/route-handlers-and-server-modules.md`'s `jsonMaybeGzipped` paragraph), with a list DTO in `src/lib/apiTypes.ts`.
 - **a `Tools` section on Settings**, `01e-` §2 and §4. Two groups in this phase -
   `UF_PY_TOOLS` and `UF_GH_EXTENSIONS` - and the stacks group arrives in phase 2
   with nothing about the section changing to admit it.
@@ -294,7 +294,7 @@ visible on a reviewer's fresh install and masked on every install that already
 exists. **This is the one invariant in the plan whose breach is invisible to the
 person who breaks it**, and §6's assertion 3 is the only thing that catches it.
 
-**And: never a shell.** `docs/agent/security.md:14` - the agent is spawned
+**And: never a shell.** `docs/agent/security/path-containment-and-spawn-argv.md`'s never-a-shell paragraph - the agent is spawned
 *"with an argument array and `stdio: ["ignore", "pipe", "pipe"]`, **never a
 shell**, so prompt metacharacters are inert"* - over an artifact a third party
 wrote. `01b-` §2's four expansion

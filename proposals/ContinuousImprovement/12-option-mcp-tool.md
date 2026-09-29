@@ -347,7 +347,7 @@ being kept from" (`src/lib/privsep.ts:182`–`:189`). Under Option I every holde
 a capability *is* a work cycle, all at one uid and one gid, so there is no group
 to hand the file to that does not contain the thief. A concurrent run reads a
 sibling's path off `/proc`, opens a file its own uid owns, and calls `list_runs`
-and `get_run` as that sibling — two tools `docs/agent/chat.md:22` keeps
+and `get_run` as that sibling — two tools `docs/agent/chat/mcp-tools-and-capability.md`'s *"the chat's child authenticates with a capability"* paragraph keeps
 install-wide *deliberately*, on the reasoning that "a file list is not a patch".
 Read-only bounds the damage; it does not remove the fact that a run would be
 speaking as another run.
