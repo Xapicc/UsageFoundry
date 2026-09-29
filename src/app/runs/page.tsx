@@ -51,6 +51,11 @@ import { TBody, THead, Table, Td, Th, Tr } from "@/components/ui/Table";
  * cut in the browser out of the hundred newest rows of every status, and lost
  * exactly that run, with its Stop button, while the Fleet card still counted
  * it. `listRunsPage`'s tests pin the case.
+ *
+ * The queue half asks for the queue's own order, `order=queue`. Newest first,
+ * a queue longer than the cap kept the runs that start last and dropped the
+ * ones that start next; in the queue's order what the cap leaves out is its
+ * tail, which moves into the band as the runs ahead of it start.
  */
 const EXECUTING: readonly RunListItemDTO["status"][] = ["running", "paused"];
 const QUEUE: readonly RunListItemDTO["status"][] = ["queued", "waiting"];
@@ -115,15 +120,21 @@ function bucketBoundary(at: number): number {
   return Math.floor((at - RECENT_WINDOW_MS) / 60_000) * 60_000;
 }
 
+/** One page of a list as the server applied it: its rows and what they are a slice of. */
+type ListPage = Pick<RunListDTO, "runs" | "total" | "offset" | "limit">;
+
 /** The two bands above the fold, each as the server counted it. */
 interface Bands {
   active: RunListItemDTO[];
   activeTotal: number;
-  recent: RunListItemDTO[];
-  recentTotal: number;
+  recent: ListPage;
 }
 
-const NO_BANDS: Bands = { active: [], activeTotal: 0, recent: [], recentTotal: 0 };
+const NO_BANDS: Bands = {
+  active: [],
+  activeTotal: 0,
+  recent: { runs: [], total: 0, offset: 0, limit: BAND_LIMIT },
+};
 
 /** One band's request, at the route's ceiling rather than its default page. */
 function bandRequest(params: Record<string, string>) {
@@ -153,13 +164,18 @@ function activeBand(executing: RunListDTO, queue: RunListDTO): RunListItemDTO[] 
 }
 
 /**
- * What a band holds when it holds less than the server counted.
+ * What "In flight" holds when it holds less than the server counted.
  *
- * Every band is capped, and each of its queries drops its oldest rows. A band
- * that silently stops at its cap is the failure this page's bands were split
- * into their own queries to end, so the count comes with the rows. The count
- * and nothing about which rows: in "In flight" the run created first is the
- * running one and is shown, so "the oldest are missing" would be untrue there.
+ * A band that silently stops at its cap is the failure this page's bands were
+ * split into their own queries to end, so the count comes with the rows. The
+ * count and nothing about which rows, because two queries with two orders fill
+ * this band: what is past the cap is the queue's tail, while the running run
+ * created before all of it is shown.
+ *
+ * A count rather than a pager, unlike the recent band's: the tail is the part
+ * of the queue that starts last, and it arrives here as the head drains.
+ * Every run that settled in the last day is equally an answer, and a count
+ * alone would leave the ones past the cap on no part of the page.
  */
 function BandCap({ shown, total }: { shown: number; total: number }) {
   if (total <= shown) return null;
@@ -167,6 +183,47 @@ function BandCap({ shown, total }: { shown: number; total: number }) {
     <p className="mt-2 text-sm tabular-nums text-ink-muted">
       Showing {shown} of {total}.
     </p>
+  );
+}
+
+/**
+ * Where a page sits in what the server counted, and the way to the rest.
+ *
+ * Driven by the page the server answered with rather than by the offset asked
+ * for: the route clamps an offset past the end, so that is the only figure that
+ * says which rows are on screen.
+ */
+function PageControls({
+  page,
+  busy = false,
+  onPage,
+}: {
+  page: ListPage;
+  busy?: boolean;
+  onPage: (offset: number) => void;
+}) {
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-3">
+      <span className="text-sm tabular-nums text-ink-muted">
+        {page.offset + 1}–{page.offset + page.runs.length} of {page.total}
+      </span>
+      <ButtonRow className="ml-auto">
+        <Button
+          variant="secondary"
+          disabled={busy || page.offset === 0}
+          onClick={() => onPage(Math.max(0, page.offset - page.limit))}
+        >
+          Previous
+        </Button>
+        <Button
+          variant="secondary"
+          disabled={busy || page.offset + page.limit >= page.total}
+          onClick={() => onPage(page.offset + page.limit)}
+        >
+          Next
+        </Button>
+      </ButtonRow>
+    </div>
   );
 }
 
@@ -668,6 +725,11 @@ function RunList({
 
 export default function RunsPage() {
   const [bands, setBands] = useState<Bands>(NO_BANDS);
+  // The recent band's page. The ref is what the poll checks its answer
+  // against, so a request already out when Next was pressed cannot land after
+  // the one it replaced and put the page just left back on screen.
+  const [recentOffset, setRecentOffset] = useState(0);
+  const recentAsked = useRef(0);
   const [boot, setBoot] = useState<BootReconcileDTO | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -733,9 +795,15 @@ export default function RunsPage() {
     try {
       const answers = await Promise.all([
         bandRequest({ status: EXECUTING.join(",") }),
-        bandRequest({ status: QUEUE.join(",") }),
-        bandRequest({ settledAfter: String(cut) }),
+        bandRequest({ status: QUEUE.join(","), order: "queue" }),
+        bandRequest({
+          settledAfter: String(cut),
+          ...(recentOffset > 0 ? { offset: String(recentOffset) } : {}),
+        }),
       ]);
+      // Dropped whole rather than in part: the request carrying the new
+      // offset is already out, and it reads the other two bands as well.
+      if (recentOffset !== recentAsked.current) return;
       const pages: RunListDTO[] = [];
       for (const answer of answers) {
         if (!answer.ok) {
@@ -752,8 +820,7 @@ export default function RunsPage() {
       setBands({
         active: activeBand(executing, queue),
         activeTotal: executing.total + queue.total,
-        recent: settled.runs,
-        recentTotal: settled.total,
+        recent: settled,
       });
       setBoot(executing.lastBootReconcile ?? null);
       setReadAt(Date.now());
@@ -762,7 +829,12 @@ export default function RunsPage() {
     } finally {
       setLoaded(true);
     }
-  }, []);
+  }, [recentOffset]);
+
+  function pageRecent(next: number) {
+    recentAsked.current = next;
+    setRecentOffset(next);
+  }
 
   useEffect(() => {
     loadRuns();
@@ -898,7 +970,9 @@ export default function RunsPage() {
 
   /** Empty because nothing arrived, as against empty because nothing is there. */
   const blank =
-    bands.active.length === 0 && bands.recent.length === 0 && pollError !== null;
+    bands.active.length === 0 &&
+    bands.recent.runs.length === 0 &&
+    pollError !== null;
 
   /**
    * The finished runs a bulk pick-up would act on: the ones in the "Finished in
@@ -910,7 +984,9 @@ export default function RunsPage() {
    * to be on — press it on page five and it picks up page five — while the
    * band is the same question every four seconds. It used to be the poll's
    * hundred newest rows of any age, most of which no band drew, so the button
-   * swept runs nobody on this page had been shown.
+   * swept runs nobody on this page had been shown. Past its cap the band pages
+   * too, and the button then follows the band's page on screen rather than its
+   * first: that is the rule below, applied to a band that has more than one.
    *
    * Derived here and handed down rather than read inside the control, because
    * the rule is about *what somebody looked at* — a run that failed between the
@@ -923,13 +999,13 @@ export default function RunsPage() {
    */
   const reopenable = useMemo(
     () =>
-      bands.recent
+      bands.recent.runs
         .filter((r) => REOPENABLE.has(r.status) && !r.set_aside_at)
         .map((r) => ({ id: r.id, status: r.status })),
     [bands],
   );
 
-  const { active, activeTotal, recent, recentTotal } = bands;
+  const { active, activeTotal, recent } = bands;
 
   return (
     <>
@@ -1054,7 +1130,7 @@ export default function RunsPage() {
           <Card emphasis="quiet">
             <Unread />
           </Card>
-        ) : recent.length === 0 ? (
+        ) : recent.runs.length === 0 ? (
           <Card emphasis="quiet">
             <Empty>
               <div className="font-medium text-ink">Nothing finished</div>
@@ -1063,12 +1139,14 @@ export default function RunsPage() {
         ) : (
           <>
             <RunList
-              runs={recent}
+              runs={recent.runs}
               kind="history"
               now={now}
               caption="Runs that finished in the last 24 hours, newest first"
             />
-            <BandCap shown={recent.length} total={recentTotal} />
+            {(recent.offset > 0 || recent.total > recent.runs.length) && (
+              <PageControls page={recent} onPage={pageRecent} />
+            )}
           </>
         )}
       </div>
@@ -1160,33 +1238,11 @@ export default function RunsPage() {
               what arrived — the sentence that used to sit here instead said the
               route did not page beyond a hundred, which is what it now does. */}
           {history.total > 0 && (
-            <div className="mt-3 flex flex-wrap items-center gap-3">
-              <span className="text-sm tabular-nums text-ink-muted">
-                {history.offset + 1}–{history.offset + history.runs.length} of{" "}
-                {history.total}
-              </span>
-              <ButtonRow className="ml-auto">
-                <Button
-                  variant="secondary"
-                  disabled={historyLoading || history.offset === 0}
-                  onClick={() =>
-                    setOffset(Math.max(0, history.offset - history.limit))
-                  }
-                >
-                  Previous
-                </Button>
-                <Button
-                  variant="secondary"
-                  disabled={
-                    historyLoading ||
-                    history.offset + history.limit >= history.total
-                  }
-                  onClick={() => setOffset(history.offset + history.limit)}
-                >
-                  Next
-                </Button>
-              </ButtonRow>
-            </div>
+            <PageControls
+              page={history}
+              busy={historyLoading}
+              onPage={setOffset}
+            />
           )}
         </Disclosure>
       )}

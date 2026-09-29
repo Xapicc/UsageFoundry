@@ -867,6 +867,14 @@ function migrate(db: Database.Database) {
     -- Every admission decision and every promotion pass reads the active rows.
     CREATE INDEX IF NOT EXISTS idx_runs_status
       ON runs(status);
+    -- The instant a run settled, which the runs page's recent band asks for on
+    -- every four-second poll and which nothing else indexes: without it that
+    -- page and its count read every row the install has ever held, and nothing
+    -- prunes this table. The expression is listRunsPage's character for
+    -- character, because SQLite matches an expression index textually and a
+    -- respelling is a scan again with nothing saying so. Measured there.
+    CREATE INDEX IF NOT EXISTS idx_runs_settled_at
+      ON runs(COALESCE(finished_at, started_at, created_at));
     CREATE INDEX IF NOT EXISTS idx_otlp_run
       ON otlp_requests(run_id, ts);
     -- The wake-up query reads the graph from the *dependency* end: a run has
