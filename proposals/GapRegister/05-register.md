@@ -503,7 +503,7 @@ is unreadable by this uid, so no run's `deliver` event can be read.
 on the app's own security and trust boundary**: its doors, its credentials, its
 inputs. [07-security.md](07-security.md) is the axis file. That axis is
 deliberately the *reverse* direction from
-`proposals/implemented - Sandboxing/`, which owns what a run can reach; where a
+`git show a74a1bb:"proposals/implemented - Sandboxing/"`, which owns what a run can reach; where a
 finding would have needed a claim about what a sandboxed child can dial, the
 claim is not made and the candidate is in that file's drop list saying so.
 

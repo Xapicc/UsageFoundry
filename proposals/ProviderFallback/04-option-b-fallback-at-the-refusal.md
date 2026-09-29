@@ -84,7 +84,7 @@ carries on in Codex and abandons the Claude session it paid to build. There is
 no third answer, because there is no cross-provider resume.
 
 **Alternating cycles is the pathological case.** Every switch is a fresh
-conversation for the provider being switched *to*. `proposals/ContextControl/03-experiment-resumed-vs-fresh.md` measured a fresh conversation at **2.59× the cost
+conversation for the provider being switched *to*. `git show a74a1bb:"proposals/implemented - ContextControl/03-experiment-resumed-vs-fresh.md"` measured a fresh conversation at **2.59× the cost
 of a resumed one** with a break-even of 3.9 KB of re-reading per cycle. A run
 that alternates pays that on every cycle, in both directions, in exchange for
 not waiting.

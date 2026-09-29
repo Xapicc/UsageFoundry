@@ -90,7 +90,7 @@ C lost on three things:
    multi-provider operation. 8–12 days of adapter for a policy that is 3 days of
    the total is the wrong ratio unless somebody wants Codex runs for their own
    sake.
-3. **`proposals/ModelRouter`'s finding points the same way.** Its recommendation
+3. **`git show 0232554:"proposals/notRecomended - ModelRouter/"`'s finding points the same way.** Its recommendation
    was *against building a router*, in favour of the per-run field that already
    had wire support (`proposals/README.md:20`). A provider column is that
    argument's shape; a fallback policy is the router.

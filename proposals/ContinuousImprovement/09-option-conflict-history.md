@@ -120,7 +120,7 @@ undefined rather than large.
 at the tip of a cycle-1 prompt is `S = D`, `T* = 19·(S/D) − 20 = −1`, paid once
 at the write rate and carried at 0.1× thereafter (constraint 4). Two or three
 path names is tens of tokens, which is noise against the 82% of the bill that
-`proposals/ContextControl/README.md` records as carried context.
+`git show a74a1bb:"proposals/implemented - ContextControl/README.md"` records as carried context.
 
 **The shape this option must never take is a file in the repository.** A
 maintained `CONTENTION.md`, or an agent asked to append to a lessons file, is a

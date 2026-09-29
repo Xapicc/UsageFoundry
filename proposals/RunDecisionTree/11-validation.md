@@ -37,7 +37,7 @@ node scripts/thinking-by-model.mjs
 ```
 
 **Status: verified, and the earlier finding is strengthened rather than
-repeated.** `proposals/ContextControl/00-problem.md:476-493` measured 13,454
+repeated.** `git show a74a1bb:"proposals/implemented - ContextControl/00-problem.md"` lines 476-493 measured 13,454
 empty / 0 non-empty; `19-validation.md:62` re-confirmed 13,734 over 113,468
 records. This pass covers 266,362 records — roughly double — and the
 non-empty count on `claude-opus-5` is still zero.
@@ -362,7 +362,7 @@ README.md  SessionFlow  implemented - Sandboxing  implemented - UnattendedOperat
 ```
 
 No `IntakeFilter`. **Correction applied:** this proposal follows
-`proposals/ContextControl/`'s convention (README index, `00-problem`,
+`git show a74a1bb:"proposals/implemented - ContextControl/"`'s convention (README index, `00-problem`,
 `01-constraints`, numbered options, comparison, recommendation, validation) with
 `proposals/OperatorInterface/`'s precedent for shipping a measurement script
 beside the prose (`contrast.py` there, `scripts/` here).

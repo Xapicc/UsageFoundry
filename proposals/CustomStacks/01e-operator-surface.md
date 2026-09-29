@@ -62,9 +62,9 @@ does with it.
 `docs/agent/ui-density-audit.md:159-162` bans an eleventh row on the ground that
 it would be *"the second row you cannot reach from the keyboard"*, and ends:
 *"New destinations are sub-routes under an existing pane."* That sentence has
-been applied here before and shipped - `proposals/implemented - SessionFlow/`
+been applied here before and shipped - `git show a74a1bb:"proposals/implemented - SessionFlow/"`
 took the same fork and landed `/runs/[id]/touched` rather than a pane
-(`proposals/implemented - SessionFlow/05-option-d-sub-route.md:11` quotes the
+(`git show a74a1bb:"proposals/implemented - SessionFlow/05-option-d-sub-route.md"` line 11 quotes the
 same line).
 
 **The ban is stale by one and it does not matter which way.**

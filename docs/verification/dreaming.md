@@ -18,7 +18,7 @@
   the saving moves with the heap cap and is not a fixed number of megabytes.
 
 - **Dreaming end to end, 2026-09-02**, built app over the real corpus: the
-  readout matches `proposals/Dreaming` (77 signatures, 1,260 of 2,553
+  readout matches `git show a74a1bb:"proposals/implemented - Dreaming/"` (77 signatures, 1,260 of 2,553
   instances); warm scan 21 ms, 0 files re-read. One night ($9.40) wrote notes
   passing `_Meta/qc.py`'s ERROR gate for nine of twelve signatures, and found
   the scan double-counting the 5.1% of records resumes rewrite.

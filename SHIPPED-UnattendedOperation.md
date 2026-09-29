@@ -10,7 +10,9 @@ outcome now live in two places. The durable references are
 invariants) and `docs/verification.md` (what was measured). Check any claim here
 against the tree before acting on it.
 
-The survey is [`proposals/implemented - UnattendedOperation/`](<proposals/implemented - UnattendedOperation/README.md>).
+The survey is no longer in the tree: 36a0416 moved it to the operator's
+Knowledge Vault as a summary note, and as written it is
+`git show a74a1bb:"proposals/implemented - UnattendedOperation/README.md"`.
 Its recommendation was four steps. Steps 1, 2 and 4a were built. Step 3 was the
 question put to the operator, and 4a is the answer they gave.
 

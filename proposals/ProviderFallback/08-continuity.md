@@ -66,7 +66,7 @@ The run's original prompt, re-sent to a fresh Codex session.
 **Loses:** everything the run learned. Which files matter, which approach was
 tried, which test was failing and why, what the last four cycles established.
 
-**What it costs to re-derive:** `proposals/ContextControl/README.md` measured a
+**What it costs to re-derive:** `git show a74a1bb:"proposals/implemented - ContextControl/README.md"` measured a
 fresh conversation at **2.59× the cost of a resumed one**, with a break-even of
 **3.9 KB of re-reading per cycle**. A run that has done five cycles of
 exploration is well past that.

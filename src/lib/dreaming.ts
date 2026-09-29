@@ -15,15 +15,16 @@ import { listTranscriptFiles } from "./transcripts";
  *
  * ## Why this slice and not the day
  *
- * `proposals/Dreaming` measured the alternatives. The whole tool corpus is
- * 5,521k tokens a night and overflows a 1,000k window on 21 of 23 days, so a
- * reader over it is chunking every night and is not doing the cross-session
- * synthesis that was the point. Worse, 99.8% of it carries no deduplication
- * key: an error result has a message a signature can be taken from, a
- * successful one has nothing to match on but a model's own judgement. The error
- * slice is 0.90 MiB over 23 days — 11k tokens a night — and is the part that
- * can be deduplicated by a set membership test rather than by a nightly
- * retrieval pass over somebody's vault.
+ * The Dreaming proposal
+ * (`git show a74a1bb:"proposals/implemented - Dreaming/"`) measured the
+ * alternatives. The whole tool corpus is 5,521k tokens a night and overflows a
+ * 1,000k window on 21 of 23 days, so a reader over it is chunking every night
+ * and is not doing the cross-session synthesis that was the point. Worse, 99.8%
+ * of it carries no deduplication key: an error result has a message a signature
+ * can be taken from, a successful one has nothing to match on but a model's own
+ * judgement. The error slice is 0.90 MiB over 23 days — 11k tokens a night —
+ * and is the part that can be deduplicated by a set membership test rather than
+ * by a nightly retrieval pass over somebody's vault.
  *
  * ## Why a signature is not a lesson, said here rather than in a proposal
  *
@@ -131,9 +132,10 @@ export interface DreamingReadout {
  * Aggressive on purpose, and the direction of the error is stated where the
  * number is used: this over-collapses, so it is an upper bound on how well a
  * nightly writer could deduplicate. It matches
- * `proposals/Dreaming/scripts/recurrence.mjs` exactly — the script is how the
- * figures behind this feature were measured, and a normalisation that drifted
- * from it would leave the proposal describing a different feature.
+ * `git show a74a1bb:"proposals/implemented - Dreaming/scripts/recurrence.mjs"`
+ * exactly — the script is how the figures behind this feature were measured,
+ * and a normalisation that drifted from it would leave the proposal describing
+ * a different feature.
  */
 export function signatureOf(text: string): string {
   return text
@@ -233,11 +235,12 @@ export function rollUp(observations: readonly ErrorObservation[]): SignatureRoll
  * Which signatures a night should write down.
  *
  * **The write policy is the feature.** Measured over the same 23 days
- * (`proposals/Dreaming/scripts/ledger.mjs`), writing every distinct signature
- * every night produces 1,361 notes; writing each one once, on first sight,
- * produces 1,177 — of which **1,100 (93.5%) are about something that never
- * happened again**. Writing on the night a signature reaches its *second* day
- * produces **77**, every one about something seen on two or more days.
+ * (`git show a74a1bb:"proposals/implemented - Dreaming/scripts/ledger.mjs"`),
+ * writing every distinct signature every night produces 1,361 notes; writing
+ * each one once, on first sight, produces 1,177 — of which **1,100 (93.5%) are
+ * about something that never happened again**. Writing on the night a signature
+ * reaches its *second* day produces **77**, every one about something seen on
+ * two or more days.
  *
  * So the rule is: a signature is writable when it has spanned at least
  * `minDays` days and this app has not already written it. `minDays` is a

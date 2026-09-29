@@ -49,7 +49,7 @@ Nothing in `src/`. Documentation, and one honest sentence in the UI:
    and are not re-argued here.
 4. **A `docs/security.md` paragraph** stating that this app deliberately exposes no
    shell, and why — because the next person to propose one should find the
-   argument rather than re-derive it. `proposals/ContextControl/` is the
+   argument rather than re-derive it. `git show a74a1bb:"proposals/implemented - ContextControl/"` is the
    precedent: a survey that closed with a recommendation against every mechanism
    it examined, kept for the argument.
 

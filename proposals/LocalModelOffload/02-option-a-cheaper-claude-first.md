@@ -36,8 +36,9 @@ line there is also the operator's to write, and the app will not see it.
 - **The ModelRouter survey already cleared the ground.** It recommended "build
   no router" and found the CLI already routes delegated turns on its own —
   "1,231 `general-purpose` turns on Sonnet and 948 on Opus in one week, inside
-  sessions whose main thread was Opus" (`git show 0232554:"proposals/notRecomended
-  - ModelRouter/11-option-route-the-delegated-turn.md"`), calling the delegated
+  sessions whose main thread was Opus"
+  (`git show 0232554:"proposals/notRecomended - ModelRouter/11-option-route-the-delegated-turn.md"`),
+  calling the delegated
   turn "displacement, not a gap". This option adds nothing to what it settled;
   it names the one lever that survey did not examine (the environment
   variable, which it never mentions) and leaves the per-run model field it

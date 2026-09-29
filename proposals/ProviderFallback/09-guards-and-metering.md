@@ -175,7 +175,7 @@ request goes to a different host and gets none of it.
 
 So the cost comparison is not "a Codex cycle versus a Claude cycle". It is "an
 unfiltered Codex cycle versus a filtered Claude cycle", and the second term has a
-discount this app measures at scale: `proposals/ContextControl/README.md` puts
+discount this app measures at scale: `git show a74a1bb:"proposals/implemented - ContextControl/README.md"` puts
 82.1% of the week's bill in carried context, priced at 0.1×–2.0× the base rate.
 
 None of that is an argument that Codex is dearer — nobody here knows what it

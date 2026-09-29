@@ -6,8 +6,8 @@
 // The prompt lives in prompt.md and is the only place the model's instructions
 // are written; this file assembles evidence, sends it, and parses the answer
 // back. The three verdict names are the brief's and map one-to-one onto
-// proposals/ExternalValidator/external-validator.md §5's proposed column values (did-the-work /
-// did-not / cannot-tell).
+// `git show a74a1bb:"proposals/implemented - ExternalValidator/external-validator.md"`
+// §5's proposed column values (did-the-work / did-not / cannot-tell).
 //
 // Usage:
 //   node scripts/validator-spike/validate.mjs <case.json> [options]

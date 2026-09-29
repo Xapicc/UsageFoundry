@@ -22,12 +22,13 @@ import {
  * have to be distinguishable from a working sandbox and from a stock install.
  *
  * Most of the literals below were read out of the pinned CLI binary in
- * `proposals/implemented - Sandboxing/` and have never been executed. The `bwrap:` ones are
- * the exception and the reason the rest are worth having: they are copied out
- * of this install's own failed tool calls, where a sandbox that could not start
- * produced 214 of them and no `sandbox` row at all — and then, once that was
- * fixed, 714 more in a wording nobody had read. What this pins either way is
- * that the matcher is exactly as wide as the evidence, no wider.
+ * `git show a74a1bb:"proposals/implemented - Sandboxing/"` and have never been
+ * executed. The `bwrap:` ones are the exception and the reason the rest are
+ * worth having: they are copied out of this install's own failed tool calls,
+ * where a sandbox that could not start produced 214 of them and no `sandbox`
+ * row at all — and then, once that was fixed, 714 more in a wording nobody had
+ * read. What this pins either way is that the matcher is exactly as wide as the
+ * evidence, no wider.
  *
  * The third reading is the note the settings row carries when the detector has
  * been firing, and it earns a test on the same grounds as the other two: it is

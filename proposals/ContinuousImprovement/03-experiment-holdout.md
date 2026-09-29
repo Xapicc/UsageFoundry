@@ -262,7 +262,7 @@ question.
 ## Probe A — does `--max-budget-usd` bound a delegated turn?
 
 **This is a guard question the app owes an answer to regardless of any option in
-this survey, and `proposals/ContextControl/11-option-delegation-as-isolation.md:244`–`:247`
+this survey, and `git show a74a1bb:"proposals/implemented - ContextControl/11-option-delegation-as-isolation.md"` lines 244–247
 calls it "the single question that would most change this option's risk".**
 `buildArgs` pushes `--max-budget-usd` at `src/lib/orchestrator.ts:4955` as
 `max(0, maxRunCostUSD − spentGuardUSD)`, per invocation. If the CLI's own

@@ -17,7 +17,7 @@ readout depend on the writer's configuration, or that makes the writer reachable
 without that flag, breaks the split the whole feature rests on.
 
 **Why the corpus is the error slice and not the day.** Measured in
-`proposals/Dreaming/scripts/tool-corpus.mjs`: the whole tool corpus is 5,521k
+`git show a74a1bb:"proposals/implemented - Dreaming/scripts/tool-corpus.mjs"`: the whole tool corpus is 5,521k
 tokens a night, overflows a 1,000k window on 21 of 23 days and by 12.8× on the
 worst, and — the figure that actually decides it — **99.8% of it by bytes carries
 no deduplication key.** An error result has a message a signature can be taken
@@ -45,7 +45,7 @@ appears as several rows — four `bwrap` denials at four paths are one denial �
 one row carries many causes, of which `Exit code N` is the worst in this corpus.
 `signatureOf` matches `scripts/recurrence.mjs` **exactly**, and that is not
 tidiness: the script is how every figure behind this feature was measured, so a
-normalisation that drifted from it would leave `proposals/Dreaming` describing a
+normalisation that drifted from it would leave `git show a74a1bb:"proposals/implemented - Dreaming/"` describing a
 different feature. Roughly half the top recurring rows are not failures at all —
 a person declining a tool call, a permission prompt working correctly — and
 nothing separates them, which is why the page carries the caveat and the prompt

@@ -64,7 +64,7 @@ comment above). With `UF_SANDBOX=1` the entrypoint writes a root-owned
 accepts `[A-Za-z0-9.*_-]` (`:392`–`:410`), so `host.docker.internal` passes it; whether
 Claude Code's `allowedDomains` then honours it is untested (the Sandboxing
 validation notes it "takes domains",
-`proposals/implemented - Sandboxing/10-validation.md` line 250). There is no
+`git show a74a1bb:"proposals/implemented - Sandboxing/10-validation.md"` line 250). There is no
 per-run network policy: the per-run `--settings` overlay carries only
 `filesystem.allowWrite` (`src/lib/orchestrator.ts:5680`–`:5687`). And the
 repository's own verdict: "the egress allowlist has never been exercised"

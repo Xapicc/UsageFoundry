@@ -109,8 +109,8 @@ export interface StatusReport {
    * construction, so a receiver that has been refusing every POST for a week
    * produces the same silence as a fleet with nothing wrong. This is the number
    * to alert on, and it is the condition
-   * `proposals/UnattendedOperation/04-option-c-outbound-webhook.md` puts on the
-   * whole feature.
+   * `git show a74a1bb:"proposals/implemented - UnattendedOperation/04-option-c-outbound-webhook.md"`
+   * puts on the whole feature.
    *
    * Counts and a clock, and deliberately **no error string**: a fetch failure's
    * message carries the receiver's hostname, and this payload is retained and

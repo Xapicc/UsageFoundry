@@ -91,8 +91,8 @@ point was off by exactly +73, and the survey carried about thirty of them —
 for `:6208`–`:6221`, the once-per-run settings read at `:6379`/`:6402` for
 `:6452`/`:6475`.
 
-That is the same defect `proposals/ContextControl/19-validation.md` found fifty
-times and `proposals/ModelRouter/15-validation.md` found before it. **Three
+That is the same defect `git show a74a1bb:"proposals/implemented - ContextControl/19-validation.md"` found fifty
+times and `git show 0232554:"proposals/notRecomended - ModelRouter/15-validation.md"` found before it. **Three
 surveys, three passes, the same class.** The bare-`:NNNN` variant recurred too —
 a reference like `` `:4397`–`:4399` `` chains off whatever file was last named,
 and in at least two places that was `src/lib/settings.ts` when the intended file
@@ -108,7 +108,7 @@ at the end, and a bare `:NNNN` should not be written at all.
 install's 484 `tool_error` rows". The table now holds 538. The 214 and the
 "**Measured, not read**" marker both still hold; the denominator does not.
 
-**`proposals/ContextControl/02-levers-on-the-pin.md` carries the same stale
+**`git show a74a1bb:"proposals/implemented - ContextControl/02-levers-on-the-pin.md"` carries the same stale
 line numbers** this survey had — `5158` for `sandboxArgs`, `4828`–`4831` for the
 `--plugin-dir` docblock — because the same commit moved them. Not this survey's
 files and not edited here.
@@ -126,7 +126,7 @@ edit made in this pass is recoverable from history.
 ## Unverifiable from here
 
 - **That `--settings` survives `--resume` and `--plugin-dir` does not.** Read out
-  of `proposals/ContextControl/02-levers-on-the-pin.md:183`–`:217` verbatim. No
+  of `git show a74a1bb:"proposals/implemented - ContextControl/02-levers-on-the-pin.md"` lines 183–217 verbatim. No
   CLI was run in this pass, and unlike that survey this one did not rebuild the
   recorder. Every option that depends on the channel depends on that survey's
   probe rather than on one of ours.

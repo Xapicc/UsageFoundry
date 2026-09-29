@@ -5380,8 +5380,9 @@ export type { CycleAdapter, CycleEnding } from "./cycleInvocation";
  * what matters is not what this image installs but what version wrote the
  * boundary record being described, which the record itself carries.
  *
- * Sourced at `proposals/ContextControl/01-constraints.md`, which audits the
- * table row by row against this app's own argv.
+ * Sourced at
+ * `git show a74a1bb:"proposals/implemented - ContextControl/01-constraints.md"`,
+ * which audits the table row by row against this app's own argv.
  */
 export const SURVIVAL_TABLE_CLI_VERSION = "2.1.198";
 
@@ -6136,9 +6137,9 @@ export function sandboxArgsFor(scope: SandboxScope): string[] {
  * install's argv, environment and boot warnings are byte-identical after this.
  *
  * Verified present in the pinned binary by the survey that found them
- * (`proposals/ContextControl/18-implementation-sketch.md`, phase 0a); this app
- * neither sets nor validates them, so a value the CLI rejects is still the
- * CLI's to reject.
+ * (`git show a74a1bb:"proposals/implemented - ContextControl/18-implementation-sketch.md"`,
+ * phase 0a); this app neither sets nor validates them, so a value the CLI
+ * rejects is still the CLI's to reject.
  */
 export const CONTEXT_SHAPING_ENV = [
   "DISABLE_AUTO_COMPACT",

@@ -145,7 +145,7 @@ quote the two words *"never a shell"*, which the paragraph does contain.
 
 **This is a house-style trap worth naming, because the paraphrase is loose in the
 tree**: `proposals/ContinuousImprovement/01-constraints.md:159` and
-`proposals/implemented - ContextControl/08-option-externalise-tool-output.md:284`
+`git show a74a1bb:"proposals/implemented - ContextControl/08-option-externalise-tool-output.md"` line 284
 both carry it, the second in quotation marks, and neither cites a source for it.
 Attributing it to a file is the error; using the phrase is not.
 
@@ -231,7 +231,7 @@ rows against ⌘1–⌘9"*.
 
 **The ban is not weakened by being stale - it is strengthened**, and `01e-` §2
 uses it either way. This is the third document in a disagreement
-`proposals/implemented - SessionFlow/README.md` already recorded, and it has not
+`git show a74a1bb:"proposals/implemented - SessionFlow/README.md"` already recorded, and it has not
 been reconciled since.
 
 ---

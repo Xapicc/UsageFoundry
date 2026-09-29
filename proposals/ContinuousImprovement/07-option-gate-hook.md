@@ -25,7 +25,7 @@ this is the only one that changes the position rather than the wording.
 hook's `hookSpecificOutput.additionalContext` reaches the model as a *separate*
 text block rather than as part of the tool result, wrapped as a
 `<system-reminder>` and landing immediately after the result the model is already
-reading (`proposals/ContextControl/02-levers-on-the-pin.md:121`–`:125`, quoting
+reading (`git show a74a1bb:"proposals/implemented - ContextControl/02-levers-on-the-pin.md"` lines 121–125, quoting
 the observed `TEXT-WITH-HOOK` line). The binary's own validation-error string
 lists `additionalContext` as an accepted `PostToolUse` field
 (`02-levers-on-the-pin.md:167`). None of that is inferred; it was exercised on
@@ -258,7 +258,7 @@ FROM runs GROUP BY model` → `claude-opus-5|294`) at $5/M input
 (`src/lib/pricing.ts:38`), so a 1h cache write is $10/M and a cache read $0.50/M
 (`:16`–`:18`). Document sizes are `wc -c` at `ee93684`; tokens are 4 bytes each
 with a ×1.5 upper bound, the spread
-`proposals/ContextControl/05-option-trim-injected-text.md:127`–`:129` measures
+`git show a74a1bb:"proposals/implemented - ContextControl/05-option-trim-injected-text.md"` lines 127–129 measures
 between its own two conversions. Carry length is the median tool calls a run makes
 at or after its first edit, one API request assumed per tool call:
 
