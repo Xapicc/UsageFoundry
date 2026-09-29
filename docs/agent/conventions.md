@@ -83,6 +83,7 @@ Each rule is in one topic file under `docs/agent/conventions/`; the lines below 
 - One thing leads on every screen, and elevation says which.
 - Grouping has a closed vocabulary, and it is seven things.
 - `ceiling`, `guard` and `limit` are three different words for three different things, and the app says which.
+- Interface copy carries information the screen does not already show, or it is deleted.
 - The chat's transcript says who is speaking with structure, never with colour.
 
 ## [The component kit, its spacing and interface defects](conventions/component-kit.md)
