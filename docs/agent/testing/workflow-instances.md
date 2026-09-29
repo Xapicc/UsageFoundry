@@ -4,11 +4,11 @@
 
 Read before adding or editing tests of `workflows.ts`' instances and blocks (halt, boot reconcile, `instanceStatus`), `schedules.ts`' `putSchedule`, `/api/workflows/[id]`, the name `duplicateWorkflow` picks, and `canvasGraph.ts`/`format.ts`' section and pass drawing.
 
-The fourth of the twenty that open the database, `haltedMembers.test.ts`, halts a real instance through `stopInstance` and then asks `reopenRun` and `reviveBlockedDependents` about its members, and drives the same pick-up against a graph's deferred nodes to pin `reviveBlockedBlocks` — the two halves of one question, because what it pins is a *join*: a halted member is an ordinary `blocked` row with a null `work_dir`, indistinguishable from the one the revive exists to rescue except by `workflow_instance_runs`, so every way of getting this wrong typechecks, throws nothing and reads identically on the page — the only evidence is a billed agent working under a workflow the page says is stopped.
+`haltedMembers.test.ts`, which opens the database, halts a real instance through `stopInstance` and then asks `reopenRun` and `reviveBlockedDependents` about its members, and drives the same pick-up against a graph's deferred nodes to pin `reviveBlockedBlocks` — the two halves of one question, because what it pins is a *join*: a halted member is an ordinary `blocked` row with a null `work_dir`, indistinguishable from the one the revive exists to rescue except by `workflow_instance_runs`, so every way of getting this wrong typechecks, throws nothing and reads identically on the page — the only evidence is a billed agent working under a workflow the page says is stopped.
 
 Its three control cases are half the test, and the half more easily broken: a chain outside any workflow, and one inside an instance still `started`, must still wake exactly as before.
 
-The seventh of the twenty that open the database, `bootBlocks.test.ts`, drives a whole boot — `reconcileOnBoot` then `reconcileBlocksOnBoot`, in `src/instrumentation.ts`'s order — because what it pins is neither a value nor a row but an *ordering between two reconcilers*: `bootBlockPlan` beside it decides which instances are spared, and this is what says the survivors it is handed are the ones the run reconciler had already decided to keep.
+`bootBlocks.test.ts`, which opens the database, drives a whole boot — `reconcileOnBoot` then `reconcileBlocksOnBoot`, in `src/instrumentation.ts`'s order — because what it pins is neither a value nor a row but an *ordering between two reconcilers*: `bootBlockPlan` beside it decides which instances are spared, and this is what says the survivors it is handed are the ones the run reconciler had already decided to keep.
 
 Its own controls are again half of it, and one of them is the halt bound: a stale pause, a run the boot failed, and an instance already `stopping` must all still lose their blocks.
 
@@ -16,7 +16,7 @@ It asks the same question of a `looping` block, whose survivor is the loop's own
 
 It asks it once more of a run `waiting` on another run, which the boot used to stop unconditionally under a sentence saying its dependency had been closed out by the same restart. Three cases: behind a pause the boot kept it stays `waiting`; behind a run the boot failed, on an `on-finish` edge that the ordinary release would read as satisfied, it and the run behind it end `blocked`, each naming the run in front; and behind a completed run while new work is held it stays `waiting` with nothing planned.
 
-`instanceReading.test.ts` is the twentieth of the twenty that open the database, and it is the half of one word that no pure function can be asked about.
+`instanceReading.test.ts` opens the database, and it is the half of one word that no pure function can be asked about.
 
 `instanceStatus` decides which of the six readings a stored row is and is tested beside `haltPlan`; what it decides *from* is a count over two tables, because a graph is half runs and half a ledger of blocks that are not runs yet — and both halves can be live, and both can be written off.
 

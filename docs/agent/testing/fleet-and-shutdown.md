@@ -4,7 +4,7 @@
 
 Read before adding or editing tests of `fleet.ts` (`stopFleet`, the hold, the bulk pick-ups) and of `shutdownRuns` and the shutdown ladder in `orchestrator.ts`.
 
-The twelfth of the twenty that open the database is `fleet.test.ts`, and it is two subjects that are one file because both are about *whether anything is running*.
+`fleet.test.ts` opens the database, and it is two subjects that are one file because both are about *whether anything is running*.
 
 The stop half pins an ordering, `bootBlocks.test.ts`'s kind of fact: a dependent still `waiting` when the run it waits on is stopped is released, promoted and spawned — a run starting *because* the fleet was stopped — so the waiting rows are blocked first, and the only evidence otherwise is a billed agent under a page saying everything stopped.
 
@@ -24,7 +24,7 @@ Every one of those failures ends the same way and none of them throws: an agent 
 
 A fourth covers a run picked up before it ever had a workspace, because both doors that reach `reopenRun` are here. A run created behind another one has no `work_dir` and no isolation until `admitWaiting` plans them, and it can end `stopped` while it waits or `failed` by that release; a pick-up that queued it worked in the operator's own folder, with no checkout and no wait for its dependency. Three cases, stopped then reopened by hand, failed by a release that found every checkout slot held, and stopped then reopened through `reopenFleet`, each asserting the row goes back to `waiting` and is admitted into a checkout of a real repository once its dependency completes. `maxConcurrentRuns` is set to 0 rather than the hold, since the hold would suppress the release under test.
 
-`shutdown.test.ts` is the nineteenth of the twenty that open the database and the only one here whose subject is a *promise the process makes on the way out*: it drives a real run to `running` against a child that stays alive until it is signalled, calls the real `shutdownRuns`, and reads the row.
+`shutdown.test.ts` opens the database, and it is the only one here whose subject is a *promise the process makes on the way out*: it drives a real run to `running` against a child that stays alive until it is signalled, calls the real `shutdownRuns`, and reads the row.
 
 Nothing short of that says what it needs to say — `reconcileKilledCycle` was always correct and was reachable from exactly one place, inside `startRun`'s loop, which a `process.exit(0)` two lines after `killAllAgents` meant no suspended frame ever reached.
 

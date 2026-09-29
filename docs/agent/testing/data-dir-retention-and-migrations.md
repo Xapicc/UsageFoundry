@@ -4,7 +4,7 @@
 
 Read before adding or editing tests of `serverLock.ts`'s data-directory claim, `retention.ts` and its sweep, and `migrate()` in `db.ts`.
 
-`dataDirClaim.test.ts` is the eighteenth of the twenty that open the database and it opens the database in order to be *refused* by it twice, in the two ways ownership ends: with the lock held by a live pid that is not ours, `createRun` has to throw, leave no row and spawn no child.
+`dataDirClaim.test.ts` opens the database in order to be *refused* by it twice, in the two ways ownership ends: with the lock held by a live pid that is not ours, `createRun` has to throw, leave no row and spawn no child.
 
 What it pins is the wiring rather than a value — `lockVerdict` was always right and nothing asked it, so a second replica served traffic, admitted runs and spawned billed agents having correctly reported that it owned nothing, and the collision that follows is silent in every table.
 

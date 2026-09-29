@@ -16,11 +16,11 @@ The status it carries is the other half — `null` is nobody answered and a numb
 
 `chatRequest` (`chatRequest.test.ts`) is a caller of it and keeps its own test, because the chat page reads a thread off the answer and that shape is its own.
 
-The first of the twenty that open the database, `src/app/api/chat/[id]/route.test.ts`, names a throwaway `DATA_DIR` and calls the handler, because what it pins is a *payload key*: the chat page polls that one route, so a list left out of its answer is frozen on screen until a reload, which is exactly what it did for as long as a comment claimed otherwise.
+`src/app/api/chat/[id]/route.test.ts`, which opens the database, names a throwaway `DATA_DIR` and calls the handler, because what it pins is a *payload key*: the chat page polls that one route, so a list left out of its answer is frozen on screen until a reload, which is exactly what it did for as long as a comment claimed otherwise.
 
-The second, `chatOrder.test.ts`, is in the SQL itself: a thread ordered by a random UUID puts a denial note above the reply it is a footnote to, which reverses what the operator is being told.
+`chatOrder.test.ts`, which opens the database too, is in the SQL itself: a thread ordered by a random UUID puts a denial note above the reply it is a footnote to, which reverses what the operator is being told.
 
-The third, `chatTurn.test.ts`, drives `sendChatMessage` through a failed pre-spawn setup, because what it pins is a *state transition* rather than a return value (a chat thread stranded at `thinking` for ever by one failed `writeFileSync`, unusable until the server restarts).
+`chatTurn.test.ts`, which opens the database too, drives `sendChatMessage` through a failed pre-spawn setup, because what it pins is a *state transition* rather than a return value (a chat thread stranded at `thinking` for ever by one failed `writeFileSync`, unusable until the server restarts).
 
 Its other two cases are one gate along and pin the transition that must *not* happen: an approval clicked while the install ceiling is up refuses the click and decides nothing, because `failed` on a proposal is terminal and the condition that caused it clears on its own — so the obvious behaviour, marking the proposal and telling the operator exactly why, is the one that destroys the work, and it does it a batch at a time.
 

@@ -4,7 +4,7 @@
 
 Read before adding or editing tests of `transcripts.ts` (the scan, its cache, dedupe, walk and memo), `transcriptCompaction` and `buildSnapshot`'s coalescing.
 
-The eleventh of the twenty that open the database is a count as well, one function over from `createRun`: `snapshotCoalesce.test.ts` wraps `buildSnapshot` module-wide and asks how many times it runs for 25 callers that arrive together.
+`snapshotCoalesce.test.ts` opens the database and is a count as well, one function over from `createRun`: it wraps `buildSnapshot` module-wide and asks how many times it runs for 25 callers that arrive together.
 
 It is a count and never a wall clock because the defect is invisible from any value the app produces — all 25 of those aggregations return the same answer — so a timing assertion would be the only other way to see it, and a timing assertion in CI is a flake.
 

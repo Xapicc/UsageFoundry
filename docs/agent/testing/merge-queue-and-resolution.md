@@ -4,7 +4,7 @@
 
 Read before adding or editing tests of `mergeQueue.ts` and its drain, conflict resolution's checkout, budget and silence deadline, and `conflictedPaths`.
 
-The fifth of the twenty that open the database, `mergeQueueOrder.test.ts`, is in the SQL as well, `chatOrder.test.ts`'s grounds one table over: `nextQueuedIn`'s ORDER BY is the whole of what decides which branch is merged next, and reading the per-batch `position` first sorted a batch queued while the worker was still draining an earlier one into the middle of it.
+`mergeQueueOrder.test.ts`, which opens the database, is in the SQL as well, `chatOrder.test.ts`'s grounds one table over: `nextQueuedIn`'s ORDER BY is the whole of what decides which branch is merged next, and reading the per-batch `position` first sorted a batch queued while the worker was still draining an earlier one into the middle of it.
 
 It also pins the repository term beside it — that a branch in one repository stays eligible while another repository's is in flight, and that within one repository nothing does — because those are one question and the way to get the first is to drop the second.
 
@@ -12,7 +12,7 @@ Nothing crashes — every item is still re-previewed against git at its own turn
 
 It drives the selector the way the worker does, settling each row and asking again, because a comparator beside the query would be a second copy of the rule and the copy is the one that would stay right.
 
-The sixth, `mergeQueueView.test.ts`, is that same table once more, and its decision is in the SQL too: `selectQueueBatches` is the rule and is tested pure, but the query that fed it never consulted a rule at all — it took the newest `batch_id` — so what `mergeQueueView.test.ts` pins is that the answer the page is handed covers every batch the worker can still act on, and that Cancel reaches one that is not the newest.
+`mergeQueueView.test.ts`, which opens the database too, is that same table once more, and its decision is in the SQL too: `selectQueueBatches` is the rule and is tested pure, but the query that fed it never consulted a rule at all — it took the newest `batch_id` — so what `mergeQueueView.test.ts` pins is that the answer the page is handed covers every batch the worker can still act on, and that Cancel reaches one that is not the newest.
 
 `mergeQueueDrain.test.ts` is the drain's own three writes, named beside `planItem` / `selectQueueBatches` in the list of what `npm test` covers: it is the only thing in the process that can move a row off `landing` or `resolving`, and no pure function reaches it.
 

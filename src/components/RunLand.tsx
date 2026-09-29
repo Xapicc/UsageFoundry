@@ -751,9 +751,10 @@ export function RunLand({ run }: { run: RunDTO }) {
           )}
 
           {/* Refuse and explain, never show-and-caveat: each of these reasons is
-              a standing condition of the install — no credential for this
-              repository, a remote that is not GitHub — rather than something a
-              press would find out, so it is said instead of being discovered. */}
+              one the press would give — a standing condition of the install,
+              such as no credential for this repository or a remote that is not
+              GitHub, or a branch something can still commit to — so it is said
+              instead of being discovered. */}
           {state.branchExists &&
             settled &&
             delivery &&

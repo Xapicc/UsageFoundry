@@ -312,8 +312,8 @@ test("a link that resolves to nothing is recorded as broken, never dropped", () 
   );
 
   // And it is still an edge, to a node flagged as a phantom — this is how a
-  // vault records an intention, and dropping it is what turns "340 dangling
-  // links" into a graph that reads as complete.
+  // vault records an intention, and dropping it is what turns a vault with
+  // dangling links into a graph that reads as complete.
   const phantom = [...idx.nodes.values()].find((n) => n.kind === "phantom");
   assert.ok(phantom, "no phantom node for an unresolved target");
   assert.equal(phantom.title, "Nothing Written Yet");
