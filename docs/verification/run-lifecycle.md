@@ -99,7 +99,24 @@
 - **The `needs-review` matcher, precedence, prompt composition, loop stop and
   edge semantics are unit-tested.**
 
+- **The restart notice answers a refused and a failed pick-up beside its
+  button**, rendered 2026-09-29 at `943445e` from the standalone build against
+  a throwaway `DATA_DIR`, with `/api/runs/restarted` intercepted by Playwright:
+  a count of 2, then a POST answered with two refusals, with a 500 carrying an
+  `error`, and with a reset connection, each at 390px and 1280px. All six kept
+  **Pick up 2**, drew the answer under the notice, read the list a second time,
+  and left `scrollWidth` equal to `clientWidth`, including a refusal carrying
+  an 80-character branch name at 390px. Caveat: the answers were intercepted,
+  so no refusal written by `reopenRestartClosed` itself has reached the page.
+
 ## Not yet verified by hand
+
+- **No real `reopenRestartClosed` refusal has reached the restart notice.**
+  The notice's rendering of one is checked against an intercepted answer only.
+  Settle: on a scratch install, let a cheap run with a work-cycle limit of 1
+  finish, run `UPDATE runs SET restart_closed = 1 WHERE id = '<id>'` against
+  `$DATA_DIR/usagefoundry.db`, reload `/runs` and press **Pick up**: the run
+  should be refused for its used-up cycles, named, with a link to its page.
 
 - **What `--allowedTools Grep Glob` does to a real work cycle is unmeasured.**
 
