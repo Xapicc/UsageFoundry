@@ -462,7 +462,14 @@ export default function NewRunPage() {
 
   const [mounts, setMounts] = useState<WorkspaceMountDTO[]>([]);
   const [allFolders, setAllFolders] = useState<WorkspaceFolderDTO[]>([]);
-  const [foldersLoaded, setFoldersLoaded] = useState(false);
+  // Three states for `RunFormState.foldersRead`'s reason. A failed read used to
+  // end in `mounts` empty and the list marked loaded, which drew "No workspace
+  // is mounted" and sent the operator to reconfigure the container over a
+  // request that had failed.
+  const [foldersRead, setFoldersRead] = useState<
+    { state: "loading" } | { state: "ok" } | { state: "failed"; error: string }
+  >({ state: "loading" });
+  const foldersLoaded = foldersRead.state === "ok";
   const [settings, setSettings] = useState<SettingsDTO | null>(null);
   const [usage, setUsage] = useState<UsageResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -590,6 +597,49 @@ export default function NewRunPage() {
   // Return is a newline and the operator is standing when they finish.
   const formRef = useRef<HTMLFormElement>(null);
 
+  // Through `jsonRequest` for the reason the `/api/settings` read below gives:
+  // a non-2xx answer carries a JSON body, so a raw `r.json()` resolved it as a
+  // list with no mounts in it.
+  async function loadFolders() {
+    const res = await jsonRequest<FoldersResponse>("/api/folders");
+    if (!res.ok) {
+      setFoldersRead({
+        state: "failed",
+        error: pollFailureMessage(res.status, res.error),
+      });
+      return;
+    }
+    const d = res.data;
+    setMounts(d.mounts ?? []);
+    setAllFolders(d.folders ?? []);
+    setFoldersRead({ state: "ok" });
+    // Prefer the first mount that actually has something in it, so a
+    // configured-but-empty mount does not look like the whole UI is broken.
+    const first =
+      d.mounts?.find((m) => m.available && m.folderCount > 0) ??
+      d.mounts?.find((m) => m.available) ??
+      d.mounts?.[0];
+    if (first && !seeded.current) {
+      // Only into an empty picker: a retry lands after an arbitrary delay, and
+      // a template applied while the list could not be read has already named
+      // its mount.
+      setMountId((current) => current || first.id);
+      // The baseline moves with it. This form chose the mount, not the
+      // operator, so marking it "changed" would be the page reporting its
+      // own default back as an override.
+      setBaseline((b) =>
+        b.kind === "defaults"
+          ? { ...b, values: { ...b.values, mountId: first.id } }
+          : b,
+      );
+    }
+  }
+
+  function retryFolders() {
+    setFoldersRead({ state: "loading" });
+    void loadFolders();
+  }
+
   useEffect(() => {
     // Read from `window` rather than `useSearchParams`, which would force this
     // page behind a Suspense boundary purely to read one optional parameter.
@@ -597,31 +647,7 @@ export default function NewRunPage() {
     const seedRunId = new URLSearchParams(window.location.search).get("from");
     if (seedRunId) seeded.current = true;
 
-    fetch("/api/folders", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d: FoldersResponse) => {
-        setMounts(d.mounts ?? []);
-        setAllFolders(d.folders ?? []);
-        setFoldersLoaded(true);
-        // Prefer the first mount that actually has something in it, so a
-        // configured-but-empty mount does not look like the whole UI is broken.
-        const first =
-          d.mounts?.find((m) => m.available && m.folderCount > 0) ??
-          d.mounts?.find((m) => m.available) ??
-          d.mounts?.[0];
-        if (first && !seeded.current) {
-          setMountId(first.id);
-          // The baseline moves with it. This form chose the mount, not the
-          // operator, so marking it "changed" would be the page reporting its
-          // own default back as an override.
-          setBaseline((b) =>
-            b.kind === "defaults"
-              ? { ...b, values: { ...b.values, mountId: first.id } }
-              : b,
-          );
-        }
-      })
-      .catch(() => setFoldersLoaded(true));
+    void loadFolders();
 
     // Through `jsonRequest` rather than a raw `fetch`, because this is the one
     // read on the page whose failure decides what an unattended agent may do,
@@ -709,7 +735,8 @@ export default function NewRunPage() {
         })
         .catch(() => void 0);
     }
-    // Runs once. `applySeed` only calls setters, all of which are stable.
+    // Runs once. `applySeed` and `loadFolders` only call setters and read
+    // refs, all of which are stable.
   }, []);
 
   /**
@@ -960,7 +987,7 @@ export default function NewRunPage() {
 
   const problems = runFormProblems({
     mountId,
-    foldersLoaded,
+    foldersRead: foldersRead.state,
     hasActiveMount: activeMount !== null,
     noMountsUsable,
     prompt,
@@ -1364,6 +1391,23 @@ export default function NewRunPage() {
         </Notice>
       )}
 
+      {/* Never the notice above: a read that failed says nothing about what is
+          mounted, and pointing at `.env` over it sends the operator off to
+          reconfigure a container that may be fine. */}
+      <div role="alert">
+        {foldersRead.state === "failed" && (
+          <Notice tone="warn">
+            <strong>The workspace list could not be read.</strong>{" "}
+            {foldersRead.error}
+            <ButtonRow className="mt-2.5">
+              <Button variant="secondary" onClick={retryFolders}>
+                Try again
+              </Button>
+            </ButtonRow>
+          </Notice>
+        )}
+      </div>
+
       {/* The read that decides what an agent may do, and it failed. Said here
           rather than swallowed, because the value left in the picker is this
           form's own default and it is the more permissive of the two. */}
@@ -1441,8 +1485,10 @@ export default function NewRunPage() {
                       <span className="mono break-all">{activeMount.path}</span>
                       {activeMount.error ? ` — ${activeMount.error}` : ""}
                     </>
-                  ) : !foldersLoaded ? (
+                  ) : foldersRead.state === "loading" ? (
                     "Reading the configured mounts…"
+                  ) : foldersRead.state === "failed" ? (
+                    "Could not read the configured mounts"
                   ) : mounts.length === 0 ? (
                     "No workspace mounts are configured"
                   ) : (
@@ -1470,7 +1516,11 @@ export default function NewRunPage() {
                   aria-invalid={problemFor("mount") ? true : undefined}
                   required
                 >
-                  {!foldersLoaded && <option value="">Loading…</option>}
+                  {!foldersLoaded && (
+                    <option value="">
+                      {foldersRead.state === "failed" ? "Unavailable" : "Loading…"}
+                    </option>
+                  )}
                   {/* A value with no option of its own shows the first
                       enabled one while state still holds the old value, and
                       choosing what is already shown fires no change — so on a

@@ -28,7 +28,7 @@ import {
 /** A form with nothing wrong with it: every refusal below is one edit away. */
 const CLEAN: RunFormState = {
   mountId: "workspace",
-  foldersLoaded: true,
+  foldersRead: "ok",
   hasActiveMount: true,
   noMountsUsable: false,
   prompt: "Do the thing",
@@ -76,9 +76,25 @@ test("a run with nowhere to work is refused, and says which kind of nowhere", ()
   // ...but only once the list has actually landed. A mount cannot be judged
   // missing from a list that has not arrived.
   assert.deepEqual(
-    focuses({ ...CLEAN, hasActiveMount: false, foldersLoaded: false }),
+    focuses({ ...CLEAN, hasActiveMount: false, foldersRead: "loading" }),
     [],
   );
+
+  // A read that failed is a third kind of nowhere, and neither of the other
+  // two sentences: "No workspace is mounted" sends the operator to `.env` over
+  // a request that failed, and "Choose" points at a picker with nothing in it.
+  // It refuses even a mount a copied run already named, because the form
+  // cannot show where that run would go.
+  for (const mountId of ["", "workspace"]) {
+    const failed = runFormProblems({
+      ...CLEAN,
+      mountId,
+      hasActiveMount: false,
+      foldersRead: "failed",
+    });
+    assert.deepEqual(failed.map((p) => p.focus), ["mount"]);
+    assert.match(failed[0].message, /workspace list is read/);
+  }
 });
 
 test("a blank task is refused, and whitespace is blank", () => {
@@ -255,7 +271,7 @@ test("which refusals wait for a blur and which do not", () => {
   const byFocus = new Map(
     runFormProblems({
       mountId: "",
-      foldersLoaded: true,
+      foldersRead: "ok",
       hasActiveMount: false,
       noMountsUsable: false,
       prompt: "",

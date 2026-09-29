@@ -24,7 +24,12 @@ export interface Problem {
  */
 export interface RunFormState {
   mountId: string;
-  foldersLoaded: boolean;
+  /**
+   * Whether the workspace list has been read. Three states rather than a flag,
+   * because a read that failed is neither: it is not "no workspace is mounted",
+   * and it is not a list that has yet to arrive.
+   */
+  foldersRead: "loading" | "ok" | "failed";
   hasActiveMount: boolean;
   noMountsUsable: boolean;
   prompt: string;
@@ -61,7 +66,16 @@ export interface RunFormState {
  */
 export function runFormProblems(v: RunFormState): Problem[] {
   const problems: Problem[] = [];
-  if (!v.mountId || (v.foldersLoaded && !v.hasActiveMount)) {
+  // Refused even with a mount already named by a copied run: the form cannot
+  // show where that run would work without the list, and Start would send an
+  // agent into a folder nobody on this page was shown.
+  if (v.foldersRead === "failed") {
+    problems.push({
+      focus: "mount",
+      message: "Nothing to choose until the workspace list is read.",
+      immediate: false,
+    });
+  } else if (!v.mountId || (v.foldersRead === "ok" && !v.hasActiveMount)) {
     problems.push({
       focus: "mount",
       message: v.noMountsUsable
