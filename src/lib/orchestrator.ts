@@ -12358,12 +12358,28 @@ export function reopenRun(
         "would ever end it. Give it one of the two.",
     };
   }
-  if (policy.maxIterations !== null && run.iterations >= policy.maxIterations) {
+  // The cap every guard site reads, widened by what task checks have granted,
+  // and the door has to read it too or the two disagree in both directions: a
+  // pick-up the guard would admit is refused here, and a limit typed as a total
+  // buys the old grants over again on top. Carried rather than zeroed, because
+  // `reopenRestartClosed` picks a restart's runs up through this door on their
+  // own stored budgets, and the column is on the row so that a restart does not
+  // hand a run back its whole `maxValidationCycles` allowance.
+  const grantedCycles = run.validation_cycles;
+  if (
+    policy.maxIterations !== null &&
+    run.iterations >= policy.maxIterations + grantedCycles
+  ) {
     return {
       ok: false,
-      reason: `This run has already used ${run.iterations} work ${
-        run.iterations === 1 ? "cycle" : "cycles"
-      }. Raise the cycle limit above that to carry on.`,
+      reason:
+        grantedCycles > 0
+          ? `This run has already used ${run.iterations} work cycles, and the check on its task granted ${grantedCycles} of them on top of its limit. Raise the cycle limit above ${
+              run.iterations - grantedCycles
+            } to carry on.`
+          : `This run has already used ${run.iterations} work ${
+              run.iterations === 1 ? "cycle" : "cycles"
+            }. Raise the cycle limit above that to carry on.`,
     };
   }
   if (policy.maxRunCostUSD !== null && spentUSD >= policy.maxRunCostUSD) {

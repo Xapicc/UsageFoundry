@@ -60,7 +60,7 @@ assert.equal(
     "run against the real database",
 );
 
-const { createRun, currentSnapshot, getRun } =
+const { createRun, currentSnapshot, getRun, reopenRun } =
   require("./orchestrator") as typeof import("./orchestrator");
 const { evaluateBudget } = require("./budget") as typeof import("./budget");
 const validation = require("./validation") as typeof import("./validation");
@@ -129,6 +129,16 @@ after(() => {
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
+/** Wait for a run's loop to settle it, however it ends. */
+async function settled(id: string): Promise<NonNullable<ReturnType<typeof getRun>>> {
+  for (let i = 0; i < 500; i++) {
+    const row = getRun(id);
+    if (row && row.status !== "queued" && row.status !== "running") return row;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  assert.fail(`run ${id} never settled; it is ${getRun(id)?.status}`);
+}
+
 /** Start a run the way the form does and wait for its loop to settle it. */
 async function settle(
   budget: Record<string, unknown>,
@@ -140,12 +150,7 @@ async function settle(
     budget,
     origin: "form",
   });
-  for (let i = 0; i < 500; i++) {
-    const row = getRun(run.id);
-    if (row && row.status !== "queued" && row.status !== "running") return row;
-    await new Promise((r) => setTimeout(r, 10));
-  }
-  assert.fail(`run ${run.id} never settled; it is ${getRun(run.id)?.status}`);
+  return settled(run.id);
 }
 
 describe("a work cycle a task check granted past the cycle cap", () => {
@@ -225,6 +230,42 @@ describe("a work cycle a task check granted past the cycle cap", () => {
       verdict.allowed ? null : verdict.code,
       "iterations",
       "the live guard read the cycle it was watching as past the cap that admitted it",
+    );
+  });
+});
+
+describe("picking up a run a task check granted cycles to", () => {
+  it("buys the cycles its new limit names, and keeps the grants on top", async () => {
+    // The door read the cap without the grant while the guard read it with
+    // one, so the two disagreed both ways: a limit of 2 was refused as "already
+    // used 2" though the guard would admit a cycle, and a limit of 3 bought two
+    // cycles where the door had just said the count to beat was 2.
+    spawned = 0;
+    replies = ["DONE", "Still working."];
+    verdicts = [{ pushback: "Add the missing test.", reason: "the test is missing" }];
+    const ended = await settle({ maxIterations: 1 });
+    assert.equal(ended.iterations, 2, "the fixture used its own cycle and the granted one");
+    assert.equal(ended.validation_cycles, 1);
+
+    const refused = reopenRun(ended.id, { maxIterations: 1 });
+    assert.equal(refused.ok, false, "a limit the run has already used was accepted");
+    assert.match(
+      refused.ok ? "" : refused.reason,
+      /granted 1 of them on top of its limit\. Raise the cycle limit above 1 to carry on/,
+    );
+
+    spawned = 0;
+    replies = ["Still working."];
+    const picked = reopenRun(ended.id, { maxIterations: 2 });
+    assert.equal(picked.ok, true, picked.ok ? "" : `refused: ${picked.reason}`);
+
+    const row = await settled(ended.id);
+    assert.equal(spawned, 1, "a limit one above what the run was given buys one cycle");
+    assert.equal(row.iterations, 3);
+    assert.equal(row.validation_cycles, 1, "the pick-up carried the grant rather than resetting it");
+    assert.match(
+      row.stop_reason ?? "",
+      /Used all 3 work cycles .* the 2 it was given and 1 more the check on its task granted/,
     );
   });
 });
