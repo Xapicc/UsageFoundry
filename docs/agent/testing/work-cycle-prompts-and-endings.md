@@ -22,7 +22,7 @@ Its negative cases carry the same weight and will be exercised first: the matche
 
 `nextPrompt`'s new assertion is the **ungating** — that the notice rides on a prompt where `endsOnDone` is false — because `maxIterations` defaults to 1, so folding it under that flag would withhold the ending from the majority of runs on a stock install and nothing else would report the loss; its existing equalities compose against the notice rather than dropping to substring matches, since only an equality catches a second sentence appended by accident.
 
-The ninth of the twenty that open the database is `settleOnExit`'s argument in its strongest form: what `cycleDeadline.test.ts` pins is that `runIteration` *returns at all* against a child that prints nothing and does not exit, so the subject has to be a real process — a stubbed emitter would pin the wiring rather than the fault, and the fault is the child.
+`cycleDeadline.test.ts` opens the database and is `settleOnExit`'s argument in its strongest form: what it pins is that `runIteration` *returns at all* against a child that prints nothing and does not exit, so the subject has to be a real process — a stubbed emitter would pin the wiring rather than the fault, and the fault is the child.
 
 It is the one file in the suite that points `CLAUDE_BIN` at a binary that exists (`process.execPath`, running an inline script, so it can reach nothing and spend nothing), which is exactly why it cannot be a case in `orchestrator.test.ts`, whose own harness pins that variable at a path that does not exist so a regression reaching a spawn is a failed test rather than a billed one.
 
