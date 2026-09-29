@@ -24,8 +24,8 @@ Eighteen are renderings rather than functions — every `*.test.tsx` in the tree
 |---|---|
 | `budget.test.ts` | [harnesses] |
 | `diff.test.ts` |  |
-| `land.test.ts` | [landing], [harnesses] |
-| `orchestrator.test.ts` | [cycle], [argv], [ceiling], [pruning], [parsers], [budgets], [pricing], [landing], [sandbox], [harnesses] |
+| `land.test.ts` | [landing], [merge-queue], [harnesses] |
+| `orchestrator.test.ts` | [cycle], [argv], [ceiling], [pruning], [parsers], [budgets], [pricing], [landing], [merge-queue], [sandbox], [harnesses] |
 | `patch.test.ts` |  |
 | `planUsage.test.ts` |  |
 | `queueOrder.test.ts` |  |
@@ -181,11 +181,10 @@ Units that are about no test file in the tree:
 | `validation.test.ts` |  |
 | `validationSettle.test.ts` |  |
 
-## [Landing, conflict resolution and the merge queue](testing/landing-and-merge-queue.md)
+## [Landing, delivery and the land gate](testing/landing-and-delivery.md)
 
 | Test file | Also in |
 |---|---|
-| `conflictedPaths.test.ts` |  |
 | `deleteBranch.test.ts` |  |
 | `deliverRun.test.ts` |  |
 | `delivery.test.ts` |  |
@@ -194,11 +193,17 @@ Units that are about no test file in the tree:
 | `landAfterVerify.test.ts` |  |
 | `landUnwind.test.ts` |  |
 | `landView.test.ts` | [cards] |
+| `repoLock.test.ts` |  |
+
+## [The merge queue and conflict resolution](testing/merge-queue-and-resolution.md)
+
+| Test file | Also in |
+|---|---|
+| `conflictedPaths.test.ts` |  |
 | `mergeQueue.test.ts` | [argv] |
 | `mergeQueueDrain.test.ts` |  |
 | `mergeQueueOrder.test.ts` |  |
 | `mergeQueueView.test.ts` |  |
-| `repoLock.test.ts` |  |
 | `resolutionBudget.test.ts` |  |
 | `resolutionSilence.test.ts` |  |
 | `resolveCheckout.test.ts` |  |
@@ -389,7 +394,8 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [proposals]: testing/chat-proposals.md
 [tasks]: testing/taskboard-authority-and-moves.md
 [task-deps]: testing/taskboard-comments-deps-and-mcp.md
-[landing]: testing/landing-and-merge-queue.md
+[landing]: testing/landing-and-delivery.md
+[merge-queue]: testing/merge-queue-and-resolution.md
 [run-page]: testing/run-page-panels-and-file-maps.md
 [argv]: testing/spawn-argv-and-child-env.md
 [sandbox]: testing/sandbox-and-read-guard.md
