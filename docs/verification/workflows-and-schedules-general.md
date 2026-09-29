@@ -128,6 +128,19 @@
   and the fix-rounds select, and the run block's "Runs on: Local model". No
   console error. Nothing was run.
 
+- **A section fan-in's second branch, 2026-09-29** (production standalone
+  builds of `c6446d8` and `c2a9f73`, scratch `DATA_DIR` and mount, a stub
+  `CLAUDE_BIN` that commits one marker file per run and reports DONE, default
+  guards so every run isolates): loop `L` with `maxPasses` 1 repeating e→a,
+  e→b, a→j, b→j, j→m, where e→a and a→j carry the branch. On the base build it
+  saved 200 and finished with every run `completed` and `m` reporting
+  `branchesLanded: 1` and no note, and `main` held e's, a's and j's commits and
+  not b's, which sat on its own unmerged branch. On the fix it is refused at
+  `POST /api/workflows` with "Nothing lands “B”'s branch … Link “B” to “M” as
+  well", and with b→m added it saves, `m` lands 2 branches and `main` holds all
+  four. Caveat: one pass, non-overlapping files so no conflict, and only the
+  API door was tried, not the editor.
+
 ## Not yet verified by hand
 
 - **No review block has run against a real model (2026-09-28).** The block's
