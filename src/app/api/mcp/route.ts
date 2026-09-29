@@ -2725,9 +2725,11 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
     // decision. An *omitted* field is not that decision, and reading one as the
     // other would silently put a block on the whole workspace, which is the one
     // selection that blocks every other run in the tree. So it is required
-    // here, exactly as `propose_run` requires a folder beside a mountId.
+    // here, exactly as `propose_run` requires a folder beside a mountId. `null`
+    // is refused with it: it is how a model spells "no value", and the
+    // normalizer's `?? ""` would read it as the mount root all the same.
     const startsNoRun = ["merge", "review"].includes(String(b.kind ?? "run"));
-    if (!startsNoRun && b.folder === undefined) {
+    if (!startsNoRun && (b.folder === undefined || b.folder === null)) {
       return text(
         `“${String(b.name ?? to)}” names no folder. Pass it exactly as ` +
           'list_folders gives it, or "" if you really mean the whole ' +
