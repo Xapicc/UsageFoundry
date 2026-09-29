@@ -41,6 +41,21 @@ rather than in the run loop: the pane is the only consumer, and a Dreaming-shape
 branch inside the orchestrator's cycle handling would be this feature reaching
 into the loop every other feature is careful not to touch.
 
+**`reconcileDreamingNotes` maps `NOTE n` on the stored `prompt_item`, never on a
+row's position among the run's rows that are left.** `forgetNote` deletes a row
+and every later row of that run moves up a place, so a position map attached
+item 1's path to item 2's signature on the next reconcile of a run still
+waiting on its report — and the pane's retraction list then sent a person to
+delete the wrong file from their vault. `claimSignatures` stores each row's
+1-based place in the array it was handed, which must be the array
+`buildDreamingPrompt` numbers and in its order, and `claimedByItem` reads it
+back. A `NOTE` line whose row has been forgotten is dropped, because forgetting
+is what lets a later night write that signature again. Rows claimed before the
+column existed carry a null `prompt_item`, and a run holding one falls back to
+claim order — right until one of its rows is forgotten, which is all those rows
+ever had. `dreamingLedger.test.ts` pins both: forget-then-reconcile, and the
+fallback.
+
 **`recordNight`'s `selected` is sticky.** A night that had already started a run
 and then found nothing left on a second pass read back as `quiet`, so the one
 surface that shows this feature reported a night that wrote into somebody's vault

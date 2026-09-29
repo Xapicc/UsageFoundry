@@ -20,6 +20,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 
 - A day is the operator's day.
 - The scan keeps its own cache and must never ride `scanUsage`'s.
+- The scan memo holds each observation's instant, never its day.
 - There is no eviction bound on the scan memo and that is deliberate.
 - The scan deduplicates on the record, never on the signature, and the distinction is load-bearing.
 
@@ -28,6 +29,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - The ledger is the retraction mechanism, and that is why the feature can ship.
 - Signatures are claimed before the run writes, not after it reports.
 - `reconcileDreamingNotes` is keyed on the run and never on the night.
+- `reconcileDreamingNotes` maps `NOTE n` on the stored `prompt_item`, never on a row's position among the run's rows that are left.
 - `recordNight`'s `selected` is sticky.
 
 ## [The writer: a run, its spend limit and its prompt](dreaming/the-writer.md)
