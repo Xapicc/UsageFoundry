@@ -63,9 +63,9 @@ import type { Settings } from "./settings";
  * is stated there rather than here.
  *
  * A target that resolves to nothing is recorded as a **broken link** and gets a
- * `phantom` node, never dropped. Dropping it is what turns "this vault has 340
- * dangling links" into a graph that reads as complete, which is the one reading
- * an operator would act on and the one that would be wrong.
+ * `phantom` node, never dropped. Dropping it is what turns a vault with dangling
+ * links into a graph that reads as complete, which is the one reading an
+ * operator would act on and the one that would be wrong.
  *
  * ## The cache is the point
  *
