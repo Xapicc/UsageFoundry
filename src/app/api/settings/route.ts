@@ -422,11 +422,11 @@ async function applySettingsPut(body: Record<string, unknown>): Promise<Response
 
   if ("dreamingMaxCostUSD" in body) {
     const v = Number(body.dreamingMaxCostUSD);
-    // No way to express "no ceiling", on `scheduleRefusal`'s reasoning: a clock
+    // No way to express "no limit", on `scheduleRefusal`'s reasoning: a clock
     // removes the person who would have seen what the last run cost.
     if (!Number.isFinite(v) || v <= 0) {
       return NextResponse.json(
-        { error: "Dreaming needs a cost ceiling above zero; it runs with nobody present." },
+        { error: "Dreaming needs a spend limit above zero; it runs with nobody present." },
         { status: 400 },
       );
     }

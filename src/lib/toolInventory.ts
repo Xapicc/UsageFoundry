@@ -79,7 +79,7 @@ export type ToolSource = "python" | "gh-extension" | "stack";
  * command to resolve, so every one of the other six would be a claim nobody
  * measured. `SandboxRow` reserves the same word for the same reason — *"a
  * policy file this app could not read, and it is deliberately neutral rather
- * than reassuring"* (`settings/page.tsx:1747-1750`).
+ * than reassuring"* (`SandboxRow`'s docblock in `settings/page.tsx`).
  */
 export type ToolState =
   | "installed"
@@ -607,9 +607,9 @@ function toolboxOf(source: ToolSource): string {
 /**
  * The sentence beside each badge.
  *
- * The server's, not the page's, for `SandboxRow`'s reason at
- * `settings/page.tsx:1752-1754`: *"a second copy written here is a second thing
- * to keep honest."* It says what was counted and never why a call failed — a
+ * The server's, not the page's, for the reason `SandboxRow`'s docblock in
+ * `settings/page.tsx` gives: *"a second copy written here is a second thing to
+ * keep honest."* It says what was counted and never why a call failed — a
  * count cannot tell a missing binary from a tool that ran and did not like its
  * arguments, and a word that claims a cause sends somebody to fix the wrong
  * thing (`01e-operator-surface.md` §4).

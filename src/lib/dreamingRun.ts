@@ -241,7 +241,7 @@ export function parseNoteLines(text: string, count: number): Map<number, string>
 export function dreamingRefusal(s: Settings): string | null {
   if (!s.dreamingEnabled) return "Dreaming is off.";
   if (!(s.dreamingMaxCostUSD > 0)) {
-    return "Dreaming has no cost ceiling, and a clock removes the person who would have seen what the last run cost.";
+    return "Dreaming has no spend limit, and a clock removes the person who would have seen what the last run cost.";
   }
   const root = resolveKnowledgeRoot(s);
   if (!root.ok) return root.reason;

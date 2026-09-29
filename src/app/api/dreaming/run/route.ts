@@ -25,8 +25,8 @@ export const POST = auditMutation(async () => {
   const result = await runDreamingNight({ origin: "form" });
 
   // A refusal is a 200 carrying a sentence, not a 4xx: every reason this can
-  // decline — off, no ceiling, no vault — is a state the page is *for* showing,
-  // and a 4xx would render it as a fault.
+  // decline — off, no spend limit, no vault — is a state the page is *for*
+  // showing, and a 4xx would render it as a fault.
   const headers = result.runId ? { [SUBJECT_HEADER]: result.runId } : undefined;
   return NextResponse.json(
     {
