@@ -243,4 +243,32 @@ describe("discoverPlugins' problems", () => {
     );
     assert.ok(!about(neverEnabled).some((p) => p.enabledPath !== null));
   });
+
+  it("reports a mount root whose own manifest is broken, once", () => {
+    // The root is looked at apart from the walk, and that branch used to drop a
+    // manifest that did not parse with no line at all.
+    const manifestDir = path.join(mount, ".claude-plugin");
+    fs.mkdirSync(manifestDir, { recursive: true });
+    const aboutRoot = () =>
+      plugins
+        .discoverPlugins()
+        .problems.filter((p) => p.message.startsWith(`${MOUNT_DIR}: `) || p.enabledPath === mount);
+    try {
+      breakManifest(mount);
+      const off = aboutRoot();
+      assert.deepEqual(off.map((p) => p.enabledPath), [null], JSON.stringify(off));
+      assert.match(off[0].message, /not valid JSON/);
+
+      // Enabled, the stored-entry pass reports it with its switch-off, and the
+      // root's own line would be the same problem again with no control.
+      fs.writeFileSync(path.join(manifestDir, "plugin.json"), JSON.stringify({ name: "root" }));
+      plugins.setPluginEnabled(mount, true);
+      breakManifest(mount);
+      const on = aboutRoot();
+      assert.deepEqual(on.map((p) => p.enabledPath), [mount], JSON.stringify(on));
+    } finally {
+      plugins.setPluginEnabled(mount, false);
+      fs.rmSync(manifestDir, { recursive: true, force: true });
+    }
+  });
 });
