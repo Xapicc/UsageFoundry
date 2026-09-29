@@ -876,6 +876,11 @@ function branchOwner(chain: readonly ChainMember[]): string | null {
   return worked.at(-1)?.runId ?? chain[0]?.runId ?? null;
 }
 
+/** `branchOwner` from a fresh read of this run's chain, for `enqueue`. */
+export function branchOwnerOf(run: RunRow): string | null {
+  return branchOwner(branchChain(run));
+}
+
 /**
  * Another run on this branch that can still add to it, if there is one.
  *
