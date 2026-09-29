@@ -102,9 +102,12 @@ Eighteen are renderings rather than functions — every `*.test.tsx` in the tree
 | Test file | Also in |
 |---|---|
 | `contextPruning.test.ts` | [ceiling] |
+| `contextPruningReporting.test.ts` |  |
+| `forkAttempts.test.ts` |  |
 | `intakeFilter.test.ts` |  |
 | `pruneStatement.test.ts` |  |
 | `pruneTranscript.test.ts` |  |
+| `transcriptForkDedupe.test.ts` |  |
 | `transcriptOwnership.test.ts` |  |
 
 ## [Context samples, the live tick and the context ceiling](testing/context-samples-and-ceiling.md)
@@ -237,6 +240,7 @@ Units that are about no test file in the tree:
 
 | Test file | Also in |
 |---|---|
+| `mcpStatus.test.ts` |  |
 | `notify.test.ts` |  |
 | `review.test.ts` | [pricing], [landing], [stacks] |
 | `toolComposition.test.ts` |  |
@@ -355,17 +359,6 @@ Units that are about no test file in the tree:
 Units that are about no test file in the tree:
 
 - Four more files and 91 cases across thirteen of them landed with the audit pass that added the two spawn-side token levers, the install-ceiling bounding and the gzip helper — counted as `git diff …
-
-## Test files whose grounds are not recorded
-
-These are in the tree, and no topic file says what they earned.
-
-| Test file |
-|---|
-| `contextPruningReporting.test.ts` |
-| `forkAttempts.test.ts` |
-| `mcpStatus.test.ts` |
-| `transcriptForkDedupe.test.ts` |
 
 ## Checking this page is complete
 
