@@ -103,6 +103,15 @@ type Baseline = {
   values: FormValues;
 };
 
+/** What `applySeed` can fill the form from. */
+type SeedKind = Exclude<Baseline["kind"], "defaults">;
+
+/** The subject of the two carried-setting notices, per source. */
+const SEED_SOURCE: Record<SeedKind, string> = {
+  template: "The template",
+  run: "The run you copied",
+};
+
 /** A row of the form that can be reset to the baseline in one click. */
 type RowId =
   | "task"
@@ -148,7 +157,7 @@ const ROW_LABEL: Record<RowId, string> = {
   time: "the time limit",
   session: "the 5-hour window guard",
   weekly: "the weekly window guard",
-  enforcement: "when a limit is acted on",
+  enforcement: "how limits and guards are enforced",
   afterDone: "what happens after DONE",
 };
 
@@ -559,12 +568,18 @@ export default function NewRunPage() {
   const [templateError, setTemplateError] = useState<string | null>(null);
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [armedDelete, setArmedDelete] = useState(false);
-  // Whether the two settings that decide what an unattended agent may do came
-  // from a template rather than from this operator, just now. Cleared the
-  // moment either control is touched — after that it is their choice, and a
-  // banner saying otherwise would be wrong.
-  const [carriedEnforcement, setCarriedEnforcement] = useState(false);
-  const [carriedPermission, setCarriedPermission] = useState(false);
+  // Where the two settings that decide what an unattended agent may do came
+  // from, when a template or a copied run supplied them rather than this
+  // operator, just now; null otherwise. Cleared the moment either control is
+  // touched — after that it is their choice, and a banner saying otherwise
+  // would be wrong. The source rides with each flag because the notice names
+  // it, and "Start another like this" fills this form from a run.
+  const [carriedEnforcement, setCarriedEnforcement] = useState<SeedKind | null>(
+    null,
+  );
+  const [carriedPermission, setCarriedPermission] = useState<SeedKind | null>(
+    null,
+  );
 
   // Validation state. `touched` is per control and set on blur; `attempted`
   // covers the whole form and is set by a Start that could not go through.
@@ -916,6 +931,9 @@ export default function NewRunPage() {
 
   function restoreRow(row: RowId) {
     const b = baseline.values;
+    // Restoring puts back the notice the baseline raised, and the form's own
+    // defaults raise none.
+    const from = baseline.kind === "defaults" ? null : baseline.kind;
     switch (row) {
       case "task":
         setPrompt(b.prompt);
@@ -935,7 +953,9 @@ export default function NewRunPage() {
         break;
       case "permission":
         setPermissionMode(b.permissionMode);
-        setCarriedPermission(b.permissionMode === "bypassPermissions");
+        setCarriedPermission(
+          b.permissionMode === "bypassPermissions" ? from : null,
+        );
         break;
       case "cycles":
         setIterationsCapped(b.iterationsCapped);
@@ -957,7 +977,7 @@ export default function NewRunPage() {
         break;
       case "enforcement":
         setEnforcement(b.enforcement);
-        setCarriedEnforcement(b.enforcement !== "between-cycles");
+        setCarriedEnforcement(b.enforcement !== "between-cycles" ? from : null);
         break;
       case "afterDone":
         setContinueAfterDone(b.continueAfterDone);
@@ -1036,7 +1056,7 @@ export default function NewRunPage() {
    * that reads as zero — which is why the baseline is the *result* of applying
    * the seed rather than the seed itself.
    */
-  function applySeed(seed: FormSeed, kind: "template" | "run", note: string) {
+  function applySeed(seed: FormSeed, kind: SeedKind, note: string) {
     const b = seed.budget;
     const next: FormValues = {
       // A seed with no mount leaves the picker alone: it is saying "ask me",
@@ -1095,8 +1115,10 @@ export default function NewRunPage() {
 
     // The two that decide what an unattended agent may do. Applied, but
     // announced — see the notices beside the controls themselves.
-    setCarriedEnforcement(b.enforcement !== "between-cycles");
-    setCarriedPermission(seed.permissionMode === "bypassPermissions");
+    setCarriedEnforcement(b.enforcement !== "between-cycles" ? kind : null);
+    setCarriedPermission(
+      seed.permissionMode === "bypassPermissions" ? kind : null,
+    );
     // A template's mode is narrowed on save, on read and again by POST
     // /api/runs; a global default landing on top of it a moment later would
     // undo all three.
@@ -1122,8 +1144,8 @@ export default function NewRunPage() {
     if (!t) {
       setTemplateNote(null);
       setTemplateError(null);
-      setCarriedEnforcement(false);
-      setCarriedPermission(false);
+      setCarriedEnforcement(null);
+      setCarriedPermission(null);
       return;
     }
     applySeed(t, "template", `Loaded “${t.name}”`);
@@ -1368,10 +1390,10 @@ export default function NewRunPage() {
   // cannot offer.
   const enforcementLine =
     enforcement === "between-cycles"
-      ? "Limits are read before each cycle, so the cycle already running always finishes — and the run can end up one cycle past a limit."
+      ? "Limits and guards are read before each cycle, so the cycle already running always finishes — and the run can overshoot by one cycle."
       : resuming
-        ? `Limits are also read about every ${guardInterval}s while Claude is working, and that cycle's work is lost — tighter than waiting for the cycle to end, but still not an exact cut-off. A full 5-hour window parks the run instead of ending it; every other limit still ends it.`
-        : `Limits are also read about every ${guardInterval}s while Claude is working, and that cycle's work is lost. Tighter than waiting for the cycle to end, but still not an exact cut-off.`;
+        ? `Limits and guards are also read about every ${guardInterval}s while Claude is working, and that cycle's work is lost — tighter than waiting for the cycle to end, but still not an exact cut-off. The 5-hour guard parks the run instead of ending it; the weekly guard and every limit still end it.`
+        : `Limits and guards are also read about every ${guardInterval}s while Claude is working, and that cycle's work is lost. Tighter than waiting for the cycle to end, but still not an exact cut-off.`;
 
   const folderLabel = folder || activeMount?.label || "this workspace";
   const permission = permissionConsequence(permissionMode);
@@ -1964,14 +1986,14 @@ export default function NewRunPage() {
         <Card className="mb-4">
           <CardTitle>What the agent may do</CardTitle>
 
-          {/* Applying a template must not be the same as choosing. This setting
-              decides what an unattended agent is allowed to do, so it is
-              applied, named, and offered back — above the group that holds it,
-              where it cannot be scrolled past. */}
+          {/* Applying a template or copying a run must not be the same as
+              choosing. This setting decides what an unattended agent is
+              allowed to do, so it is applied, named, and offered back — above
+              the group that holds it, where it cannot be scrolled past. */}
           {carriedPermission && (
             <Notice tone="danger">
               <strong>
-                The template carries{" "}
+                {SEED_SOURCE[carriedPermission]} carries{" "}
                 <span className="mono">bypassPermissions</span>.
               </strong>{" "}
               Claude can run any command in the folder without asking.
@@ -1981,7 +2003,7 @@ export default function NewRunPage() {
                   variant="secondary"
                   onClick={() => {
                     setPermissionMode("acceptEdits");
-                    setCarriedPermission(false);
+                    setCarriedPermission(null);
                   }}
                 >
                   Edit files only
@@ -1989,7 +2011,7 @@ export default function NewRunPage() {
                 <Button
                   type="button"
                   variant="ghost"
-                  onClick={() => setCarriedPermission(false)}
+                  onClick={() => setCarriedPermission(null)}
                 >
                   Keep it
                 </Button>
@@ -2077,7 +2099,7 @@ export default function NewRunPage() {
                   // Chosen here, so it is no longer inherited — the banner
                   // above would be describing a decision that is now the
                   // operator's.
-                  setCarriedPermission(false);
+                  setCarriedPermission(null);
                   // And a settings read still in flight must not answer a
                   // question the operator has just answered themselves.
                   permissionTouched.current = true;
@@ -2094,22 +2116,25 @@ export default function NewRunPage() {
           {/* Applied, but announced — for the same reason as bypassPermissions
               above. There is no global default for this setting precisely so
               that no single edit turns every run into a cycle-killing one, and
-              a template is the second way to inherit that choice. */}
+              a template or a copied run is the second way to inherit that
+              choice. */}
           {carriedEnforcement && (
             <Notice tone="warn">
-              <strong>The template cuts cycles short.</strong>{" "}
+              <strong>
+                {SEED_SOURCE[carriedEnforcement]} cuts cycles short.
+              </strong>{" "}
               {resuming
                 ? "“Stop, then resume”"
                 : "“Stop mid-cycle”"}{" "}
-              reads your limits mid-cycle and kills the agent when one trips, so
-              that cycle&rsquo;s work is thrown away.
+              reads your limits and guards mid-cycle and kills the agent when one
+              trips, so that cycle&rsquo;s work is thrown away.
               <ButtonRow className="mt-2.5">
                 <Button
                   type="button"
                   variant="secondary"
                   onClick={() => {
                     setEnforcement("between-cycles");
-                    setCarriedEnforcement(false);
+                    setCarriedEnforcement(null);
                   }}
                 >
                   Let cycles finish
@@ -2117,7 +2142,7 @@ export default function NewRunPage() {
                 <Button
                   type="button"
                   variant="ghost"
-                  onClick={() => setCarriedEnforcement(false)}
+                  onClick={() => setCarriedEnforcement(null)}
                 >
                   Keep it
                 </Button>
@@ -2459,7 +2484,7 @@ export default function NewRunPage() {
               </>
             }
           >
-            <ListRow label="When a limit is reached">
+            <ListRow label="When a limit or guard is reached">
               {mark("enforcement")}
               {/* Three options of prose come to 352px, which is wider than the
                   294px this row leaves on a 390px screen, and
@@ -2483,9 +2508,9 @@ export default function NewRunPage() {
                   value={enforcement}
                   onChange={(v) => {
                     setEnforcement(v);
-                    setCarriedEnforcement(false);
+                    setCarriedEnforcement(null);
                   }}
-                  label="When a limit is reached"
+                  label="When a limit or guard is reached"
                 />
               </div>
             </ListRow>
@@ -2496,7 +2521,7 @@ export default function NewRunPage() {
               description={
                 <>
                   {continueAfterDone
-                    ? "Claude is asked to verify and tighten rather than invent work, and the run can then only end at a limit"
+                    ? "Claude is asked to verify and tighten rather than invent work, and the run can then only end at a limit or guard"
                     : "The run ends as soon as Claude replies DONE"}
                   {/* The consequence of *this* switch on *this* folder. It was
                       under the card, where it read as a fact about the run
