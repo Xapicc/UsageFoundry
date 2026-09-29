@@ -20,6 +20,6 @@ Each paragraph is in one topic file under `docs/agent/architecture/`; the lines 
 
 - Four kinds of agent child process, from four modules, and no more — and two numbers bound how many of them exist at once.
 - Every long-lived child also outranks the server as an OOM victim, and that is a second thing `privsep.ts` decides once.
-- `orchestrator.ts`'s loop calls `currentSnapshot()` (a fresh transcript scan, shared with every other caller that asks while it is running — see the invariant below) *before every iteration*, evaluates …
+- `orchestrator.ts`'s loop calls `currentSnapshot()` (a fresh transcript scan, shared with every other caller that asks while it is running — see *One aggregation per burst* in `docs/agent/metering/transcripts.md`) *before every iteration*, evaluates …
 - Several runs can be in flight at once.
 - Events flow: `emit()` writes to `run_events` and publishes on a `globalThis` EventEmitter → `/api/runs/[id]/stream` replays persisted history first (honouring `Last-Event-ID`), then tails live.

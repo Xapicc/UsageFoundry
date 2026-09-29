@@ -46,16 +46,21 @@ stacks.ts       the read-back over what apply-stacks.mjs installed, and the
                 removes nothing and repairs nothing, because the applier runs
                 in the one window of the container's life with no agent alive
                 and this runs in a request. `parseReceipt` validates at the
-                boundary a shell script writes across — a half-written receipt
-                must read `unreadable` and never a partial `ok`. It also
+                boundary a shell script writes across — the truncated receipt a
+                container killed mid-write leaves behind must read `unreadable`
+                and never a partial `ok`, since a partial `ok` is the read-back
+                reporting an install that did not happen. It also
                 projects what every ok stack grants a cycle
                 (`Bash(<bin>:*)` onto --allowedTools) and denies it
                 (`Bash(<entry>:*)` onto --disallowedTools), cached for the life
                 of the process because that is the exact life of the receipts.
-                There is **no `stacks` table**: the receipts are the state and
-                they are per boot, so the one question a monitor asks — what
-                did *this* boot find wrong — is answered by a set nothing
-                outlives a restart with.
+                `stackEnvironment` is the block `src/instrumentation.ts` merges
+                into `process.env` at boot, never overwriting what the operator
+                set, from where `childEnv` carries it to every child.
+                There is **no `stacks` table** and must not be: the receipts
+                are the state and they are per boot, so the one question a
+                monitor asks — what did *this* boot find wrong — is answered by
+                a set nothing outlives a restart with.
 scripts/apply-stacks.mjs
                 not in src/ and not importable from it — it runs from the
                 entrypoint before `exec "$@"`, because PATH has to be final
@@ -73,21 +78,6 @@ scripts/apply-stacks.mjs
                 already exists — which is the one breach here invisible to
                 whoever commits it, and the reason deployment.test.ts asserts
                 the Dockerfile names no path under it.
-stacks.ts       the receipts `scripts/apply-stacks.mjs` wrote, typed. A reader
-                and nothing else: it installs nothing, removes nothing and
-                repairs nothing, because the applier runs in the one window of
-                the container's life with no agent alive and this runs in a
-                request. `parseReceipt` validates rather than trusts, on
-                CLAUDE.md's boundary rule — the branch that earns it is the
-                truncated receipt a container killed mid-write leaves behind,
-                which must read unreadable and never a partial `ok`, since a
-                partial `ok` is the read-back reporting an install that did not
-                happen. There is no `stacks` table and must not be: the receipts
-                *are* the state and they are per boot, so the set de-latches on
-                the only event that can clear one of these. `stackEnvironment`
-                is the block `src/instrumentation.ts` merges into `process.env`
-                at boot, never overwriting what the operator set, from where
-                `childEnv` carries it to every child.
 plugins.ts      Claude Code plugins found in the mounts, switched on per install
                 and carried onto every work cycle as --plugin-dir. Deliberately
                 *not* `claude plugin install`: compose binds the operator's
