@@ -59,6 +59,7 @@ import { cycleOutputs } from "@/lib/cycles";
 import {
   LOG_FILTER_OPTIONS,
   describeEvent,
+  folderHolder,
   logFilterActive,
   matchesLogFilter,
   parkTrigger,
@@ -254,6 +255,8 @@ function describeRun(
     cycleInFlight: string | null;
     stoppedByGuard: boolean;
     parkedBy: ParkTrigger | null;
+    /** The run the sweeper is holding this parked one behind, if any. */
+    heldBy: string | null;
   },
 ): RunState {
   switch (run.status) {
@@ -295,6 +298,31 @@ function describeRun(
       };
 
     case "paused":
+      if (ctx.heldBy) {
+        // The window has cleared, so this is the queued card's folder wait in
+        // the queued card's words and tone, and `resume_at` is not printed:
+        // it is already past. "took" rather than "holds", because the id is
+        // whoever held the folder when the hold began, and another run can
+        // have taken it since.
+        return {
+          tone: "info",
+          headline: "Waiting for its folder",
+          detail: (
+            <>
+              Run{" "}
+              <Link className="mono" href={`/runs/${ctx.heldBy}`}>
+                {ctx.heldBy.slice(0, 8)}
+              </Link>{" "}
+              took{" "}
+              <span className="mono" title={run.work_dir ?? run.folder}>
+                {run.relPath || run.mountLabel || shortPath(run.folder, 2)}
+              </span>{" "}
+              while this run waited. This run rejoins the queue once the folder is
+              free.
+            </>
+          ),
+        };
+      }
       return {
         tone: "warn",
         headline: "Waiting for the next 5-hour window",
@@ -1304,6 +1332,9 @@ export default function RunDetail({
     cycleInFlight,
     stoppedByGuard,
     parkedBy,
+    // Only for a paused run, because on any other the walk runs back to the
+    // last status event through every line since, once a second.
+    heldBy: run.status === "paused" ? folderHolder(events, run.resume_at, nowTick) : null,
   });
   const isolated = run.isolation === "worktree" && Boolean(run.worktree_branch);
   // Read in three places below, all of them money: the figure, its footnote and

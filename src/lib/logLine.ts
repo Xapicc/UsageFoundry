@@ -923,3 +923,37 @@ export function parkTrigger(events: readonly RunEventDTO[]): ParkTrigger | null 
   }
   return null;
 }
+
+/**
+ * The run a parked run is being held behind, when `sweepPaused` is keeping it
+ * `paused` for its folder rather than for its window; null otherwise.
+ *
+ * A held run's window has cleared, but a run started while it waited is in its
+ * folder. Its row says so only in `stop_reason`, which is prose, and leaves
+ * `resume_at` in the past — so the paused card kept "Waiting for the next
+ * 5-hour window" and promised a retry at an instant already gone, above a
+ * reason saying the opposite. The holder's id is in the hold's `log` payload
+ * as `waitingFor`, written once when the hold begins.
+ *
+ * A `status` event newer than that line ends the hold it records: every park
+ * emits one and so does every way out of `paused`, so neither a hold from an
+ * earlier park nor the queue wait `createRun` logs under the same field is read
+ * as this one. A `resume_at` still ahead is the sweep re-parking the run for
+ * its window, which rewrites that column and emits nothing — the same `now >=`
+ * test `duePausedRuns` applies. The id is whoever held the folder when the hold
+ * began: the sweep does not log again if another run takes it after that.
+ */
+export function folderHolder(
+  events: readonly RunEventDTO[],
+  resumeAt: number | null | undefined,
+  now: number,
+): string | null {
+  if (resumeAt != null && now < resumeAt) return null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.kind === "status") return null;
+    const holder = e.payload?.waitingFor;
+    if (e.kind === "log" && typeof holder === "string") return holder;
+  }
+  return null;
+}
