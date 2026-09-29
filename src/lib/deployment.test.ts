@@ -2193,28 +2193,84 @@ describe("the container's log has a ceiling, and README states it", () => {
  */
 describe("the rotation cost of every environment-sourced value is recorded", () => {
   const ANCHOR = "Rotating any of these is a container restart";
-  const environmentDoc = fs.readFileSync(
-    path.join(root, "docs", "agent", "environment.md"),
-    "utf8",
-  );
+  const INDEX = "docs/agent/environment.md";
+  const TOPICS = INDEX.replace(/\.md$/, "");
 
-  /** The one bullet, up to the next top-level one. Empty when it is gone. */
-  const section = (() => {
-    const start = environmentDoc.indexOf(ANCHOR);
-    if (start === -1) return "";
-    const rest = environmentDoc.slice(start);
-    const end = rest.indexOf("\n- ");
-    return end === -1 ? rest : rest.slice(0, end);
+  const isDirectory = (rel: string) =>
+    fs.statSync(path.join(root, rel), { throwIfNoEntry: false })?.isDirectory() ?? false;
+
+  /**
+   * The document as `CLAUDE.md` routes a reader to it, which is no longer one
+   * file: past about 20 KB it is split into an index at the old path and topic
+   * files under a directory of the same name. Every file beneath that directory
+   * is read rather than today's topic file by name, because naming it would
+   * break at the next split exactly as the single path broke at the last one —
+   * the same reading `readDocument` in `docClaims.test.ts` gives.
+   */
+  const documentFiles = (() => {
+    const found = [INDEX];
+    const walk = (dir: string) => {
+      const entries = fs
+        .readdirSync(path.join(root, dir), { withFileTypes: true })
+        .sort((a, b) => a.name.localeCompare(b.name));
+      for (const entry of entries) {
+        const child = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(child);
+        else if (entry.name.endsWith(".md")) found.push(child);
+      }
+    };
+    if (isDirectory(TOPICS)) walk(TOPICS);
+    return found.map((rel) => ({
+      rel,
+      text: fs.readFileSync(path.join(root, rel), "utf8"),
+      isIndex: isDirectory(rel.replace(/\.md$/, "")),
+    }));
   })();
+
+  /**
+   * Each copy of the one bullet, up to the next top-level one. An index line
+   * repeats the bullet's lead claim — the anchor included — cut at about 200
+   * characters and before any of the names, so a topic file's copy is read
+   * wherever there is one and the index's only when nothing else carries it.
+   */
+  const bullets = (() => {
+    const copies = documentFiles.flatMap(({ rel, text, isIndex }) => {
+      const start = text.indexOf(ANCHOR);
+      if (start === -1) return [];
+      const rest = text.slice(start);
+      const end = rest.indexOf("\n- ");
+      return [{ rel, isIndex, section: end === -1 ? rest : rest.slice(0, end) }];
+    });
+    return copies.some((copy) => !copy.isIndex) ? copies.filter((copy) => !copy.isIndex) : copies;
+  })();
+
+  /** Empty when the bullet is gone, which the first case reports. */
+  const section = bullets[0]?.section ?? "";
+  const doc =
+    bullets.length > 0
+      ? bullets.map((bullet) => bullet.rel).join(" and ")
+      : `${INDEX} or any file under ${TOPICS}/`;
 
   it("carries the bullet the other cases read", () => {
     assert.notEqual(
       section,
       "",
-      `docs/agent/environment.md no longer carries the rotation bullet ` +
-        `(anchored on "${ANCHOR}"). It is the only written statement of what ` +
-        `rotating a leaked credential costs on this install; do not remove it ` +
-        `without putting the enumeration somewhere a reader is routed to.`,
+      `Neither ${INDEX} nor any file under ${TOPICS}/ carries the rotation ` +
+        `bullet (anchored on "${ANCHOR}"). It is the only written statement of ` +
+        `what rotating a leaked credential costs on this install; do not remove ` +
+        `it without putting the enumeration somewhere a reader is routed to.`,
+    );
+    // The cases below read the first copy only, so a second that says
+    // something else would go unchecked; docClaims fails the same way.
+    const readings = new Set(bullets.map((bullet) => bullet.section.replace(/\s+/g, " ").trim()));
+    assert.equal(
+      readings.size,
+      1,
+      [
+        "The rotation bullet is in more than one place, and the copies differ:",
+        ...bullets.map((bullet) => `  ${bullet.rel}`),
+        "  Correct whichever is stale, so the document makes one list.",
+      ].join("\n"),
     );
   });
 
@@ -2229,7 +2285,7 @@ describe("the rotation cost of every environment-sourced value is recorded", () 
       assert.ok(
         section.includes(name),
         `${name} is read through optionalEnv in config.ts and the rotation ` +
-          `bullet in docs/agent/environment.md does not name it. Say which of ` +
+          `bullet in ${doc} does not name it. Say which of ` +
           `the three groups it is in — issued here (only a restart revokes it), ` +
           `issued elsewhere (revoke at the issuer, the restart only re-arms ` +
           `this install), or not a credential at all.`,
@@ -2248,7 +2304,7 @@ describe("the rotation cost of every environment-sourced value is recorded", () 
       assert.ok(
         section.includes(name),
         `${name} is compared in the edge gate and the rotation bullet in ` +
-          `docs/agent/environment.md does not name it. This is the group that ` +
+          `${doc} does not name it. This is the group that ` +
           `matters most: the edge runtime has no node:fs and must not import ` +
           `lib/config, so a credential checked there cannot be given a source ` +
           `that changes while the process runs.`,
@@ -2271,7 +2327,7 @@ describe("the rotation cost of every environment-sourced value is recorded", () 
       assert.ok(
         section.includes(name),
         `${name} reaches a child from this process's own environment and the ` +
-          `rotation bullet in docs/agent/environment.md does not name it. It ` +
+          `rotation bullet in ${doc} does not name it. It ` +
           `rotates on the same restart as everything this app does read.`,
       );
     }
@@ -2293,7 +2349,7 @@ describe("the rotation cost of every environment-sourced value is recorded", () 
     assert.ok(
       section.includes("DISCORD_WEBHOOK_URL"),
       "docker-entrypoint.sh launches the Discord relay with DISCORD_WEBHOOK_URL " +
-        "and the rotation bullet in docs/agent/environment.md does not name it.",
+        `and the rotation bullet in ${doc} does not name it.`,
     );
   });
 });
