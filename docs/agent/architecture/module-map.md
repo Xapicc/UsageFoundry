@@ -103,8 +103,10 @@ plugins.ts      Claude Code plugins found in the mounts, switched on per install
                 --resume, and a stored path is proved contained in a mount again
                 at *use* time, not just when it was switched on, because what it
                 becomes is a directory whose hooks the container executes. An
-                enabled plugin that stops resolving reaches the run's own log
-                rather than being dropped
+                enabled plugin that stops resolving, or whose manifest stops
+                parsing, is withheld and reaches the run's own log rather than
+                being dropped. Switching off proves nothing: the entries that
+                most need it are the ones the enable proofs would refuse
 vaultSkill.ts   the vault-lookup skill, delivered the same way and for the same
                 reason: a plugin directory generated per spawn and passed as
                 --plugin-dir, never installed into ~/.claude/skills, where it

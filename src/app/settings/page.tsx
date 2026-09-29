@@ -4653,9 +4653,29 @@ export default function SettingsPage() {
 
         {plugins && plugins.problems.length > 0 && (
           <Notice tone="warn" className="mb-4">
-            <ul className="list-disc pl-4">
-              {plugins.problems.map((p) => (
-                <li key={p}>{p}</li>
+            <ul className="list-disc space-y-1.5 pl-4">
+              {plugins.problems.map(({ message, enabledPath }) => (
+                <li key={message}>
+                  {/* `anywhere` rather than the `dd` above's `break-all`: a
+                      message is prose around a path, and `break-all` splits
+                      the prose mid-word too. `anywhere` still counts the
+                      path's break points in the min-content width, which is
+                      the half `break-words` misses. */}
+                  <span className="[overflow-wrap:anywhere]">{message}</span>
+                  {/* An enabled plugin the list cannot show has no row, so
+                      without this it has no switch at all. */}
+                  {enabledPath !== null && (
+                    <Button
+                      variant="secondary"
+                      size="compact"
+                      className="ml-2"
+                      busy={pluginBusy === enabledPath}
+                      onClick={() => void togglePlugin(enabledPath, false)}
+                    >
+                      Switch off
+                    </Button>
+                  )}
+                </li>
               ))}
             </ul>
           </Notice>
