@@ -56,7 +56,7 @@ option is a **layer over** it, exactly as `04-` is a layer over `02-`/`03-`.
   monospace. **The component this option needs is shipped and in use on the run
   page.**
 - **`stripEscapes`** (`claudeAuth.ts:118`) for the install output, or `Log`'s own
-  rendering. No ANSI colour work, no `conventions.md:64` theme-probe problem,
+  rendering. No ANSI colour work, no theme-probe problem of the kind `docs/agent/conventions/canvas-and-charts.md`'s *"a `<canvas>` settles three things the DOM already answered"* paragraph describes,
   because there is no canvas.
 - **No input element anywhere on the page.** That is the invariant, and it is one
   sentence in a review: *the transcript pane has no `<input>`, no `<textarea>`,

@@ -16,7 +16,7 @@ Two values differ from the hunts' own:
 | 1 | R-2 | Fleet pick-up sheet keeps each run's spending cap and seeds a passable cycle cap | high | 01 | yes: `FleetControls.tsx:55-56`, `:191-196`, `:222`; `fleet.ts:274` spreads `{ ...stored, ...wire }`, which settles the hunt's open assumption about an absent key | Top ten. Same run as R-3. Goes after `b403b8b4` |
 | 2 | G-1 | Name the paths when Land refuses a dirty checkout | high | 04 | yes: `land.ts:423-435` keeps a boolean; `:1040-1041`; `DIRT_NAMED` at `:1332` | Top ten. Goes before G-2. `landRefusal` needs a new test case |
 | 3 | R-4 + W-1 | A run's page links to the workflow run (or other origin) that started it | high | 01, 03 | yes: `runs/[id]/page.tsx:1330`; `grep -c "/workflows/"` gives 0; `origin_ref` is read nowhere in `src/app` or `src/components` | Top ten. **Merged from R-4 and W-1.** W-1's route is the one to take: `origin_ref` holds a node id for some origins (`workflows.ts:4887-4888`, per W-1), so resolve through `workflow_instance_runs`, indexed at `db.ts:901`. The schedule and chat halves of R-4 make it S–M |
-| 4 | C-1 | A decided proposal card says what its run did | high | 02 | yes: `chat/page.tsx:2651-2676`; `chat/dto.ts:268-290` has `runId` and no run field | Top ten. One batched query per poll (`chat.md:71`). Same run as C-6 |
+| 4 | C-1 | A decided proposal card says what its run did | high | 02 | yes: `chat/page.tsx:2651-2676`; `chat/dto.ts:268-290` has `runId` and no run field | Top ten. One batched query per poll (`docs/agent/chat/chat-api-and-poll.md`'s *"the poll asks for the messages it does not have"* paragraph). Same run as C-6 |
 | 5 | C-10 | Warn before an unsaved task brief or note is thrown away | high | 02 (and 05, outside note) | yes: no `registerLeaveGuard` or `beforeunload` in `TaskEditor.tsx` or `TaskThread.tsx`; `autoFocus` at `TaskEditor.tsx:210`; `unsavedWork.ts:36` exists | Top ten. **Merged with 05's "Seen outside my territory" note** on the same missing guard. Its "send only changed fields" part goes before C-15 |
 | 6 | C-8 | Show the status of the run that holds a claim | high | 02 | yes: `tasks/page.tsx:214-223` and `tasks/[id]/page.tsx:54-63` draw a short id only; no holder status on the DTO | Top ten |
 | 7 | W-2 | The instance page says each wait's condition | high | 03 | yes: `workflows/dto.ts:87-95` keeps `edge.from` and drops `edge.edge` | Top ten. Same run as W-3 |
@@ -34,7 +34,7 @@ Two values differ from the hunts' own:
 | 19 | C-4 | The browser tab says when a turn has landed or a question is waiting | medium | 02 | yes: `grep -rn document.title src` finds nothing | It would be the first page to set a title |
 | 20 | C-5 | Keep the composer's draft per thread, and do not overwrite it | medium | 02 | — | Closes the rest of ChatPanelExperience C7 |
 | 21 | C-6 | A proposal card's task links to the task | medium | 02 | — | The template half moved to R-8. Same run as C-1 |
-| 22 | C-7 | Name the open thread on the page, from its first message | medium | 02 | yes: the heading is the literal "Orchestrator" (`chat/page.tsx:1039`) | S; M with rename. Rewrites `chat.md:69` |
+| 22 | C-7 | Name the open thread on the page, from its first message | medium | 02 | yes: the heading is the literal "Orchestrator" (`chat/page.tsx:1039`) | S; M with rename. Rewrites `docs/agent/chat/chat-api-and-poll.md`'s *"`GET /api/chat` answers two different questions"* paragraph |
 | 23 | C-12 | Keep the board's project filter, and file new tasks into it | medium | 02 | — | Same run as C-15 |
 | 24 | C-14 | Show what was filed while working a task | medium | 02 | yes: `grep -ci parent src/app/api/tasks/route.ts` gives 0 | |
 | 25 | C-15 | Change a task's priority from its board row | medium | 02 | — | After C-10's changed-fields Save |
@@ -82,8 +82,8 @@ Two values differ from the hunts' own:
 
 | # | ID | Title | Value | From | Checked here | Notes |
 |---|---|---|---|---|---|---|
-| 60 | C-9 | Start a run from a task, linked to it | high | 02 | — | After R-8. `taskIds` go *into* `createRun`, never after it (`taskboard.md:755-768`) |
-| 61 | C-2 | Say on the chat page that another thread is waiting on the operator | high | 02 | — | Proposals and questions stay two counts (`chat.md:65`) |
+| 60 | C-9 | Start a run from a task, linked to it | high | 02 | — | After R-8. `taskIds` go *into* `createRun`, never after it (`docs/agent/taskboard/runs-from-tasks.md`'s *"the links have to be written before the run can be promoted"* paragraph) |
+| 61 | C-2 | Say on the chat page that another thread is waiting on the operator | high | 02 | — | Proposals and questions stay two counts (`docs/agent/chat/operator-questions.md`'s *"a chat waiting on an answer is drawn as waiting"* paragraph) |
 | 62 | U-5 | Settings: send only what changed | high | 05 | — | It bends `metering.md`'s default-agent decision and has to argue with that decision's reasoning. `modelCatalogue` joins `EDITABLE_PATHS` first |
 | 63 | G-5 | Stop listing deleted branches as rows for ever | high | 04 | — | Migration (`runs.branch_removed_at`). Pager counts go over the filtered set |
 | 64 | U-1 | Project exhaustion from Anthropic's own reading on a stock install | high | 05 | — | Same run as `8b47ae9a` |
@@ -190,7 +190,7 @@ These are gathered from the five files. The reasons are given there.
 - **01:** One install-wide stop that also reaches assist children (reviews, resolutions, chat turns, validations). It needs a stop path for assists first.
 - **01:** A per-segment history of a run, where each pick-up, park and restart is a row with its own worked minutes and spend.
 - **02:** Tell an operator who is not looking that the chat asked them something. It needs the webhook's closed, run-only field list reopened, and a per-thread URL.
-- **02:** Bulk moves on the board. It needs a selection column, and `taskboard.md:962-966` refuses a seventh column.
+- **02:** Bulk moves on the board. It needs a selection column, and `docs/agent/taskboard/board-page.md`'s *"the count goes inside a cell the board already has"* paragraph refuses a seventh column.
 - **02:** Start a run from several tasks at once. This is C-9 plus the bulk selection.
 - **03:** A per-edge "why did or did not this start" timeline across an instance. That is RunDecisionTree's `run_events`.
 - **03:** Inputs at the press of Run. The run route reads no body, by design.

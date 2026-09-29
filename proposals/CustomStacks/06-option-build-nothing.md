@@ -44,7 +44,7 @@ Four documentation changes and zero code:
 3. **A correction to `docs/agent/architecture/run-loop-and-child-processes.md`'s *"four kinds of agent child process"* paragraph** — "four kinds of agent
    child process, from four modules" is three modules (`orchestrator.ts`, `chat.ts`, `review.ts`).
    `chat.ts` has one `spawn(` (`:1709`) serving *one* kind through two callers,
-   on `architecture.md:203`'s own reading — a workflow's orchestrator block is
+   on that paragraph's own reading — a workflow's orchestrator block is
    *"not a fifth kind: it is the fourth one invoked without a thread"* — and it
    is `review.ts`'s one `spawn(` (`:660`) that serves two of the four. That
    paragraph already contradicts its own opening with *"Three modules, four

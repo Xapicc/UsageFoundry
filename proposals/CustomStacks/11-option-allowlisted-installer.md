@@ -63,7 +63,7 @@ The verbs, and the closed list is the design:
   front. §10 is where that choice gets made; `04-` §2's reconcile-host question is
   inherited whole and is not re-argued here.
 - **UI**: a sub-route with a card per verb and a `ui/Log` transcript per run.
-  Entirely inside the seven affordances (`conventions.md:50`) — a card, a
+  Entirely inside the seven affordances (`docs/agent/conventions/design-language-and-grouping.md`'s *"grouping has a closed vocabulary"* paragraph) — a card, a
   `ListGroup` of installed things, a `Disclosure` for the transcript. **The only
   option in this file set that adds no new UI shape at all.**
 

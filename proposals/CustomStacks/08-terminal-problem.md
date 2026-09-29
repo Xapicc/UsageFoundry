@@ -301,7 +301,7 @@ panes"* and `panes.ts:15` says nine. `ui-density-audit.md:115` also still says
 
 ### Against the seven affordances
 
-`conventions.md:50` closes grouping at seven — pane, sub-route, card, labelled
+`docs/agent/conventions/design-language-and-grouping.md`'s *"grouping has a closed vocabulary"* paragraph closes grouping at seven — pane, sub-route, card, labelled
 `ListGroup`, `Disclosure`, `SegmentedControl` tab strip, `Sheet` — and forbids
 seven more, and states that *"a **region** is not an eighth affordance"*.
 
@@ -328,7 +328,7 @@ each is a real cost rather than a formality:
    `<input>`, `<textarea>`, `<select>` and `contentEditable`. xterm.js keeps a
    hidden textarea and is therefore covered; a bare focusable `<div>` is not, and
    ⌘1 typed into it navigates away mid-command.
-2. **Colour.** `conventions.md:64`'s canvas rules apply to any canvas or WebGL
+2. **Colour.** `docs/agent/conventions/canvas-and-charts.md`'s *"a `<canvas>` settles three things the DOM already answered"* paragraph's canvas rules apply to any canvas or WebGL
    renderer: a colour may never be read from a custom property, because every
    token is a `light-dark()` no `@property` registers and `getComputedStyle`
    returns source text a 2D context rejects **silently**. An emulator needs
@@ -491,7 +491,7 @@ option file's cost estimate depends on the first two.
    ```
 5. **Nothing about a real terminal emulator.** No xterm.js was installed, no PTY
    was opened, no theme probe was written. The colour cost in §6 is reasoned from
-   `conventions.md:64` and has not been paid by anyone here.
+   `docs/agent/conventions/canvas-and-charts.md`'s *"a `<canvas>` settles three things the DOM already answered"* paragraph and has not been paid by anyone here.
 
 And one thing that is a gap in the tree rather than in this survey:
 **`Dockerfile:10` is stale.** It says of `python3 make g++` that *"They stay in

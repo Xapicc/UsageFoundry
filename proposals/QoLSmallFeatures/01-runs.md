@@ -28,29 +28,29 @@ I did not run `npm test` or `npm run typecheck`, because nothing in `src/` chang
   - `maxIterations` defaults to 1 (`docs/agent/run-lifecycle/reopen-and-resume.md`'s *"a reopened run carries one message"* paragraph), so the ordinary `completed` run that used its one cycle is refused on the first press with the values the sheet chose. So is a run stopped by its spending limit.
 - **Change**: When a stored limit is already reached, pre-fill a raised value instead: `iterations + max(1, original cap)` for cycles, and the spend so far plus the original cap for money. Mark each raised field with its hint ("was 1 — used up"), so the raised number is visibly the form's suggestion. Share one pure helper between the sheet and the door, e.g. `reachedLimits(run)` next to `pausedMsAt` in `apiTypes.ts`, so the sheet and `reopenRun`'s three checks cannot disagree.
 - **Size**: S.
-- **Touches**: `run-lifecycle.md:33` ("re-queueing under the limits that stopped it just reproduces the stop"). This item applies that reasoning to the form as well as the door. `permissionMode` stays off the wire. The risk is that a pre-filled higher spending cap is a money decision, so it must show as a changed value, never silently.
+- **Touches**: `docs/agent/run-lifecycle/reopen-and-resume.md`'s *"reopening a finished run is an operator decision"* paragraph ("re-queueing under the limits that stopped it just reproduces the stop"). This item applies that reasoning to the form as well as the door. `permissionMode` stays off the wire. The risk is that a pre-filled higher spending cap is a money decision, so it must show as a changed value, never silently.
 - **Value**: high. It is the ordinary pick-up of the default run, every time.
 - **Not worth it if**: pick-ups are nearly all of `failed` runs whose limits were not reached (not measured; assumed rare).
 
 ### R-2 The fleet pick-up sheet's defaults refuse every run and clear every spending cap
 - **Friction**:
   - The cycle field starts at `"1"` and the spending field blank (`src/components/FleetControls.tsx:55-56`), and blank goes on the wire as `null` (`:194-197`).
-  - Cycles: every run that has used a cycle is refused by the door check (`orchestrator.ts:11800`). After "Stop everything", that is every run that was mid-cycle, because the loop increments before it spawns (`budgets-and-guards.md:14`). A sub-agent executed `reopenFleet` with the sheet's defaults: runs at 1/5 and 3/10 cycles were both refused.
-  - Spending: `reopenFleet` spreads the wire over each run's stored budget (`run-lifecycle.md:15`), so the untouched blank field rewrites every run's own `maxRunCostUSD` to "no limit". A sub-agent executed it: a stored `{maxIterations:1, maxRunCostUSD:5, …}` came back as `"maxRunCostUSD":null`.
+  - Cycles: every run that has used a cycle is refused by the door check (`orchestrator.ts:11800`). After "Stop everything", that is every run that was mid-cycle, because the loop increments before it spawns (`docs/agent/budgets-and-guards/enforcement-modes.md`'s `LIVE_ENFORCEABLE_CODES` paragraph). A sub-agent executed `reopenFleet` with the sheet's defaults: runs at 1/5 and 3/10 cycles were both refused.
+  - Spending: `reopenFleet` spreads the wire over each run's stored budget (`docs/agent/run-lifecycle/fleet-stop-hold-and-set-aside.md`'s *"the hold is a settings row of its own"* paragraph), so the untouched blank field rewrites every run's own `maxRunCostUSD` to "no limit". A sub-agent executed it: a stored `{maxIterations:1, maxRunCostUSD:5, …}` came back as `"maxRunCostUSD":null`.
 - **Change**:
   - Seed the cycle field from the set: the maximum `iterations` over `reopenable` plus the smallest original cap. `RunListItemDTO` carries `iterations`.
   - Send `maxRunCostUSD` only when the operator has typed in the field, and say "each run keeps its own spending limit" while it is untouched.
-  - A typed blank still means "no limit", exactly as `run-lifecycle.md:15` records.
+  - A typed blank still means "no limit", exactly as `docs/agent/run-lifecycle/fleet-stop-hold-and-set-aside.md`'s *"the hold is a settings row of its own"* paragraph records.
 - **Size**: S.
-- **Touches**: `run-lifecycle.md:15`, where blank-as-`null` is an explicit answer and "a field the sheet never asked about keeps the value that run was started with". This item uses the second half of that sentence for a field the operator did not touch. That an absent key is kept by the spread is assumed from that sentence; `fleet.ts:220-232` should be checked first.
+- **Touches**: `docs/agent/run-lifecycle/fleet-stop-hold-and-set-aside.md`'s *"the hold is a settings row of its own"* paragraph, where blank-as-`null` is an explicit answer and "a field the sheet never asked about keeps the value that run was started with". This item uses the second half of that sentence for a field the operator did not touch. That an absent key is kept by the spread is assumed from that sentence; `fleet.ts:220-232` should be checked first.
 - **Value**: high. The control exists for the twenty-five-run case, and its defaults fail it both ways.
 - **Not worth it if**: nobody uses the fleet pick-up (no usage figure exists).
 
 ### R-3 The pick-up sheet lists the runs it will pick up
-- **Friction**: The sheet confirms a count, "The N failed or stopped runs listed on this page" (`FleetControls.tsx:~201-206`). `reopenable` is computed from the poll's newest 100 rows (`src/app/runs/page.tsx:876`), including runs that are only in the collapsed "Older runs" fold. `run-lifecycle.md:15` grounds the bulk pick-up on "the ids the page displayed", but the sheet never displays them.
+- **Friction**: The sheet confirms a count, "The N failed or stopped runs listed on this page" (`FleetControls.tsx:~201-206`). `reopenable` is computed from the poll's newest 100 rows (`src/app/runs/page.tsx:876`), including runs that are only in the collapsed "Older runs" fold. `docs/agent/run-lifecycle/fleet-stop-hold-and-set-aside.md`'s *"the hold is a settings row of its own"* paragraph grounds the bulk pick-up on "the ids the page displayed", but the sheet never displays them.
 - **Change**: Inside the existing `Sheet`, list `reopenable` as `ListRow`s (task clipped, status, finished relative, link to the run). Beyond nine rows, show the first nine and a count ("and 16 more"), per the `ListGroup` rule "more than nine is two".
 - **Size**: S.
-- **Touches**: `conventions.md:51` (a `Sheet` is the allowed shape for a decision; no nested disclosure). The list must be `reopenable` itself and not a re-query, or it stops being the ids the press sends.
+- **Touches**: `docs/agent/conventions/design-language-and-grouping.md`'s *"grouping has a closed vocabulary"* paragraph (a `Sheet` is the allowed shape for a decision; no nested disclosure). The list must be `reopenable` itself and not a re-query, or it stops being the ids the press sends.
 - **Value**: medium. It turns a count into something that can be checked before a press that restarts agents that accept edits.
 - **Not worth it if**: the set is almost always one or two runs.
 
@@ -61,9 +61,9 @@ I did not run `npm test` or `npm run typecheck`, because nothing in `src/` chang
   - `schedule` → the schedule's page;
   - `chat` → the thread.
 
-  Render the origin word as a `Link` when non-null. When the referenced row is gone, leave it as plain text, which is what the column is designed to keep saying (`run-lifecycle.md:9`).
+  Render the origin word as a `Link` when non-null. When the referenced row is gone, leave it as plain text, which is what the column is designed to keep saying (`docs/agent/run-lifecycle/origin-queue-and-request-log.md`'s *"a run records the gate it came through"* paragraph).
 - **Size**: S–M.
-- **Touches**: `run-lifecycle.md:9` (origin is a record, not a deduction; this must not infer an origin where `origin_ref` is null). `conventions.md` on positions resolved at the fetch boundary.
+- **Touches**: `docs/agent/run-lifecycle/origin-queue-and-request-log.md`'s *"a run records the gate it came through"* paragraph (origin is a record, not a deduction; this must not infer an origin where `origin_ref` is null). `conventions.md` on positions resolved at the fetch boundary.
 - **Value**: medium-high. The comment above that line calls provenance "the first question".
 - **Not worth it if**: most referenced rows are deleted before anyone reads the run (unmeasured).
 
@@ -72,7 +72,7 @@ I did not run `npm test` or `npm run typecheck`, because nothing in `src/` chang
 - **Change**:
   - Add "finished <time>" to the header when `finished_at` is set.
   - Add one fact line "worked Xm · parked Ym · n of 3 waits used" to the run's inspector region, computed with `pausedMsAt`.
-  - Label it "since it was last picked up" when `reopened_at` is set, because `started_at` and `paused_ms` reset on a pick-up (`run-lifecycle.md:33`).
+  - Label it "since it was last picked up" when `reopened_at` is set, because `started_at` and `paused_ms` reset on a pick-up (`docs/agent/run-lifecycle/reopen-and-resume.md`'s *"reopening a finished run is an operator decision"* paragraph).
 - **Size**: S.
 - **Touches**: `budgets-and-guards.md` (the bar and the guard share one arithmetic; this adds a third reader of the same function, not a copy). The "of 3" must read `MAX_PAUSES_PER_RUN`. If task `8ef928a2` splits the refusal counter from `pause_count`, show that counter instead.
 - **Value**: medium. These are basic facts about a run, currently missing from its own page.
@@ -94,11 +94,11 @@ I did not run `npm test` or `npm run typecheck`, because nothing in `src/` chang
 ### R-7 Filter the runs list by origin
 - **Friction**: `origin` is on the list DTO (`apiTypes.ts:1405`) but is not drawn or filterable on `/runs`; `grep -n origin src/app/runs/page.tsx` returns nothing. "What did the schedules start overnight?" and "what did that orchestrator block emit?" cannot be asked. `listRunsPage` filters on `status`, `q` and `settledBefore` only (`orchestrator.ts:1130-1145`).
 - **Change**:
-  - Add `?origin=` to `GET /api/runs` and `listRunsPage`. Refuse an unknown value rather than dropping it (`conventions.md:16`).
+  - Add `?origin=` to `GET /api/runs` and `listRunsPage`. Refuse an unknown value rather than dropping it (`docs/agent/conventions/polling-dtos-and-settings-save.md`'s *"a list route ships the list's own DTO"* paragraph).
   - Add a select beside the status filter in the "Older runs" fold.
   - Add a short origin word on each row.
 - **Size**: S–M.
-- **Touches**: `conventions.md:16` (narrowing happens in the query, never over a capped page). `run-lifecycle.md:9` (five values, recorded not deduced). The local scan over `proposals/Findability/` found no filter by origin.
+- **Touches**: `docs/agent/conventions/polling-dtos-and-settings-save.md`'s *"a list route ships the list's own DTO"* paragraph (narrowing happens in the query, never over a capped page). `docs/agent/run-lifecycle/origin-queue-and-request-log.md`'s *"a run records the gate it came through"* paragraph (five values, recorded not deduced). The local scan over `proposals/Findability/` found no filter by origin.
 - **Value**: medium. Three of the five origins start agents with nobody present, and that is when an operator most needs to find the runs later.
 - **Not worth it if**: installs use only the form.
 
@@ -147,8 +147,8 @@ I did not run `npm test` or `npm run typecheck`, because nothing in `src/` chang
 
 ## Too big for this list
 
-- One install-wide stop that also reaches assist children (reviews, conflict resolutions, chat turns, validations). "Stop everything" composes run and instance stops only (`src/lib/fleet.ts`, `run-lifecycle.md:13`), and a `run_reviews` row has no stop at all (`budgets-and-guards.md:46`). That needs a stop path designed for assists first.
-- A per-segment history of a run, with each pick-up, park and restart as its own row carrying worked minutes and spend. `started_at`/`paused_ms` reset on a pick-up (`run-lifecycle.md:33`), so today a run's whole life cannot be totalled.
+- One install-wide stop that also reaches assist children (reviews, conflict resolutions, chat turns, validations). "Stop everything" composes run and instance stops only (`src/lib/fleet.ts`, `docs/agent/run-lifecycle/fleet-stop-hold-and-set-aside.md`'s *"there is one install-wide stop, one install-wide hold"* paragraph), and a `run_reviews` row has no stop at all (`docs/agent/budgets-and-guards/concurrency-and-install-ceiling.md`'s *"the door is read once"* paragraph). That needs a stop path designed for assists first.
+- A per-segment history of a run, with each pick-up, park and restart as its own row carrying worked minutes and spend. `started_at`/`paused_ms` reset on a pick-up (`docs/agent/run-lifecycle/reopen-and-resume.md`'s *"reopening a finished run is an operator decision"* paragraph), so today a run's whole life cannot be totalled.
 
 ## Bugs filed
 

@@ -230,7 +230,7 @@ into that file rather than left in this proposal.
 Plus the colour work: sixteen ANSI colours plus foreground, background and cursor,
 each probed off a real element and re-probed on theme change, because
 `getComputedStyle` on a `light-dark()` token returns source text a 2D context
-rejects **silently** (`conventions.md:64`). Invisible until somebody switches
+rejects **silently** (`docs/agent/conventions/canvas-and-charts.md`'s *"a `<canvas>` settles three things the DOM already answered"* paragraph). Invisible until somebody switches
 theme, and not small.
 
 ## 10. What would have to be true
