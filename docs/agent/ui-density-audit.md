@@ -417,7 +417,7 @@ cheaply, it does not get to fold; it groups instead.
 group.** Fold it into the group above. Two things are deliberately outside
 this rule: a **region** is not a group — it names *why* its contents sit
 together and may hold one card or one block (`Live from runs` on the dashboard
-holds one, `Against its limits` on the run page holds one) — and the **agent
+holds one, `What bounds it` on the run page holds one) — and the **agent
 row** keeps its own single-row group wherever it appears, because
 `agents-and-templates.md` forbids it from joining the guards group and there
 is nowhere else for it to go.
@@ -1077,7 +1077,7 @@ the column, nothing is folded, and every block keeps its own heading.
 | Region | Heading | Blocks, in order |
 |---|---|---|
 | 1 | *(none — the state headline is the heading)* | state headline + detail + stop reason + `needs_review_reason` + workflow/set-aside sentences; the ButtonRow; the feedback region; the reopen form |
-| 2 | **`Against its limits`** | `Guards` (the up-to-three meters and the five rows) |
+| 2 | **`What bounds it`** (first built as `Against its limits`, which named neither the window guards nor the context reading under it) | `Guards` (the up-to-three meters and the five rows) |
 | 3 | **`What it has spent`** | the `Spent` / `Work cycles` stat grid; `Agent work`; `Telemetry — first-party` |
 | 4 | **`How it was set up`** | `Agent`; `Checkout`; `Task` |
 
@@ -1085,7 +1085,7 @@ the column, nothing is folded, and every block keeps its own heading.
 > them.** `agents-and-templates.md` forbids an agent row inside a guard group,
 > because a row there would claim it bounds something and an agent bounds
 > strictly nothing. `Agent` sits in its own region, two regions away from
-> `Against its limits`. A build run that "tidies" it into region 2 has broken
+> `What bounds it`. A build run that "tidies" it into region 2 has broken
 > that rule and nothing will say so. See §5.8.
 
 Region headings are `<h2>` styled as `CardTitle` (`text-sm font-semibold`);

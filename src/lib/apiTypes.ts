@@ -1321,6 +1321,13 @@ export interface RunDTO {
   /** Work cycles that have *finished*. A cycle in flight is not counted here. */
   iterations: number;
   /**
+   * Work cycles the check on this run's task granted past `max_iterations`.
+   * The guard's cap is the sum of the two, so a page that draws the cap from
+   * `max_iterations` alone reads "2/1" for a run that used exactly what it was
+   * allowed.
+   */
+  validation_cycles?: number;
+  /**
    * The work cycle open right now, or null when no child is running. Read
    * through `fmtCycleInFlight`, which also refuses to trust it on a row that is
    * no longer running.

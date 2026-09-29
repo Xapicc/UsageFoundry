@@ -251,6 +251,25 @@ function describeQueued(run: RunDTO): RunState {
   };
 }
 
+/**
+ * Work cycles the check on this run's task granted past the limit it was given.
+ *
+ * The guard's cap is `max_iterations` plus these (`RunProgress.grantedCycles`
+ * in `budget.ts`), so every figure on this page that draws the cap adds them,
+ * or a run that used exactly what it was allowed reads "2/1" over a bar at
+ * 200%. Each of them also says the grant is there, or sits over a sentence
+ * that does, rather than folding it into the total, for `cycleCapReason`'s
+ * reason: a cap that grew without a word reads as a guard that miscounted.
+ * Zero under no cap, which a grant cannot widen.
+ */
+function grantedCycles(run: RunDTO): number {
+  return run.max_iterations > 0 ? (run.validation_cycles ?? 0) : 0;
+}
+
+function grantedCyclesNote(granted: number): string {
+  return `includes ${granted} granted by the check on its task`;
+}
+
 function describeRun(
   run: RunDTO,
   ctx: {
@@ -396,25 +415,49 @@ function describeRun(
       // signal is the budget event's own payload, never the wording of
       // `stop_reason`. The two are told apart because the way on differs: the
       // reopen form raises a limit and carries the window guards over as they
-      // were.
-      return ctx.stoppedBy === "guard"
-        ? {
+      // were. It raises only this run's own limits, so a stop on the install's
+      // or the workflow's says where that one is set instead.
+      switch (ctx.stoppedBy) {
+        case "guard":
+          return {
             tone: "neutral",
             headline: "Stopped by a window guard",
             detail:
               "Resuming keeps its window guards, so wait for the window to fall back below the guard.",
-          }
-        : ctx.stoppedBy === "limit"
-          ? {
-              tone: "neutral",
-              headline: "Stopped by one of your limits",
-              detail: "Resume it with more room to carry on.",
-            }
-          : {
-              tone: "neutral",
-              headline: "Stopped",
-              detail: "It will not start another work cycle on its own.",
-            };
+          };
+        case "limit":
+          return {
+            tone: "neutral",
+            headline: "Stopped by one of your limits",
+            detail: "Resume it with more room to carry on.",
+          };
+        case "install_limit":
+          return {
+            tone: "neutral",
+            headline: "Stopped by the install's spending limit",
+            detail: (
+              <>
+                That limit is set in Settings, not on this run:{" "}
+                <Link href="/settings#guards">Install limit, rolling 24 hours</Link>.
+                Raise it, or wait for spend to age out of the window, before
+                resuming.
+              </>
+            ),
+          };
+        case "workflow_limit":
+          return {
+            tone: "neutral",
+            headline: "Stopped by its workflow's spending limit",
+            detail:
+              "That limit is the workflow's, set in its editor, and each workflow run keeps the one it started with.",
+          };
+        case null:
+          return {
+            tone: "neutral",
+            headline: "Stopped",
+            detail: "It will not start another work cycle on its own.",
+          };
+      }
 
     case "needs-review":
       // Says what the state means and what to do about it, never what the agent
@@ -454,20 +497,24 @@ function describeRun(
       // `completed` is also what a run that used up its cycle cap is written
       // as, and the cap defaults to 1 — so this is the ordinary case, not the
       // rare one, and calling it "complete" would be a lie.
-      return run.max_iterations > 0
-        ? {
-            tone: "neutral",
-            headline: `Used all ${run.max_iterations} work cycle${
-              run.max_iterations === 1 ? "" : "s"
-            }`,
-            detail:
-              "It never reported the task complete, so there is probably more to do.",
-          }
-        : {
-            tone: "neutral",
-            headline: "Finished",
-            detail: "It stopped without reporting the task complete.",
-          };
+      //
+      // The grant is not spelled out here because the stop reason printed
+      // under this card is `cycleCapReason`'s, which already names it; a second
+      // copy of that sentence one line above it says nothing new.
+      if (run.max_iterations > 0) {
+        const cap = run.max_iterations + grantedCycles(run);
+        return {
+          tone: "neutral",
+          headline: `Used all ${cap} work cycle${cap === 1 ? "" : "s"}`,
+          detail:
+            "It never reported the task complete, so there is probably more to do.",
+        };
+      }
+      return {
+        tone: "neutral",
+        headline: "Finished",
+        detail: "It stopped without reporting the task complete.",
+      };
   }
 }
 
@@ -561,13 +608,17 @@ function guardBars(run: RunDTO, now: number) {
     value: string;
     /** How the band's end of the range is spelled; see `Meter`. */
     upperValue?: string;
+    detail?: string;
   }> = [];
 
   if (run.max_iterations > 0) {
+    const granted = grantedCycles(run);
+    const cap = run.max_iterations + granted;
     bars.push({
       label: "Work cycles",
-      fraction: run.iterations / run.max_iterations,
-      value: fmtCycles(run.iterations, run.max_iterations),
+      fraction: run.iterations / cap,
+      value: fmtCycles(run.iterations, cap),
+      detail: granted > 0 ? grantedCyclesNote(granted) : undefined,
     });
   }
 
@@ -1346,6 +1397,7 @@ export default function RunDetail({
   // of them formatting a zero as a measurement.
   const reportsSpend = providerReportsSpend(run.provider);
   const bars = guardBars(run, nowTick);
+  const cyclesGranted = grantedCycles(run);
   // Read by the card and by the scroll box inside it, which has to cancel the
   // padding this picks — one local so the two cannot disagree.
   const inspectorEmphasis: CardEmphasis = active ? "primary" : "default";
@@ -1751,7 +1803,11 @@ export default function RunDetail({
               </Section>
             )}
 
-            <Region title="Against its limits">
+            {/* Named for neither word, because it holds both and a third thing:
+                the limits, the two window guards, and a context reading that is
+                neither. It was `Against its limits`, which the guard rows under
+                it contradicted. */}
+            <Region title="What bounds it">
               <Section title="Limits and guards">
                 {bars.length > 0 && (
                   <div className="mb-3">
@@ -1765,6 +1821,7 @@ export default function RunDetail({
                         upperHint={b.upperHint}
                         value={b.value}
                         upperValue={b.upperValue}
+                        detail={b.detail}
                       />
                     ))}
                   </div>
@@ -1887,10 +1944,13 @@ export default function RunDetail({
                     {/* 0 is the stored sentinel for "no cap" — see db.ts. */}
                     <span className="text-lg font-medium text-ink-muted">
                       {run.max_iterations > 0
-                        ? `/${run.max_iterations}`
+                        ? `/${run.max_iterations + cyclesGranted}`
                         : " · no limit"}
                     </span>
                   </Stat>
+                  {cyclesGranted > 0 && (
+                    <div className={SUB}>{grantedCyclesNote(cyclesGranted)}</div>
+                  )}
                   <div className={SUB}>
                     {run.status === "paused"
                       ? "parked between cycles"
@@ -1977,7 +2037,7 @@ export default function RunDetail({
 
             {/* What was decided before it started, and the region is what keeps
                 `Model` and `Agent` *beside* the guards rather than among them —
-                two regions away from `Against its limits`. A row inside that
+                two regions away from `What bounds it`. A row inside that
                 guard group would claim they bound something, and each bounds
                 strictly nothing: a model moves cost, which every guard in that
                 group already measures rather than being set by, and `--agent`
