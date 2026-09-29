@@ -215,4 +215,60 @@ describe("deleteBranch", () => {
     assert.equal(branchExists(s.repo, s.branch), true);
     assert.equal(headOf(s.repo), s.branch);
   });
+
+  it("refuses while a checkout is stopped mid-rebase on the branch", async () => {
+    // The holder `worktree list` does not name: a rebase detaches HEAD and
+    // writes the branch it will move back into `rebase-merge/head-name`, which
+    // is where `git branch -d` found it. `update-ref -d` does not look, so
+    // before the refusal the branch went and `rebase --continue` then failed on
+    // its final ref write, leaving the checkout detached.
+    const s = scene("rebasing");
+    git(s.repo, "merge", "-q", "--no-ff", "-m", "land", s.branch);
+    const tip = git(s.repo, "rev-parse", s.branch).trim();
+    execFileSync("git", ["rebase", "-q", "-i", `${s.branch}~1`], {
+      cwd: s.slot,
+      stdio: "pipe",
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@example.com",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@example.com",
+        GIT_SEQUENCE_EDITOR: "sed -i -e s/^pick/edit/",
+      },
+    });
+    assert.equal(headOf(s.slot), "HEAD", "the rebase did not stop detached");
+
+    const outcome = await land.deleteBranch(s.runId);
+
+    assert.equal(outcome.ok, false, "a branch mid-rebase was deleted");
+    const reason = outcome.ok ? "" : outcome.reason;
+    assert.match(reason, /rebase/);
+    assert.ok(reason.includes(s.slot), `the refusal does not say where: ${reason}`);
+    assert.equal(git(s.repo, "rev-parse", s.branch).trim(), tip);
+    assert.equal(fs.existsSync(s.slot), true, "the rebasing checkout was removed");
+  });
+
+  it("refuses while a checkout is bisecting from the branch", async () => {
+    // The same gap by the other file: `BISECT_START` names the branch short,
+    // without `refs/heads/`, and bisect detaches at the first midpoint.
+    const s = scene("bisecting");
+    for (const n of [1, 2, 3]) {
+      fs.writeFileSync(path.join(s.slot, "shared.txt"), `step ${n}\n`);
+      git(s.slot, "commit", "-qam", `step ${n}`);
+    }
+    git(s.repo, "merge", "-q", "--no-ff", "-m", "land", s.branch);
+    const tip = git(s.repo, "rev-parse", s.branch).trim();
+    git(s.slot, "bisect", "start", tip, `${s.branch}~4`);
+    assert.equal(headOf(s.slot), "HEAD", "the bisect did not detach");
+
+    const outcome = await land.deleteBranch(s.runId);
+
+    assert.equal(outcome.ok, false, "a branch being bisected was deleted");
+    const reason = outcome.ok ? "" : outcome.reason;
+    assert.match(reason, /bisect/);
+    assert.ok(reason.includes(s.slot), `the refusal does not say where: ${reason}`);
+    assert.equal(git(s.repo, "rev-parse", s.branch).trim(), tip);
+    assert.equal(fs.existsSync(s.slot), true, "the bisecting checkout was removed");
+  });
 });

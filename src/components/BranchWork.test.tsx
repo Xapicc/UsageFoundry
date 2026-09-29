@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { UncommittedNote, offersCommit } from "./BranchWork";
+import { CommitAction, UncommittedNote, offersCommit } from "./BranchWork";
 import type { BranchSummaryDTO } from "../lib/apiTypes";
 
 /**
@@ -28,6 +28,7 @@ function branch(over: Partial<BranchSummaryDTO> = {}): BranchSummaryDTO {
     landedUnchanged: false,
     uncommitted: 0,
     heldByCheckout: true,
+    merging: false,
     exists: true,
     active: false,
     landedAt: null,
@@ -79,4 +80,30 @@ test("Commit is offered on an unread checkout, not withheld by it", () => {
   );
   assert.equal(offersCommit(branch({ uncommitted: 2, active: true })), false);
   assert.equal(offersCommit(branch({ uncommitted: 2, exists: false })), false);
+});
+
+test("a checkout left mid-merge draws no Commit, and the row says why", () => {
+  // `commitRefusal` refuses it — a Commit would put the half-done merge and its
+  // conflict markers on the branch — and the Land card already draws no button
+  // there. The row drew one anyway, so the refusal was only found by pressing.
+  const midMerge = branch({ uncommitted: 3, merging: true });
+  const commit = (b: BranchSummaryDTO) =>
+    renderToStaticMarkup(<CommitAction branch={b} working={false} onCommit={() => {}} />);
+
+  assert.match(commit(branch({ uncommitted: 3 })), />Commit</, "the ordinary row lost its Commit");
+  assert.equal(commit(midMerge), "", "a mid-merge checkout was offered Commit");
+  assert.equal(
+    commit(branch({ uncommitted: null, merging: true })),
+    "",
+    "an unread count does not bring Commit back on a checkout seen mid-merge",
+  );
+
+  const note = renderToStaticMarkup(<UncommittedNote branch={midMerge} />);
+  assert.match(note, /3 uncommitted in the checkout/);
+  assert.match(note, /mid-merge/i, "the row does not say why Commit is missing");
+  assert.match(
+    renderToStaticMarkup(<UncommittedNote branch={branch({ uncommitted: 0, merging: true })} />),
+    /mid-merge/i,
+    "a merge with nothing left to stage is still a merge",
+  );
 });
