@@ -7286,27 +7286,33 @@ async function pruneAtEarlyEnd(
 /**
  * Drop the composition mark, so the next tick re-reads the shape.
  *
- * Called where a cut is decided rather than from the tick, because the tick
- * cannot see one happen: it pages the reading on **distance** — 40,000 tokens
- * from where the sampled figure stood at the last reading, in either direction
- * — and a cut is not obliged to move that figure at all. Under the fork engine
- * it does not: measured on all five forks here, the API window after the resume
- * was 1,153 to 5,238 tokens *higher* than before the cut, so the distance test
- * never fires on a run whose whole shape has just changed. Under the in-place
- * engine 12 of this install's 54 receipts removed under 40,000 tokens, and each
- * of those left the stack drawing the pre-cut shape until ordinary growth had
- * regrown what the cut took *and then* 40,000 more.
+ * Called where a conversation is cut or replaced rather than from the tick,
+ * because the tick cannot see either happen: it pages the reading on
+ * **distance** — 40,000 tokens from where the sampled figure stood at the last
+ * reading, in either direction — and neither is obliged to move that figure
+ * that far. Under the fork engine a cut does not move it at all: measured on
+ * all five forks here, the API window after the resume was 1,153 to 5,238
+ * tokens *higher* than before the cut, so the distance test never fires on a
+ * run whose whole shape has just changed. Under the in-place engine 12 of this
+ * install's 54 receipts removed under 40,000 tokens, and each of those left the
+ * stack drawing the pre-cut shape until ordinary growth had regrown what the
+ * cut took *and then* 40,000 more.
  *
- * Two call sites and they are not redundant. The ceiling watcher clears it as
+ * Three call sites and they are not redundant. The ceiling watcher clears it as
  * it writes the interrupt, which is the only route to an early-end cut and the
  * only one a tick can be standing beside; `pruneAtBoundary` clears its own,
- * because a natural boundary never passes through the watcher. Clearing at the
- * interrupt is a shade early — winnow may still refuse the cut — and that costs
- * one extra `winnow context` on a cycle that was ending anyway, which is the
- * cheaper of the two ways to be wrong.
+ * because a natural boundary never passes through the watcher; and the
+ * fresh-start branch in `startRun` clears it, because that drops the whole
+ * conversation without cutting it, so neither of the other two sees it. The
+ * distance does not cover a fresh start either: `freshStartContextTokens` is
+ * floored at 20,000, so a threshold of 80,000 restarts a conversation last read
+ * near 85k at roughly the 55k of system prompt, tool list and task — a 30k
+ * move. Clearing at the interrupt is a shade early — winnow may still refuse
+ * the cut — and that costs one extra `winnow context` on a cycle that was
+ * ending anyway, which is the cheaper of the two ways to be wrong.
  *
- * A function rather than the bare `delete` twice, so the argument above has one
- * home instead of being half-stated in two comments.
+ * A function rather than the bare `delete` three times, so the argument above
+ * has one home instead of being part-stated in three comments.
  */
 function forgetComposition(id: string): void {
   compositionMeasuredAt.delete(id);
@@ -9529,6 +9535,9 @@ export async function startRun(id: string): Promise<void> {
         // A decline explained against that conversation explained nothing about
         // this one, so the next is written out in full rather than as a follow-up.
         earlyEndDeclined.delete(id);
+        // And the shape, which is now a different conversation's — see
+        // `forgetComposition` for why the distance test cannot be left to it.
+        forgetComposition(id);
       }
 
       const prompt = nextPrompt({
@@ -11600,7 +11609,8 @@ const ceilingMeasuredAt = ((globalThis as unknown as {
  * this mark itself, through `forgetComposition`, and the distance goes on
  * pacing ordinary growth between cuts, which is what it was written for.
  *
- * Keyed by run, cleared when a cut lands and when the run's loop ends.
+ * Keyed by run, cleared when a cut lands, when a fresh start drops the
+ * conversation, and when the run's loop ends.
  */
 const compositionMeasuredAt = ((globalThis as unknown as {
   __ufCompositionMeasuredAt?: Map<string, number>;
