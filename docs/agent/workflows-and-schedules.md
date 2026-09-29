@@ -48,6 +48,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - A `repeats` link is never a run dependency.
 - A loop's `bodyNodeIds` is derived from its `repeats` link and is never empty.
 - A section is one way in and one way out, and the way out has to land.
+- A path to the exit is not a branch to it, so every run member has to hand its branch to something that takes it.
 - A loop's own task and an intra-section link's condition were each answered a different way before the frame, and both of those answers are still findable in the tree.
 - A body member is the one node here that is neither a run nor a ledger row.
 

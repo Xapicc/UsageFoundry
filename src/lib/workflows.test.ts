@@ -1408,7 +1408,7 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
     const v = value(
       graph(
         [repeater("l"), node("a"), decider("d"), merger("m")],
-        [repeats("l", "a"), edge("a", "d"), edge("d", "m")],
+        [repeats("l", "a"), edge("a", "d"), edge("d", "m"), edge("a", "m")],
       ),
     );
     assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "d", "m"]);
@@ -1458,10 +1458,17 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
           node("b"),
           merger("m"),
         ],
-        [repeats("l", "a"), edge("a", "d"), edge("d", "b"), edge("b", "m")],
+        [
+          repeats("l", "a"),
+          edge("a", "d"),
+          edge("d", "b"),
+          edge("b", "m"),
+          edge("a", "m"),
+        ],
       ),
     );
-    assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "d", "b", "m"]);
+    // Sorted, because the link that lands “A” puts “M” earlier in the walk.
+    assert.deepEqual([...v.graph.nodes[0].bodyNodeIds].sort(), ["a", "b", "d", "m"]);
   });
 
   it("exempts a merge member from that test on a machine with no default", () => {
@@ -1538,14 +1545,14 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
 
   it("lets a section fork and meet again at its merge block", () => {
     // The chain rule, gone. Two members off one predecessor is a diamond, and
-    // what makes it safe is that neither carries the branch: each cuts its own
-    // and the section's exit lands both.
+    // what makes it safe is that only one of them carries the branch: “B”
+    // carries on “A”'s, “C” cuts its own, and the section's exit lands both.
     const v = value(
       graph(
         [repeater("l"), node("a"), node("b"), node("c"), merger("m")],
         [
           repeats("l", "a"),
-          edge("a", "b"),
+          inside("a", "b"),
           edge("a", "c"),
           edge("b", "m"),
           edge("c", "m"),
@@ -1567,6 +1574,71 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
     );
     assert.match(refusal, /ends in 2 places: “M”, “B”|ends in 2 places: “B”, “M”/);
     assert.match(refusal, /committed on a branch nothing ever lands/);
+  });
+
+  it("refuses a run member whose branch reaches the exit by path alone", () => {
+    // A fan-in: “J” can carry on one of the two branches that meet at it, and a
+    // merge block lands only the runs directly in front of it — so “B” has a
+    // path to “M” through “J” and its work still lands nowhere. The sentence
+    // names the link that would land it.
+    const fanIn = error(
+      graph(
+        [
+          repeater("l"),
+          node("e"),
+          node("a"),
+          node("b"),
+          node("j"),
+          merger("m"),
+        ],
+        [
+          repeats("l", "e"),
+          inside("e", "a"),
+          edge("e", "b"),
+          inside("a", "j"),
+          edge("b", "j"),
+          edge("j", "m"),
+        ],
+      ),
+    );
+    assert.match(fanIn, /Nothing lands “B”'s branch in the section “L” repeats/);
+    assert.match(fanIn, /Link “B” to “M” as well/);
+
+    // An orchestrator member hands no branch on either, whatever it decides.
+    assert.match(
+      error(
+        graph(
+          [repeater("l"), node("a"), decider("d"), merger("m")],
+          [repeats("l", "a"), edge("a", "d"), edge("d", "m")],
+        ),
+      ),
+      /Nothing lands “A”'s branch.*Link “A” to “M” as well/,
+    );
+  });
+
+  it("saves a fan-in whose second branch is linked to the exit", () => {
+    const v = value(
+      graph(
+        [
+          repeater("l"),
+          node("e"),
+          node("a"),
+          node("b"),
+          node("j"),
+          merger("m"),
+        ],
+        [
+          repeats("l", "e"),
+          inside("e", "a"),
+          edge("e", "b"),
+          inside("a", "j"),
+          edge("b", "j"),
+          edge("j", "m"),
+          edge("b", "m"),
+        ],
+      ),
+    );
+    assert.equal(v.graph.nodes[0].bodyNodeIds.length, 5);
   });
 
   it("refuses a section that does not end at a merge block", () => {
@@ -1616,7 +1688,7 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
     const refusal = error(
       graph(
         [repeater("l", { maxPasses: 20 }), node("a"), decider("d"), merger("m")],
-        [repeats("l", "a"), edge("a", "d"), edge("d", "m")],
+        [repeats("l", "a"), edge("a", "d"), edge("d", "m"), edge("a", "m")],
       ),
     );
     assert.match(refusal, /repeats 3 block\(s\) up to 20 time\(s\)/);
@@ -1764,7 +1836,7 @@ describe("normalizeWorkflowInput — the link that makes a section", () => {
         [repeater("l"), node("a"), node("b"), merger("m")],
         [
           repeats("l", "a"),
-          edge("a", "b", { edge: "on-finish" }),
+          edge("a", "b", { edge: "on-finish", continueBranch: true }),
           edge("b", "m"),
         ],
       ),

@@ -1715,6 +1715,40 @@ function loopBodyRefusal(
       );
     }
 
+    // A path to the exit is not a branch to it. A merge block lands the runs
+    // **directly** in front of it, and a run whose way on carries no branch
+    // leaves its commits where they are: its successor starts fresh. So a
+    // fan-in — `a` and `b` meeting at `j`, which can carry on only one of the
+    // two — reaches the exit through `j` and still lands only `a`'s work, and
+    // the path test above cannot tell. Each run member has to hand its branch
+    // to something that takes it: a run that carries it on, which this same
+    // rule then asks about in turn, or a merge or review block right behind
+    // it. A review block counts because what it sets aside it sets aside on
+    // purpose.
+    //
+    // Refused here rather than mended in the editor, because the editor is one
+    // of three doors a graph is saved through, and because the exit may not be
+    // drawn yet when the fan-in link is. The sentence names the link to draw.
+    const unlanded = [...members].find((id) => {
+      if (byId.get(id)!.kind !== "run") return false;
+      return !within.some(
+        (e) =>
+          e.from === id &&
+          (e.continueBranch ||
+            byId.get(e.to)!.kind === "merge" ||
+            byId.get(e.to)!.kind === "review"),
+      );
+    });
+    if (unlanded) {
+      const member = byId.get(unlanded)!;
+      return (
+        `Nothing lands “${member.name}”'s branch in the section ` +
+        `“${loop.name}” repeats: no link out of it carries that branch on, and ` +
+        `none leads to a merge block. Link “${member.name}” to “${exit.name}” ` +
+        "as well, or its work is committed on a branch nothing ever lands."
+      );
+    }
+
     // What one press of Run would put on the machine over the life of this
     // block, with every factor named: a cap on the product alone is a number
     // the operator cannot act on.

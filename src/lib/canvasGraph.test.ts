@@ -1124,7 +1124,14 @@ test("a fan-in drawn inside a frame carries one branch into the block it meets a
   // A run can continue one branch. Carrying both is refused at Save as “j is
   // set to carry on two branches”, over a switch this panel does not show.
   assert.equal(links.filter((l) => l.to === "j" && l.continueBranch).length, 1);
-  const result = saved({ blocks, links });
+  // So `j` carries on `a`'s branch and `m` lands `j`, and `b` reaches the exit
+  // through `j` with its own branch landed by nothing. The refusal names the
+  // link that lands it, and once that is drawn the graph saves.
+  const refused = saved({ blocks, links });
+  assert.ok(!refused.ok, "a fan-in that strands b's branch was saved");
+  assert.match(refused.error, /Nothing lands “b”'s branch/);
+  assert.match(refused.error, /Link “b” to “m” as well/);
+  const result = saved({ blocks, links: drawnInside(blocks, links, [["b", "m"]]) });
   assert.ok(result.ok, result.ok ? "" : result.error);
 });
 
@@ -1145,6 +1152,8 @@ test("taking out the block two branches met at leaves one branch carried", () =>
     ["b", "x"],
     ["x", "y"],
     ["y", "m"],
+    // What lands `b`'s branch, which `x` does not carry on.
+    ["b", "m"],
   ]);
   const next = linksWithoutMember("l", "x", blocks, links);
   assert.ok(next !== null);
@@ -1167,6 +1176,8 @@ test("a member switched away from a run block stops carrying a branch", () => {
     ["e", "b"],
     ["b", "c"],
     ["c", "m"],
+    // What lands `e`'s branch once `b` is no longer a run to carry it on.
+    ["e", "m"],
   ]);
   for (const kind of ["orchestrator", "merge"] as const) {
     const switched = blocks.map((b) => (b.id === "b" ? { ...b, kind } : b));
