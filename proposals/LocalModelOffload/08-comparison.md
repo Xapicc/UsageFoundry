@@ -60,6 +60,6 @@ same turns with no local model, no latency and no loss of fidelity. It cannot
 replace a sequential exploration, which is what C's loop is for. It is not an
 option in this survey — it is a prompt change to the appended system prompt
 (`DELEGATION_NOTICE`'s neighbourhood, `src/lib/cycleInvocation.ts:840`), and
-its rule about literals would apply (`docs/agent/security.md:22`) — but anyone
+its rule about literals would apply (`docs/agent/security/process-signals-and-appended-prompt.md`'s no-literal paragraph) — but anyone
 measuring C should measure the batching rate beside it, because a rise in one
 would be credited to the other.

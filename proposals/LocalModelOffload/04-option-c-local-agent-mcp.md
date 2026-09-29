@@ -132,12 +132,12 @@ Where it would run:
 
 - **In-app (the chosen shape):** in the Next.js server process, which is
   **root** in the container ("The server is root and every child it spawns is
-  not", `docs/agent/security.md:10`). Not inside the run's sandbox, not under
+  not", `docs/agent/security/child-uid-and-credentials.md`). Not inside the run's sandbox, not under
   the agent uid. Root can read `/data`, `/proc/<server>/environ` and the
   credential file. Every path it touches must therefore pass the app's own
   containment against **the run's checkout**, not the mount: `resolveInMount`'s
   lexical check and then its `realpathSync` check (`src/lib/orchestrator.ts:1244`;
-  both "load-bearing", `docs/agent/security.md:11`). And because the run's agent
+  both "load-bearing", `docs/agent/security/path-containment-and-spawn-argv.md`'s `resolveInMount` paragraph). And because the run's agent
   can write its own checkout, it can swap a checked file for a symlink between
   the check and the read, so the read must verify the path of the **opened
   descriptor**, not of the name — open, `fstat`, resolve `/proc/self/fd/<n>`,
@@ -167,7 +167,7 @@ decides it, not caution alone:
   Economics*).
 - Bash inside an MCP call is the `pkill` incident's shape exactly: a command no
   deny list sees, issued by an agent the run log does not show
-  (`docs/agent/security.md:21`–`:22`).
+  (`docs/agent/security/process-signals-and-appended-prompt.md`'s first two paragraphs).
 
 A write-capable local agent is a different option with a different risk, and
 nothing in the vault's evidence makes it worth taking.

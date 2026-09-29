@@ -225,8 +225,8 @@ it nightly from cron present identically — on every page, on the status
 endpoint, and in every one of `README.md`'s fifteen alertable conditions.
 
 **This row does not ask for a scheduler and the distinction is the whole of why
-it is filed.** Shipping one is refused, on the record, at
-`docs/agent/environment.md:13`: *"`scripts/backup-db.mjs` is run by hand or by
+it is filed.** Shipping one is refused, on the record, in
+`docs/agent/environment/workspace-and-bind-mounts.md`'s `UF_BACKUP_DIR` paragraph: *"`scripts/backup-db.mjs` is run by hand or by
 the operator's own cron, which the README states in words rather than shipping a
 scheduler, because a timer that spends nothing still needs somewhere to put a
 file that grows without bound."* That argument is about **writing**. It says
@@ -510,7 +510,7 @@ exists to say `/api/status` did not receive.
 Eight candidates that look like operational gaps and are documented decisions.
 Named so a future sweep does not rediscover them.
 
-1. **Nothing schedules a backup.** Decided at `docs/agent/environment.md:13`:
+1. **Nothing schedules a backup.** Decided in `docs/agent/environment/workspace-and-bind-mounts.md`'s `UF_BACKUP_DIR` paragraph:
    run by hand or by the operator's own cron, *"because a timer that spends
    nothing still needs somewhere to put a file that grows without bound."*
    [O4](#o4--nothing-in-the-app-knows-the-backup-directory-exists-so-no-surface-can-say-when-the-install-was-last-backed-up)

@@ -128,7 +128,7 @@ Two things it genuinely must get right, and both are `04-`'s:
 - **The stream route is behind the same session gate as everything else.** It is
   not one of `middleware.ts`'s exemptions and must never become one — the
   exemptions each stay paired with the check that stands in for them
-  (`docs/agent/security.md:23`), and a transcript route has no such check to
+  (`docs/agent/security/middleware-login-and-sessions.md`'s edge-runtime paragraph), and a transcript route has no such check to
   offer.
 
 ## 7. The operator's surface

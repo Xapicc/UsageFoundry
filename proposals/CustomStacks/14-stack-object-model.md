@@ -55,7 +55,7 @@ this survey refuses it.
 
 | Shape | In the tree? | Expresses | Cannot express |
 |---|---|---|---|
-| **An ordered list of shell steps** | no | anything | anything the app can reason about — and it needs a shell, which `docs/agent/security.md:14` forbids composing (`08-` §4) |
+| **An ordered list of shell steps** | no | anything | anything the app can reason about — and it needs a shell, which `docs/agent/security/path-containment-and-spawn-argv.md`'s never-a-shell paragraph forbids composing (`08-` §4) |
 | **A Dockerfile fragment** | yes — `05-` | anything, reproducibly, root-owned | interactivity; and it is not a stored object at all, it is a file in the operator's checkout |
 | **A declarative manifest of packages per ecosystem** | **yes, twice** | whatever each ecosystem's installer takes | anything with no ecosystem — which is exactly Terraform (`00-` §"Missing 1") |
 | **A set of requirements** — name plus a version predicate, with no installer behind it | no | "this must be present, and here is how to tell" | installing it |
@@ -179,7 +179,7 @@ fourth silent failure.
 
 1. **A warning where the operator already looks.** A variable read through
    `env()` that compose renders as `${VAR:-}` becomes a permanent dashboard
-   warning on every stock install (`docs/agent/environment.md:17`) — the tree
+   warning on every stock install (`docs/agent/environment/boot-checks-and-credentials.md`'s *"the configuration is checked before the server serves"* paragraph) — the tree
    treats that as a *hazard* to be avoided, which means the surface is known to
    work. A stack that declared four tools and found three belongs on it.
 2. **A refusal at the door.** This app refuses by name rather than degrading:

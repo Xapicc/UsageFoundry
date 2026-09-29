@@ -294,7 +294,7 @@ visible on a reviewer's fresh install and masked on every install that already
 exists. **This is the one invariant in the plan whose breach is invisible to the
 person who breaks it**, and §6's assertion 3 is the only thing that catches it.
 
-**And: never a shell.** `docs/agent/security.md:14` - the agent is spawned
+**And: never a shell.** `docs/agent/security/path-containment-and-spawn-argv.md`'s never-a-shell paragraph - the agent is spawned
 *"with an argument array and `stdio: ["ignore", "pipe", "pipe"]`, **never a
 shell**, so prompt metacharacters are inert"* - over an artifact a third party
 wrote. `01b-` §2's four expansion

@@ -289,7 +289,7 @@ was not surveyed: `proposals/implemented - Sandboxing/` owns what a run can
 reach (filesystem, network, one run against another), and this axis is the
 reverse direction, what reaches the app. Two candidates died on that line rather
 than on the evidence line and are recorded as such, one of them a real and
-documented residue (every child sharing a uid, `docs/agent/security.md:10`).
+documented residue (every child sharing a uid, `docs/agent/security/child-uid-and-credentials.md`'s *"the server is root and every child it spawns is not"* paragraph).
 
 ### Commands run, and their output
 
@@ -380,7 +380,7 @@ returns a row's `revokedAt` to a caller, is called from
 ### What was deliberately left unread
 
 - **`privsep.ts` and the uid/gid arrangement**, beyond
-  `docs/agent/security.md:10`'s account of it. It is the one part of this area
+  the account of it in `docs/agent/security/child-uid-and-credentials.md`'s *"the server is root and every child it spawns is not"* paragraph. It is the one part of this area
   whose failure mode is *between children*, which is the Sandboxing boundary.
 - **`docs/security.md`**, the human-facing companion, except where
   `docs/agent/security.md` names it as holding the residue.
@@ -620,8 +620,8 @@ count of real rows.
 ### What was deliberately left unread on this pass
 
 - **`docker-entrypoint.sh`**, 1,200 lines, not opened at all. What it does with
-  the Discord relay and the `UF_` variables is `docs/agent/environment.md:37-39`'s
-  account and `deployment.test.ts:1348-1380`'s pins, both of which are the
+  the Discord relay and the `UF_` variables is
+  `docs/agent/environment/discord-relay.md`'s account and `deployment.test.ts:1348-1380`'s pins, both of which are the
   security axis's territory rather than this one's. No row here rests on it — but
   it is the file that decides what the container does before the server starts, so
   an operations survey with a container to run should start there and this one did

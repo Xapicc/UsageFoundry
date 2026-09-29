@@ -14,7 +14,7 @@ is ([`01-constraints.md`](01-constraints.md) C12):
 - `local_summarise { path, instruction }` — the app reads `path` from the run's
   own checkout, proves it contained (`resolveInMount`'s lexical-then-realpath
   pair, `src/lib/orchestrator.ts:1244`; "Both checks are load-bearing",
-  `docs/agent/security.md:11`), sends instruction plus content to the local
+  `docs/agent/security/path-containment-and-spawn-argv.md`'s `resolveInMount` paragraph), sends instruction plus content to the local
   server, returns the answer.
 - later, `local_extract { path, instruction, schema }` — not in the
   implementation sketch's build order — the same, with the reply

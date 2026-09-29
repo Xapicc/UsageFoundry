@@ -34,7 +34,7 @@ refused three times.
   when JSON is free.
 - **Read at spawn, not at admission** (`14-` §4). `resolveInMount()` for the path
   — containment on the resolved path **and again** after `realpathSync`, both
-  load-bearing (`docs/agent/security.md:11`). A manifest is a stored path that
+  load-bearing (`docs/agent/security/path-containment-and-spawn-argv.md`'s `resolveInMount` paragraph). A manifest is a stored path that
   becomes an install, which is the plugins module's exact situation and gets the
   plugins module's exact treatment (`src/lib/plugins.ts:153-174`).
 - **`src/lib/repoStack.ts`** — pure: parse, validate every field by name, and
@@ -45,7 +45,7 @@ refused three times.
   container by being cloned, which is not a feature, it is a supply chain. The
   verbs are `uv-tool`, `gh-extension`, `release-tarball`, and the argv is a
   constant template with the manifest's value in exactly one position
-  (`docs/agent/security.md:14`).
+  (`docs/agent/security/path-containment-and-spawn-argv.md`'s never-a-shell paragraph).
 - **And the gate, which is the whole option**: a manifest is **inert until an
   operator approves it**, per repository, from the app. First sighting produces a
   notice, not an install. That approval is a settings row keyed by mount and by

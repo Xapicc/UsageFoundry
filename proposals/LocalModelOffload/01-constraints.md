@@ -87,7 +87,7 @@ not by Bash, so under that assumption it runs **outside** the sandbox.
   there is **no `mcp__…` entry** (`:1244`–`:1249`).
 - `--disallowedTools Bash(pkill:*) Bash(killall:*)` on every spawn
   (`:711`, `:1258`) — it binds the **Bash tool**, and "survives
-  `bypassPermissions`" (`docs/agent/security.md:21`). It cannot see a process a
+  `bypassPermissions`" (`docs/agent/security/process-signals-and-appended-prompt.md`'s *"an agent cannot select processes by name"* paragraph). It cannot see a process a
   tool call spawns by any other route.
 - **`--strict-mcp-config` is deliberately absent for runs**
   (`src/lib/cycleInvocation.ts:1188`): the operator's own MCP servers in the
@@ -109,7 +109,7 @@ commands inside it, and neither does the `pkill` denial.
 (`:6114`–`:6127`). `CODEX_ACCESS_TOKEN` is not stripped (filed as a task; see
 the README). The subscription itself is the mounted
 `~/.claude/.credentials.json`, which a work cycle can read by design
-(`docs/agent/security.md:10`: "a work cycle can still read the account's own
+(`docs/agent/security/child-uid-and-credentials.md`'s *"the server is root and every child it spawns is not"* paragraph: "a work cycle can still read the account's own
 OAuth credential — it has to").
 
 The vault's trap for anything that spawns Claude Code against another server:

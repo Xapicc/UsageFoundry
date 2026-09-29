@@ -64,8 +64,8 @@ consequences of the idea:
 **And one thing that is *not* a delta, which is worth stating because it is the
 first objection anyone will raise.** The credential does not reach the agents:
 `childEnv`, `chatEnv`, `reviewEnv`, `authEnv` and `gitEnv` all strip `UF_*`
-(`01-constraints.md` §3 for the first two; `docs/agent/security.md:14` and
-`review.ts:760-770` / `claudeAuth.ts:258-268` / `git.ts:51-61` for the rest), so
+(`01-constraints.md` §3 for the first two; `docs/agent/security/path-containment-and-spawn-argv.md`'s never-a-shell
+paragraph and `review.ts:760-770` / `claudeAuth.ts:258-268` / `git.ts:51-61` for the rest), so
 `UF_AUTH_TOKEN` is not in any child's environment and a work-cycle agent cannot
 POST to a terminal route to escape its own uid. That strip is load-bearing for
 this feature specifically, and any option that introduces a *second* credential
@@ -98,7 +98,7 @@ Neither is an argument that the terminal must not exist. Both are arguments that
 
 There is no CSRF token, no double-submit and no origin check anywhere in `src/`
 (zero `csrf` hits). The stand-in is stated: *"`httpOnly` and `sameSite: "lax"` are
-unchanged and are what stands in for CSRF protection"* (`docs/agent/security.md:25`).
+unchanged and are what stands in for CSRF protection"* (`docs/agent/security/middleware-login-and-sessions.md`'s *"the session cookie is a handle"* paragraph).
 `Lax` withholds the cookie from a cross-site `POST` and **sends it on a top-level
 `GET` navigation**. So:
 
@@ -162,8 +162,8 @@ directions.
 
 ## 4. "Never a shell" — the rule, and the only reconciliation that holds
 
-`CLAUDE.md:59` routes it, and the rule itself lives at
-`docs/agent/security.md:14` — *"spawned with an
+`CLAUDE.md:59` routes it, and the rule itself lives in
+`docs/agent/security/path-containment-and-spawn-argv.md`'s never-a-shell paragraph — *"spawned with an
 argument array and `stdio: ["ignore", "pipe", "pipe"]`, **never a shell**, so
 prompt metacharacters are inert"* — and the tree keeps it: **`shell: true`
 appears nowhere in this repository**, and all eight production spawn sites pass

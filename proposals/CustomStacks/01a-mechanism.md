@@ -339,8 +339,8 @@ writes `/var/lib/uf-stacks/env` as `KEY=VALUE` lines and
 `src/instrumentation.ts` merges it into `process.env` at server start, before any
 child can be spawned. It goes through the server rather than through the
 entrypoint because the entrypoint would have to `export` text that came from a
-third party's file, and *"never a shell"* (`docs/agent/security.md:14`) is easier
-to keep true if no generated text is ever handed to one.
+third party's file, and *"never a shell"* (`docs/agent/security/path-containment-and-spawn-argv.md`)
+is easier to keep true if no generated text is ever handed to one.
 
 **`state/` persists on exactly the same terms as the binary**: same volume,
 survives `up --build`, destroyed by `down -v`. A tool that caches a gigabyte of
