@@ -10225,12 +10225,27 @@ export async function startRun(id: string): Promise<void> {
         // and a local would restart at zero each time. It used to be bounded by
         // nothing: a run whose cycle is longer than its guard's share of a
         // window was cut and refunded every window, never reached its cycle
-        // cap, and parked for ever. Past the bound the cut cycle stays charged
-        // and the cycle cap ends the run on its ordinary verdict, so guard cuts
-        // add at most that many billed invocations to what `maxIterations` buys.
+        // cap, and parked for ever. Past the bound the cut cycle stays charged,
+        // so guard cuts add at most that many billed invocations to what
+        // `maxIterations` buys.
         if (postCycle.pause && guardRefunds < MAX_PAUSES_PER_RUN) {
           guardRefunds += 1;
           iterations -= 1;
+        } else if (
+          postCycle.pause &&
+          policy.maxIterations !== null &&
+          iterations >= policy.maxIterations + grantedCycles
+        ) {
+          // A charged cut that reaches the cap is a run that can never work
+          // again, so it ends here, on the verdict the pre-cycle guard and
+          // `sweepPaused` would both reach. Parked, it held its folder and its
+          // checkout for up to a whole 5-hour window before the sweeper read
+          // that verdict, and everything queued behind it waited that long for
+          // a run that was already over. `grantedCycles` is this pass's figure,
+          // the one that admitted the cycle just cut.
+          stopReason = cycleCapReason(policy.maxIterations, grantedCycles);
+          finalStatus = "stopped";
+          log(id, stopReason);
         }
         break;
       }
