@@ -3954,6 +3954,7 @@ describe("handleStreamLine on an unrecognised event type", () => {
   const fresh = () =>
     ({
       costUSD: 0,
+      resumedLedger: null,
       tokens: 0,
       contextTokens: 0,
       sessionId: null,

@@ -33,6 +33,18 @@ export interface IterationResult {
    */
   costUSD: number;
   /**
+   * The session this child was spawned to `--resume`, and that session's last
+   * reported running total — `runs.session_cost_usd`, the baseline
+   * `cycleSpendOf` measures the cycle from. Null when the child resumed
+   * nothing or there is no earlier figure.
+   *
+   * Seeded by the loop rather than learnt from the stream, and read only for
+   * the `result` event's own `costUSD`, the feed's "cycle done" row and
+   * `run.cycle_finished`. `costUSD` above stays the running total, because
+   * `cycleSpendOf` subtracts this baseline from it after the cycle returns.
+   */
+  resumedLedger: { sessionId: string; costUSD: number } | null;
+  /**
    * Every token this cycle's `result` events reported, summed — `usage` is that
    * stretch's own rather than the session's, which is the half of the event
    * `costUSD` above is not.
