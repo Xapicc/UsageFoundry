@@ -276,4 +276,46 @@ describe("an owner that loses the directory while it is up", () => {
 
     await settle();
   });
+
+  /**
+   * The same loss, landing during the sweep rather than before it.
+   *
+   * The sweeper asks at entry and then awaits a transcript scan that can take
+   * seconds, and a beat that finds the lock taken can fire in that time. Every
+   * decision after the scan is a write to the new owner's rows, so a gate read
+   * only at entry is read before the write rather than at it. The sweep runs
+   * synchronously as far as the scan, which is what lets the loss land inside
+   * it here.
+   */
+  it("un-parks nothing when the directory is lost during the sweep's scan", async () => {
+    assert.equal(ownsDataDir(), true, "this case starts from owning it");
+
+    const parked = seedRun("lost-mid-scan", "paused");
+
+    const sweeping = sweepPaused();
+    fs.writeFileSync(
+      lockPath(),
+      JSON.stringify({
+        pid: process.ppid,
+        ownerId: "the-mid-scan-server",
+        startedAt: Date.now(),
+        heartbeatAt: Date.now(),
+      }),
+    );
+    heartbeat();
+    assert.equal(ownsDataDir(), false, "the loss has to land before the scan settles");
+    await sweeping;
+
+    assert.equal(statusOf(parked), "paused", "a sweep that lost the directory must un-park nothing");
+
+    // The control: the same row, swept by an owner, is reconsidered — so the
+    // case above failed to un-park it because of the loss, not the fixture.
+    fs.rmSync(lockPath(), { force: true });
+    assert.equal(await claimDataDir(), true);
+    await sweepPaused();
+    assert.notEqual(statusOf(parked), "paused", "owning it again must let the sweep decide");
+    stopRun(parked);
+
+    await settle();
+  });
 });

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { after, before, describe, it } from "node:test";
+import { after, afterEach, before, describe, it } from "node:test";
 import type { BudgetPolicy } from "./budget";
 // Type-only, so it is erased rather than hoisted above the environment setup
 // below — the same reason the values come through `require`.
@@ -82,6 +82,7 @@ const {
   childEnv,
   clampRunOffset,
   compactionNotice,
+  currentSnapshot,
   conflictKey,
   contextShapingEnv,
   cycleCutByRestart,
@@ -6263,6 +6264,7 @@ describe("the parked sweeper's decision", () => {
       assert.deepEqual(planPausedRun(parks(5_000), null), {
         action: "park",
         resumeAt: 5_000,
+        reason: "The 5-hour window is full.",
       });
     });
 
@@ -6272,6 +6274,7 @@ describe("the parked sweeper's decision", () => {
       assert.deepEqual(planPausedRun(parks(5_000), "holder-1"), {
         action: "park",
         resumeAt: 5_000,
+        reason: "The 5-hour window is full.",
       });
     });
   });
@@ -6408,6 +6411,19 @@ describe("applying the sweeper's decision", () => {
       );
     return id;
   }
+
+  // Every case that resumes a run reads it `queued` and leaves it there, and
+  // nothing in this suite means to start one. The next `promoteQueued` reached
+  // without a cap would — `stopRun`'s own, in the operator-stop case below —
+  // each one a real `startRun` chain that outlives its case and ends in another
+  // `promoteQueued`, at whatever moment a later case is running.
+  afterEach(() => {
+    db()
+      .prepare(
+        "UPDATE runs SET status='stopped', finished_at=? WHERE status='queued' AND id LIKE 'sweep-%'",
+      )
+      .run(Date.now());
+  });
 
   it("puts a resumed run in the queue rather than starting it", async () => {
     // A run already spending, and a cap it fills. `promoteQueued` is what knows
@@ -6677,10 +6693,8 @@ describe("applying the sweeper's decision", () => {
       const sweeping = sweepPaused();
       const pressed = press();
       await sweeping;
-      // Under the cap rather than after it. A run an earlier case promoted is
-      // still in flight, can settle in the same turn as this sweep, and ends
-      // in `promoteQueued` — which, past the reset below, starts the queued
-      // run this case is about to read.
+      // Under the cap rather than after it: the row `check` reads as `queued`
+      // is startable by any `promoteQueued` from the moment the cap is reset.
       check(pressed);
     } finally {
       saveSettings({ maxConcurrentRuns: null });
@@ -6745,6 +6759,72 @@ describe("applying the sweeper's decision", () => {
         );
       },
     );
+  });
+
+  it("gives a held run the window's reason back when it re-parks for it", async () => {
+    // Held for its folder, then refused again when the run in that folder
+    // filled the window: the park wrote only `resume_at`, so the row went on
+    // saying the window had cleared, under a card saying it waits for it.
+    const shared = globalThis as unknown as {
+      __ufSnapshotInflight?: Promise<import("./windows").UsageSnapshot> | null;
+    };
+    const real = await currentSnapshot();
+    const sweepReading = async (fraction: number) => {
+      shared.__ufSnapshotInflight = Promise.resolve({
+        ...real,
+        session: {
+          ...real.session,
+          fraction,
+          guardFraction: fraction,
+          endsAt: Date.now() + HOUR,
+        },
+      });
+      try {
+        await sweepPaused();
+      } finally {
+        shared.__ufSnapshotInflight = null;
+      }
+    };
+
+    const workDir = `${ws}/held-then-reparked`;
+    // The run that took the folder, and `sweepAlone`'s cap: rows earlier cases
+    // left parked are due in these sweeps too, and must stay `queued`.
+    saveSettings({ maxConcurrentRuns: 1 });
+    insertRun({ status: "running", workDir });
+    const held = insertRun({
+      status: "paused",
+      workDir,
+      budget:
+        '{"maxIterations":5,"maxDurationMinutes":600,"maxSessionFraction":0.5,"enforcement":"live-resume"}',
+    });
+    const reasonLogs = () =>
+      runEvents(held).events.filter(
+        (e) => e.kind === "log" && e.payload.message === getRun(held)!.stop_reason,
+      );
+
+    try {
+      await sweepReading(0.2);
+      const holdReason = getRun(held)!.stop_reason;
+      assert.match(holdReason ?? "", /folder/, "the fixture has to reach the hold first");
+
+      await sweepReading(0.9);
+      const reparked = getRun(held)!;
+      assert.equal(reparked.status, "paused");
+      assert.ok((reparked.resume_at ?? 0) > Date.now(), "parked for the window, not held");
+      assert.notEqual(reparked.stop_reason, holdReason, "the hold's reason is gone");
+      assert.match(reparked.stop_reason ?? "", /Waiting for the next 5-hour window/);
+      const parkReason = reparked.stop_reason;
+
+      // Due again, on a different reading. The verdict's reason carries the
+      // figure, so a write guarded on it alone would rewrite the row and log a
+      // line every 60 seconds; this one replaces only the hold's.
+      db().prepare("UPDATE runs SET resume_at = ? WHERE id = ?").run(Date.now() - 1, held);
+      await sweepReading(0.95);
+      assert.equal(getRun(held)!.stop_reason, parkReason, "changed exactly once");
+      assert.equal(reasonLogs().length, 1, "and said so once");
+    } finally {
+      saveSettings({ maxConcurrentRuns: null });
+    }
   });
 });
 
