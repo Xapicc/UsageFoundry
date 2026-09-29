@@ -10225,12 +10225,27 @@ export async function startRun(id: string): Promise<void> {
         // and a local would restart at zero each time. It used to be bounded by
         // nothing: a run whose cycle is longer than its guard's share of a
         // window was cut and refunded every window, never reached its cycle
-        // cap, and parked for ever. Past the bound the cut cycle stays charged
-        // and the cycle cap ends the run on its ordinary verdict, so guard cuts
-        // add at most that many billed invocations to what `maxIterations` buys.
+        // cap, and parked for ever. Past the bound the cut cycle stays charged,
+        // so guard cuts add at most that many billed invocations to what
+        // `maxIterations` buys.
         if (postCycle.pause && guardRefunds < MAX_PAUSES_PER_RUN) {
           guardRefunds += 1;
           iterations -= 1;
+        } else if (
+          postCycle.pause &&
+          policy.maxIterations !== null &&
+          iterations >= policy.maxIterations + grantedCycles
+        ) {
+          // A charged cut that reaches the cap is a run that can never work
+          // again, so it ends here, on the verdict the pre-cycle guard and
+          // `sweepPaused` would both reach. Parked, it held its folder and its
+          // checkout for up to a whole 5-hour window before the sweeper read
+          // that verdict, and everything queued behind it waited that long for
+          // a run that was already over. `grantedCycles` is this pass's figure,
+          // the one that admitted the cycle just cut.
+          stopReason = cycleCapReason(policy.maxIterations, grantedCycles);
+          finalStatus = "stopped";
+          log(id, stopReason);
         }
         break;
       }
@@ -10612,9 +10627,12 @@ export async function startRun(id: string): Promise<void> {
         // container does.
         recordValidationCycle(id);
         pendingPushback = heldBack.pushback;
+        // Worded so it names no count: `reason` is one task's finding bare or
+        // several tasks' by title, and the validator's own lines just above
+        // this one already said which tasks were checked.
         log(
           id,
-          `The task this run holds was checked and is not closed: ${heldBack.reason}. Giving it another work cycle to finish what is missing.`,
+          `Checked and not closed: ${heldBack.reason}. Giving this run another work cycle to finish what is missing.`,
         );
       }
 
@@ -12358,12 +12376,28 @@ export function reopenRun(
         "would ever end it. Give it one of the two.",
     };
   }
-  if (policy.maxIterations !== null && run.iterations >= policy.maxIterations) {
+  // The cap every guard site reads, widened by what task checks have granted,
+  // and the door has to read it too or the two disagree in both directions: a
+  // pick-up the guard would admit is refused here, and a limit typed as a total
+  // buys the old grants over again on top. Carried rather than zeroed, because
+  // `reopenRestartClosed` picks a restart's runs up through this door on their
+  // own stored budgets, and the column is on the row so that a restart does not
+  // hand a run back its whole `maxValidationCycles` allowance.
+  const grantedCycles = run.validation_cycles;
+  if (
+    policy.maxIterations !== null &&
+    run.iterations >= policy.maxIterations + grantedCycles
+  ) {
     return {
       ok: false,
-      reason: `This run has already used ${run.iterations} work ${
-        run.iterations === 1 ? "cycle" : "cycles"
-      }. Raise the cycle limit above that to carry on.`,
+      reason:
+        grantedCycles > 0
+          ? `This run has already used ${run.iterations} work cycles, and the check on its task granted ${grantedCycles} of them on top of its limit. Raise the cycle limit above ${
+              run.iterations - grantedCycles
+            } to carry on.`
+          : `This run has already used ${run.iterations} work ${
+              run.iterations === 1 ? "cycle" : "cycles"
+            }. Raise the cycle limit above that to carry on.`,
     };
   }
   if (policy.maxRunCostUSD !== null && spentUSD >= policy.maxRunCostUSD) {

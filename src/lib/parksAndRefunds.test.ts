@@ -72,6 +72,7 @@ const {
   resumeRun,
   stopRun,
 } = require("./orchestrator") as typeof import("./orchestrator");
+const { db } = require("./db") as typeof import("./db");
 
 /**
  * What the stubbed child does on one work cycle.
@@ -308,6 +309,69 @@ describe("what bounds the refund of a cycle the live guard cut", () => {
     );
     assert.equal(row.iterations, 1, "the cut past the bound is the cycle the cap counted");
     assert.equal(row.guard_refunds, MAX_PAUSES_PER_RUN);
+  });
+
+  it("ends the run at a charged cut that reaches its cap, rather than parking it", async () => {
+    // Past the bound the cut stays charged, and on a cap of 1 that charge is
+    // the run's last cycle. Parked anyway, it held its folder until the
+    // sweeper next looked — up to a whole window — only to end it then on the
+    // same verdict. So the segment the charged cut ends is not handed back
+    // here: the run has to leave `paused` by itself.
+    const id = start(
+      "cut-at-cap",
+      Array<Cycle>(MAX_PAUSES_PER_RUN + 1).fill("guard-pause"),
+      { maxIterations: 1, enforcement: "live-resume" },
+    );
+
+    for (let park = 1; park <= MAX_PAUSES_PER_RUN; park++) {
+      await settled(id);
+      const row = getRun(id)!;
+      assert.equal(row.status, "paused", `refunded cut ${park}: ${row.stop_reason}`);
+      unpark(id);
+    }
+
+    await settled(id);
+    const row = getRun(id)!;
+    assert.equal(
+      row.status,
+      "stopped",
+      `the charged cut parked a run its cycle cap had already ended: ${row.stop_reason}`,
+    );
+    assert.match(row.stop_reason ?? "", /Used all 1 work cycle allowed/);
+    assert.equal(row.resume_at, null, "nothing is scheduled to look at it again");
+    assert.equal(spawned, MAX_PAUSES_PER_RUN + 1);
+    assert.equal(row.iterations, 1);
+    assert.equal(row.guard_refunds, MAX_PAUSES_PER_RUN);
+  });
+
+  it("still parks a charged cut that a task check's grant keeps under the cap", async () => {
+    // The control, and it pins the widened cap as well: a check that compared
+    // against `maxIterations` alone, or that ended every cut past the bound,
+    // would end this run with a granted cycle still unspent.
+    const id = start(
+      "cut-under-granted-cap",
+      Array<Cycle>(MAX_PAUSES_PER_RUN + 1).fill("guard-pause"),
+      { maxIterations: 1, enforcement: "live-resume" },
+    );
+
+    for (let park = 1; park <= MAX_PAUSES_PER_RUN; park++) {
+      await settled(id);
+      const row = getRun(id)!;
+      assert.equal(row.status, "paused", `refunded cut ${park}: ${row.stop_reason}`);
+      // Written while parked, where the loop is not reading it, and read off
+      // the row by every pass after the un-park, as a real grant is.
+      if (park === 1) {
+        db().prepare("UPDATE runs SET validation_cycles = 1 WHERE id = ?").run(id);
+      }
+      unpark(id);
+    }
+
+    await settled(id);
+    const row = getRun(id)!;
+    assert.equal(row.status, "paused", `ended with a granted cycle unspent: ${row.stop_reason}`);
+    assert.equal(row.iterations, 1, "the cut past the bound is still charged");
+    assert.equal(row.guard_refunds, MAX_PAUSES_PER_RUN);
+    stopRun(id);
   });
 });
 
