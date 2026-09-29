@@ -2831,8 +2831,12 @@ export function blocksOf(instanceId: string): WorkflowInstanceBlock[] {
               (SELECT COUNT(*) FROM merge_queue q
                 WHERE q.batch_id = b.merge_batch_id AND q.status = 'landed')
                 AS branchesLanded,
+              -- Neither count takes a branch already on its target by its
+              -- turn, which is the block's skip (see queuedBranchOutcome) and
+              -- is counted nowhere, like one skipped before it was queued.
               (SELECT COUNT(*) FROM merge_queue q
-                WHERE q.batch_id = b.merge_batch_id AND q.status <> 'landed')
+                WHERE q.batch_id = b.merge_batch_id
+                  AND q.status NOT IN ('landed', 'already-landed'))
                 AS branchesFailed
          FROM workflow_instance_blocks b
         WHERE instance_id = ? ORDER BY position`,
@@ -6662,26 +6666,46 @@ async function startMergeBlock(
 
   const rows = await awaitBatch(queued.batchId, instanceId, nodeId);
   for (const row of rows) {
-    candidates.push({
-      branch: branchLabel(row.run_id),
-      result: row.status === "landed" ? "landed" : "failed",
-      reason:
-        row.status === "landed"
-          ? null
-          : // Nothing here stops waiting on a clock any more, so a row still
-            // active is the workflow having been halted out from under it — not
-            // a verdict, but a branch that is not on its target, which is the
-            // only question a successor's condition asks.
-            isQueueActive(row.status)
-            ? "still in the merge queue when this workflow was stopped"
-            : (row.message ?? row.status),
-    });
+    candidates.push(queuedBranchOutcome(row, branchLabel(row.run_id)));
   }
 
   finishMergeBlock(instanceId, nodeId, {
     ...withNote(mergeBlockOutcome(candidates), guardNote),
     costUSD: rows.reduce((sum, r) => sum + r.resolve_cost, 0),
   });
+}
+
+/**
+ * What one row of the batch a merge block queued means for that block.
+ *
+ * Pure and exported for a test, for `mergeBlockOutcome`'s reason: both ways of
+ * reading a row wrong are silent. `already-landed` is `branchVerdict`'s skip
+ * reached at the branch's turn rather than before the queue — its work got to
+ * the target some other way, a successor in the same batch or a merge by hand
+ * — and failing it stops a graph over a merge that had nothing to do. The
+ * queue's own `skipped` is not that: it is a branch never attempted because
+ * the checkout stopped its repository, and reading it as nothing to land
+ * starts the blocks behind this one on a target that never received the work.
+ */
+export function queuedBranchOutcome(
+  row: Pick<QueueRow, "status" | "message">,
+  branch: string,
+): BranchOutcome {
+  if (row.status === "landed") return { branch, result: "landed", reason: null };
+  if (row.status === "already-landed") {
+    return { branch, result: "skipped", reason: row.message ?? "already on its target" };
+  }
+  return {
+    branch,
+    result: "failed",
+    // Nothing here stops waiting on a clock any more, so a row still active is
+    // the workflow having been halted out from under it — not a verdict, but a
+    // branch that is not on its target, which is the only question a
+    // successor's condition asks.
+    reason: isQueueActive(row.status)
+      ? "still in the merge queue when this workflow was stopped"
+      : (row.message ?? row.status),
+  };
 }
 
 /** A note the block has to carry regardless of how the merge itself went. */

@@ -213,6 +213,7 @@ const ITEM_TONE: Record<MergeQueueItemDTO["status"], BadgeTone> = {
   landing: "accent",
   resolving: "accent",
   landed: "ok",
+  "already-landed": "ok",
   failed: "danger",
   skipped: "warn",
   cancelled: "neutral",
@@ -223,6 +224,7 @@ const ITEM_LABEL: Record<MergeQueueItemDTO["status"], string> = {
   landing: "landing",
   resolving: "resolving",
   landed: "landed",
+  "already-landed": "already landed",
   failed: "failed",
   skipped: "skipped",
   cancelled: "cancelled",
@@ -233,6 +235,7 @@ const ITEM_MARK: Record<MergeQueueItemDTO["status"], ReactNode> = {
   landing: TRIANGLE,
   resolving: DIAMOND,
   landed: CHECK,
+  "already-landed": CHECK,
   failed: CROSS,
   skipped: DASH,
   cancelled: SLASH_RING,
@@ -250,6 +253,7 @@ const STEP_RING: Record<MergeQueueItemDTO["status"], string> = {
   landing: "border-accent bg-accent-dim text-accent",
   resolving: "border-accent bg-accent-dim text-accent",
   landed: "border-ok text-ok",
+  "already-landed": "border-ok text-ok",
   failed: "border-danger text-danger",
   skipped: "border-warn text-warn",
   cancelled: "border-line-strong text-ink-muted",
@@ -281,12 +285,14 @@ function queueSummary(items: MergeQueueItemDTO[]): string {
     items.filter((i) => i.status === s).length;
   const parts: string[] = [];
   const landed = count("landed");
+  const alreadyLanded = count("already-landed");
   const working = count("landing") + count("resolving");
   const waiting = count("queued");
   const failed = count("failed");
   const skipped = count("skipped");
   const cancelled = count("cancelled");
   if (landed) parts.push(`${landed} landed`);
+  if (alreadyLanded) parts.push(`${alreadyLanded} already landed`);
   if (working) parts.push(`${working} in flight`);
   if (waiting) parts.push(`${waiting} waiting`);
   if (failed) parts.push(`${failed} left for you`);

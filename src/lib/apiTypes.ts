@@ -2897,6 +2897,7 @@ export interface MergeQueueItemDTO {
     | "landing"
     | "resolving"
     | "landed"
+    | "already-landed"
     | "failed"
     | "skipped"
     | "cancelled";
