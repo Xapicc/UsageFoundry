@@ -1020,6 +1020,18 @@ function migrate(db: Database.Database) {
   addColumn(db, "runs", "spent_usd_est", "REAL NOT NULL DEFAULT 0");
   addColumn(db, "runs", "spent_tokens_est", "INTEGER NOT NULL DEFAULT 0");
 
+  // The last `total_cost_usd` a work cycle reported, which is what the next
+  // resumed cycle's figure is measured from. On the pinned CLI that figure is
+  // the session's running total — `--resume` restores the ledger from the
+  // transcript's `cost-state` record — so a cycle's own cost is the increase
+  // over this, and adding the figure whole charged cycle N for cycles 1..N on
+  // `spent_usd` and on every guard that reads it. Nullable rather than
+  // defaulted to zero, `chat_sessions.session_cost_usd`'s reason: a run that
+  // predates the column resumes a ledger that is already non-zero, and null is
+  // what makes that one cycle bank the whole figure rather than subtract from
+  // nothing it can name.
+  addColumn(db, "runs", "session_cost_usd", "REAL");
+
   // Where an isolated run's work belongs, and whether it got there.
   // `worktree_base` is a commit; it says where the branch started, not which
   // branch it should be merged into. Rows written before this column existed

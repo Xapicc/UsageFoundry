@@ -80,6 +80,7 @@ import {
   mintRunCapability,
   removeMcpConfig,
   revokeRunCapabilities,
+  turnCostOf,
   writeMcpConfig,
 } from "./chat";
 import { recordRunTasks, tasksLinkedToRun, updateTask } from "./tasks";
@@ -390,6 +391,11 @@ export interface RunRow {
    */
   spent_usd_est: number;
   spent_tokens_est: number;
+  /**
+   * The CLI's last `total_cost_usd` for this run, or null — what the next
+   * resumed cycle's figure is measured from. See `cycleSpendOf`.
+   */
+  session_cost_usd: number | null;
   /**
    * The agent this run was started **as**, as the whole JSON definition rather
    * than an id — see the column note in `db.ts`. Null is the ordinary run. Read
@@ -7783,11 +7789,11 @@ export function toolResultFailures(
  * requests, and `spent_usd` was stored as their sum — 75% above what the
  * session actually cost, on the figure `maxRunCostUSD` is compared against.
  *
- * A **restart** is not this case and must keep summing: a cycle that died at
- * `error_during_execution` and resumed gets a second child, a second
- * `IterationResult` and a CLI accumulator that starts at zero, which is why
- * every such run reconciles to the cent against telemetry today. That is the
- * whole reason this is scoped to one `IterationResult` rather than to the run.
+ * Scoped to one child and never to the run, because across children the figure
+ * needs a different rule: a `--resume`d child restores the ledger the previous
+ * one saved and reports the running total from there, while a child that
+ * opened a new session starts again from zero — which a fold across the run
+ * would swallow. `cycleSpendOf` is that rule.
  *
  * The larger rather than the last, and a non-positive reading ignored: a
  * running total does not go backwards, so the two agree on every well-formed
@@ -7799,6 +7805,70 @@ export function cycleCostAfterResult(prevUSD: number, reported: unknown): number
   const cost = Number(reported ?? 0);
   if (!Number.isFinite(cost) || cost <= 0) return prevUSD;
   return Math.max(prevUSD, cost);
+}
+
+/**
+ * What one work cycle adds to `runs.spent_usd`, and the figure the next cycle
+ * is measured from.
+ *
+ * **A resumed cycle reports its session's running total, not its own cost.**
+ * `--resume` restores the ledger the previous child saved in the transcript's
+ * `cost-state` record, and `total_cost_usd` is read off that ledger — read off
+ * the pinned binary and 138 transcripts, not run; see
+ * `docs/verification/metering-and-cost.md`. Added whole, three $4 cycles stored
+ * $24, and every guard built on `spent_usd` — `maxRunCostUSD` before a cycle
+ * and on the live tick, `--max-budget-usd`'s remainder, the install ceiling —
+ * stopped the run at half the money it was given.
+ *
+ * So the increase is banked, on `turnCostOf`'s rules, which the chat already
+ * uses for the same figure. The whole figure is banked when:
+ * - this cycle resumed nothing: the first cycle, a fresh start, or a pick-up
+ *   whose session is gone;
+ * - the CLI answered under a session other than the one it was asked for;
+ * - there is no earlier figure;
+ * - or the total went down, which a restored ledger cannot do.
+ *
+ * A fork counts as the same conversation here, because winnow copies every
+ * record it does not strip, `cost-state` included, and the CLI reports the id
+ * it resumed.
+ *
+ * A cycle that reported nothing banks nothing — `reconcileKilledCycle`
+ * estimates it into its own column. If it resumed the ledger it was asked for,
+ * the old figure stays as the baseline, because that ledger is still the one
+ * the next cycle restores. If it opened another ledger, the baseline is
+ * cleared, because nobody saw that ledger's total. The CLI saves its ledger at
+ * exit, and a child stopped by `SIGINT` still exits that way. The next cycle's
+ * increase then includes the stopped cycle, which `spent_usd_est` already
+ * holds: the guard's figure over-counts, and a ceiling can afford that
+ * direction. Only `SIGKILL` leaves the old ledger standing.
+ *
+ * Pure and unit-tested because both ways of getting it wrong are silent: too
+ * much stops a run short of its limit, too little lets it run past one.
+ */
+export function cycleSpendOf(o: {
+  /** The previous reporting cycle's figure: `runs.session_cost_usd`. */
+  sessionCostUSD: number | null;
+  /** The session this cycle was spawned to `--resume`, or null for a new one. */
+  resumedSessionId: string | null;
+  /** The session the stream named, or null if it named none. */
+  reportedSessionId: string | null;
+  /** `IterationResult.costUSD`: the child's own fold, 0 when it reported none. */
+  reportedUSD: number;
+}): { costUSD: number; sessionCostUSD: number | null } {
+  const continued =
+    o.resumedSessionId !== null && o.reportedSessionId === o.resumedSessionId;
+  if (o.reportedUSD <= 0) {
+    const sameLedger =
+      o.resumedSessionId !== null && (o.reportedSessionId === null || continued);
+    return { costUSD: 0, sessionCostUSD: sameLedger ? o.sessionCostUSD : null };
+  }
+  return {
+    costUSD: turnCostOf(o.sessionCostUSD, o.reportedUSD, continued),
+    // Nothing to measure the next cycle from when the figure came with no id to
+    // pin it to — the chat's rule, and the over-count direction: that one cycle
+    // is banked whole rather than every later one short.
+    sessionCostUSD: o.reportedSessionId === null ? null : o.reportedUSD,
+  };
 }
 
 /**
@@ -8966,6 +9036,12 @@ export async function startRun(id: string): Promise<void> {
    */
   let spentGuardEstUSD = run.spent_usd_est;
   let spentEstTokens = run.spent_tokens_est;
+  /**
+   * The CLI's last running total, which the next resumed cycle's figure is
+   * measured from. Hydrated because a pick-up resumes the same ledger. See
+   * `cycleSpendOf`.
+   */
+  let sessionCostUSD = run.session_cost_usd;
   let iterations = run.iterations;
   let doneRetriggers = run.done_retriggers;
   /**
@@ -9875,6 +9951,18 @@ export async function startRun(id: string): Promise<void> {
         pendingFork.delete(id);
       }
 
+      // What this cycle cost, as against what its session has cost so far.
+      // `res.costUSD` is the running total from the first cycle onwards, so
+      // every reader below takes `cycleSpend.costUSD` instead.
+      const cycleSpend = cycleSpendOf({
+        sessionCostUSD,
+        resumedSessionId: resumeTarget,
+        reportedSessionId: res.sessionId,
+        reportedUSD: res.costUSD,
+      });
+      const sessionCostBeforeCycle = sessionCostUSD;
+      sessionCostUSD = cycleSpend.sessionCostUSD;
+
       // Say so when the live spend guard was blind. Exporting is configured by
       // `telemetryEnv`, but nothing guarantees the records arrive — an ingest
       // that fails leaves `telemetrySpendSince` returning zero, and a guard
@@ -9882,12 +9970,12 @@ export async function startRun(id: string): Promise<void> {
       // was simply never reached. Checked here because this is the first point
       // with something to compare against: the CLI's own figure for the cycle
       // the ticker was watching.
-      if (liveSpendTelemetry && res.sawResult && res.costUSD > 0) {
+      if (liveSpendTelemetry && res.sawResult && cycleSpend.costUSD > 0) {
         const reported = telemetrySpendSince(id, cycleStartedAt);
         if (reported.requests === 0) {
           log(
             id,
-            `This work cycle cost $${res.costUSD.toFixed(2)} and reported no telemetry, so the live spending limit had nothing to read while it ran. It was enforced between cycles only.`,
+            `This work cycle cost $${cycleSpend.costUSD.toFixed(2)} and reported no telemetry, so the live spending limit had nothing to read while it ran. It was enforced between cycles only.`,
           );
         }
       }
@@ -9907,7 +9995,7 @@ export async function startRun(id: string): Promise<void> {
       // the repository rollups present as measured, and a run whose every cycle
       // added an unmeasured zero would read as one that has been watched and
       // found to cost nothing. `stopReason` below says so in words instead.
-      if (spendIsMeasured) spentUSD += res.costUSD;
+      if (spendIsMeasured) spentUSD += cycleSpend.costUSD;
       // Tokens *are* measured on both — `turn.completed.usage` is counts and
       // nothing else — so this is unconditional and is the only figure a Codex
       // run reports about its own consumption.
@@ -9956,7 +10044,7 @@ export async function startRun(id: string): Promise<void> {
         .prepare(
           "UPDATE runs SET iterations = ?, spent_usd = ?, spent_tokens = ?," +
             " spent_usd_est = ?, spent_tokens_est = ?, session_id = ?," +
-            " done_retriggers = ?, active_iteration = NULL," +
+            " session_cost_usd = ?, done_retriggers = ?, active_iteration = NULL," +
             " active_started_at = NULL WHERE id = ?",
         )
         .run(
@@ -9966,6 +10054,7 @@ export async function startRun(id: string): Promise<void> {
           spentEstUSD,
           spentEstTokens,
           sessionId,
+          sessionCostUSD,
           doneRetriggers,
           id,
         );
@@ -10347,6 +10436,10 @@ export async function startRun(id: string): Promise<void> {
           iterations -= 1;
           cyclesThisSegment = 0;
           adoptSession(fork.fallbackSessionId);
+          // The fork carried its source's ledger, so the figure from before this
+          // cycle is still the one the fallback restores — whatever throwaway
+          // session the failed resume named.
+          sessionCostUSD = sessionCostBeforeCycle;
           log(
             id,
             `The forked conversation would not resume, so this run is back on the ` +
@@ -10365,6 +10458,8 @@ export async function startRun(id: string): Promise<void> {
           // empty session the CLI opened before giving up — is worth less than
           // the conversation the retry exists to get back into.
           adoptSession(resumeTarget);
+          // And the figure that session's ledger stood at, for the same reason.
+          sessionCostUSD = sessionCostBeforeCycle;
           log(
             id,
             "Resuming the previous session failed before it did any work. Trying once more.",

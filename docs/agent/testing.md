@@ -74,6 +74,7 @@ Eighteen are renderings rather than functions — every `*.test.tsx` in the tree
 | `installSpend.test.ts` | [chat], [harnesses] |
 | `instanceBudget.test.ts` |  |
 | `parksAndRefunds.test.ts` |  |
+| `resumedCycleSpend.test.ts` |  |
 | `validationGrant.test.ts` |  |
 
 ## [Pricing, the model catalogue and model choice](testing/pricing-and-models.md)
