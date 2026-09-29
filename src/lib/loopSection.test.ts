@@ -1146,6 +1146,6 @@ describe("a loop that cannot decide while a pass is working", () => {
     });
 
     await drive(instanceId);
-    assertLandedThenFailed(instanceId, /no longer in the workflow/);
+    assertLandedThenFailed(instanceId, /has no pass cap/);
   });
 });

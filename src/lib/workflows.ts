@@ -5681,12 +5681,19 @@ function advanceLoop(
     // loop that ends and one that does not: an instance blob written before
     // this column existed, or by anything but `normalizeWorkflowInput`, carries
     // `undefined` here — and `passes.length >= undefined` is false for ever.
+    //
+    // Its own sentence rather than the missing-block one above: the block is
+    // still in the graph, and an operator told it is not goes looking for a
+    // deletion that never happened.
     if (typeof node.maxPasses !== "number") {
       settleLoop(
         instanceId,
         nodeId,
         "failed",
-        "This block is no longer in the workflow this run was started from.",
+        "This loop has no pass cap in the copy of the workflow this run was " +
+          "started from, so nothing says how many passes it may take. Start " +
+          "the workflow again: Run copies its saved graph afresh, and refuses " +
+          "a loop without a cap.",
       );
       return;
     }
