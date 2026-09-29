@@ -367,6 +367,7 @@ const passBlock = (
   costUSD: null,
   costUnknown: false,
   emitted: 0,
+  started: 0,
   decided: false,
   reply: null,
   notes: [],

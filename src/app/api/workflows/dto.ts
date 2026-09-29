@@ -148,6 +148,7 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
       costUSD: blockSpendReading(b),
       costUnknown: b.costUnknown,
       emitted: b.emitted,
+      started: b.started,
       decided: b.decided,
       reply: b.reply,
       notes: b.notes,

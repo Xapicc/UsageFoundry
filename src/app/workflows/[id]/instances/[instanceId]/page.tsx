@@ -774,11 +774,12 @@ function LoopCard({
  * The one line under a block's name.
  *
  * A deciding block that started nothing is what this exists to separate. Zero
- * runs is three different endings — it called emit_runs and named nothing, it
- * never called it, or it failed before it got there — and all three stop the
- * branch of the graph behind them, so "which of the three" is the operator's
- * whole question. The block's own reply sits under this and answers *why*;
- * this says *what*.
+ * runs is four different endings — it called emit_runs and named nothing, it
+ * never called it, it failed before it got there, or it decided on runs this
+ * app then could not create — and all four stop the branch of the graph behind
+ * them, so "which of the four" is the operator's whole question. The block's
+ * own reply and this app's notes sit under this and answer *why*; this says
+ * *what*.
  */
 function blockSummary(b: BlockDTO, waits: string[]): string {
   const ran = b.status === "emitted" || b.status === "failed";
@@ -807,7 +808,15 @@ function blockSummary(b: BlockDTO, waits: string[]): string {
     // passes is exactly when the count is worth watching.
     if (b.status !== "waiting") return `${b.emitted} pass(es)`;
   } else if (ran) {
-    if (b.emitted > 0) return `started ${b.emitted} run(s)`;
+    // `emitted` is what the turn decided on and `started` what became runs;
+    // read as one number, a spec that was never created is a run to go and
+    // look for.
+    if (b.started < b.emitted) {
+      return b.started === 0
+        ? `decided on ${b.emitted} run(s), none could be started`
+        : `decided on ${b.emitted} run(s), started ${b.started}`;
+    }
+    if (b.started > 0) return `started ${b.started} run(s)`;
     if (b.kind === "orchestrator") {
       if (b.decided) return "decided there was nothing to start";
       return b.status === "failed"
