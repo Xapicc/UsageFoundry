@@ -2797,7 +2797,8 @@ export async function commitPending(
  *
  * Its checkout goes first when one is still registered, because the ref is
  * deleted with `update-ref`, which does not ask whether a checkout is standing
- * on it; a slot holding uncommitted work is left alone rather than forced.
+ * on it; a slot holding uncommitted work is left alone rather than forced, and
+ * one stopped mid-rebase or mid-bisect on the branch refuses the Delete.
  */
 export async function deleteBranch(runId: string): Promise<LandOutcome> {
   const run = getRun(runId);
@@ -2888,6 +2889,20 @@ export async function deleteBranch(runId: string): Promise<LandOutcome> {
         return {
           ok: false,
           reason: `${state.branch} is no longer in ${state.target ?? "its target"}: one of the two changed while this was being checked. Nothing was deleted.`,
+        };
+      }
+
+      // Before the holder is removed, so a refusal here changes nothing either.
+      const midOperation = await worktreeMidOperation(repoRoot, state.branch);
+      if (!midOperation.ok) return { ok: false, reason: `${midOperation.reason} Nothing was deleted.` };
+      if (midOperation.found) {
+        const { checkout, operation } = midOperation.found;
+        return {
+          ok: false,
+          reason:
+            `The checkout at ${checkout} is in the middle of a ${operation} of ${state.branch}, ` +
+            `and deleting the branch under it would break the ${operation}'s last step. ` +
+            `Finish or abort it there first.`,
         };
       }
 
@@ -3003,6 +3018,91 @@ async function worktreeHolding(
   branch: string,
 ): Promise<string | null> {
   return (await worktreeBranches(repoRoot)).get(branch) ?? null;
+}
+
+/** A checkout stopped part-way through an operation it will finish on a branch. */
+interface BranchInOperation {
+  checkout: string;
+  operation: "rebase" | "bisect";
+}
+
+/**
+ * Where each operation keeps the name of the branch it will return to, inside
+ * one checkout's own git directory. `head-name` holds the full ref and
+ * `BISECT_START` the short name; git's own `get_branch` strips the prefix off
+ * either, and so does the comparison below.
+ */
+const BRANCH_IN_OPERATION: ReadonlyArray<readonly [string, BranchInOperation["operation"]]> = [
+  ["rebase-merge/head-name", "rebase"],
+  ["rebase-apply/head-name", "rebase"],
+  ["BISECT_START", "bisect"],
+];
+
+/**
+ * A checkout mid-rebase or mid-bisect on this branch, which `worktreeHolding`
+ * cannot see.
+ *
+ * Both operations detach HEAD, so `worktree list` shows the checkout as
+ * detached, and keep the branch's name in a file instead — which is where
+ * `git branch -d` looked (`find_shared_symref`) and `update-ref -d` does not.
+ * No commit is lost by deleting under one, since the tip was just proved to be
+ * in the target, but a rebase's last step is writing the rebased commits back
+ * to that ref: `rebase --continue` then fails and leaves the checkout detached
+ * on them.
+ *
+ * Every git directory is read, the repository's own and each
+ * `worktrees/<id>`, because this state is per checkout. Absence is the only
+ * reading taken as "not in use": a directory that could not be read is a
+ * refusal, since a guard that read it as idle would delete on a guess.
+ */
+async function worktreeMidOperation(
+  repoRoot: string,
+  branch: string,
+): Promise<{ ok: true; found: BranchInOperation | null } | { ok: false; reason: string }> {
+  const common = await git(repoRoot, ["rev-parse", "--git-common-dir"]);
+  if (!common.ok) {
+    return { ok: false, reason: `Could not find its git directory: ${common.stderr.split("\n")[0]}` };
+  }
+  const commonDir = path.resolve(repoRoot, common.stdout);
+
+  try {
+    const gitDirs = [{ dir: commonDir, checkout: repoRoot }];
+    const linked = path.join(commonDir, "worktrees");
+    for (const id of readIfPresent(() => fs.readdirSync(linked)) ?? []) {
+      const dir = path.join(linked, id);
+      // `gitdir` points at the checkout's `.git` file. Without it the entry is
+      // still a checkout's state, and the refusal names the entry instead.
+      const pointer = readIfPresent(() => fs.readFileSync(path.join(dir, "gitdir"), "utf8"));
+      gitDirs.push({ dir, checkout: pointer ? path.dirname(pointer.trim()) : dir });
+    }
+
+    for (const { dir, checkout } of gitDirs) {
+      for (const [file, operation] of BRANCH_IN_OPERATION) {
+        const named = readIfPresent(() => fs.readFileSync(path.join(dir, file), "utf8"));
+        if (named?.trim().replace(/^refs\/heads\//, "") === branch) {
+          return { ok: true, found: { checkout, operation } };
+        }
+      }
+    }
+    return { ok: true, found: null };
+  } catch (err) {
+    return {
+      ok: false,
+      reason:
+        "Could not read whether a checkout is mid-rebase on it: " +
+        (err instanceof Error ? err.message : String(err)),
+    };
+  }
+}
+
+/** `read()`, or null when what it reads does not exist. Anything else throws. */
+function readIfPresent<T>(read: () => T): T | null {
+  try {
+    return read();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
 }
 
 /* ------------------------------------------------------------------ */
