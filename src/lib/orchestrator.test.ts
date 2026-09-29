@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { after, before, describe, it } from "node:test";
+import { after, afterEach, before, describe, it } from "node:test";
 import type { BudgetPolicy } from "./budget";
 // Type-only, so it is erased rather than hoisted above the environment setup
 // below — the same reason the values come through `require`.
@@ -6409,6 +6409,19 @@ describe("applying the sweeper's decision", () => {
     return id;
   }
 
+  // Every case that resumes a run reads it `queued` and leaves it there, and
+  // nothing in this suite means to start one. The next `promoteQueued` reached
+  // without a cap would — `stopRun`'s own, in the operator-stop case below —
+  // each one a real `startRun` chain that outlives its case and ends in another
+  // `promoteQueued`, at whatever moment a later case is running.
+  afterEach(() => {
+    db()
+      .prepare(
+        "UPDATE runs SET status='stopped', finished_at=? WHERE status='queued' AND id LIKE 'sweep-%'",
+      )
+      .run(Date.now());
+  });
+
   it("puts a resumed run in the queue rather than starting it", async () => {
     // A run already spending, and a cap it fills. `promoteQueued` is what knows
     // about the cap; `startRun` is not, so a sweeper that called it directly
@@ -6677,10 +6690,8 @@ describe("applying the sweeper's decision", () => {
       const sweeping = sweepPaused();
       const pressed = press();
       await sweeping;
-      // Under the cap rather than after it. A run an earlier case promoted is
-      // still in flight, can settle in the same turn as this sweep, and ends
-      // in `promoteQueued` — which, past the reset below, starts the queued
-      // run this case is about to read.
+      // Under the cap rather than after it: the row `check` reads as `queued`
+      // is startable by any `promoteQueued` from the moment the cap is reset.
       check(pressed);
     } finally {
       saveSettings({ maxConcurrentRuns: null });
