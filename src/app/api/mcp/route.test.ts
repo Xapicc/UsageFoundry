@@ -499,6 +499,29 @@ test("propose_run refuses a mount with no folder, and a folder with no mount", a
   assert.equal(proposals(), 2);
 });
 
+test("propose_workflow refuses a block whose folder is null, and takes \"\" as the mount root", async () => {
+  const { token, proposals } = proposingChat();
+  const propose = (folder: unknown) =>
+    callTool(token, "propose_workflow", {
+      name: `One step ${randomUUID()}`,
+      blocks: [{ id: "a", name: "Somewhere", mountId: MOUNT, folder, task: "Do a thing." }],
+    });
+
+  // `null` is what a model sends for a field it has no value for, and
+  // `normalizeWorkflowInput` reads it through `?? ""` as the mount root — the
+  // folder claim that blocks every other run under it, on a card that looks
+  // like any other.
+  const nullFolder = await propose(null);
+  assert.equal(nullFolder.isError, true, "propose_workflow refuses it");
+  assert.match(nullFolder.text, /“Somewhere” names no folder/);
+  assert.match(nullFolder.text, /list_folders/);
+  assert.equal(proposals(), 0, "and wrote no card");
+
+  const mountRoot = await propose("");
+  assert.equal(mountRoot.isError, false, mountRoot.text);
+  assert.equal(proposals(), 1);
+});
+
 /**
  * The chat can name the provider a proposed run is spawned as, which it could
  * not before: the tool had no field for it, so the orchestrator told the
