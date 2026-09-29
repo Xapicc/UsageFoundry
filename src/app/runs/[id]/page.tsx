@@ -1779,7 +1779,11 @@ export default function RunDetail({
               </Section>
             )}
 
-            <Region title="Against its limits">
+            {/* Named for neither word, because it holds both and a third thing:
+                the limits, the two window guards, and a context reading that is
+                neither. It was `Against its limits`, which the guard rows under
+                it contradicted. */}
+            <Region title="What bounds it">
               <Section title="Limits and guards">
                 {bars.length > 0 && (
                   <div className="mb-3">
@@ -2009,7 +2013,7 @@ export default function RunDetail({
 
             {/* What was decided before it started, and the region is what keeps
                 `Model` and `Agent` *beside* the guards rather than among them —
-                two regions away from `Against its limits`. A row inside that
+                two regions away from `What bounds it`. A row inside that
                 guard group would claim they bound something, and each bounds
                 strictly nothing: a model moves cost, which every guard in that
                 group already measures rather than being set by, and `--agent`
