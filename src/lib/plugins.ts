@@ -361,10 +361,16 @@ export function discoverPlugins(): { plugins: DiscoveredPlugin[]; problems: Plug
       }
     };
 
-    if (isPluginDir(root)) {
+    if (isPluginDir(root) && !seen.has(root)) {
+      seen.add(root);
       const manifest = readManifestAt(root);
-      if (!("error" in manifest) && !seen.has(root)) {
-        seen.add(root);
+      if ("error" in manifest) {
+        // The walk's rule, for the walk's reason. A root's path relative to
+        // itself is empty, so the line names the mount instead.
+        if (!enabled.has(root)) {
+          problems.push({ message: `${mount.label}: ${manifest.error}`, enabledPath: null });
+        }
+      } else {
         plugins.push({
           ...manifest,
           path: root,
