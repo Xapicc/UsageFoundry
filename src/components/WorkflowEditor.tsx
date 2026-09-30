@@ -552,17 +552,16 @@ export function WorkflowEditor({
   // anything.
   useEffect(() => {
     let live = true;
-    fetch("/api/agents", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => {
-        if (!live) return;
-        setAgents((d.agents ?? []) as AgentDTO[]);
-        setAmbientAgents((d.ambient ?? []) as AmbientAgentDTO[]);
-        setAgentsLoaded(true);
-      })
-      .catch(() => {
-        /* see above; the picker stays empty and the server still decides */
-      });
+    void (async () => {
+      const res = await jsonRequest<{
+        agents?: AgentDTO[];
+        ambient?: AmbientAgentDTO[];
+      }>("/api/agents");
+      if (!live || !res.ok) return;
+      setAgents(res.data.agents ?? []);
+      setAmbientAgents(res.data.ambient ?? []);
+      setAgentsLoaded(true);
+    })();
     return () => {
       live = false;
     };
@@ -570,28 +569,25 @@ export function WorkflowEditor({
 
   // Separate from the pair above and deliberately not blocking `loaded`: this
   // decides whether one warning renders, so a slow or failed read must not hold
-  // the editor back or turn into an error banner over it.
+  // the editor back or turn into an error banner over it. A failed read leaves
+  // the warning unrendered; Run still refuses by name.
   useEffect(() => {
     let live = true;
-    fetch("/api/settings", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => {
-        const s = d.settings as SettingsDTO | undefined;
-        if (!live || !s) return;
-        setCeilings({
-          session:
-            s.planUsageFromApi ||
-            s.sessionCostLimit !== null ||
-            s.sessionTokenLimit !== null,
-          weekly:
-            s.planUsageFromApi ||
-            s.weeklyCostLimit !== null ||
-            s.weeklyTokenLimit !== null,
-        });
-      })
-      .catch(() => {
-        /* the warning stays unrendered; Run still refuses by name */
+    void (async () => {
+      const res = await jsonRequest<{ settings?: SettingsDTO }>("/api/settings");
+      const s = res.ok ? res.data.settings : undefined;
+      if (!live || !s) return;
+      setCeilings({
+        session:
+          s.planUsageFromApi ||
+          s.sessionCostLimit !== null ||
+          s.sessionTokenLimit !== null,
+        weekly:
+          s.planUsageFromApi ||
+          s.weeklyCostLimit !== null ||
+          s.weeklyTokenLimit !== null,
       });
+    })();
     return () => {
       live = false;
     };
