@@ -387,9 +387,10 @@ const SHARED_TOOLS = [
           enum: ["open", "claimed", "done", "dropped"],
           description:
             "Only tasks in this state. Omit for the whole board. 'open' is " +
-            "what is waiting for somebody, 'claimed' is what a run already " +
-            "holds — proposing a second run for one of those is how two " +
-            "agents end up with the same brief.",
+            "what is waiting for somebody, 'claimed' is what somebody already " +
+            "holds — a run, or the operator doing it themselves " +
+            "(claimedByOperator) — and proposing a run for one of those is how " +
+            "two workers end up with the same brief.",
         },
         mountId: {
           type: "string",
@@ -1134,8 +1135,9 @@ const CHAT_TOOLS = [
             "open task (by id or title) that is in neither this list nor " +
             "relatedTaskIds is refused. Changes nothing else about the run — " +
             "no guard, no folder, no prompt. An id not on the board is refused, " +
-            "and so is a task marked operatorOnly — no run may claim one; name " +
-            "it in relatedTaskIds if the brief mentions it.",
+            "and so is a task marked operatorOnly or with claimedByOperator " +
+            "set — no run may claim one; name it in relatedTaskIds if the " +
+            "brief mentions it.",
         },
         relatedTaskIds: {
           type: "array",
@@ -1591,8 +1593,9 @@ const BLOCK_TOOLS = [
                   "of this list stays open after the run has done it. A brief " +
                   "naming an open task (by id or title) that is in neither " +
                   "this list nor relatedTaskIds refuses the whole emission, as " +
-                  "does an id not on the board or a task marked operatorOnly, " +
-                  "which no run may claim — name that in relatedTaskIds. Sets " +
+                  "does an id not on the board or a task marked operatorOnly " +
+                  "or claimedByOperator, which no run may claim — name that " +
+                  "in relatedTaskIds. Sets " +
                   "no guard, picks no folder and does not change the brief.",
               },
               relatedTaskIds: {
@@ -3311,6 +3314,10 @@ function listTasksTool(args: Record<string, unknown>) {
             // own doc names: two agents, one brief, one folder, nothing saying
             // so.
             claimedByRunId: row.claimedByRunId,
+            // The other holder a claim can name, for the same reason: a model
+            // reading a null run id on a claimed row would take it for a claim
+            // nobody is working, and `propose_run` refuses a run for it.
+            claimedByOperator: row.claimedByOperator,
             // Beside the status rather than instead of it: an operator-only
             // task is `open`, and a model reading "open" alone proposes a run
             // `propose_run` then refuses.
@@ -3432,6 +3439,7 @@ function getTaskTool(args: Record<string, unknown>) {
         parentTaskId: task.parentTaskId,
         createdByRunId: task.createdByRunId,
         claimedByRunId: task.claimedByRunId,
+        claimedByOperator: task.claimedByOperator,
         completedByRunId: task.completedByRunId,
         // Runs started *for* this task, which is the link `taskIds` on a
         // proposal or an emission writes. Reported so a model can see the work

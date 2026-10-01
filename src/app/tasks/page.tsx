@@ -264,16 +264,21 @@ function RunLink({ label, runId }: { label: string; runId: string }) {
  * "Held by" is gated on the status rather than on the column alone, because a
  * re-open is the only thing that clears `claimed_by_run_id`: a task closed by
  * hand keeps the id of the run that last held it, and drawing that on a Done row
- * reports finished work as work in progress.
+ * reports finished work as work in progress. The operator holding a task is the
+ * same slot with no run to link — their claim is the row's only holder, and a
+ * row that drew nothing there would read as a claim held by nobody.
  */
 function actingRun(
   task: TaskListItemDTO,
-): { label: string; runId: string } | null {
+): { label: string; runId: string } | { label: string; operator: true } | null {
   if (task.completedByRunId) {
     return { label: "Closed by", runId: task.completedByRunId };
   }
   if (task.status === "claimed" && task.claimedByRunId) {
     return { label: "Held by", runId: task.claimedByRunId };
+  }
+  if (task.status === "claimed" && task.claimedByOperator) {
+    return { label: "Held by", operator: true };
   }
   return null;
 }
@@ -628,7 +633,11 @@ export default function TasksPage() {
             className="align-top whitespace-nowrap text-ink-muted"
           >
             {acted ? (
-              <RunLink label={acted.label} runId={acted.runId} />
+              "runId" in acted ? (
+                <RunLink label={acted.label} runId={acted.runId} />
+              ) : (
+                <span className="block">{acted.label} you</span>
+              )
             ) : (
               task.runCount > 0 && (
                 // The count rather than the ids: `run_tasks` is unbounded and
@@ -667,6 +676,20 @@ export default function TasksPage() {
                 a numeric utility's values ascending, so a caller's smaller gap on
                 the same element is a no-op that reads as a decision. */}
             <ButtonRow className="justify-end">
+              {/* Release's slot on an open row, so an open row is no wider
+                  than a claimed one. The operator claiming for themselves,
+                  and offered on open rows only: taking a run's task is a
+                  release and then a claim. */}
+              {task.status === "open" && (
+                <Button
+                  variant="ghost"
+                  size="compact"
+                  onClick={() => void move(task, "claimed", "claim")}
+                  busy={moving === `${task.id}:claimed`}
+                >
+                  Claim
+                </Button>
+              )}
               {task.status === "claimed" && (
                 <Button
                   variant="ghost"
