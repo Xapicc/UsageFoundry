@@ -169,6 +169,15 @@ const SPEC_ID = /^[A-Za-z0-9_-]{1,64}$/;
  */
 const MAX_FAILURES_LISTED = 40;
 
+/**
+ * The longest `list_my_tasks` search honoured, the run list's own bound.
+ *
+ * Clipped rather than refused: a shorter needle matches a superset of what the
+ * whole one would, so the clip can only show a run more candidates, never hide
+ * the task it was looking for.
+ */
+const MAX_RUN_TASK_QUERY = 200;
+
 /** How much of one error sample the tool repeats. The pane shows more. */
 const FAILURE_SAMPLE_CHARS = 300;
 
@@ -573,8 +582,22 @@ const RUN_TOOLS = [
       "so you do not write down something already on the board. A task marked " +
       "operatorOnly needs the operator and no run can take it. Each " +
       "bodyPreview is clipped: call get_my_task for the whole brief of any " +
-      "task listed here.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      "task listed here. Before you file something, search for it with " +
+      "query: the folder may hold more open tasks than one list shows.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description:
+            "Words to look for in the title and brief of every open task in " +
+            "this folder, not only the ones one list shows; case is ignored " +
+            "for unaccented letters. Narrows openInFolder, never held. Omit " +
+            "to list.",
+        },
+      },
+      additionalProperties: false,
+    },
   },
   {
     name: "complete_task",
@@ -2460,7 +2483,7 @@ async function callTool(
     case "complete_task":
     case "release_task": {
       if (subject.kind !== "run") return text(subjectRefusal(subject, name), true);
-      if (name === "list_my_tasks") return listMyTasks(subject.runId);
+      if (name === "list_my_tasks") return listMyTasks(args, subject.runId);
       if (name === "get_my_task") return getMyTask(args, subject.runId);
       return name === "complete_task"
         ? await completeTaskForRun(args, subject.runId)
@@ -3939,10 +3962,16 @@ function runFolder(runId: string): {
  * complete, `openInFolder` is what it should read before filing. Naming them
  * apart in the payload is what stops a model completing something it merely saw
  * — the ids are in the same shape, and a single flat list is an invitation.
+ *
+ * A `query` narrows `openInFolder` alone, and is echoed back when one was
+ * applied: `openInFolderTotal` then counts matches rather than the folder, and
+ * a model reading a total of 2 with nothing saying it searched would take the
+ * backlog for nearly empty.
  */
-function listMyTasks(runId: string) {
+function listMyTasks(args: Record<string, unknown>, runId: string) {
   const { folder } = runFolder(runId);
-  const mine = tasksForRun(runId, folder);
+  const query = String(args.query ?? "").trim().slice(0, MAX_RUN_TASK_QUERY) || null;
+  const mine = tasksForRun(runId, folder, query);
   // One pair of queries for the held rows, not one per row: unlike the threads
   // below, this read answers for a whole set at a time and there is no reason
   // to pay the N+1 the board's own listing refuses. `openInFolder` is
@@ -4020,6 +4049,7 @@ function listMyTasks(runId: string) {
         // the duplicate it read the list to avoid.
         openInFolderShown: mine.openInFolder.length,
         openInFolderTotal: mine.openInFolderTotal,
+        ...(query ? { query } : {}),
         folder,
         // The sentence the shape cannot carry. A model reading two arrays of
         // ids will reach for the nearest one, and only one of them is closeable.
