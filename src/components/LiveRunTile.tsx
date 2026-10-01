@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import type { LiveRunDTO } from "@/lib/apiTypes";
 import type { LiveTile } from "@/lib/liveTiles";
 import { describeEvent } from "@/lib/logLine";
@@ -52,9 +52,20 @@ export function LiveRunTile({
   // Follows the tail until the reader scrolls up, and picks it up again when
   // they scroll back down — the run page's rule, without its "jump to live"
   // button: a tile is short enough to drag back to the bottom.
+  //
+  // A layout effect, so the jump lands in the same task as the rows it follows.
+  // A full tile trims a row off the top for every one it adds, and scroll
+  // anchoring answers that by moving the reader up by the height trimmed; any
+  // layout before the follow — a pointer resting on the log is enough, since
+  // hovering hit-tests — then sends a scroll event that finds them one batch
+  // short of the tail, and `pinned` turned false on the page's own update
+  // rather than on the reader's scroll. Anchoring stays on: it is what keeps a
+  // reader who *has* scrolled up looking at the same rows while the ones above
+  // them are trimmed, and with it off they were carried back to the tail in
+  // three events.
   const logRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = logRef.current;
     if (el && pinned.current) el.scrollTop = el.scrollHeight;
   }, [lines, tile.tools]);
