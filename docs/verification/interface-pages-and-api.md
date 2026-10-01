@@ -168,6 +168,20 @@
   one failure the rendering-test count in `docs/agent/testing.md`, which the
   docs change that followed corrected.
 
+- **A full `/runs/live` tile stays on its tail with the pointer on its log,
+  and holds a reader who scrolled up, 2026-10-01**, against
+  `.next/standalone/server.js` at `c6ddfdd` and at its parent, in Chromium at
+  1280px. An init script replaced the page's `EventSource` and fed four tiles a
+  50-event join, then 60 batches of 1-3 events 100-700ms apart. Before, with
+  the pointer resting on the log, the tile ended 1,699px behind the tail at 1x
+  and 4x, and 27 of about 30 scroll events read a gap of 40px or more. After,
+  0 of about 1,600 sampled frames were off the tail at 1x and 4x CPU throttle,
+  with and without the pointer. Wheeled up 160px, a row mid-log held within 1px over 8 batches
+  in both builds and wheeling down resumed the follow; with `overflow-anchor:
+  none` injected the same row slid 811px and the gap hit 0 within three
+  batches. Caveat: the stream was fake, so real network timing and the 390px
+  tile were not exercised.
+
 ## Not yet verified by hand
 
 - **No after-change payload from the 2026-08-23 pass has been read from a

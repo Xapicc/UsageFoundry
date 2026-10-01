@@ -254,3 +254,12 @@ nothing about it.
   carrying `started`, the instance's member rows whose `emitted_by` is the
   block, and saying "decided on N run(s), none could be started" when fewer
   started than were decided on.
+- **2026-10-01, `c6ddfdd`, class D.** A full `/runs/live` tile stopped
+  following its tail when the pointer rested on its log. Each event trims a row
+  off the top, scroll anchoring moved the reader up by that height, and the
+  hover's hit test laid the log out before the passive follow effect ran, so a
+  scroll event reached `onScroll` one batch short of the bottom and `pinned`
+  went false on the page's own update. Found by the operator; reproduced in
+  Chromium with a fake stream; fixed by following in a layout effect. Turning
+  anchoring off was measured and refused: it carried a reader who had scrolled
+  up back to the tail within three events.
