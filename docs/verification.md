@@ -32,7 +32,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Context control | [context-control-intake-filter.md](verification/context-control-intake-filter.md) — the intake filter and its ledger | 8 | 4 |
 | Context control | [context-control-occupancy-and-composition.md](verification/context-control-occupancy-and-composition.md) — the occupancy and composition series | 8 | 5 |
 | Orchestrator chat | [orchestrator-chat.md](verification/orchestrator-chat.md) | 12 | 22 |
-| Taskboard | [taskboard-board-and-tools.md](verification/taskboard-board-and-tools.md) — the board, its MCP tools and validation | 11 | 5 |
+| Taskboard | [taskboard-board-and-tools.md](verification/taskboard-board-and-tools.md) — the board, its MCP tools and validation | 12 | 6 |
 | Taskboard | [taskboard-comments.md](verification/taskboard-comments.md) — task comments and threads | 7 | 2 |
 | Taskboard | [taskboard-dependencies.md](verification/taskboard-dependencies.md) — task dependencies and their drawing | 5 | 4 |
 | Workflows and schedules | [workflows-and-schedules-loop-sections.md](verification/workflows-and-schedules-loop-sections.md) — a loop's repeated section: frames, marking, passes and pick-ups | 18 | 4 |
