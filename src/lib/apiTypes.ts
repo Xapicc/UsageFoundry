@@ -2338,6 +2338,8 @@ export interface WorkflowInstanceNodeDTO {
     stopReason: string | null;
     iterations: number;
     maxIterations: number;
+    /** `RunDTO.validation_cycles`: the cap drawn here is the sum of the two. */
+    validationCycles: number;
     /** The cycle open right now. See `fmtCycleInFlight` — never added to the count. */
     activeIteration: number | null;
     startedAt: number | null;

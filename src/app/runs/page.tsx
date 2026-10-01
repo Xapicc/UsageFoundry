@@ -17,6 +17,7 @@ import {
   fmtUSD,
   fmtWaitingFor,
   folderLabel,
+  grantedCycles,
   pollFailureMessage,
   signedUSD,
   STATUS_LABEL,
@@ -533,6 +534,7 @@ function RunList({
           ) : (
             runs.map((r) => {
               const detail = kind === "active" ? waitingDetail(r, now) : null;
+              const granted = grantedCycles(r);
               return (
                 <Tr
                   key={r.id}
@@ -632,7 +634,10 @@ function RunList({
                     label="Cycles"
                     className="whitespace-nowrap align-top text-ink-muted"
                   >
-                    {fmtCycles(r.iterations, r.max_iterations)}
+                    {fmtCycles(r.iterations, r.max_iterations + granted)}
+                    {granted > 0 && (
+                      <div className="text-xs">includes {granted} granted</div>
+                    )}
                   </Td>
                   {kind === "active" ? (
                     // Its own column, never folded into the count beside it:

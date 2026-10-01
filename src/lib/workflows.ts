@@ -7971,6 +7971,7 @@ export function runStateOf(runId: string): {
   stopReason: string | null;
   iterations: number;
   maxIterations: number;
+  validationCycles: number;
   activeIteration: number | null;
   startedAt: number | null;
   mountLabel: string | null;
@@ -7985,6 +7986,7 @@ export function runStateOf(runId: string): {
     stopReason: run.stop_reason,
     iterations: run.iterations,
     maxIterations: run.max_iterations,
+    validationCycles: run.validation_cycles,
     activeIteration: run.active_iteration,
     startedAt: run.started_at,
     mountLabel,
