@@ -17,8 +17,10 @@ import { heldByAnotherProcess } from "./serverLock";
 // module and that one, so the seed has to live where neither can reach back.
 import {
   adoptModelIds,
+  defaultCatalogueWith,
+  discoveredEntriesOf,
   mergeSeededModels,
-  SEEDED_MODEL_CATALOGUE,
+  MODEL_DISCOVERY_KEY,
   type ModelCatalogueEntry,
 } from "./modelCatalogue";
 
@@ -2969,13 +2971,32 @@ function adoptModelsInUse(db: Database.Database) {
       .all() as { model: string }[]).map((row) => row.model),
   ];
 
-  const adopted = adoptModelIds(SEEDED_MODEL_CATALOGUE, inUse);
-  if (adopted.length === SEEDED_MODEL_CATALOGUE.length) return;
+  // Onto the list this install is actually following, which is the seed plus
+  // whatever model discovery has added. Adopting onto the bare seed would pin a
+  // list that lacks every discovered model, and since discovery never offers an
+  // id twice, each of them would be gone for good — set off by nothing more than
+  // a template naming one of them.
+  const following = defaultCatalogueWith(discoveredEntriesOf(discoveryRecord(db)));
+  const adopted = adoptModelIds(following, inUse);
+  if (adopted.length === following.length) return;
 
   db.prepare(
     `INSERT INTO settings (key, value) VALUES ('settings', ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
   ).run(JSON.stringify({ ...stored, modelCatalogue: adopted }));
+}
+
+/** Model discovery's stored record, or null when it is absent or unreadable. */
+function discoveryRecord(db: Database.Database): unknown {
+  const raw = db
+    .prepare("SELECT value FROM settings WHERE key = ?")
+    .get(MODEL_DISCOVERY_KEY) as { value: string } | undefined;
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw.value) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 /**

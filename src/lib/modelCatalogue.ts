@@ -32,6 +32,26 @@
  * an operator who wants it back: clearing the list turns the whole check off.
  * A *non-empty* list with nothing enabled is the state that would refuse every
  * run, and `normalizeModelCatalogue` refuses it at the door instead.
+ *
+ * ## What discovery may do to it
+ *
+ * The list being the operator's closed the gap a build-time list leaves from
+ * one side: a model shipped next week is a settings edit. `modelDiscovery.ts`
+ * closes it from the other, by asking `/v1/models` what the credential runs use
+ * can reach and adding what this install has never been offered. It is held to
+ * one rule, and `mergeDiscoveredModels` is where it lives: **it adds and never
+ * edits.** No existing entry's id, label, switch or position moves; nothing is
+ * removed for being unlisted, because the `[1m]` ids are the CLI's and the API
+ * never lists one; an id discovery has offered once is never offered again, so
+ * an operator's Remove stays removed; and an empty list stays empty. What it
+ * adds arrives enabled under the API's display name, unpriced if `pricing.ts`
+ * has never heard of it, which is the same footing as a hand-added entry.
+ *
+ * What it adds moves the install's *default* rather than its setting:
+ * `settingsDefaults()` is the seed plus discovery's additions, so an install
+ * that never touched the list keeps following every future seed and keeps
+ * reading as unedited. See `docs/agent/agents-and-templates/` for why that and
+ * not writing the merged list back.
  */
 
 import { knownModelIds } from "./pricing";
@@ -344,4 +364,188 @@ export function mergeSeededModels(
   });
 
   return [...merged, ...stored.filter((entry) => !seedIds.has(entry.id))];
+}
+
+/**
+ * A model as `/v1/models` lists it, reduced to what an entry can carry.
+ *
+ * The API also says how large a model's window is and what it can do, and none
+ * of it is kept: an entry may carry nothing that could reach a guard, and a
+ * context size copied in here would be one refactor from becoming one.
+ */
+export interface DiscoveredModel {
+  id: string;
+  displayName: string;
+}
+
+/**
+ * The shape an id from the network must have before it may become an entry.
+ *
+ * Every entry is a string that reaches `--model` on a spawned argv, and until
+ * discovery every one of them was typed by the operator or shipped in a build.
+ * This is the first that arrives unattended, so it is held to the shape every id
+ * Anthropic has published has had — `claude-`, then lowercase letters and
+ * digits in runs joined by `-` or `.` — which refuses a leading dash a CLI
+ * parser could take for a flag, whitespace, brackets (`[1m]` is the CLI's
+ * construct and the API never lists one), and anything a person could not tell
+ * from a model id at a glance. A model named some other way is refused and
+ * reported rather than admitted; the operator can still type it in.
+ */
+const DISCOVERED_ID = /^claude-[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
+const MAX_DISCOVERED_ID_LENGTH = 100;
+const MAX_DISCOVERED_LABEL_LENGTH = 80;
+
+export function isDiscoverableModelId(id: unknown): id is string {
+  return (
+    typeof id === "string" &&
+    id.length <= MAX_DISCOVERED_ID_LENGTH &&
+    DISCOVERED_ID.test(id)
+  );
+}
+
+/**
+ * The API's display name, made safe to put on a picker, or the id.
+ *
+ * A label gates nothing, but it is still text from outside on every page that
+ * names a model, so control characters and runs of whitespace go and the length
+ * is bounded. Blank falls back to the id, which is what a hand-added entry wears.
+ */
+function discoveredLabel(displayName: unknown, id: string): string {
+  const label =
+    typeof displayName === "string"
+      ? displayName
+          .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+      : "";
+  if (!label) return id;
+  return label.length > MAX_DISCOVERED_LABEL_LENGTH
+    ? `${label.slice(0, MAX_DISCOVERED_LABEL_LENGTH - 1)}…`
+    : label;
+}
+
+export interface DiscoveryMerge {
+  /** Every existing entry untouched and in place, then this pass's additions. */
+  catalogue: ModelCatalogueEntry[];
+  /** What this pass added, in the order the API listed it. */
+  added: ModelCatalogueEntry[];
+  /** Every id discovery has offered, the record it was given included. */
+  offered: string[];
+  /** What the API listed that is not the shape of a model id, as listed. */
+  refused: string[];
+}
+
+/**
+ * What a `/v1/models` listing adds to a catalogue, and nothing else.
+ *
+ * **Adds, never edits.** Existing entries come back as the same objects in the
+ * same order, whatever the API says about them: their switch and label are the
+ * operator's answer, and their absence from the listing proves nothing — the
+ * `[1m]` ids are the CLI's and are never listed, and an operator's own entry may
+ * name a model this credential cannot see.
+ *
+ * **Offered once.** `offered` is every id discovery has already put in front of
+ * this list, and an id on it is never added again — that is what keeps a
+ * Remove removed, where "add whatever is missing" would undo it at the next
+ * fetch. Every listed id is recorded, including one already on the list: an
+ * operator's typed entry that the API also lists is then just as removable.
+ *
+ * **Empty stays empty.** An empty catalogue means no catalogue, and filling it
+ * would turn the check back on behind the operator's back. Nothing is recorded
+ * as offered either, because nothing was: if they later turn the list back on,
+ * the next listing offers what it has.
+ *
+ * Matching is exact, as everywhere in this file — `claude-sonnet-4-5-20250929`
+ * is not `claude-sonnet-4-5` here, whatever `pricing.ts` makes of the two.
+ */
+export function mergeDiscoveredModels(
+  catalogue: readonly ModelCatalogueEntry[],
+  discovered: readonly DiscoveredModel[],
+  offered: readonly string[],
+): DiscoveryMerge {
+  const refused: string[] = [];
+  const listed: DiscoveredModel[] = [];
+  for (const model of discovered) {
+    if (isDiscoverableModelId(model.id)) listed.push(model);
+    else refused.push(model.id);
+  }
+
+  if (catalogue.length === 0) {
+    return { catalogue: [], added: [], offered: [...offered], refused };
+  }
+
+  const present = new Set(catalogue.map((entry) => entry.id));
+  const seen = new Set(offered);
+  const nextOffered = [...offered];
+  const added: ModelCatalogueEntry[] = [];
+  for (const model of listed) {
+    if (seen.has(model.id)) continue;
+    seen.add(model.id);
+    nextOffered.push(model.id);
+    if (present.has(model.id)) continue;
+    present.add(model.id);
+    added.push({
+      id: model.id,
+      label: discoveredLabel(model.displayName, model.id),
+      enabled: true,
+    });
+  }
+
+  return {
+    catalogue: [...catalogue, ...added],
+    added,
+    offered: nextOffered,
+    refused,
+  };
+}
+
+/**
+ * The `settings` row discovery keeps its record under, beside the blob.
+ *
+ * Its own row rather than a key of `Settings`, because `saveSettings` rebuilds
+ * that blob from `SETTINGS_KEYS` and the page PUTs every key back — so a record
+ * kept there would be one any Save could overwrite with what the page loaded.
+ */
+export const MODEL_DISCOVERY_KEY = "modelDiscovery";
+
+/**
+ * What discovery has added, off its stored record, for the default to follow.
+ *
+ * Read again at this boundary rather than trusted, because the row is JSON on
+ * disk and these ids reach `--model`: anything that is not a well-formed id is
+ * dropped, every label is re-cleaned, and every entry is enabled, which is the
+ * only way discovery ever adds one.
+ */
+export function discoveredEntriesOf(record: unknown): ModelCatalogueEntry[] {
+  if (!record || typeof record !== "object") return [];
+  const added = (record as { added?: unknown }).added;
+  if (!Array.isArray(added)) return [];
+
+  const entries: ModelCatalogueEntry[] = [];
+  const seen = new Set<string>();
+  for (const raw of added) {
+    if (!raw || typeof raw !== "object") continue;
+    const { id, label } = raw as { id?: unknown; label?: unknown };
+    if (!isDiscoverableModelId(id) || seen.has(id)) continue;
+    seen.add(id);
+    entries.push({ id, label: discoveredLabel(label, id), enabled: true });
+  }
+  return entries;
+}
+
+/**
+ * The list an install that never edited its own follows: the seed, then what
+ * discovery added.
+ *
+ * `mergeSeededModels` with discovery's additions in the stored list's place,
+ * so a model discovery found first and a later release seeds lands where the
+ * seed declares it and keeps discovery's switch — exactly what the boot merge
+ * does to an install that *has* pinned its list, so the two cannot disagree.
+ */
+export function defaultCatalogueWith(
+  added: readonly ModelCatalogueEntry[],
+): ModelCatalogueEntry[] {
+  return added.length === 0
+    ? SEEDED_MODEL_CATALOGUE
+    : mergeSeededModels(added, SEEDED_MODEL_CATALOGUE);
 }

@@ -256,6 +256,13 @@ export async function register() {
       // own this directory is reading another server's answers to both.
       const { startRetentionSweeper } = await import("./lib/retention");
       startRetentionSweeper();
+
+      // And the model list's one unattended writer. Behind the same claim
+      // because a check writes the catalogue every run is validated against,
+      // and two processes doing that would each record ids the other then
+      // finds already offered.
+      const { startModelDiscovery } = await import("./lib/modelDiscovery");
+      startModelDiscovery();
     } else {
       // Not "starting without closing anything out" any more, which read like a
       // benign notice on a process that then admitted runs and spawned billed

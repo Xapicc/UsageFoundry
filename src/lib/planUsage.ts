@@ -70,8 +70,12 @@ const ERROR_BACKOFF_MS = 60_000;
  * confident percentage for the wrong account is worse than none. On macOS the
  * CLI may keep this in the Keychain instead, in which case there is no file
  * and this reports a miss.
+ *
+ * Exported for `modelDiscovery.ts`, which needs the same token on the same
+ * terms — never refreshed, expired is a miss — and a second reader would be a
+ * second place for those terms to drift.
  */
-async function readAccessToken(now: number): Promise<string | null> {
+export async function readAccessToken(now: number): Promise<string | null> {
   try {
     const raw = JSON.parse(await fs.readFile(credentialsPath(), "utf8")) as {
       claudeAiOauth?: { accessToken?: unknown; expiresAt?: unknown };

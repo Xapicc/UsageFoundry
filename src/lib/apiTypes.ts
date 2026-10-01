@@ -3179,6 +3179,38 @@ export interface ModelCatalogueEntryDTO {
   enabled: boolean;
 }
 
+/**
+ * What model discovery last did, for the line beside the catalogue.
+ *
+ * Success and failure are kept apart rather than as one "last result", because
+ * the page needs both after a failure: when the list was last brought up to
+ * date, and why today's check did not. A success clears the failure. The
+ * credential is named by kind and never carried.
+ */
+export interface ModelDiscoveryDTO {
+  /** When a whole listing was last read and merged, or null if never. */
+  lastSuccessAt: string | null;
+  /** Which credential that listing was read with. */
+  credential: "api_key" | "claude_code" | null;
+  /** How many models it listed. */
+  listed: number | null;
+  /** The ids it added to the catalogue. */
+  added: string[];
+  /** What it listed that is not the shape of a model id, refused at the door. */
+  refused: string[];
+  /** Why the latest check failed, in plain words, or null if it did not. */
+  error: string | null;
+  errorAt: string | null;
+  /** Null when the check failed for want of any credential. */
+  errorCredential: "api_key" | "claude_code" | null;
+}
+
+/** `POST /api/models/discovery`: the check's outcome and the list it left. */
+export interface ModelDiscoveryCheckDTO {
+  discovery: ModelDiscoveryDTO;
+  modelCatalogue: ModelCatalogueEntryDTO[];
+}
+
 export interface SettingsDTO {
   sessionCostLimit: number | null;
   weeklyCostLimit: number | null;

@@ -25,6 +25,10 @@ src/lib/
                    no second answer to which models exist. Validation and
                    never a guard — it reaches the doors that start work and
                    no budget, mode or isolation choice
+  modelDiscovery.ts  asks `/v1/models`, at boot and daily, with the credential
+                   runs bill against, and adds what the list was never offered.
+                   Adds and never edits; an install that never touched its
+                   list reads the additions as its default and stays unpinned
   adminApi.ts      Admin API client (rate limits, usage, cost) w/ pagination
   budget.ts        policy evaluation
   orchestrator.ts  run loop, process spawn, stream-json parsing, SSE bus;

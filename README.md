@@ -134,9 +134,11 @@ banner on the dashboard: a workspace whose path is not a directory (Docker
 creates a missing bind source rather than refusing, so a typo in `UF_WORKSPACE`
 looks exactly like an empty one), a `CLAUDE_HOME` with no `projects/` under it
 (every usage figure reads zero), and any variable set to the empty string where
-blank is not an answer. Thirteen variables are where blank *is* an answer, and
+blank is not an answer. Fourteen variables are where blank *is* an answer, and
 none of them is ever reported: `UF_AUTH_TOKEN`, `ANTHROPIC_ADMIN_KEY`,
 `UF_GITHUB_TOKEN` and `UF_GITHUB_TOKENS`, where it means *off*;
+`ANTHROPIC_API_KEY`, where it means runs and the model list's daily check use
+the Claude Code sign-in instead;
 `UF_ALLOW_NO_AUTH`, `UF_COOKIE_SECURE` and `UF_TRANSCRIPT_CACHE_MAX_ENTRIES`,
 where it means *take the default*; `UF_WEBHOOK_URL`, `UF_WEBHOOK_SECRET`,
 `UF_PUBLIC_URL` and `UF_INSTALL_LABEL`, where it means the whole outbound

@@ -4,7 +4,6 @@ import { NextResponse } from "next/server";
 // the way src/lib and the chat route already do.
 import { armDreaming, disarmDreaming } from "../../../lib/dreamingRun";
 import {
-  DEFAULTS,
   EFFORT_LEVELS,
   getSettings,
   isEffortLevel,
@@ -12,6 +11,7 @@ import {
   sameValue,
   saveSettings,
   SETTINGS_KEYS,
+  settingsDefaults,
   type Settings,
 } from "../../../lib/settings";
 import { normalizePolicy } from "../../../lib/budget";
@@ -94,15 +94,18 @@ function at(obj: unknown, path: string): unknown {
  * stored guard set always has exactly those leaves.
  */
 function nonDefaultKeys(settings: Settings): string[] {
+  // `settingsDefaults()` and not `DEFAULTS`: a catalogue model discovery added
+  // to is still the default, and `saveSettings` agrees, so the fold must too.
+  const defaults = settingsDefaults();
   const paths: string[] = [];
   for (const key of SETTINGS_KEYS) {
-    if (sameValue(settings[key], DEFAULTS[key])) continue;
+    if (sameValue(settings[key], defaults[key])) continue;
     if (key !== SPLIT_KEY) {
       paths.push(key);
       continue;
     }
-    for (const path of leafPaths(DEFAULTS[key], key)) {
-      if (!sameValue(at(settings, path), at(DEFAULTS, path))) paths.push(path);
+    for (const path of leafPaths(defaults[key], key)) {
+      if (!sameValue(at(settings, path), at(defaults, path))) paths.push(path);
     }
   }
   return paths;

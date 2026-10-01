@@ -18,6 +18,8 @@ import type {
   CodexAuthStateDTO,
   LocalProviderDTO,
   KnowledgeStatusDTO,
+  ModelDiscoveryCheckDTO,
+  ModelDiscoveryDTO,
   PluginDTO,
   PluginsReportDTO,
   ToolInventoryDTO,
@@ -38,6 +40,7 @@ import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
 import {
   describeAmbientAgents,
   fmtBytes,
+  fmtRelative,
   fmtTokens,
   fmtUSD,
   type BadgeTone,
@@ -47,6 +50,7 @@ import { Button } from "@/components/ui/Button";
 // Safe from a client file: `modelCatalogue.ts` imports only `pricing.ts`, which
 // imports nothing — no route back to `node:fs`.
 import { SEEDED_MODEL_CATALOGUE } from "@/lib/modelCatalogue";
+import { isKnownModel } from "@/lib/pricing";
 import { Card, CardTitle, Empty } from "@/components/ui/Card";
 import { Disclosure } from "@/components/ui/Disclosure";
 import { Field, Input, Select, Switch, Textarea } from "@/components/ui/Field";
@@ -1240,6 +1244,97 @@ function ToolFigures({
   );
 }
 
+const DISCOVERY_CREDENTIAL: Record<NonNullable<ModelDiscoveryDTO["credential"]>, string> = {
+  api_key: "the API key",
+  claude_code: "the Claude Code sign-in",
+};
+
+/**
+ * What model discovery last did, beside the list it writes to.
+ *
+ * A failure is a warning in words and never only a missing timestamp: the one
+ * thing this must not look like is a check that has stopped working reading as
+ * a list with nothing new on it. The button stands down while the list has
+ * unsaved edits, because a check writes to the stored list and Save would then
+ * put the edited copy — without what the check added — back over it.
+ */
+function ModelDiscoveryPanel({
+  status,
+  error,
+  busy,
+  catalogueEdited,
+  catalogueEmpty,
+  onCheck,
+}: {
+  status: ModelDiscoveryDTO | null;
+  error: string | null;
+  busy: boolean;
+  catalogueEdited: boolean;
+  catalogueEmpty: boolean;
+  onCheck: () => void;
+}) {
+  // Only this page's own press. A check already in flight elsewhere is shared
+  // by a press rather than doubled, so there is nothing to wait out first.
+  const checking = busy;
+  const success =
+    status?.lastSuccessAt && status.credential
+      ? {
+          age: fmtRelative(Date.parse(status.lastSuccessAt)),
+          credential: DISCOVERY_CREDENTIAL[status.credential],
+          listed: status.listed ?? 0,
+          added: status.added,
+        }
+      : null;
+
+  return (
+    <div className="mb-3">
+      {error !== null && (
+        <Notice tone="danger" live>
+          {error}
+        </Notice>
+      )}
+      {status?.error && (
+        <Notice tone="warn">
+          <strong>
+            The last check failed
+            {status.errorAt ? ` ${fmtRelative(Date.parse(status.errorAt))}` : ""}.
+          </strong>{" "}
+          {status.error.replace(/\.$/, "")}. Nothing on the list changed.
+        </Notice>
+      )}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Button
+          variant="secondary"
+          onClick={onCheck}
+          disabled={checking || catalogueEdited}
+        >
+          {checking ? "Checking…" : "Check for models"}
+        </Button>
+        <span className="text-xs text-ink-faint">
+          {success
+            ? `Listed ${success.listed} ${success.listed === 1 ? "model" : "models"} ${success.age} with ${success.credential}, ${
+                success.added.length === 0
+                  ? "nothing new"
+                  : `added ${success.added.length}: ${success.added.join(", ")}`
+              }`
+            : status
+              ? "No check has succeeded yet"
+              : "Reading the last check…"}
+        </span>
+      </div>
+      {catalogueEdited && <Hint>Save or discard the list first</Hint>}
+      {catalogueEmpty && <Hint>Nothing is added while the list is empty</Hint>}
+      {status && status.refused.length > 0 && (
+        <Hint tone="warn">
+          Refused {status.refused.length === 1 ? "an id" : `${status.refused.length} ids`}{" "}
+          that {status.refused.length === 1 ? "is" : "are"} not shaped like a model id:{" "}
+          <span className="mono">{status.refused.join(", ")}</span>
+        </Hint>
+      )}
+    </div>
+  );
+}
+
 function KnowledgeFigures({
   report,
   error,
@@ -2329,6 +2424,11 @@ export default function SettingsPage() {
 
   /** The id being typed into the model list's Add box, before it is a row. */
   const [modelDraft, setModelDraft] = useState("");
+  // What model discovery last did. A reading on its own route rather than a
+  // setting: nothing on this form writes it, and Save never touches it.
+  const [discovery, setDiscovery] = useState<ModelDiscoveryDTO | null>(null);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const [discoveryBusy, setDiscoveryBusy] = useState(false);
   const standalone = useStandalone();
   const [sectionHash, setSectionHash] = useSectionHash();
 
@@ -2444,6 +2544,20 @@ export default function SettingsPage() {
     void loadKnowledge();
   }, [loadKnowledge]);
 
+  const loadDiscovery = useCallback(async () => {
+    const res = await jsonRequest<ModelDiscoveryDTO>("/api/models/discovery");
+    if (!res.ok) {
+      setDiscoveryError(actionFailureMessage(res, "Model discovery's status could not be read."));
+      return;
+    }
+    setDiscoveryError(null);
+    setDiscovery(res.data);
+  }, []);
+
+  useEffect(() => {
+    void loadDiscovery();
+  }, [loadDiscovery]);
+
   const toggleSkill = useCallback(async (enabled: boolean) => {
     setSkillBusy(true);
     const res = await jsonRequest<{ skillEnabled: boolean }>("/api/knowledge/skill", {
@@ -2534,6 +2648,16 @@ export default function SettingsPage() {
       effective !== null &&
       savedS !== null &&
       JSON.stringify(effective) !== JSON.stringify(savedS),
+    [effective, savedS],
+  );
+
+  // Its own comparison rather than `changed`, which walks `EDITABLE_PATHS` and
+  // that list does not carry the catalogue.
+  const catalogueEdited = useMemo(
+    () =>
+      effective !== null &&
+      savedS !== null &&
+      JSON.stringify(effective.modelCatalogue) !== JSON.stringify(savedS.modelCatalogue),
     [effective, savedS],
   );
 
@@ -2629,12 +2753,17 @@ export default function SettingsPage() {
 
   const save = useCallback(async () => {
     if (!effective) return;
+    // The catalogue only when it was edited here. Model discovery adds to it
+    // while this page is open, and re-sending the copy loaded before that would
+    // store the list without what it added — which, offered once, never returns.
+    const body: Partial<SettingsDTO> = { ...effective };
+    if (!catalogueEdited) delete body.modelCatalogue;
     setBusy(true);
     try {
       const res = await fetch("/api/settings", {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(effective),
+        body: JSON.stringify(body),
       });
       const json = await res.json().catch(() => null);
       // A rejected field means nothing was saved — keep the edited form on
@@ -2661,7 +2790,44 @@ export default function SettingsPage() {
     } finally {
       setBusy(false);
     }
-  }, [effective, loadKnowledge]);
+  }, [effective, catalogueEdited, loadKnowledge]);
+
+  /**
+   * Ask `/v1/models` now, and show what it added without reloading the page.
+   *
+   * A reload would cost every unsaved edit on it. Only what the check appended
+   * is laid onto the form, because discovery never edits an entry and a switch
+   * flipped while the request was out is the operator's to keep.
+   */
+  const checkForModels = useCallback(async () => {
+    if (!savedS) return;
+    const before = savedS.modelCatalogue;
+    setDiscoveryBusy(true);
+    const res = await jsonRequest<ModelDiscoveryCheckDTO>("/api/models/discovery", {
+      method: "POST",
+    });
+    setDiscoveryBusy(false);
+    if (!res.ok) {
+      setDiscoveryError(actionFailureMessage(res, "The check could not be started."));
+      return;
+    }
+    setDiscoveryError(null);
+    setDiscovery(res.data.discovery);
+    const after = res.data.modelCatalogue;
+    const appended = after.filter((entry) => !before.some((e) => e.id === entry.id));
+    setSavedS((prev) => (prev ? { ...prev, modelCatalogue: after } : prev));
+    setS((prev) =>
+      prev
+        ? {
+            ...prev,
+            modelCatalogue: [
+              ...prev.modelCatalogue,
+              ...appended.filter((entry) => !prev.modelCatalogue.some((e) => e.id === entry.id)),
+            ],
+          }
+        : prev,
+    );
+  }, [savedS]);
 
   async function calibrate() {
     setCalBusy(true);
@@ -3804,6 +3970,15 @@ export default function SettingsPage() {
           defaultOpen={false}
         >
           <div className={`${FOLD_BODY} ${FLUSH}`}>
+            <ModelDiscoveryPanel
+              status={discovery}
+              error={discoveryError}
+              busy={discoveryBusy}
+              catalogueEdited={catalogueEdited}
+              catalogueEmpty={catalogue.length === 0}
+              onCheck={() => void checkForModels()}
+            />
+
             {/* Longer than the seven-row rule of thumb, and the length is the
                 price table's rather than a choice: this is one list of one
                 kind of thing, and splitting it by whether the switch is on
@@ -3822,9 +3997,18 @@ export default function SettingsPage() {
                   // Nothing when the two are the same string, which is every
                   // entry an operator typed: the id under the id is the shipped
                   // rows' second fact, not a second copy of their first.
+                  // Unpriced is said here because discovery can add a model the
+                  // price table has never heard of, enabled, and a run on it is
+                  // charged the fallback rate — a fact this row is the first
+                  // place anybody sees the model.
                   description={
-                    entry.label === entry.id ? undefined : (
-                      <span className="mono">{entry.id}</span>
+                    entry.label === entry.id && isKnownModel(entry.id) ? undefined : (
+                      <span className="inline-flex flex-wrap items-center gap-2">
+                        {entry.label !== entry.id && (
+                          <span className="mono">{entry.id}</span>
+                        )}
+                        {!isKnownModel(entry.id) && <Badge tone="warn">Unpriced</Badge>}
+                      </span>
                     )
                   }
                 >
