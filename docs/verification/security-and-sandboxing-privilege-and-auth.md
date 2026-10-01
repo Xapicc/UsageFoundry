@@ -99,6 +99,28 @@
   container's kernel, not with the lock's own `root`/`agent-gid` pair; the
   sandbox bind shape is read off the binary, not run.
 
+- **`CLAUDE_CODE_HARBOR_KITE=0` removes `ListAgents` and skips the CLI's peer
+  inbox, on 2.1.280, 2026-10-01.** Measured with
+  `proposals/CrossSessionCommunication/scripts/native-tools.sh`, which runs the
+  CLI against its stub with a dummy key. The argv was the app's shape
+  (`--permission-mode acceptEdits --allowedTools Grep Glob --disallowedTools
+  'Bash(pkill:*)' 'Bash(killall:*)'`) plus `--debug-file`. Without the
+  variable: `init tools (23)` including `ListAgents` and `SendMessage`, and the
+  debug log shows the inbox trying to listen at
+  `$XDG_RUNTIME_DIR/cc-socks/<pid>.sock`. With
+  `EXTRA_ENV=CLAUDE_CODE_HARBOR_KITE=0`: `init tools (22)` with `ListAgents` the
+  only one gone, the same 22 in the stub's request, and `[uds-messaging]
+  Skipped: cross-session messaging gate off`. A stub turn that called
+  `ListAgents` under the variable got "No such tool available … disabled for
+  this session, in subagents as well as here". Without `--allowedTools` the
+  counts are 21 and 20. `childEnv`, `chatEnv`, `reviewEnv` and `authEnv` set the
+  variable, and `orchestrator.test.ts` pins it on all four. Caveat: the Bash
+  sandbox refuses `AF_UNIX`, so the listen without the variable failed with
+  `EPERM`, and neither run left a socket under `/tmp/cc-socks/` or the scratch
+  `$XDG_RUNTIME_DIR`. That the variable keeps the socket from being created is
+  read from the debug line, not seen as a missing file. The probe set the
+  variable by hand rather than through the app's builders.
+
 ## Not yet verified by hand
 
 - **What an authenticated work cycle replaces under `~/.claude` is unwatched,
@@ -244,3 +266,40 @@
   ```
   The refresh token was never spent under the old read-only layout, so an install
   that stopped authenticating recovers the login on the first boot with this mode.
+
+- **That a live work cycle opens no inbox and is not offered `ListAgents`,
+  after the change to every env that spawns `claude`.** The probe in *Verified*
+  ran inside the Bash sandbox, which refuses `AF_UNIX`, and did not go through
+  the app's own spawn. Settle in the deployed container while runs are live.
+  Reading both places works from a work cycle's Bash, because only creating a
+  socket is refused there. `ls -la /tmp/cc-socks/` must hold no socket for any
+  `sdk-cli` session.
+  `jq -r 'select(.entrypoint=="sdk-cli") | "\(.pid) \(.messagingSocketPath // "none")"' ~/.claude/sessions/*.json`
+  must name no socket. On the build before this change, read 2026-10-01 from a
+  work cycle's Bash, all 12 `sdk-cli` records named a socket and 5 of those
+  sockets existed. A run asked to call `ListAgents` must report that it has no
+  such tool.
+
+- **The receiving side of a peer message (U1), and `SendMessage` refusing a
+  live peer under the variable.** Not runnable inside the Bash sandbox, for the
+  same `AF_UNIX` reason. With no live peer to address, the only measured change
+  was the hint for an unknown name: "Use ListAgents to see everyone you can
+  message" became "use the agent ID from a background agent's spawn result".
+  The "Cross-session messaging is not available in this session" refusal is
+  read from the binary. Settle from a container shell outside the sandbox: run
+  `bash proposals/CrossSessionCommunication/scripts/native-pair-test.sh`, then
+  run it again with `CLAUDE_CODE_HARBOR_KITE=0` added to the `env -i` line for
+  `ROLE_A` and `ROLE_B`. In the second run A's debug log must read `Skipped`,
+  no socket may appear for A, B's `ListAgents` must not list A, and B's send
+  must be refused.
+
+- **That a mid-session feature-flag refresh cannot reopen the inbox under the
+  variable.** The skip line itself ends "(will late-bind if a GrowthBook refresh
+  enables it)", and the binary has that late-bind path. That the variable holds
+  against it is inferred: the gate returns the variable's value whenever it is
+  set (`proposals/CrossSessionCommunication/13-validation.md` §4). The stub
+  probe reaches no flag service, so no refresh happened. Settle in the deployed
+  container, outside any Bash sandbox, with a work cycle that runs past a flag
+  refresh: `ls /tmp/cc-socks/`, polled throughout, must never show its pid.
+  Started by hand with `--debug-file`, its log must hold no `Late bind` line.
+  That cycle is billed.
