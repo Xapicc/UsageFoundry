@@ -27,7 +27,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - A local run needs a slot under two caps, and the second is about another machine.
 - And a cap on N still bounds nothing about the total, so there is one ceiling that is about the install rather than about a spender.
 - `installSpend` reads a fifth place, and the reason it did not before stopped being true.
-- Counting a spender and refusing it are two halves, and the install ceiling had only the first for assists.
+- Counting a spender and refusing it are two halves, and the install limit had only the first for assists.
 - The door is read once, so what an admitted child spends has to be bounded on the child, and **every conflict resolution now carries `resolutionBudgetUSD` as `--max-budget-usd`**: $20 by default …
 
 ## [Termini, waiting out a window and the duration cap](budgets-and-guards/termini-and-waiting.md)

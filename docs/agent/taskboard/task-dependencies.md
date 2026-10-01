@@ -146,7 +146,9 @@ than treat the list as the edge set.
 failure this feature can produce on the agent surface is not a bad write — a
 misdirected edge is a wrong ordering on the board and is visible as one, which
 is why `add_task_dependency` takes two task ids without being held to
-`list_my_tasks`' id rule, the same argument `comment_on_task` makes. It is a
+`list_my_tasks`' id rule. `comment_on_task` once made the same argument and no
+longer does for a run: a note is free text the run holding the task reads whole,
+where an edge carries no words of its own. The failure here is a
 model *reading* an edge as a gate: stopping work on a task it holds because
 something upstream is open, or telling the operator that a run cannot start.
 Nothing in this app reads `task_deps` when a run starts, when a task is claimed

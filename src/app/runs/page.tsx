@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import type {
   BootReconcileDTO,
   RunListDTO,
@@ -17,11 +18,12 @@ import {
   fmtUSD,
   fmtWaitingFor,
   folderLabel,
+  grantedCycles,
   pollFailureMessage,
   signedUSD,
   STATUS_LABEL,
 } from "@/lib/format";
-import { jsonRequest } from "@/lib/jsonRequest";
+import { jsonRequest, type JsonResult } from "@/lib/jsonRequest";
 import { FleetControls } from "@/components/FleetControls";
 import { RestartClosed } from "@/components/RestartClosed";
 import { StatusMark } from "@/components/StatusMark";
@@ -139,12 +141,22 @@ type ListPage = Pick<RunListDTO, "runs" | "total" | "offset" | "limit">;
 interface Bands {
   active: RunListItemDTO[];
   activeTotal: number;
+  /**
+   * What "In flight" was narrowed to when it was read. Carried with the rows
+   * rather than read off the URL, which moves a request ahead of them, so the
+   * line describing the band always describes the rows under it.
+   */
+  narrowing: Narrowing;
+  /** Runs spending now, for the Live button. */
+  running: number;
   recent: ListPage;
 }
 
 const NO_BANDS: Bands = {
   active: [],
   activeTotal: 0,
+  narrowing: { kind: "all" },
+  running: 0,
   recent: { runs: [], total: 0, offset: 0, limit: BAND_LIMIT },
 };
 
@@ -172,6 +184,101 @@ function activeBand(executing: RunListDTO, queue: RunListDTO): RunListItemDTO[] 
     (a, b) =>
       ACTIVE_ORDER[a.status as keyof typeof ACTIVE_ORDER] -
       ACTIVE_ORDER[b.status as keyof typeof ACTIVE_ORDER],
+  );
+}
+
+/** A status a run in flight can have, and so one `?status=` can narrow the band to. */
+type ActiveStatus = keyof typeof ACTIVE_ORDER;
+
+// `hasOwn` rather than `in`, which would take `?status=toString` for a status.
+function isActiveStatus(status: string): status is ActiveStatus {
+  return Object.hasOwn(ACTIVE_ORDER, status);
+}
+
+/**
+ * What `?status=` asked "In flight" for — the URL `/runs/live`'s counts link to.
+ *
+ * A value naming no status in flight is refused rather than dropped, on the
+ * route's own grounds for refusing one: answering "every run" to "show me the
+ * paused ones" reads as the paused ones.
+ */
+type Narrowing =
+  | { kind: "all" }
+  | { kind: "only"; status: ActiveStatus }
+  | { kind: "refused"; asked: string };
+
+function readNarrowing(asked: string | null): Narrowing {
+  if (!asked) return { kind: "all" };
+  return isActiveStatus(asked)
+    ? { kind: "only", status: asked }
+    : { kind: "refused", asked };
+}
+
+/** A request the narrowing leaves nothing to ask: no rows, and none counted. */
+function unasked(): Promise<JsonResult<RunListDTO>> {
+  return Promise.resolve({
+    ok: true,
+    data: { runs: [], lastBootReconcile: null, total: 0, offset: 0, limit: BAND_LIMIT },
+  });
+}
+
+/**
+ * The two requests "In flight" is filled from, narrowed in the query for
+ * `EXECUTING`'s reason: a status picked out of their answers would be picked
+ * out of a capped page rather than the table.
+ *
+ * A half the narrowing leaves nothing in is not asked at all, because an empty
+ * `status` is no filter to the route and would answer with every run there is.
+ */
+function inFlightRequests(narrowing: Narrowing) {
+  const keep = (statuses: readonly RunListItemDTO["status"][]) =>
+    statuses.filter(
+      (s) =>
+        narrowing.kind === "all" ||
+        (narrowing.kind === "only" && s === narrowing.status),
+    );
+  const executing = keep(EXECUTING);
+  const queue = keep(QUEUE);
+  return [
+    executing.length > 0 ? bandRequest({ status: executing.join(",") }) : unasked(),
+    queue.length > 0
+      ? bandRequest({ status: queue.join(","), order: "queue" })
+      : unasked(),
+  ];
+}
+
+/**
+ * How many runs are spending, for the Live button, while "In flight" is
+ * narrowed and so may not hold them. Only `total` is read, so one row is asked.
+ */
+function runningCount() {
+  return jsonRequest<RunListDTO>("/api/runs?status=running&limit=1");
+}
+
+/**
+ * The line saying "In flight" is narrowed, and the way back to all of it.
+ *
+ * Without it a band narrowed by a link from `/runs/live` reads as the whole
+ * fleet: "In flight 2" over two paused runs says nothing is running.
+ */
+function NarrowingNote({ narrowing }: { narrowing: Narrowing }) {
+  if (narrowing.kind === "all") return null;
+  const showAll = (
+    <Link href="/runs" className="max-md:inline-flex max-md:min-h-11 max-md:items-center">
+      Show all
+    </Link>
+  );
+  if (narrowing.kind === "refused") {
+    return (
+      <Notice tone="warn">
+        No run in flight has the status “{narrowing.asked}”. {showAll}
+      </Notice>
+    );
+  }
+  return (
+    <p className="mb-3 text-sm text-ink-muted">
+      Showing {STATUS_LABEL[narrowing.status]} runs only · {showAll}
+    </p>
   );
 }
 
@@ -533,6 +640,7 @@ function RunList({
           ) : (
             runs.map((r) => {
               const detail = kind === "active" ? waitingDetail(r, now) : null;
+              const granted = grantedCycles(r);
               return (
                 <Tr
                   key={r.id}
@@ -632,7 +740,10 @@ function RunList({
                     label="Cycles"
                     className="whitespace-nowrap align-top text-ink-muted"
                   >
-                    {fmtCycles(r.iterations, r.max_iterations)}
+                    {fmtCycles(r.iterations, r.max_iterations + granted)}
+                    {granted > 0 && (
+                      <div className="text-xs">includes {granted} granted</div>
+                    )}
                   </Td>
                   {kind === "active" ? (
                     // Its own column, never folded into the count beside it:
@@ -731,13 +842,39 @@ function RunList({
   );
 }
 
+/**
+ * `useSearchParams` rather than the `window.location.search` that `/runs/new`
+ * and `/knowledge` read, because this page's parameter changes under it: Show
+ * all, or the sidebar's Runs, is a navigation to the same route, which keeps
+ * the page mounted and would leave a one-off reading narrowed.
+ *
+ * The Suspense boundary is what `next build` demands of a client page reading
+ * it once that page is prerendered. The root layout's `force-dynamic` means
+ * none is today, and the build was measured to pass without the boundary; it
+ * stays so that dropping that line cannot fail the build here.
+ */
 export default function RunsPage() {
+  return (
+    <Suspense>
+      <RunsView />
+    </Suspense>
+  );
+}
+
+function RunsView() {
+  const askedStatus = useSearchParams().get("status");
   const [bands, setBands] = useState<Bands>(NO_BANDS);
   // The recent band's page. The ref is what the poll checks its answer
   // against, so a request already out when Next was pressed cannot land after
   // the one it replaced and put the page just left back on screen.
   const [recentOffset, setRecentOffset] = useState(0);
   const recentAsked = useRef(0);
+  // The same check for the narrowing, which changes by navigation rather than
+  // by a press here. Declared above the poll's effect so it moves first.
+  const statusAsked = useRef(askedStatus);
+  useEffect(() => {
+    statusAsked.current = askedStatus;
+  }, [askedStatus]);
   const [boot, setBoot] = useState<BootReconcileDTO | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -798,20 +935,22 @@ export default function RunsPage() {
     // the requests, so the one the recent band is asked with is the one the
     // fold is then handed.
     const cut = bucketBoundary(Date.now());
+    const narrowing = readNarrowing(askedStatus);
     // Each band in its own query, per `EXECUTING`: narrowed by the route over
     // every row, never cut here out of a page that was capped before it arrived.
     try {
       const answers = await Promise.all([
-        bandRequest({ status: EXECUTING.join(",") }),
-        bandRequest({ status: QUEUE.join(","), order: "queue" }),
+        ...inFlightRequests(narrowing),
         bandRequest({
           settledAfter: String(cut),
           ...(recentOffset > 0 ? { offset: String(recentOffset) } : {}),
         }),
+        narrowing.kind === "all" ? unasked() : runningCount(),
       ]);
       // Dropped whole rather than in part: the request carrying the new
       // offset is already out, and it reads the other two bands as well.
       if (recentOffset !== recentAsked.current) return;
+      if (askedStatus !== statusAsked.current) return;
       const pages: RunListDTO[] = [];
       for (const answer of answers) {
         if (!answer.ok) {
@@ -824,20 +963,31 @@ export default function RunsPage() {
         }
         pages.push(answer.data);
       }
-      const [executing, queue, settled] = pages;
+      const [executing, queue, settled, counted] = pages;
+      const active = activeBand(executing, queue);
       setBands({
-        active: activeBand(executing, queue),
+        active,
         activeTotal: executing.total + queue.total,
+        narrowing,
+        // Unnarrowed, off the band itself rather than a request of its own: it
+        // is capped at `BAND_LIMIT` rows, which no install's concurrency
+        // ceiling comes near, and `running` sorts first in it.
+        running:
+          narrowing.kind === "all"
+            ? active.filter((r) => r.status === "running").length
+            : counted.total,
         recent: settled,
       });
-      setBoot(executing.lastBootReconcile ?? null);
+      // Off the recent band, the one request every narrowing makes; each
+      // answer carries the same reading.
+      setBoot(settled.lastBootReconcile ?? null);
       setReadAt(Date.now());
       setBoundary(cut);
       setPollError(null);
     } finally {
       setLoaded(true);
     }
-  }, [recentOffset]);
+  }, [recentOffset, askedStatus]);
 
   function pageRecent(next: number) {
     recentAsked.current = next;
@@ -1013,11 +1163,7 @@ export default function RunsPage() {
     [bands],
   );
 
-  const { active, activeTotal, recent } = bands;
-  // Off the band the page already holds rather than a request of its own. The
-  // band is capped at `BAND_LIMIT` rows, which no install's concurrency ceiling
-  // comes near, and `running` sorts first in it.
-  const running = active.filter((r) => r.status === "running").length;
+  const { active, activeTotal, narrowing, running, recent } = bands;
 
   return (
     <>
@@ -1086,9 +1232,10 @@ export default function RunsPage() {
           In flight
           {activeTotal > 0 && <Badge tone="accent">{activeTotal}</Badge>}
         </CardTitle>
+        <NarrowingNote narrowing={narrowing} />
         <p className="sr-only" aria-live="polite">
-          {loaded
-            ? `${activeTotal} run${activeTotal === 1 ? "" : "s"} in flight`
+          {loaded && narrowing.kind !== "refused"
+            ? `${activeTotal} ${narrowing.kind === "only" ? `${STATUS_LABEL[narrowing.status]} ` : ""}run${activeTotal === 1 ? "" : "s"} in flight`
             : ""}
         </p>
         {!loaded ? (
@@ -1102,17 +1249,25 @@ export default function RunsPage() {
               caption="Runs in flight, still loading"
             />
           </div>
-        ) : blank ? (
+        ) : narrowing.kind === "refused" ? null : blank ? (
           <Card emphasis="quiet">
             <Unread />
           </Card>
         ) : active.length === 0 ? (
           <Card emphasis="quiet">
             <Empty>
-              <div className="font-medium text-ink">Nothing is running</div>
-              <div className="mt-3">
-                <Link href="/runs/new">Start a run</Link>
-              </div>
+              {narrowing.kind === "only" ? (
+                <div className="font-medium text-ink">
+                  No {STATUS_LABEL[narrowing.status]} runs
+                </div>
+              ) : (
+                <>
+                  <div className="font-medium text-ink">Nothing is running</div>
+                  <div className="mt-3">
+                    <Link href="/runs/new">Start a run</Link>
+                  </div>
+                </>
+              )}
             </Empty>
           </Card>
         ) : (

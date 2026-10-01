@@ -1450,6 +1450,10 @@ export default function RunDetail({
   const reportsSpend = providerReportsSpend(run.provider);
   const bars = guardBars(run, nowTick);
   const cyclesGranted = grantedCycles(run);
+  // The column itself rather than `grantedCycles`: `reopenRun` adds it to
+  // whatever limit is typed, so a run picked up from no cap still gets its
+  // grants on top, though no cap was there for them to widen when it ran.
+  const reopenGranted = run.validation_cycles ?? 0;
   // Read by the card and by the scroll box inside it, which has to cancel the
   // padding this picks — one local so the two cannot disagree.
   const inspectorEmphasis: CardEmphasis = active ? "primary" : "default";
@@ -1788,10 +1792,19 @@ export default function RunDetail({
                       in total
                     </span>
                   </div>
-                  <Hint>
-                    Includes the {run.iterations} it has had; blank means no cycle
-                    limit, which needs a time limit
-                  </Hint>
+                  {reopenGranted > 0 ? (
+                    <Hint>
+                      Includes {run.iterations - reopenGranted} of the{" "}
+                      {run.iterations} it has had; the {reopenGranted} its task&apos;s
+                      check granted {reopenGranted === 1 ? "is" : "are"} added on
+                      top; blank means no cycle limit, which needs a time limit
+                    </Hint>
+                  ) : (
+                    <Hint>
+                      Includes the {run.iterations} it has had; blank means no cycle
+                      limit, which needs a time limit
+                    </Hint>
+                  )}
                 </Field>
 
                 <Field label="Spending limit" htmlFor="re-cost">

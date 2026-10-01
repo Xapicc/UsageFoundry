@@ -3312,7 +3312,7 @@ export function startWorkflow(
     };
   }
 
-  // The install-wide ceiling, before anything else about this workflow is
+  // The install's spend limit, before anything else about this workflow is
   // decided. `createRun` refuses every member individually, which would abort
   // the pass part-way and record the instance `failed` — a rollback in the
   // record for a limit that has nothing to do with this graph. Refused here it
@@ -6227,7 +6227,7 @@ async function startBlockTurn(instanceId: string, nodeId: string): Promise<void>
   // — and so counted — ever since. Asking the budget again here would have a
   // block refuse itself whenever it was the one that filled it.
   //
-  // The install-wide ceiling is the other half and is *not* deferred by that
+  // The install's spend limit is the other half and is *not* deferred by that
   // claim: it bounds what the whole install spends in a rolling day rather than
   // how many children exist, so nothing upstream has already asked it on this
   // block's behalf and a block holding its slot must still be refused by it.
@@ -7971,6 +7971,7 @@ export function runStateOf(runId: string): {
   stopReason: string | null;
   iterations: number;
   maxIterations: number;
+  validationCycles: number;
   activeIteration: number | null;
   startedAt: number | null;
   mountLabel: string | null;
@@ -7985,6 +7986,7 @@ export function runStateOf(runId: string): {
     stopReason: run.stop_reason,
     iterations: run.iterations,
     maxIterations: run.max_iterations,
+    validationCycles: run.validation_cycles,
     activeIteration: run.active_iteration,
     startedAt: run.started_at,
     mountLabel,

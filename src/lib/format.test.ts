@@ -80,6 +80,36 @@ test("an uncapped run names the cycle without inventing a limit", () => {
     fmtCycleInFlight({ status: "running", max_iterations: 0, active_iteration: 3 }),
     "cycle 3 in flight",
   );
+  // A grant cannot widen a cap that is not there.
+  assert.equal(
+    fmtCycleInFlight({
+      status: "running",
+      max_iterations: 0,
+      active_iteration: 3,
+      validation_cycles: 1,
+    }),
+    "cycle 3 in flight",
+  );
+});
+
+test("the cycle a task check granted is counted against the widened cap", () => {
+  // Capped at 1 and sent back once: the guard admits a second cycle, and the
+  // line drawn from `max_iterations` alone read "cycle 2 of 1" — over the
+  // limit, on a run doing exactly what it was allowed.
+  assert.equal(
+    fmtCycleInFlight({
+      status: "running",
+      max_iterations: 1,
+      active_iteration: 2,
+      validation_cycles: 1,
+    }),
+    "cycle 2 of 2 in flight",
+  );
+  // No grant reads as it always did, whether the column is 0 or absent.
+  assert.equal(
+    fmtCycleInFlight({ ...RUNNING, validation_cycles: 0 }),
+    "cycle 1 of 2 in flight",
+  );
 });
 
 /**

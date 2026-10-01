@@ -104,9 +104,8 @@ export function grantedCycles(
 /**
  * The cycle a live tile names, against the cap the guard enforces.
  *
- * `fmtCycleInFlight`'s two halves, with the granted cycles added to the cap —
- * the tile has one line for this and no room for a sentence beside it, so the
- * grant is named in the line itself. Between two cycles, when nothing is open,
+ * `fmtCycleInFlight`'s two halves, with the grant named in the line itself —
+ * the tile has one line for this and no room for a sentence beside it. Between two cycles, when nothing is open,
  * it counts the ones that finished instead, because "cycle 3" for a run that
  * has not started its third would claim work in flight that is not.
  */
@@ -153,17 +152,24 @@ export function folderLabel(
  * Gated on `running` as well as on the column: nothing clears the row when the
  * container dies mid-cycle, and a finished run claiming an open cycle is the
  * same lie in the other direction.
+ *
+ * The cap is the guard's, granted cycles included, or the cycle a task check
+ * granted reads "cycle 2 of 1". Unlike `fmtLiveCycle` it does not name the
+ * grant: every surface that prints this also prints the count, and the grant
+ * is said once, beside the count.
  */
 export function fmtCycleInFlight(
-  run: Pick<RunDTO, "status" | "max_iterations" | "active_iteration">,
+  run: Pick<
+    RunDTO,
+    "status" | "max_iterations" | "active_iteration" | "validation_cycles"
+  >,
 ): string | null {
   if (run.status !== "running") return null;
   const n = run.active_iteration;
   if (n === null || n === undefined || n < 1) return null;
   // 0 is the stored sentinel for "no cap" — see db.ts.
-  return run.max_iterations > 0
-    ? `cycle ${n} of ${run.max_iterations} in flight`
-    : `cycle ${n} in flight`;
+  const cap = run.max_iterations + grantedCycles(run);
+  return cap > 0 ? `cycle ${n} of ${cap} in flight` : `cycle ${n} in flight`;
 }
 
 /**
