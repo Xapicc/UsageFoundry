@@ -1268,7 +1268,9 @@ export function reviewEnv(): NodeJS.ProcessEnv {
       delete env[key];
     }
   }
-  return env;
+  // Peer messaging off, for the reason over `childEnv`. A reviewer runs `plan`,
+  // and a `plan` session can still ask an `acceptEdits` run to write.
+  return { ...env, CLAUDE_CODE_HARBOR_KITE: "0" };
 }
 
 export interface AssistResult {

@@ -4301,7 +4301,9 @@ export function chatEnv(): NodeJS.ProcessEnv {
       delete env[key];
     }
   }
-  return { ...env, ...githubEnv() };
+  // Peer messaging off, for the reason over `childEnv`. Last, so nothing above
+  // it can turn it back on.
+  return { ...env, ...githubEnv(), CLAUDE_CODE_HARBOR_KITE: "0" };
 }
 
 /**

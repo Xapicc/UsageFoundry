@@ -6152,6 +6152,22 @@ export function sandboxArgsFor(scope: SandboxScope): string[] {
  *   `ANTHROPIC_API_KEY` is deliberately **not** here — it is what a work cycle
  *   bills against, and `claudeAuth.ts`'s copy writes out why.
  *
+ * One variable is set rather than withheld. `CLAUDE_CODE_HARBOR_KITE=0` turns
+ * off the CLI's cross-session messaging, which is on by default and spans the
+ * whole container. Without it every session gets `ListAgents` and an inbox at
+ * `cc-socks/<pid>.sock`, so any run, chat turn or reviewer can list and
+ * message every other one on this uid. That includes a `plan` run asking an
+ * `acceptEdits` run to write, a message that keeps a cycle going after it
+ * should have ended, and nothing on the receiver's log. With the variable at
+ * `0`, `ListAgents` is gone, `SendMessage` refuses peer addresses and keeps
+ * working for the run's own sub-agents, and the inbox never opens.
+ * `--disallowedTools SendMessage ListAgents` is the wrong lever: it takes
+ * sub-agent messaging away and leaves the inbox open. It is set after the
+ * extras so no caller can turn it back on, and every copy of this list that
+ * spawns `claude` sets it too. `proposals/CrossSessionCommunication/` has the
+ * finding, and `docs/verification/` has the measurement against the pin. It
+ * is the CLI's internal name, so a pin bump re-checks it there.
+ *
  * Everything else passes through. The CLI needs PATH, HOME, CLAUDE_CONFIG_DIR,
  * proxy and CA settings, and locale to function at all, so an allowlist would
  * fail in ways that are tedious to diagnose from inside a container.
@@ -6240,7 +6256,7 @@ export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
       delete env[key];
     }
   }
-  return { ...env, ...extra };
+  return { ...env, ...extra, CLAUDE_CODE_HARBOR_KITE: "0" };
 }
 
 /**

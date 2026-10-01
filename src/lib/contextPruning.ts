@@ -1440,6 +1440,13 @@ export function pruningEnabled(s: Settings = getSettings()): boolean {
  * would mean maintaining a second one that drifts. It is applied by
  * `winnow safe run` in-process; what this adds is the pair that command does not
  * set for us.
+ *
+ * It does not set `CLAUDE_CODE_HARBOR_KITE=0`, which every env that spawns
+ * `claude` sets (see `childEnv`), because this one never spawns it. None of the
+ * five `safe run` subcommands here starts a child other than `ps`. The paths
+ * in winnow that do run `claude` are `guard`, `reload` and
+ * `python -m winnow.validate`, and `safe run` refuses the first two. A new
+ * subcommand here that reaches one of them needs the variable.
  */
 function pruneEnv(): NodeJS.ProcessEnv {
   return {

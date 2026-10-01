@@ -30,6 +30,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 
 - The server is root and every child it spawns is not, and that one difference is what makes three separate defences mean anything. (was line 10)
 - The child environment is a denylist, and a denylist fails open — so a credential shape gets closed before this app has a use for it, not after. (was line 18)
+- No Claude Code child this app spawns may list or message another session, and one variable is what enforces it.
 - `UF_GITHUB_TOKEN` is scoped by host and by child, and there are three kinds of child rather than one. (was line 16)
 - A work cycle can now write to this app's database, and what bounds that is the tool list rather than a file mode. (was line 33)
 - The chat's capability token is compared constant-time against every live token in `subjectForCapability`, rather than looked up by key: a `Map.get` on a secret leaks its prefix through timing. (was line 32)
