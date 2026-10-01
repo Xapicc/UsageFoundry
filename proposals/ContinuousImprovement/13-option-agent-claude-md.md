@@ -36,7 +36,7 @@ CLI's, and this app is not on the path.
 **And the delivery reaches every cycle, which is the thing constraint 2 exists
 to make hard.** The two-cycle mutation probe changed the memory file between
 cycle 1 and cycle 2 of *one* session and watched the first user message change
-with it — `proposals/ContextControl/02-levers-on-the-pin.md:442`–`:448`, where
+with it — `git show a74a1bb:"proposals/implemented - ContextControl/02-levers-on-the-pin.md"` lines 442–448, where
 `block2` goes 662B → 697B carrying "first version of the project memory" →
 "SECOND version…"; the block is labelled at `:461` as `claudeMd + currentDate`.
 So the CLI re-reads the file on each cycle and re-sends it, and this option
@@ -125,7 +125,7 @@ from content well enough to make that argument.
 single.** Constraint 4's rule is that a repository change is a cache write,
 because `gitStatus` sits inside the CLI's own `sys[2]` block ahead of the only
 breakpoint that matters
-(`proposals/ContextControl/02-levers-on-the-pin.md:419`–`:437`, `:470`–`:474`).
+(`git show a74a1bb:"proposals/implemented - ContextControl/02-levers-on-the-pin.md"` lines 419–437 and 470–474).
 A `CLAUDE.md` edit is a repository change, so it moves `gitStatus`. But the same
 probe shows it *also* moves `block2`, the injected memory itself (`:445`–`:447`),
 and `:468`–`:470` records that on a resumed request the third `cache_control`
@@ -140,7 +140,7 @@ volatile per-machine sections out of the system prompt and into the first user
 message (`:487`–`:498`) — which fixes `gitStatus` and does nothing whatever for
 the memory block, since it lands in the same unbroken first message.
 
-The price is the handover pair, from `proposals/ContextControl/00-problem.md:943`–`:947`:
+The price is the handover pair, from `git show a74a1bb:"proposals/implemented - ContextControl/00-problem.md"` lines 943–947:
 
 | first turn after a continuation prompt | n | median write | median $ |
 |---|---|---|---|
@@ -155,7 +155,7 @@ further.** The floor is certain: six of the 29 hits followed a cycle that change
 nothing in the repository, and all six hit — "no handover whose previous cycle
 changed nothing in the repository ever re-wrote (0 of 74), and every handover with
 no repository change hit the cache (6 of 6)"
-(`proposals/ContextControl/02-levers-on-the-pin.md:516`–`:518`). A memory write on
+(`git show a74a1bb:"proposals/implemented - ContextControl/02-levers-on-the-pin.md"` lines 516–518). A memory write on
 those six cycles flips them: **6 × $2.17 = $13.02 a week**. The ceiling assumes
 the write flips every currently-hitting handover: **29 × $2.17 = $62.93 a week**.
 The spread exists because 23 of the 29 hits followed a cycle that *did* change
@@ -173,7 +173,7 @@ anything a quarter larger than the pricing above assumes.
 established.** Regressing median opening prefix against `CLAUDE.md` bytes over
 five repositories gives r² = 0.165, and VisualMerge's 27 KB memory produces a
 *smaller* opening prefix than UsageFoundry's 15 KB
-(`proposals/ContextControl/00-problem.md:1274`–`:1279`). This repository's copy
+(`git show a74a1bb:"proposals/implemented - ContextControl/00-problem.md"` lines 1274–1279). This repository's copy
 is 15,473 bytes today (`wc -c CLAUDE.md`), up from the 15,172 that file recorded
 days earlier. So growth is real and its price is unmeasured; what is measured is
 the write.

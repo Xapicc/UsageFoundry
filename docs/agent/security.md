@@ -44,5 +44,4 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 
 ## [Stacks](security/stacks.md)
 
-- A stack is software the operator chose to install, and what this mechanism buys is that the choice is reviewable and revocable rather than safe. (was line 25)
-- A stack is software you chose to install, and this mechanism makes that act reviewable and revocable rather than safe. (was line 36)
+- A stack is software the operator chose to install, and what this mechanism buys is that the choice is reviewable and revocable rather than safe. (was lines 25 and 36)

@@ -17,7 +17,8 @@ import { buildDreamingPrompt, parseNoteLines } from "./dreamingRun";
  * for a note. `parseNoteLines` mis-parsing leaves a ledger row pointing at
  * nothing, which is the one column that makes a wrong note retractable.
  *
- * The numbers asserted below are the ones in `proposals/Dreaming` and they were
+ * The numbers asserted below are the ones in the Dreaming proposal
+ * (`git show a74a1bb:"proposals/implemented - Dreaming/"`) and they were
  * measured by `scripts/ledger.mjs` over the same corpus. A change here that
  * moves them is a change to what the proposal claims.
  */

@@ -20,8 +20,8 @@ narrower than it looks and it decides the whole design.
 
 ## 1. The model's reasoning is not in the transcript. Re-verified, and worse than stated
 
-`proposals/ContextControl/00-problem.md:476-493` measured 13,454 thinking blocks
-with zero non-empty bytes; `proposals/ContextControl/19-validation.md:62`
+`git show a74a1bb:"proposals/implemented - ContextControl/00-problem.md"` lines 476-493 measured 13,454 thinking blocks
+with zero non-empty bytes; `git show a74a1bb:"proposals/implemented - ContextControl/19-validation.md"` line 62
 re-confirmed 13,734 empty over 113,468 records. **Both still hold, on a corpus
 that has since roughly doubled**, and the re-measurement adds a distinction the
 earlier passes did not draw.

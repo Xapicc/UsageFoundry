@@ -46,8 +46,8 @@ by a factor of 3.6.
 
 **It is editable mid-run without touching the tree, so it is cache-safe where a
 `CLAUDE.md` edit is not.** Constraint 4: a repository change is a cache write,
-and `proposals/ContextControl/00-problem.md:763` prices one at a median $2.32
-(re-measured at $2.39, `proposals/ContextControl/19-validation.md:68`). Editing
+and `git show a74a1bb:"proposals/implemented - ContextControl/00-problem.md"` line 763 prices one at a median $2.32
+(re-measured at $2.39, `git show a74a1bb:"proposals/implemented - ContextControl/19-validation.md"` line 68). Editing
 `CLAUDE.md` to correct a running agent is a working-tree modification, so it
 moves `gitStatus`, which sits ahead of the only cache breakpoint that matters —
 the operator pays a full prefix re-write for the privilege of fixing a sentence.
@@ -147,7 +147,7 @@ That is 10,957 turns a week on one repository, every one of them
 
 The write range is one to three 1h writes per run at 2.0×
 (`src/lib/pricing.ts:18`) across 126.6 runs a week; the upper end comes from
-`proposals/ContextControl/00-problem.md:763`, where 79 of 108 handovers
+`git show a74a1bb:"proposals/implemented - ContextControl/00-problem.md"` line 763, where 79 of 108 handovers
 re-wrote. The chain cross-checks against constraint 12's independent figure of
 $8.14–$8.26 a week for 995 tokens over 16,605 container turns: this install's
 `sdk` requests across all folders come to 24,092 in eleven days, or 15,331 a

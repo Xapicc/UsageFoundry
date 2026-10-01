@@ -9,12 +9,14 @@ import type { PersistedRunEvent, RunStatus } from "./orchestrator";
  * nothing else in that file.
  *
  * Both are pure and both fail silently, which is the bar this suite is built to.
- * The filter is the one `proposals/UnattendedOperation/12-validation.md` names as
- * this feature's own failure mode: too wide and the channel is noise, which is
- * how an operator stops reading it; too narrow and it is a channel that looks
- * configured and never fires, which is indistinguishable from a fleet with
- * nothing wrong — and neither direction throws, fails to typecheck or shows on
- * any page. There is no place in the UI where a missed notification is visible.
+ * The filter is the one
+ * `git show a74a1bb:"proposals/implemented - UnattendedOperation/12-validation.md"`
+ * names as this feature's own failure mode: too wide and the channel is noise,
+ * which is how an operator stops reading it; too narrow and it is a channel
+ * that looks configured and never fires, which is indistinguishable from a
+ * fleet with nothing wrong — and neither direction throws, fails to typecheck
+ * or shows on any page. There is no place in the UI where a missed notification
+ * is visible.
  *
  * The signature fails the other way and once for everybody: a receiver verifying
  * the HMAC rejects every POST, and the symptom is a channel that delivers 400s

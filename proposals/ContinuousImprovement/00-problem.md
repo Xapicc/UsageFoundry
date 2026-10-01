@@ -343,7 +343,7 @@ scored on that basis in `15-comparison.md`.
 billing a sliced read at `limit × mean bytes per line` gives 27.2 MB of 31.1 MB
 (87.6%) repeated on this folder, about 6.8M tokens; 53.5% of `Read` calls carry
 an `offset` or `limit`, 217 of the paths are no longer on disk and were skipped,
-and `proposals/ContextControl/05-option-trim-injected-text.md:127`–`:129` flags
+and `git show a74a1bb:"proposals/implemented - ContextControl/05-option-trim-injected-text.md"` lines 127–129 flags
 that its own two bytes-per-token conversions disagree by 1.5×. Treat every
 byte-derived dollar in this survey as an order of magnitude.
 

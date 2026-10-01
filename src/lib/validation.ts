@@ -25,13 +25,14 @@ import {
  * `completed` is written both for a `DONE` reply and for a run that merely used
  * up `maxIterations`.
  *
- * `proposals/ExternalValidator/` is the shaping for this and
- * `scripts/validator-spike/` is the measurement: 40 labelled runs, task text
- * against branch diff, **34 of 37 agreement on the held-out set with zero
- * false-finished**, median $0.125 a verdict on an upper-bound transport. The
- * prompt below is that spike's, because that is the artefact the numbers were
- * measured on; the one paragraph that changed is named where it changed and
- * why.
+ * The ExternalValidator proposal
+ * (`git show a74a1bb:"proposals/implemented - ExternalValidator/"`) is the
+ * shaping for this and `scripts/validator-spike/` is the measurement: 40
+ * labelled runs, task text against branch diff, **34 of 37 agreement on the
+ * held-out set with zero false-finished**, median $0.125 a verdict on an
+ * upper-bound transport. The prompt below is that spike's, because that is the
+ * artefact the numbers were measured on; the one paragraph that changed is
+ * named where it changed and why.
  *
  * ## Where this design departs from the pitch, and why it had to
  *

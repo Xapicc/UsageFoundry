@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Reconstruct the validator's inputs for every run in `proposals/ExternalValidator/validator-baseline.md`.
+// Reconstruct the validator's inputs for every run in
+// `git show a74a1bb:"proposals/implemented - ExternalValidator/validator-baseline.md"`.
 //
 // The spike needs, per run, exactly what a validator would be handed at run end:
 // the task text and the branch diff. Neither is reachable here. The operator's

@@ -33,7 +33,7 @@ while the form reverts under a "Saved" confirmation.
 ## 2. It must reach every cycle, not only the first
 
 Established on the pinned binary in
-`proposals/ContextControl/02-levers-on-the-pin.md:183`–`:217`:
+`git show a74a1bb:"proposals/implemented - ContextControl/02-levers-on-the-pin.md"` lines 183–217:
 
 - **`--settings <json>` and `--settings <path>` survive `--resume`.** Hooks
   delivered this way fired on cycle 1 and on the resumed cycles.
@@ -63,7 +63,7 @@ payload into a single object and emits whenever either half is non-empty.
 
 The only cache breakpoint that matters sits inside the CLI's own `sys[2]` block,
 and `gitStatus` lives there — ahead of it
-(`proposals/ContextControl/02-levers-on-the-pin.md:419`–`:437`, `:470`–`:474`).
+(`git show a74a1bb:"proposals/implemented - ContextControl/02-levers-on-the-pin.md"` lines 419–437 and 470–474).
 Measured on the corpus: **no handover whose previous cycle changed nothing in the
 repository ever re-wrote (0 of 74), and all six handovers with no repository
 change hit the cache**.
@@ -72,7 +72,7 @@ So **a repository change is a cache write**, and any option whose mechanism is
 "the agent maintains a file in the tree" pays that on every cycle it writes. Text
 appended at the tip of a prompt is the opposite case: `S = D`, `T* = 19·(S/D) −
 20 = −1`, paid once and read at 0.1× thereafter
-(`proposals/ContextControl/01-constraints.md:32`).
+(`git show a74a1bb:"proposals/implemented - ContextControl/01-constraints.md"` line 32).
 
 ## 5. It must not become a fourth cost source, and must not mix the three
 
@@ -88,7 +88,7 @@ way `startAssist` already does.
 
 ## 6. It must be visible on the run's own log
 
-`proposals/ContextControl/01-constraints.md` states the rule and this survey
+`git show a74a1bb:"proposals/implemented - ContextControl/01-constraints.md"` states the rule and this survey
 inherits it: a mechanism invisible in the log is one whose misbehaviour reads as
 the agent being stupid.
 
@@ -161,7 +161,7 @@ at every spawn site.
 
 ## 12. A standing tool definition costs money before anyone calls it
 
-`proposals/ContextControl/12-option-retrieval-index.md:111`, re-measured at
+`git show a74a1bb:"proposals/implemented - ContextControl/12-option-retrieval-index.md"` line 111, re-measured at
 `19-validation.md:53`: **$8.14–$8.26 per tool definition per week** on this
 install, read at 0.1× across every turn of every run, whether the tool is called
 or not.

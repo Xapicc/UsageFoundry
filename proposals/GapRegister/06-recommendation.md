@@ -135,7 +135,7 @@ request instead of a merge; extending the `landing` guard to the other four
 doors versus one repository-wide lock. Several are mutually exclusive.
 
 **This is not ExternalValidator's question, and the distinction is the reason
-this survey is allowed to exist.** `proposals/ExternalValidator/` asks whether a
+this survey is allowed to exist.** `git show a74a1bb:"proposals/implemented - ExternalValidator/"` asks whether a
 finished run should get *a second, adversarial reading of task text against
 branch diff* — a semantic judgement about whether the agent did what was asked.
 This asks whether the code **builds and its tests pass**, which is mechanical,

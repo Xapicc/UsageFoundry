@@ -210,7 +210,7 @@ proxy settings are the operator's decision (`:874`–`:875`).
 all of it.** Three consequences, none of which any option can fix:
 
 1. The per-request saving does not apply. On the Claude side this is not a
-   rounding error: `proposals/ContextControl/README.md` measures 82.1% of the
+   rounding error: `git show a74a1bb:"proposals/implemented - ContextControl/README.md"` measures 82.1% of the
    week's bill as carried context.
 2. `intakeFilter.ts`'s ledger gains no line, so `counterfactualUSD` and
    `winnow inspect`/`winnow fork` know nothing about the cycle. A run whose

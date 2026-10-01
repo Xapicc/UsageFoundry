@@ -15,13 +15,14 @@ import type { PersistedRunEvent, RunStatus } from "./orchestrator";
 /**
  * One outbound POST when a run reaches an ending that needs a person.
  *
- * The problem it answers is `proposals/UnattendedOperation/00-problem.md`: at
- * twenty-five unattended runs, an ending that asks for somebody — `needs-review`,
- * a guard that stopped the run, a crash, the 17-26 minute 429 ladder — is
- * visible on the run page, in `run_events` and on container stdout, and in none
- * of those places does it reach a person who is not already looking. Every other
- * option surveyed there needs somebody at a screen. This one needs a receiver
- * the operator already has.
+ * The problem it answers is
+ * `git show a74a1bb:"proposals/implemented - UnattendedOperation/00-problem.md"`:
+ * at twenty-five unattended runs, an ending that asks for somebody —
+ * `needs-review`, a guard that stopped the run, a crash, the 17-26 minute 429
+ * ladder — is visible on the run page, in `run_events` and on container stdout,
+ * and in none of those places does it reach a person who is not already
+ * looking. Every other option surveyed there needs somebody at a screen. This
+ * one needs a receiver the operator already has.
  *
  * **It is vendor-neutral, and that is the whole of its security argument rather
  * than a preference.** One generic signed JSON body goes to one URL the operator
@@ -187,8 +188,9 @@ export interface NotifyDecision {
  * the loop: this is the half whose failure is silent. A filter that is too wide
  * makes the channel noise, which is how an operator stops reading it; one that
  * is too narrow is a channel that looks configured and is not — the failure
- * `proposals/UnattendedOperation/12-validation.md` names, and the reason it is
- * unit-tested rather than checked by hand against a live receiver.
+ * `git show a74a1bb:"proposals/implemented - UnattendedOperation/12-validation.md"`
+ * names, and the reason it is unit-tested rather than checked by hand against a
+ * live receiver.
  *
  * Reads *and updates* `s`, which is what makes it a reducer rather than a pure
  * predicate. The state is taken as an argument rather than reached for, so a

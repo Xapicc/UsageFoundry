@@ -192,7 +192,7 @@ whether that matters, which no evidence here can settle.
 > per-attempt row in `webhook_deliveries` (`:322`). A run that simply worked is
 > off by default and opt-in through `UF_NOTIFY_ON_SUCCESS`
 > (`src/lib/config.ts:505`). Commits `1891ad7` and `0d6af15`; the proposal behind
-> it is `proposals/implemented - UnattendedOperation`.
+> it is `git show a74a1bb:"proposals/implemented - UnattendedOperation/"`.
 >
 > **Two things about it are worth carrying forward rather than filing as new
 > rows.** It is **vendor-neutral by argument, not by omission** — the docblock at

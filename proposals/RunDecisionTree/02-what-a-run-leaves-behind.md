@@ -50,7 +50,7 @@ number in this proposal comes from it and from a second run for contrast.
 | CLI version | `2.1.226` |
 | started | `2026-08-22T02:05:14.528Z` |
 | wall clock | ~58 minutes |
-| what it did | revised `proposals/ContextControl/` — 13 commits, 11 files, +1634 −74 |
+| what it did | revised `git show a74a1bb:"proposals/implemented - ContextControl/"` — 13 commits, 11 files, +1634 −74 |
 
 **Run B — the contrast run**, `~/.claude/projects/-workspace2/b51351ba-….jsonl`:
 same harness, different repository, 484 tool calls, web-research shaped rather

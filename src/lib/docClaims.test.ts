@@ -6,7 +6,9 @@ import { describe, it } from "node:test";
 /**
  * The completeness claims in `CLAUDE.md` and `docs/agent/`, held against the
  * code they are about — the sentences that say "there are 22 tables", "the list
- * is closed at ten", "all five", "which is the whole of that class".
+ * is closed at ten", "all five", "which is the whole of that class" — and one
+ * table outside them, `docs/verification.md`'s per-area counts, held against
+ * the files it counts.
  *
  * Not pure functions, and they earn a place here on the grounds the rest of
  * this suite exists for: the failure is silent. A claim decays the moment
@@ -553,6 +555,101 @@ describe("docs/agent/testing's rendering tests", () => {
         `"${claim[1]} are renderings rather than functions … the whole of that class"`,
         `find src -name '*.test.tsx' answers ${renderings.length}: ${renderings.join(", ")}`,
       ),
+    );
+  });
+});
+
+describe("docs/verification.md's per-area counts", () => {
+  const doc = "docs/verification.md";
+  const index = read(doc);
+  const SECTIONS = ["Verified", "Not yet verified by hand"] as const;
+
+  // The table is rewritten by hand every time an entry is filed, and it has
+  // already drifted twice: bca9673 found five rows and the Total behind their
+  // files, and e6ed6a1, sixteen minutes later, moved a row and left the Total
+  // one short. `CLAUDE.md` requires each "Not yet verified by hand" list to stay
+  // honest, and these figures are how a reader decides which list is worth
+  // opening; a wrong one reads exactly like a right one.
+  const rowPattern = /^\| [^|]+ \| \[[^\]]+\]\((verification\/[^)]+\.md)\)[^|]* \| (\d+) \| (\d+) \|$/gm;
+  const rows = [...index.matchAll(rowPattern)].map((row) => ({
+    rel: path.join("docs", row[1]),
+    verified: Number(row[2]),
+    unverified: Number(row[3]),
+  }));
+
+  /**
+   * An entry is a top-level `- **` bullet or a paragraph that opens in bold.
+   * "None yet." is the one thing an empty section may say, so a section that
+   * holds text and counts nothing fails rather than reading as zero.
+   */
+  function entriesIn(rel: string): Record<(typeof SECTIONS)[number], number> {
+    const sections = new Map(
+      read(rel)
+        .split(/^## /m)
+        .slice(1)
+        .map((section) => {
+          const [heading, ...body] = section.split("\n");
+          return [heading.trim(), body] as const;
+        }),
+    );
+    const counts = {} as Record<(typeof SECTIONS)[number], number>;
+    for (const heading of SECTIONS) {
+      const body = sections.get(heading);
+      assert.ok(body, `${rel} has no "## ${heading}" section, which the table in ${doc} counts.`);
+      const entries = body.filter(
+        (line, i) => line.startsWith("- **") || (line.startsWith("**") && (i === 0 || body[i - 1].trim() === "")),
+      ).length;
+      const text = body.join("\n").trim();
+      assert.ok(
+        entries > 0 || text === "" || text === "None yet.",
+        `${rel}'s "## ${heading}" holds text but no entry this test can count: an entry is a ` +
+          'top-level "- **" bullet or a paragraph that opens in bold, and an empty section says "None yet."',
+      );
+      counts[heading] = entries;
+    }
+    return counts;
+  }
+
+  it("has a row for every file under docs/verification/", () => {
+    assert.ok(rows.length > 0, unpinned(doc, rowPattern));
+    const filed = fs
+      .readdirSync(path.join(root, "docs", "verification"))
+      .filter((name) => name.endsWith(".md"))
+      .map((name) => path.join("docs", "verification", name))
+      .sort();
+    const listed = rows.map((row) => row.rel).sort();
+
+    assert.deepEqual(
+      listed,
+      filed,
+      stale(doc, `the table names ${listed.length} files`, `docs/verification/ holds ${filed.length}: ${filed.join(", ")}`),
+    );
+  });
+
+  it("gives each file the entries it holds", () => {
+    const wrong = rows.flatMap((row) => {
+      const counts = entriesIn(row.rel);
+      const held = [counts["Verified"], counts["Not yet verified by hand"]];
+      return held[0] === row.verified && held[1] === row.unverified
+        ? []
+        : [`${row.rel}: the table says ${row.verified} / ${row.unverified}, the file holds ${held[0]} / ${held[1]}`];
+    });
+
+    assert.deepEqual(wrong, [], stale(doc, "Verified / Not yet verified per file", wrong.join("; ")));
+  });
+
+  it("adds its rows up to the Total", () => {
+    const totalPattern = /^\| \*\*Total\*\* \| \| \*\*(\d+)\*\* \| \*\*(\d+)\*\* \|$/m;
+    const total = claimIn(doc, index, totalPattern);
+    const sum = rows.reduce(
+      (acc, row) => [acc[0] + row.verified, acc[1] + row.unverified],
+      [0, 0],
+    );
+
+    assert.deepEqual(
+      [Number(total[1]), Number(total[2])],
+      sum,
+      stale(doc, `Total ${total[1]} / ${total[2]}`, `the rows above it add up to ${sum[0]} / ${sum[1]}`),
     );
   });
 });

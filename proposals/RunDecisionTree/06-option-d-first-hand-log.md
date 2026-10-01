@@ -111,7 +111,7 @@ that, because it cannot be measured without running the experiment.
 
 `docs/agent/run-lifecycle.md` records that the flags must ride **every** cycle's
 argv; an appended prompt rides the same path and is subject to the same rule.
-And `proposals/ContextControl/` measured what injected text costs against a
+And `git show a74a1bb:"proposals/implemented - ContextControl/"` measured what injected text costs against a
 cached prefix — the marginal tokens here are small but they are not zero, and
 they land in the prefix that gets re-read 520 times.
 
@@ -129,7 +129,7 @@ is already paying for the context it writes into.
 
 Against run A's measured $43.51 that is **0.06%**, and against the 356,961 output
 tokens the run already generated, 900 more is noise. The prompt tokens ride the
-cached prefix at 0.1× input rates — `proposals/ContextControl/` measured what
+cached prefix at 0.1× input rates — `git show a74a1bb:"proposals/implemented - ContextControl/"` measured what
 injected text costs there, and 120 tokens is at the bottom of that scale.
 
 **The real cost is not the money.** It is the context the declarations occupy and
@@ -180,7 +180,7 @@ Two mitigations, both real, neither free:
 
 - **Re-inject the declarations after a compaction.** ~15 declarations × 60
   tokens = ~900 tokens, trivially affordable at 11,135 post-compaction tokens.
-  This is `proposals/ContextControl/`'s "continuation brief" idea applied to a
+  This is `git show a74a1bb:"proposals/implemented - ContextControl/"`'s "continuation brief" idea applied to a
   narrow, structured payload, and it is the right answer.
 - **Render the seam in the tree** and say the run could not see across it — which
   every option does anyway (C5).

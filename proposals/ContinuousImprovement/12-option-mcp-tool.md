@@ -118,10 +118,10 @@ describe it. There is no turn at which it pays itself off, because it is not a
 saving with a write attached. It is rent.
 
 The rent has been measured twice.
-`proposals/ContextControl/12-option-retrieval-index.md:111` puts one added tool
+`git show a74a1bb:"proposals/implemented - ContextControl/12-option-retrieval-index.md"` line 111 puts one added tool
 definition at **$8.14 to $8.26 a week**, read at 0.1× across the rolling week's
 container main-thread turns before it is called once, and
-`proposals/ContextControl/19-validation.md:53` is the re-measurement that widened
+`git show a74a1bb:"proposals/implemented - ContextControl/19-validation.md"` line 53 is the re-measurement that widened
 it from a single figure to that range, noting the tool block is not a constant.
 `19-validation.md:93` re-derives the arithmetic and it reproduces.
 
@@ -198,7 +198,7 @@ unless `d > 0`, and nothing in this repository measures `d`.
 
 **`--resume`: `buildArgs` re-sends the flag per cycle, but whether the CLI honours
 a tool-list change mid-session is not established on the pin.**
-`proposals/ContextControl/02-levers-on-the-pin.md:183`–`:217` probed three flags
+`git show a74a1bb:"proposals/implemented - ContextControl/02-levers-on-the-pin.md"` lines 183–217 probed three flags
 on the pin — `--settings <json>`, `--settings <path>` and `--plugin-dir` — and
 `--mcp-config` is not among them. The failure mode if it behaves like
 `--plugin-dir` is the one constraint 2 names and calls silent: cycle 3 exits 0,
@@ -290,7 +290,7 @@ the run page with the rest of the cycle's calls.
 
 **They cannot see the rent, and nothing in the app would tell them.** No page
 prices a tool definition; the $8.14–$8.26 figure exists only because
-`proposals/ContextControl/` went and measured the tool block. An operator would
+`git show a74a1bb:"proposals/implemented - ContextControl/"` went and measured the tool block. An operator would
 see the weekly bill move by 0.43% with no instrument that attributes it — which is
 `04-option-see-it.md`'s argument arriving from another direction: the readout that
 would let this option be scored does not exist yet.

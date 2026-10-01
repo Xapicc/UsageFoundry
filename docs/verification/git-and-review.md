@@ -99,7 +99,7 @@
   states against a seeded `run_events` fixture, so the card and its graph are
   known to paint; nothing below it was read. To walk at 1280px and 390px:
   - write down the header's distinct-file and work-cycle counts: the deferred
-    file-by-cycle grid in `proposals/SessionFlow/` waits on them;
+    file-by-cycle grid in `git show a74a1bb:"proposals/implemented - SessionFlow/"` waits on them;
   - a gone branch (`kind: "none"`) drops to two groups with a warn notice and
     neither "changed, never named" nor "named, and not changed" — the item
     most likely to be wrong;

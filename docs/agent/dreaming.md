@@ -4,7 +4,7 @@
 > silent — nothing throws, nothing fails to typecheck, and the page looks right.
 > **Read before editing `src/lib/dreaming.ts`, `src/lib/dreamingLedger.ts`,
 > `src/lib/dreamingRun.ts`, `src/app/dreaming/`, or `src/app/api/dreaming/`.**
-> The reasoning behind the shape is `proposals/Dreaming/`, whose figures every
+> The reasoning behind the shape is `git show a74a1bb:"proposals/implemented - Dreaming/"`, whose figures every
 > constant here comes from.
 
 This file is an index. Each line below is the lead claim of one paragraph, and the paragraph itself is in the topic file its heading links to.

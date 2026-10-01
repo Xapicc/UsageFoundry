@@ -2,7 +2,7 @@
 
 Five gaps, surveyed at `main` `66fdbab` on 2026-09-06.
 
-**This axis is the reverse direction from `proposals/implemented - Sandboxing/`.**
+**This axis is the reverse direction from `git show a74a1bb:"proposals/implemented - Sandboxing/"`.**
 That proposal owns what a run can reach: filesystem, network, and one run
 against another. This one owns what reaches **the app**: its own doors, its own
 credentials, its own inputs. Where a finding here would have needed a claim
@@ -117,7 +117,7 @@ success.
 **Confidence: high.** Every step is read off three files and there is no premise
 to assume. What is **not** established here is who can reach the port: compose
 binds `127.0.0.1:3000`, and whether a sandboxed child can dial loopback is
-`proposals/implemented - Sandboxing/`'s question and not this one. The row
+`git show a74a1bb:"proposals/implemented - Sandboxing/"`'s question and not this one. The row
 argues the door, never the reach.
 
 **Owned by:** no issue. Adjacent to [M2](04-missing-features.md#m2-one-credential-no-identity-no-authorisation)
@@ -535,7 +535,7 @@ Real, and stated in `docs/agent/security/child-uid-and-credentials.md`'s *"the s
 uid, so the group above is the only thing separating them"*) with
 `docs/security.md` named as where the residue is written down. It is also **one
 run against another**, which is
-`proposals/implemented - Sandboxing/`'s question by the boundary set for this
+`git show a74a1bb:"proposals/implemented - Sandboxing/"`'s question by the boundary set for this
 pass, so it is not surveyed here in either direction.
 
 **[M2](04-missing-features.md#m2-one-credential-no-identity-no-authorisation)
@@ -561,7 +561,7 @@ survey's output as the rows are.
 1. **Whether anything other than the operator can reach `/api/logout`, the
    relay's port, or `/api/otlp/v1/logs`.** Compose binds `127.0.0.1:3000`, and
    what a sandboxed child can dial is
-   `proposals/implemented - Sandboxing/`'s question by the boundary set for this
+   `git show a74a1bb:"proposals/implemented - Sandboxing/"`'s question by the boundary set for this
    pass. Docker is unavailable here, so no request was made from anywhere.
    [S1](#s1-the-all-sessions-branch-of-the-logout-route-takes-no-credential-and-revoking-a-session-does-not-end-it)
    and [S5](#s5-the-one-write-path-the-edge-gate-exempts-buffers-an-unbounded-body)

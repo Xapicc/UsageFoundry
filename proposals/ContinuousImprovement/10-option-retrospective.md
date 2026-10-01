@@ -45,10 +45,10 @@ it fires on fewer than half the fleet and never asks a run how it felt about its
 own work.
 
 **That gating is also what answers the external-verifier objection.**
-`proposals/ExternalValidator/`'s spike found that handing a validator the run's
+`git show a74a1bb:"proposals/implemented - ExternalValidator/"`'s spike found that handing a validator the run's
 own final turn — testimony, in its words — changed **zero of eight verdicts**
-(`proposals/ExternalValidator/README.md:29`,
-`proposals/ExternalValidator/external-validator.md:535`): a model's account of
+(`git show a74a1bb:"proposals/implemented - ExternalValidator/README.md"` line 29,
+`git show a74a1bb:"proposals/implemented - ExternalValidator/external-validator.md"` line 535): a model's account of
 its own work bought nothing. But that is about *introspection*, and a
 retrospective shown `bwrap: No permissions to create new namespace`, an exit
 code, or a conflict in `CLAUDE.md` is reading an artefact the app recorded — the

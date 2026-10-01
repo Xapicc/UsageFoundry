@@ -52,7 +52,7 @@ issues only, writing nothing — and the first to argue a row from a query plan.
 **Security is the fifth axis and it is the app's doors rather than a run's
 reach**: what gets in, what credentials it holds, what it accepts as input, which
 is deliberately the reverse direction from
-`proposals/implemented - Sandboxing/`.
+`git show a74a1bb:"proposals/implemented - Sandboxing/"`.
 
 **Operations and recovery is the sixth**, and it asks what an operator can find
 out when something goes wrong, what they can get back, and what is silently
@@ -145,7 +145,7 @@ register to close without an implementation run being pointed at it.**
   webhook target live in `settings.json`, because `/api/settings` is reachable
   with the master key and a repointable target would turn one credential into an
   exfiltration channel aimed anywhere the container can reach. The proposal
-  behind it is `proposals/implemented - UnattendedOperation`.
+  behind it is `git show a74a1bb:"proposals/implemented - UnattendedOperation/"`.
 
 **[F3](01-frontend.md#f3-a-chat-turn-renders-nothing-until-it-finishes-the-run-path-streams) and [F5](01-frontend.md#f5-nothing-that-renders-is-checked-by-anything) did not ship, and neither did B1, B3, B4, B5,
 G1–G4, or M2 and M6.** Twelve of the twenty rows are exactly as surveyed and
@@ -552,7 +552,7 @@ unauthenticated `POST` and
 [S5](07-security.md#s5-the-one-write-path-the-edge-gate-exempts-buffers-an-unbounded-body)'s
 unbounded body are read out of the tree rather than demonstrated against a
 listener; and who can reach the port at all is
-`proposals/implemented - Sandboxing/`'s question, deliberately left there.
+`git show a74a1bb:"proposals/implemented - Sandboxing/"`'s question, deliberately left there.
 Full accounting in [00-method.md](00-method.md#the-security-pass-2026-09-06).
 
 ### The operations pass, 2026-09-06

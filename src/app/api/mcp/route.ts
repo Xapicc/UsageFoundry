@@ -154,8 +154,9 @@ const SPEC_ID = /^[A-Za-z0-9_-]{1,64}$/;
 /**
  * The most `list_recurring_failures` returns per list.
  *
- * `proposals/Dreaming` measured 78 signatures spanning two or more days over 23
- * days of this install's corpus, each carrying a sample, and a turn that read
+ * The Dreaming proposal (`git show a74a1bb:"proposals/implemented - Dreaming/"`)
+ * measured 78 signatures spanning two or more days over 23 days of this
+ * install's corpus, each carrying a sample, and a turn that read
  * all of them has spent part of `chatTurnBudgetUSD` on error text before
  * thinking about any of it.
  */

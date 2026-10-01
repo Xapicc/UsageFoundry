@@ -17,16 +17,16 @@ is about at all. And **half of it already shipped, hours ago and unmeasured** �
 
 **Its per-unit ratio is the only one in either survey that was measured on the
 wire rather than derived, and the one correction made to it ran in its favour.**
-`proposals/ContextControl/11-option-delegation-as-isolation.md` priced the two
+`git show a74a1bb:"proposals/implemented - ContextControl/11-option-delegation-as-isolation.md"` priced the two
 thread classes off this install's own transcripts: main-thread turns at **$0.163
 each** against sidechain turns at **$0.060** — 37% — and the parent's prefix is
 byte-identical across a delegation (`sha unchanged` on its `req-003` probe). That
 file first put the break-even at "about three mean-sized reads";
-`proposals/ContextControl/19-validation.md:50` refuted the arithmetic — it
+`git show a74a1bb:"proposals/implemented - ContextControl/19-validation.md"` line 50 refuted the arithmetic — it
 divided the sub-agent's fixed prefix by the *delegated cost* of a read rather
 than by the *saving* — and corrected it to **0.65 reads, not three**, at a
 46,582-byte sub-agent prefix costing $0.073 at 1.25× against $0.112 saved per
-mean-sized read moved. `proposals/ContextControl/19-validation.md:12`–`:17`
+mean-sized read moved. `git show a74a1bb:"proposals/implemented - ContextControl/19-validation.md"` lines 12–17
 calls that the one finding of the whole closing pass that moved a number in an
 option's favour, and the reason Option H is that survey's runner-up rather than a
 curiosity.
@@ -138,12 +138,12 @@ more than they can be pointed away.
 ## What it does to the prefix cache
 
 **Nothing to the parent's, during a delegation, ever** — the `sha unchanged`
-measurement in `proposals/ContextControl/11-`. There is no cut point and
+measurement in `git show a74a1bb:"proposals/implemented - ContextControl/11-option-delegation-as-isolation.md"`. There is no cut point and
 constraint 4's `T*` does not apply. Nothing here writes a file into the tree, so
 the "a repository change is a cache write" clause is not reached either.
 
 **The string's own idle cost scales from a measured neighbour.**
-`proposals/ContextControl/05-option-trim-injected-text.md:113`–`:118` prices
+`git show a74a1bb:"proposals/implemented - ContextControl/05-option-trim-injected-text.md"` lines 113–118 prices
 `SELF_HOSTING_NOTICE` — 1,096 bytes on `--append-system-prompt`, every cycle — at
 about **$4.28 a week** out of a $2,707.57 container bill. `DELEGATION_NOTICE` is
 666 bytes (`node -e` over the literal at
@@ -169,7 +169,7 @@ So an instruction that adds one delegation per run to 200 runs proposes about
 the displacement fraction constraint 13's table says **does not exist**. `11-`'s
 $0.112 saved per mean-sized read moved is a per-read figure; nothing measures how
 many reads a delegation displaces on this install's real tasks, and
-`proposals/ContextControl/19-validation.md:250` lists that as an unrun
+`git show a74a1bb:"proposals/implemented - ContextControl/19-validation.md"` line 250 lists that as an unrun
 billed experiment.
 
 ## What it does to `--resume`, retention, the DONE contract and `needs-review`
@@ -203,10 +203,10 @@ scan, and they are swept with the session by the transcript sweep
 
 **This is the section that decides the option, and the finding is that the hole
 is real, is in the guard today, and is one measurement smaller than
-`proposals/ContextControl/11-` left it.** That file's closing verdict was that
+`git show a74a1bb:"proposals/implemented - ContextControl/11-option-delegation-as-isolation.md"` left it.** That file's closing verdict was that
 whether a cycle's `--max-budget-usd` (`src/lib/orchestrator.ts:4953`–`:4955`)
 bounds its delegated turns is *not established*, and
-`proposals/ContextControl/19-validation.md:249` makes it experiment 2 — "Yes →
+`git show a74a1bb:"proposals/implemented - ContextControl/19-validation.md"` line 249 makes it experiment 2 — "Yes →
 Option H's largest risk is gone and it should ship beside A. No → H stays a
 runner-up with an unbounded exposure." Three of the four guard paths can be
 settled from this database without a billed child. The fourth cannot.
@@ -383,7 +383,7 @@ whatever this survey recommends for the memory question, never instead of one.
 **That `d` is non-zero for delegation specifically.** The per-unit arithmetic is
 the best in the survey and is entirely conditional on it: $0.112 saved per
 mean-sized read moved, a $0.073 prefix per delegation, break-even at 0.65 reads
-(`proposals/ContextControl/19-validation.md:50`) — and, from this install, a mean
+(`git show a74a1bb:"proposals/implemented - ContextControl/19-validation.md"` line 50) — and, from this install, a mean
 delegation that actually costs **$1.47**. If a delegation displaces one read and
 adds fifteen turns of its own, the option loses money on every call, and nothing
 distinguishes that outcome from the good one on any page this app renders.

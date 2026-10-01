@@ -176,7 +176,7 @@ Nothing, on the cheapest terms available to any injecting option in this survey.
 The block lands in the first user message of a conversation that does not yet
 exist, so there is no suffix to invalidate: `D = 0`, and constraint 4's `T* =
 19·(S/D) − 20` is undefined rather than large.
-`proposals/ContextControl/02-levers-on-the-pin.md:462` puts a `cache_control`
+`git show a74a1bb:"proposals/implemented - ContextControl/02-levers-on-the-pin.md"` line 462 puts a `cache_control`
 breakpoint on `msg0.3`, "the prompt this app sent", on a session's first request,
 so the block sits inside the cached region from the second turn onward. It
 touches no file in the tree, so it never moves `gitStatus` inside `sys[2]` and
@@ -187,7 +187,7 @@ the third mark moves to the newest message, so the first user message falls
 inside the prefix `sys[2]` breaks — every cycle whose predecessor changed the
 repository re-writes this block along with everything else. At 1,254 bytes and
 the 0.374 tokens-per-byte fit from
-`proposals/ContextControl/05-option-trim-injected-text.md:100` that is **469
+`git show a74a1bb:"proposals/implemented - ContextControl/05-option-trim-injected-text.md"` line 100 that is **469
 tokens**, and at `claude-opus-5`'s $5 per million input (`src/lib/pricing.ts:38`)
 and the 2.0× one-hour write multiplier (`src/lib/pricing.ts:18`) it adds
 **$0.0047 to each re-write**, against the median handover write of 231,644 tokens
@@ -293,7 +293,7 @@ sink it.
 **It points at files that are gone.** Three of the twenty entries in the current
 unfiltered UsageFoundry top-20 do not exist in the tree — `docs/ui-density-audit.md`
 and `docs/external-validator.md`, both of which this repository deliberately
-moved (to `docs/agent/` and `proposals/ExternalValidator/`, as `CLAUDE.md`
+moved (to `docs/agent/` and `git show a74a1bb:"proposals/implemented - ExternalValidator/"`, as `CLAUDE.md`
 records), plus one absolute path into a transcript scratch directory. The
 existence filter removes all three, which is why it is not optional; without it
 the failure is an agent running `Read` on a moved document and getting `File does
@@ -309,8 +309,8 @@ but honest; without it, this option hands a run a map of somewhere else.
 **And on a busy repository it stops being about the repository.** The decayed
 ranking's effective window is the last ~29 runs, here 66 hours, which is short
 enough for one recent task to capture it. The filtered top-20 for this repository
-today holds **ten entries under `proposals/ContextControl/`, six of them with
-a single distinct run behind them**; one (`proposals/ContextControl/00-problem.md`,
+today holds **ten entries under `git show a74a1bb:"proposals/implemented - ContextControl/"`, six of them with
+a single distinct run behind them**; one (`git show a74a1bb:"proposals/implemented - ContextControl/00-problem.md"`,
 4 runs) outranks `src/lib/orchestrator.ts` outright, 16.22 against 10.14 on 74. A new run
 on an unrelated area would open on a reading list for a survey that finished.
 

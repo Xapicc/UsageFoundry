@@ -285,7 +285,7 @@ Everything the refresh could not reach, this could not reach either, and it adds
 two holes of its own.
 
 **The boundary this pass held itself to**, stated first because it decided what
-was not surveyed: `proposals/implemented - Sandboxing/` owns what a run can
+was not surveyed: `git show a74a1bb:"proposals/implemented - Sandboxing/"` owns what a run can
 reach (filesystem, network, one run against another), and this axis is the
 reverse direction, what reaches the app. Two candidates died on that line rather
 than on the evidence line and are recorded as such, one of them a real and
@@ -359,7 +359,7 @@ returns a row's `revokedAt` to a caller, is called from
   `src/lib/cycleInvocation.ts`'s notice join; the two notice tests;
   `src/app/api/mcp/route.ts`'s `save_template` schema and its guard-stating
   handler; `docker-entrypoint.sh:806-854` and `scripts/discord-relay.mjs`.
-- `proposals/implemented - Sandboxing/README.md`, to stay off it.
+- `git show a74a1bb:"proposals/implemented - Sandboxing/README.md"`, to stay off it.
 - `proposals/GapRegister/` itself: `00-method.md`, `05-register.md`,
   `02-backend-logic.md` for the row shape, and `06-recommendation.md:196-256` for
   the refuted list this pass was told not to rediscover.

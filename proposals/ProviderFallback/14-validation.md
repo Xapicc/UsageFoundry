@@ -22,7 +22,7 @@ node proposals/ProviderFallback/scripts/check-citations.mjs
 The script checks three things: that every internal markdown link resolves to a
 sibling file; that every `path/file.ts:N` names a real path with at least N
 lines; and that every bare `` `:N` `` chains to the last **named** repo path in
-the same markdown file, which is the convention `proposals/ContextControl/19-validation.md`
+the same markdown file, which is the convention `git show a74a1bb:"proposals/implemented - ContextControl/19-validation.md"`
 found fifty violations of across eight files.
 
 **On the first pass this proposal had 53 of them.** Every one was qualified in
