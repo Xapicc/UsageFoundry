@@ -183,6 +183,31 @@
   model, and 390px and the ascii skin rest on `npm run smoke-pages` (96/96),
   which asserts load and nothing about interaction.
 
+- **Granted cycles on the runs list, the instance page and the in-flight line,
+  2026-10-01**, the standalone bundle built from `46c424e` plus this change,
+  headless Chromium at 390 and 1280. `/api/runs`, `/api/runs/[id]` and the
+  instance route were answered by the real server over a seeded run and a
+  one-block workflow, edited per case with `route.fulfill`, and read with
+  `innerText`. A running run capped at 1 with one grant and `active_iteration`
+  2 read `1/2` over "includes 1 granted" and "cycle 2 of 2 in flight" on
+  `/runs` and on the instance page, and on its own page sat beside "includes 1
+  granted by the check on its task"; a completed one that used both read `2/2`
+  over "includes 1 granted". With no grant, `0/2` with "cycle 1 of 2 in
+  flight", and `2/2` with no second line. No console error and no sideways
+  scroll at either width; `npm run smoke-pages` 96/96 against the same bundle.
+  Caveat: every grant was injected — the unedited answers carried the column,
+  as 0, in all three payloads — so no run a check actually sent back was drawn.
+
+- **The reopen form's work-cycle hint with a grant, 2026-10-01**, the same
+  bundle and method. A completed run with `iterations` 2 and
+  `validation_cycles` 1, after "Ask for more", read "Includes 1 of the 2 it has
+  had; the 1 its task's check granted is added on top; blank means no cycle
+  limit, which needs a time limit", over a field prefilled with its limit of
+  1; with no grant, exactly "Includes the 2 it has had; blank means no cycle
+  limit, which needs a time limit". Caveat: the hint was read and the form not
+  submitted, so that typing 2 there buys one cycle is `reopenRun`'s arithmetic
+  read from source rather than a pick-up driven in a browser.
+
 ## Not yet verified by hand
 
 - **No after-change payload from the 2026-08-23 pass has been read from a

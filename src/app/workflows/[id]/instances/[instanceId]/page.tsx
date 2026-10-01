@@ -13,6 +13,7 @@ import {
   fmtDateTime,
   fmtPct,
   fmtUSD,
+  grantedCycles,
   landingSummary,
   passRuns,
   passesOf,
@@ -204,16 +205,20 @@ function RunRows({
     <TBody>
       {nodes.map((n) => {
         const waits = n.waitsFor.map((from) => nodeName.get(from) ?? from);
-        // Reads the run's own `fmtCycleInFlight`, in that function's argument
-        // shape rather than a second copy of its rules: what counts as a cycle
-        // in flight is one definition, and the DTO here is simply camelCase.
-        const inFlight = n.run
-          ? fmtCycleInFlight({
+        // Reads the run's own `fmtCycleInFlight` and `grantedCycles`, in their
+        // argument shape rather than a second copy of their rules: what counts
+        // as a cycle in flight, and what widens the cap, are one definition
+        // each, and the DTO here is simply camelCase.
+        const cycleRun = n.run
+          ? {
               status: n.run.status,
               max_iterations: n.run.maxIterations,
+              validation_cycles: n.run.validationCycles,
               active_iteration: n.run.activeIteration,
-            })
+            }
           : null;
+        const inFlight = cycleRun ? fmtCycleInFlight(cycleRun) : null;
+        const granted = cycleRun ? grantedCycles(cycleRun) : 0;
         return (
           <Tr key={n.nodeId}>
             <Td className="align-top">
@@ -269,7 +274,12 @@ function RunRows({
               label="Cycles"
               className="whitespace-nowrap align-top text-ink-muted"
             >
-              {n.run ? fmtCycles(n.run.iterations, n.run.maxIterations) : "—"}
+              {n.run
+                ? fmtCycles(n.run.iterations, n.run.maxIterations + granted)
+                : "—"}
+              {granted > 0 && (
+                <div className="text-xs">includes {granted} granted</div>
+              )}
             </Td>
             <Td num label="Spent" className="whitespace-nowrap align-top">
               {/* Null is a provider that reports no cost, not a member that

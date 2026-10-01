@@ -166,6 +166,11 @@ const { saveSettings } = require("./settings") as typeof import("./settings");
 const { stackGrants } = require("./stacks") as typeof import("./stacks");
 const { priceFiles, renderFileCostNotice } =
   require("./fileCostNotice") as typeof import("./fileCostNotice");
+const { chatEnv } = require("./chat") as typeof import("./chat");
+const { reviewEnv } = require("./review") as typeof import("./review");
+const { authEnv } = require("./claudeAuth") as typeof import("./claudeAuth");
+const { localCycleEnv } =
+  require("./localProvider") as typeof import("./localProvider");
 
 const clash = (a: string, b: string) => overlaps(conflictKey(a), conflictKey(b));
 
@@ -4669,6 +4674,47 @@ describe("childEnv — a credential class the app has no use for", () => {
   });
 });
 
+describe("every env that spawns claude — no session may reach another", () => {
+  // The pinned CLI gives every session `ListAgents` and a unix-socket inbox
+  // unless this variable turns them off, and the scope is the container: every
+  // run, chat turn, reviewer and interactive session on the same uid. A
+  // message that arrives mid-cycle extends the cycle, and the receiver's log
+  // carries nothing. Nothing in the app reads the variable, so a builder that
+  // lost it reopens the channel with every run still working and nothing on
+  // any page changing. `proposals/CrossSessionCommunication/` has the finding.
+  const KEY = "CLAUDE_CODE_HARBOR_KITE";
+  const previous = process.env[KEY];
+  after(() => {
+    if (previous === undefined) delete process.env[KEY];
+    else process.env[KEY] = previous;
+  });
+
+  it("turns peer messaging off over an inherited value that turns it on", () => {
+    // Set on this process rather than passed in, for the reason the siblings
+    // give: reading `process.env` is the whole of what these functions do.
+    process.env[KEY] = "1";
+    const builders: Record<string, () => NodeJS.ProcessEnv> = {
+      childEnv: () => childEnv(),
+      // `childEnv`'s extras land after its strip and win every key they name,
+      // which is why this one key has to land after them.
+      "childEnv with an extra naming the key": () => childEnv({ [KEY]: "1" }),
+      "a local cycle's env over childEnv": () =>
+        localCycleEnv(
+          childEnv(),
+          { baseUrl: "http://127.0.0.1:1234", token: null, contextTokens: null },
+          "m",
+          "/c",
+        ),
+      chatEnv,
+      reviewEnv,
+      authEnv,
+    };
+    for (const [name, build] of Object.entries(builders)) {
+      assert.equal(build()[KEY], "0", `${name} lets a session list and message its peers`);
+    }
+  });
+});
+
 describe("childEnv — the agent's home, which is not its checkout", () => {
   // A work cycle leaves eleven empty `0444` files at the root of its checkout —
   // `.bashrc`, `.profile`, `.zshrc`, `.gitconfig` — and the obvious reading of
@@ -6366,7 +6412,7 @@ describe("the parked sweeper's decision", () => {
     /**
      * `no_ceiling` was on the list above and is deliberately no longer: it is
      * the one refusal here that is not about this run at all. On a stock
-     * install ceilings ship null by design and the fraction guard's reading is
+     * install, ceilings ship null by design and the fraction guard's reading is
      * the provider's own percentage, discarded after an hour without a fresh
      * answer — so an unreachable Anthropic host made this branch end every
      * parked run in the install, 60 seconds after the pre-cycle guard had

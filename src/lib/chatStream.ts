@@ -63,9 +63,9 @@ export interface ChatTurnAccumulator {
    * The CLI emits one `assistant` event per content block — a thinking block, a
    * text block, a tool call — and every one repeats the response's id and its
    * whole `usage`. Summed per event, one response was counted once per block,
-   * and the figure lands where a ceiling reads it: `turn_cost_est` is what
+   * and the figure lands where a limit reads it: `turn_cost_est` is what
    * `installSpend` counts for a live turn and what `recordProgress` re-asks the
-   * install's ceiling with. `transcripts.ts` meets the same duplication in the
+   * install limit with. `transcripts.ts` meets the same duplication in the
    * files and resolves it the same way, highest output wins, because every
    * block before the last carries a streaming placeholder in the output field.
    */

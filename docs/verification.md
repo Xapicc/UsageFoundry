@@ -46,10 +46,10 @@ measurement under *Verified* and cut the item down to what is still open.
 | Dreaming | [dreaming.md](verification/dreaming.md) | 2 | 1 |
 | Retention | [retention.md](verification/retention.md) | 2 | 2 |
 | Security and sandboxing | [security-and-sandboxing-cli-sandbox.md](verification/security-and-sandboxing-cli-sandbox.md) — the CLI's sandbox, bwrap, seccomp, mount points and the write set | 17 | 12 |
-| Security and sandboxing | [security-and-sandboxing-privilege-and-auth.md](verification/security-and-sandboxing-privilege-and-auth.md) — the privilege split, credentials, auth and containment | 9 | 7 |
+| Security and sandboxing | [security-and-sandboxing-privilege-and-auth.md](verification/security-and-sandboxing-privilege-and-auth.md) — the privilege split, credentials, auth and containment | 10 | 10 |
 | Security and sandboxing | [security-and-sandboxing-stacks.md](verification/security-and-sandboxing-stacks.md) — a stack's tool grants and permissions | 8 | 1 |
 | Container and environment | [container-and-environment-resources.md](verification/container-and-environment-resources.md) — memory, CPU, cgroup limits, OOM and the filter launcher | 6 | 5 |
-| Container and environment | [container-and-environment-stacks.md](verification/container-and-environment-stacks.md) — the stacks carrier, its installs, receipts and invocation counts | 20 | 6 |
+| Container and environment | [container-and-environment-stacks.md](verification/container-and-environment-stacks.md) — the stacks carrier, its installs, receipts and invocation counts | 20 | 7 |
 | Container and environment | [container-and-environment-deployment.md](verification/container-and-environment-deployment.md) — the image, network, volumes, backup and health | 9 | 13 |
 | Build and release | [build-and-release.md](verification/build-and-release.md) | 4 | 0 |
 | Interface | [interface-ascii-skin.md](verification/interface-ascii-skin.md) — the ascii skin | 17 | 4 |
@@ -57,5 +57,5 @@ measurement under *Verified* and cut the item down to what is still open.
 | Interface | [interface-app-shell.md](verification/interface-app-shell.md) — the toolbar, drawer, sheets and shared layer | 6 | 2 |
 | Interface | [interface-narrow-viewports.md](verification/interface-narrow-viewports.md) — pages at 390px, layout sweeps and smoke-pages | 15 | 9 |
 | Interface | [interface-canvases.md](verification/interface-canvases.md) — the graph canvases, touched map and replay | 5 | 2 |
-| Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads | 16 | 12 |
-| **Total** | | **388** | **247** |
+| Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads | 18 | 12 |
+| **Total** | | **391** | **251** |

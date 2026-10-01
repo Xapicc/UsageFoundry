@@ -202,20 +202,22 @@ function makeRun(id: string, file: string, repoRoot = repo, from = "main"): stri
 }
 
 /**
- * A completed run carrying `of`'s branch on with one commit of its own, the
- * way `continueBranch` leaves it: the same ref, the chain's base, and
- * `continues_run` naming the link before it.
+ * A completed run carrying `of`'s branch on with one commit of its own — or
+ * none, when `file` is null — the way `continueBranch` leaves it: the same
+ * ref, the chain's base, and `continues_run` naming the link before it.
  */
-function continueRun(id: string, of: string, file: string): void {
+function continueRun(id: string, of: string, file: string | null): void {
   const { worktree_branch: branch, worktree_base: base } = dbMod
     .db()
     .prepare("SELECT worktree_branch, worktree_base FROM runs WHERE id = ?")
     .get(of) as { worktree_branch: string; worktree_base: string };
-  git(repo, "checkout", "-q", branch);
-  fs.writeFileSync(path.join(repo, file), `${file}\n`);
-  git(repo, "add", "-A");
-  git(repo, "commit", "-q", "-m", `work ${id}`);
-  git(repo, "checkout", "-q", "main");
+  if (file !== null) {
+    git(repo, "checkout", "-q", branch);
+    fs.writeFileSync(path.join(repo, file), `${file}\n`);
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", `work ${id}`);
+    git(repo, "checkout", "-q", "main");
+  }
 
   dbMod
     .db()
@@ -379,6 +381,69 @@ describe("the merge worker", () => {
       );
     });
   }
+
+  // The same pair a batch apart, which `enqueue`'s same-batch drop cannot see:
+  // the owner squash-lands in one batch and the first link is queued alone in
+  // the next, as a POST naming it does. `landed_tip` is on the owner alone, so
+  // a link reading only its own read the branch as never landed and was failed
+  // with the owner refusal, over work that is on the target.
+  it("records a link queued after its owner squash-landed as already landed, not failed", async () => {
+    const first = "chain5a0";
+    const owner = "chain5b0";
+    makeRun(first, "chain5-a.txt");
+    continueRun(owner, first, "chain5-b.txt");
+
+    const landing = mergeQueue.enqueue([owner], { strategy: "squash", autoResolve: false });
+    assert.ok(landing.ok, JSON.stringify(landing));
+    const [landed] = await settle(landing.batchId);
+    assert.equal(landed.status, "landed", landed.message ?? "");
+
+    const queued = mergeQueue.enqueue([first], { strategy: "squash", autoResolve: false });
+    assert.ok(queued.ok, JSON.stringify(queued));
+    const rows = await settle(queued.batchId);
+    assert.equal(rows[0].status, "already-landed", rows[0].message ?? "");
+    assert.match(rows[0].message ?? "", /Already squashed into main/);
+
+    const outcomes = rows.map((row) => workflows.queuedBranchOutcome(row, row.run_id));
+    assert.equal(
+      workflows.mergeBlockOutcome(outcomes).ok,
+      true,
+      "a merge block over this batch records a failed landing",
+    );
+  });
+
+  // The other side of that reading: a link that put nothing on a branch an
+  // earlier link squash-landed is the branch's owner now, and the tip is the
+  // one that landed. Read per run, it was offered for landing again — on its
+  // Land card, on the branches page and by the queue — which squashes the same
+  // change into the target a second time.
+  it("does not offer a branch an earlier link squash-landed for landing again", async () => {
+    const first = "chain6a0";
+    const owner = "chain6b0";
+    makeRun(first, "chain6-a.txt");
+
+    const landing = mergeQueue.enqueue([first], { strategy: "squash", autoResolve: false });
+    assert.ok(landing.ok, JSON.stringify(landing));
+    const [landed] = await settle(landing.batchId);
+    assert.equal(landed.status, "landed", landed.message ?? "");
+
+    continueRun(owner, first, null);
+
+    const state = await land.landState(owner);
+    assert.ok(state, "the owner has no land state");
+    assert.equal(state.landedUnchanged, true, `offered for landing, blocked: ${state.blocked}`);
+    assert.match(state.blocked ?? "", /Already squashed into main/);
+
+    const inventory = await land.branchInventory();
+    const row = inventory.branches.find((b) => b.runId === owner);
+    assert.ok(row, "the branch's owner is not on the branches page");
+    assert.equal(row.landedUnchanged, true, "the branches page offers it for landing again");
+
+    const queued = mergeQueue.enqueue([owner], { strategy: "squash", autoResolve: false });
+    assert.ok(queued.ok, JSON.stringify(queued));
+    const rows = await settle(queued.batchId);
+    assert.equal(rows[0].status, "already-landed", rows[0].message ?? "");
+  });
 });
 
 /**

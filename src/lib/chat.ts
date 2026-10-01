@@ -2405,7 +2405,7 @@ export function revokeRunCapabilities(runId: string): void {
  *
  * `land` revokes on every other ending, but it runs when the child is gone, and
  * `endTurn` returns while the child it signalled still has eight seconds of
- * ladder left — so after Stop, the sweeper or the install ceiling, a stopped
+ * ladder left — so after Stop, the sweeper or the install limit, a stopped
  * turn could still propose runs, file tasks and ask questions into a thread the
  * operator had stopped, while their retry was claiming the next turn. The idle
  * timer's rule, applied to the other three endings.
@@ -2611,11 +2611,11 @@ export function staleTurn(
  * Keep what a turn had produced when it is ending without a verdict.
  *
  * Three endings reach this and none of them gets a `result` event: a cancel, a
- * timeout, and the install ceiling closing on a turn that is still going. A
+ * timeout, and the install limit closing on a turn that is still going. A
  * fourth — a restart — reaches it from `reconcileChatsOnBoot`. Before the child
  * streamed there was nothing to keep: the text existed in the dead process's
- * memory and the money existed nowhere at all, so the install's rolling ceiling
- * never learned it had been spent, which is the one direction a ceiling must
+ * memory and the money existed nowhere at all, so the install's rolling limit
+ * never learned it had been spent, which is the one direction a limit must
  * never move by accident.
  *
  * Two figures and they are deliberately different kinds of number.
@@ -2821,7 +2821,7 @@ export async function sendChatMessage(
   // already spent. A chat turn spends against the same window as everything
   // else, and unlike a run it goes through no `evaluateBudget` — there is no
   // per-chat fraction and inventing one would be a threshold nobody set.
-  // …and the install-wide ceiling, which `assistRefusal` now asks for every
+  // …and the install's spend limit, which `assistRefusal` now asks for every
   // caller and which is the one limit a chat turn was once never measured
   // against at all: `chatTurnBudgetUSD` bounds *this* turn and nothing bounds
   // the hundredth.
@@ -2873,7 +2873,7 @@ export async function sendChatMessage(
  *
  * The counterpart to the composer, and the reason it is a second entry point
  * rather than a second implementation: everything that bounds a turn —
- * `dataDirRefusal`, `assistRefusal`, the install ceiling, the claim, the
+ * `dataDirRefusal`, `assistRefusal`, the install limit, the claim, the
  * sweeper — is in `sendChatMessage`, and an answer that reached the CLI around
  * any of them would be a route to spend nobody gated. All this adds is the two
  * things only this door knows: which rows are being settled, and what the
@@ -3487,10 +3487,10 @@ function runTurn(chat: ChatRow, prompt: string): void {
 const PROGRESS_WRITE_MS = 500;
 
 /**
- * How often a turn in flight re-asks whether the install's ceiling still lets
+ * How often a turn in flight re-asks whether the install limit still lets
  * it run.
  *
- * The ceiling is a rolling 24 hours and the query behind it is a scan of three
+ * The limit is a rolling 24 hours and the query behind it is a scan of three
  * tables, so it is not something to ask per event. Ten seconds bounds the
  * overshoot at ten seconds of one turn's spend, which is the same shape the
  * live run guard's own interval takes and for the same reason: the answer moves
@@ -3504,7 +3504,7 @@ const progress = ((globalThis as unknown as {
 }).__ufChatProgress ??= new Map<string, { wroteAt: number; checkedAt: number }>());
 
 /**
- * Persist what the turn has said so far, and stop it if the install's ceiling
+ * Persist what the turn has said so far, and stop it if the install limit
  * has since been reached.
  *
  * **Persist, then publish** — `emit()`'s order, arriving at the one path that
@@ -3738,7 +3738,7 @@ export function turnResultOf(
  * invocation's: a `--resume`d child restores the ledger the last one saved —
  * the `cost-state` record in the transcript — and reports the running total.
  * Banked whole, turn N carried the cost of turns 1..N, so a thread's `cost_usd`
- * grew quadratically and `chat_turn_spend`, which the install's ceiling reads,
+ * grew quadratically and `chat_turn_spend`, which the install limit reads,
  * over-reported by the same amount until it closed every door in the app on
  * money nobody spent.
  *
@@ -3747,10 +3747,10 @@ export function turnResultOf(
  * starts a new one, whose ledger starts at zero. And the whole figure when the
  * total went *down*, which a ledger that is only ever added to does only when
  * it was not restored at all: the difference would bank nothing for a turn
- * that certainly cost something, and a ceiling must not fail in that direction.
+ * that certainly cost something, and a limit must not fail in that direction.
  *
  * Pure and unit-tested because both ways of getting it wrong are silent: too
- * much closes the install's ceiling, too little lets it be overrun.
+ * much closes the install limit, too little lets it be overrun.
  */
 export function turnCostOf(
   previousCumulative: number | null,
@@ -3852,12 +3852,12 @@ function finishTurn(chatId: string, turnSeq: number, r: TurnResult): void {
   // Both are needed and neither is derivable from the other: the column above
   // answers "what has this thread cost", which is what the chat page shows,
   // and this answers "what did this install spend on chat inside the window",
-  // which is what the install-wide ceiling reads. Summing the running total
+  // which is what the install's spend limit reads. Summing the running total
   // charged a thread's whole history to whichever 24 hours its last message
   // fell in — see `chat_turn_spend` in db.ts. Written after the latch above
   // rather than beside it, so a late settle that changed no total adds no row.
   // The increase and never the session's running total, for `turnCostOf`'s
-  // reason: this is the table the install's ceiling sums.
+  // reason: this is the table the install limit sums.
   if (banked > 0) {
     db()
       .prepare(
@@ -3969,7 +3969,7 @@ export function reconcileChatsOnBoot(): void {
     .all() as Array<Pick<ChatRow, "id">>;
   // Before the status moves, because `keepPartialTurn` is what turns the four
   // per-turn columns into a message, a token count and a dated row the
-  // install's ceiling can read — and this is the ending that most needs it.
+  // install limit can read — and this is the ending that most needs it.
   // The other three have somebody present; this one is what the operator finds
   // when they come back, and before the child streamed the whole turn was gone
   // by then with only the bill left behind.
@@ -4301,7 +4301,9 @@ export function chatEnv(): NodeJS.ProcessEnv {
       delete env[key];
     }
   }
-  return { ...env, ...githubEnv() };
+  // Peer messaging off, for the reason over `childEnv`. Last, so nothing above
+  // it can turn it back on.
+  return { ...env, ...githubEnv(), CLAUDE_CODE_HARBOR_KITE: "0" };
 }
 
 /**

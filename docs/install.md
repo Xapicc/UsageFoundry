@@ -322,7 +322,7 @@ beside your `docker-compose.yml` — `UF_STACKS_DIR` moves it — and holds one
 ```
 
 The directory name is the stack's identity and `name` must equal it. Save it,
-`docker compose up -d`, and `shellcheck` is on every agent's `PATH`. That is the
+`docker compose restart`, and `shellcheck` is on every agent's `PATH`. That is the
 whole of adding a tool: `git diff --name-only` over the commit is one file, and
 no file the image contains is among them.
 

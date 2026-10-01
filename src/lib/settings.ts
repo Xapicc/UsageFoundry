@@ -452,7 +452,7 @@ export interface Settings {
    * spending never meets, so without this the only bound on one was that it
    * exits. The merge
    * queue starts one per conflicting branch of a batch queued with auto-resolve,
-   * a workflow's merge block included, with nobody present; the install ceiling
+   * a workflow's merge block included, with nobody present; the install limit
    * is read once at the door, so a resolution admitted just under it could
    * spend without limit. It covers the Resolve button too, because a person
    * watching the row has no control that stops it either.

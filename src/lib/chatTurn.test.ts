@@ -26,9 +26,9 @@ import { after, before, describe, it } from "node:test";
  * The second is the same shape one gate along, and its cost is the work rather
  * than the thread: `failed` is terminal on a proposal — `planProposal` refuses
  * anything not `pending` and the route only ever offers what is pending — so a
- * proposal marked that way by the install ceiling or by a lost data-directory
+ * proposal marked that way by the install limit or by a lost data-directory
  * claim is gone, and getting it back is a billed turn asking the chat to
- * propose it again. Nothing throws, the operator is told the ceiling stopped
+ * propose it again. Nothing throws, the operator is told the limit stopped
  * their run, and every word of that sentence is true except what it implies
  * about the proposal.
  *
@@ -134,7 +134,7 @@ describe("approving under a refusal that clears on its own", () => {
       folder: "project",
     });
 
-    // The operator's install-wide ceiling, and enough spend inside its rolling
+    // The operator's install limit, and enough spend inside its rolling
     // window to have reached it. A settled turn's own spend row is the cheapest
     // money to put in that window without inventing a run to have spent it.
     settings.saveSettings({ installDailyCostLimitUSD: 1 });
@@ -514,7 +514,7 @@ describe("a stopped turn's child exiting into the turn that replaced it", () => 
       "the live turn's answer never reached the conversation",
     );
 
-    // The install-wide ceiling reads the dated rows rather than the running
+    // The install's spend limit reads the dated rows rather than the running
     // total, so a settle refused above must have left none behind here either.
     const spend = dbMod
       .db()
@@ -632,7 +632,7 @@ describe("a turn a restart left mid-flight", () => {
 /**
  * What a resumed turn is charged, end to end: the CLI's `total_cost_usd` is the
  * session's running total on the pin, and the row, the thread's total and the
- * install's ceiling all have to see each turn's own cost. The pure half is
+ * install limit all have to see each turn's own cost. The pure half is
  * `turnCostOf` in `chat.test.ts`; this pins that `finishTurn` feeds it the
  * session it resumed and keeps the figure the next turn subtracts from.
  */

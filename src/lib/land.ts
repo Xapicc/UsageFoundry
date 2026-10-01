@@ -525,7 +525,8 @@ export async function landState(
 
   const branch = run.worktree_branch;
   const repoRoot = repoPathFor(run.repo_root);
-  const chain = branchChain(run);
+  const links = chainRuns(run);
+  const chain = links.map(chainMember);
   const base: LandState = {
     runId,
     runStatus: run.status,
@@ -629,7 +630,7 @@ export async function landState(
     await git(repoRoot, ["merge-base", "--is-ancestor", branch, target.branch], NO_CLOCK)
   ).ok;
 
-  const landedUnchanged = !!run.landed_tip && run.landed_tip === tip;
+  const landedUnchanged = isLandedTip(links, tip);
 
   // Not previewed while the run can still commit: the answer would be stale
   // before it rendered, and `merge-tree` writes objects to work it out.
@@ -706,8 +707,31 @@ function certificationOf(run: RunRow, tip: string): CertificationState {
   };
 }
 
+/** Every run on this run's branch, oldest first. See `chainRuns`. */
+function branchChain(run: RunRow): ChainMember[] {
+  return chainRuns(run).map(chainMember);
+}
+
+function chainMember(run: RunRow): ChainMember {
+  return { runId: run.id, status: run.status, iterations: run.iterations };
+}
+
 /**
- * Every run on this run's branch, oldest first.
+ * Whether `tip` is the tip some run on this branch landed.
+ *
+ * Asked of the whole chain because `landRun` writes `landed_tip` on the run
+ * that landed, which is only ever the chain's owner at the time. Read for one
+ * run, every other link saw a squashed branch as never landed: a link queued
+ * after its owner had landed was failed by the queue with the owner refusal,
+ * and a later link that added nothing offered the same squash for landing
+ * again.
+ */
+function isLandedTip(chain: readonly RunRow[], tip: string | undefined): boolean {
+  return chain.some((r) => !!r.landed_tip && r.landed_tip === tip);
+}
+
+/**
+ * Every run on this run's branch, oldest first, as the rows themselves.
  *
  * Walked over `continues_run` rather than selected on `worktree_branch`,
  * because a dependent that has not been released yet has no branch recorded —
@@ -728,7 +752,7 @@ function certificationOf(run: RunRow, tip: string): CertificationState {
  * and `chainBlocker` cannot match one, so which of two is followed decides
  * nothing.
  */
-function branchChain(run: RunRow): ChainMember[] {
+function chainRuns(run: RunRow): RunRow[] {
   const byId = db().prepare("SELECT * FROM runs WHERE id = ?");
   // The settled list is built from `TERMINAL_STATUSES` rather than spelled out,
   // for `admitDependencies`' reason: a second copy is a second thing to forget.
@@ -764,11 +788,7 @@ function branchChain(run: RunRow): ChainMember[] {
     down = after;
   }
 
-  return [...head, run, ...tail].map((r) => ({
-    runId: r.id,
-    status: r.status,
-    iterations: r.iterations,
-  }));
+  return [...head, run, ...tail];
 }
 
 /**
@@ -2953,8 +2973,12 @@ export async function deleteBranch(runId: string): Promise<LandOutcome> {
       // Never `git branch -d`'s own check: that asks whether the branch is in
       // HEAD of the operator's checkout, which is not the target whenever they
       // are working on something else, and it refused every merged branch then.
+      // The chain's landed tips rather than this run's, as `landState` read
+      // them for the check above: a link whose owner squash-landed the branch
+      // passes that check, and a per-run compare here refused it as having
+      // changed while it was being checked.
       const safe =
-        run.landed_tip === tip ||
+        isLandedTip(chainRuns(run), tip) ||
         (state.target !== null &&
           (
             await git(
@@ -4046,7 +4070,7 @@ export async function branchInventory(
           repoLabel: describeFolder(repoRoot).relPath || repoRoot,
           createdAt: run.created_at,
           merged,
-          landedUnchanged: !!run.landed_tip && run.landed_tip === tips.get(branch),
+          landedUnchanged: exists && isLandedTip(chainRuns(run), tips.get(branch)),
           exists,
           active: active.has(run.id),
           landedAt: run.landed_at,

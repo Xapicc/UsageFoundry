@@ -426,7 +426,7 @@ describe("refusesEveryLaterResolution", () => {
     );
   });
 
-  it("recognises the install ceiling's refusal, read off the verdict that words it", () => {
+  it("recognises the install limit's refusal, read off the verdict that words it", () => {
     // Taken from `evaluateInstallBudget` rather than typed out, so rewording
     // that sentence fails here instead of quietly costing every later branch in
     // the queue a fresh refusal.
