@@ -148,6 +148,14 @@ gets tested.
   checkout not its own, and its concession that one still can
   (`git show 36a0416^:"proposals/implemented - Sandboxing/README.md"`), set
   C7.
+- **The archived Taskboard and Session Flow proposals** (vault,
+  `/workspace2/4 Archive/UsageFoundry Proposals/`, both `confidence: low`,
+  `status: archived`).
+  - The Taskboard one held that "a claim is a record, not a lease", so a parked
+    sibling still holds its task. That is why G3 lists `paused` runs.
+  - Session Flow found that a recorded touch means "attempted", and that tool
+    events expire at 30 days. That is why G3 shows branches, which do not
+    expire, rather than touched files.
 - **The vault.** Every note cited is `confidence: medium`, `status: growing`:
   *Prompt Infection (Lee and Tiwari 2024)*, *Do More Agents Help (Fu et al
   2026)*, *Orchestration Topologies*, *Sub-Agent Architectures* and *Agent
