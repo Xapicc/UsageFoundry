@@ -183,6 +183,16 @@
   Caveat: every grant was injected — the unedited answers carried the column,
   as 0, in all three payloads — so no run a check actually sent back was drawn.
 
+- **The reopen form's work-cycle hint with a grant, 2026-10-01**, the same
+  bundle and method. A completed run with `iterations` 2 and
+  `validation_cycles` 1, after "Ask for more", read "Includes 1 of the 2 it has
+  had; the 1 its task's check granted is added on top; blank means no cycle
+  limit, which needs a time limit", over a field prefilled with its limit of
+  1; with no grant, exactly "Includes the 2 it has had; blank means no cycle
+  limit, which needs a time limit". Caveat: the hint was read and the form not
+  submitted, so that typing 2 there buys one cycle is `reopenRun`'s arithmetic
+  read from source rather than a pick-up driven in a browser.
+
 ## Not yet verified by hand
 
 - **No after-change payload from the 2026-08-23 pass has been read from a
