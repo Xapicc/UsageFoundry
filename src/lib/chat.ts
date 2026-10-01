@@ -4364,7 +4364,9 @@ function mcpConfigBase(): string {
  * `/proc/<pid>/cmdline` can read the file. A second gid would not help, because
  * every work cycle would be in it. So the run capability is bounded by *what it
  * can do* instead — `docs/agent/security.md` carries what a stolen one is worth,
- * and it is why the run tool list is three tools that start nothing.
+ * and it is why the run tool list is eight tools that start nothing, approve
+ * nothing and install nothing, and whose writes reach only the board and the
+ * token's own run (`RUN_TOOLS` in `src/app/api/mcp/route.ts` names them).
  *
  * @param ownership defaulted from `privsep.ts`; a parameter so the modes can be
  *   tested without a second uid, which a unit test in this process cannot have.
