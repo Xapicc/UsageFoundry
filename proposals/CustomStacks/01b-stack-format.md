@@ -394,10 +394,10 @@ against an allowlist of hosts, and there is no signature verification, because
 this repository has no key material and inventing a trust root is a larger
 decision than this design. `01d-` §3 lists it among what this does not do.
 
-**The honest sentence, and it belongs in `docs/agent/security.md`.** A stack is
+**The honest sentence, and it lives in `docs/agent/security/stacks.md`.** A stack is
 software you have chosen to install, declared in a file you can read in thirty
 seconds. Consuming a third party's stack is the same act as taking their `RUN`
 line into your Dockerfile. What this mechanism buys is that the act is
-**reviewable** - one small file, every URL and digest visible, every granted
+**reviewable** - one small file, every URL and digest visible, every denied
 command listed - and **revocable** - delete the directory, restart. It does not
 make it safe, and nothing that installs software can.
