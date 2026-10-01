@@ -1,4 +1,4 @@
-# 00 — The problem, and whether this install has it
+# 00: The problem, and whether this install has it
 
 ## The question
 
@@ -28,7 +28,7 @@ orchestrator chat and finished runs are in scope is decided, with the reason, in
   `continueBranch`). A note left for the next run on a folder is ContinuousImprovement's
   question, and its four rejections of a durable, model-authored store (the
   operator note, the per-repository brief, the MCP knowledge tool, the
-  agent-maintained `CLAUDE.md`, `proposals/ContinuousImprovement/README.md:116`–`:121`)
+  agent-maintained `CLAUDE.md`, `proposals/ContinuousImprovement/README.md:116`-`:121`)
   are reused here rather than re-argued.
 - **[ProviderFallback](../ProviderFallback/README.md)** describes one run's
   hand-over from one provider to another:
@@ -44,7 +44,7 @@ Yes, and that is the normal state on this install. The folder claim allows one
 writing run per folder subtree **unless the run is isolated**
 (`docs/agent/concurrency-and-ownership/folder-claim-and-slot-walk.md:7`), an
 isolated run claims its own worktree rather than the repository
-(`src/lib/orchestrator.ts:476`–`:478`), isolation is on by default
+(`src/lib/orchestrator.ts:476`-`:478`), isolation is on by default
 (`src/lib/orchestrator.ts:4098`), and a repository has up to 64 worktree slots
 (`src/lib/orchestrator.ts:3549`). `maxConcurrentRuns` ships at 4
 (`src/lib/settings.ts:1052`); this install has evidently raised it, since ten
@@ -114,7 +114,7 @@ Duplicate, yes; contradict, no case found.
   first, and none of the results contained the task, because each showed 20
   open tasks while `openInFolderTotal` read 69, then 85, then 99. That is
   `MAX_RUN_TASKS = 20` (`src/lib/tasks.ts:1473`) applied to `openInFolder`
-  (`src/lib/tasks.ts:1525`–`:1534`). The bug was then fixed once.
+  (`src/lib/tasks.ts:1525`-`:1534`). The bug was then fixed once.
 - **Three runs filed "EraseReported.swift does not compile on Linux"** on
   Dockrac between 19:35 and 19:42 on 2026-09-26. One said it was "Checking
   whether a sibling run already filed the EraseReported failure" and filed
@@ -151,7 +151,7 @@ Three findings narrow it.
    both runs must edit. A message saying "I am editing `CLAUDE.md`" does not
    remove the edit the receiver also has to make. The contention is
    ContinuousImprovement's contention card's territory
-   (`proposals/ContinuousImprovement/README.md:10`–`:15`), not this survey's.
+   (`proposals/ContinuousImprovement/README.md:10`-`:15`), not this survey's.
 3. **A channel already exists that nobody here built.** The pinned Claude Code
    CLI gives every work cycle peer-messaging tools, and nothing on the app's argv
    denies them. [`02-what-already-talks.md`](02-what-already-talks.md) §1 has the

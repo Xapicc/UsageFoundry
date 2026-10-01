@@ -15,3 +15,4 @@ python3 "$HERE/report_collisions.py" "$OUT/collisions.json" > "$OUT/collisions-r
 python3 "$HERE/dup_tasks.py" "$OUT/sessions.jsonl" "$OUT/runs.json" 0.6 > "$OUT/dup-tasks.txt"
 python3 "$HERE/keyword_hunt.py" "$OUT/runs.json" > "$OUT/keyword-hits.txt"
 python3 "$HERE/peer_usage.py" > "$OUT/peer-usage.txt"
+python3 "$HERE/search_would_find.py" "$OUT/dup-tasks.txt" > "$OUT/search-would-find.txt"

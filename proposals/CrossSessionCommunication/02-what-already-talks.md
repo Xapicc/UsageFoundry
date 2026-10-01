@@ -1,4 +1,4 @@
-# 02 — What already carries information between runs
+# 02: What already carries information between runs
 
 Every channel below was verified in code or measured on this install. The
 question asked of each is the same: what it carries, who writes and who reads
@@ -62,7 +62,7 @@ Code session in the container, and nothing in this app knows.**
     `--settings`.
 - **What the app would see.** The sender's call is an ordinary `tool_use` in
   `stream-json`, so `run_events` keeps its input, clipped
-  (`src/lib/orchestrator.ts:8357`–`:8370`). The receiver's stream carries the
+  (`src/lib/orchestrator.ts:8357`-`:8370`). The receiver's stream carries the
   replayed user turn only under `--replay-user-messages`, which the app does not
   pass. So **the receiving run's log most likely shows no frame for the message
   at all**, only what the model did next. This is assumed: the Bash sandbox
@@ -95,12 +95,12 @@ and on for this install. A run gets seven tools (`RUN_TOOLS`,
 | | |
 |---|---|
 | Carries | Task titles and bodies (`create_task`), notes (`comment_on_task`, defined at `src/app/api/mcp/route.ts:685`, handled at `src/app/api/mcp/route.ts:1824` and `src/app/api/mcp/route.ts:2354`), dependency edges |
-| Written by | A run, the chat or the operator. Authorship comes from the token, never from an argument (`src/app/api/mcp/route.ts:2369`–`:2383`) |
-| Read by a sibling | Through a tool call only. Notes on a task a run **holds** come back whole on its next `list_my_tasks`, the last ten of them (`src/lib/taskComments.ts:130`). Open tasks in the run's folder come back as `openInFolder`, without notes and **clipped to 20** (`MAX_RUN_TASKS`, `src/lib/tasks.ts:1473`). `get_my_task` returns a thread on a held or open-in-folder task (`src/lib/tasks.ts:1560`–`:1579`) |
-| Read when | When the agent asks, at any tool round. Never via the appended prompt, by rule (`docs/agent/taskboard/comments.md:63`–`:69`) |
+| Written by | A run, the chat or the operator. Authorship comes from the token, never from an argument (`src/app/api/mcp/route.ts:2369`-`:2383`) |
+| Read by a sibling | Through a tool call only. Notes on a task a run **holds** come back whole on its next `list_my_tasks`, the last ten of them (`src/lib/taskComments.ts:130`). Open tasks in the run's folder come back as `openInFolder`, without notes and **clipped to 20** (`MAX_RUN_TASKS`, `src/lib/tasks.ts:1473`). `get_my_task` returns a thread on a held or open-in-folder task (`src/lib/tasks.ts:1560`-`:1579`) |
+| Read when | When the agent asks, at any tool round. Never via the appended prompt, by rule (`docs/agent/taskboard/comments.md:63`-`:69`) |
 | Durable | Yes. `tasks` and comments are never swept (`docs/agent/retention.md:24`) |
 | Operator sees | Every note on the task page. The run's call is a `tool` event |
-| Starts, wakes, extends | No. "It starts nothing" (`src/app/api/mcp/route.ts:631`). The one indirect effect: a workflow loop's board condition counts open tasks before each pass, bounded by `maxPasses` (`docs/agent/taskboard/operator-only-and-release.md:70`–`:75`) |
+| Starts, wakes, extends | No. "It starts nothing" (`src/app/api/mcp/route.ts:631`). The one indirect effect: a workflow loop's board condition counts open tasks before each pass, bounded by `maxPasses` (`docs/agent/taskboard/operator-only-and-release.md:70`-`:75`) |
 
 **This is already an addressed channel between concurrent runs.** Run A writes
 on a task run B holds, and B reads it whole at its next `list_my_tasks`. Two
@@ -116,13 +116,13 @@ one task because each `list_my_tasks` showed 20 of 69-99 open tasks
 ## 3. `dependsOn` and `continueBranch`
 
 Sequential, not concurrent. A dependent is released by `releaseDependents`
-(`src/lib/orchestrator.ts:5058`–`:5076`) into the queue rather than started
+(`src/lib/orchestrator.ts:5058`-`:5076`) into the queue rather than started
 (`docs/agent/dependencies.md:18`), once `edgeSatisfied`
-(`src/lib/orchestrator.ts:4674`–`:4681`) holds. With `continueBranch` it adopts
-the predecessor's branch and base (`src/lib/orchestrator.ts:2427`–`:2437`) and
-receives `continuedWorkNotice` on cycle 1 (`src/lib/cycleInvocation.ts:431`–`:445`).
+(`src/lib/orchestrator.ts:4674`-`:4681`) holds. With `continueBranch` it adopts
+the predecessor's branch and base (`src/lib/orchestrator.ts:2427`-`:2437`) and
+receives `continuedWorkNotice` on cycle 1 (`src/lib/cycleInvocation.ts:431`-`:445`).
 That notice names the branch and two git commands, and 84.8% of told runs ran
-the exact command (`proposals/ContinuousImprovement/README.md:47`–`:50`).
+the exact command (`proposals/ContinuousImprovement/README.md:47`-`:50`).
 
 What passes is the branch. No report, reply or stop reason crosses.
 `reconcileOnBoot` blocks dependents rather than releasing them (C6). The edges
@@ -137,7 +137,7 @@ components and `touchedMap.ts`. A run reads none of them: the `RUN_TOOLS`
 docblock says nothing there "reads another run's work"
 (`src/app/api/mcp/route.ts:494`). The chat and orchestrator blocks can read a
 run's stop reason and log tail through `get_run`
-(`src/app/api/mcp/route.ts:2440`–`:2505`), and a block can turn that into a new
+(`src/app/api/mcp/route.ts:2440`-`:2505`), and a block can turn that into a new
 run's prompt through `emit_runs`. That is a model relay, and only into runs that
 do not exist yet.
 
@@ -172,17 +172,17 @@ path), and a run's write there is visible only as an ordinary `Write` tool
 event. It is the one existing channel where a run writes standing instructions
 that later runs load into their system context. That is
 ContinuousImprovement's §7 concern, "the write side and the read side must not
-have the same author" (`proposals/ContinuousImprovement/01-constraints.md:107`–`:118`),
+have the same author" (`proposals/ContinuousImprovement/01-constraints.md:107`-`:118`),
 already realised.
 
 ## 7. Each other's transcripts and argv
 
 Same uid, mounted `~/.claude`: every run can read every sibling's live
 transcript, and `/proc/<pid>/cmdline` is world-readable
-(`src/lib/chat.ts:4341`–`:4344`). The argv holds the sibling's `-p` prompt, its
+(`src/lib/chat.ts:4341`-`:4344`). The argv holds the sibling's `-p` prompt, its
 appended system prompt and its `--mcp-config` path, which C9 covers. Runs have
 used the transcripts this way: the `RUN_TOOLS` docblock records that "runs were
-digging the rest out of transcripts on disk" (`src/app/api/mcp/route.ts:529`–`:531`).
+digging the rest out of transcripts on disk" (`src/app/api/mcp/route.ts:529`-`:531`).
 
 ## 8. Smaller channels
 
@@ -191,7 +191,7 @@ digging the rest out of transcripts on disk" (`src/app/api/mcp/route.ts:529`–`
   `createRun` (`src/lib/orchestrator.ts:4096`) and carried on every cycle's
   appended prompt. It holds aggregate counts only, from earlier runs.
 - **The vault skill and dreaming.** Both are off by default
-  (`src/lib/vaultSkill.ts:127`–`:128`). Notes written nightly are read by later
+  (`src/lib/vaultSkill.ts:127`-`:128`). Notes written nightly are read by later
   runs on request.
 - **Plugins.** These are operator-enabled directories passed every cycle
   (`src/lib/plugins.ts:467`). A run that edited one would change a sibling's
