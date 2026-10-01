@@ -362,6 +362,7 @@ const EDITABLE_PATHS = [
   "maxConcurrentRuns",
   "maxConcurrentAssists",
   "maxConcurrentLocalRuns",
+  "modelCatalogue",
   "isolationCopyGlobs",
   "isolationCopyGlobsByRepo",
   "landStrategy",
@@ -2737,15 +2738,7 @@ export default function SettingsPage() {
     [effective, savedS],
   );
 
-  // Its own comparison rather than `changed`, which walks `EDITABLE_PATHS` and
-  // that list does not carry the catalogue.
-  const catalogueEdited = useMemo(
-    () =>
-      effective !== null &&
-      savedS !== null &&
-      JSON.stringify(effective.modelCatalogue) !== JSON.stringify(savedS.modelCatalogue),
-    [effective, savedS],
-  );
+  const catalogueEdited = changed.has("modelCatalogue");
 
   /**
    * The one thing standing between an unsaved page and a closed tab.
@@ -4045,12 +4038,17 @@ export default function SettingsPage() {
             one. */}
         <Disclosure
           className="mb-3.5 last:mb-0"
-          summaryClassName={FOLD_SUMMARY}
+          // `relative` so the rail is drawn against this line rather than
+          // against whichever positioned ancestor sits further up the page.
+          summaryClassName={`relative ${FOLD_SUMMARY}`}
           summary={
-            <SettingName
-              label="Models this install may use"
-              edited={isEdited("modelCatalogue")}
-            />
+            <>
+              <EditedRail on={isEdited("modelCatalogue")} />
+              <SettingName
+                label="Models this install may use"
+                edited={isEdited("modelCatalogue")}
+              />
+            </>
           }
           count={movedCount(["modelCatalogue"])}
           defaultOpen={false}
