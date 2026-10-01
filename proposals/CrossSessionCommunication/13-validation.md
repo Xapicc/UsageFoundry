@@ -124,6 +124,19 @@ Measured or read on 2026-10-01 at `336b907`:
   isolated runs; this survey's own scan of each run's opening prompt counted 12
   of 493, all on Dockrac. The two differ in their match and in their run key and
   are not reconciled. Nothing in the recommendation rests on either.
+- **That a mid-cycle feature-flag refresh cannot re-open the inbox under
+  `CLAUDE_CODE_HARBOR_KITE=0`.**
+  - The startup log under the variable reads `[uds-messaging] Skipped:
+    cross-session messaging gate off (will late-bind if a GrowthBook refresh
+    enables it)`.
+  - The binary also carries a `Late bind: gate enabled by a GrowthBook refresh
+    after startup` path.
+  - The gate returns the variable's value whenever the variable is set:
+    `function Rs(){let e=a.CLAUDE_CODE_HARBOR_KITE;if(e!==void 0)return De(e);…}`,
+    from `grep -ao` on the binary. That suggests a refresh cannot enable it.
+  - That the late-bind path consults the same gate is inferred.
+  - It is settled by the after-G1 socket check in §1, made during a cycle that
+    outlives the flag refresh.
 - **That `-p` cycles have no Remote Control bridge**, so that peers stay
   local-only. Assumed.
 - **That varying the resumed `-p` text writes no prefix** (U5). No option this

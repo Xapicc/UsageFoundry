@@ -48,7 +48,11 @@ its index names for spawn environments. It records what
 `scripts/native-tools.sh` shows on 2.1.280 with and without the variable
 (23 → 22 tools, `ListAgents` gone, `[uds-messaging] Skipped`), with the date.
 Add a *Not yet verified* item for the receiving side (U1), with
-`scripts/native-pair-test.sh` as the command that settles it.
+`scripts/native-pair-test.sh` as the command that settles it. Add a second
+item: the CLI has a late-bind path that opens the inbox when a flag refresh
+enables the gate mid-session. That the variable also holds against that path is
+inferred, from the gate returning the variable's value whenever it is set
+([`13-validation.md`](13-validation.md) §4).
 
 **Pin bumps.** The variable is the CLI's internal name. Whoever bumps
 `CLAUDE_CLI_VERSION` (`Dockerfile:445`) re-runs `scripts/native-tools.sh` with
