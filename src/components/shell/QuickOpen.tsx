@@ -7,7 +7,7 @@ import type {
   RunListItemDTO,
   WorkflowListItemDTO,
 } from "@/lib/apiTypes";
-import { pollFailureMessage, shortPath } from "@/lib/format";
+import { STATUS_LABEL, pollFailureMessage, shortPath } from "@/lib/format";
 import { jsonRequest } from "@/lib/jsonRequest";
 import { leaving } from "@/lib/unsavedWork";
 import { Icon } from "@/components/ui/Icon";
@@ -231,7 +231,7 @@ export function QuickOpen({
       key: `run:${run.id}`,
       group: needle ? "Runs" : "Recent runs",
       label: runLabel(run),
-      detail: `${run.status} · ${shortPath(run.folder, 2)}`,
+      detail: `${STATUS_LABEL[run.status]} · ${shortPath(run.folder, 2)}`,
       href: `/runs/${run.id}`,
       haystack: `${run.id} ${run.status} ${run.folder}`.toLowerCase(),
     }));

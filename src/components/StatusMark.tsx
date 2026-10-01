@@ -13,7 +13,7 @@ import { STATUS_TONE, type BadgeTone } from "../lib/format";
  * puts its state marker.
  *
  * The word is the accessible fallback and is always somewhere on the same row;
- * this is what makes nine rows separable at a glance without reading any of
+ * this is what makes ten rows separable at a glance without reading any of
  * them. Tone alone cannot do that job — `paused`, `stopped`, `blocked` and
  * `needs-review` are all amber, so in greyscale or to a colour-blind operator
  * the badge carries no signal until it is read word by word.
@@ -44,6 +44,15 @@ const GLYPH: Record<RunDTO["status"], ReactNode> = {
       <rect x="2.4" y="1.9" width="1.8" height="6.2" rx="0.6" fill="currentColor" />
       <rect x="5.8" y="1.9" width="1.8" height="6.2" rx="0.6" fill="currentColor" />
     </>
+  ),
+  // A toolbox, outlined: parked like `paused`, and parked on a tool. Hollow so
+  // it never reads as `stopped`'s filled square at a glance, and carrying a
+  // handle so it never reads as an empty one.
+  "waiting-for-stack": (
+    <g fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round">
+      <rect x="1.6" y="3.6" width="6.8" height="4.6" rx="0.8" />
+      <path d="M3.8 3.6V2.2h2.4v1.4M1.6 5.6h6.8" />
+    </g>
   ),
   completed: (
     <path
@@ -94,16 +103,17 @@ const GLYPH: Record<RunDTO["status"], ReactNode> = {
 };
 
 /**
- * The same nine marks as characters, for the skin that has no vector in it.
+ * The same ten marks as characters, for the skin that has no vector in it.
  *
  * Each one echoes the shape above it rather than starting a vocabulary of its
  * own — hollow `o` for the run that is only alive, `=` for the pause bars, `!`
  * for the bang that asks the reader for something — because the shapes were
  * chosen to be separable at a glance and that is the property the port has to
- * keep. Nine distinct marks, checked against each other and not only against
+ * keep. Ten distinct marks, checked against each other and not only against
  * the SVG each replaces: `+` and `x` are the two endings and read as opposites,
- * `#` is the stop square, and `blocked`'s `/` is the slash through the circle
- * it is drawn as.
+ * `#` is the stop square, `blocked`'s `/` is the slash through the circle it is
+ * drawn as, and `waiting-for-stack`'s `?` is the run asking for something, the
+ * way `!` is the run saying it could not get past something.
  *
  * `running` is the one that is not a character. It was a motionless `*` while
  * the same skin left a vector ring turning two components away, and it is now
@@ -121,6 +131,7 @@ const ASCII: Record<RunDTO["status"], ReactNode> = {
   waiting: ">",
   queued: "o",
   paused: "=",
+  "waiting-for-stack": "?",
   completed: "+",
   "needs-review": "!",
   stopped: "#",
@@ -132,7 +143,7 @@ const ASCII: Record<RunDTO["status"], ReactNode> = {
  * The glyph's own colour, as `currentColor` for the svg inside it.
  *
  * Only the text half of `Badge`'s tone map, and only because the mark leads the
- * row from outside the badge, where nothing else supplies a colour: nine shapes
+ * row from outside the badge, where nothing else supplies a colour: ten shapes
  * all drawn in `--fg` would make a failed run and a completed one differ only in
  * outline, which is the distinction the leading edge should make first.
  */

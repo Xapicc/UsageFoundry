@@ -29,6 +29,7 @@ import type {
   SandboxDTO,
   SandboxStateDTO,
   SettingsDTO,
+  StackRequestDTO,
   StorageReportDTO,
 } from "@/lib/apiTypes";
 import { PRUNE_ENGINE_LABEL } from "@/lib/pruneStatement";
@@ -62,6 +63,7 @@ import {
 import { Sheet } from "@/components/ui/Sheet";
 import { Table, TableWrap, TBody, Td, Th, THead, Tr } from "@/components/ui/Table";
 import { isPlainCommandChord } from "@/components/shell/shortcuts";
+import { StackRequestDetail } from "@/components/StackRequestDetail";
 
 interface CalibrateResponse {
   ok: boolean;
@@ -1167,12 +1169,91 @@ function ToolRow({ tool }: { tool: ToolRowDTO }) {
   );
 }
 
+/**
+ * What runs have asked for and nobody has answered.
+ *
+ * First in the section because it is the only thing in it that needs doing.
+ * It stays mounted when the list empties, so the note a Decline leaves is
+ * still there once the re-read has taken the request it was about away.
+ */
+function StackRequestGroup({
+  requests,
+  onAnswered,
+}: {
+  requests: StackRequestDTO[];
+  /** Re-reads the inventory, so an answered request leaves the list. */
+  onAnswered: () => Promise<void>;
+}) {
+  const [declining, setDeclining] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function decline(id: string) {
+    setNote(null);
+    setError(null);
+    setDeclining(id);
+    const res = await jsonRequest<{ declined?: boolean }>(
+      `/api/stack-requests/${encodeURIComponent(id)}/decline`,
+      { method: "POST" },
+    );
+    if (!res.ok) {
+      setDeclining(null);
+      setError(actionFailureMessage(res, "Could not decline that stack."));
+      return;
+    }
+    // `declined: false` is a 200: it was answered first, from here or from a
+    // run's page, and the re-read below is what takes it off the list.
+    setNote(
+      res.data.declined
+        ? "Declined — every run waiting on it rejoins the queue and is told to carry on without it."
+        : "That request was already answered.",
+    );
+    await onAnswered();
+    setDeclining(null);
+  }
+
+  if (requests.length === 0 && note === null && error === null) return null;
+
+  return (
+    <div className="mb-4">
+      {requests.length > 0 && (
+        <ListGroup
+          label="Asked for by runs"
+          footnote="Nothing here installs anything: a stack is installed by putting its stack.json under ./stacks and restarting the container"
+        >
+          {requests.map((request) => (
+            // Not a `ListRow`: a request is a block of prose and a draft, with
+            // no right edge for a control to align against.
+            <div key={request.id} className="px-3.5 py-3">
+              <StackRequestDetail
+                request={request}
+                declining={declining === request.id}
+                onDecline={() => void decline(request.id)}
+              />
+            </div>
+          ))}
+        </ListGroup>
+      )}
+      <div aria-live="polite">
+        {note && <p className="mt-1.5 px-1 text-xs text-accent">{note}</p>}
+        {error && (
+          <Notice tone="danger" className="mt-2">
+            {error}
+          </Notice>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ToolFigures({
   report,
   error,
+  onAnswered,
 }: {
   report: ToolInventoryDTO | null;
   error: string | null;
+  onAnswered: () => Promise<void>;
 }) {
   if (error !== null) {
     return (
@@ -1190,6 +1271,8 @@ function ToolFigures({
 
   return (
     <>
+      <StackRequestGroup requests={report.stackRequests} onAnswered={onAnswered} />
+
       {report.problems.length > 0 && (
         <Notice tone="warn" className="mb-4">
           <ul className="list-disc pl-4">
@@ -2414,7 +2497,10 @@ export default function SettingsPage() {
    * installers run before the server is `exec`ed, so nothing can install a tool
    * while this page is open, and the one half that does move — how often a
    * command has been invoked — sits behind a sixty-second cache a poll would
-   * mostly re-serve.
+   * mostly re-serve. The stack requests on the same answer can arrive while it
+   * is open, and are still not polled: the run that asked is parked and spends
+   * nothing until somebody answers, and its own page already polls the request.
+   * A Decline re-reads.
    */
   const loadTools = useCallback(async () => {
     const res = await jsonRequest<ToolInventoryDTO>("/api/tools");
@@ -4371,10 +4457,12 @@ export default function SettingsPage() {
 
           {/* The copy has one job the row above does not: saying what the run
               can and cannot do, because "reach the taskboard" reads as a much
-              larger grant than it is. Three tools, none of which starts work.
+              larger grant than it is. Eight tools, none of which starts work.
               The refusal is worth naming rather than implying — an operator
               weighing this is asking whether an unattended agent could close
-              somebody else's item, and the answer is no. */}
+              somebody else's item, and the answer is no. The stack request is
+              named because it is the one tool here that is not about the board,
+              and an operator switching this off is also switching it off. */}
           <SettingRow
             htmlFor="taskboard"
             edited={isEdited("taskboardForRuns")}
@@ -4383,10 +4471,11 @@ export default function SettingsPage() {
               <>
                 A run can read its own task and what is open in its folder,
                 complete its own task, and file a new one for something it
-                should not fix itself. It cannot complete a task it was not
-                given, start anything, or see other folders. Off by default: it
-                writes into this app&rsquo;s own database from an agent nobody
-                is watching
+                should not fix itself. It can also ask you for a stack it needs
+                and wait for your answer; that installs nothing. It cannot
+                complete a task it was not given, start anything, or see other
+                folders. Off by default: it writes into this app&rsquo;s own
+                database from an agent nobody is watching
               </>
             }
           >
@@ -4747,7 +4836,7 @@ export default function SettingsPage() {
           </>
         }
       >
-        <ToolFigures report={tools} error={toolsError} />
+        <ToolFigures report={tools} error={toolsError} onAnswered={loadTools} />
       </Section>
 
       <Section
