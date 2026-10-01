@@ -185,6 +185,41 @@ describe("deleteBranch", () => {
     assert.equal(fs.existsSync(s.slot), false, "its checkout slot was not freed");
   });
 
+  it("deletes a squash-landed branch from the link before the run that landed it", async () => {
+    // `landed_tip` is written on the run that landed, which on a chain is the
+    // owner. Asked from the first link, the check before the claim refused the
+    // branch as unmerged; reading the chain there alone, the check inside the
+    // claim refused it as having changed while it was read.
+    const s = scene("squashed-link");
+    const ownerId = `${s.runId}-owner`;
+    fs.writeFileSync(path.join(s.slot, "shared.txt"), "owner\n");
+    git(s.slot, "commit", "-qam", "the owner's work");
+    git(s.repo, "merge", "-q", "--squash", s.branch);
+    git(s.repo, "commit", "-q", "-m", "land squashed");
+    const tip = git(s.repo, "rev-parse", s.branch).trim();
+    dbMod
+      .db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                           created_at, finished_at, isolation, repo_root, worktree_path,
+                           worktree_branch, worktree_base, worktree_base_branch, continues_run,
+                           landed_at, landed_into, landed_strategy, landed_tip)
+         SELECT ?, folder, prompt, status, budget, max_iterations, iterations,
+                created_at + 1, finished_at, isolation, repo_root, worktree_path,
+                worktree_branch, worktree_base, worktree_base_branch, id,
+                ?, 'main', 'squash', ?
+           FROM runs WHERE id = ?`,
+      )
+      .run(ownerId, Date.now(), tip, s.runId);
+    git(s.repo, "switch", "-q", "other");
+
+    const outcome = await land.deleteBranch(s.runId);
+
+    assert.equal(outcome.ok, true, outcome.ok ? "" : outcome.reason);
+    assert.equal(branchExists(s.repo, s.branch), false);
+    assert.equal(fs.existsSync(s.slot), false, "its checkout slot was not freed");
+  });
+
   it("refuses a branch that gained a commit after it was merged, and changes nothing", async () => {
     const s = scene("moved");
     git(s.repo, "merge", "-q", "--no-ff", "-m", "land", s.branch);
