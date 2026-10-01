@@ -10641,7 +10641,8 @@ export async function startRun(id: string): Promise<void> {
       // Asked of the record rather than of anything the agent said, so a model
       // that calls `request_stack` and then carries on working still parks, and
       // one that only says it needs a tool does not.
-      if (stackWaitOf(id).length > 0) {
+      const asked = stackWaitOf(id);
+      if (asked.length > 0) {
         // `reportedDone`'s trap from the branch below: hydrated from the row,
         // so a break that does not clear it writes a stale DONE.
         reportedDone = false;
@@ -10650,9 +10651,11 @@ export async function startRun(id: string): Promise<void> {
         // so a charged park is reachable only for a run attached before it.
         if (stackWaits < MAX_STACK_WAITS_PER_RUN) iterations -= 1;
         stackWaits += 1;
-        stopReason =
-          "Waiting for a stack this run asked for. It resumes in the same session " +
-          "once the operator installs it and restarts, or declines it.";
+        // The fact and nothing else: the run page's card already says what
+        // the wait means, and the log and the lists need which stack.
+        stopReason = `Asked for ${asked
+          .map((wait) => `${wait.name} (${wait.binaries.join(", ")})`)
+          .join("; ")}.`;
         log(id, stopReason);
         finalStatus = "waiting-for-stack";
         break;

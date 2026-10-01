@@ -422,8 +422,8 @@ function describeRun(
         headline: "Waiting for stack",
         detail: (
           <>
-            It asked for software this install does not have, and carries on in
-            the same session once you install it and restart, or decline it.{" "}
+            It carries on in the same session once you install what it asked
+            for and restart, or decline it.{" "}
             {whileParked(run)}
           </>
         ),
