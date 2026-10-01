@@ -98,15 +98,14 @@ export default function LiveRunsPage() {
     <>
       <h1 className="mb-1 text-xl font-semibold tracking-tight">Live runs</h1>
 
-      {/* Each count goes to the runs list, whose "In flight" band — the first
-          thing on it — holds all three statuses. The list has no filter by
-          status to land on. */}
+      {/* Each count goes to the runs list narrowed to that status, which its
+          "In flight" band asks the route for and says above itself. */}
       <p className="mb-4 flex min-h-5 flex-wrap gap-x-4 text-sm tabular-nums">
         {live.counts !== null &&
           STRIP.map((status) => (
             <Link
               key={status}
-              href="/runs"
+              href={`/runs?status=${status}`}
               className="max-md:inline-flex max-md:min-h-11 max-md:items-center"
             >
               {live.counts?.[status]} {status}
