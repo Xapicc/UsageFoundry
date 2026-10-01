@@ -355,7 +355,7 @@ headless run. That is the design working, not failing.
 > `"deny": ["terraform apply", "terraform destroy"]`.
 
 **Adding this to an install is:** copy the directory into `./stacks/`,
-`docker compose up -d`. Nothing else. `git diff --name-only` over the commit is
+`docker compose restart`. Nothing else. `git diff --name-only` over the commit is
 `stacks/terraform/stack.json` and `stacks/terraform/README.md`, and no file the
 image contains is among them, which is R1's own test.
 
