@@ -42,6 +42,23 @@
 >
 > **Phase 0, the probe, has not been run**, and phases 3 to 5 are untouched.
 
+> **ADDED, 2026-10-01: a run can ask for a stack, and only ask.**
+> Not one of [21-implementation-sketch.md](21-implementation-sketch.md)'s phases:
+> the operator asked for it directly — *"a feature so runs can request new
+> Stacks and a new status for a run that says, waiting for stack"*. A work cycle
+> calls `request_stack` with a name, the binaries it needs, a reason and an
+> optional draft `stack.json`; the run parks as `waiting-for-stack` at the end of
+> that cycle; the operator reads the request on the run page or under Settings →
+> Tools, puts a `stack.json` under `./stacks/<name>/` on the host and restarts,
+> or declines; and the run resumes in the same session, granted the new binaries
+> by the receipts the restart wrote. **Nothing about the carrier moved**:
+> `/etc/uf-stacks` is still a read-only bind, the applier still runs only at
+> boot, and the app writes no declaration — a run's request is untrusted text
+> and the draft is shown, never applied. The reasoning is in
+> `docs/agent/security/stacks.md`'s last paragraph and the lifecycle in
+> `docs/agent/run-lifecycle/waiting-for-stack.md`. The tool rides the run tool
+> list, so it exists only where *Let runs use the taskboard* is on.
+
 ## What is being built
 
 A way to install new tools into UsageFoundry **without modifying the published

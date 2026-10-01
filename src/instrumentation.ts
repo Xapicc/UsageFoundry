@@ -96,7 +96,7 @@ export async function register() {
       console.log(`[usagefoundry] stacks export ${exported.sort().join(", ")} to every agent.`);
     }
 
-    const { backfillTaskSignatures, reconcileOnBoot, shutdownRuns } =
+    const { backfillTaskSignatures, reconcileOnBoot, releaseStackWaits, shutdownRuns } =
       await import("./lib/orchestrator");
 
     // Once, at boot, and idempotent. Without it the relative cost guard is
@@ -228,6 +228,14 @@ export async function register() {
       // blocks come down here whatever its members are doing.
       reconcileBlocksOnBoot();
       reconcileHaltsOnBoot();
+
+      // A run waiting for a stack was waiting for exactly this restart, and the
+      // receipts the applier wrote before `exec` are on disk by now. After the
+      // two workflow reconcilers, so a member of an instance this boot has
+      // halted is stopped there rather than re-queued here, and so the
+      // re-queue meets an instance whose blocks are already in the state the
+      // next advance reads.
+      releaseStackWaits();
 
       // And the schedules, which are the one thing here that would otherwise
       // start an agent *because* the server restarted. Every fire time that

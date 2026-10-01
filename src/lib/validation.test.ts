@@ -347,6 +347,7 @@ describe("buildValidationPrompt", () => {
     folder: "/w/repo",
     createdByRunId: null,
     claimedByRunId: "r-1",
+    claimedByOperator: false,
     completedByRunId: null,
     parentTaskId: null,
     operatorOnly: false,

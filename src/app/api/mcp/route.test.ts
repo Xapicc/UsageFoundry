@@ -152,6 +152,9 @@ test("a work cycle is handed get_my_task, and neither orchestrator subject is", 
     "comment_on_task",
     "add_task_dependency",
     "get_my_task",
+    // The eighth since a run could ask for a stack; the security doc's bound
+    // on a stolen token names all eight and this list is what it is held to.
+    "request_stack",
   ]);
 
   const chatToken = chat.mintCapability({ kind: "chat", chatId: randomUUID() });
@@ -169,6 +172,7 @@ test("a work cycle is handed get_my_task, and neither orchestrator subject is", 
     assert.ok(names.includes("list_tasks"), `${who} still lists the board`);
     assert.ok(!names.includes("get_my_task"), `${who} is not handed a run's view`);
     assert.ok(!names.includes("list_my_tasks"), `${who} is not handed a run's view`);
+    assert.ok(!names.includes("request_stack"), `${who} has no run to park`);
 
     // Refused at the gate rather than reaching the handler: the gate is the
     // same list, so what is not offered is not callable either.
@@ -176,6 +180,43 @@ test("a work cycle is handed get_my_task, and neither orchestrator subject is", 
     assert.equal(asked.isError, true);
     assert.match(asked.text, /is not available/);
   }
+});
+
+test("request_stack records a wait for the token's run and no other", async () => {
+  // The run is named by the token and by nothing in the call: a `runId` in the
+  // arguments would be one run able to park another.
+  const { runId, token } = seedRun(HERE);
+  const other = seedRun(HERE);
+  const { stackWaitOf } = await import("../../../lib/stackRequests");
+
+  const refused = await callTool(token, "request_stack", {
+    name: "rust; rm -rf ~",
+    binaries: ["cargo"],
+    reason: "The task is a Rust crate.",
+  });
+  assert.equal(refused.isError, true);
+  assert.match(refused.text, /not a stack name/);
+  assert.deepEqual(stackWaitOf(runId), []);
+
+  const filed = await callTool(token, "request_stack", {
+    name: "zig-request-test",
+    binaries: ["zig"],
+    reason: "The task is a Zig project.",
+    runId: other.runId,
+  });
+  assert.equal(filed.isError, false, filed.text);
+  assert.match(filed.text, /End this work cycle now/);
+  assert.deepEqual(stackWaitOf(runId).map((w) => w.name), ["zig-request-test"]);
+  assert.deepEqual(stackWaitOf(other.runId), [], "an argument named a run and it was believed");
+
+  const chatToken = chat.mintCapability({ kind: "chat", chatId: randomUUID() });
+  const asked = await callTool(chatToken, "request_stack", {
+    name: "zig-request-test",
+    binaries: ["zig"],
+    reason: "x",
+  });
+  assert.equal(asked.isError, true);
+  assert.match(asked.text, /is not available/);
 });
 
 test("a run reads the whole brief of a task it holds", async () => {

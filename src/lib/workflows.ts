@@ -3065,6 +3065,7 @@ const LIVE_STATUSES: readonly RunStatus[] = [
   "queued",
   "running",
   "paused",
+  "waiting-for-stack",
 ];
 
 /** The widest page `findInstances` will answer with, whatever it was asked for. */
@@ -7715,6 +7716,7 @@ function blockSystemPrompt(
     "  close only those, and a task named in its text but left out is refused.",
     "  A task marked operatorOnly needs the operator and no run may claim it:",
     "  it goes in relatedTaskIds if the brief mentions it, never in taskIds.",
+    "  So does a task with claimedByOperator set: the operator is doing it.",
     "- Runs with no dependsOn link between them start in parallel.",
     "- Emitting nothing is a real answer when there is nothing worth doing — say",
     "  so plainly, and know that any block set to start after this one will be",

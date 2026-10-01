@@ -20,6 +20,8 @@ import { runAgentDTO } from "@/lib/agents";
 import { tasksLinkedToRun } from "@/lib/tasks";
 import { normalizePolicy } from "@/lib/budget";
 import { auditMutation } from "../../../../lib/requestLog";
+import { readReceipts } from "../../../../lib/stacks";
+import { stackRequestDTOs, stackRequestsOfRun } from "../../../../lib/stackRequests";
 import { jsonMaybeGzipped } from "../../../../lib/http";
 
 export const runtime = "nodejs";
@@ -62,6 +64,18 @@ export async function GET(req: Request, ctx: Ctx) {
   // dashboard is already running rather than starting a second.
   const pruned = await pruneSavings({ runId: id });
 
+  // Only while the run waits, and only what it waits on: the card is the one
+  // reader, and a request this run asked for and was answered on is in its log.
+  const stackRequests =
+    run.status === "waiting-for-stack"
+      ? await stackRequestDTOs(
+          stackRequestsOfRun(id).filter((request) =>
+            request.runs.some((attached) => attached.runId === id && attached.releasedAt === null),
+          ),
+          readReceipts().receipts,
+        )
+      : undefined;
+
   // Gzipped: 14,170 bytes to 3,717, measured — the row carries the agent's
   // whole system prompt and the normalised policy, and this is the three-second
   // poll every open run page runs. The 404 above stays plain.
@@ -98,6 +112,7 @@ export async function GET(req: Request, ctx: Ctx) {
       // than as a link to nothing. On the run's own page only — the runs list
       // draws no link and would pay a query a row for one.
       tasks: tasksLinkedToRun(id),
+      stackRequests,
     },
     running: isRunning(id),
     // Reported alongside spent_usd, never merged into it. The two are

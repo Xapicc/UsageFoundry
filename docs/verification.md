@@ -27,12 +27,12 @@ measurement under *Verified* and cut the item down to what is still open.
 |---|---|--:|--:|
 | Metering and cost | [metering-and-cost.md](verification/metering-and-cost.md) | 23 | 12 |
 | Budgets and guards | [budgets-and-guards.md](verification/budgets-and-guards.md) | 7 | 4 |
-| Run lifecycle | [run-lifecycle.md](verification/run-lifecycle.md) | 22 | 29 |
+| Run lifecycle | [run-lifecycle.md](verification/run-lifecycle.md) | 23 | 30 |
 | Context control | [context-control-pruning.md](verification/context-control-pruning.md) — pruning, compaction and the context ceiling | 21 | 12 |
 | Context control | [context-control-intake-filter.md](verification/context-control-intake-filter.md) — the intake filter and its ledger | 8 | 4 |
 | Context control | [context-control-occupancy-and-composition.md](verification/context-control-occupancy-and-composition.md) — the occupancy and composition series | 8 | 5 |
 | Orchestrator chat | [orchestrator-chat.md](verification/orchestrator-chat.md) | 12 | 22 |
-| Taskboard | [taskboard-board-and-tools.md](verification/taskboard-board-and-tools.md) — the board, its MCP tools and validation | 11 | 5 |
+| Taskboard | [taskboard-board-and-tools.md](verification/taskboard-board-and-tools.md) — the board, its MCP tools and validation | 12 | 6 |
 | Taskboard | [taskboard-comments.md](verification/taskboard-comments.md) — task comments and threads | 7 | 2 |
 | Taskboard | [taskboard-dependencies.md](verification/taskboard-dependencies.md) — task dependencies and their drawing | 5 | 4 |
 | Workflows and schedules | [workflows-and-schedules-loop-sections.md](verification/workflows-and-schedules-loop-sections.md) — a loop's repeated section: frames, marking, passes and pick-ups | 18 | 4 |
@@ -58,4 +58,4 @@ measurement under *Verified* and cut the item down to what is still open.
 | Interface | [interface-narrow-viewports.md](verification/interface-narrow-viewports.md) — pages at 390px, layout sweeps and smoke-pages | 15 | 9 |
 | Interface | [interface-canvases.md](verification/interface-canvases.md) — the graph canvases, touched map and replay | 5 | 2 |
 | Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads | 13 | 10 |
-| **Total** | | **383** | **243** |
+| **Total** | | **385** | **245** |

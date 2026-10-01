@@ -39,6 +39,7 @@ import {
   fmtUSD,
   pollFailureMessage,
   shortPath,
+  STATUS_LABEL,
 } from "@/lib/format";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonRow } from "@/components/ui/Button";
@@ -54,6 +55,7 @@ import {
   type SegmentedOption,
 } from "@/components/ui/SegmentedControl";
 import { StatusMark } from "@/components/StatusMark";
+import { StackRequestDetail } from "@/components/StackRequestDetail";
 import { ContextOccupancy } from "@/components/ContextOccupancy";
 import { cycleOutputs } from "@/lib/cycles";
 import {
@@ -89,13 +91,25 @@ import { RunTasks } from "@/components/RunTasks";
  *
  * `waiting` is one of them. It holds no folder, but it is a run that has not
  * happened yet rather than one that is over, so the page keeps its Stop button
- * and its live log.
+ * and its live log. `waiting-for-stack` will not spend again until a person
+ * answers it, and is here for the same reason: parked is not over, and the poll
+ * is what sees it released.
  */
 const ACTIVE_STATUSES: ReadonlySet<RunDTO["status"]> = new Set([
   "running",
   "queued",
   "paused",
   "waiting",
+  "waiting-for-stack",
+]);
+
+/**
+ * The two parks: no process, its checkout kept, its folder yielded. Stopping
+ * one is giving up on a run that would otherwise carry on, and the copy says so.
+ */
+const PARKED_STATUSES: ReadonlySet<RunDTO["status"]> = new Set([
+  "paused",
+  "waiting-for-stack",
 ]);
 
 /**
@@ -270,6 +284,31 @@ function grantedCyclesNote(granted: number): string {
   return `includes ${granted} granted by the check on its task`;
 }
 
+/**
+ * What a parked run holds meanwhile, the sentence both parks end on.
+ *
+ * Not "still holding" its folder, which is what this said and the opposite of
+ * the rule: a parked run keeps its worktree slot and yields its folder, so a
+ * run started meanwhile works there, and telling the operator to stop this one
+ * — terminal, and its place lost — freed a folder that was already free.
+ */
+function whileParked(run: RunDTO): ReactNode {
+  return run.isolation === "worktree" && run.worktree_branch ? (
+    <>
+      It keeps its checkout on <span className="mono">{run.worktree_branch}</span>{" "}
+      meanwhile.
+    </>
+  ) : (
+    <>
+      Other runs can use{" "}
+      <span className="mono" title={run.work_dir ?? run.folder}>
+        {run.relPath || run.mountLabel || shortPath(run.folder, 2)}
+      </span>{" "}
+      meanwhile; it waits for any still there to finish.
+    </>
+  );
+}
+
 function describeRun(
   run: RunDTO,
   ctx: {
@@ -370,25 +409,22 @@ function describeRun(
             ) : (
               "It tries again when the window rolls over."
             )}{" "}
-            {/* Not "still holding" its folder, which is what this said and the
-                opposite of the rule: a parked run keeps its worktree slot and
-                yields its folder, so a run started meanwhile works there, and
-                telling the operator to stop this one — terminal, and its place
-                lost — freed a folder that was already free. */}
-            {run.isolation === "worktree" && run.worktree_branch ? (
-              <>
-                It keeps its checkout on{" "}
-                <span className="mono">{run.worktree_branch}</span> meanwhile.
-              </>
-            ) : (
-              <>
-                Other runs can use{" "}
-                <span className="mono" title={run.work_dir ?? run.folder}>
-                  {run.relPath || run.mountLabel || shortPath(run.folder, 2)}
-                </span>{" "}
-                meanwhile; it waits for any still there to finish.
-              </>
-            )}
+            {whileParked(run)}
+          </>
+        ),
+      };
+
+    case "waiting-for-stack":
+      // No clock and no "tries again": nothing on this side moves it, and the
+      // requests drawn under this card say what will.
+      return {
+        tone: "warn",
+        headline: "Waiting for stack",
+        detail: (
+          <>
+            It carries on in the same session once you install what it asked
+            for and restart, or decline it.{" "}
+            {whileParked(run)}
           </>
         ),
       };
@@ -854,6 +890,8 @@ export default function RunDetail({
   // the accent tone as a statement about the run, and a press that may or may
   // not have landed is neither.
   const [actionError, setActionError] = useState<string | null>(null);
+  // Which stack request a Decline is in flight for, so only its button spins.
+  const [decliningStack, setDecliningStack] = useState<string | null>(null);
   // The reopen form. Held as strings because blank is meaningful — it is what
   // `normalizePolicy` reads as "no limit" — and a number input cannot hold it.
   const [reopenOpen, setReopenOpen] = useState(false);
@@ -1195,7 +1233,7 @@ export default function RunDetail({
       res.data.outcome === "signalled"
         ? "Stopping the current work cycle…"
         : res.data.outcome === "cancelled"
-          ? run?.status === "paused"
+          ? run && PARKED_STATUSES.has(run.status)
             ? "Stopped — it will not resume."
             : "Stopping — it will not start another work cycle."
           : "This run is not active.",
@@ -1228,6 +1266,34 @@ export default function RunDetail({
         : res.data.outcome === "not-owner"
           ? "This server does not own the data directory, so it cannot start anything. See the notice above."
           : "This run is not waiting.",
+    );
+  }
+
+  /**
+   * Say no to a stack this run asked for.
+   *
+   * The route releases the waiting runs before it answers, so the next poll
+   * normally shows this one queued. `declined: false` is a 200 rather than a
+   * failure — somebody answered it first, from here or from Settings — and is
+   * said as that, not as an error.
+   */
+  async function declineStack(requestId: string) {
+    setActionError(null);
+    setDecliningStack(requestId);
+    const res = await jsonRequest<{ declined?: boolean }>(
+      `/api/stack-requests/${encodeURIComponent(requestId)}/decline`,
+      { method: "POST" },
+    );
+    setDecliningStack(null);
+    if (!res.ok) {
+      setStopNote(null);
+      setActionError(actionFailureMessage(res, "Could not decline that stack."));
+      return;
+    }
+    setStopNote(
+      res.data.declined
+        ? "Declined — it rejoins the queue and is told to carry on without it."
+        : "That request was already answered.",
     );
   }
 
@@ -1432,7 +1498,7 @@ export default function RunDetail({
       <h1 className="mb-1 flex flex-wrap items-center gap-2 text-xl font-semibold tracking-tight">
         Run <span className="mono text-lg">{run.id.slice(0, 8)}</span>
         <StatusMark status={run.status} />
-        <Badge tone={STATUS_TONE[run.status]}>{run.status}</Badge>
+        <Badge tone={STATUS_TONE[run.status]}>{STATUS_LABEL[run.status]}</Badge>
         {setAsideAt && <Badge>set aside</Badge>}
       </h1>
       <p className="mb-5 max-w-[80ch] text-sm text-ink-muted">
@@ -1575,6 +1641,22 @@ export default function RunDetail({
             {run.stop_reason && (
               <p className="mt-1 text-xs text-ink-muted">{run.stop_reason}</p>
             )}
+            {/* In the state block rather than a block of its own: what the run
+                waits on is its state, and region 1 is where the audit puts
+                everything the headline needs said under it. */}
+            {run.status === "waiting-for-stack" && run.stackRequests && (
+              <div className="mt-3 space-y-4">
+                {run.stackRequests.map((request) => (
+                  <StackRequestDetail
+                    key={request.id}
+                    request={request}
+                    runId={id}
+                    declining={decliningStack === request.id}
+                    onDecline={() => void declineStack(request.id)}
+                  />
+                ))}
+              </div>
+            )}
             {/* The agent's own account of what stopped it, verbatim and clipped
                 only at the write. Gated on the column rather than on the status:
                 it is cleared by every other ending and by a pick-up, so its
@@ -1621,10 +1703,10 @@ export default function RunDetail({
                 reachable state**, and the pick-up is the one that gets it: a run
                 still working has none, because the only thing to do to it is stop
                 it. `Try now` never becomes a second one — it and the pick-up
-                cannot co-render, `paused` being the one status that is not
-                pickupable — and it is deliberately the quieter of the two, since
-                the run rejoins the queue on its own and pressing it does not
-                bypass the guard that parked it. */}
+                cannot co-render, because it is offered only on `paused` and
+                neither park is pickupable — and it is deliberately the quieter
+                of the two, since the run rejoins the queue on its own and
+                pressing it does not bypass the guard that parked it. */}
             <ButtonRow className="mt-3">
               {run.status === "paused" && (
                 <Button variant="secondary" onClick={tryNow}>
@@ -1636,7 +1718,7 @@ export default function RunDetail({
               )}
               {active && (
                 <Button variant="danger" onClick={stop}>
-                  {run.status === "paused" ? "Give up" : "Stop run"}
+                  {PARKED_STATUSES.has(run.status) ? "Give up" : "Stop run"}
                 </Button>
               )}
               {/* Last, and `ghost`, because this is the one control here that does
@@ -1952,7 +2034,7 @@ export default function RunDetail({
                     <div className={SUB}>{grantedCyclesNote(cyclesGranted)}</div>
                   )}
                   <div className={SUB}>
-                    {run.status === "paused"
+                    {PARKED_STATUSES.has(run.status)
                       ? "parked between cycles"
                       : (cycleInFlight ?? (active ? "starting" : "finished"))}
                   </div>

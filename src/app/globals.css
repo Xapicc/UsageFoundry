@@ -689,15 +689,15 @@
    an em inside it: one column wide here, narrower wherever the reader's face
    answers the block range at the mono advance (0.602em was measured on one),
    and never wider. That is what keeps `StatusMark`'s column from stepping
-   sideways by status, which is the property its nine characters were picked
+   sideways by status, which is the property its ten characters were picked
    for, and what stops the word beside a `Spinner` moving every tick.
 
    No keyframe fills forwards, so `prefers-reduced-motion` — which flattens the
    duration to 0.01ms in @layer base and must not be defeated — freezes it on
    the base value, `▛`. A block with a corner bitten out of it still reads "not
    finished", which is the property `Log.tsx` records for drawing a *broken*
-   ring rather than a full one, and it is not `o`, `=`, `+`, `!`, `#`, `/`, `x`
-   or `>`.
+   ring rather than a full one, and it is not `o`, `=`, `?`, `+`, `!`, `#`, `/`,
+   `x` or `>`.
 
    150ms a frame, because a four-step rotation any slower reads as flipping
    rather than turning. Deliberately not one of the --motion-* tokens: those

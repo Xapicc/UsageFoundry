@@ -60,9 +60,12 @@ is a `PATCH` and the sentence that comes back is rendered verbatim, because
 and a mirrored copy of the edge table in the browser is a second set to keep in
 step — confidently wrong about what a press does, from the moment one of them
 changes. What the page *does* decide is which buttons to draw, and that is the
-smaller claim: the operator's own edges, with **no Claim button among them**,
-because a claim names the run that will hold the task and the operator is not a
-run. A row that moved between the poll that drew it and the press against it is
+smaller claim: the operator's own edges. Claim is among them on an **open** row
+only — the operator holding the task themselves, in Release's slot so an open row
+is no wider than a claimed one — and never on a claimed row, because taking a
+run's task is a release and then a claim, two presses the operator sees. The
+holder cell draws "Held by you" for the operator's claim, since a claimed row
+naming no holder reads as a claim nobody is working. A row that moved between the poll that drew it and the press against it is
 exactly when the server's refusal matters, so it is shown rather than swallowed
 and the board is re-read either way. The in-flight state is keyed on the *edge*
 (`id:status`) and not on the row: keyed on the row, pressing Done lit Release

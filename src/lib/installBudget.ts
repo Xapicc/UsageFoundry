@@ -55,7 +55,8 @@ function windowStart(now: number): number {
  * bounds it.** A row that has nothing but a start is inside the window by
  * definition; one that stopped spending has to name when.
  *
- * - A run: `finished_at`, or `paused_at` while the row is still `paused`. A
+ * - A run: `finished_at`, or `paused_at` while the row is still parked —
+ *   `paused`, or `waiting-for-stack`, which writes the same open park. A
  *   parked run deliberately has no `finished_at` — it is not finished, it is
  *   waiting for the 5-hour window and keeps its folder and session — so
  *   bounding on that column alone counted its whole spend for ever. Three runs
@@ -100,7 +101,8 @@ export function installSpend(now = Date.now()): InstallProgress {
          FROM (SELECT id, status, spent_usd AS spent, spent_usd_est AS est,
                       active_started_at AS cycleStartedAt,
                       COALESCE(finished_at,
-                               CASE WHEN status = 'paused' THEN paused_at END)
+                               CASE WHEN status IN ('paused', 'waiting-for-stack')
+                                    THEN paused_at END)
                         AS stoppedAt
                  FROM runs)
         WHERE stoppedAt IS NULL OR stoppedAt >= ?`,

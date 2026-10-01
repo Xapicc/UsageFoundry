@@ -231,18 +231,24 @@ test("a run must claim before it can complete", () => {
   assert.match(refusal!, /[Cc]laim/);
 });
 
-test("a claim names the run that holds it", () => {
+test("a claim names its holder: a run, or the operator for themselves", () => {
+  // A claim naming no run is the operator's own, and nobody else's: from any
+  // other actor it would record a holder that does not exist.
   for (const claimRunId of [undefined, null, "", "   "]) {
-    assert.ok(
-      taskTransitionRefusal({
+    for (const [name, actor] of Object.entries(ACTORS)) {
+      const refusal = taskTransitionRefusal({
         from: "open",
         to: "claimed",
-        actor: { kind: "operator" },
+        actor,
         claimedByRunId: null,
         claimRunId,
-      }),
-      `a claim of ${JSON.stringify(claimRunId)} should be refused`,
-    );
+      });
+      if (name === "operator") {
+        assert.equal(refusal, null, `the operator claims for themselves with ${JSON.stringify(claimRunId)}`);
+      } else {
+        assert.match(refusal ?? "", /name the run/, `${name} claimed with ${JSON.stringify(claimRunId)}`);
+      }
+    }
   }
 
   // The operator and a chat turn may claim on a run's behalf — a proposal that
@@ -731,9 +737,9 @@ test("an id that is not on the board is refused, and a closed task is not", () =
   // dropped instead of refusing produces a proposal that said "for the
   // flaky-auth task" and is bit-for-bit one that named none.
   const board = new Map([
-    ["t-open", { title: "Open one", status: "open" as const, operatorOnly: false, needsFrontier: false }],
-    ["t-done", { title: "Closed one", status: "done" as const, operatorOnly: false, needsFrontier: false }],
-    ["t-dropped", { title: "Dropped one", status: "dropped" as const, operatorOnly: false, needsFrontier: false }],
+    ["t-open", { title: "Open one", status: "open" as const, operatorOnly: false, needsFrontier: false, claimedByOperator: false }],
+    ["t-done", { title: "Closed one", status: "done" as const, operatorOnly: false, needsFrontier: false, claimedByOperator: false }],
+    ["t-dropped", { title: "Dropped one", status: "dropped" as const, operatorOnly: false, needsFrontier: false, claimedByOperator: false }],
   ]);
 
   assert.equal(taskRefusal("t-open", board), null);
@@ -843,10 +849,10 @@ const DONE_ID = "dfa89779-71cd-41d5-bae3-7c417807a96d";
 const SHORT_ID = "0f146cc6-1c9a-4a8e-9d0e-5b2f1f2c0e11";
 
 const BRIEFED = new Map([
-  [OPEN_ID, { title: "The merge tool opens with no conflicts in it", status: "open" as const, operatorOnly: false, needsFrontier: false }],
-  [CLAIMED_ID, { title: "Shell.run deadlocks forever on a loud child", status: "claimed" as const, operatorOnly: false, needsFrontier: false }],
-  [DONE_ID, { title: "git diff on a conflicted repo traps the app", status: "done" as const, operatorOnly: false, needsFrontier: false }],
-  [SHORT_ID, { title: "Fix the README", status: "open" as const, operatorOnly: false, needsFrontier: false }],
+  [OPEN_ID, { title: "The merge tool opens with no conflicts in it", status: "open" as const, operatorOnly: false, needsFrontier: false, claimedByOperator: false }],
+  [CLAIMED_ID, { title: "Shell.run deadlocks forever on a loud child", status: "claimed" as const, operatorOnly: false, needsFrontier: false, claimedByOperator: false }],
+  [DONE_ID, { title: "git diff on a conflicted repo traps the app", status: "done" as const, operatorOnly: false, needsFrontier: false, claimedByOperator: false }],
+  [SHORT_ID, { title: "Fix the README", status: "open" as const, operatorOnly: false, needsFrontier: false, claimedByOperator: false }],
 ]);
 
 test("a task is named by its whole id, its eight-character prefix, or its whole title", () => {
@@ -910,7 +916,7 @@ test("the task link fields are refused by name when they cannot mean what was se
   const tooMany = Array.from({ length: MAX_RUN_TASKS + 1 }, () => OPEN_ID).map(
     (id, n) => `${id.slice(0, -2)}${String(n).padStart(2, "0")}`,
   );
-  const board = new Map(tooMany.map((id) => [id, { title: id, status: "open" as const, operatorOnly: false, needsFrontier: false }]));
+  const board = new Map(tooMany.map((id) => [id, { title: id, status: "open" as const, operatorOnly: false, needsFrontier: false, claimedByOperator: false }]));
   const capped = readTaskLinks({ taskIds: tooMany }, "", board);
   assert.match(capped.ok ? "" : capped.reason, new RegExp(`at most ${MAX_RUN_TASKS}`));
 
@@ -1042,7 +1048,12 @@ test("the operator-only matrix: every actor, set and clear, at a create and at a
     chat: { kind: "chat" },
     block: { kind: "block" },
   };
-  const release = { from: "claimed", to: "open", claimedByRunId: HOLDER } as const;
+  const release = {
+    from: "claimed",
+    to: "open",
+    claimedByRunId: HOLDER,
+    claimedByOperator: false,
+  } as const;
 
   const cases: Array<{
     what: string;
@@ -1099,7 +1110,7 @@ test("the operator-only matrix: every actor, set and clear, at a create and at a
   );
 });
 
-test("nothing claims an operator-only task, and the refusal names the flag", () => {
+test("no run claims an operator-only task, and the operator may for themselves", () => {
   for (const [name, actor] of Object.entries(ACTORS)) {
     const refusal = taskTransitionRefusal({
       from: "open",
@@ -1109,9 +1120,21 @@ test("nothing claims an operator-only task, and the refusal names the flag", () 
       claimRunId: HOLDER,
       operatorOnly: true,
     });
-    assert.match(refusal ?? "", /operator-only/, `${name} claimed an operator-only task`);
-    assert.match(refusal ?? "", /operator clears/, "and says who can undo it");
+    assert.match(refusal ?? "", /operator-only/, `${name} claimed an operator-only task for a run`);
+    assert.match(refusal ?? "", /claim it for themselves/, "and says who may claim it");
+    assert.match(refusal ?? "", /clear the mark/, "and who can undo it");
   }
+  assert.equal(
+    taskTransitionRefusal({
+      from: "open",
+      to: "claimed",
+      actor: { kind: "operator" },
+      claimedByRunId: null,
+      operatorOnly: true,
+    }),
+    null,
+    "the operator claims an operator-only task for themselves",
+  );
   // Every other edge is untouched by the flag: an operator-only task is still
   // open, and the operator still closes and drops it the ordinary way.
   for (const to of ["done", "dropped"] as const) {
@@ -1126,6 +1149,136 @@ test("nothing claims an operator-only task, and the refusal names the flag", () 
       null,
     );
   }
+});
+
+/* ------------------------------------------------------------------ */
+/* The operator holding a task themselves                              */
+/* ------------------------------------------------------------------ */
+
+/** A task the operator has claimed for themselves, through the real door. */
+function heldByOperator(over: Record<string, unknown> = {}): Task {
+  const task = file(over);
+  const claimed = updateTask(task.id, { status: "claimed" }, { kind: "operator" });
+  if (!claimed.ok) throw new Error(`fixture claim refused: ${claimed.error}`);
+  return claimed.task;
+}
+
+test("the operator claims an open task, operator-only included, and holds it alone", () => {
+  for (const operatorOnly of [false, true]) {
+    const task = heldByOperator({ operatorOnly });
+    assert.equal(task.status, "claimed");
+    assert.equal(task.claimedByOperator, true);
+    // Exactly one holder: no sentinel run id beside the operator's claim.
+    assert.equal(task.claimedByRunId, null);
+    assert.equal(task.operatorOnly, operatorOnly, "the claim leaves the mark alone");
+    assert.equal(taskDTO(task).claimedByOperator, true);
+  }
+  // A run's claim is still a run's: the operator's flag is not set beside it.
+  assert.equal(claimedBy(HOLDER).claimedByOperator, false);
+});
+
+test("nothing but the operator moves a task the operator holds, and the refusal says so", () => {
+  const others: Record<string, TaskActor> = {
+    run: { kind: "run", runId: HOLDER },
+    chat: { kind: "chat" },
+    block: { kind: "block" },
+  };
+  for (const [name, actor] of Object.entries(others)) {
+    for (const to of ["claimed", "open", "done", "dropped"] as const) {
+      const task = heldByOperator();
+      const before = getTask(task.id)!;
+      const moved = updateTask(task.id, { status: to }, actor);
+      assert.equal(moved.ok, false, `${name} moved the operator's task to ${to}`);
+      // `claimed` is a restatement here, which every other row lets through as
+      // a no-op; against the operator's claim it is a run asking to hold it.
+      assert.match(moved.ok ? "" : moved.error, /the operator holds it/, `${name} -> ${to}`);
+      assert.doesNotMatch(moved.ok ? "" : moved.error, /nobody/);
+      assert.deepEqual(getTask(task.id), before, "and nothing is written");
+    }
+  }
+  // `release_task` asks the same rule, so a run's release says the same.
+  const task = heldByOperator();
+  for (const operatorOnly of [false, true]) {
+    const released = releaseTask(task.id, HOLDER, { reason: "not mine", operatorOnly });
+    assert.equal(released.ok, false);
+    assert.match(released.ok ? "" : released.error, /the operator holds it/);
+  }
+  assert.equal(listTaskComments(task.id, 10).total, 0);
+});
+
+test("the operator's release, close and drop take their own claim off", () => {
+  for (const to of ["open", "done", "dropped"] as const) {
+    const task = heldByOperator();
+    const moved = updateTask(task.id, { status: to }, { kind: "operator" });
+    assert.equal(moved.ok, true, moved.ok ? "" : moved.error);
+    assert.equal(moved.ok && moved.task.status, to);
+    assert.equal(moved.ok && moved.task.claimedByOperator, false, `still held after ${to}`);
+    assert.equal(moved.ok && moved.task.claimedByRunId, null);
+    assert.equal(moved.ok && moved.task.completedByRunId, null, "a person is not a run");
+  }
+  // Released, it is an ordinary open task a run may claim.
+  const task = heldByOperator();
+  updateTask(task.id, { status: "open" }, { kind: "operator" });
+  const claimed = updateTask(task.id, { status: "claimed" }, { kind: "run", runId: HOLDER });
+  assert.equal(claimed.ok && claimed.task.claimedByRunId, HOLDER);
+  assert.equal(claimed.ok && claimed.task.claimedByOperator, false);
+});
+
+test("the operator takes a run's task in two presses, never one", () => {
+  const task = claimedBy(HOLDER);
+  const restated = updateTask(task.id, { status: "claimed" }, { kind: "operator" });
+  // `claimed → claimed` is not a move, so the run still holds it.
+  assert.equal(restated.ok && restated.task.claimedByRunId, HOLDER);
+  assert.equal(restated.ok && restated.task.claimedByOperator, false);
+
+  updateTask(task.id, { status: "open" }, { kind: "operator" });
+  const taken = updateTask(task.id, { status: "claimed" }, { kind: "operator" });
+  assert.equal(taken.ok && taken.task.claimedByRunId, null);
+  assert.equal(taken.ok && taken.task.claimedByOperator, true);
+});
+
+test("a brief may name a task the operator holds as context and never as work", () => {
+  const HELD = "0dd0beef-1111-4222-8333-444455556666";
+  const board = new Map([
+    ...BRIEFED,
+    [HELD, { title: "Rotate the signing key by hand today", status: "claimed" as const, operatorOnly: false, needsFrontier: false, claimedByOperator: true }],
+  ]);
+  const brief = "Ship the release notes. The key is “Rotate the signing key by hand today”.";
+
+  for (const opts of [{}, { localRun: true }]) {
+    const asWork = readTaskLinks({ taskIds: [HELD] }, brief, board, opts);
+    assert.equal(asWork.ok, false);
+    assert.match(asWork.ok ? "" : asWork.reason, /held by the operator/);
+    assert.match(asWork.ok ? "" : asWork.reason, /relatedTaskIds/);
+  }
+  assert.deepEqual(readTaskLinks({ relatedTaskIds: [HELD] }, brief, board), {
+    ok: true,
+    taskIds: [],
+  });
+  assert.equal(readTaskLinks({}, brief, board).ok, false, "named and in neither list");
+});
+
+test("a run started for a task the operator then claimed logs who holds it", () => {
+  const run = seedRun("run-approved-before-the-operator-claimed");
+  const task = file({ title: "Something the operator took on" });
+  recordRunTasks(run, [task.id]);
+  updateTask(task.id, { status: "claimed" }, { kind: "operator" });
+
+  assert.doesNotThrow(() => claimTasksForRun(run));
+
+  const row = getTask(task.id)!;
+  assert.equal(row.claimedByOperator, true, "the operator keeps it");
+  assert.equal(row.claimedByRunId, null);
+  const lines = (
+    db()
+      .prepare("SELECT payload FROM run_events WHERE run_id = ? AND kind = 'log'")
+      .all(run) as Array<{ payload: string }>
+  ).map((entry) => String(JSON.parse(entry.payload).message));
+  assert.ok(
+    lines.some((line) => /the operator holds it/.test(line)),
+    `the run's log names the operator: ${JSON.stringify(lines)}`,
+  );
+  assert.ok(!lines.some((line) => /nobody/.test(line)), JSON.stringify(lines));
 });
 
 test("the flag is a boolean at both doors, and absent is agent work", () => {
@@ -1218,7 +1371,7 @@ test("a needs-frontier task is refused for a local run and allowed for any other
   const HARD = "c0ffee00-2222-4222-8333-444455556666";
   const board = new Map([
     ...BRIEFED,
-    [HARD, { title: "Untangle the rename bookkeeping", status: "open" as const, operatorOnly: false, needsFrontier: true }],
+    [HARD, { title: "Untangle the rename bookkeeping", status: "open" as const, operatorOnly: false, needsFrontier: true, claimedByOperator: false }],
   ]);
   const brief = "Do “Untangle the rename bookkeeping”.";
   const local = readTaskLinks({ taskIds: [HARD] }, brief, board, { localRun: true });
@@ -1244,7 +1397,7 @@ test("a rejected run's claim or tick is reopened, and nobody else's", () => {
     status: TaskStatus,
     claimedByRunId: string | null,
     completedByRunId: string | null,
-  ) => ({ status, claimedByRunId, completedByRunId });
+  ) => ({ status, claimedByRunId, claimedByOperator: false, completedByRunId });
   assert.deepEqual(rejectedWorkReopen(task("claimed", "run-bad", null), rejected), {
     reopen: true,
   });
@@ -1253,6 +1406,7 @@ test("a rejected run's claim or tick is reopened, and nobody else's", () => {
   });
   for (const [t, why] of [
     [task("claimed", "run-other", null), /another run holds it/],
+    [{ ...task("claimed", null, null), claimedByOperator: true }, /the operator holds it/],
     [task("done", null, "run-other"), /closed by the operator or by another run/],
     [task("done", null, null), /closed by the operator or by another run/],
     [task("dropped", null, null), /the operator dropped it/],
@@ -1275,7 +1429,7 @@ test("a brief may name an operator-only task as context and never as work", () =
   const RESERVED = "c0ffee00-1111-4222-8333-444455556666";
   const board = new Map([
     ...BRIEFED,
-    [RESERVED, { title: "Notarise the macOS installer by hand", status: "open" as const, operatorOnly: true, needsFrontier: false }],
+    [RESERVED, { title: "Notarise the macOS installer by hand", status: "open" as const, operatorOnly: true, needsFrontier: false, claimedByOperator: false }],
   ]);
   const brief = "Build the Linux half. The macOS half is “Notarise the macOS installer by hand”.";
 

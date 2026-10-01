@@ -288,10 +288,20 @@ export default function TaskDetail({
           {task.operatorOnly && <Badge tone="neutral">operator only</Badge>}
           {task.needsFrontier && <Badge tone="warn">needs frontier</Badge>}
         </h1>
-        {/* The operator's own rows of the edge table, with no Claim among them:
-            a claim names the run that will hold the task, and the operator is
-            not a run. */}
+        {/* The operator's own rows of the edge table. Claim is the operator
+            holding the task themselves, offered on an open task only, the
+            operator-only ones included: a run's claim is released first and
+            claimed second, never taken over in one press. */}
         <ButtonRow>
+          {task.status === "open" && (
+            <Button
+              variant="ghost"
+              onClick={() => void move("claimed", "claim")}
+              busy={moving === "claimed"}
+            >
+              Claim
+            </Button>
+          )}
           {task.status === "claimed" && (
             <Button
               variant="ghost"
@@ -410,6 +420,11 @@ export default function TaskDetail({
           )}
           {task.claimedByRunId && (
             <RunLine label="Held by run" runId={task.claimedByRunId} />
+          )}
+          {task.claimedByOperator && (
+            <div>
+              <span className="text-ink-faint">Held by</span> you
+            </div>
           )}
           {task.completedByRunId && (
             <RunLine label="Closed by run" runId={task.completedByRunId} />

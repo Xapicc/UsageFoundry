@@ -111,6 +111,7 @@ import {
   currentSnapshot,
   DEPENDENCY_EDGES,
   describeFolder,
+  emitRunEvent,
   getRun,
   listRuns,
   providerRecordsSpend,
@@ -131,6 +132,12 @@ import {
 import { mountById } from "../../../lib/config";
 import { fmtUSD } from "../../../lib/format";
 import { isJsonObject } from "../../../lib/http";
+import { readReceipts } from "../../../lib/stacks";
+import {
+  checkStackDraft,
+  normalizeStackRequest,
+  recordStackRequest,
+} from "../../../lib/stackRequests";
 import { auditMutation, sourceAddress } from "../../../lib/requestLog";
 import { opsLog } from "../../../lib/ops";
 
@@ -387,9 +394,10 @@ const SHARED_TOOLS = [
           enum: ["open", "claimed", "done", "dropped"],
           description:
             "Only tasks in this state. Omit for the whole board. 'open' is " +
-            "what is waiting for somebody, 'claimed' is what a run already " +
-            "holds — proposing a second run for one of those is how two " +
-            "agents end up with the same brief.",
+            "what is waiting for somebody, 'claimed' is what somebody already " +
+            "holds — a run, or the operator doing it themselves " +
+            "(claimedByOperator) — and proposing a run for one of those is how " +
+            "two workers end up with the same brief.",
         },
         mountId: {
           type: "string",
@@ -484,7 +492,7 @@ const SHARED_TOOLS = [
 /**
  * Everything a work cycle gets, and the whole of it.
  *
- * **Seven tools, and what is absent is the design.** A run does not get
+ * **Eight tools, and what is absent is the design.** A run does not get
  * `SHARED_TOOLS`: not `list_runs`, not `get_run_diff`, not `list_folders`, and
  * deliberately not `list_tasks` or `get_task` — a work cycle is an unattended
  * agent that was pointed at one folder and given one brief, and the whole
@@ -492,8 +500,16 @@ const SHARED_TOOLS = [
  * is the narrower question it can actually answer from: what am I holding, and
  * what is already written down where I am working.
  *
- * Nothing here starts a run, approves anything, reads another run's work or
- * moves a task this run does not hold. The one rule that needs enforcing rather
+ * Nothing here starts a run, approves anything, installs anything, reads
+ * another run's diff, log or transcript, or moves a task this run does not
+ * hold. What the two readers return beyond this run's own tasks is the open
+ * tasks in its folder and every note on them, which includes notes other runs
+ * wrote — so a run reads what any run in its folder could, and no more. Six
+ * write: `complete_task` and `release_task` move only a task this run holds;
+ * `create_task`, `comment_on_task` and `add_task_dependency` write onto the
+ * board beyond it, each for the reason given below; and `request_stack` files a
+ * request for the operator and parks this run, and no other, at its next cycle
+ * boundary. The one rule that needs enforcing rather
  * than describing — a run completes only what it holds — is enforced in
  * `tasks.ts` against the row's own `claimed_by_run_id`, compared with the run id
  * off **the capability token**. No tool below takes a run id, and that is not an
@@ -533,6 +549,18 @@ const SHARED_TOOLS = [
  * call to the tool a run calls before each `complete_task`, `release_task` and
  * `create_task`; a separate door is read once. It refuses "not yours" and "not
  * there" in one sentence, so it cannot be used to probe the board for ids.
+ *
+ * `request_stack` is the eighth and the only one that is not about the board.
+ * It is here rather than on a door of its own because this is the door a work
+ * cycle already has, and so it inherits `taskboardForRuns`' gate: on an install
+ * with the board off a run cannot ask for a stack and keeps the two answers it
+ * had. What it writes is text the operator reads and a wait for the run that
+ * made it — it installs nothing, writes no declaration and starts no applier,
+ * because a stack is software the operator chose and the choice is what the
+ * mechanism exists to keep reviewable (`docs/agent/security/stacks.md`). The
+ * worst a misdirected or stolen call does is park the token's own run until the
+ * operator answers, and put a request on Settings that a person reads before
+ * anything happens.
  */
 const RUN_TOOLS = [
   {
@@ -775,6 +803,60 @@ const RUN_TOOLS = [
         },
       },
       required: ["taskId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    // The description carries the one instruction the schema cannot: end the
+    // cycle after calling it. The boundary reads the record rather than the
+    // reply, so a model that files a request and then works around the gap for
+    // an hour parks anyway — having spent that hour on a cycle that is about to
+    // be refunded. The last sentence is the misuse that costs the operator a
+    // restart: a project dependency the run could have installed itself.
+    name: "request_stack",
+    description:
+      "Ask the operator to install a tool this run needs and does not have — a " +
+      "compiler, a CLI, a language toolchain — when a command is not found and " +
+      "the task cannot be done without it. It installs nothing itself: the " +
+      "operator reads your request, decides, and installs it with a restart. " +
+      "If the commands you name are already installed you are told so and " +
+      "nothing is recorded. Otherwise end this work cycle straight after " +
+      "calling it, saying where you stopped and what you will do with the " +
+      "tool. This run then waits, keeping its checkout, and resumes in this " +
+      "same session once the stack is installed or declined; you are told " +
+      "which. Do not use it for anything you can install inside your own " +
+      "working directory, such as a project's dependencies.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description:
+            "The stack's name, which becomes its directory in the operator's " +
+            "stacks folder: a letter or digit, then letters, digits, '_', '.' " +
+            "or '-'. E.g. 'rust' or 'terraform'.",
+        },
+        binaries: {
+          type: "array",
+          items: { type: "string" },
+          description: "The commands this run needs on PATH, e.g. ['cargo', 'rustc'].",
+        },
+        reason: {
+          type: "string",
+          description:
+            "One or two sentences on what the task needs them for. The operator " +
+            "reads it before deciding.",
+        },
+        draft: {
+          type: "string",
+          description:
+            "Optional: the text of a stack.json you propose. It is checked " +
+            "against the format the server installs from and you are told " +
+            "whether it would be accepted; the operator reads it and decides. " +
+            "Omit it rather than guess a URL or a checksum.",
+        },
+      },
+      required: ["name", "binaries", "reason"],
       additionalProperties: false,
     },
   },
@@ -1134,8 +1216,9 @@ const CHAT_TOOLS = [
             "open task (by id or title) that is in neither this list nor " +
             "relatedTaskIds is refused. Changes nothing else about the run — " +
             "no guard, no folder, no prompt. An id not on the board is refused, " +
-            "and so is a task marked operatorOnly — no run may claim one; name " +
-            "it in relatedTaskIds if the brief mentions it.",
+            "and so is a task marked operatorOnly or with claimedByOperator " +
+            "set — no run may claim one; name it in relatedTaskIds if the " +
+            "brief mentions it.",
         },
         relatedTaskIds: {
           type: "array",
@@ -1591,8 +1674,9 @@ const BLOCK_TOOLS = [
                   "of this list stays open after the run has done it. A brief " +
                   "naming an open task (by id or title) that is in neither " +
                   "this list nor relatedTaskIds refuses the whole emission, as " +
-                  "does an id not on the board or a task marked operatorOnly, " +
-                  "which no run may claim — name that in relatedTaskIds. Sets " +
+                  "does an id not on the board or a task marked operatorOnly " +
+                  "or claimedByOperator, which no run may claim — name that " +
+                  "in relatedTaskIds. Sets " +
                   "no guard, picks no folder and does not change the brief.",
               },
               relatedTaskIds: {
@@ -2383,6 +2467,12 @@ async function callTool(
         : releaseTaskForRun(args, subject.runId);
     }
 
+    // Narrowed for the board tools' reason: the run whose wait this records is
+    // the token's, and no argument names one.
+    case "request_stack":
+      if (subject.kind !== "run") return text(subjectRefusal(subject, name), true);
+      return await requestStackForRun(args, subject.runId);
+
     case "ask_operator":
       return askOperator(args, chatId!);
 
@@ -2600,6 +2690,9 @@ async function usageReport() {
         running: active.filter((r) => r.status === "running").length,
         queued: active.filter((r) => r.status === "queued").length,
         paused: active.filter((r) => r.status === "paused").length,
+        // Apart from `paused`, because a chat deciding what to start reads that
+        // as "will resume on its own", and these will not until a person acts.
+        waitingForStack: active.filter((r) => r.status === "waiting-for-stack").length,
         // A null ceiling is not zero and not "unlimited" — it is a number
         // Anthropic does not publish and the operator has not supplied, so
         // every fraction above it is null too. Said outright, because a model
@@ -3311,6 +3404,10 @@ function listTasksTool(args: Record<string, unknown>) {
             // own doc names: two agents, one brief, one folder, nothing saying
             // so.
             claimedByRunId: row.claimedByRunId,
+            // The other holder a claim can name, for the same reason: a model
+            // reading a null run id on a claimed row would take it for a claim
+            // nobody is working, and `propose_run` refuses a run for it.
+            claimedByOperator: row.claimedByOperator,
             // Beside the status rather than instead of it: an operator-only
             // task is `open`, and a model reading "open" alone proposes a run
             // `propose_run` then refuses.
@@ -3432,6 +3529,7 @@ function getTaskTool(args: Record<string, unknown>) {
         parentTaskId: task.parentTaskId,
         createdByRunId: task.createdByRunId,
         claimedByRunId: task.claimedByRunId,
+        claimedByOperator: task.claimedByOperator,
         completedByRunId: task.completedByRunId,
         // Runs started *for* this task, which is the link `taskIds` on a
         // proposal or an emission writes. Reported so a model can see the work
@@ -4086,6 +4184,105 @@ function releaseTaskForRun(args: Record<string, unknown>, runId: string) {
  * one path where the thing worth keeping — the new brief — is lost to the state
  * of a row it is only annotated with.
  */
+/**
+ * `request_stack`: answer from the receipts, or record the request and the wait.
+ *
+ * The run is parked by the loop at its next cycle boundary, off the record this
+ * writes — not here, because the cycle that called this is still running and
+ * only the loop may end it. The reply says so in as many words, since a model
+ * that is told "recorded" and nothing else carries on working.
+ *
+ * The draft is checked by the applier's own parser and the verdict goes to the
+ * agent here and to the operator on the request, recomputed each time it is
+ * shown rather than stored, so it is always this image's parser speaking.
+ */
+async function requestStackForRun(args: Record<string, unknown>, runId: string) {
+  const checked = normalizeStackRequest(args);
+  if (!checked.ok) return text(checked.error, true);
+  const input = checked.value;
+  const run = getRun(runId);
+  if (!run) return text("This run is no longer on record.", true);
+
+  const outcome = recordStackRequest({
+    runId,
+    input,
+    receipts: readReceipts().receipts,
+    waitsSoFar: run.stack_waits,
+  });
+
+  switch (outcome.kind) {
+    case "installed":
+      return text(
+        `Already installed, so nothing was recorded: ${outcome.stacks
+          .map((stack) => `${stack.name} (${stack.binaries.join(", ")})`)
+          .join("; ")}. ` +
+          "Those commands are on PATH and allowed in this work cycle. If one is " +
+          "not found, say so in your reply rather than asking again.",
+      );
+    case "incomplete":
+      return text(
+        `A stack called "${outcome.stack.name}" is installed and provides ` +
+          `${outcome.stack.binaries.join(", ") || "no commands"}, but not ` +
+          `${outcome.missing.join(", ")}. Nothing was recorded. To ask for ` +
+          `${outcome.missing.length === 1 ? "that" : "those"}, call request_stack ` +
+          "again under a different name.",
+      );
+    case "waits-spent":
+      return text(
+        `This run has already waited for a stack ${outcome.waits} times, which is ` +
+          "as many as one run may, so nothing was recorded. Continue without " +
+          `${input.name} if you can. If you cannot finish without it, say what you ` +
+          "would have used it for and reply with exactly NEEDS_REVIEW on its own line.",
+        true,
+      );
+    case "declined-before":
+      return text(
+        `The operator already declined a request for "${input.name}" from this ` +
+          "run, so nothing was recorded. Continue without it if you can. If you " +
+          "cannot finish without it, say what you would have used it for and " +
+          "reply with exactly NEEDS_REVIEW on its own line.",
+        true,
+      );
+  }
+
+  emitRunEvent({
+    runId,
+    ts: Date.now(),
+    kind: "log",
+    payload: {
+      message: `Asked the operator for a stack: ${input.name} (${input.binaries.join(", ")}).`,
+    },
+  });
+
+  const draft = input.draft === null ? null : await checkStackDraft(input.name, input.draft);
+  return text(
+    [
+      outcome.kind === "filed"
+        ? `Recorded a request for the stack "${input.name}" (${input.binaries.join(", ")}).`
+        : outcome.alreadyAttached
+          ? `This run is already waiting on the request for "${input.name}"; your binaries and reason are updated on it.`
+          : `A request for "${input.name}" was already waiting for the operator, and this run is now waiting on it too, with your binaries and reason.`,
+      draft === null
+        ? null
+        : draft.kind === "accepted"
+          ? "Your draft would be accepted by the format check the server runs at boot; the operator still decides whether to install it."
+          : draft.kind === "refused"
+            ? `Your draft would be refused at boot: ${draft.reason}. The operator sees that too.`
+            : `Your draft could not be checked here (${draft.reason}); the operator sees it unchecked.`,
+      outcome.kind === "attached" && input.draft !== null
+        ? "Only the first draft offered for a request is kept."
+        : null,
+      "End this work cycle now: reply with where you stopped and what you will " +
+        "do once the tools are there, and do not reply DONE or NEEDS_REVIEW. When " +
+        "the cycle ends this run waits, keeping its checkout, until the operator " +
+        "installs the stack or declines it, and then resumes in this same session " +
+        "and is told which.",
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+}
+
 function createTaskForRun(args: Record<string, unknown>, runId: string) {
   const { filing } = runFolder(runId);
   const named = String(args.parentTaskId ?? "").trim();
