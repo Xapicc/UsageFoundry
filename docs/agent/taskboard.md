@@ -47,7 +47,7 @@ The paragraphs themselves live in `docs/agent/taskboard/`, one topic file per he
 - A comment moves nothing, and specifically does not bump `tasks.updated_at`.
 - A clipped thread loses its oldest end, which is the one place this inverts `listTasks`' shape.
 - Comments reach a run through a tool call and never through the appended system prompt.
-- `comment_on_task` takes a task id and is deliberately not held to `complete_task`'s rule, which is a smaller claim than it looks.
+- `comment_on_task` takes a task id and is deliberately not held to `complete_task`'s rule, but a run is held to `get_my_task`'s scope.
 - The comment count is on `TaskDTO` and is passed rather than read.
 
 ## [Dependencies between tasks](taskboard/task-dependencies.md)
@@ -71,6 +71,7 @@ The paragraphs themselves live in `docs/agent/taskboard/`, one topic file per he
 - The gate is one membership test against the list the same function published, and that shape is load-bearing rather than tidy.
 - Nothing a chat turn or a block holds can move a task to any status, and that is enforced twice rather than once.
 - A work cycle's tools, and what their absence is.
+- The count alone was measured not to prevent that duplicate, and `list_my_tasks` takes a `query` because of it.
 - `get_my_task` is the whole-brief door onto exactly those rows, and its scope is the list's and never wider.
 - The run id comes from the token and never from the call, and that sentence is the entire authorisation of this surface.
 - The token is minted per run, lives as long as the run's loop and is revoked outright, with no grace.
