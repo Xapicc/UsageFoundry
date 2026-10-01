@@ -1061,7 +1061,7 @@ export function normalizeInstanceBudget(raw: unknown): InstanceBudgetPolicy {
 /* ------------------------------------------------------------------ */
 
 /**
- * How far back the install-wide ceiling looks.
+ * How far back the install's spend limit looks.
  *
  * A **rolling** 24 hours, not a calendar day, and both halves of that are
  * deliberate. A calendar day would have to be cut in some zone — the container
@@ -1173,7 +1173,7 @@ export function evaluateInstallBudget(
 }
 
 /**
- * Read the install ceiling off a settings value.
+ * Read the install limit off a settings value.
  *
  * `normalizeInstanceBudget`'s rules, for its reasons: total, idempotent, and
  * `null`/`""`/`0`/negative all meaning **off**, which is this app's standing

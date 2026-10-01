@@ -4097,11 +4097,11 @@ export function createRun(input: CreateRunInput): RunRow {
   const prompt = String(input.prompt ?? "").trim();
   if (!prompt) throw new Error("Prompt is required");
 
-  // The install-wide ceiling, at the one door every run in this app comes
+  // The install's spend limit, at the one door every run in this app comes
   // through — the form, the chat's approval batch, a workflow's pass and an
   // orchestrator block's emission all end here. Refused rather than queued,
   // because a queued run is a promise to spend as soon as a slot frees and the
-  // whole point of this ceiling is that nothing new starts. Synchronous, like
+  // whole point of this limit is that nothing new starts. Synchronous, like
   // everything else in this function: the reading is three SQLite sums and
   // better-sqlite3 has no `await` to offer, so the folder claim's
   // one-event-loop-turn atomicity is untouched.
@@ -7955,7 +7955,7 @@ export function cycleCostAfterResult(prevUSD: number, reported: unknown): number
  * the pinned binary and 138 transcripts, not run; see
  * `docs/verification/metering-and-cost.md`. Added whole, three $4 cycles stored
  * $24, and every guard built on `spent_usd` — `maxRunCostUSD` before a cycle
- * and on the live tick, `--max-budget-usd`'s remainder, the install ceiling —
+ * and on the live tick, `--max-budget-usd`'s remainder, the install limit —
  * stopped the run at half the money it was given.
  *
  * So the increase is banked, on `turnCostOf`'s rules, which the chat already

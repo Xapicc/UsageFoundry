@@ -55,7 +55,7 @@ test("no ceiling is not a cell count", () => {
 });
 
 test("a reading outside 0–1 is clamped rather than overrunning the track", () => {
-  // Spend past an install ceiling is a real state, and it arrives here as a
+  // Spend past an install limit is a real state, and it arrives here as a
   // fraction above 1. More cells than the bar has would render as a bar wider
   // than every other bar on the page.
   assert.deepEqual(meterCells(1.4, null, CELLS), { filled: 20, band: 0, empty: 0 });

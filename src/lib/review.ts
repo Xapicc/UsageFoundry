@@ -628,16 +628,16 @@ export const SHUTDOWN_REFUSAL =
 
 /**
  * The door for a caller that is about to **take** a slot outside a work cycle:
- * the process budget is full, the install's rolling-day ceiling is reached, the
+ * the process budget is full, the install's rolling-day limit is reached, the
  * operator's own window ceiling is spent, or the process is shutting down.
  *
- * Cheapest first. The budget is a `COUNT`, the install ceiling a handful of
+ * Cheapest first. The budget is a `COUNT`, the install limit a handful of
  * `SUM`s, and `windowRefusal` a full transcript scan — and the merge queue calls
  * this once per item, so a shortage that will refuse all of them must not cost
  * a scan each time.
  *
- * The install ceiling is here rather than at each caller because every one of
- * them spends into `run_reviews.cost_usd`, which `installSpend` reads: a ceiling
+ * The install limit is here rather than at each caller because every one of
+ * them spends into `run_reviews.cost_usd`, which `installSpend` reads: a cap
  * that counts a spender and never refuses it is a report, not a limit. A chat
  * turn asks it through here too. What each caller does with the sentence is
  * its own — a review and a resolution return it to the person or the queue row,

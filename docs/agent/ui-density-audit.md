@@ -1412,7 +1412,7 @@ Source **A** = this app's price table over every transcript on the machine
 **What arrived with what.** `24a886d` shipped cards 1 and 8. `5abcbaa` added
 `Where it went`, `22bd9c7` and `e42e3b3` gave the page a hierarchy and added
 `Rate and totals`, `f6a3f92` added `Usage by period`, `cc55c24` added the
-telemetry card, `e25727d` (#108) added the install ceiling card, `53c685d`
+telemetry card, `e25727d` (#108) added the install limit card, `53c685d`
 (#113) added the repository card. **Six of the eight cards were appended by six
 separate features and the page has never been regrouped.**
 
@@ -1945,7 +1945,7 @@ Three readings of overlapping money, and **any sum double-counts**:
 Rules a build run must not break:
 
 - **No card, region, header or badge may add two of them.** Adjacency is not
-  permission: `budgets-and-guards.md` argues the install ceiling's separate card
+  permission: `budgets-and-guards.md` argues the install limit's separate card
   explicitly *because adjacency implies summability*.   This is why changes **C6** (the run page) and **E1** (the dashboard) each
   forbid a figure at region level.
 - **Telemetry reaches a budget decision through one door only** —
