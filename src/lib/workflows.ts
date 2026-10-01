@@ -3065,6 +3065,7 @@ const LIVE_STATUSES: readonly RunStatus[] = [
   "queued",
   "running",
   "paused",
+  "waiting-for-stack",
 ];
 
 /** The widest page `findInstances` will answer with, whatever it was asked for. */

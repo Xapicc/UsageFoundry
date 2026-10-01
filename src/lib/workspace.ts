@@ -56,7 +56,9 @@ export async function scanWorkspace(): Promise<WorkspaceScan> {
     // whatever runs next is finished — but it is still worth naming, since the
     // new run will find the tree changed under it when it resumes.
     const running = hits.find((h) => h.run.status === "running");
-    const parked = hits.find((h) => h.run.status === "paused");
+    const parked = hits.find(
+      (h) => h.run.status === "paused" || h.run.status === "waiting-for-stack",
+    );
     return {
       busyRunId: running?.run.id ?? null,
       parkedRunId: parked?.run.id ?? null,

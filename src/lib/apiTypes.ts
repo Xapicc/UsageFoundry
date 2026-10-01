@@ -1304,6 +1304,7 @@ export interface RunDTO {
     | "queued"
     | "running"
     | "paused"
+    | "waiting-for-stack"
     | "completed"
     | "needs-review"
     | "stopped"
@@ -1456,6 +1457,12 @@ export interface RunDTO {
    * a list polled every four seconds.
    */
   tasks?: RunTaskDTO[];
+  /**
+   * The stack requests this run is waiting on, set only while its status is
+   * `waiting-for-stack`. The run page's card is the one reader, and like `tasks`
+   * the list does not set it.
+   */
+  stackRequests?: StackRequestDTO[];
   /** When an operator last picked this run up again. Never rewrites `origin`. */
   reopened_at?: number | null;
 }
@@ -4737,6 +4744,66 @@ export interface ToolInventoryDTO {
    * an operator is looking for is not there.
    */
   problems: string[];
+  /**
+   * What runs have asked the operator to install and nobody has answered.
+   *
+   * On this payload rather than a route of its own because the Tools section is
+   * the one place it is drawn, and a list route ships the list's own DTO. A
+   * request a receipt has since answered is left out once no run waits on it:
+   * "installed" is never written to the request, so that test is the only way
+   * an answered one stops being listed.
+   */
+  stackRequests: StackRequestDTO[];
+}
+
+/**
+ * One request a run made through `request_stack`, as the operator reads it.
+ *
+ * Every string on it except `id`, `hostPath` and the verdicts is a model's
+ * output — `name` and `binaries` validated to plain command names, `reason` and
+ * `draft` not validated at all — so it is drawn as text and never as markup or
+ * markdown, and `draft` in a preformatted block and nowhere else.
+ */
+export interface StackRequestDTO {
+  id: string;
+  name: string;
+  /** Every binary any run asked for under this name. */
+  binaries: string[];
+  draft: string | null;
+  /**
+   * What the boot's own parser says about `draft`, recomputed each time this is
+   * served so it is always this image's parser speaking. Null with no draft;
+   * `unchecked` when the parser could not be loaded, never a guess.
+   */
+  draftVerdict:
+    | { kind: "accepted" }
+    | { kind: "refused"; reason: string }
+    | { kind: "unchecked"; reason: string }
+    | null;
+  state: "pending" | "declined";
+  /** Read from the receipts when this was served. Never stored on the request. */
+  receipt:
+    | { kind: "installed"; stacks: { name: string; binaries: string[] }[]; missing: string[] }
+    | { kind: "failed"; reason: string }
+    | { kind: "absent" };
+  /**
+   * Where the declaration goes, relative to the directory holding
+   * `docker-compose.yml`: the default of `UF_STACKS_DIR`, which the container
+   * cannot read back because it is a host path.
+   */
+  hostPath: string;
+  createdAt: number;
+  declinedAt: number | null;
+  runs: {
+    runId: string;
+    /** Null for a run no longer on record. */
+    status: RunDTO["status"] | null;
+    reason: string;
+    binaries: string[];
+    createdAt: number;
+    /** When it stopped waiting on this request; null while it still does. */
+    releasedAt: number | null;
+  }[];
 }
 
 /** One step of one stack's install, as the applier recorded it. */

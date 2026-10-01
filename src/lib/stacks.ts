@@ -36,9 +36,11 @@ import path from "node:path";
  *
  * A copy of `DECLARATIONS_DIR` in `scripts/apply-stacks.mjs`, which is where it
  * is used — the runtime image ships `scripts/` without `src/`, so neither can
- * import the other. `deployment.test.ts` holds the two to the entrypoint's own
- * value, because a copy drifts silently and what it costs here is a page
- * telling an operator to edit a directory that is not there.
+ * import the other at build time (`checkStackDraft` loads the applier at
+ * runtime, from a path, and only for its parser). `deployment.test.ts` holds
+ * the two to the entrypoint's own value, because a copy drifts silently and
+ * what it costs here is a page telling an operator to edit a directory that is
+ * not there.
  *
  * Nothing in this app reads a file under it. It is carried only so the detail
  * page can say where a stack came from.

@@ -201,7 +201,10 @@ export function planItem(
 }
 
 const isRunActive = (status: RunRow["status"]) =>
-  status === "running" || status === "queued" || status === "paused";
+  status === "running" ||
+  status === "queued" ||
+  status === "paused" ||
+  status === "waiting-for-stack";
 
 /* ------------------------------------------------------------------ */
 /* Which batches the page covers — pure, and tested                    */

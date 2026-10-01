@@ -25,7 +25,14 @@ import { checkoutWriter } from "./checkoutClaim";
 import { dataDirRefusal, mayWriteDataDir, requireDataDir } from "./serverLock";
 import { childCredentials, chownForChild, deprioritiseChildForOom } from "./privsep";
 import { currentSandbox, sandboxRefusal } from "./sandbox";
-import { STACKS_STATE_DIR, stackGrants } from "./stacks";
+import { STACKS_STATE_DIR, readReceipts, stackGrants, type StackReceipt } from "./stacks";
+import {
+  MAX_STACK_WAITS_PER_RUN,
+  decideStackWait,
+  releaseStackWait,
+  stackResumeNotice,
+  stackWaitOf,
+} from "./stackRequests";
 import {
   ensureSandboxExcludesFile,
   ensureSandboxMountPoints,
@@ -211,6 +218,22 @@ export type RunStatus =
   | "running"
   /** Stepped aside for a full 5-hour window; the sweeper will re-queue it. */
   | "paused"
+  /**
+   * Asked for a stack with `request_stack` and is parked until the operator
+   * installs it or declines it.
+   *
+   * A park on `paused`'s model, and a park on a different clock: nothing here
+   * clears on its own. Stacks are applied only at boot, from a read-only bind of
+   * the host's `./stacks`, so the wait ends when a person writes a `stack.json`
+   * and restarts the container — or presses Decline — and `releaseStackWaits`
+   * re-queues the run through `promoteQueued` with a notice saying which. Like
+   * a parked run it keeps its checkout and yields its folder, its waiting time
+   * is closed into `paused_ms` rather than counted as worked, and the cycle that
+   * asked is refunded within `MAX_STACK_WAITS_PER_RUN`. Unlike one it survives a
+   * restart whatever its age, because the restart is what it is waiting for,
+   * and it notifies, because only a person can end it.
+   */
+  | "waiting-for-stack"
   | "completed"
   /**
    * The agent judged it could not finish the task and said so.
@@ -318,6 +341,11 @@ export interface RunRow {
    * which `MAX_PAUSES_PER_RUN` also caps. Only ever increases.
    */
   guard_refunds: number;
+  /**
+   * Parks for a stack, each refunding the cycle it ended, which
+   * `MAX_STACK_WAITS_PER_RUN` caps. Only ever increases.
+   */
+  stack_waits: number;
   /**
    * Work cycles the context ceiling ended early and the loop refunded, which
    * `MAX_EARLY_ENDS_PER_RUN` caps. Only ever increases.
@@ -1008,6 +1036,7 @@ const RUN_STATUS_KEYS: Record<RunStatus, true> = {
   queued: true,
   running: true,
   paused: true,
+  "waiting-for-stack": true,
   completed: true,
   "needs-review": true,
   stopped: true,
@@ -3486,8 +3515,9 @@ export interface CreateRunInput {
 /**
  * Runs holding, or waiting to hold, a place on disk.
  *
- * `paused` belongs here, but what a parked run holds is narrower than what a
- * live one holds. Its **worktree slot** is reserved outright — it resumes onto
+ * `paused` belongs here, and so does `waiting-for-stack`, which holds exactly
+ * what it holds, but what a parked run holds is narrower than what a live one
+ * holds. Its **worktree slot** is reserved outright — it resumes onto
  * the same branch carrying its own commits, and `allocateSlotPath` must never
  * hand that checkout to anyone else. Its **folder** is not: a parked run has no
  * process, so it steps aside for a run that is ready to work now and takes the
@@ -3502,7 +3532,7 @@ export interface CreateRunInput {
 export function activeRuns(): RunRow[] {
   return db()
     .prepare(
-      "SELECT * FROM runs WHERE status IN ('queued','running','paused') ORDER BY created_at",
+      "SELECT * FROM runs WHERE status IN ('queued','running','paused','waiting-for-stack') ORDER BY created_at",
     )
     .all() as RunRow[];
 }
@@ -9162,6 +9192,8 @@ export async function startRun(id: string): Promise<void> {
   // rather than this segment's: every cut ends a segment. See
   // `MAX_PAUSES_PER_RUN`.
   let guardRefunds = run.guard_refunds ?? 0;
+  /** Parks for a stack over the run's whole life. See `MAX_STACK_WAITS_PER_RUN`. */
+  let stackWaits = run.stack_waits ?? 0;
   /** The operator's message for the first cycle of this segment, if any. */
   let followUp: string | null = run.follow_up ?? null;
   /**
@@ -10594,6 +10626,38 @@ export async function startRun(id: string): Promise<void> {
         break;
       }
 
+      // A run that asked for a stack parks here, below every rung that is a
+      // statement about the machine and above every one that is a statement
+      // about the task. Below, because a stop, a refusal or a dead child keeps
+      // its meaning whatever the agent asked for — `failed` and `stopped` are
+      // not turned into a wait. Above, because whatever this cycle said about
+      // the task was said without the tool it asked for: a `NEEDS_REVIEW` is
+      // usually the wall the stack is meant to clear, a `DONE` is premature,
+      // and the cycle cap below would end on the default of one cycle a run
+      // that is about to be given the thing it was missing. A claim for the
+      // validator to check is left in flight for the same reason — the boundary
+      // that would act on its verdict is the one this run is not crossing.
+      //
+      // Asked of the record rather than of anything the agent said, so a model
+      // that calls `request_stack` and then carries on working still parks, and
+      // one that only says it needs a tool does not.
+      if (stackWaitOf(id).length > 0) {
+        // `reportedDone`'s trap from the branch below: hydrated from the row,
+        // so a break that does not clear it writes a stale DONE.
+        reportedDone = false;
+        // Refunded on `guard_refunds`' terms and for the default cap's sake —
+        // see `MAX_STACK_WAITS_PER_RUN`. `request_stack` refuses at the bound,
+        // so a charged park is reachable only for a run attached before it.
+        if (stackWaits < MAX_STACK_WAITS_PER_RUN) iterations -= 1;
+        stackWaits += 1;
+        stopReason =
+          "Waiting for a stack this run asked for. It resumes in the same session " +
+          "once the operator installs it and restarts, or declines it.";
+        log(id, stopReason);
+        finalStatus = "waiting-for-stack";
+        break;
+      }
+
       // What this cycle's last turn said about the task, if anything. The
       // precedence between the two tokens lives in `cycleEnding` rather than
       // here, so the branch below and the test that pins it cannot disagree.
@@ -10814,6 +10878,7 @@ export async function startRun(id: string): Promise<void> {
       // Beside the count it corrects, so no ending can store one without the
       // other.
       guard_refunds: guardRefunds,
+      stack_waits: stackWaits,
       spent_usd: spentUSD,
       spent_tokens: spentTokens,
       spent_usd_est: spentEstUSD,
@@ -10847,6 +10912,23 @@ export async function startRun(id: string): Promise<void> {
           ...(refusalPark ? { refusal_pauses: (run.refusal_pauses ?? 0) + 1 } : {}),
         });
         startSweeper();
+      } else if (finalStatus === "waiting-for-stack") {
+        // A park in every column `paused` writes except `resume_at`, which
+        // would be a promise about when a person restarts a container. The
+        // open park is what keeps the wait out of worked minutes, and
+        // `pause_count` is what tells `ensureWorktree` this run has worked
+        // before once its refund has put `iterations` back to zero.
+        setStatus(id, "waiting-for-stack", {
+          ...carried,
+          resume_at: null,
+          paused_at: Date.now(),
+          pause_count: (run.pause_count ?? 0) + 1,
+        });
+        // The sweeper is the release's backstop. A decline releases at once,
+        // and an install can only arrive with a restart, which releases at
+        // boot — but an operator who declined while this cycle was still
+        // running finds the run here, already answered, on the next tick.
+        startSweeper();
       } else {
         setStatus(id, finalStatus, {
           ...carried,
@@ -10854,6 +10936,10 @@ export async function startRun(id: string): Promise<void> {
           exit_code: lastExit,
           resume_at: null,
         });
+        // Any ending that is not a park ends the wait too: an attachment left
+        // standing would park this run at the first cycle boundary after a
+        // pick-up, on a request the operator may have stopped it to abandon.
+        releaseStackWait(id);
       }
     } finally {
       // The last write a shutdown waits for, landed or thrown. Everything after
@@ -10891,6 +10977,7 @@ export async function startRun(id: string): Promise<void> {
     // storage.
     if (
       finalStatus !== "paused" &&
+      finalStatus !== "waiting-for-stack" &&
       run.isolation === "worktree" &&
       run.worktree_path &&
       iterations > 0
@@ -10903,7 +10990,7 @@ export async function startRun(id: string): Promise<void> {
     // This run has just settled, so anything told to start after it now knows
     // whether it may. Before the promotion, so a run released here takes its
     // turn in the same pass rather than waiting for the next event.
-    if (finalStatus !== "paused") releaseDependents();
+    if (finalStatus !== "paused" && finalStatus !== "waiting-for-stack") releaseDependents();
 
     // The folder is free as of the status write above, so whatever was waiting
     // on it can start. Must come after, or the promotion sees this run still
@@ -11044,6 +11131,21 @@ export function stopRun(id: string, cause: string = OPERATOR_CAUSE): StopOutcome
       resume_at: null,
       ...pauseClosedAt(run, at),
     });
+    releaseDependents();
+    promoteQueued();
+    return "cancelled";
+  }
+
+  // The same kill switch for the other park. The request itself stays pending
+  // for any other run waiting on it; only this run stops waiting.
+  if (run.status === "waiting-for-stack") {
+    const at = Date.now();
+    setStatus(id, "stopped", {
+      finished_at: at,
+      stop_reason: `${cause} while it was waiting for a stack.`,
+      ...pauseClosedAt(run, at),
+    });
+    releaseStackWait(id, at);
     releaseDependents();
     promoteQueued();
     return "cancelled";
@@ -11939,11 +12041,18 @@ export async function sweepPaused(): Promise<void> {
   if (timers.sweeping) return;
   timers.sweeping = true;
   try {
+    // First, and synchronous: the other park is decided by the receipts and
+    // the operator rather than by a window, so it needs no snapshot and must
+    // not wait behind one. It shares this timer rather than taking its own so
+    // the per-tick resume bound below is one bound and not two: what it
+    // re-queued comes off the slots the parked runs get.
+    const forStack = releaseStackWaits();
+
     const paused = db()
       .prepare("SELECT * FROM runs WHERE status = 'paused' ORDER BY created_at")
       .all() as RunRow[];
     if (paused.length === 0) {
-      stopSweeper();
+      if (forStack.waiting === 0) stopSweeper();
       return;
     }
 
@@ -11960,7 +12069,7 @@ export async function sweepPaused(): Promise<void> {
     }
     const now = Date.now();
     let freed = false;
-    let resumeSlots = MAX_RESUMES_PER_SWEEP;
+    let resumeSlots = MAX_RESUMES_PER_SWEEP - forStack.released;
 
     for (const run of due) {
       const policy = normalizePolicy(JSON.parse(run.budget));
@@ -12113,6 +12222,72 @@ export async function sweepPaused(): Promise<void> {
   } finally {
     timers.sweeping = false;
   }
+}
+
+/**
+ * Hand back every `waiting-for-stack` run whose request has been answered, and
+ * say how many it re-queued and how many are still waiting.
+ *
+ * Called at boot once the receipts are on disk, by every sweep, and by a
+ * decline. `decideStackWait` is the decision and is pure; this is the writes.
+ * A run goes back through `promoteQueued` and never through `startRun`, which
+ * is `sweepPaused`'s rule for the same reasons — FIFO order, the folder claim
+ * and the concurrency cap have one owner — and at most `MAX_RESUMES_PER_SWEEP`
+ * per call, because a restart that installs the stack twenty runs were waiting
+ * for is exactly the fleet arriving in one event-loop turn that bound exists to
+ * spread. The rest keep their row and are taken next tick.
+ *
+ * What the run is told travels in `follow_up`, the door a pick-up's notices
+ * use, so it is consumed at the spawn and the resumed turn is the notice. The
+ * grant needs nothing here: `stackGrants()` is read per cycle, from receipts a
+ * restart has just rewritten, and `buildArgs` puts it on a resumed cycle's
+ * argv as on any other.
+ *
+ * Every flip is conditional on the status, `sweepPaused`'s rule: a Stop pressed
+ * while this ran must win.
+ */
+export function releaseStackWaits(
+  receipts: readonly StackReceipt[] = readReceipts().receipts,
+): { released: number; waiting: number } {
+  if (!mayWriteDataDir()) return { released: 0, waiting: 0 };
+  const waiting = db()
+    .prepare("SELECT id FROM runs WHERE status = 'waiting-for-stack' ORDER BY created_at")
+    .all() as { id: string }[];
+
+  let released = 0;
+  let still = 0;
+  const now = Date.now();
+  for (const { id } of waiting) {
+    const decision = decideStackWait(stackWaitOf(id), receipts);
+    if (decision.kind === "stay" || released >= MAX_RESUMES_PER_SWEEP) {
+      still += 1;
+      continue;
+    }
+    const flip = db()
+      .prepare(
+        "UPDATE runs SET status='queued', follow_up=? WHERE id=? AND status='waiting-for-stack'",
+      )
+      .run(stackResumeNotice(decision), id);
+    if (flip.changes !== 1) continue;
+    released += 1;
+    releaseStackWait(id, now);
+    emit({
+      runId: id,
+      ts: now,
+      kind: "status",
+      payload: {
+        status: "queued",
+        message:
+          decision.kind === "declined"
+            ? `The operator declined ${decision.declined.join(", ")}; rejoining the queue to carry on without it.`
+            : decision.installed.length > 0
+              ? `${decision.installed.map((stack) => stack.name).join(", ")} installed; rejoining the queue.`
+              : "The stack request it was waiting on is gone; rejoining the queue.",
+      },
+    });
+  }
+  if (released > 0) promoteQueued();
+  return { released, waiting: still };
 }
 
 export type ResumeOutcome = "requeued" | "not-paused" | "not-owner";
@@ -12630,6 +12805,12 @@ export function reopenRun(
   if (flip.changes !== 1) {
     return { ok: false, reason: "This run changed state before it could be picked up." };
   }
+  // The boot's `failed` and the sweeper's `stopped` reach a terminal status
+  // without passing the loop's `finally`, which is where every other ending
+  // releases a wait. A pick-up is the one door back from all of them, so a
+  // request this run filed before it ended cannot park the picked-up run at its
+  // first cycle boundary; if it still needs the stack it asks again.
+  releaseStackWait(id);
 
   emit({
     runId: id,
@@ -13384,12 +13565,22 @@ export function reconcileOnBoot(): void {
 
   let closed = 0;
   let kept = 0;
+  let keptForStack = 0;
   const graceMs = getSettings().resumeGraceHours * 3_600_000;
   // What this pass closes out, which is what the waiting rows below are decided
   // against. A row it keeps is not in it.
   const closedHere = new Set<string>();
 
   for (const run of stale) {
+    // Kept whatever its age, which is the one way it differs from `paused`
+    // below: the grace exists because a run waiting on a window that cleared
+    // hours ago is waiting on nothing, and this run is waiting on exactly the
+    // restart that has just happened. Closing it out here would end every run
+    // whose stack the operator installed in the act of installing it.
+    if (run.status === "waiting-for-stack") {
+      keptForStack += 1;
+      continue;
+    }
     if (run.status === "paused") {
       const fresh = run.paused_at !== null && Date.now() - run.paused_at < graceMs;
       if (fresh) {
@@ -13483,6 +13674,14 @@ export function reconcileOnBoot(): void {
     console.warn(
       `[usagefoundry] Kept ${kept} paused run(s); they resume when their 5-hour window clears.`,
     );
+    startSweeper();
+  }
+  // Not in the ops row below, whose `kept` the runs page words as paused runs
+  // and whose point is a restart that cost something. A run waiting for a stack
+  // surviving the restart it asked for is the ordinary case. The release itself
+  // is `src/instrumentation.ts`'s, after the workflow reconcilers have run.
+  if (keptForStack > 0) {
+    console.log(`[usagefoundry] Kept ${keptForStack} run(s) waiting for a stack.`);
     startSweeper();
   }
   if (closed > 0 || kept > 0) {

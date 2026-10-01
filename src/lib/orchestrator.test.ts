@@ -163,6 +163,7 @@ const { revokeIngestTokens, runForIngestToken } =
 const { db } = require("./db") as typeof import("./db");
 const { recentOpsEvents } = require("./ops") as typeof import("./ops");
 const { saveSettings } = require("./settings") as typeof import("./settings");
+const { stackGrants } = require("./stacks") as typeof import("./stacks");
 const { priceFiles, renderFileCostNotice } =
   require("./fileCostNotice") as typeof import("./fileCostNotice");
 
@@ -538,7 +539,10 @@ describe("dependencies", () => {
   });
 
   it("holds it while the dependency is still going", () => {
-    for (const status of ["queued", "running", "paused"] as const) {
+    // `waiting-for-stack` beside `paused`: a run parked on the operator is no
+    // more finished than one parked on the window, and a chain released behind
+    // it would build on work it has not done.
+    for (const status of ["queued", "running", "paused", "waiting-for-stack"] as const) {
       const decision = releasableRuns(
         [{ id: "a", status, iterations: 0 }, waiting("b")],
         [link("b", "a")],
@@ -2626,6 +2630,51 @@ describe("buildArgs", () => {
       stackGrants: { allow: ["Bash(shellcheck:*)"], deny: [] },
     });
     assert.deepEqual(allowedToolValues(args), ["Bash(shellcheck:*)", ...SEARCH_TOOLS]);
+  });
+
+  it("grants a resumed cycle the stack a restart installed while the run waited", () => {
+    // The run that asked for a stack comes back in a new process, as a resumed
+    // cycle, and nothing about the wait carries the grant: it is derived from
+    // the receipts by `stackGrants()` and spread by this function, so the test
+    // is that composition rather than either half. `stackGrants` caches for the
+    // life of the process, which is the life of the receipts, so the cache is
+    // reset around the case the way a restart resets it.
+    const cache = (globalThis as unknown as { __ufStackGrants: { value: unknown } })
+      .__ufStackGrants;
+    const receipts = fs.mkdtempSync(path.join(os.tmpdir(), "uf-grant-receipts-"));
+    try {
+      fs.writeFileSync(
+        path.join(receipts, "rust.json"),
+        JSON.stringify({
+          name: "rust",
+          digest: "0".repeat(64),
+          status: "ok",
+          bin: [
+            { name: "cargo", path: "/var/lib/uf-stacks/bin/cargo" },
+            { name: "rustc", path: "/var/lib/uf-stacks/bin/rustc" },
+          ],
+          deny: ["cargo publish"],
+        }),
+      );
+      cache.value = null;
+      const args = buildArgs({
+        ...base,
+        isolated: true,
+        resumeSessionId: "sess-waited",
+        stackGrants: stackGrants(receipts),
+      });
+      assert.equal(args[args.indexOf("--resume") + 1], "sess-waited");
+      assert.deepEqual(allowedToolValues(args), [
+        ...ISOLATED_GIT_TOOLS_EXPECTED,
+        "Bash(cargo:*)",
+        "Bash(rustc:*)",
+        ...SEARCH_TOOLS,
+      ]);
+      assert.ok(disallowedToolValues(args).includes("Bash(cargo publish:*)"));
+    } finally {
+      cache.value = null;
+      fs.rmSync(receipts, { recursive: true, force: true });
+    }
   });
 
   it("leaves the argv of an install with no stack exactly as it was", () => {
@@ -6876,7 +6925,7 @@ describe("what a lifecycle event says on stdout", () => {
   };
 
   it("routes the three endings that want a person at warn, and nothing else", () => {
-    // All nine, both directions: a status that stops being routed is as silent
+    // All ten, both directions: a status that stops being routed is as silent
     // as one that starts being, and the second wakes somebody for a press they
     // just made.
     const levels: Array<[RunStatus, string]> = [
@@ -6884,6 +6933,9 @@ describe("what a lifecycle event says on stdout", () => {
       ["queued", "info"],
       ["running", "info"],
       ["paused", "info"],
+      // A park, not a fault. The person it needs is reached by the webhook,
+      // which notifies on it; stdout's level is about what went wrong.
+      ["waiting-for-stack", "info"],
       ["completed", "info"],
       ["needs-review", "warn"],
       // An operator's own cancel arrives as `stopped`, and a run a guard took
@@ -7573,6 +7625,7 @@ describe("isRunStatus", () => {
       "queued",
       "running",
       "paused",
+      "waiting-for-stack",
       "completed",
       "needs-review",
       "stopped",
