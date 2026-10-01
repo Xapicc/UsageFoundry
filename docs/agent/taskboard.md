@@ -15,11 +15,12 @@ The paragraphs themselves live in `docs/agent/taskboard/`, one topic file per he
 ## [Tasks, status transitions and the task row](taskboard/tasks-and-transitions.md)
 
 - A task is not a run, and the absence of every hook that would make it one is what keeps this feature out of the orchestrator.
-- `claimed` is a record of which run holds a task. It is not a lock, it has no clock on it, and nothing on this path may acquire one.
+- `claimed` is a record of who holds a task — a run, or the operator. It is not a lock, it has no clock on it, and nothing on this path may acquire one.
 - Who may move a task to which status is one pure function, and it is the whole of the board's authority model.
 - Table: From / To / Who.
 - Four of those are load-bearing beyond their own row.
-- `from === to` is not a move and is allowed for every actor, so an update that restates the status it is not changing is a no-op rather than a refusal; `updateTask` calls the rule only when the status…
+- A claim names its holder, and the operator can be one.
+- `from === to` is not a move and is allowed for every actor, so an update that restates the status it is not changing is a no-op rather than a refusal — the one exception being a non-operator restating `claimed`…
 - A write that changes nothing is not written, so `updated_at` does not move.
 - A move's effects are the other half of the rule, and re-opening deliberately clears both run columns.
 - `GET`/`POST /api/tasks` and `GET`/`PATCH`/`DELETE /api/tasks/[id]` are operator-facing and behind the app's ordinary gate, and the actor is a constant in the route rather than anything read off a…

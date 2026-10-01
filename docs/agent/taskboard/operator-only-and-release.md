@@ -12,13 +12,17 @@ that is the reason it is a column rather than a status: a fifth status would hav
 to be threaded through every edge of `taskTransitionRefusal`, and it would stop
 meaning "open" to every reader that already asks for open work — the board's
 groups, `tasksForRun`, the chat's `list_tasks`, a loop's count. The one edge the
-flag changes is `open → claimed`, refused for **every** actor while it is set,
-the operator included: a claim names the run that will hold the task, and the
-flag says no run here can do it. The operator's way round is to clear the flag
-first, which says the blocker is gone rather than claiming past it. A task
-already claimed when the flag is set keeps its claim, because a claim is a record
-and taking it off is a release. The operator still closes and drops one the
-ordinary way. It defaults to false on an existing install (`addColumn`, `NOT NULL
+flag changes is `open → claimed`: a claim naming a **run** is refused whoever
+asks, because the flag says no run here can do the work, and a claim on one is a
+run spending its budget finding that out again. The operator's own claim, which
+names no run, is allowed, and it is what an operator-only task is waiting for —
+"I am doing this myself", with the board saying who holds it, which is otherwise
+the one thing the operator's own lane has no way to say. Handing it to a run is
+still clearing
+the flag first, which says the blocker is gone rather than claiming past it. A
+task already claimed when the flag is set keeps its claim, because a claim is a
+record and taking it off is a release. The operator still closes and drops one
+the ordinary way. It defaults to false on an existing install (`addColumn`, `NOT NULL
 DEFAULT 0`), because every row filed before the column existed was filed as
 agent work — there was no other kind.
 
@@ -60,7 +64,11 @@ when it is not a boolean; `get_task` returns it. `readTaskLinks` refuses an
 operator-only id in **`taskIds`** — on `propose_run` and `emit_runs` alike, since
 both read through it — and names `relatedTaskIds` as the way to say the brief
 only mentions it. That is refused at the proposal rather than left to the claim
-because a claim refusal is a log line on a run that has already started. The rule
+because a claim refusal is a log line on a run that has already started. A task
+**the operator holds** is refused in `taskIds` on the same two doors with the
+same way out, for the same reason — the run would start, fail to claim it, and
+do the work beside the operator — and `list_tasks` and `get_task` carry
+`claimedByOperator` beside `claimedByRunId` so a model can see it first. The rule
 that a named open task must be accounted for is untouched: an operator-only task
 named in a brief and in neither list is refused exactly as any other is. A
 proposal already written names its tasks as they were when it was written; one

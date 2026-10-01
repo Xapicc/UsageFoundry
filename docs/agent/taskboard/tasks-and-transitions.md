@@ -20,8 +20,8 @@ somebody makes later. The day something here starts, queues or bounds a run is
 the day this paragraph stops being true, and it is a decision rather than a
 detail.
 
-**`claimed` is a record of which run holds a task. It is not a lock, it has no
-clock on it, and nothing on this path may acquire one.** The obvious next feature
+**`claimed` is a record of who holds a task — a run, or the operator. It is not
+a lock, it has no clock on it, and nothing on this path may acquire one.** The obvious next feature
 is a lease — claim expires after an hour, so a run that died holding a task does
 not strand it — and it is the wrong one, for a reason that is specific to this
 app rather than general. A work cycle here has no upper bound on how long it may
@@ -41,11 +41,14 @@ still alive, never something that fires when a run ends, fails or is stopped. A
 run that dies holding a task still leaves the claim for the operator. Nothing here calls
 `setTimeout`, nothing stores an expiry, and `updated_at` is a record of the last
 edit rather than a countdown; a future editor reaching for a `claimed_at` should
-know that the column's absence is the decision.
+know that the column's absence is the decision. The operator's own claim is the
+same record with no run in it, and carries no clock for the same reason: a
+person doing the work by hand is the slowest holder there is.
 
 **Who may move a task to which status is one pure function, and it is the whole
 of the board's authority model.** `taskTransitionRefusal` in `tasks.ts` takes a
-pair of statuses, an actor and the row's own `claimed_by_run_id`, and answers
+pair of statuses, an actor and the row's own holder — `claimed_by_run_id` and
+`claimed_by_operator` — and answers
 with a sentence or with null — `agentRefusal`'s shape, for `agentRefusal`'s
 reason: three doors will eventually ask it (the operator's route, a chat tool, a
 work cycle) and one wording is what stops them disagreeing about the same move.
@@ -53,7 +56,7 @@ Eight edges exist and every pair not on the list is refused:
 
 | From | To | Who |
 |---|---|---|
-| `open` | `claimed` | any actor, and the claim names the run that will hold it — **nobody** while the task is operator-only |
+| `open` | `claimed` | any actor, and the claim names the run that will hold it — or the operator, with no run, holding it themselves; while the task is operator-only, **only** that second kind |
 | `open` | `done` | operator only — a run claims first |
 | `open` | `dropped` | operator only |
 | `claimed` | `open` | operator, or the run that holds it (releasing, through `release_task`) — or a review block, for a rejected run's claim (`reopenRejectedTask`) |
@@ -82,10 +85,31 @@ somebody can disagree with it. **A terminal task is re-opened before it is
 anything else**: there is no `done → dropped` and no `dropped → done`, which is
 what keeps the edge set small enough to hold in one's head.
 
+**A claim names its holder, and the operator can be one.** The operator claiming
+a task says "I am doing this myself": the board shows who holds it, and no run
+is pointed at it. It is stored as `tasks.claimed_by_operator` beside
+`claimed_by_run_id` rather than as a sentinel id *in* that column, because that
+column is read as a run everywhere — `tasksForRun`, completion validation, the
+run link on the board — and an invented id is a run no `runs` row answers for.
+A `claimed` task has exactly one holder, and `updateTask` is the writer that
+keeps it so. A claim naming nobody is the operator's alone: from any other actor
+it is the record of a holder that does not exist, which nothing would ever
+release. It is taken from `open` only — a task a run holds is released first and
+claimed second, so taking work off a run is two presses the operator sees, never
+the side effect of one, and the table keeps its eight rows. **Nothing but the
+operator moves a task the operator holds**: a run, a chat or a block is refused
+its release, its completion, its drop and even a restated claim, and the refusal
+names the operator rather than reading the null run column as "nobody holds it".
+That one is checked before `from === to` below on purpose: a run re-claims its
+tasks at every pick-up and resume, and against the operator's claim that would
+otherwise be an allowed no-op its log could only report as held by nobody.
+
 `from === to` is not a move and is allowed for every actor, so an update that
-restates the status it is not changing is a no-op rather than a refusal;
-`updateTask` calls the rule only when the status actually differs, which is what
-keeps a patch from applying a move's effects when nothing moved.
+restates the status it is not changing is a no-op rather than a refusal — the
+one exception being a non-operator restating `claimed` on a task the operator
+holds, above. `updateTask` asks the rule whenever a patch carries a status and
+applies a move's effects only when the status actually differs, which is what
+keeps a patch from applying them when nothing moved.
 
 **A write that changes nothing is not written, so `updated_at` does not move.**
 That column means the task moved — `idx_tasks_board` and `listTasks` both sort on
@@ -102,8 +126,12 @@ added to the `UPDATE` without joining it is skipped whenever it is the only
 thing a patch changes.
 
 **A move's effects are the other half of the rule, and re-opening deliberately
-clears both run columns.** Into `claimed`, the claim names its run and `closed_at`
-is cleared. Into `done`, `completed_by_run_id` is the acting run, or null when the
+clears both run columns.** Into `claimed`, the claim names its holder — the run,
+or the operator with the run column null — and `closed_at` is cleared. Out of
+`claimed` into anything, the operator's claim is cleared, `dropped` included:
+unlike the run column, which `tasksForRun` reads to show a run what it closed,
+nothing reads the operator's claim on a task that is no longer claimed, and a
+set flag on a closed row is a holder the board cannot draw. Into `done`, `completed_by_run_id` is the acting run, or null when the
 operator marked it — a person is not a run, and inventing one would put a run id
 on work no run did. Into `dropped`, `closed_at` is set and `completed_by_run_id`
 is left alone, because nobody completed it. Into `open`, both run columns are
