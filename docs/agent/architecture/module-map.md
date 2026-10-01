@@ -223,6 +223,17 @@ tasks.ts        the taskboard: one board across every mount, and the only
                 beside the storage, because a wrong edge closes work nobody did
 cycles.ts       the event stream segmented into work cycles — client-safe, and
                 the only reader of where one cycle's output ends
+liveStream.ts   the pure half of /api/runs/live/stream, the one SSE connection
+                /runs/live holds for every running run: a tail of
+                LIVE_TAIL_EVENTS per run, a replay byte budget split evenly
+                across runs, each event cut to the line a tile draws, and
+                which runs to follow against the runs table. The route reads
+                the bus's "*" topic (subscribeAll) and answers no Last-Event-ID
+                — a reconnect replays each tail and the page replaces it.
+                GET /api/runs/live, the tiles' figures, is a poll beside it
+liveTiles.ts    that stream folded into the page's tiles — client-safe and
+                pure: a join replaces a tail, ready drops the tiles of runs
+                that ended while the connection was down
 ops.ts          what the two background timers last did, and how often they
                 failed — in memory, because it answers "is *this* process
                 making progress" and a counter that outlived it would not

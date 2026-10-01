@@ -378,6 +378,24 @@ already started — a run copies every value it needs the moment it is created.
 
 ---
 
+## Watching every running run at once
+
+**Live**, beside **New run** at the top of **Runs**, opens `/runs/live`: one tile
+per running run, each with its task and folder, the work cycle it is on against
+its limit, how long it has been running, what its finished cycles cost, what
+Claude Code's own telemetry has counted of the cycle in flight, how full its
+context is, and the last fifty lines of its log. Tiles come and go as runs start
+and stop, without a reload. The badge on the button counts the runs going now.
+
+The two money figures are never added together. **Spent** is what finished
+cycles reported; **Telemetry — first-party** is the cycle in flight, and says
+**none reported this cycle** for a run whose CLI exports none — any run, unless
+**Let agents report per-request cost over OpenTelemetry** is on in **Settings**
+or the run has a spending limit enforced mid-cycle. Open a tile's task for the
+run page, which has the whole log and the controls.
+
+---
+
 ## Finding a run you have already done
 
 **Runs** is three lists, and only the third one reaches the whole history.

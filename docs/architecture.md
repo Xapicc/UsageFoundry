@@ -33,6 +33,11 @@ src/lib/
                    `compactionNotice` say what a compaction took — read off the
                    cycle's own argv, quoting the vendor's table, acting on
                    nothing
+  liveStream.ts    the pure half of /api/runs/live/stream, the one SSE
+                   connection /runs/live holds for every running run: each
+                   tail's length and byte budget, and each event cut to the
+                   line a tile draws
+  liveTiles.ts     that stream folded into the page's tiles, client-side
   cycleInvocation.ts  what one work cycle *says* and how it is invoked — the
                    next prompt and every notice appended to it, `cycleEnding`'s
                    two contracts, and `buildArgs`. Lifted out of the file above,

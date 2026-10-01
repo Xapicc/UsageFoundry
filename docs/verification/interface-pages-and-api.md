@@ -142,6 +142,32 @@
   both edits apply above it; a notice appearing above the split was reasoned
   about and not seen.
 
+- **`/runs/live` in a browser over seeded rows, 2026-10-01**, the standalone
+  bundle built from `92d07a1`, headless Chromium at 390x900 and 1280x900,
+  standard skin, a scratch `DATA_DIR`. Empty: the strip read 0 running, 0
+  queued, 0 paused over "Nothing is running. Back to runs". Then three running
+  runs (events in `run_events`, context samples on two, two `otlp_requests` rows
+  on one), one queued and one paused were written into the table after boot,
+  and the page reloaded: three tiles, and every load at both widths requested
+  exactly one `/stream` URL, `/api/runs/live/stream`, and no
+  `/api/runs/[id]/stream`. No console error; `scrollWidth - clientWidth` 0 on
+  the document and on `main` at both widths. The run with telemetry read $0.78
+  beside $1.84 spent and the two without read "— none reported this cycle"; the
+  run with two granted cycles read "work cycle 3 of 7 (2 granted)"; a tile's
+  context figure matched that run's own page (41.2k, same derivation). With no
+  reload, one running run was set `completed` and the queued one `running` by
+  another process writing the table, and the tiles went from 1111/2222/3333 to
+  1111/3333/4444 inside 17 seconds, which is the stream's 15-second reconcile.
+  Caveat: events another process writes never reach this server's bus, so live
+  forwarding and the join a `status` event triggers were exercised only in
+  `src/app/api/runs/live/stream/route.test.ts`, never in a browser.
+
+- **`npm run smoke-pages` 96/96 with `/runs/live` in the list, 2026-10-01**,
+  against `.next/standalone/server.js` built from the same tree: 24 pages, two
+  skins, 390 and 1280. `npm run typecheck` exit 0; `npm test` 3612 tests, the
+  one failure the rendering-test count in `docs/agent/testing.md`, which the
+  docs change that followed corrected.
+
 ## Not yet verified by hand
 
 - **No after-change payload from the 2026-08-23 pass has been read from a
@@ -196,3 +222,16 @@
 - **The composition stack's hatched overflow strip has not been drawn at
   390px.** It sits in the same `viewBox` as the bands, which is an argument,
   not a measurement.
+
+- **`/runs/live` has never watched a real run.** Open: a line arriving on a
+  tile as the agent writes it, a run's tile appearing within a second of it
+  starting rather than at the next 15-second reconcile, `RunActivity`'s open
+  calls on a tile, and the tail staying put while the reader is scrolled up.
+  Settles it: `docker compose up --build`, start two runs, open `/runs/live`.
+
+- **`/runs/live`'s reconnect has never been seen in a browser.** The fold that
+  replaces each tail on a reconnect is unit-tested (`liveTiles.test.ts`); a
+  real `EventSource` retrying through a server restart, a proxy's idle cut or
+  an HTTP/2 terminator has not been watched. Settles it: open the page over two
+  running runs and `docker compose restart`, then count each tile's lines.
+

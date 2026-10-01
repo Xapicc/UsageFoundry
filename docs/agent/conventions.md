@@ -12,7 +12,7 @@ Each rule is in one topic file under `docs/agent/conventions/`; the lines below 
 - Server-only vs client. `src/lib/apiTypes.ts` holds the DTO mirror of the server types so client components never transitively import `node:fs`.
 - Route handlers that touch SQLite or the filesystem need `export const runtime = "nodejs"` and `export const dynamic = "force-dynamic"`.
 - A body a handler reads fields off goes through `readJsonObject` (`src/lib/http.ts`), not `(await req.json().catch(() => ({}))) as Record<string, unknown>`.
-- Twenty-three routes answer through `jsonMaybeGzipped` (`grep -rl 'jsonMaybeGzipped(' src/app/api`), and the streaming ones are excluded by name
+- Twenty-four routes answer through `jsonMaybeGzipped` (`grep -rl 'jsonMaybeGzipped(' src/app/api`), and the streaming ones are excluded by name
 - Module state survives dev hot reload via `globalThis` singletons: `__ufDb`, `__ufBus`, `__ufProcs`, `__ufInterrupts`, `__ufTranscriptCacheV2`.
 - Schema changes go in `migrate()` in `db.ts` as idempotent `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` statements, or as an `addColumn` that reads the live schema — there is no …
 - `better-sqlite3` is a native addon — it must stay in `serverExternalPackages` in `next.config.ts`, and the Dockerfile's `deps` stage carries the build toolchain for it.
@@ -21,6 +21,7 @@ Each rule is in one topic file under `docs/agent/conventions/`; the lines below 
 ## [Polling, list DTOs, filters and Settings saves](conventions/polling-dtos-and-settings-save.md)
 
 - Pages are client components that poll their API route (dashboard 120s, run detail 3s for the row while SSE carries the log).
+- A page holds one `EventSource` whatever it shows, and a page that follows several runs follows them through one multiplexed stream.
 - A list route ships the list's own DTO, and both readers of a list move together.
 - A payload may carry a position into its own answer, and it is turned back into an id at the fetch boundary.
 - A control that narrows what is on screen narrows the *data*, never the way the data is drawn — and it says what it left out.
