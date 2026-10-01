@@ -34,17 +34,20 @@ const STRIP: readonly (keyof LiveCountsDTO)[] = ["running", "queued", "paused"];
 
 export default function LiveRunsPage() {
   const [live, setLive] = useState<LiveState>(EMPTY_LIVE);
-  const [connected, setConnected] = useState(true);
+  const [stream, setStream] = useState<"open" | "retrying" | "closed">("open");
   const [figures, setFigures] = useState<ReadonlyMap<string, LiveRunDTO>>(new Map());
   const [pollError, setPollError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     const es = new EventSource("/api/runs/live/stream");
-    es.onopen = () => setConnected(true);
-    // `EventSource` reconnects on its own; the stream then replays every
-    // running run's tail and the reducer replaces what the tiles held.
-    es.onerror = () => setConnected(false);
+    es.onopen = () => setStream("open");
+    // `EventSource` reconnects on its own after a dropped connection, and the
+    // stream then replays every running run's tail for the reducer to replace.
+    // An answer it cannot use — a 401 once the session lapses — closes it for
+    // good instead, and saying "reconnecting" over that would be a promise.
+    es.onerror = () =>
+      setStream(es.readyState === EventSource.CLOSED ? "closed" : "retrying");
     es.onmessage = (msg) => {
       const frame = JSON.parse(msg.data) as LiveFrameDTO;
       setLive((state) => applyLiveFrame(state, frame));
@@ -112,10 +115,13 @@ export default function LiveRunsPage() {
       </p>
 
       <div role="alert">
-        {!connected && (
+        {stream === "retrying" && (
           <Notice tone="warn" quiet>
             Live updates lost — reconnecting.
           </Notice>
+        )}
+        {stream === "closed" && (
+          <Notice tone="danger">Live updates stopped. Reload the page to try again.</Notice>
         )}
         {pollError && <Notice tone="danger">{pollError}</Notice>}
       </div>
