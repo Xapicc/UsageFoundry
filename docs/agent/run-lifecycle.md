@@ -4,7 +4,7 @@
 > load into a session. Each paragraph records a correctness or safety decision
 > whose violation is silent — nothing throws, nothing fails to typecheck.
 > **Read before editing src/lib/orchestrator.ts, fleet.ts, requestLog.ts,
-> notify.ts.**
+> notify.ts, stackRequests.ts.**
 
 This file is an index. Each line below is the lead claim of one paragraph, and the paragraph itself is in the topic file its heading links to.
 
@@ -33,6 +33,19 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - A refusal has three answers, not two, and the third one is not a park.
 - …and a rate limit is a transient failure that is not the same transient failure, so it has its own ladder and its own ending.
 - A paused run is reconsidered, not trusted.
+
+## [Waiting for a stack](run-lifecycle/waiting-for-stack.md)
+
+- A run has a third answer to a missing tool, and it is a question rather than an install.
+- The park is read off the record at the cycle boundary, below the machine's rungs and above the task's.
+- The cycle that asked is refunded, and the refund is bounded.
+- It is a park in every column `paused` writes except `resume_at`.
+- It survives every boot, and the boot is what releases it.
+- The release is one pure decision, and it agrees with the tool about what is installed.
+- What the resumed run is told travels in `follow_up`, and the grant needs nothing.
+- An attachment means exactly "between asking and being answered".
+- It notifies, because only a person ends it.
+- Two things are deliberately thin.
 
 ## [Reopening, pick-ups and resumed sessions](run-lifecycle/reopen-and-resume.md)
 
@@ -70,6 +83,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 
 - A run ending can leave the machine, and where that sink attaches is the whole of its data-minimisation argument.
 - What is worth a notification is its own named constant and its own four-part filter, and every part of it is a decision about noise.
+- One park notifies, and it is the one only a person can end.
 
 ## [What replaced `--autocompact`, and compaction notices](run-lifecycle/autocompact-and-compaction.md)
 

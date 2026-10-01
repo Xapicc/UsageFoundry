@@ -185,7 +185,52 @@
 
 - **The routes under the new-run form's template UI**, exercised directly.
 
+- **`GET /v1/models`' paging fields, read off Anthropic's docs 2026-10-01**
+  (`platform.claude.com/docs/en/api/models-list`, the target of
+  `docs.anthropic.com/en/api/models-list`'s 301, fetched). Query `after_id`,
+  `before_id` and `limit` (default 20, 1–1000); response `data`, `has_more`,
+  `first_id`, `last_id`; each item `type`, `id`, `display_name`, `created_at`,
+  `max_input_tokens`, `max_tokens`, `capabilities`; "More recently released
+  models are listed first." `modelDiscovery.ts` asks `limit=1000` and follows
+  `last_id` as `after_id`. Caveat: the documentation through `WebFetch`'s
+  markdown conversion, not a response from the endpoint. The page marks
+  `anthropic-beta` deprecated on this method and says nothing about OAuth.
+
+- **Model discovery against a stubbed `/v1/models` and a real `DATA_DIR`,
+  2026-10-01:** `npm test` 3,599 tests, 3,598 passing before the README count
+  was corrected (the one failure was that count). `modelDiscovery.test.ts`
+  covers paging, both credentials' headers, a redacted 401, five malformed
+  bodies, no credential, and the merge through `getSettings`/`saveSettings`
+  and a reboot. Swapping `settingsDefaults()` for `DEFAULTS` in compiled
+  `saveSettings` failed 2 of its cases; adopting onto the bare seed in
+  compiled `db.js` failed 1. Caveat: a stub, never the real endpoint.
+
+- **The Settings panel on the built standalone server, 2026-10-01**, scratch
+  `DATA_DIR` seeded with a discovery record (one success 3 h earlier, one
+  refused id), no `ANTHROPIC_API_KEY`, an empty `CLAUDE_CONFIG_DIR`. The boot
+  check ran and logged "No credential: …"; at 1280 and 390 px the fold showed
+  that failure as a warning above *Check for models*, the earlier success
+  ("Listed 2 models 3h 1m ago with the API key, added 1: claude-opus-6") and
+  the refused id, with no console error; one row read *Unpriced*
+  (`claude-opus-6`); pressing the button logged the same failure again.
+  `GET /api/settings` answered `nonDefaultKeys: []` with `claude-opus-6` last
+  in the catalogue, so a discovered model on an unedited install reads as
+  unedited. Caveat: the no-credential path only; nothing was listed.
+
 ## Not yet verified by hand
+
+- **No real `/v1/models` listing has been read, with either credential.**
+  Whether the endpoint accepts a Claude Code OAuth token with
+  `anthropic-beta: oauth-2025-04-20` is unknown — no subscription credential
+  was read to test it, by instruction — and so is what the API-key listing
+  returns, in particular how many dated snapshot ids a first check adds to an
+  existing install. Settling the key path: `curl -s
+  'https://api.anthropic.com/v1/models?limit=1000' -H 'anthropic-version:
+  2023-06-01' -H "x-api-key: $ANTHROPIC_API_KEY" | jq -r '.data[].id'`.
+  Settling the OAuth path: press *Check for models* on an install with no
+  `ANTHROPIC_API_KEY` and read the line beside it. `CLAUDE_CODE_OAUTH_TOKEN`
+  is not consulted, so an install signed in only that way reads "No
+  credential". `docker compose up --build` was not run.
 
 - **An empty agent name and a non-JSON `--agents` payload were not
   re-measured under `--agent`.**

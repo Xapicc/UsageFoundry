@@ -19,6 +19,7 @@ import {
   folderLabel,
   pollFailureMessage,
   signedUSD,
+  STATUS_LABEL,
 } from "@/lib/format";
 import { jsonRequest } from "@/lib/jsonRequest";
 import { FleetControls } from "@/components/FleetControls";
@@ -43,9 +44,11 @@ import { TBody, THead, Table, Td, Th, Tr } from "@/components/ui/Table";
  * `waiting` belongs here even though it holds no folder — it is a run the
  * operator started and expects to see start, and dropping it into the history
  * table below would file a run that has not happened yet under what has.
+ * `waiting-for-stack` belongs for the same reason: it is parked on the
+ * operator's answer, not over.
  *
  * Two requests rather than one, split where the bound changes. A workflow or a
- * schedule can queue any number of runs, and over all four statuses a page of
+ * schedule can queue any number of runs, and over all five statuses a page of
  * the newest rows is the newest *queued* ones — so the run actually spending,
  * created before the queue was, is the one a cap cuts. This band used to be
  * cut in the browser out of the hundred newest rows of every status, and lost
@@ -57,7 +60,11 @@ import { TBody, THead, Table, Td, Th, Tr } from "@/components/ui/Table";
  * ones that start next; in the queue's order what the cap leaves out is its
  * tail, which moves into the band as the runs ahead of it start.
  */
-const EXECUTING: readonly RunListItemDTO["status"][] = ["running", "paused"];
+const EXECUTING: readonly RunListItemDTO["status"][] = [
+  "running",
+  "paused",
+  "waiting-for-stack",
+];
 const QUEUE: readonly RunListItemDTO["status"][] = ["queued", "waiting"];
 
 /**
@@ -72,9 +79,14 @@ const BAND_LIMIT = 200;
  * not started. Creation order put a queued run above a running one, which is
  * backwards for a band whose job is "what needs attention".
  */
-const ACTIVE_ORDER: Record<"running" | "paused" | "queued" | "waiting", number> = {
+const ACTIVE_ORDER: Record<
+  "running" | "paused" | "waiting-for-stack" | "queued" | "waiting",
+  number
+> = {
   running: 0,
+  // The two parks rank together: each will spend again, once its wait ends.
   paused: 1,
+  "waiting-for-stack": 1,
   queued: 2,
   // Last: it is not waiting on this machine for anything, it is waiting on
   // another run in this band.
@@ -309,6 +321,10 @@ function waitingDetail(
         }
       : { text: "waiting for the 5-hour window" };
   }
+  if (run.status === "waiting-for-stack") {
+    // No clock: nothing on this side moves it, only an answer from the operator.
+    return { text: "waiting for you to install or decline a stack" };
+  }
   return null;
 }
 
@@ -534,7 +550,7 @@ function RunList({
                   <Td className="align-top">
                     <div className="flex flex-wrap items-center gap-2">
                       <StatusMark status={r.status} />
-                      <span className="text-ink">{r.status}</span>
+                      <span className="text-ink">{STATUS_LABEL[r.status]}</span>
                       {/* Beside the status rather than replacing it: this run
                           ended however it ended, and being held back from the
                           bulk pick-ups is a separate fact about it. Without the

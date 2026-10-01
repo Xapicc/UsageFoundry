@@ -17,8 +17,10 @@ import { heldByAnotherProcess } from "./serverLock";
 // module and that one, so the seed has to live where neither can reach back.
 import {
   adoptModelIds,
+  defaultCatalogueWith,
+  discoveredEntriesOf,
   mergeSeededModels,
-  SEEDED_MODEL_CATALOGUE,
+  MODEL_DISCOVERY_KEY,
   type ModelCatalogueEntry,
 } from "./modelCatalogue";
 
@@ -979,6 +981,10 @@ function migrate(db: Database.Database) {
   // each cut ends in. No backfill: a refund taken before this column was never
   // counted, and 0 grants an old row at most one more allowance.
   addColumn(db, "runs", "guard_refunds", "INTEGER NOT NULL DEFAULT 0");
+  // Parks for a stack, each of which refunds the cycle it ended, so
+  // `MAX_STACK_WAITS_PER_RUN` bounds them for `guard_refunds`' reason. Never
+  // reset, `reopenRun` included. No backfill: no row predates the status.
+  addColumn(db, "runs", "stack_waits", "INTEGER NOT NULL DEFAULT 0");
   // Work cycles the context ceiling ended early and refunded, which
   // `MAX_EARLY_ENDS_PER_RUN` bounds. It was a local of `startRun`, so the bound
   // was per segment and reset at every park, restart and pick-up. No backfill,
@@ -2639,6 +2645,15 @@ function migrate(db: Database.Database) {
   // `operator_only`'s reason: every older row was work anyone could do.
   addColumn(db, "tasks", "needs_frontier", "INTEGER NOT NULL DEFAULT 0");
 
+  // The operator holds this claim themselves. A column beside
+  // `claimed_by_run_id` rather than a sentinel run id in it, because that
+  // column is read as a run everywhere — `tasksForRun`, completion validation,
+  // the run link on the board — and a made-up id would be a run no `runs` row
+  // answers for. A `claimed` task has exactly one holder, this or the run
+  // column; `updateTask` is the writer that keeps that. `NOT NULL DEFAULT 0`
+  // because before this column the operator could not claim at all.
+  addColumn(db, "tasks", "claimed_by_operator", "INTEGER NOT NULL DEFAULT 0");
+
   // JSON `string[]`, read through `proposalTaskIds`, for `depends_on`'s reason:
   // nothing queries a proposal by task, so a table would be a join for no read.
   addColumn(db, "chat_proposals", "task_ids", "TEXT");
@@ -2691,6 +2706,49 @@ function migrate(db: Database.Database) {
       updated_at     INTEGER NOT NULL,
       PRIMARY KEY (instance_id, block_id, origin_run_id)
     );
+  `);
+
+  // What runs have asked the operator to install, and which runs are waiting.
+  // `stackRequests.ts` carries the design; the part that belongs beside the
+  // schema is what is absent. There is no `installed` state and no column that
+  // could hold one: whether a stack is installed is read from the applier's
+  // receipts, every time, so this cannot become a second record of what is
+  // installed that disagrees with the directory — `stacks.ts`'s reason for
+  // having no `stacks` table at all. One `pending` row per name, enforced by
+  // the index rather than by a read, so a second run asking for the same stack
+  // waits on the first run's request and the operator answers once.
+  //
+  // The attachment is per run because a run's reason and binaries are its own;
+  // the request's `binaries` is their union, which is what the operator is
+  // asked to install. `released_at` is set on every way out of a wait, so an
+  // unreleased row means exactly "this run is between asking and being
+  // answered". The run end cascades for `run_deps`' reason.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS stack_requests (
+      id          TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      binaries    TEXT NOT NULL,
+      draft       TEXT,
+      -- 'pending' | 'declined'
+      state       TEXT NOT NULL,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL,
+      declined_at INTEGER
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_stack_requests_pending_name
+      ON stack_requests(name) WHERE state = 'pending';
+    CREATE TABLE IF NOT EXISTS stack_request_runs (
+      request_id  TEXT NOT NULL REFERENCES stack_requests(id) ON DELETE CASCADE,
+      run_id      TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      reason      TEXT NOT NULL,
+      binaries    TEXT NOT NULL,
+      created_at  INTEGER NOT NULL,
+      released_at INTEGER,
+      PRIMARY KEY (request_id, run_id)
+    );
+    -- The cycle boundary's read: is this run waiting on anything?
+    CREATE INDEX IF NOT EXISTS idx_stack_request_runs_run
+      ON stack_request_runs(run_id, released_at);
   `);
 
   adoptModelsInUse(db);
@@ -2969,13 +3027,32 @@ function adoptModelsInUse(db: Database.Database) {
       .all() as { model: string }[]).map((row) => row.model),
   ];
 
-  const adopted = adoptModelIds(SEEDED_MODEL_CATALOGUE, inUse);
-  if (adopted.length === SEEDED_MODEL_CATALOGUE.length) return;
+  // Onto the list this install is actually following, which is the seed plus
+  // whatever model discovery has added. Adopting onto the bare seed would pin a
+  // list that lacks every discovered model, and since discovery never offers an
+  // id twice, each of them would be gone for good — set off by nothing more than
+  // a template naming one of them.
+  const following = defaultCatalogueWith(discoveredEntriesOf(discoveryRecord(db)));
+  const adopted = adoptModelIds(following, inUse);
+  if (adopted.length === following.length) return;
 
   db.prepare(
     `INSERT INTO settings (key, value) VALUES ('settings', ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
   ).run(JSON.stringify({ ...stored, modelCatalogue: adopted }));
+}
+
+/** Model discovery's stored record, or null when it is absent or unreadable. */
+function discoveryRecord(db: Database.Database): unknown {
+  const raw = db
+    .prepare("SELECT value FROM settings WHERE key = ?")
+    .get(MODEL_DISCOVERY_KEY) as { value: string } | undefined;
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw.value) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -40,7 +40,13 @@ import { haltSteps, stopInstance, type HaltReport } from "./workflows";
  */
 
 /** Statuses a run has not finished in, including the one that holds nothing. */
-const FLEET_STATUSES: readonly RunStatus[] = ["waiting", "queued", "running", "paused"];
+const FLEET_STATUSES: readonly RunStatus[] = [
+  "waiting",
+  "queued",
+  "running",
+  "paused",
+  "waiting-for-stack",
+];
 
 /**
  * What a fleet stop is recorded as, on a run that belongs to no workflow.

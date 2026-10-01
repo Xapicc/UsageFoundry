@@ -61,11 +61,26 @@ stacks.ts       the read-back over what apply-stacks.mjs installed, and the
                 are the state and they are per boot, so the one question a
                 monitor asks — what did *this* boot find wrong — is answered by
                 a set nothing outlives a restart with.
+stackRequests.ts
+                what runs asked the operator to install through
+                `request_stack`, and which runs wait on each — text an agent
+                wrote for a person to read, never anything the app applies.
+                It records requests (`pending` or `declined`) and never
+                installs: whether one is answered is `stackSatisfaction` over
+                the receipts, asked by both the tool and the release so the two
+                cannot disagree. `decideStackWait` is the release's pure
+                decision; the status writes are `orchestrator.ts`'s
+                `releaseStackWaits`. `checkStackDraft` asks the image's own
+                `scripts/apply-stacks.mjs` whether a draft would parse, loaded
+                at runtime rather than bundled. See
+                docs/agent/run-lifecycle/waiting-for-stack.md.
 scripts/apply-stacks.mjs
-                not in src/ and not importable from it — it runs from the
+                not in src/ and not bundled into it — it runs from the
                 entrypoint before `exec "$@"`, because PATH has to be final
                 before the server starts and childEnv copies the server's
-                environment into every agent. Parse, digest, download, verify,
+                environment into every agent, and the server reaches its
+                parser only by loading the image's copy at runtime
+                (`checkStackDraft`). Parse, digest, download, verify,
                 unpack, link, write receipts. Three verbs and nothing else:
                 `archive` executes nothing it downloads, `uv-tool` and
                 `npm-global` run the package's own install hooks as the agent
@@ -248,7 +263,7 @@ health.ts       what /api/health answers with, and the one thing it is for:
                 being false when this server cannot do its job
 status.ts       what /api/status answers with — gauges for a monitor rather
                 than a person, behind a read-only credential of its own
-db.ts           SQLite: every table migrate() creates, and there are 39 —
+db.ts           SQLite: every table migrate() creates, and there are 41 —
                 runs, run_deps, run_events, run_reviews, run_templates,
                 fork_attempts, resume_probes, agents, settings,
                 chat_sessions, chat_messages, chat_proposals,
@@ -262,10 +277,11 @@ db.ts           SQLite: every table migrate() creates, and there are 39 —
                 webhook_deliveries, auth_sessions,
                 login_attempts, tasks, task_comments, task_deps,
                 run_tasks, local_provider,
-                workflow_review_items. The list is a
+                workflow_review_items, stack_requests,
+                stack_request_runs. The list is a
                 completeness claim, so
                 check it against
                 `grep -oE 'CREATE TABLE IF NOT EXISTS [a-z_]+'
                 src/lib/db.ts | sort -u | wc -l` when adding one — a plain
-                `grep -c` says 41 and counts two comments
+                `grep -c` says 43 and counts two comments
 ```

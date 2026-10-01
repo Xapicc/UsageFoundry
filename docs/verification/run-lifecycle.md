@@ -109,6 +109,24 @@
   an 80-character branch name at 390px. Caveat: the answers were intercepted,
   so no refusal written by `reopenRestartClosed` itself has reached the page.
 
+- **A run waiting for a stack survives a boot, is drawn, and is declined,
+  against the standalone build, 2026-10-01 at `79b42bf`.** Two `waiting-for-stack`
+  runs and their requests were written into a throwaway `DATA_DIR` through the
+  compiled `stackRequests.js`, and `.next/standalone/server.js` was served over
+  it with `scripts/apply-stacks.mjs` copied beside it, where the image puts it,
+  reading this container's real receipts (`playwright` failed, `go`, `python`,
+  `shell-lint`, `swift` ok). The boot logged "Kept 2 run(s) waiting for a stack"
+  and released neither. `/api/tools` answered the `rust` draft with the boot
+  parser's own refusal ("stack.json is not valid JSON …") and the `playwright`
+  request with the failed receipt's reason, so the runtime `import()` of the
+  applier survived bundling. The run page, Settings → Tools and `/runs` were
+  200 at 390px and 1280px with no console error and `scrollWidth` equal to
+  `clientWidth`; a `<script>` in the draft was drawn as text with no element
+  created. Decline answered "Declined — it rejoins the queue…", and the run left
+  `waiting-for-stack` for the queue and then `failed`, because the scratch
+  `CLAUDE_BIN` does not exist. Caveat: the runs were inserted rather than parked
+  by a cycle — that half is `stackWait.test.ts`, against a stubbed child.
+
 ## Not yet verified by hand
 
 - **No real `reopenRestartClosed` refusal has reached the restart notice.**
@@ -231,3 +249,16 @@
   state card, the warn log line. Unexercised on a database: freeing the folder,
   continuing the branch, Resume, the bulk pick-ups, Land/Delete/Purge. No
   `docker compose up --build` has been run against it.
+
+- **No real work cycle has called `request_stack`, and no real restart has
+  resumed one.** Unmeasured: whether a model reads the tool's description and
+  ends its cycle after calling it, whether a `docker compose restart` with the
+  new `stack.json` under `./stacks` re-queues the run at boot and resumes the
+  same session with the binary granted, and whether the webhook's
+  `run.waiting_for_stack` reaches a receiver. The park, the refund, the release
+  and the resumed cycle's `--allowedTools` are pinned through the real loop in
+  `stackWait.test.ts`, against a stubbed child and a receipts directory that
+  test writes. Settled by: with *Let runs use the taskboard* on, start a run
+  told to run `zig version` on a container without it, wait for
+  `waiting-for-stack`, add `stacks/zig/stack.json`, `docker compose restart`, and
+  read the resumed cycle's argv and first tool call on the run page.

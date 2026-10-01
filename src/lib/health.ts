@@ -92,6 +92,11 @@ const LAG_DEGRADED_MS = 2_000;
  * every other field being merely unknown.
  */
 function probeDatabase(): RunStateCounts {
+  // `waiting-for-stack` is absent on purpose. These counts exist for the
+  // stalled-sweeper test below, and the sweeper is the only way out of `paused`
+  // but only a backstop for that park: its run is released by the boot that
+  // installs the stack and by the press that declines it, both directly. A key
+  // added here is also a change to a payload monitors already parse whole.
   const rows = db()
     .prepare(
       "SELECT status, COUNT(*) AS n FROM runs" +

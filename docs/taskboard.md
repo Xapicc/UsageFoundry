@@ -21,7 +21,7 @@ them the container is doing exactly what it was doing with none.
 | Status | Means |
 |---|---|
 | `open` | Filed, nobody is doing it |
-| `claimed` | A run is doing it now, and the board names which |
+| `claimed` | A run is doing it now, or you are, and the board names which |
 | `done` | The work was finished |
 | `dropped` | You decided it should not happen |
 
@@ -29,6 +29,13 @@ them the container is doing exactly what it was doing with none.
 days behind a provider's weekly wall and still legitimately hold its task, so a
 claim that has gone stale is yours to release — the Release button on the row —
 against a run whose status you can see on the same screen.
+
+You can claim an open task yourself with **Claim**, on the row or on the task's
+page, to say you are doing it by hand: the board shows it held by you, no run can
+claim it, release it or close it, and a run the orchestrator chat or a block
+proposes cannot be pointed at it. Release or Done takes your claim off again. To take a task a
+run is holding, release it first and then claim it — there is no one-press
+takeover.
 
 Only you can drop a task, delete one, or re-open a closed one. A re-open clears
 the record of which run had claimed and completed it, because a task that is
@@ -39,8 +46,9 @@ open while naming the run that finished it is a row contradicting itself.
 Some work no run in this container can do: it needs a Mac or a GUI, hardware,
 credentials only you hold, or a physical action. Mark such a task **Operator
 only** — on the new-task form, or with the toggle on the task's page — and no
-run will claim it; it stays open on the board for you. It is not a status: the
-task is still open, and you close or drop it the ordinary way.
+run will claim it; it stays open on the board for you. Claim it when you start
+on it, so the board says it is in hand. It is not a status: the task is still
+open, and you close or drop it the ordinary way.
 
 A run that gave a task back because of a blocker like that can mark it for you,
 and so can the orchestrator chat when it files a new task. Only you can clear

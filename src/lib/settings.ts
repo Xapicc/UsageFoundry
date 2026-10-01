@@ -1,6 +1,9 @@
 import { getJSON, setJSON } from "./db";
 import { normalizePolicy, type BudgetPolicy } from "./budget";
 import {
+  defaultCatalogueWith,
+  discoveredEntriesOf,
+  MODEL_DISCOVERY_KEY,
   SEEDED_MODEL_CATALOGUE,
   type ModelCatalogueEntry,
 } from "./modelCatalogue";
@@ -1103,6 +1106,27 @@ export const SETTINGS_KEYS = Object.keys(DEFAULTS) as (keyof Settings)[];
 
 const KEY = "settings";
 
+/**
+ * `DEFAULTS`, with the one value that moves without a release: the model
+ * catalogue, which is the seed plus whatever model discovery has added.
+ *
+ * Discovery moves the *default* rather than writing the operator's setting,
+ * and every comparison against "what shipped" has to use this rather than
+ * `DEFAULTS` or that choice undoes itself. `saveSettings` would store the
+ * catalogue the first time anybody saved anything — pinning an install that
+ * never touched the list, which is the trap `mergeSeededModels` exists to dig
+ * out of — and the settings route would report the list as moved off its default
+ * when nobody moved it. `docs/agent/agents-and-templates/` argues the choice.
+ *
+ * `DEFAULTS` itself stays the build's constant: `SETTINGS_KEYS` is walked off
+ * it, and a constant cannot read a database row.
+ */
+export function settingsDefaults(): Settings {
+  const added = discoveredEntriesOf(getJSON<unknown>(MODEL_DISCOVERY_KEY, null));
+  if (added.length === 0) return DEFAULTS;
+  return { ...DEFAULTS, modelCatalogue: defaultCatalogueWith(added) };
+}
+
 export function getSettings(): Settings {
   const stored = getJSON<Partial<Settings> & { resolveVerifyTools?: string[] }>(KEY, {});
   // `resolveAllowedTools` was stored as `resolveVerifyTools` until that name
@@ -1117,11 +1141,13 @@ export function getSettings(): Settings {
   if (resolveVerifyTools !== undefined && rest.resolveAllowedTools === undefined) {
     rest.resolveAllowedTools = resolveVerifyTools;
   }
-  return { ...DEFAULTS, ...rest };
+  return { ...settingsDefaults(), ...rest };
 }
 
 /**
- * Persist the effective object as **only what differs from `DEFAULTS`**.
+ * Persist the effective object as **only what differs from `DEFAULTS`** — as
+ * `settingsDefaults()` reads it, so a catalogue that is only the seed plus what
+ * discovery added stays unstored.
  *
  * `getSettings()` is `{...DEFAULTS, ...stored}` and the settings page PUTs the
  * whole *effective* object on Save, so storing it verbatim materialised all
@@ -1158,9 +1184,10 @@ export function getSettings(): Settings {
  */
 export function saveSettings(patch: Partial<Settings>): Settings {
   const next = { ...getSettings(), ...patch };
+  const defaults = settingsDefaults();
   const stored: Partial<Settings> = {};
   for (const key of SETTINGS_KEYS) {
-    if (!sameValue(next[key], DEFAULTS[key])) {
+    if (!sameValue(next[key], defaults[key])) {
       // The cast is the price of a per-key loop over a heterogeneous record:
       // `next[key]` and `stored[key]` are the same member of the same union at
       // every iteration, and TypeScript cannot carry that through the index.

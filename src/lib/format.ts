@@ -41,6 +41,9 @@ export const STATUS_TONE: Record<RunDTO["status"], BadgeTone> = {
   // it is holding a folder meanwhile. "accent" would imply progress and "" would
   // let it disappear into the history table.
   paused: "warn",
+  // `paused`'s test and more so: it will not move until a person installs or
+  // declines what it asked for.
+  "waiting-for-stack": "warn",
   completed: "ok",
   // The same test `paused` passes: it needs attention. Never `ok` — green is
   // what made a run that hit a wall indistinguishable from one that did the job
@@ -50,6 +53,29 @@ export const STATUS_TONE: Record<RunDTO["status"], BadgeTone> = {
   stopped: "warn",
   blocked: "warn",
   failed: "danger",
+};
+
+/**
+ * The word a run's status is drawn as, wherever a badge or a row names it.
+ *
+ * The status itself for every member but one, because those words are what an
+ * operator already reads in the filter, the API and the log. The exception is
+ * the one status whose name is a phrase: `waiting-for-stack` drawn hyphenated
+ * reads as an identifier rather than as a state, and the operator asked for it
+ * to read "Waiting for stack". A `Record` for `STATUS_TONE`'s reason — a member
+ * added and not drawn here is a compile error.
+ */
+export const STATUS_LABEL: Record<RunDTO["status"], string> = {
+  waiting: "waiting",
+  queued: "queued",
+  running: "running",
+  paused: "paused",
+  "waiting-for-stack": "waiting for stack",
+  completed: "completed",
+  "needs-review": "needs-review",
+  stopped: "stopped",
+  blocked: "blocked",
+  failed: "failed",
 };
 
 /** "3/5", or "3 · no cap" when the run has no work-cycle limit (stored as 0). */

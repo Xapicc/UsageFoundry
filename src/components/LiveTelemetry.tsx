@@ -5,7 +5,7 @@ import Link from "next/link";
 // rewrites the path alias at runtime, so a tested component has to import the
 // way src/lib and Meter.tsx already do.
 import type { TelemetryWindowDTO } from "../lib/apiTypes";
-import { STATUS_TONE, fmtRelative, fmtTokens, fmtUSD } from "../lib/format";
+import { STATUS_LABEL, STATUS_TONE, fmtRelative, fmtTokens, fmtUSD } from "../lib/format";
 import { Badge } from "./ui/Badge";
 import { Card, CardTitle, Stat } from "./ui/Card";
 import { ListView, STICKY_HEAD } from "./ui/ListView";
@@ -125,7 +125,7 @@ export function LiveTelemetry({
                       deleted — but the join is a LEFT JOIN, so say "unknown"
                       rather than inventing a status. */}
                   {r.status ? (
-                    <Badge tone={STATUS_TONE[r.status]}>{r.status}</Badge>
+                    <Badge tone={STATUS_TONE[r.status]}>{STATUS_LABEL[r.status]}</Badge>
                   ) : (
                     "—"
                   )}

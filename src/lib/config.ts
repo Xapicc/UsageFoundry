@@ -636,6 +636,18 @@ export const ANTHROPIC_API_BASE = env("ANTHROPIC_API_BASE", "https://api.anthrop
 export const USER_AGENT = "UsageFoundry/0.1.0";
 
 /**
+ * The Anthropic API key work cycles bill against, or empty when they use the
+ * Claude Code sign-in instead.
+ *
+ * Read here for one consumer, `modelDiscovery.ts`, which asks `/v1/models` with
+ * whichever credential runs actually use — so the list it fills is the list of
+ * models a run can reach. Every child still gets the key from its own copy of
+ * `process.env`, as before; this constant is not how it reaches them, and
+ * nothing may hand it to one.
+ */
+export const ANTHROPIC_API_KEY = optionalEnv("ANTHROPIC_API_KEY");
+
+/**
  * Every variable this process actually read through `env()`, in the order it
  * read them.
  *
@@ -663,6 +675,8 @@ export const BLANK_MEANINGFUL_ENV_VARS = [
   "ANTHROPIC_ADMIN_KEY",
   "UF_GITHUB_TOKEN",
   "UF_GITHUB_TOKENS",
+  // Blank is "use the Claude Code sign-in", for runs and for model discovery.
+  "ANTHROPIC_API_KEY",
   // Blank is "take the default": no acknowledgement, let the request decide the
   // cookie flag, and the shipped transcript cache bound.
   "UF_ALLOW_NO_AUTH",

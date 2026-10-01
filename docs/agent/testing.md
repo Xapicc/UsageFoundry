@@ -80,6 +80,7 @@ Nineteen are renderings rather than functions — every `*.test.tsx` in the tree
 |---|---|
 | `modelAdoption.test.ts` |  |
 | `modelCatalogue.test.ts` |  |
+| `modelDiscovery.test.ts` |  |
 | `pricing.test.ts` |  |
 | `templates.test.ts` | [argv] |
 
@@ -354,6 +355,8 @@ Units that are about no test file in the tree:
 | `cycles.test.ts` | [run-page] |
 | `logLine.test.ts` |  |
 | `repoSpend.test.ts` |  |
+| `stackRequests.test.ts` |  |
+| `stackWait.test.ts` | [budgets] |
 | `stacks.test.ts` |  |
 | `toolInventory.test.ts` |  |
 | `unsavedWork.test.ts` |  |
@@ -373,7 +376,7 @@ Units that are about no test file in the tree:
 Every test file is named in the paragraph that holds its grounds, in the topic file for its area — by basename, or by path for the `route.test.ts` files, which all share one — and that name is the whole of what the check below looks for. It reads the topic files and never this page. The tables above name every test file by design, so a check that read them would pass a test whose row was added and whose paragraph never was, which is how it once printed nothing while four files had no grounds anywhere. For the same reason a paragraph that names only its subject, a function or a module, is invisible to it: when you write one, put the file's name in it too.
 
 ```
-find src -name '*.test.ts' -o -name '*.test.tsx' | wc -l          # 182 as this is written, 2026-09-29
+find src -name '*.test.ts' -o -name '*.test.tsx' | wc -l          # 185 as this is written, 2026-10-01
 for f in $(find src -name '*.test.ts' -o -name '*.test.tsx' | sort); do
   name=$(basename "$f")
   [ "$name" = route.test.ts ] && name=$f          # every route handler's test has that basename

@@ -95,6 +95,17 @@
   no console error or sideways scroll, and the labels read open 16→17 with 12
   closed. Caveat: made-up rows, and the ascii skin was not rendered with rows.
 
+- **The operator's claim, in a browser, 2026-10-01**, standalone build of this
+  branch, scratch `DATA_DIR`, Chromium, three tasks filed through `/api/tasks`.
+  `PATCH {status: "claimed"}` on an operator-only task answered 200 with
+  `claimedByOperator: true`, no run id and the mark kept; Claim on a task's page
+  drew "Held by you", offered Release in its place and stored the same; the
+  board drew "Held by you" on both held rows and Claim on the open row only, no
+  console error or sideways scroll at 1280 or 390; its Release, Claim and Done
+  left the row open, held, then done with no holder. Caveat: no run, chat, block
+  or MCP door met an operator-held task outside `tasks.test.ts`. (The
+  2026-09-26 entry's "the operator cannot claim" was the rule then.)
+
 ## Not yet verified by hand
 
 - **No model has called the board tools over stdio**; that needs a billed run.
@@ -126,3 +137,10 @@
   hard. Settle it after `docker compose up --build` with *Let runs use the
   taskboard* on: start a run from a task that needs a Mac, and read whether
   the task comes back open, marked, with a reason naming the blocker.
+
+- **No model has read `claimedByOperator`.** `list_tasks` and `get_task` carry
+  it, and `propose_run`/`emit_runs` refusing an operator-held id in `taskIds` is
+  pinned in `tasks.test.ts`; unmeasured is whether a chat reading a claimed row
+  with a null run id proposes a run for it anyway. Settle it after `docker
+  compose up --build`: claim a task on the board, ask the orchestrator chat for
+  a run that does it, and read the proposal or the refusal it took.

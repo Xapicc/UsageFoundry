@@ -4111,7 +4111,8 @@ function systemPrompt(): string {
     "  the brief but left out of taskIds stays open after the work is done, and",
     "  propose_run refuses a brief that does that. A task marked operatorOnly",
     "  needs the operator and no run may claim it: it goes in relatedTaskIds",
-    "  if the brief mentions it, never in taskIds.",
+    "  if the brief mentions it, never in taskIds. So does a task with",
+    "  claimedByOperator set: the operator is doing it themselves.",
     "- A template's prompt is instructions the operator wrote and tested. Say",
     "  whether you named one or left the run on the default guard set.",
     "- Use promptOverride rather than contradicting the template inside the task,",
@@ -4364,7 +4365,9 @@ function mcpConfigBase(): string {
  * `/proc/<pid>/cmdline` can read the file. A second gid would not help, because
  * every work cycle would be in it. So the run capability is bounded by *what it
  * can do* instead — `docs/agent/security.md` carries what a stolen one is worth,
- * and it is why the run tool list is three tools that start nothing.
+ * and it is why the run tool list is eight tools that start nothing, approve
+ * nothing and install nothing, and whose writes reach only the board and the
+ * token's own run (`RUN_TOOLS` in `src/app/api/mcp/route.ts` names them).
  *
  * @param ownership defaulted from `privsep.ts`; a parameter so the modes can be
  *   tested without a second uid, which a unit test in this process cannot have.

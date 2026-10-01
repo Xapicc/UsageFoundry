@@ -18,6 +18,8 @@ import type {
   CodexAuthStateDTO,
   LocalProviderDTO,
   KnowledgeStatusDTO,
+  ModelDiscoveryCheckDTO,
+  ModelDiscoveryDTO,
   PluginDTO,
   PluginsReportDTO,
   ToolInventoryDTO,
@@ -29,6 +31,7 @@ import type {
   SandboxDTO,
   SandboxStateDTO,
   SettingsDTO,
+  StackRequestDTO,
   StorageReportDTO,
 } from "@/lib/apiTypes";
 import { PRUNE_ENGINE_LABEL } from "@/lib/pruneStatement";
@@ -38,6 +41,7 @@ import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
 import {
   describeAmbientAgents,
   fmtBytes,
+  fmtRelative,
   fmtTokens,
   fmtUSD,
   type BadgeTone,
@@ -47,6 +51,7 @@ import { Button } from "@/components/ui/Button";
 // Safe from a client file: `modelCatalogue.ts` imports only `pricing.ts`, which
 // imports nothing — no route back to `node:fs`.
 import { SEEDED_MODEL_CATALOGUE } from "@/lib/modelCatalogue";
+import { isKnownModel } from "@/lib/pricing";
 import { Card, CardTitle, Empty } from "@/components/ui/Card";
 import { Disclosure } from "@/components/ui/Disclosure";
 import { Field, Input, Select, Switch, Textarea } from "@/components/ui/Field";
@@ -62,6 +67,7 @@ import {
 import { Sheet } from "@/components/ui/Sheet";
 import { Table, TableWrap, TBody, Td, Th, THead, Tr } from "@/components/ui/Table";
 import { isPlainCommandChord } from "@/components/shell/shortcuts";
+import { StackRequestDetail } from "@/components/StackRequestDetail";
 
 interface CalibrateResponse {
   ok: boolean;
@@ -1167,12 +1173,91 @@ function ToolRow({ tool }: { tool: ToolRowDTO }) {
   );
 }
 
+/**
+ * What runs have asked for and nobody has answered.
+ *
+ * First in the section because it is the only thing in it that needs doing.
+ * It stays mounted when the list empties, so the note a Decline leaves is
+ * still there once the re-read has taken the request it was about away.
+ */
+function StackRequestGroup({
+  requests,
+  onAnswered,
+}: {
+  requests: StackRequestDTO[];
+  /** Re-reads the inventory, so an answered request leaves the list. */
+  onAnswered: () => Promise<void>;
+}) {
+  const [declining, setDeclining] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function decline(id: string) {
+    setNote(null);
+    setError(null);
+    setDeclining(id);
+    const res = await jsonRequest<{ declined?: boolean }>(
+      `/api/stack-requests/${encodeURIComponent(id)}/decline`,
+      { method: "POST" },
+    );
+    if (!res.ok) {
+      setDeclining(null);
+      setError(actionFailureMessage(res, "Could not decline that stack."));
+      return;
+    }
+    // `declined: false` is a 200: it was answered first, from here or from a
+    // run's page, and the re-read below is what takes it off the list.
+    setNote(
+      res.data.declined
+        ? "Declined — every run waiting on it rejoins the queue and is told to carry on without it."
+        : "That request was already answered.",
+    );
+    await onAnswered();
+    setDeclining(null);
+  }
+
+  if (requests.length === 0 && note === null && error === null) return null;
+
+  return (
+    <div className="mb-4">
+      {requests.length > 0 && (
+        <ListGroup
+          label="Asked for by runs"
+          footnote="Nothing here installs anything: a stack is installed by putting its stack.json under ./stacks and restarting the container"
+        >
+          {requests.map((request) => (
+            // Not a `ListRow`: a request is a block of prose and a draft, with
+            // no right edge for a control to align against.
+            <div key={request.id} className="px-3.5 py-3">
+              <StackRequestDetail
+                request={request}
+                declining={declining === request.id}
+                onDecline={() => void decline(request.id)}
+              />
+            </div>
+          ))}
+        </ListGroup>
+      )}
+      <div aria-live="polite">
+        {note && <p className="mt-1.5 px-1 text-xs text-accent">{note}</p>}
+        {error && (
+          <Notice tone="danger" className="mt-2">
+            {error}
+          </Notice>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ToolFigures({
   report,
   error,
+  onAnswered,
 }: {
   report: ToolInventoryDTO | null;
   error: string | null;
+  onAnswered: () => Promise<void>;
 }) {
   if (error !== null) {
     return (
@@ -1190,6 +1275,8 @@ function ToolFigures({
 
   return (
     <>
+      <StackRequestGroup requests={report.stackRequests} onAnswered={onAnswered} />
+
       {report.problems.length > 0 && (
         <Notice tone="warn" className="mb-4">
           <ul className="list-disc pl-4">
@@ -1237,6 +1324,97 @@ function ToolFigures({
         </ListGroup>
       )}
     </>
+  );
+}
+
+const DISCOVERY_CREDENTIAL: Record<NonNullable<ModelDiscoveryDTO["credential"]>, string> = {
+  api_key: "the API key",
+  claude_code: "the Claude Code sign-in",
+};
+
+/**
+ * What model discovery last did, beside the list it writes to.
+ *
+ * A failure is a warning in words and never only a missing timestamp: the one
+ * thing this must not look like is a check that has stopped working reading as
+ * a list with nothing new on it. The button stands down while the list has
+ * unsaved edits, because a check writes to the stored list and Save would then
+ * put the edited copy — without what the check added — back over it.
+ */
+function ModelDiscoveryPanel({
+  status,
+  error,
+  busy,
+  catalogueEdited,
+  catalogueEmpty,
+  onCheck,
+}: {
+  status: ModelDiscoveryDTO | null;
+  error: string | null;
+  busy: boolean;
+  catalogueEdited: boolean;
+  catalogueEmpty: boolean;
+  onCheck: () => void;
+}) {
+  // Only this page's own press. A check already in flight elsewhere is shared
+  // by a press rather than doubled, so there is nothing to wait out first.
+  const checking = busy;
+  const success =
+    status?.lastSuccessAt && status.credential
+      ? {
+          age: fmtRelative(Date.parse(status.lastSuccessAt)),
+          credential: DISCOVERY_CREDENTIAL[status.credential],
+          listed: status.listed ?? 0,
+          added: status.added,
+        }
+      : null;
+
+  return (
+    <div className="mb-3">
+      {error !== null && (
+        <Notice tone="danger" live>
+          {error}
+        </Notice>
+      )}
+      {status?.error && (
+        <Notice tone="warn">
+          <strong>
+            The last check failed
+            {status.errorAt ? ` ${fmtRelative(Date.parse(status.errorAt))}` : ""}.
+          </strong>{" "}
+          {status.error.replace(/\.$/, "")}. Nothing on the list changed.
+        </Notice>
+      )}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Button
+          variant="secondary"
+          onClick={onCheck}
+          disabled={checking || catalogueEdited}
+        >
+          {checking ? "Checking…" : "Check for models"}
+        </Button>
+        <span className="text-xs text-ink-faint">
+          {success
+            ? `Listed ${success.listed} ${success.listed === 1 ? "model" : "models"} ${success.age} with ${success.credential}, ${
+                success.added.length === 0
+                  ? "nothing new"
+                  : `added ${success.added.length}: ${success.added.join(", ")}`
+              }`
+            : status
+              ? "No check has succeeded yet"
+              : "Reading the last check…"}
+        </span>
+      </div>
+      {catalogueEdited && <Hint>Save or discard the list first</Hint>}
+      {catalogueEmpty && <Hint>Nothing is added while the list is empty</Hint>}
+      {status && status.refused.length > 0 && (
+        <Hint tone="warn">
+          Refused {status.refused.length === 1 ? "an id" : `${status.refused.length} ids`}{" "}
+          that {status.refused.length === 1 ? "is" : "are"} not shaped like a model id:{" "}
+          <span className="mono">{status.refused.join(", ")}</span>
+        </Hint>
+      )}
+    </div>
   );
 }
 
@@ -2329,6 +2507,11 @@ export default function SettingsPage() {
 
   /** The id being typed into the model list's Add box, before it is a row. */
   const [modelDraft, setModelDraft] = useState("");
+  // What model discovery last did. A reading on its own route rather than a
+  // setting: nothing on this form writes it, and Save never touches it.
+  const [discovery, setDiscovery] = useState<ModelDiscoveryDTO | null>(null);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const [discoveryBusy, setDiscoveryBusy] = useState(false);
   const standalone = useStandalone();
   const [sectionHash, setSectionHash] = useSectionHash();
 
@@ -2414,7 +2597,10 @@ export default function SettingsPage() {
    * installers run before the server is `exec`ed, so nothing can install a tool
    * while this page is open, and the one half that does move — how often a
    * command has been invoked — sits behind a sixty-second cache a poll would
-   * mostly re-serve.
+   * mostly re-serve. The stack requests on the same answer can arrive while it
+   * is open, and are still not polled: the run that asked is parked and spends
+   * nothing until somebody answers, and its own page already polls the request.
+   * A Decline re-reads.
    */
   const loadTools = useCallback(async () => {
     const res = await jsonRequest<ToolInventoryDTO>("/api/tools");
@@ -2443,6 +2629,20 @@ export default function SettingsPage() {
   useEffect(() => {
     void loadKnowledge();
   }, [loadKnowledge]);
+
+  const loadDiscovery = useCallback(async () => {
+    const res = await jsonRequest<ModelDiscoveryDTO>("/api/models/discovery");
+    if (!res.ok) {
+      setDiscoveryError(actionFailureMessage(res, "Model discovery's status could not be read."));
+      return;
+    }
+    setDiscoveryError(null);
+    setDiscovery(res.data);
+  }, []);
+
+  useEffect(() => {
+    void loadDiscovery();
+  }, [loadDiscovery]);
 
   const toggleSkill = useCallback(async (enabled: boolean) => {
     setSkillBusy(true);
@@ -2534,6 +2734,16 @@ export default function SettingsPage() {
       effective !== null &&
       savedS !== null &&
       JSON.stringify(effective) !== JSON.stringify(savedS),
+    [effective, savedS],
+  );
+
+  // Its own comparison rather than `changed`, which walks `EDITABLE_PATHS` and
+  // that list does not carry the catalogue.
+  const catalogueEdited = useMemo(
+    () =>
+      effective !== null &&
+      savedS !== null &&
+      JSON.stringify(effective.modelCatalogue) !== JSON.stringify(savedS.modelCatalogue),
     [effective, savedS],
   );
 
@@ -2629,12 +2839,17 @@ export default function SettingsPage() {
 
   const save = useCallback(async () => {
     if (!effective) return;
+    // The catalogue only when it was edited here. Model discovery adds to it
+    // while this page is open, and re-sending the copy loaded before that would
+    // store the list without what it added — which, offered once, never returns.
+    const body: Partial<SettingsDTO> = { ...effective };
+    if (!catalogueEdited) delete body.modelCatalogue;
     setBusy(true);
     try {
       const res = await fetch("/api/settings", {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(effective),
+        body: JSON.stringify(body),
       });
       const json = await res.json().catch(() => null);
       // A rejected field means nothing was saved — keep the edited form on
@@ -2661,7 +2876,44 @@ export default function SettingsPage() {
     } finally {
       setBusy(false);
     }
-  }, [effective, loadKnowledge]);
+  }, [effective, catalogueEdited, loadKnowledge]);
+
+  /**
+   * Ask `/v1/models` now, and show what it added without reloading the page.
+   *
+   * A reload would cost every unsaved edit on it. Only what the check appended
+   * is laid onto the form, because discovery never edits an entry and a switch
+   * flipped while the request was out is the operator's to keep.
+   */
+  const checkForModels = useCallback(async () => {
+    if (!savedS) return;
+    const before = savedS.modelCatalogue;
+    setDiscoveryBusy(true);
+    const res = await jsonRequest<ModelDiscoveryCheckDTO>("/api/models/discovery", {
+      method: "POST",
+    });
+    setDiscoveryBusy(false);
+    if (!res.ok) {
+      setDiscoveryError(actionFailureMessage(res, "The check could not be started."));
+      return;
+    }
+    setDiscoveryError(null);
+    setDiscovery(res.data.discovery);
+    const after = res.data.modelCatalogue;
+    const appended = after.filter((entry) => !before.some((e) => e.id === entry.id));
+    setSavedS((prev) => (prev ? { ...prev, modelCatalogue: after } : prev));
+    setS((prev) =>
+      prev
+        ? {
+            ...prev,
+            modelCatalogue: [
+              ...prev.modelCatalogue,
+              ...appended.filter((entry) => !prev.modelCatalogue.some((e) => e.id === entry.id)),
+            ],
+          }
+        : prev,
+    );
+  }, [savedS]);
 
   async function calibrate() {
     setCalBusy(true);
@@ -3804,6 +4056,15 @@ export default function SettingsPage() {
           defaultOpen={false}
         >
           <div className={`${FOLD_BODY} ${FLUSH}`}>
+            <ModelDiscoveryPanel
+              status={discovery}
+              error={discoveryError}
+              busy={discoveryBusy}
+              catalogueEdited={catalogueEdited}
+              catalogueEmpty={catalogue.length === 0}
+              onCheck={() => void checkForModels()}
+            />
+
             {/* Longer than the seven-row rule of thumb, and the length is the
                 price table's rather than a choice: this is one list of one
                 kind of thing, and splitting it by whether the switch is on
@@ -3822,9 +4083,18 @@ export default function SettingsPage() {
                   // Nothing when the two are the same string, which is every
                   // entry an operator typed: the id under the id is the shipped
                   // rows' second fact, not a second copy of their first.
+                  // Unpriced is said here because discovery can add a model the
+                  // price table has never heard of, enabled, and a run on it is
+                  // charged the fallback rate — a fact this row is the first
+                  // place anybody sees the model.
                   description={
-                    entry.label === entry.id ? undefined : (
-                      <span className="mono">{entry.id}</span>
+                    entry.label === entry.id && isKnownModel(entry.id) ? undefined : (
+                      <span className="inline-flex flex-wrap items-center gap-2">
+                        {entry.label !== entry.id && (
+                          <span className="mono">{entry.id}</span>
+                        )}
+                        {!isKnownModel(entry.id) && <Badge tone="warn">Unpriced</Badge>}
+                      </span>
                     )
                   }
                 >
@@ -4371,10 +4641,12 @@ export default function SettingsPage() {
 
           {/* The copy has one job the row above does not: saying what the run
               can and cannot do, because "reach the taskboard" reads as a much
-              larger grant than it is. Three tools, none of which starts work.
+              larger grant than it is. Eight tools, none of which starts work.
               The refusal is worth naming rather than implying — an operator
               weighing this is asking whether an unattended agent could close
-              somebody else's item, and the answer is no. */}
+              somebody else's item, and the answer is no. The stack request is
+              named because it is the one tool here that is not about the board,
+              and an operator switching this off is also switching it off. */}
           <SettingRow
             htmlFor="taskboard"
             edited={isEdited("taskboardForRuns")}
@@ -4383,10 +4655,11 @@ export default function SettingsPage() {
               <>
                 A run can read its own task and what is open in its folder,
                 complete its own task, and file a new one for something it
-                should not fix itself. It cannot complete a task it was not
-                given, start anything, or see other folders. Off by default: it
-                writes into this app&rsquo;s own database from an agent nobody
-                is watching
+                should not fix itself. It can also ask you for a stack it needs
+                and wait for your answer; that installs nothing. It cannot
+                complete a task it was not given, start anything, or see other
+                folders. Off by default: it writes into this app&rsquo;s own
+                database from an agent nobody is watching
               </>
             }
           >
@@ -4747,7 +5020,7 @@ export default function SettingsPage() {
           </>
         }
       >
-        <ToolFigures report={tools} error={toolsError} />
+        <ToolFigures report={tools} error={toolsError} onAnswered={loadTools} />
       </Section>
 
       <Section

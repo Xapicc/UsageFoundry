@@ -96,7 +96,7 @@ export async function register() {
       console.log(`[usagefoundry] stacks export ${exported.sort().join(", ")} to every agent.`);
     }
 
-    const { backfillTaskSignatures, reconcileOnBoot, shutdownRuns } =
+    const { backfillTaskSignatures, reconcileOnBoot, releaseStackWaits, shutdownRuns } =
       await import("./lib/orchestrator");
 
     // Once, at boot, and idempotent. Without it the relative cost guard is
@@ -229,6 +229,14 @@ export async function register() {
       reconcileBlocksOnBoot();
       reconcileHaltsOnBoot();
 
+      // A run waiting for a stack was waiting for exactly this restart, and the
+      // receipts the applier wrote before `exec` are on disk by now. After the
+      // two workflow reconcilers, so a member of an instance this boot has
+      // halted is stopped there rather than re-queued here, and so the
+      // re-queue meets an instance whose blocks are already in the state the
+      // next advance reads.
+      releaseStackWaits();
+
       // And the schedules, which are the one thing here that would otherwise
       // start an agent *because* the server restarted. Every fire time that
       // passed while this process was not running is recorded as missed and the
@@ -256,6 +264,13 @@ export async function register() {
       // own this directory is reading another server's answers to both.
       const { startRetentionSweeper } = await import("./lib/retention");
       startRetentionSweeper();
+
+      // And the model list's one unattended writer. Behind the same claim
+      // because a check writes the catalogue every run is validated against,
+      // and two processes doing that would each record ids the other then
+      // finds already offered.
+      const { startModelDiscovery } = await import("./lib/modelDiscovery");
+      startModelDiscovery();
     } else {
       // Not "starting without closing anything out" any more, which read like a
       // benign notice on a process that then admitted runs and spawned billed

@@ -111,6 +111,20 @@ const NOTIFY_STATUSES: ReadonlySet<string> = new Set<RunStatus>([
   "failed",
 ]);
 
+/**
+ * The one park that notifies, because it is the one only a person can end.
+ *
+ * `paused` clears on its own when the window refills, and saying so would be a
+ * notification per refusal rung at fleet scale. `waiting-for-stack` clears when
+ * somebody writes a `stack.json` and restarts, or declines — so a run entering it
+ * sits there for exactly as long as nobody is told. Its own constant rather than
+ * a member of `NOTIFY_STATUSES`, whose readers take "notifies" to mean "ended",
+ * and tested above the settled gate below because it is not an ending: it
+ * consumes neither latch, so a guard stop armed before the park still notifies
+ * when the run that resumed from it is stopped.
+ */
+const NOTIFY_PARKS: ReadonlySet<string> = new Set<RunStatus>(["waiting-for-stack"]);
+
 /** Every ending, for forgetting a run's tracked state. Not a success test. */
 const SETTLED_STATUSES: ReadonlySet<string> = new Set<RunStatus>([
   "needs-review",
@@ -253,6 +267,8 @@ export function notifiableEvent(
 
   const status = typeof p.status === "string" ? p.status : null;
   if (status === null) return null;
+
+  if (NOTIFY_PARKS.has(status)) return { event: eventName(status), status };
 
   // Both latches are consumed only by an *ending*, never by a status the run
   // passes through on the way to one. Nothing emits a `running` between a stop
