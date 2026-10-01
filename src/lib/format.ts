@@ -58,6 +58,63 @@ export function fmtCycles(used: number, cap: number): string {
 }
 
 /**
+ * Work cycles the check on this run's task granted past the limit it was given.
+ *
+ * The guard's cap is `max_iterations` plus these (`RunProgress.grantedCycles`
+ * in `budget.ts`), so every figure that draws the cap adds them, or a run that
+ * used exactly what it was allowed reads "2/1" over a bar at 200%. Each of them
+ * also says the grant is there, or sits over a sentence that does, rather than
+ * folding it into the total, for `cycleCapReason`'s reason: a cap that grew
+ * without a word reads as a guard that miscounted. Zero under no cap, which a
+ * grant cannot widen. Shared by the run page and `/runs/live`'s tiles, so the
+ * two cannot draw one run against two caps.
+ */
+export function grantedCycles(
+  run: Pick<RunDTO, "max_iterations" | "validation_cycles">,
+): number {
+  return run.max_iterations > 0 ? (run.validation_cycles ?? 0) : 0;
+}
+
+/**
+ * The cycle a live tile names, against the cap the guard enforces.
+ *
+ * `fmtCycleInFlight`'s two halves, with the granted cycles added to the cap —
+ * the tile has one line for this and no room for a sentence beside it, so the
+ * grant is named in the line itself. Between two cycles, when nothing is open,
+ * it counts the ones that finished instead, because "cycle 3" for a run that
+ * has not started its third would claim work in flight that is not.
+ */
+export function fmtLiveCycle(
+  run: Pick<
+    RunDTO,
+    "iterations" | "active_iteration" | "max_iterations" | "validation_cycles"
+  >,
+): string {
+  const granted = grantedCycles(run);
+  const cap = run.max_iterations + granted;
+  const grant = granted > 0 ? ` (${granted} granted)` : "";
+  const n = run.active_iteration;
+  if (n !== null && n !== undefined && n >= 1) {
+    return cap > 0 ? `work cycle ${n} of ${cap}${grant}` : `work cycle ${n}`;
+  }
+  return cap > 0
+    ? `${run.iterations} of ${cap} work cycles done${grant}`
+    : `${run.iterations} work cycles done`;
+}
+
+/**
+ * Where a run worked, as one line: the mount and the path under it, or the
+ * folder's tail when no mount claims it. Shared by the runs list and the live
+ * tiles.
+ */
+export function folderLabel(
+  run: Pick<RunDTO, "folder" | "mountLabel" | "relPath">,
+): string {
+  if (!run.mountLabel) return shortPath(run.folder, 2);
+  return `${run.mountLabel} / ${run.relPath || "."}`;
+}
+
+/**
  * The work cycle a run has open right now, or null when it has none.
  *
  * `fmtCycles` counts cycles that *finished*, because that is what the guard

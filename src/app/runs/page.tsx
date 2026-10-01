@@ -16,8 +16,8 @@ import {
   fmtTokens,
   fmtUSD,
   fmtWaitingFor,
+  folderLabel,
   pollFailureMessage,
-  shortPath,
   signedUSD,
 } from "@/lib/format";
 import { jsonRequest } from "@/lib/jsonRequest";
@@ -250,18 +250,6 @@ const FILTERS: readonly SegmentedOption<Filter>[] = [
   { value: "failed", label: "Failed" },
   { value: "blocked", label: "Blocked" },
 ];
-
-/**
- * Where the run worked, as one line.
- *
- * One tone rather than two: the mount used to be drawn in `ink-faint`, which is
- * 3.4:1 on the card surface in light mode, and this is a line a person reads
- * rather than a rule they glance past.
- */
-function folderLabel(run: RunListItemDTO): string {
-  if (!run.mountLabel) return shortPath(run.folder, 2);
-  return `${run.mountLabel} / ${run.relPath || "."}`;
-}
 
 /**
  * What a queued run is waiting on, in one clause.
@@ -601,6 +589,10 @@ function RunList({
                     >
                       {r.prompt}
                     </Link>
+                    {/* One tone rather than two: the mount used to be drawn
+                        in `ink-faint`, which is 3.4:1 on the card surface in
+                        light mode, and this is a line a person reads rather
+                        than a rule they glance past. */}
                     <div
                       className="mono mt-0.5 max-w-[56ch] truncate text-ink-muted"
                       title={r.work_dir ?? r.folder}
@@ -1006,6 +998,10 @@ export default function RunsPage() {
   );
 
   const { active, activeTotal, recent } = bands;
+  // Off the band the page already holds rather than a request of its own. The
+  // band is capped at `BAND_LIMIT` rows, which no install's concurrency ceiling
+  // comes near, and `running` sorts first in it.
+  const running = active.filter((r) => r.status === "running").length;
 
   return (
     <>
@@ -1013,9 +1009,15 @@ export default function RunsPage() {
         <div>
           <h1 className="mb-1 text-xl font-semibold tracking-tight">Runs</h1>
         </div>
-        <ButtonLink href="/runs/new" variant="primary">
-          New run
-        </ButtonLink>
+        <ButtonRow>
+          <ButtonLink href="/runs/live">
+            Live
+            {running > 0 && <Badge tone="accent">{running}</Badge>}
+          </ButtonLink>
+          <ButtonLink href="/runs/new" variant="primary">
+            New run
+          </ButtonLink>
+        </ButtonRow>
       </div>
 
       {/* Present even when empty, so the message is announced when it arrives

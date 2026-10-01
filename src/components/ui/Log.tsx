@@ -31,7 +31,7 @@ const SYSTEM_LABEL: Record<LogTone, string> = {
   accent: "text-accent",
 };
 
-export type LogSize = "inline" | "pane";
+export type LogSize = "inline" | "pane" | "tile";
 
 /**
  * Complete class strings per size, never interpolated — Badge's rule.
@@ -54,10 +54,18 @@ export type LogSize = "inline" | "pane";
  * fill and the page is meant to scroll, so it stays a bounded box.
  *
  * `inline` is the older behaviour, for a log sitting among other cards.
+ *
+ * `tile` is a tail in a grid of them on `/runs/live`, and it is a fixed height
+ * at every width — the one capped scroller this app keeps below the breakpoint
+ * (`pane-overflow-and-tables.md`), for the canvas's reason: released, fifty
+ * lines a tile is the page, and the tail it follows is no longer at the bottom
+ * of anything. Short enough that the tile's header above it is somewhere to
+ * scroll the page from on a phone.
  */
 const SIZE: Record<LogSize, string> = {
   inline: "max-h-[560px]",
   pane: "h-[min(62vh,44rem)] min-h-[18rem] lg:absolute lg:inset-0 lg:h-auto lg:min-h-0",
+  tile: "h-56",
 };
 
 export function Log({

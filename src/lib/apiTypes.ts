@@ -1472,6 +1472,20 @@ export interface RunDTO {
 export const MAX_LIST_PROMPT = 400;
 
 /**
+ * The task, short enough that a hundred of them are not the response.
+ *
+ * `MAX_LIST_PROMPT - 1` plus the ellipsis, `clipReason`'s shape, so a clipped
+ * value is the marked length rather than one character over it and cannot be
+ * mistaken for a whole task. The list truncates the line it draws anyway; what
+ * this bounds is the wire. Shared by the runs list and `/runs/live`.
+ */
+export function clipListPrompt(prompt: string): string {
+  return prompt.length <= MAX_LIST_PROMPT
+    ? prompt
+    : `${prompt.slice(0, MAX_LIST_PROMPT - 1)}…`;
+}
+
+/**
  * A run as the runs list and quick open read it, which is less than a run.
  *
  * Its own type rather than a quietly weakened `RunDTO`, because `RunDTO` is what
@@ -1543,6 +1557,90 @@ export interface RunListDTO {
   offset: number;
   limit: number;
 }
+
+/**
+ * One running run's tile on `/runs/live`, as `GET /api/runs/live` answers it.
+ *
+ * The figures half of the tile; the log half arrives over the page's one
+ * stream. Only what the tile draws — the list's own DTO, on the rule the runs
+ * list follows, because this is polled every few seconds for every run that is
+ * spending.
+ */
+export interface LiveRunDTO {
+  id: string;
+  /** Clipped to `MAX_LIST_PROMPT`, as the runs list clips it. */
+  prompt: string;
+  folder: string;
+  work_dir: string | null;
+  mountLabel: string | null;
+  relPath: string;
+  provider: RunProviderDTO | null;
+  started_at: number | null;
+  iterations: number;
+  active_iteration: number | null;
+  max_iterations: number;
+  validation_cycles: number;
+  /** Finished cycles only, as the CLI's `result` events reported them. */
+  spent_usd: number;
+  /**
+   * Claude Code's own OTLP spend since the cycle in flight started.
+   *
+   * **Null when nothing has arrived**, never zeroes: a run whose CLI exports no
+   * telemetry and a run whose cycle has cost nothing yet are different facts,
+   * and only the first is the common one. Never summed with `spent_usd` — see
+   * `LiveTelemetry.tsx` for why the two readings overlap.
+   */
+  cycleTelemetry: { requests: number; costUSD: number; tokens: number } | null;
+  /**
+   * `contextOccupancy`'s answer cut to what a tile draws: the newest sample and
+   * no prunes or composition. The counts are left as they were, so they still
+   * say how much there is; a reader that wants the series asks
+   * `/api/runs/[id]`. Null when the run has no context record yet.
+   */
+  context: ContextOccupancyDTO | null;
+}
+
+/**
+ * Lines a tile on `/runs/live` holds: what the stream opens a tail with and
+ * what the page trims it back to as events arrive, one figure for both so a
+ * reconnect's tail is the tail the page was already showing.
+ */
+export const LIVE_TAIL_EVENTS = 50;
+
+export interface LiveRunsDTO {
+  runs: LiveRunDTO[];
+}
+
+/** The strip at the top of `/runs/live`. */
+export interface LiveCountsDTO {
+  running: number;
+  queued: number;
+  paused: number;
+}
+
+/**
+ * One frame of `/api/runs/live/stream`.
+ *
+ * No frame carries an SSE `id:` — the route's docblock says why a reconnect
+ * replaces each tail rather than resuming it. `join` is a run's tail whole, and
+ * a client holding a tile for that run replaces it; `ready` closes the replay
+ * that opens a connection and names every run that is running, so a tile whose
+ * run ended while the connection was down is dropped.
+ */
+export type LiveFrameDTO =
+  | { kind: "counts"; counts: LiveCountsDTO }
+  | {
+      kind: "join";
+      runId: string;
+      events: RunEventDTO[];
+      /** Older events the tail does not hold, by either cap. */
+      dropped: number;
+      tools: RunToolActivityDTO[];
+    }
+  | { kind: "ready"; runIds: string[] }
+  | { kind: "event"; runId: string; event: RunEventDTO }
+  | { kind: "tools"; runId: string; tools: RunToolActivityDTO[] }
+  | { kind: "leave"; runId: string };
 
 /** Mirrors `RunOrigin` in `orchestrator.ts`; see the column note in `db.ts`. */
 export type RunOriginDTO =

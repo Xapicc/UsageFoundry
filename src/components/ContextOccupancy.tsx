@@ -86,6 +86,7 @@ export function ContextOccupancy({
   context,
   now,
   live,
+  compact = false,
 }: {
   context: ContextOccupancyDTO;
   now: number;
@@ -95,6 +96,13 @@ export function ContextOccupancy({
    * that will never gain another point reads as a stalled poll.
    */
   live: boolean;
+  /**
+   * The figure, its age and the meter, and nothing that needs the series — for
+   * `/runs/live`'s tiles, which are sent the newest sample alone
+   * (`contextForTile`). The same code draws both, so a tile and the run page
+   * cannot disagree about one run's reading.
+   */
+  compact?: boolean;
 }) {
   const { ceilingTokens, samples, sampleCount, prunes, pruneCount } = context;
 
@@ -134,7 +142,7 @@ export function ContextOccupancy({
             fraction={null}
             unknownHint="not measured yet"
           />
-          {pruneCount > 0 && (
+          {pruneCount > 0 && !compact && (
             <p className="mt-2 max-w-[68ch] text-xs leading-snug text-ink-muted">
               {pruneCount} {pruneCount === 1 ? "prune is" : "prunes are"} recorded,
               with no series to mark {pruneCount === 1 ? "it" : "them"} on.
@@ -171,33 +179,37 @@ export function ContextOccupancy({
             unknownHint="no ceiling reported"
           />
 
-          <Sparkline
-            samples={samples}
-            prunes={prunes}
-            ceilingTokens={ceilingTokens}
-          />
+          {!compact && (
+            <>
+              <Sparkline
+                samples={samples}
+                prunes={prunes}
+                ceilingTokens={ceilingTokens}
+              />
 
-          <CompositionStack
-            readings={context.composition}
-            readingCount={context.compositionCount}
-            absence={context.compositionAbsence}
-            now={now}
-            live={live}
-          />
+              <CompositionStack
+                readings={context.composition}
+                readingCount={context.compositionCount}
+                absence={context.compositionAbsence}
+                now={now}
+                live={live}
+              />
 
-          <Caption
-            context={context}
-            latest={latest}
-            held={held}
-            drawnPrunes={prunesInSpan(samples, prunes).length}
-          />
+              <Caption
+                context={context}
+                latest={latest}
+                held={held}
+                drawnPrunes={prunesInSpan(samples, prunes).length}
+              />
+            </>
+          )}
         </>
       )}
 
       {/* Outside the branch: a run with prunes and no samples still owes a
           reader what they were, and the marks are the half of this panel that
           is a list of events rather than a shape. */}
-      {prunes.length > 0 && (
+      {prunes.length > 0 && !compact && (
         <div className="sr-only">
           <Table>
             <caption>

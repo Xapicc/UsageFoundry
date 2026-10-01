@@ -108,6 +108,9 @@ export function activePane(pathname: string): Pane | null {
  */
 export function toolbarTitle(pathname: string): string {
   if (pathname === "/runs/new") return "New run";
+  // A sub-route of Runs rather than a pane of its own (`ui-density-audit.md`
+  // §1.2), and above the line that names everything under `/runs/` a run.
+  if (pathname === "/runs/live") return "Live runs";
   // Before the line under it, which would otherwise title a sub-route with the
   // name of the page it hangs off — and a toolbar saying "Run" over a screen
   // that is not the run page is the one breadcrumb an operator has.

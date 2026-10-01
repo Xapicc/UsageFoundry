@@ -5,6 +5,7 @@ import {
   EDGE_OPTION_LABEL,
   fmtCycleInFlight,
   fmtCycles,
+  fmtLiveCycle,
   fmtTokens,
   guardBadge,
   landingSummary,
@@ -625,4 +626,50 @@ test("a clipped thread with none of this run's notes reads as it did before", ()
   );
   assert.equal(drawn.length, 3);
   assert.deepEqual(line, { text: "Newest 3 of 9.", link: "Read the thread" });
+});
+
+/**
+ * The cycle a `/runs/live` tile names, against the cap the guard enforces.
+ *
+ * Granted cycles are part of that cap (`budget.ts`), and a tile that drew the
+ * cap without them would read "work cycle 4 of 3" on a run doing exactly what
+ * it was allowed — the over-limit reading `grantedCycles` exists to prevent on
+ * the run page, arriving one page over.
+ */
+const liveRun = (
+  over: Partial<
+    Pick<RunDTO, "iterations" | "active_iteration" | "max_iterations" | "validation_cycles">
+  > = {},
+) => ({
+  iterations: 3,
+  active_iteration: 4,
+  max_iterations: 3,
+  validation_cycles: 0,
+  ...over,
+});
+
+test("a tile counts granted cycles into the cap and says so", () => {
+  assert.equal(fmtLiveCycle(liveRun({ validation_cycles: 2 })), "work cycle 4 of 5 (2 granted)");
+});
+
+test("a tile with no grant names the cycle against the plain cap", () => {
+  assert.equal(fmtLiveCycle(liveRun({ max_iterations: 6 })), "work cycle 4 of 6");
+});
+
+test("a grant cannot widen a run with no cap", () => {
+  assert.equal(
+    fmtLiveCycle(liveRun({ max_iterations: 0, validation_cycles: 2 })),
+    "work cycle 4",
+  );
+});
+
+test("between cycles a tile counts what finished rather than claiming one open", () => {
+  assert.equal(
+    fmtLiveCycle(liveRun({ active_iteration: null, validation_cycles: 1 })),
+    "3 of 4 work cycles done (1 granted)",
+  );
+  assert.equal(
+    fmtLiveCycle(liveRun({ active_iteration: null, max_iterations: 0 })),
+    "3 work cycles done",
+  );
 });

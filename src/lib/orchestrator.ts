@@ -1373,6 +1373,19 @@ export function subscribe(
 }
 
 /**
+ * Every run's events, on the `"*"` topic `emit` already publishes to.
+ *
+ * For the one reader that follows a set of runs which changes under it —
+ * `/api/runs/live/stream`. One listener for the whole set, rather than one per
+ * run, is what lets it notice a run it was not following: the `status` event
+ * that starts one arrives here before anything has subscribed to its topic.
+ */
+export function subscribeAll(fn: (e: PersistedRunEvent) => void): () => void {
+  bus.on("*", fn);
+  return () => void bus.off("*", fn);
+}
+
+/**
  * `onlyFrom` is for a writer that read the row before an `await`: the write
  * lands only while the row still holds that status, and on a miss nothing is
  * emitted and `false` comes back. The emit is skipped as well as the write

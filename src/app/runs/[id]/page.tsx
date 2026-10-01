@@ -37,6 +37,7 @@ import {
   fmtRunOrigin,
   fmtTokens,
   fmtUSD,
+  grantedCycles,
   pollFailureMessage,
   shortPath,
 } from "@/lib/format";
@@ -249,21 +250,6 @@ function describeQueued(run: RunDTO): RunState {
         ? "Next in line."
         : `${ahead} other run${ahead === 1 ? " is" : "s are"} ahead of it.`,
   };
-}
-
-/**
- * Work cycles the check on this run's task granted past the limit it was given.
- *
- * The guard's cap is `max_iterations` plus these (`RunProgress.grantedCycles`
- * in `budget.ts`), so every figure on this page that draws the cap adds them,
- * or a run that used exactly what it was allowed reads "2/1" over a bar at
- * 200%. Each of them also says the grant is there, or sits over a sentence
- * that does, rather than folding it into the total, for `cycleCapReason`'s
- * reason: a cap that grew without a word reads as a guard that miscounted.
- * Zero under no cap, which a grant cannot widen.
- */
-function grantedCycles(run: RunDTO): number {
-  return run.max_iterations > 0 ? (run.validation_cycles ?? 0) : 0;
 }
 
 function grantedCyclesNote(granted: number): string {

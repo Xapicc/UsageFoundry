@@ -21,7 +21,7 @@ import { pruneSavingsByRun } from "../../../lib/contextPruning";
 import { recentOpsEvents } from "../../../lib/ops";
 import { jsonMaybeGzipped, readJsonObject } from "../../../lib/http";
 import {
-  MAX_LIST_PROMPT,
+  clipListPrompt,
   RUN_PROVIDERS,
   type BootReconcileDTO,
   type RunListDTO,
@@ -46,20 +46,6 @@ import { auditMutation, SUBJECT_HEADER } from "../../../lib/requestLog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-/**
- * The task, short enough that a hundred of them are not the response.
- *
- * `MAX_LIST_PROMPT - 1` plus the ellipsis, `clipReason`'s shape, so a clipped
- * value is the marked length rather than one character over it and cannot be
- * mistaken for a whole task. The list truncates the line it draws anyway; what
- * this bounds is the wire.
- */
-function clipPrompt(prompt: string): string {
-  return prompt.length <= MAX_LIST_PROMPT
-    ? prompt
-    : `${prompt.slice(0, MAX_LIST_PROMPT - 1)}…`;
-}
 
 /**
  * One page of runs: `?offset=`, `?limit=`, `?status=` (one status or a
@@ -163,7 +149,7 @@ export async function GET(req: Request) {
       // `MAX_NEEDS_REVIEW_REASON` clips at the write: the column holds whatever
       // an operator typed and this list is polled every four seconds. Measured:
       // 522,541 bytes of a 696,197-byte response.
-      prompt: clipPrompt(r.prompt),
+      prompt: clipListPrompt(r.prompt),
       mountId,
       mountLabel,
       relPath,
