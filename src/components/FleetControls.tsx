@@ -230,10 +230,18 @@ export function FleetControls({
 
 /** "3 running, 2 queued, 1 waiting" — zeroes left out, order fixed. */
 function describeCounts(state: FleetStateDTO): string {
-  const order = ["running", "queued", "paused", "waiting"];
+  // Each status's own name is its word except where that name is an
+  // identifier: "1 waiting-for-stack" is not something a sentence says.
+  const order: readonly (readonly [status: string, word: string])[] = [
+    ["running", "running"],
+    ["queued", "queued"],
+    ["paused", "paused"],
+    ["waiting-for-stack", "waiting for a stack"],
+    ["waiting", "waiting"],
+  ];
   const parts = order
-    .filter((s) => (state.counts[s] ?? 0) > 0)
-    .map((s) => `${state.counts[s]} ${s}`);
+    .filter(([status]) => (state.counts[status] ?? 0) > 0)
+    .map(([status, word]) => `${state.counts[status]} ${word}`);
   return parts.length === 0 ? "Nothing is in flight" : parts.join(", ");
 }
 

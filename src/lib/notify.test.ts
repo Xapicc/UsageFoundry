@@ -90,6 +90,29 @@ describe("which run event is worth telling somebody about", () => {
     }
   });
 
+  it("notifies when a run starts waiting for a stack, which only a person ends", () => {
+    assert.deepEqual(notifiableEvent(status("waiting-for-stack"), freshState()), {
+      event: "run.waiting_for_stack",
+      status: "waiting-for-stack",
+    });
+  });
+
+  it("leaves a guard stop armed across a stack wait, since the wait is not an ending", () => {
+    // The guard verdict lands, the run parks for a stack instead of stopping,
+    // and the run that resumes from the wait is the one the guard then stops.
+    // Consuming the mark on the park would make that stop read as a cancel.
+    const s = freshState();
+    notifiableEvent(
+      event("budget", { allowed: false, disposition: "stop", enforceable: true }),
+      s,
+    );
+    notifiableEvent(status("waiting-for-stack"), s);
+    assert.deepEqual(notifiableEvent(status("stopped"), s), {
+      event: "run.stopped",
+      status: "stopped",
+    });
+  });
+
   it("ignores every kind of event that is not an ending or a refusal", () => {
     // The kinds that arrive per tool call and per assistant turn. One of these
     // reaching the filter is a POST per tool call at twenty-five runs.

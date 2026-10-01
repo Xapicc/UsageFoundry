@@ -139,6 +139,10 @@ describe("stopFleet", () => {
     const running = run("stop-running", "running");
     const queued = run("stop-queued", "queued");
     const paused = run("stop-paused", "paused");
+    // The other park, which no timer of its own will ever end: a stop that
+    // missed it would leave it waiting on an operator who believes they
+    // stopped everything.
+    const forStack = run("stop-stack", "waiting-for-stack");
     const waiting = run("stop-waiting", "waiting");
     // The silent half: a `completed` row rewritten as stopped destroys the
     // record of work that landed, and nothing afterwards says it happened.
@@ -148,10 +152,10 @@ describe("stopFleet", () => {
     const report = fleet.stopFleet();
 
     assert.deepEqual(report.blocked, [waiting]);
-    // Every one of the three live statuses answers `cancelled` here because no
+    // Every one of the four live statuses answers `cancelled` here because no
     // child is registered in this process; what matters is that each was
     // reached, and that none of them was skipped for being the wrong status.
-    for (const id of [running, queued, paused]) {
+    for (const id of [running, queued, paused, forStack]) {
       assert.ok(
         report.cancelled.includes(id) || report.signalled.includes(id),
         `${statusOf(id)} run was not reached`,
@@ -159,6 +163,7 @@ describe("stopFleet", () => {
     }
     assert.equal(statusOf(queued), "stopped");
     assert.equal(statusOf(paused), "stopped");
+    assert.equal(statusOf(forStack), "stopped");
     assert.equal(statusOf(waiting), "blocked");
     assert.match(orch.getRun(waiting)!.stop_reason ?? "", /every run in flight/);
 

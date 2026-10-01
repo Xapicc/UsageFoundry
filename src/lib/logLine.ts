@@ -366,6 +366,7 @@ function statusTone(status: unknown): LogTone {
   if (status === "failed") return "danger";
   if (
     status === "paused" ||
+    status === "waiting-for-stack" ||
     status === "blocked" ||
     status === "stopped" ||
     // Typed `unknown`, so nothing here is a compile error and a missing member

@@ -350,6 +350,8 @@ Units that are about no test file in the tree:
 | `cycles.test.ts` | [run-page] |
 | `logLine.test.ts` |  |
 | `repoSpend.test.ts` |  |
+| `stackRequests.test.ts` |  |
+| `stackWait.test.ts` | [budgets] |
 | `stacks.test.ts` |  |
 | `toolInventory.test.ts` |  |
 | `unsavedWork.test.ts` |  |

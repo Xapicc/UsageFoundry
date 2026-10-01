@@ -1,6 +1,8 @@
 import { toolInventory } from "../../../lib/toolInventory";
 import { jsonMaybeGzipped } from "../../../lib/http";
 import type { ToolInventoryDTO } from "../../../lib/apiTypes";
+import { readReceipts } from "../../../lib/stacks";
+import { pendingStackRequests, stackRequestDTOs } from "../../../lib/stackRequests";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,11 +26,23 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(req: Request) {
   const inventory = toolInventory();
+  const { receipts } = readReceipts();
+  // An answered request with nobody waiting on it is done with, and the table
+  // never says so — "installed" is not a state a request can hold — so this is
+  // where it stops being listed. One a run still waits on stays until the
+  // release has handed that run back, so the list never claims a run is free
+  // that is still parked.
+  const requests = (await stackRequestDTOs(pendingStackRequests(), receipts)).filter(
+    (request) =>
+      request.receipt.kind !== "installed" ||
+      request.runs.some((run) => run.releasedAt === null && run.status === "waiting-for-stack"),
+  );
   const body: ToolInventoryDTO = {
     tools: inventory.rows,
     unclaimed: inventory.unclaimed,
     observedWindowDays: inventory.observedWindowDays,
     problems: inventory.problems,
+    stackRequests: requests,
   };
   return jsonMaybeGzipped(req, body, { headers: { "Cache-Control": "no-store" } });
 }

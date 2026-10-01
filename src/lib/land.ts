@@ -635,7 +635,7 @@ export async function landState(
   // before it rendered, and `merge-tree` writes objects to work it out.
   // `landRefusal` tests the run's status ahead of the preview, so this never
   // becomes the reason shown.
-  const active = ["running", "queued", "paused"].includes(run.status);
+  const active = ["running", "queued", "paused", "waiting-for-stack"].includes(run.status);
 
   const preview = merged
     ? ({ outcome: "already-merged" } as const)
@@ -853,6 +853,7 @@ const UNSETTLED: readonly RunRow["status"][] = [
   "queued",
   "running",
   "paused",
+  "waiting-for-stack",
 ];
 
 /**
@@ -1093,7 +1094,12 @@ export function unsettledBranchRefusal(
   // landable today — and an operator who has read the reason may well decide the
   // partial work is worth having. Taking the button away would leave them with a
   // branch and no route to it.
-  if (s.runStatus === "running" || s.runStatus === "queued" || s.runStatus === "paused") {
+  if (
+    s.runStatus === "running" ||
+    s.runStatus === "queued" ||
+    s.runStatus === "paused" ||
+    s.runStatus === "waiting-for-stack"
+  ) {
     return (
       "This run is still active. It can commit again at any moment, so anything " +
       `${words.done} now would be half its work.`
@@ -1898,7 +1904,7 @@ async function startResolution(
   if (!state.branchExists || !state.target) {
     return { ok: false, reason: state.blocked ?? "There is nothing to resolve." };
   }
-  if (["running", "queued", "paused"].includes(run.status)) {
+  if (["running", "queued", "paused", "waiting-for-stack"].includes(run.status)) {
     return {
       ok: false,
       reason: "This run is still active — it can commit again, and would be resolving against a moving branch.",
@@ -2650,7 +2656,12 @@ export function commitRefusal(s: {
   }
   if (!s.branch) return "This run has no branch of its own.";
 
-  if (s.runStatus === "running" || s.runStatus === "queued" || s.runStatus === "paused") {
+  if (
+    s.runStatus === "running" ||
+    s.runStatus === "queued" ||
+    s.runStatus === "paused" ||
+    s.runStatus === "waiting-for-stack"
+  ) {
     return (
       "This run is still active. It can write to that checkout at any moment, so a " +
       "commit now would catch a change half-written."
@@ -2875,7 +2886,7 @@ export async function deleteBranch(runId: string): Promise<LandOutcome> {
   const state = await landState(runId);
   if (!state) return { ok: false, reason: "This run has no branch." };
   if (!state.branchExists) return { ok: false, reason: "This branch is already gone." };
-  if (["running", "queued", "paused"].includes(run.status)) {
+  if (["running", "queued", "paused", "waiting-for-stack"].includes(run.status)) {
     return { ok: false, reason: "This run is still active." };
   }
   // Merged is not "finished" once a chain shares the ref: the run behind this
@@ -3205,7 +3216,7 @@ export function purgeRefusal(s: {
 }): string | null {
   if (!s.branch) return "This run has no branch.";
   if (!s.branchExists) return `${s.branch} is already gone.`;
-  if (["running", "queued", "paused"].includes(s.runStatus)) {
+  if (["running", "queued", "paused", "waiting-for-stack"].includes(s.runStatus)) {
     return "This run is still active. Stop it before purging the branch it is working on.";
   }
   // The run is terminal and `activeRuns()` does not see the resolution, whose

@@ -17,6 +17,7 @@ import {
   passRuns,
   passesOf,
   pollFailureMessage,
+  STATUS_LABEL,
 } from "@/lib/format";
 import { Markdown } from "@/components/Markdown";
 import { Meter } from "@/components/Meter";
@@ -217,7 +218,7 @@ function RunRows({
           <Tr key={n.nodeId}>
             <Td className="align-top">
               {n.run ? (
-                <Badge tone={STATUS_TONE[n.run.status]}>{n.run.status}</Badge>
+                <Badge tone={STATUS_TONE[n.run.status]}>{STATUS_LABEL[n.run.status]}</Badge>
               ) : (
                 <Badge tone="neutral">gone</Badge>
               )}
