@@ -57,5 +57,5 @@ measurement under *Verified* and cut the item down to what is still open.
 | Interface | [interface-app-shell.md](verification/interface-app-shell.md) — the toolbar, drawer, sheets and shared layer | 6 | 2 |
 | Interface | [interface-narrow-viewports.md](verification/interface-narrow-viewports.md) — pages at 390px, layout sweeps and smoke-pages | 15 | 9 |
 | Interface | [interface-canvases.md](verification/interface-canvases.md) — the graph canvases, touched map and replay | 5 | 2 |
-| Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads | 15 | 12 |
-| **Total** | | **387** | **247** |
+| Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads | 16 | 12 |
+| **Total** | | **388** | **247** |

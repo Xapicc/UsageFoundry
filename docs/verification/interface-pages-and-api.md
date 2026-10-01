@@ -168,6 +168,21 @@
   one failure the rendering-test count in `docs/agent/testing.md`, which the
   docs change that followed corrected.
 
+- **The model list's unsaved-edit rail on Settings, in a browser against the
+  production bundle, 2026-10-01**, at `5b83423`: a scratch Playwright script
+  over `.next/standalone/server.js` with a throwaway `DATA_DIR`, 1280px,
+  default skin. Flipping one model switch lit the `EditedRail` on the "Models
+  this install may use" summary, at the summary's own top and height and 12px
+  into the gutter, with the fold open and shut; the summary carried the
+  `sr-only` suffix, the save bar read "1 unsaved change, marked in the margin"
+  and Check for models was disabled. Discard cleared all of it and restored the
+  switch; a second flip then Save cleared it too, and after a reload the rail
+  stayed off and `GET /api/settings` held the model disabled. The fold holds
+  one `[data-setting-name]`, and searching that model's id read "1 field
+  match". **Caveat:** only the switch was driven, not adding or removing a
+  model, and 390px and the ascii skin rest on `npm run smoke-pages` (96/96),
+  which asserts load and nothing about interaction.
+
 ## Not yet verified by hand
 
 - **No after-change payload from the 2026-08-23 pass has been read from a
@@ -191,11 +206,12 @@
   24-hour boundary (one fold request a minute), old runs in ⌘K.
   `/api/runs?status=nope` should answer `Unknown run status: nope`.
 
-- **The run log's filter and the settings field search have never been
-  rendered.** They rest on six unit cases (`matchesLogFilter`,
-  `logFilterActive`) and the build; the settings search has no unit test, as it
-  reads `textContent`. Open: counts and truncation hint, Jump to live, results
-  opening closed Prompts folds, the unsaved dialog, 390×844.
+- **The run log's filter has never been rendered, and the settings field
+  search only for the one query the model-list rail entry above names.** They
+  rest on six unit cases (`matchesLogFilter`, `logFilterActive`) and the build;
+  the settings search has no unit test, as it reads `textContent`. Open: counts
+  and truncation hint, Jump to live, results opening closed Prompts folds, the
+  unsaved dialog, 390×844.
 
 - **The run log's background-task panel (`RunTasks.tsx`) has never been
   rendered.** Only its reducer is tested (18 cases in `runTasks.test.ts`). Open
