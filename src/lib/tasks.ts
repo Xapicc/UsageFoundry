@@ -1476,6 +1476,18 @@ function likePrefix(folder: string): string {
 }
 
 /**
+ * A run's search text as a `LIKE` needle matching anywhere in a column.
+ *
+ * `likePrefix`'s escape, unanchored at both ends. A run searching for `100%` or
+ * `snake_case` is looking for the task that says so, and the wildcards left in
+ * would answer with tasks that hold neither — a list that reads as "already
+ * filed" for work nobody wrote down.
+ */
+function likeContains(text: string): string {
+  return `%${likePrefix(text)}%`;
+}
+
+/**
  * One page of the board.
  *
  * The order is the board's: priority first, then the most recently moved. It is
@@ -1562,9 +1574,9 @@ export const MAX_RUN_TASKS = 20;
 export interface RunTasks {
   /** Every task this run's row is claimed by, whatever status it now has. */
   held: Task[];
-  /** Open tasks filed against the folder the run is working in. */
+  /** Open tasks filed against the folder the run is working in, matching the query if one was given. */
   openInFolder: Task[];
-  /** Open tasks in that folder beyond `MAX_RUN_TASKS`, so a clip is never silent. */
+  /** Every row `openInFolder` was cut from, so a clip at `MAX_RUN_TASKS` is never silent. */
   openInFolderTotal: number;
 }
 
@@ -1587,8 +1599,23 @@ export interface RunTasks {
  * The count is separate from the rows for the reason a shortened diff names the
  * files it left out: a run shown twenty of sixty open tasks and told nothing
  * files the duplicate it was reading the list to avoid.
+ *
+ * **The count alone did not stop that, and `query` is what does.** Nine runs on
+ * one project filed the same task, each having read twenty rows beside a count
+ * of 69 to 99 (`proposals/CrossSessionCommunication/00-problem.md` §3): told the
+ * list was short, a run still had no way to read the rest. A query narrows
+ * `openInFolder` to the open tasks in the folder whose title or brief contains
+ * it, so the one matching task is found whatever its place in the board's order,
+ * and `openInFolderTotal` then counts the matches. It folds case the way
+ * SQLite's built-in `LIKE` does, which is ASCII only. `held` is never narrowed:
+ * what a run holds is not a search result, and a run that searched for
+ * something else and found its own task missing would read the claim as lost.
  */
-export function tasksForRun(runId: string, folder: string | null): RunTasks {
+export function tasksForRun(
+  runId: string,
+  folder: string | null,
+  query: string | null = null,
+): RunTasks {
   const held = (
     db()
       .prepare(
@@ -1602,21 +1629,30 @@ export function tasksForRun(runId: string, folder: string | null): RunTasks {
 
   if (!folder) return { held, openInFolder: [], openInFolderTotal: 0 };
 
+  const where = ["status = 'open'", "folder = ?"];
+  const args: unknown[] = [folder];
+  if (query) {
+    const needle = likeContains(query);
+    where.push("(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')");
+    args.push(needle, needle);
+  }
+  const clause = where.join(" AND ");
+
   const openInFolderTotal = (
     db()
-      .prepare("SELECT COUNT(*) AS n FROM tasks WHERE status = 'open' AND folder = ?")
-      .get(folder) as { n: number }
+      .prepare(`SELECT COUNT(*) AS n FROM tasks WHERE ${clause}`)
+      .get(...args) as { n: number }
   ).n;
 
   const openInFolder = (
     db()
       .prepare(
         `SELECT ${COLUMNS} FROM tasks
-          WHERE status = 'open' AND folder = ?
+          WHERE ${clause}
           ORDER BY ${PRIORITY_RANK_SQL}, updated_at DESC, id
           LIMIT ?`,
       )
-      .all(folder, MAX_RUN_TASKS) as TaskRow[]
+      .all(...args, MAX_RUN_TASKS) as TaskRow[]
   ).map(rowToTask);
 
   return { held, openInFolder, openInFolderTotal };

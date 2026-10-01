@@ -97,7 +97,7 @@ import type { RegistryAgent } from "./agents";
  *    message, with nothing short of a server restart able to clear it.
  *  - `turnCostOf` decides what a resumed turn is charged, and the CLI's figure
  *    is the session's running total rather than the turn's. Banked whole it
- *    charged turn N for turns 1..N into the table the install's ceiling sums;
+ *    charged turn N for turns 1..N into the table the install limit sums;
  *    subtracted wrongly it charges nothing. Neither throws, and the first
  *    closes every door in the app.
  *  - The three about questions to the operator earn their place together,
@@ -2416,7 +2416,7 @@ describe("reconcileChatsOnBoot keeps what a stranded turn produced", () => {
         "SELECT cost_usd AS cost, estimated FROM chat_turn_spend WHERE chat_id=?",
       )
       .all(chat.id) as Array<{ cost: number; estimated: number }>;
-    // The row is what tells the install's ceiling the money went; `estimated`
+    // The row is what tells the install limit the money went; `estimated`
     // is what keeps it out of the measured half of that reading.
     assert.deepEqual(spend, [{ cost: 0.25, estimated: 1 }]);
   });

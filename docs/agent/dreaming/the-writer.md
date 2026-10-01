@@ -8,7 +8,7 @@ Read before editing `runDreamingNight`, `dreamingRefusal` or `buildDreamingPromp
 is where `installSpend`'s rolling 24 hours looks, and appears on `/runs` with a
 log, a cost, a status and an origin. A third `AssistKind` would inherit the
 review's ten-minute clock (`review.ts:78`), log itself as a review
-(`logLine.ts:561`) and spend where the install ceiling cannot see it
+(`logLine.ts:561`) and spend where the install limit cannot see it
 (`installBudget.ts:79`) — three defects that reproduce at HEAD and that this
 feature sidesteps by not being an assist. It is also never isolated: an isolated
 run works in a copy and lands a branch, the vault is not a repository, and a note

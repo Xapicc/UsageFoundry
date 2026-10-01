@@ -23,7 +23,7 @@ import { getSettings, type Settings } from "./settings";
  * rolling 24 hours looks, and it appears on `/runs` with a log, a cost and a
  * status. An assist would inherit the review's ten-minute clock
  * (`review.ts:78`), log itself as a review (`logLine.ts:561`) and spend
- * somewhere the install ceiling cannot see it (`installBudget.ts:79`).
+ * somewhere the install limit cannot see it (`installBudget.ts:79`).
  *
  * ## The clock, and what it is not allowed to do
  *

@@ -1474,7 +1474,7 @@ function migrate(db: Database.Database) {
   // The chat child used to print one JSON object when it exited, so all three
   // of these existed only in one process's memory until it did: a restart in
   // the middle lost the assistant's text entirely, lost the row that tells the
-  // install-wide ceiling the money was spent, and lost the thread's running
+  // install's spend limit the money was spent, and lost the thread's running
   // total — while the money stayed spent. The child streams now, and these are
   // where each event lands before anything publishes it, which is `emit()`'s
   // persist-then-publish order arriving at the one path that never had it.
@@ -1772,10 +1772,10 @@ function migrate(db: Database.Database) {
   //
   // `chat_sessions.cost_usd` beside it is a running total over the whole life
   // of a thread, and it was the only chat figure recorded anywhere — so the
-  // install-wide ceiling, which is a reading over a rolling 24 hours, summed
+  // install's spend limit, which is a reading over a rolling 24 hours, summed
   // that column bounded on `updated_at` and charged a fortnight of
   // conversation to the window the moment one four-cent message was sent into
-  // an old thread. Over-counting is the safe direction for a ceiling (see
+  // an old thread. Over-counting is the safe direction for a limit (see
   // `installSpend`), but that is over-counting with no upper bound at all:
   // a limit on the install's whole history wearing a 24-hour label, closing
   // every door in the app and ending the runs already in flight at their next
@@ -3197,7 +3197,7 @@ export function setJSON(key: string, value: unknown): void {
  * A day, because the settings payload this feeds is read on a page an operator
  * opens rather than watches, and a window shorter than one would go quiet
  * overnight and show a working sandbox in the morning. It is also the horizon
- * the install ceiling already rolls on, so two figures on that page mean the
+ * the install limit already rolls on, so two figures on that page mean the
  * same span of time.
  */
 const SANDBOX_FAILURE_WINDOW_HOURS = 24;

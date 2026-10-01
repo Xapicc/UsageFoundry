@@ -7,7 +7,7 @@ import { after, before, describe, it } from "node:test";
 import type Database from "better-sqlite3";
 
 /**
- * Covers what the install-wide ceiling is *measured from*, which the pure
+ * Covers what the install's spend limit is *measured from*, which the pure
  * verdict beside it cannot.
  *
  * `evaluateInstallBudget` answers correctly about any pair of figures it is
@@ -124,7 +124,7 @@ function clearAll(): void {
   }
 }
 
-describe("what the install-wide ceiling is measured from", () => {
+describe("what the install's spend limit is measured from", () => {
   it("counts runs, workflow blocks and chat turns, and only inside the window", () => {
     clearAll();
 

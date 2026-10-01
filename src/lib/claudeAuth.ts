@@ -257,8 +257,14 @@ export function normalizeCode(input: unknown): ClaudeAuthResult<string> {
  * A copy rather than an import of `orchestrator.ts`'s, for the reason
  * `review.ts` keeps its own `settleOnExit`: an auth route has no business
  * pulling the run loop in behind it.
+ *
+ * It turns the CLI's peer messaging off as well, for the reason over
+ * `childEnv`. `claude auth` was not measured opening an inbox, and the rule is
+ * "every env that spawns `claude`" rather than "every one that was measured",
+ * so the next pin cannot open one here without a check noticing. Exported for
+ * the test that pins that, and nothing else.
  */
-function authEnv(): NodeJS.ProcessEnv {
+export function authEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, FORCE_COLOR: "0" };
   for (const key of Object.keys(env)) {
     if (
@@ -275,7 +281,7 @@ function authEnv(): NodeJS.ProcessEnv {
       delete env[key];
     }
   }
-  return env;
+  return { ...env, CLAUDE_CODE_HARBOR_KITE: "0" };
 }
 
 /**

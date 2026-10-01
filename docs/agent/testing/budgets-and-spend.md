@@ -16,7 +16,7 @@ Its two negative cases carry the same weight as its positives and one of them is
 
 Both directions were seen to fail before this landed.
 
-`installSpend.test.ts` pins what the install-wide ceiling is *measured from*, which the pure verdict beside it cannot — a SUM across three tables each bounded on a different column, with a fourth contribution through `telemetrySpendSince` — because a window bound on the wrong column is a ceiling quietly larger than the one the operator typed and a plausible dollar amount either way.
+`installSpend.test.ts` pins what the install's spend limit is *measured from*, which the pure verdict beside it cannot — a SUM across three tables each bounded on a different column, with a fourth contribution through `telemetrySpendSince` — because a window bound on the wrong column is a limit quietly larger than the one the operator typed and a plausible dollar amount either way.
 
 `instanceBudget.test.ts` pins *when* the workflow-wide budget is evaluated: every call site was "before something spends", so a graph of single-cycle blocks compared its limit with zero N times and `maxInstanceCostUSD` could not fire at all, which looks exactly like a workflow that came in under its limit.
 

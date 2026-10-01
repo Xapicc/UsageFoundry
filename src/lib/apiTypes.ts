@@ -900,7 +900,7 @@ export interface UsageResponse {
   telemetry: TelemetryWindowDTO | null;
   /**
    * What this whole installation has spent inside the rolling window the
-   * install-wide ceiling covers, and that ceiling.
+   * install's spend limit covers, and that limit.
    *
    * A **fourth** reading on this page and, like the third, never added to the
    * others: the meters above it are our price table over every transcript on the
@@ -917,7 +917,7 @@ export interface UsageResponse {
 }
 
 /**
- * The install-wide ceiling and what has been spent against it.
+ * The install's spend limit and what has been spent against it.
  *
  * `spentUSD` is the measured floor — every figure a CLI itself reported — and
  * `spentGuardUSD` adds killed cycles' reconciled estimates and what telemetry
@@ -3916,7 +3916,7 @@ export interface ChatDTO {
    * Beside `costUSD` and never folded into it, which is `runs.spent_usd_est`'s
    * rule: this is priced by the app from the tokens the CLI reported, where the
    * figure above is the CLI's own. Zero on every thread that has never had a
-   * turn cut off by a cancel, a timeout, a restart or the install's ceiling.
+   * turn cut off by a cancel, a timeout, a restart or the install limit.
    */
   costEstUSD: number;
   tokens: number;
