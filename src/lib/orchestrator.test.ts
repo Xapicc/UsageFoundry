@@ -6366,7 +6366,7 @@ describe("the parked sweeper's decision", () => {
     /**
      * `no_ceiling` was on the list above and is deliberately no longer: it is
      * the one refusal here that is not about this run at all. On a stock
-     * install ceilings ship null by design and the fraction guard's reading is
+     * install, ceilings ship null by design and the fraction guard's reading is
      * the provider's own percentage, discarded after an hour without a fresh
      * answer — so an unreachable Anthropic host made this branch end every
      * parked run in the install, 60 seconds after the pre-cycle guard had
