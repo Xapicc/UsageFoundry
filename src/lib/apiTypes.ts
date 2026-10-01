@@ -4395,11 +4395,17 @@ export interface TaskDTO {
   relPath: string | null;
   createdByRunId: string | null;
   claimedByRunId: string | null;
+  /**
+   * The operator holds it, doing the work themselves. Only ever set on a
+   * `claimed` task, and never beside `claimedByRunId`.
+   */
+  claimedByOperator: boolean;
   completedByRunId: string | null;
   parentTaskId: string | null;
   /**
    * Work no run in this container can do, left for the operator. Not a status:
-   * an operator-only task is still `open`, and no run may claim it.
+   * an operator-only task is still `open`, and no run may claim it — the
+   * operator may, for themselves.
    */
   operatorOnly: boolean;
   /**

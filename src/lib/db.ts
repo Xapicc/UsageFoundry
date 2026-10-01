@@ -2639,6 +2639,15 @@ function migrate(db: Database.Database) {
   // `operator_only`'s reason: every older row was work anyone could do.
   addColumn(db, "tasks", "needs_frontier", "INTEGER NOT NULL DEFAULT 0");
 
+  // The operator holds this claim themselves. A column beside
+  // `claimed_by_run_id` rather than a sentinel run id in it, because that
+  // column is read as a run everywhere — `tasksForRun`, completion validation,
+  // the run link on the board — and a made-up id would be a run no `runs` row
+  // answers for. A `claimed` task has exactly one holder, this or the run
+  // column; `updateTask` is the writer that keeps that. `NOT NULL DEFAULT 0`
+  // because before this column the operator could not claim at all.
+  addColumn(db, "tasks", "claimed_by_operator", "INTEGER NOT NULL DEFAULT 0");
+
   // JSON `string[]`, read through `proposalTaskIds`, for `depends_on`'s reason:
   // nothing queries a proposal by task, so a table would be a join for no read.
   addColumn(db, "chat_proposals", "task_ids", "TEXT");

@@ -143,6 +143,11 @@ export interface Task {
   createdByRunId: string | null;
   /** Which run holds it. A record, never a lease — see the docblock above. */
   claimedByRunId: string | null;
+  /**
+   * The operator holds it themselves. A `claimed` task has exactly one holder,
+   * this or `claimedByRunId`, and neither is set on a task that is not claimed.
+   */
+  claimedByOperator: boolean;
   completedByRunId: string | null;
   /** Set when a run filed this while working another. */
   parentTaskId: string | null;
@@ -221,7 +226,15 @@ export interface TaskTransition {
   actor: TaskActor;
   /** `claimed_by_run_id` as the row holds it, never as a caller asserts it. */
   claimedByRunId: string | null;
-  /** The run that will hold it. Required when `to` is `claimed`. */
+  /**
+   * `claimed_by_operator` as the row holds it. Absent reads as not held by the
+   * operator; `updateTask`, the one writer of `status`, always passes it.
+   */
+  claimedByOperator?: boolean;
+  /**
+   * The run that will hold it, when `to` is `claimed`. Empty is the operator
+   * claiming the task for themselves, which only the operator may do.
+   */
   claimRunId?: string | null;
   /**
    * `operator_only` as it will stand after the write this move is part of.
@@ -247,7 +260,8 @@ const COMPLETION_BELONGS_TO =
  * The edges are few enough to state, and every absent edge is refused:
  *
  *   - `open → claimed`     any actor, and the claim names the run that holds it;
- *                          nobody, while the task is operator-only
+ *                          or the operator, holding it themselves. While the
+ *                          task is operator-only, only that second kind
  *   - `open → done`        operator only; a run claims first
  *   - `open → dropped`     operator only
  *   - `claimed → open`     operator, or the run that holds it (releasing)
@@ -256,7 +270,7 @@ const COMPLETION_BELONGS_TO =
  *   - `done → open`        operator only (re-opening)
  *   - `dropped → open`     operator only
  *
- * Four decisions inside that are worth stating rather than deducing.
+ * Five decisions inside that are worth stating rather than deducing.
  *
  * **A run may complete only the task it holds.** Not "a task", and not "a task
  * claimed by some run": the row's own `claimed_by_run_id` has to be this run.
@@ -281,16 +295,32 @@ const COMPLETION_BELONGS_TO =
  * job not to apply a move's effects when nothing moved, which `updateTask`
  * does by only calling this when the status actually differs.
  *
- * **Nothing claims an operator-only task, the operator included.** A claim
- * names the run that will hold it, and the flag says no run here can do the
- * work — so a claim on one is a run spending its budget on something the
- * operator already said needs a Mac, a GUI or a hand. The operator's way round
- * is to clear the flag first, which is a statement that the blocker is gone
- * rather than a claim made past it. A task already claimed when the flag is set
- * keeps its claim: the claim is a record, and taking it off is a release.
+ * **A claim names its holder, and the operator can be one.** The operator
+ * claiming a task says "I am doing this myself": the board shows who holds it,
+ * and nothing points a run at it. That is the whole of what an operator-only
+ * task is waiting for, so the operator may claim one; what the flag still
+ * refuses is a claim naming a *run*, because no run here can do the work and a
+ * claim on one is a run spending its budget finding that out. A claim naming
+ * nobody is the operator's alone — from anyone else it is the record of a
+ * holder that does not exist, and nothing would ever release it. The claim is
+ * taken from `open` only: a task a run holds is released first and claimed
+ * second, so taking work off a run is two presses the operator can see, never
+ * a side effect of one. A task already claimed when the flag is set keeps its
+ * claim: the claim is a record, and taking it off is a release.
+ *
+ * **Nothing but the operator moves a task the operator holds** — not to
+ * release it, complete it, drop it, or claim it again, and this one is checked
+ * before `from === to` on purpose. A run re-claims its tasks at every pick-up
+ * and resume, and against the operator's claim that restated `claimed` would
+ * otherwise be an allowed no-op the run's log could only report as held by
+ * nobody; refused, the sentence it logs says who has the task.
  */
 export function taskTransitionRefusal(transition: TaskTransition): string | null {
   const { from, to, actor, claimedByRunId } = transition;
+
+  if (transition.claimedByOperator && from === "claimed" && actor.kind !== "operator") {
+    return operatorHolderRefusal(actor, to);
+  }
 
   if (from === to) return null;
 
@@ -324,19 +354,22 @@ export function taskTransitionRefusal(transition: TaskTransition): string | null
   }
 
   if (to === "claimed") {
+    const claimRunId = (transition.claimRunId ?? "").trim();
+    if (!claimRunId) {
+      if (actor.kind === "operator") return null;
+      return (
+        `A claim is the record of who holds the task, so a ${actor.kind} has to ` +
+        "name the run that will. Only the operator claims a task without one, " +
+        "for themselves. Nothing here expires a claim, and a claim naming " +
+        "nobody could never be released."
+      );
+    }
     if (transition.operatorOnly) {
       return (
         "This task is marked operator-only: it needs something no run in this " +
-        "container has, so no run may claim it. The operator clears the mark on " +
-        "the board if a run should take it after all."
-      );
-    }
-    const claimRunId = (transition.claimRunId ?? "").trim();
-    if (!claimRunId) {
-      return (
-        "A claim is the record of which run holds the task, so it has to name " +
-        "one. Nothing here expires a claim, and a claim naming nobody could " +
-        "never be released."
+        "container has, so no run may claim it. The operator may claim it for " +
+        "themselves, or clear the mark on the board if a run should take it " +
+        "after all."
       );
     }
     if (actor.kind === "run" && actor.runId !== claimRunId) {
@@ -377,6 +410,24 @@ export function taskTransitionRefusal(transition: TaskTransition): string | null
     : holderRefusal(actor.runId, claimedByRunId, "complete");
 }
 
+/**
+ * The one wording for "the operator holds this", whatever the asker wanted to
+ * do with it. Its own sentence rather than `holderRefusal`'s, which would read
+ * the null run column as nobody holding the task.
+ */
+function operatorHolderRefusal(
+  actor: Exclude<TaskActor, { kind: "operator" }>,
+  to: TaskStatus,
+): string {
+  const verb = { claimed: "claim", open: "release", done: "complete", dropped: "drop" }[to];
+  const who = actor.kind === "run" ? `Run ${short(actor.runId)}` : `A ${actor.kind}`;
+  return (
+    `${who} cannot ${verb} this task: the operator holds it and is doing it ` +
+    "themselves. Only the operator moves a task they hold — leave a comment " +
+    "if there is something they should know."
+  );
+}
+
 /** The one wording for "you are not the run that holds this". */
 function holderRefusal(
   askerRunId: string,
@@ -402,17 +453,20 @@ function holderRefusal(
  * branch was for is then claimed by, or closed as done by, a run whose work was
  * never merged — a claim nobody is working and a tick nobody earned. So the
  * task is reopened **only** when the run holding it is one of the rejected
- * runs: a task another run holds or closed, and one the operator dropped, are
- * someone's decision about different work, and are left alone. Pure, so the
- * rule is tested apart from the write.
+ * runs: a task another run holds or closed, one the operator holds, and one the
+ * operator dropped, are someone's decision about different work, and are left
+ * alone. Pure, so the rule is tested apart from the write.
  */
 export function rejectedWorkReopen(
-  task: Pick<Task, "status" | "claimedByRunId" | "completedByRunId">,
+  task: Pick<Task, "status" | "claimedByRunId" | "claimedByOperator" | "completedByRunId">,
   rejectedRunIds: readonly string[],
 ): { reopen: true } | { reopen: false; why: string } {
   if (task.status === "open") return { reopen: false, why: "it is already open" };
   if (task.status === "dropped") {
     return { reopen: false, why: "the operator dropped it" };
+  }
+  if (task.status === "claimed" && task.claimedByOperator) {
+    return { reopen: false, why: "the operator holds it" };
   }
   const holder = task.status === "claimed" ? task.claimedByRunId : task.completedByRunId;
   if (holder !== null && rejectedRunIds.includes(holder)) return { reopen: true };
@@ -429,7 +483,8 @@ export function rejectedWorkReopen(
  * Reopen a task whose work a review block rejected, when `rejectedWorkReopen`
  * says so. The move's effects are `updateTask`'s re-opening ones — both run
  * columns and `closed_at` cleared — and the write is guarded on the status and
- * holder it was decided against, so a task moved in between is left as it is.
+ * holder it was decided against, the operator's claim included, so a task moved
+ * in between is left as it is.
  */
 export function reopenRejectedTask(
   id: string,
@@ -445,10 +500,11 @@ export function reopenRejectedTask(
   const changed = db()
     .prepare(
       `UPDATE tasks
-          SET status = 'open', claimed_by_run_id = NULL, completed_by_run_id = NULL,
-              closed_at = NULL, updated_at = ?
+          SET status = 'open', claimed_by_run_id = NULL, claimed_by_operator = 0,
+              completed_by_run_id = NULL, closed_at = NULL, updated_at = ?
         WHERE id = ? AND status = ?
           AND COALESCE(claimed_by_run_id, '') = ?
+          AND claimed_by_operator = ?
           AND COALESCE(completed_by_run_id, '') = ?`,
     )
     .run(
@@ -456,6 +512,7 @@ export function reopenRejectedTask(
       id,
       task.status,
       task.claimedByRunId ?? "",
+      task.claimedByOperator ? 1 : 0,
       task.completedByRunId ?? "",
     ).changes;
   if (changed === 0) {
@@ -495,7 +552,12 @@ export interface OperatorOnlyChange {
    * A run may set the flag only in the write that releases its claim, and this
    * is how the rule sees that write rather than taking a caller's word for it.
    */
-  move: { from: TaskStatus; to: TaskStatus; claimedByRunId: string | null } | null;
+  move: {
+    from: TaskStatus;
+    to: TaskStatus;
+    claimedByRunId: string | null;
+    claimedByOperator: boolean;
+  } | null;
 }
 
 /**
@@ -568,6 +630,7 @@ export function operatorOnlyRefusal(change: OperatorOnlyChange): string | null {
     to: move.to,
     actor,
     claimedByRunId: move.claimedByRunId,
+    claimedByOperator: move.claimedByOperator,
     operatorOnly: from,
   });
 }
@@ -614,6 +677,8 @@ export interface TaskFacts {
   operatorOnly: boolean;
   /** Refused in `taskIds` for a local-model run. See `readTaskLinks`. */
   needsFrontier: boolean;
+  /** Refused in `taskIds`: the operator is doing it themselves. */
+  claimedByOperator: boolean;
 }
 
 /**
@@ -789,6 +854,21 @@ export function readTaskLinks(
     };
   }
 
+  // The same refusal for the same reason: a run linked to a task the operator
+  // holds would start, fail to claim it, and do the work anyway.
+  const operatorHeld = taskIds.ids.find((id) => knowledge.get(id)?.claimedByOperator);
+  if (operatorHeld) {
+    return {
+      ok: false,
+      reason:
+        `“${knowledge.get(operatorHeld)?.title ?? operatorHeld}” (${operatorHeld}) ` +
+        "is held by the operator, who is doing it themselves, so no run may " +
+        "claim it. Take it out of taskIds. If the brief only mentions it, put it " +
+        "in relatedTaskIds; if a run should work it, the operator releases it on " +
+        "the board first.",
+    };
+  }
+
   const frontier = opts.localRun
     ? taskIds.ids.find((id) => knowledge.get(id)?.needsFrontier)
     : undefined;
@@ -854,13 +934,16 @@ function idList(
  */
 export function currentTaskKnowledge(): Map<string, TaskFacts> {
   const rows = db()
-    .prepare("SELECT id, title, status, operator_only, needs_frontier FROM tasks")
+    .prepare(
+      "SELECT id, title, status, operator_only, needs_frontier, claimed_by_operator FROM tasks",
+    )
     .all() as Array<{
     id: string;
     title: string;
     status: string;
     operator_only: number;
     needs_frontier: number;
+    claimed_by_operator: number;
   }>;
   return new Map(
     rows.map((row) => [
@@ -870,6 +953,7 @@ export function currentTaskKnowledge(): Map<string, TaskFacts> {
         status: isTaskStatus(row.status) ? row.status : ("open" as TaskStatus),
         operatorOnly: row.operator_only === 1,
         needsFrontier: row.needs_frontier === 1,
+        claimedByOperator: row.claimed_by_operator === 1,
       },
     ]),
   );
@@ -1322,6 +1406,7 @@ interface TaskRow {
   folder: string | null;
   created_by_run_id: string | null;
   claimed_by_run_id: string | null;
+  claimed_by_operator: number;
   completed_by_run_id: string | null;
   parent_task_id: string | null;
   operator_only: number;
@@ -1332,8 +1417,8 @@ interface TaskRow {
 }
 
 const COLUMNS = `id, title, body, status, priority, origin, mount_id, folder,
-  created_by_run_id, claimed_by_run_id, completed_by_run_id, parent_task_id,
-  operator_only, needs_frontier, created_at, updated_at, closed_at`;
+  created_by_run_id, claimed_by_run_id, claimed_by_operator, completed_by_run_id,
+  parent_task_id, operator_only, needs_frontier, created_at, updated_at, closed_at`;
 
 /**
  * A stored row as the rest of the app sees it.
@@ -1359,6 +1444,7 @@ export function rowToTask(row: TaskRow): Task {
     folder: row.folder,
     createdByRunId: row.created_by_run_id,
     claimedByRunId: row.claimed_by_run_id,
+    claimedByOperator: row.claimed_by_operator === 1,
     completedByRunId: row.completed_by_run_id,
     parentTaskId: row.parent_task_id,
     operatorOnly: row.operator_only === 1,
@@ -1659,7 +1745,10 @@ export interface TaskPatch {
   folder?: string | null;
   parentTaskId?: string | null;
   status?: TaskStatus;
-  /** The run that will hold it. Required when `status` moves to `claimed`. */
+  /**
+   * The run that will hold it when `status` moves to `claimed`. Absent from the
+   * operator, it is the operator claiming the task for themselves.
+   */
   claimRunId?: string | null;
   /** Who may change it is `operatorOnlyRefusal`, asked against the row. */
   operatorOnly?: boolean;
@@ -1680,6 +1769,7 @@ const WRITTEN_TASK_FIELDS = [
   "mountId",
   "folder",
   "claimedByRunId",
+  "claimedByOperator",
   "completedByRunId",
   "parentTaskId",
   "operatorOnly",
@@ -1700,12 +1790,17 @@ const WRITTEN_TASK_FIELDS = [
  * The status effects are the other half of the rule and they only fire when the
  * status actually changes:
  *
- *   - into `claimed`: the claim names its run, and `closed_at` is cleared.
+ *   - into `claimed`: the claim names its holder — the run, or the operator
+ *     with no run id beside it, never both — and `closed_at` is cleared.
  *   - into `done`: `completed_by_run_id` is the acting run, or null when the
  *     operator marked it — a person is not a run and inventing one would put a
  *     run id on work no run did.
  *   - into `dropped`: `closed_at` is set and `completed_by_run_id` is left
  *     alone, because nobody completed it.
+ *   - out of `claimed` into anything, the operator's claim is cleared: unlike
+ *     the run column, which `tasksForRun` reads to show a run what it closed,
+ *     nothing reads the operator's claim on a task that is no longer claimed,
+ *     and a set flag on a closed task would be a holder the board cannot draw.
  *   - into `open`: both run columns are cleared. A task that is open while
  *     naming the run that completed it is a contradiction the board would have
  *     to explain on every surface that draws it, and a re-open is the operator
@@ -1769,7 +1864,12 @@ export function updateTask(
       move:
         patch.status === undefined
           ? null
-          : { from: task.status, to: patch.status, claimedByRunId: task.claimedByRunId },
+          : {
+              from: task.status,
+              to: patch.status,
+              claimedByRunId: task.claimedByRunId,
+              claimedByOperator: task.claimedByOperator,
+            },
     });
     if (refusal) return { ok: false, kind: "refused", error: refusal };
     next.operatorOnly = patch.operatorOnly;
@@ -1783,27 +1883,35 @@ export function updateTask(
 
   const now = Date.now();
 
-  if (patch.status !== undefined && patch.status !== task.status) {
-    // A run claiming for itself need not name itself, which is what makes
-    // `claim` a one-argument call for the actor that makes it most often.
-    const claimRunId =
-      (patch.claimRunId ?? (actor.kind === "run" ? actor.runId : null) ?? "").trim() ||
-      null;
+  // A run claiming for itself need not name itself, which is what makes
+  // `claim` a one-argument call for the actor that makes it most often.
+  const claimRunId =
+    (patch.claimRunId ?? (actor.kind === "run" ? actor.runId : null) ?? "").trim() || null;
 
+  // Asked even when the status is restated rather than moved, because one
+  // restatement is refused: a non-operator's claim on a task the operator holds.
+  // Every other `from === to` is answered null by the rule.
+  if (patch.status !== undefined) {
     const refusal = taskTransitionRefusal({
       from: task.status,
       to: patch.status,
       actor,
       claimedByRunId: task.claimedByRunId,
+      claimedByOperator: task.claimedByOperator,
       claimRunId,
       operatorOnly: next.operatorOnly,
     });
     if (refusal) return { ok: false, kind: "refused", error: refusal };
+  }
 
+  if (patch.status !== undefined && patch.status !== task.status) {
     next.status = patch.status;
+    next.claimedByOperator = false;
     if (patch.status === "claimed") {
-      // Non-null by the rule above, which refuses a claim naming nobody.
+      // A claim naming no run is the operator's own, which the rule above
+      // allows to the operator alone.
       next.claimedByRunId = claimRunId;
+      next.claimedByOperator = claimRunId === null;
       next.closedAt = null;
     } else if (patch.status === "done") {
       next.completedByRunId = actor.kind === "run" ? actor.runId : null;
@@ -1829,9 +1937,9 @@ export function updateTask(
     .prepare(
       `UPDATE tasks
           SET title = ?, body = ?, status = ?, priority = ?, mount_id = ?,
-              folder = ?, claimed_by_run_id = ?, completed_by_run_id = ?,
-              parent_task_id = ?, operator_only = ?, needs_frontier = ?,
-              updated_at = ?, closed_at = ?
+              folder = ?, claimed_by_run_id = ?, claimed_by_operator = ?,
+              completed_by_run_id = ?, parent_task_id = ?, operator_only = ?,
+              needs_frontier = ?, updated_at = ?, closed_at = ?
         WHERE id = ?`,
     )
     .run(
@@ -1842,6 +1950,7 @@ export function updateTask(
       next.mountId,
       next.folder,
       next.claimedByRunId,
+      next.claimedByOperator ? 1 : 0,
       next.completedByRunId,
       next.parentTaskId,
       next.operatorOnly ? 1 : 0,
@@ -2044,6 +2153,7 @@ export function taskDTO(
     relPath: placed?.relPath ?? null,
     createdByRunId: task.createdByRunId,
     claimedByRunId: task.claimedByRunId,
+    claimedByOperator: task.claimedByOperator,
     completedByRunId: task.completedByRunId,
     parentTaskId: task.parentTaskId,
     operatorOnly: task.operatorOnly,
