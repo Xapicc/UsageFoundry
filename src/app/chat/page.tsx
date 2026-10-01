@@ -182,7 +182,7 @@ const GUARD_TONE: Record<"missing" | "set", string> = {
  * the operator agrees to is the one that goes wrong.
  *
  * Deliberately **not** the whole refusal set. The rest of it is a folder on
- * disk, an install-wide ceiling and the live dependency graph, none of which
+ * disk, the install's spend limit and the live dependency graph, none of which
  * this page can see; guessing at those would skip a proposal that would have
  * started. Under-selecting costs one tick, over-selecting is the defect.
  */
@@ -1093,7 +1093,7 @@ export default function ChatPage() {
               </span>
             )}
             {/* Beside it and never added to it. A turn that was cut off — a
-                cancel, a timeout, a restart, the install's ceiling — never gets
+                cancel, a timeout, a restart, the install limit — never gets
                 a cost from the CLI, so this is what the app priced the tokens
                 the CLI *did* report at. Two kinds of number in one figure would
                 be a total nobody could act on; separate, "settled" above still

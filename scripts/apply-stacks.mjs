@@ -69,9 +69,10 @@ export const DECLARATIONS_DIR = "/etc/uf-stacks";
  * The named volume. The image ships **nothing** under this path, ever.
  *
  * A named volume takes its contents from the image exactly once, at creation
- * (`Dockerfile:303-309`), so anything the image puts at a volume's mount point
- * is visible on a reviewer's fresh install and masked on every install that
- * already exists. `deployment.test.ts` asserts the `Dockerfile` names no path
+ * (the `Dockerfile`'s comment on the `ENV PATH` line that puts this volume's
+ * `bin` first), so anything the image puts at a volume's mount point is visible
+ * on a reviewer's fresh install and masked on every install that already
+ * exists. `deployment.test.ts` asserts the `Dockerfile` names no path
  * under here, because that is the one breach nothing else would catch.
  */
 export const TOOLBOX_DIR = "/var/lib/uf-stacks";
@@ -163,9 +164,10 @@ export const VERBS = new Set(["archive", "uv-tool", "npm-global"]);
  * Where each package manager is pointed, and why both variables and not one.
  *
  * `01b-` §2.1 names `UV_TOOL_BIN_DIR={pkg}/bin` alone. That is half an install:
- * `Dockerfile:282` also sets `UV_TOOL_DIR=/home/node/pytools/tools`, which this
- * process inherits, so redirecting only the bin directory leaves the tool's
- * *environment* in the volume the agents own and write. A binary on the
+ * the `Dockerfile`'s `uv` `ENV` block also sets
+ * `UV_TOOL_DIR=/home/node/pytools/tools`, which this process inherits, so
+ * redirecting only the bin directory leaves the tool's *environment* in the
+ * volume the agents own and write. A binary on the
  * server's `PATH` whose interpreter lives somewhere a sibling run can rewrite
  * is exactly the arrangement the uid split above exists to prevent, and it
  * would also mean a stack removal left the venv behind — `reconcile` may remove
@@ -745,7 +747,8 @@ function agentOwner() {
 }
 
 /**
- * The architecture, from the call the image already makes at `Dockerfile:164`.
+ * The architecture, from the call the `Dockerfile`'s `gh` and `uv` downloads
+ * already make.
  *
  * Falls back to Node's own name for it rather than guessing one spelling: an
  * install where `dpkg` is missing is not this script's to refuse, and the two
@@ -877,16 +880,17 @@ function applyArchiveStep(step, context) {
     if (!chown.ok) return { ok: false, detail: `could not hand ${pkg} to ${owner}`, stderr: chown.stderr, bytes: chown.bytes };
   }
 
-  // `curl -fsSL` is `Dockerfile:171`'s own flag set. The two additions are this
-  // design's and are worth one flag each here, because the URL came out of a
-  // file a stranger wrote rather than out of a reviewed Dockerfile line.
+  // `curl -fsSL` is the `Dockerfile`'s `gh` and `uv` downloads' own flag set.
+  // The two additions are this design's and are worth one flag each here,
+  // because the URL came out of a file a stranger wrote rather than out of a
+  // reviewed Dockerfile line.
   const curl = ["curl", "-fsSL", "--proto", "=https", "--tlsv1.2", ...CURL_STALL_ARGS, "-o", artifact, url];
   const fetched = runAsAgent(curl, { cwd: download, timeoutMs: Math.min(STEP_TIMEOUT_MS, budget()) });
   if (!fetched.ok) return { ok: false, detail: `could not download ${url}`, stderr: fetched.stderr, bytes: fetched.bytes };
 
   // One verification path for both forms. A literal digest is written into a
   // manifest of one line and checked by the same `sha256sum --ignore-missing
-  // --check` the image already uses at `Dockerfile:173`, rather than being
+  // --check` the image already uses for its `gh` download, rather than being
   // compared by a second piece of code that could disagree with it.
   const manifest = path.posix.join(download, "SHA256SUMS");
   if (step.checksums) {
@@ -915,8 +919,8 @@ function applyArchiveStep(step, context) {
   if (step.unpack === "tar.gz") {
     unpack = runAsAgent(["tar", "-xzf", archivePath, "-C", pkg], { timeoutMs: Math.min(STEP_TIMEOUT_MS, budget()) });
   } else if (step.unpack === "zip") {
-    // `python3 -m zipfile -e`, which is stdlib in the python3 already at
-    // `Dockerfile:130`, because this image has no `unzip`.
+    // `python3 -m zipfile -e`, which is stdlib in the python3 the runtime
+    // stage's apt line already installs, because this image has no `unzip`.
     unpack = runAsAgent(["python3", "-m", "zipfile", "-e", archivePath, pkg], { timeoutMs: Math.min(STEP_TIMEOUT_MS, budget()) });
   } else {
     unpack = runAsAgent(["cp", archivePath, path.posix.join(pkg, artifact)], { timeoutMs: Math.min(STEP_TIMEOUT_MS, budget()) });

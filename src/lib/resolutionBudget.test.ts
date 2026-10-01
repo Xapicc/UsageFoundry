@@ -16,7 +16,7 @@ import type { ReviewRow } from "./review";
  * meets (`resolutionSilence.test.ts`). The
  * merge queue starts one per conflicting branch of a batch queued with
  * auto-resolve, a workflow's merge block included, with nobody present, and the
- * install ceiling is read once at the door. So `--max-budget-usd` is the only
+ * install limit is read once at the door. So `--max-budget-usd` is the only
  * bound one has, and it was never passed: a resolution admitted at $99.99 of a
  * $100 day spent until it chose to exit.
  *

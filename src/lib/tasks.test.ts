@@ -1024,6 +1024,100 @@ test("a clipped board says how much it left out", () => {
   );
 });
 
+/**
+ * The count above was measured not to stop duplicates: nine runs on one project
+ * filed the same task, each shown twenty rows beside a count of 69 to 99. A
+ * query is what lets a run read past the twentieth row, so these pin that it
+ * does, that a wildcard typed into it is a character rather than a pattern, and
+ * that it never touches `held`.
+ */
+function searchFolder(name: string): string {
+  const folder = path.join(ws, "RepoOne", name);
+  fs.mkdirSync(folder, { recursive: true });
+  return folder;
+}
+
+test("a query finds an open task past the twentieth row", () => {
+  const folder = searchFolder("search-deep");
+  // `low` sorts it below every `normal` row whatever the clock says, so it is
+  // past the cut by the board's own order rather than by a millisecond.
+  const sought = file({
+    mountId: MOUNT,
+    folder,
+    title: "help service has no row in the flag table",
+    priority: "low",
+  });
+  for (let i = 0; i < MAX_RUN_TASKS + 5; i += 1) {
+    file({ mountId: MOUNT, folder, title: `unrelated ${i}` });
+  }
+  const run = seedRun("run-searching-a-long-board");
+
+  const listed = tasksForRun(run, folder);
+  assert.ok(
+    !listed.openInFolder.some((t: Task) => t.id === sought.id),
+    "the fixture is past the cut, or this proves nothing",
+  );
+
+  const found = tasksForRun(run, folder, "HELP Service");
+  assert.deepEqual(
+    found.openInFolder.map((t: Task) => t.id),
+    [sought.id],
+    "matched case-folded, whatever its place in the board's order",
+  );
+  assert.equal(found.openInFolderTotal, 1, "the total counts matches, not the folder");
+
+  const byBody = file({ mountId: MOUNT, folder, title: "terse", body: "mentions zebrafish once" });
+  assert.deepEqual(
+    tasksForRun(run, folder, "zebrafish").openInFolder.map((t: Task) => t.id),
+    [byBody.id],
+    "the brief is searched as well as the title",
+  );
+});
+
+test("a percent sign, an underscore or a backslash in a query is literal", () => {
+  const folder = searchFolder("search-literal");
+  const percent = file({ mountId: MOUNT, folder, title: "coverage stuck at 50% on CI" });
+  file({ mountId: MOUNT, folder, title: "coverage stuck at 500 on CI" });
+  const underscore = file({ mountId: MOUNT, folder, title: "rename snake_case keys" });
+  file({ mountId: MOUNT, folder, title: "rename snakeXcase keys" });
+  const backslash = file({ mountId: MOUNT, folder, title: "escape C:\\temp paths" });
+  file({ mountId: MOUNT, folder, title: "escape C:temp paths" });
+  const run = seedRun("run-searching-for-wildcards");
+
+  for (const [query, expected] of [
+    ["50%", percent],
+    ["snake_case", underscore],
+    ["C:\\temp", backslash],
+  ] as const) {
+    const found = tasksForRun(run, folder, query);
+    assert.deepEqual(
+      found.openInFolder.map((t: Task) => t.id),
+      [expected.id],
+      `"${query}" matched as a pattern rather than as the text`,
+    );
+    assert.equal(found.openInFolderTotal, 1);
+  }
+});
+
+test("a query narrows openInFolder and leaves held as it was", () => {
+  const folder = searchFolder("search-held");
+  const run = seedRun("run-holding-while-searching");
+  const held = file({ mountId: MOUNT, folder, title: "the task this run was given" });
+  updateTask(held.id, { status: "claimed" }, { kind: "run", runId: run });
+  file({ mountId: MOUNT, folder, title: "something open beside it" });
+
+  const unfiltered = tasksForRun(run, folder);
+  const searched = tasksForRun(run, folder, "nothing on this board says this");
+  assert.deepEqual(searched.openInFolder, []);
+  assert.equal(searched.openInFolderTotal, 0);
+  assert.deepEqual(
+    searched.held,
+    unfiltered.held,
+    "what a run holds is not a search result",
+  );
+  assert.deepEqual(searched.held.map((t: Task) => t.id), [held.id]);
+});
+
 /* ------------------------------------------------------------------ */
 /* Operator-only: who moves the flag, and what it refuses              */
 /* ------------------------------------------------------------------ */

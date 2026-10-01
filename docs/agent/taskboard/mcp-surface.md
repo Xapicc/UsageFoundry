@@ -19,7 +19,7 @@ idea of the work. The refusal a block gets names `list_tasks` and the `taskIds`
 field rather than pointing at `emit_runs`, because answering "write this down for
 later" with the one tool that starts work *now* is the opposite of what was
 asked. A **work cycle** gets neither of the shared tools and a `create_task` of
-its own; the next five paragraphs are its half.
+its own; the next six paragraphs are its half.
 
 **The gate is one membership test against the list the same function published,
 and that shape is load-bearing rather than tidy.** `toolsFor(subject)` decides
@@ -77,6 +77,26 @@ below `MAX_TASK_PAGE` because this is a tool result a cycle pays for by the toke
 rather than a page somebody scrolls, and the count of what was left out travels
 beside the rows on a shortened diff's rule — a run shown twenty of sixty and told
 nothing files the duplicate it read the list to avoid.
+
+**The count alone was measured not to prevent that duplicate, and
+`list_my_tasks` takes a `query` because of it.** On 2026-09-25 nine runs on one
+project filed the same task, seven of them within 31 minutes, and every one had
+called `list_my_tasks` first and been shown twenty open tasks beside an
+`openInFolderTotal` of 69, then 85, then 99
+(`proposals/CrossSessionCommunication/00-problem.md` §3): told the list was
+short, a run still had no way to read the rest. Across the 25 near-duplicate
+title pairs between concurrently live runs, one word of the later title matched
+the earlier one, so a search is the read that would have found it. The query is
+matched against the title and the brief of every open task in the folder, as a
+parameterised `LIKE ? ESCAPE '\'` with `%`, `_` and `\` escaped — left as
+wildcards, a search for `50%` answers with tasks holding neither, which reads as
+"already filed" for work nobody wrote down — and it folds case the way SQLite's
+`LIKE` does, ASCII only. The cap and the count keep their meaning: at most
+`MAX_RUN_TASKS` matches, with `openInFolderTotal` counting matches, which is why
+the result echoes `query` back, since a total of two with nothing saying a search
+ran reads as a backlog that is nearly empty. `held` is never narrowed, because
+what a run holds is not a search result. Nothing widens either: a query reads the
+open rows of the same folder the list reads, and nothing else.
 
 **`get_my_task` is the whole-brief door onto exactly those rows, and its scope is
 the list's and never wider.** It exists because `list_my_tasks` clips every brief

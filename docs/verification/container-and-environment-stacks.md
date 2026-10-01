@@ -272,3 +272,15 @@
   `failed`. Settle with
   `gh extension install vilmibm/gh-screensaver` in a throwaway container, then
   `ls -la /home/node/.local/share/gh/extensions/gh-screensaver/`.
+
+- **`docker compose up -d` against a running container has never been seen to
+  apply a stack.** Every boot recorded above was `docker compose up --build` or
+  `docker compose restart`, and `docs/install.md`, `01b-stack-format.md` §5 and
+  `StackRequestDetail.tsx`'s card say `restart` for that reason. The applier
+  runs only from `docker-entrypoint.sh`, and a file added under the
+  bind-mounted `./stacks` changes nothing compose compares, so `up -d` is
+  expected to leave the container `Running` and apply nothing — reasoned, not
+  observed. Settle on a running install: add `stacks/<name>/stack.json`, run
+  `docker compose up -d`, and check `docker compose logs usagefoundry` for a
+  `stack <name>:` line and `/var/lib/uf-stacks/receipts/<name>.json` for a
+  receipt; then the same with `docker compose restart`.

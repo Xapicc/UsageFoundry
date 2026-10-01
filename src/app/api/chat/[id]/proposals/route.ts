@@ -54,7 +54,7 @@ type Ctx = { params: Promise<{ id: string }> };
  * agents with nobody present: it puts a workflow a person saved on a
  * recurrence, through the same `putSchedule` the schedule form uses. It claims
  * no folder and starts nothing inside this click, so like a workflow it is
- * settled after the run half and is not asked the install ceiling here: each
+ * settled after the run half and is not asked the install limit here: each
  * occurrence goes through `startWorkflow`, which is what a press of Run goes
  * through.
  */
