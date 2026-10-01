@@ -525,12 +525,15 @@ const SHARED_TOOLS = [
  * omission: a `runId` argument would be a work cycle able to close every task on
  * the board by guessing an id out of a list.
  *
- * `comment_on_task` is the fourth and the one that takes a *task* id without
- * being held to the same rule, which is a smaller claim than it looks: a note
- * moves nothing, its author is recorded from the token, and the worst a
- * misdirected one can do is put a sentence signed by this run on a task it was
- * not working. `complete_task` is where an id out of a list closes work nobody
- * did, and that one is still checked against `claimed_by_run_id`.
+ * `comment_on_task` is the fourth and takes a *task* id without being held to
+ * `complete_task`'s rule: a note moves nothing and its author is recorded from
+ * the token, so it may go on an open task in this run's folder that it does not
+ * hold — "I have just changed what this task is about" is the note worth having.
+ * It is held to `get_my_task`'s scope instead, and refused anywhere else: a note
+ * on a task another run holds reaches that run whole through its own
+ * `list_my_tasks`, which is one run putting instructions in front of another.
+ * `complete_task` is where an id out of a list closes work nobody did, and that
+ * one is still checked against `claimed_by_run_id`.
  *
  * `add_task_dependency` is the fifth and takes **two** task ids on the same
  * ground, which holds here for a reason of its own: the edge it writes gates
@@ -740,8 +743,9 @@ const RUN_TOOLS = [
       "there, what you found, or why the brief is harder than it reads. It " +
       "moves nothing — it cannot close, claim, drop or re-prioritise a task, " +
       "and it does not mark the task as touched. Use complete_task to finish " +
-      "the task you hold. Notes are permanent and cannot be edited or deleted, " +
-      "and yours is recorded as written by this run.",
+      "the task you hold. You can write on a task you hold or one open in " +
+      "this folder, and nothing else. Notes are permanent and cannot be " +
+      "edited or deleted, and yours is recorded as written by this run.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2455,13 +2459,14 @@ async function callTool(
         ? createTaskForRun(args, subject.runId)
         : createTaskTool(args, chatId!);
 
-    // Shared by name between a chat and a work cycle, and the only difference
-    // between the two callers is the author the row records — which is taken
-    // from the subject here and can be taken from nowhere else. `block` never
-    // reaches this line: the gate above refuses a tool that is not on its list.
+    // Shared by name between a chat and a work cycle, and the two differ in the
+    // author the row records — taken from the subject here and from nowhere
+    // else — and in scope: a chat writes on any task it can read, a run only on
+    // one `get_my_task` would read it. `block` never reaches this line: the
+    // gate above refuses a tool that is not on its list.
     case "comment_on_task":
       return subject.kind === "run"
-        ? commentOnTask(args, { kind: "run", runId: subject.runId })
+        ? commentOnTaskForRun(args, subject.runId)
         : commentOnTask(args, { kind: "chat" }, chatId!);
 
     // Shared by name between a chat and a work cycle and, unlike the two above,
@@ -3746,7 +3751,8 @@ function toolComment(comment: TaskComment) {
  *
  * A task that is not there is refused in `taskRefusal`'s wording rather than one
  * written here, so a mistyped id reads the same as it does at `get_task`, at a
- * proposal and at an emission.
+ * proposal and at an emission. A work cycle never gets that far with one:
+ * `commentOnTaskForRun` refuses it first, in its own sentence.
  */
 function commentOnTask(
   args: Record<string, unknown>,
@@ -3781,6 +3787,41 @@ function commentOnTask(
       "be edited or deleted. Nothing about the task changed — it has the same " +
       "status, the same priority and the same owner it had before.",
   );
+}
+
+/**
+ * Write a note on a task, as a work cycle: `commentOnTask` behind
+ * `get_my_task`'s scope.
+ *
+ * **A run writes where it may read, and nowhere else.** The scope is
+ * `taskVisibleToRun` — a task this run holds, or one open in its own folder —
+ * and the run id is the token's. Checking only that the task existed let a run
+ * sign a permanent note on any task on the board, and an id is no barrier: every
+ * run can read its siblings' transcripts, where the ids are. A note on a task
+ * another run holds reaches that run whole through its own `list_my_tasks`, so
+ * the wider rule was one run able to put instructions in front of another, from
+ * work nobody pointed at it; a note on another project's task is a sentence about
+ * work this run is not doing. Sharing `get_my_task`'s predicate means "can read"
+ * and "can write on" cannot drift apart.
+ *
+ * "Not yours" and "not there" are one sentence, `get_my_task`'s rule, so this
+ * cannot be used to probe the board for which ids exist — which is also why a
+ * missing id never reaches `taskRefusal`, whose wording tells the two apart.
+ */
+function commentOnTaskForRun(args: Record<string, unknown>, runId: string) {
+  const taskId = String(args.taskId ?? "").trim();
+  if (!taskVisibleToRun(runId, runFolder(runId).folder, taskId)) {
+    return text(
+      `comment_on_task cannot write on "${taskId}": a run writes notes on a ` +
+        "task it holds, or one open in the folder it is working in, and nothing " +
+        "else on the board, because a note is permanent and signed by this run " +
+        "and another run's task or another project's is not this run's work. " +
+        "list_my_tasks shows the ids you can write on, under held and " +
+        "openInFolder.",
+      true,
+    );
+  }
+  return commentOnTask(args, { kind: "run", runId });
 }
 
 /**

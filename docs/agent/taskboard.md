@@ -47,7 +47,7 @@ The paragraphs themselves live in `docs/agent/taskboard/`, one topic file per he
 - A comment moves nothing, and specifically does not bump `tasks.updated_at`.
 - A clipped thread loses its oldest end, which is the one place this inverts `listTasks`' shape.
 - Comments reach a run through a tool call and never through the appended system prompt.
-- `comment_on_task` takes a task id and is deliberately not held to `complete_task`'s rule, which is a smaller claim than it looks.
+- `comment_on_task` takes a task id and is deliberately not held to `complete_task`'s rule, but a run is held to `get_my_task`'s scope.
 - The comment count is on `TaskDTO` and is passed rather than read.
 
 ## [Dependencies between tasks](taskboard/task-dependencies.md)

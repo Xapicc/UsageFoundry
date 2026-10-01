@@ -81,17 +81,26 @@ is the N+1 the board's own listing refuses and is admissible only because `held`
 is capped at `MAX_RUN_TASKS` and a tool call is not a ten-second poll.
 
 **`comment_on_task` takes a task id and is deliberately not held to
-`complete_task`'s rule, which is a smaller claim than it looks.** No tool on the
-run surface takes a *run* id and that is unchanged — the author is still the
-token's. What this one does take is an id off a list, and the reason that is safe
-here and not there is what the two writes do: `complete_task` against a guessed
-id closes work nobody did and the board then says it happened, where
-`comment_on_task` against a guessed id puts a sentence signed by this run on a
-task it was not working. The first is a state nothing can tell apart from the
-truth; the second is visible as exactly what it is. A run may therefore write on
-anything it can see, which includes `openInFolder` — the case that makes the tool
-worth having, since "I have just changed the thing this task is about" is a note
-about a task the run does not hold. A **block** is refused the tool outright, on
+`complete_task`'s rule, but a run is held to `get_my_task`'s scope.** No tool on
+the run surface takes a *run* id and that is unchanged — the author is still the
+token's. What this one does take is an id off a list, and the reason it need not
+be a task the run holds is what the two writes do: `complete_task` against the
+wrong id closes work nobody did and the board then says it happened, where a note
+is visible as exactly what it is. So a run may write on an open task in its own
+folder — the case that makes the tool worth having, since "I have just changed
+the thing this task is about" is a note about a task the run does not hold. It
+may write nowhere else, and the check is `taskVisibleToRun`, the predicate
+`get_my_task` reads through, so a run can write on exactly what it can see and
+the two cannot drift apart. The tool once checked only that the task existed,
+which let a run token sign a permanent note on any task on the board. An id is no
+barrier, since every run can read its siblings' transcripts under the mounted
+`~/.claude/projects`, and a note on a task another run holds reaches that run
+whole through its own `list_my_tasks` — one run putting instructions in front of
+another, from work nobody pointed it at. The refusal is one sentence for "not
+yours" and "not there", `get_my_task`'s rule for its reason, and names
+`list_my_tasks` as where the writable ids are. A **chat** is not narrowed: it
+reads the whole board through `get_task` with an operator at the keyboard, and
+writes on what it reads. A **block** is refused the tool outright, on
 `create_task`'s ground rather than by omission: a note is permanent and cannot be
 edited, its turn is unattended, and a thread it wrote to is one the operator meets
 already answered by something nobody was reading. Its refusal names what a block

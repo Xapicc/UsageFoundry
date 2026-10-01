@@ -336,6 +336,90 @@ test("a run with no folder reads what it holds and nothing else", async () => {
   );
 });
 
+/**
+ * `comment_on_task` from a run once checked only that the task existed, so a
+ * run token could sign a permanent note on any task on the board — and task ids
+ * are not secret, since every run can read its siblings' transcripts. A note on
+ * a task another run holds reaches that run whole through its own
+ * `list_my_tasks`, which made the old rule a way to put sentences in front of a
+ * run nobody had pointed at this one. The scope is now `get_my_task`'s, so the
+ * cases are that test's, plus what must not have narrowed with it.
+ */
+test("a run writes notes only on what it may read, and is refused in one sentence otherwise", async () => {
+  const writer = seedRun(HERE);
+  const other = seedRun(HERE);
+
+  const held = file(HERE, { title: "Held by the writer" });
+  move(held, "claimed", writer.runId);
+  const openHere = file(HERE, { title: "Open where the writer works" });
+  const elsewhere = file(ELSEWHERE, { title: "Another project's open task" });
+  const claimedHere = file(HERE, { title: "Claimed by another run here" });
+  move(claimedHere, "claimed", other.runId);
+  const doneHere = file(HERE, { title: "Done by another run here" });
+  move(doneHere, "claimed", other.runId);
+  move(doneHere, "done", other.runId);
+  const missing = randomUUID();
+
+  const thread = (taskId: string) => comments.listTaskComments(taskId, 50).total;
+
+  for (const task of [held, openHere]) {
+    const written = await callTool(writer.token, "comment_on_task", {
+      taskId: task.id,
+      body: "A note from the run.",
+    });
+    assert.equal(written.isError, false, `${task.title}: ${written.text}`);
+    assert.equal(thread(task.id), 1);
+  }
+
+  const cases: [string, string][] = [
+    ["an open task in another folder", elsewhere.id],
+    ["a claimed task in its folder that it does not hold", claimedHere.id],
+    ["a done task in its folder that it does not hold", doneHere.id],
+    ["an id that is on no row", missing],
+  ];
+  const sentences = new Set<string>();
+  for (const [what, taskId] of cases) {
+    const refused = await callTool(writer.token, "comment_on_task", {
+      taskId,
+      body: "A note it may not write.",
+    });
+    assert.equal(refused.isError, true, `${what} is refused`);
+    assert.match(refused.text, /list_my_tasks/, "and says where the writable ids are");
+    for (const task of [elsewhere, claimedHere, doneHere]) {
+      assert.ok(!refused.text.includes(task.title), `${what} leaks no title`);
+    }
+    sentences.add(refused.text.replaceAll(taskId, "<id>"));
+  }
+  assert.equal(
+    sentences.size,
+    1,
+    `"not yours" and "not there" must read the same, or the refusal is a probe: ${[...sentences].join(" | ")}`,
+  );
+  for (const task of [elsewhere, claimedHere, doneHere]) {
+    assert.equal(thread(task.id), 0, `nothing was written on ${task.title}`);
+  }
+
+  // The run id is the token's: naming the holder in the call writes nothing.
+  const smuggled = await callTool(writer.token, "comment_on_task", {
+    taskId: claimedHere.id,
+    body: "A note in the holder's name.",
+    runId: other.runId,
+  });
+  assert.equal(smuggled.isError, true);
+  assert.equal(thread(claimedHere.id), 0);
+
+  // The chat's door is not the run's and did not narrow with it: a chat turn
+  // reads the whole board, and writes on what it reads.
+  // A chat that exists, because the chat's write appends to its own thread.
+  const chatToken = chat.mintCapability({ kind: "chat", chatId: chat.createChat().id });
+  const fromChat = await callTool(chatToken, "comment_on_task", {
+    taskId: claimedHere.id,
+    body: "A note from the chat.",
+  });
+  assert.equal(fromChat.isError, false, fromChat.text);
+  assert.equal(thread(claimedHere.id), 1);
+});
+
 test("a work cycle asking for get_task is pointed at get_my_task", async () => {
   const { runId, token } = seedRun(HERE);
   const held = file(HERE);
