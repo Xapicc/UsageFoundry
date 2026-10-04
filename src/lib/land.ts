@@ -726,7 +726,7 @@ function chainMember(run: RunRow): ChainMember {
  * and a later link that added nothing offered the same squash for landing
  * again.
  */
-function isLandedTip(chain: readonly RunRow[], tip: string | undefined): boolean {
+export function isLandedTip(chain: readonly RunRow[], tip: string | undefined): boolean {
   return chain.some((r) => !!r.landed_tip && r.landed_tip === tip);
 }
 
@@ -752,7 +752,7 @@ function isLandedTip(chain: readonly RunRow[], tip: string | undefined): boolean
  * and `chainBlocker` cannot match one, so which of two is followed decides
  * nothing.
  */
-function chainRuns(run: RunRow): RunRow[] {
+export function chainRuns(run: RunRow): RunRow[] {
   const byId = db().prepare("SELECT * FROM runs WHERE id = ?");
   // The settled list is built from `TERMINAL_STATUSES` rather than spelled out,
   // for `admitDependencies`' reason: a second copy is a second thing to forget.

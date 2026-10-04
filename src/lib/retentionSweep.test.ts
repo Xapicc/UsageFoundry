@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { after, before, describe, it } from "node:test";
+import { after, before, beforeEach, describe, it } from "node:test";
 
 import type Database from "better-sqlite3";
 
@@ -36,15 +37,23 @@ let retention: typeof import("./retention");
 let dbMod: typeof import("./db");
 let settings: typeof import("./settings");
 let pruning: typeof import("./contextPruning");
+let orchestrator: typeof import("./orchestrator");
 let root: string;
+
+const MOUNT_DIR = "sweep-mount";
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = 1_786_470_000_000;
 
 before(async () => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), "uf-retention-"));
+  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-retention-")));
   process.env.DATA_DIR = path.join(root, "data");
   process.env.CLAUDE_HOME = path.join(root, "claude");
+  // The checkout sweep re-proves every stored repository path inside a mount
+  // before it runs git there, so the chain case below needs a real one.
+  process.env.WORKSPACE_ROOT = path.join(root, MOUNT_DIR);
+  process.env.WORKSPACE_ROOTS = "";
+  fs.mkdirSync(path.join(root, MOUNT_DIR), { recursive: true });
   // Nothing here reaches a spawn, and a `claude` that does not exist makes a
   // regression that somehow got that far a failed test rather than a billed one.
   process.env.CLAUDE_BIN = path.join(root, "no-such-claude");
@@ -61,6 +70,7 @@ before(async () => {
   dbMod = await import("./db");
   settings = await import("./settings");
   pruning = await import("./contextPruning");
+  orchestrator = await import("./orchestrator");
 });
 
 after(() => {
@@ -371,6 +381,132 @@ describe("the retention sweeper's ownership", () => {
     retention.startRetentionSweeper();
     await new Promise((resolve) => setTimeout(resolve, 200));
     assert.equal(eventCount("not-ours"), 0, "the owner's own sweep did not run");
+  });
+});
+
+/**
+ * Which tip a squash recorded, and on which run, when the checkout is a later
+ * link's.
+ *
+ * `landRun` writes `landed_tip` on the run that landed, which on a
+ * `continueBranch` chain is the owner at the time. A link that continues it
+ * afterwards takes the same slot (`planWorkspace`'s `inheritedSlot`) and the same
+ * branch, so it is the newest run recorded there — the row `newestRunPerSlot`
+ * hands `branchIsSettled` — with a `landed_tip` of its own that is null. Read for
+ * that one run, a squashed branch was never landed, git's ancestry test cannot
+ * call a squash merged either, and the checkout was kept for ever. The miss is
+ * conservative, which is why nothing throws: it is only a slot that is never
+ * given back.
+ *
+ * Driven against real git because both readings of the branch are git's
+ * answers — a fixture stating them would state the thing in question. The case
+ * that must stay a keep is the same chain with a commit added after the
+ * squash: the tip no longer matches what landed, and removing that checkout is
+ * the one outcome the sweep exists never to produce.
+ */
+describe("checkout reclaim across a continueBranch chain", () => {
+  const gitIn = (cwd: string, ...args: string[]) =>
+    execFileSync("git", args, {
+      cwd,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@example.com",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@example.com",
+      },
+    }).trim();
+
+  /**
+   * A repository whose branch carries one commit, squash-landed on `main`, with
+   * the checkout it was made in. Two runs are recorded in that slot: the owner,
+   * which landed, and a link that continues it and added nothing.
+   */
+  function chain(name: string): { repo: string; slot: string; branch: string } {
+    const repo = path.join(root, MOUNT_DIR, name);
+    fs.mkdirSync(repo);
+    gitIn(repo, "init", "-q", "-b", "main");
+    fs.writeFileSync(path.join(repo, "shared.txt"), "base\n");
+    gitIn(repo, "add", "-A");
+    gitIn(repo, "commit", "-q", "-m", "base");
+    const base = gitIn(repo, "rev-parse", "main");
+
+    const branch = `uf/${name}`;
+    const slot = path.join(
+      orchestrator.worktreeStore(repo)!,
+      `${orchestrator.repoSlug(repo)}-1`,
+    );
+    gitIn(repo, "worktree", "add", "-q", "-b", branch, slot);
+    fs.writeFileSync(path.join(slot, "shared.txt"), "branch\n");
+    gitIn(slot, "commit", "-qam", "the run's work");
+    const tip = gitIn(repo, "rev-parse", branch);
+
+    gitIn(repo, "merge", "-q", "--squash", branch);
+    gitIn(repo, "commit", "-qm", "squash-landed");
+
+    const insert = dbMod.db().prepare(
+      `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                         created_at, finished_at, isolation, repo_root, worktree_path,
+                         worktree_branch, worktree_base, worktree_base_branch,
+                         continues_run, landed_at, landed_tip)
+       VALUES (?, ?, 'task', 'completed', '{}', 1, ?, ?, ?, 'worktree', ?, ?, ?, ?, 'main',
+               ?, ?, ?)`,
+    );
+    const finished = NOW - 30 * DAY;
+    insert.run(
+      `${name}-owner`, repo, 1, finished - DAY, finished, repo, slot, branch, base,
+      null, finished, tip,
+    );
+    insert.run(
+      `${name}-link`, repo, 0, finished, finished, repo, slot, branch, base,
+      `${name}-owner`, null, null,
+    );
+    return { repo, slot, branch };
+  }
+
+  before(() => {
+    settings.saveSettings({ checkoutRetentionDays: 7 });
+  });
+
+  beforeEach(() => {
+    dbMod.db().prepare("DELETE FROM runs").run();
+  });
+
+  it("reclaims the slot of the run that landed it, which is what the chain case is measured against", async () => {
+    const c = chain("owner-only");
+    dbMod.db().prepare("DELETE FROM runs WHERE id = 'owner-only-link'").run();
+
+    const swept = await retention.sweepCheckouts(NOW);
+
+    assert.equal(swept.removed, 1, "the control did not reach a removal, so the chain case below proves nothing");
+    assert.equal(fs.existsSync(c.slot), false);
+  });
+
+  it("reclaims the slot of a link that continues a squash-landed branch", async () => {
+    const c = chain("squashed-chain");
+    assert.equal(fs.existsSync(c.slot), true);
+
+    const swept = await retention.sweepCheckouts(NOW);
+
+    assert.equal(swept.removed, 1);
+    assert.equal(fs.existsSync(c.slot), false, "the slot was kept");
+    assert.equal(
+      gitIn(c.repo, "rev-parse", "--verify", `refs/heads/${c.branch}`).length > 0,
+      true,
+      "reclaiming a checkout must never take the branch with it",
+    );
+  });
+
+  it("keeps it once the branch has a commit that was not landed", async () => {
+    const c = chain("moved-chain");
+    fs.writeFileSync(path.join(c.slot, "shared.txt"), "after the squash\n");
+    gitIn(c.slot, "commit", "-qam", "added after the land");
+
+    const swept = await retention.sweepCheckouts(NOW);
+
+    assert.equal(swept.removed, 0);
+    assert.equal(fs.existsSync(c.slot), true, "a checkout with unlanded commits went");
   });
 });
 
