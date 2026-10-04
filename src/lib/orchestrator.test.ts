@@ -3315,7 +3315,7 @@ describe("buildArgs", () => {
     assert.equal(args[at + 1], "3.75");
   });
 
-  it("attaches no ceiling when the run has no spending limit", () => {
+  it("attaches no --max-budget-usd when the run has no spending limit", () => {
     // Null is "no limit" everywhere in `normalizePolicy`, and a run that opted
     // out must not acquire one from whatever it has spent so far.
     assert.equal(
@@ -3331,13 +3331,13 @@ describe("buildArgs", () => {
    *
    * `spentGuardUSD` is `spent_usd + spent_usd_est` — the same sum the pre-cycle
    * check compares — and the estimate half is what a killed cycle cost, which
-   * is real money the CLI never got to report. Deriving the ceiling from the
+   * is real money the CLI never got to report. Deriving the limit from the
    * measured floor alone would hand the child more room than the guard believes
    * the run has left, which is the display-versus-guard split inverted at the
    * one door where it costs money. The clamp is what that reads as at the
-   * boundary: never a negative, which the CLI would take as no ceiling at all.
+   * boundary: never a negative, which the CLI would take as no limit at all.
    */
-  it("never hands over a negative ceiling", () => {
+  it("never hands over a negative limit", () => {
     const args = buildArgs({
       ...base,
       isolated: true,
@@ -3369,7 +3369,7 @@ describe("buildArgs", () => {
  * now arrive as an adapter, and the argv is built through the same object.
  * **Every way that refactor can be wrong is silent.** A flag dropped from the
  * argv is not an error: the CLI spawns, the cycle runs, and what is missing is a
- * deny list, a plugin the run needed, a system-prompt notice or the only ceiling
+ * deny list, a plugin the run needed, a system-prompt notice or the only limit
  * that bounds what one cycle may spend. A binary or a parser reached through the
  * wrong half of the pair is worse and quieter still — a cycle whose cost,
  * session id and stop reason are all absent reads exactly like a cycle that
@@ -7086,7 +7086,7 @@ describe("what a lifecycle event says on stdout", () => {
         code: "run_cost",
         disposition: "stop",
         enforceable: true,
-        reason: "This run has spent $5.00 of its $5.00 ceiling.",
+        reason: "This run has spent $5.00 of its $5.00 limit.",
       }),
     );
     assert.equal(line.event, "run.guard_tripped");
@@ -7110,7 +7110,7 @@ describe("what a lifecycle event says on stdout", () => {
         allowed: false,
         code: "install_cost",
         disposition: "stop",
-        reason: "This install has spent its rolling 24-hour ceiling.",
+        reason: "This install has spent its rolling 24-hour limit.",
       }),
     );
     assert.equal(line.event, "run.guard_tripped");

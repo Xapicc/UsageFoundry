@@ -1825,7 +1825,7 @@ export default function RunDetail({
                       the same run: hiding it would leave an operator wondering
                       where it went. What changes is the promise under it, which
                       would otherwise count a $0.00 nobody measured and imply a
-                      ceiling this run's loop will never test. */}
+                      limit this run's loop will never test. */}
                   {reportsSpend ? (
                     <Hint>
                       Includes the {fmtUSD(run.spent_usd + (run.spent_usd_est ?? 0))}{" "}

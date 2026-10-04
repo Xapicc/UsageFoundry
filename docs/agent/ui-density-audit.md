@@ -1425,7 +1425,7 @@ separate features and the page has never been regrouped.**
    sentence saying "not the same reading as the meters above and must not be
    added to them". Nothing in the page's *structure* says it, so the rule is
    re-argued in a footnote every time a card lands.
-3. **Emphasis is not doing its job.** `This install, last N hours` — a ceiling
+3. **Emphasis is not doing its job.** `This install, last N hours` — a limit
    the operator set, which stops every agent when it trips — is `quiet`, while
    `Recent 5-hour blocks`, a history table, is also `quiet` and `Usage by
    period` is `default`.

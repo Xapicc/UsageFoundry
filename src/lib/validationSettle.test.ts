@@ -200,7 +200,7 @@ describe("validationAtBoundary with more than one task", () => {
     assert.match(held.pushback, /First task[\s\S]*Second task/);
     assert.match(held.reason, /First task is missing its test.*Second task is missing its test/);
 
-    // The grant is the boundary's, so the ceiling is reached by boundaries and
+    // The grant is the boundary's, so the limit is reached by boundaries and
     // not by how many tasks each one named.
     database.db().prepare("UPDATE runs SET validation_cycles = 2 WHERE id = ?").run(runId);
     assert.equal(await validation.validationAtBoundary(runId, since, () => false), null);

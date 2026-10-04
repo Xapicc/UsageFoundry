@@ -117,7 +117,7 @@ after(async () => {
  * for a reason this has nothing to say about.
  */
 describe("approving under a refusal that clears on its own", () => {
-  // The ceiling is install-wide state in a database every other case here
+  // The limit is install-wide state in a database every other case here
   // shares. Left up by an assertion that failed before the line putting it
   // back, it refuses every run and every turn the rest of the file starts, and
   // what anybody reads first is a failure somewhere this change never touched.
@@ -146,7 +146,7 @@ describe("approving under a refusal that clears on its own", () => {
       .run(thread.id, Date.now(), 5);
     assert.ok(
       installBudget.installBudgetRefusal(),
-      "the ceiling must be tripped for this case to mean anything",
+      "the limit must be tripped for this case to mean anything",
     );
 
     const refused = chat.approveRunBatch(thread.id, [proposal.id]);
@@ -184,7 +184,7 @@ describe("approving under a refusal that clears on its own", () => {
  * The control, and the half more easily broken: "a refusal must not decide a
  * proposal" applied to *every* refusal would leave a proposal that can never
  * start pending for ever, offered on the page at every reload. Its own suite so
- * it runs after the ceiling above has been put back whatever that one did.
+ * it runs after the limit above has been put back whatever that one did.
  */
 describe("approving something that can never start", () => {
   it("still marks the proposal failed", () => {
@@ -264,7 +264,7 @@ describe("approving a card whose defaults moved under it", () => {
   };
 
   // Install-wide state in a database the rest of the file shares — put back
-  // for the reason the ceiling above is.
+  // for the reason the limit above is.
   after(() =>
     settings.saveSettings({ chatDefaultGuards: settings.DEFAULT_CHAT_GUARDS }),
   );

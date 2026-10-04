@@ -79,7 +79,7 @@ export interface BudgetPolicy {
   /**
    * Stop when this run costs more than this multiple of its own task's median.
    *
-   * Null or <= 1 is off. Relative where `maxRunCostUSD` is absolute: a ceiling
+   * Null or <= 1 is off. Relative where `maxRunCostUSD` is absolute: a limit
    * has to be set high enough for the worst legitimate run, which leaves it
    * blind to a run that is merely three times its own normal - and MEASURED on
    * this loop, the same task varies 2.28x run to run, so the tail is where the
@@ -89,7 +89,7 @@ export interface BudgetPolicy {
   /**
    * Stop when this run alone has consumed this many tokens. null = no limit.
    *
-   * No in-cycle equivalent: the CLI's own ceiling is denominated in dollars,
+   * No in-cycle equivalent: the CLI's own limit is denominated in dollars,
    * so this one really is bounded by a whole cycle under `between-cycles`.
    */
   maxRunTokens: number | null;
@@ -173,7 +173,7 @@ export interface RunProgress {
    * It widens the `iterations` check and nothing else. A grant is permission to
    * *ask* for another cycle, so duration, run spend, both windows and the order
    * they are read in stay exactly what they are without one — and the widened
-   * cap is still a terminus, because `maxValidationCycles` ceilings the column
+   * cap is still a terminus, because `maxValidationCycles` caps the column
    * and the column only ever goes up. Optional and defaulting to zero, so a
    * caller with no grant to report reads exactly as it did.
    */
@@ -194,7 +194,7 @@ export type BudgetStopCode =
   | "session_fraction"
   | "run_cost"
   /**
-   * Not a ceiling: this run has left its own task's cost distribution. Its own
+   * Not a limit: this run has left its own task's cost distribution. Its own
    * code because "you set a limit and reached it" and "this is three times what
    * this task normally costs" are different things to have happened, and an
    * operator triaging a stopped run wants to know which.
@@ -474,7 +474,7 @@ export function windowGuardRefusal(
  * limits doing real work — the window fractions read this account's own
  * utilisation, and `maxRunCostUSD` reaches the cycle as `--max-budget-usd`. For
  * a provider whose usage this app cannot read, all three are decoration: the
- * fractions measure a population this run is not in, and no in-cycle ceiling is
+ * fractions measure a population this run is not in, and no in-cycle limit is
  * handed to a CLI there is no adapter for. Telling that operator only "nothing
  * would ever end it" would leave them believing the fractions they set were the
  * safety net they are not.
@@ -658,7 +658,7 @@ export function evaluateBudget(
     );
   }
 
-  // AFTER the absolute ceiling and before the token one. A run that has hit
+  // AFTER the absolute limit and before the token one. A run that has hit
   // both should be reported as having hit the limit it was given, because that
   // is the one the operator set on purpose; the outlier code is for the run
   // nobody set anything for.
@@ -1122,7 +1122,7 @@ export interface InstallProgress {
   spentGuardUSD: number;
 }
 
-/** Nothing is set, so there is no ceiling to evaluate and no meter to fill. */
+/** Nothing is set, so there is no limit to evaluate and no meter to fill. */
 export function installBudgetIsOff(policy: InstallBudgetPolicy): boolean {
   return policy.maxInstallCostUSD === null;
 }

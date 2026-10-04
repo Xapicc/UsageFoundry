@@ -47,7 +47,7 @@ function windowStart(now: number): number {
  * `runs.spent_usd` is one figure for a whole run and this app records no
  * per-hour breakdown of it, so a run that started 30 hours ago and finished an
  * hour ago is counted in full. That over-counts, which is the safe direction for
- * a ceiling and the wrong one for a report — which is why this feeds a guard and
+ * a limit and the wrong one for a report — which is why this feeds a guard and
  * a card of its own and never a dashboard meter or a period rollup. The settings
  * copy says so.
  *
@@ -60,7 +60,7 @@ function windowStart(now: number): number {
  *   parked run deliberately has no `finished_at` — it is not finished, it is
  *   waiting for the 5-hour window and keeps its folder and session — so
  *   bounding on that column alone counted its whole spend for ever. Three runs
- *   parked at $40 each read $120 against a $100 ceiling on every call, and
+ *   parked at $40 each read $120 against a $100 limit on every call, and
  *   nothing could start, resume or continue while they stayed parked: the
  *   refusal says spend will age out of the window, and this was the one shape
  *   where it never would. The status test is load-bearing and not decoration.
@@ -82,7 +82,7 @@ function windowStart(now: number): number {
  *   for each one, and wrong the moment something fires by itself. A
  *   **validation** does: one per run asking to close a task, with nobody
  *   present, which on a fleet is one per finished piece of work. Left out, a
- *   ceiling that says "this install may spend $N a day" would not have counted
+ *   limit that says "this install may spend $N a day" would not have counted
  *   the one spender the operator never triggered. All three kinds are counted
  *   rather than validations alone, because what this reading is is *money this
  *   app recorded spending inside the window* and a reviewed run's money is no
@@ -149,7 +149,7 @@ export function installSpend(now = Date.now()): InstallProgress {
   // row a turn left behind when it was cut off — a cancel, a timeout, a restart
   // — carries this app's own price for the tokens the CLI reported, which is a
   // guard figure. Folding the second into `spentUSD` would put a derived number
-  // into the shown one, and dropping it would leave the ceiling believing money
+  // into the shown one, and dropping it would leave the limit believing money
   // it watched being spent was never spent at all.
   const chats = db()
     .prepare(
@@ -160,7 +160,7 @@ export function installSpend(now = Date.now()): InstallProgress {
     .get(since) as { measured: number; est: number };
 
   // The turn happening *right now*, which no row records until it settles.
-  // This is B4's actual subject: the ceiling used to be read once, at
+  // This is B4's actual subject: the limit used to be read once, at
   // admission, so a turn admitted at 99% could run for ten minutes past it and
   // a turn admitted before three runs finished ran against a figure that had
   // moved. `chat.ts` writes this every half-second while a turn produces
@@ -193,7 +193,7 @@ export function installSpend(now = Date.now()): InstallProgress {
   };
 }
 
-/** The ceiling as configured, `null` meaning off. */
+/** The limit as configured, `null` meaning off. */
 export function installBudget(): InstallBudgetPolicy {
   return normalizeInstallBudget({
     maxInstallCostUSD: getSettings().installDailyCostLimitUSD,
@@ -203,7 +203,7 @@ export function installBudget(): InstallBudgetPolicy {
 /**
  * The verdict every door reads: may this install start something that spends?
  *
- * Returns `null` when the ceiling is off, so a caller's ordinary path is one
+ * Returns `null` when the limit is off, so a caller's ordinary path is one
  * settings read and out — and so the doors can say "nothing to check" rather
  * than pretending to have checked.
  */
@@ -221,9 +221,9 @@ export function installBudgetRefusal(now = Date.now()): string | null {
   return installBudgetVerdict(now)?.reason ?? null;
 }
 
-/** What the dashboard draws: the reading, the ceiling and what it covers. */
+/** What the dashboard draws: the reading, the limit and what it covers. */
 export interface InstallSpendReport extends InstallProgress {
-  /** null when no ceiling is configured — the meter is indeterminate, not 0%. */
+  /** null when no limit is configured — the meter is indeterminate, not 0%. */
   limitUSD: number | null;
   windowHours: number;
 }

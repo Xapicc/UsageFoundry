@@ -209,7 +209,7 @@ export interface ChatRow {
   /**
    * This app's own price for those tokens: a **guard** figure, never shown
    * beside `cost_usd` as though it were the same kind of number. It exists so
-   * the install's rolling ceiling can see a turn that is spending right now,
+   * the install's rolling limit can see a turn that is spending right now,
    * exactly as `runs.spent_usd_est` lets it see a cycle in flight.
    */
   turn_cost_est: number;
@@ -513,10 +513,10 @@ export const MAX_CHAT_MESSAGE_BYTES = 64 * 1024;
  * on the tool call rather than on the clock. Five minutes of headroom over a
  * measured maximum, and the number is worth re-reading if that one moves.
  *
- * What is *not* here is a ceiling on the whole turn, and that is deliberate:
+ * What is *not* here is a limit on the whole turn, and that is deliberate:
  * `chatTurnBudgetUSD` bounds a turn in the unit that actually costs something,
  * enforced inside the CLI by `--max-budget-usd`, and the install's rolling
- * ceiling is re-asked while the turn runs (`CEILING_CHECK_MS`). Money is the
+ * limit is re-asked while the turn runs (`CEILING_CHECK_MS`). Money is the
  * bound; the clock only says whether anything is still there.
  */
 export const CHAT_IDLE_TIMEOUT_MS = 15 * 60_000;
@@ -2350,7 +2350,7 @@ const caps = ((globalThis as unknown as { __ufChatCaps?: Map<string, Capability>
  * `runOrchestratorChild` runs on a launch that fails, on the exit and on the
  * kill; a setup or `spawn` that throws before there is a child revokes in the
  * same function; the idle timer and `endTurn` — Stop, the sweeper, the install
- * ceiling — revoke at the moment they decide the turn is over rather than
+ * limit — revoke at the moment they decide the turn is over rather than
  * waiting for the corpse; and the map is in this process's memory, so it dies
  * with the process either way.
  */
@@ -3526,15 +3526,15 @@ const progress = ((globalThis as unknown as {
  * half-way now leaves its text and its measured tokens behind instead of
  * leaving nothing but the bill.
  *
- * **The ceiling check is the second half and it is B4's actual subject.** The
+ * **The limit check is the second half and it is B4's actual subject.** The
  * install's rolling 24 hours was read once, at admission, and never again — so
- * a turn admitted at 99% of the ceiling could run for ten minutes past it, and
+ * a turn admitted at 99% of the limit could run for ten minutes past it, and
  * a turn admitted before three runs finished ran against a figure that had
  * moved. `chatTurnBudgetUSD` bounds *this* turn inside the CLI and always did;
  * what nothing bounded was the install while this turn was going. The estimate
  * this function has just written is what `installSpend` reads for it, so the
  * check includes the turn asking it. It is no longer "ten minutes past" that
- * the ceiling is overrun by, which makes this the *only* thing that ends a turn
+ * the limit is overrun by, which makes this the *only* thing that ends a turn
  * the install can no longer afford, rather than the thing that shortens the
  * wait for a clock.
  *
@@ -3591,7 +3591,7 @@ function recordProgress(
   if (refusal) {
     // The same ending a timeout gets, and deliberately not a silent stop: the
     // operator has to be able to tell a turn that was cut off from one that
-    // answered briefly, and the sentence names the ceiling rather than the
+    // answered briefly, and the sentence names the limit rather than the
     // symptom.
     endTurn(
       chat.id,

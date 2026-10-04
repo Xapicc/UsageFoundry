@@ -908,7 +908,7 @@ export interface UsageResponse {
    * one block row and one chat row at a time — over a different span. Summing
    * the two would count the same work twice.
    *
-   * `limitUSD` is null when no ceiling is configured, and the meter must be the
+   * `limitUSD` is null when no limit is configured, and the meter must be the
    * hatched indeterminate one rather than an empty 0% bar: an install whose
    * share of a limit is unknown and one that has spent nothing must not look
    * alike.
@@ -1858,14 +1858,14 @@ export const MAX_WORKFLOW_NODES = 25;
  * them: those blocks are typed by a person one at a time, where these are chosen
  * by a model and start with no approval between the decision and the spawn. The
  * per-block cap an operator sets is what actually bounds a graph; this is the
- * ceiling on what they may set.
+ * limit on what they may set.
  */
 export const MAX_FAN_OUT = 10;
 
 /**
  * How many passes one loop block may take.
  *
- * The ceiling on the cap an operator sets, exactly as `MAX_FAN_OUT` is: a loop
+ * The limit on the cap an operator sets, exactly as `MAX_FAN_OUT` is: a loop
  * unrolls into one fresh run per pass, so this bounds what one press of Run can
  * put on the machine over the life of a block whose repetitions nobody watches.
  */
@@ -1874,7 +1874,7 @@ export const MAX_LOOP_PASSES = 20;
 /**
  * How many runs one loop block may put on the machine over its whole life.
  *
- * The ceiling the numbers above cannot state between them, and it exists
+ * The limit the numbers above cannot state between them, and it exists
  * because they *multiply*. A loop frames a section and repeats the whole of it,
  * so one pass is one run for every run member — **plus, for every orchestrator
  * member, the deciding turn and every run its fan-out cap allows**, because a
@@ -1980,7 +1980,7 @@ export interface WorkflowNodeDTO {
   /**
    * How many runs an orchestrator block may start. Null on a run block, and
    * **never** null on an orchestrator one — a block that starts agents with no
-   * approval and no ceiling is an unbounded number of billed agents from one
+   * approval and no limit is an unbounded number of billed agents from one
    * press of Run, so it is refused at save the way the `no_terminus` pair is.
    */
   fanOut: number | null;
@@ -3415,7 +3415,7 @@ export interface SettingsDTO {
    * Empty means none, which is what it had before this existed.
    */
   resolveAllowedTools: string[];
-  /** Hard ceiling on one conflict resolution. Null means no cap. */
+  /** Hard limit on one conflict resolution. Null means no cap. */
   resolutionBudgetUSD: number | null;
   /** argv that must exit 0 before Land merges. Empty is no check, not a pass. */
   landVerifyCommand: string;
@@ -3427,7 +3427,7 @@ export interface SettingsDTO {
   taskboardForRuns: boolean;
   /** Whether a run's claim to have finished a task is checked. Off by default. */
   validateTaskCompletion: boolean;
-  /** Hard ceiling on one validation. Null means no cap. */
+  /** Hard limit on one validation. Null means no cap. */
   validationBudgetUSD: number | null;
   /** How many cycles an unfinished verdict may buy one run. Never null. */
   maxValidationCycles: number;
@@ -3439,7 +3439,7 @@ export interface SettingsDTO {
   /** How an isolated run's branch is brought into the branch it started from. */
   landStrategy: "merge" | "squash";
   killProcessGroup: boolean;
-  /** Hard ceiling on one orchestrator-chat turn. Null means no cap. */
+  /** Hard limit on one orchestrator-chat turn. Null means no cap. */
   chatTurnBudgetUSD: number | null;
   /** How long a settled run's event log is kept. Null keeps it for ever. */
   eventRetentionDays: number | null;
@@ -3448,7 +3448,7 @@ export interface SettingsDTO {
   /** How long a session transcript is kept. Null keeps it for ever. */
   transcriptRetentionDays: number | null;
   /**
-   * Hard ceiling on what this whole install may spend in a rolling 24 hours,
+   * Hard limit on what this whole install may spend in a rolling 24 hours,
    * across every run, workflow block and chat turn. Null means no cap, which is
    * the shipped default — every other limit here bounds one spender.
    */
@@ -3750,7 +3750,7 @@ export interface ChatProposalDTO {
    * A *templated* proposal's guards written out, or null.
    *
    * Built by the same function that writes out the untemplated set, so the two
-   * cannot come to disagree about what a ceiling means. Null where there is
+   * cannot come to disagree about what a limit means. Null where there is
    * nothing left to write: an untemplated proposal already carries the figures
    * in `guardsLabel`, and a deleted template has no values to read.
    *
@@ -3966,7 +3966,7 @@ export interface ChatDTO {
   /**
    * `CHAT_IDLE_TIMEOUT_MS`, carried rather than imported.
    *
-   * The page says the ceiling in words, so the number has to be the one the
+   * The page says the limit in words, so the number has to be the one the
    * server enforces rather than a copy that can drift from it — and the
    * constant lives in `chat.ts`, which reaches SQLite and
    * `node:child_process`, so a `"use client"` file may not import it even for

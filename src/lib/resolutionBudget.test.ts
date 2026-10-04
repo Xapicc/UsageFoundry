@@ -7,7 +7,7 @@ import { after, before, describe, it } from "node:test";
 import type { ReviewRow } from "./review";
 
 /**
- * What a conflict resolution's child is handed as a spending ceiling, and
+ * What a conflict resolution's child is handed as a spending limit, and
  * which model its row says it was handed.
  *
  * A resolution has no clock — the landing path's rule, because a clock was
@@ -187,13 +187,13 @@ function modelFlag(argv: string[]): string | null {
   return at === -1 ? null : argv[at + 1];
 }
 
-describe("a conflict resolution's spending ceiling", () => {
+describe("a conflict resolution's spending limit", () => {
   it("hands the child resolutionBudgetUSD as --max-budget-usd", async () => {
     settings.saveSettings({ resolutionBudgetUSD: 7 });
     const { argv } = await resolveAndSettle(conflictingRun("uf/ceiling"));
 
     const at = argv.indexOf("--max-budget-usd");
-    assert.notEqual(at, -1, "a resolution was spawned with no ceiling at all");
+    assert.notEqual(at, -1, "a resolution was spawned with no limit at all");
     assert.equal(argv[at + 1], "7");
   });
 

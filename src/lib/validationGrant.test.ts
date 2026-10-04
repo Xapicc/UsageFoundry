@@ -28,7 +28,7 @@ import { after, describe, it } from "node:test";
  *   one.
  * - **The verdict is a fake**, `contextCeilingRace.test.ts`'s device for
  *   `ceilingCut`: `validationAtBoundary` is replaced on the module the loop
- *   imports it from. Its own gates — the ceiling on grants, the verdict's
+ *   imports it from. Its own gates — the limit on grants, the verdict's
  *   freshness, the task still being claimed — are `validation.test.ts`'s
  *   subject; what is pinned here is what the loop does with a grant once it
  *   has one. `recordValidationCycle` is left real, because the row it writes is

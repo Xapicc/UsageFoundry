@@ -488,7 +488,7 @@ describe("a run set aside", () => {
  *
  * `reopenRun` writes `budget=?` from the policy it is handed, so passing the
  * fleet sheet's two fields straight through **replaced** every run's stored
- * ceilings with those two — a time limit, a token limit, an enforcement mode
+ * limits with those two — a time limit, a token limit, an enforcement mode
  * chosen per run, all silently gone on a press aimed at the cycle cap. Nothing
  * throws, the report says twenty-five reopened, and the guards that were
  * dropped are guards: the next thing that notices is the spend. So the wire is
@@ -509,7 +509,7 @@ describe("what a fleet budget does to each run's own", () => {
   const budgetOf = (id: string) =>
     JSON.parse(orch.getRun(id)!.budget) as Record<string, unknown>;
 
-  it("keeps a ceiling the sheet never asked about", () => {
+  it("keeps a limit the sheet never asked about", () => {
     const id = run("merge-kept", "stopped", {
       budget: JSON.stringify({
         maxIterations: 1,

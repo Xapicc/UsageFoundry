@@ -1060,7 +1060,7 @@ function migrate(db: Database.Database) {
   // intact: `maxIterations` and `maxDurationMinutes` are the only two monotone
   // termini, so a verdict that could extend the first without bound would be a
   // run nothing ends. This only ever increases, it is compared against a
-  // ceiling the operator sets, and every other guard stays exactly as terminal
+  // limit the operator sets, and every other guard stays exactly as terminal
   // as it was. `MAX_EARLY_ENDS_PER_RUN` bounds the context ceiling's refund for
   // the same reason and is the precedent.
   addColumn(db, "runs", "validation_cycles", "INTEGER NOT NULL DEFAULT 0");
@@ -1507,7 +1507,7 @@ function migrate(db: Database.Database) {
   // `cost-state` record — so a turn's own cost is the increase over this, and
   // banking the figure whole charged turn N for turns 1..N: a thread total
   // that grew quadratically and a `chat_turn_spend` that closed the install's
-  // ceiling on money nobody spent. Nullable rather than defaulted to zero,
+  // limit on money nobody spent. Nullable rather than defaulted to zero,
   // because zero is a figure: a thread that predates this column resumes a
   // session whose ledger is already non-zero, and null is what makes that one
   // turn bank the whole figure — the old over-count, once — rather than
@@ -1793,8 +1793,8 @@ function migrate(db: Database.Database) {
   // late settle that moves no total writes no row here either.
   //
   // A thread that predates this table has no rows in it, and reading that as
-  // "$0 spent" would *widen* the ceiling on the boot that upgrades — the one
-  // direction a ceiling must never move by accident. So every thread with a
+  // "$0 spent" would *widen* the limit on the boot that upgrades — the one
+  // direction a limit must never move by accident. So every thread with a
   // total is backfilled as a single turn at its `updated_at`, which is
   // bit-for-bit what the old query counted, and ages out of the window within a
   // day on its own. The probe and the CREATE are one transaction because they
@@ -1818,8 +1818,8 @@ function migrate(db: Database.Database) {
     // A row the CLI never reported a cost for, priced by this app instead.
     //
     // Before the chat child streamed, a turn lost to a restart wrote no row
-    // here at all, so the install's rolling ceiling never learned that the
-    // money had been spent — the one direction a ceiling must never move by
+    // here at all, so the install's rolling limit never learned that the
+    // money had been spent — the one direction a limit must never move by
     // accident. `reconcileChatsOnBoot` writes the estimate it was left with
     // instead, and marks it, so `installSpend` can put it in the guard figure
     // and keep it out of the shown one. Both readings stay honest and neither

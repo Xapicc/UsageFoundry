@@ -10,12 +10,12 @@ import { InstallSpendCard } from "./InstallSpendCard";
  * The card drew its bar from `spentUSD` and printed `spentGuardUSD` under it,
  * so the head and the line beneath it were two different readings of the same
  * window with nothing saying which was which: at $5 measured, $8 guarded and a
- * $10 ceiling the head read "50.0% – 80.0%" over "$8.00 of $10.00", and a
+ * $10 limit the head read "50.0% – 80.0%" over "$8.00 of $10.00", and a
  * reader dividing the two printed dollar figures landed on the upper band.
  *
  * The second fault is in the branch this app ships in. With no limit set the
  * line read "$X spent" — `spentGuardUSD`, which `installBudget.ts` calls the
- * safe direction for a ceiling and the wrong one for a report — while the
+ * safe direction for a limit and the wrong one for a report — while the
  * sentence explaining the over-count rendered only in the *other* branch.
  *
  * Both are silent: every figure is present and right, both branches typecheck,
@@ -23,7 +23,7 @@ import { InstallSpendCard } from "./InstallSpendCard";
  * says.
  *
  * The first fault is pinned on the *pair* rather than on either string: the
- * amount the line leads with, over the ceiling it names, must be the fraction
+ * amount the line leads with, over the limit it names, must be the fraction
  * the bar was given. A test that only pinned the string would pass again the
  * next time the two are wired apart.
  */
@@ -50,7 +50,7 @@ function render(over: Partial<InstallSpendDTO> = {}): string {
 /** The percentage `aria-valuenow` claims, which is what the bar is drawn to. */
 function drawnPercent(html: string): number {
   const found = html.match(/aria-valuenow="(\d+)"/);
-  assert.ok(found, "the meter must claim a value when a ceiling is set");
+  assert.ok(found, "the meter must claim a value when a limit is set");
   return Number(found[1]);
 }
 

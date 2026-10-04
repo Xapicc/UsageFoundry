@@ -1313,7 +1313,7 @@ describe("evaluateInstanceBudget — the cap on everything one press of Run spen
 });
 
 /**
- * The ceiling on the *installation*, which is the one thing here that bounds
+ * The limit on the *installation*, which is the one thing here that bounds
  * more than one spender.
  *
  * `maxRunCostUSD` bounds a run, `maxInstanceCostUSD` one press of Run,
@@ -1329,7 +1329,7 @@ describe("evaluateInstallBudget — the cap on everything this install spends", 
     spentGuardUSD,
   });
 
-  it("allows an install under its ceiling", () => {
+  it("allows an install under its limit", () => {
     const v = evaluateInstallBudget({ maxInstallCostUSD: 100 }, spend(99.99));
     assert.equal(v.allowed, true);
     assert.deepEqual(v.meters, [
@@ -1337,7 +1337,7 @@ describe("evaluateInstallBudget — the cap on everything this install spends", 
     ]);
   });
 
-  it("stops at the ceiling exactly, not a cent past it", () => {
+  it("stops at the limit exactly, not a cent past it", () => {
     // `>=`, the same comparison every other spend guard here makes. A $100 cap
     // that only trips at $100.01 is a cap the operator did not set.
     const v = evaluateInstallBudget({ maxInstallCostUSD: 100 }, spend(100));
@@ -1365,12 +1365,12 @@ describe("evaluateInstallBudget — the cap on everything this install spends", 
     );
   });
 
-  it("is off with no ceiling, however much has been spent", () => {
+  it("is off with no limit, however much has been spent", () => {
     const off = { maxInstallCostUSD: null };
     assert.equal(installBudgetIsOff(off), true);
     const v = evaluateInstallBudget(off, spend(10_000));
     assert.equal(v.allowed, true);
-    // No ceiling, no meter: a bar with no denominator is the "unknown renders
+    // No limit, no meter: a bar with no denominator is the "unknown renders
     // as zero" mistake, and the page draws the indeterminate one instead.
     assert.deepEqual(v.meters, []);
   });

@@ -271,7 +271,7 @@ export interface FleetReopenReport {
  * That one budget is **merged over each run's own stored blob rather than
  * substituted for it**, and the difference is the whole of this function's
  * correctness. `reopenRun` writes `budget=?` from the policy it is handed, so
- * handing it the sheet's two fields would rewrite every run's ceilings to the
+ * handing it the sheet's two fields would rewrite every run's limits to the
  * two the sheet happens to expose and silently drop the rest — a time limit, a
  * token limit, an enforcement mode the operator chose per run, gone on a press
  * aimed at the cycle cap. Spreading the wire over the stored blob keeps an

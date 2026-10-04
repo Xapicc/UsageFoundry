@@ -59,8 +59,8 @@ import {
  *    only two monotone termini, and `no_terminus` refuses a run that has
  *    neither. A verdict that could buy cycles without bound is a run nothing
  *    ends. `runs.validation_cycles` only increases, `maxValidationCycles`
- *    ceilings it, and duration, run spend, both window fractions and the
- *    install's own ceiling stay exactly as terminal as they were —
+ *    caps it, and duration, run spend, both window fractions and the
+ *    install's own limit stay exactly as terminal as they were —
  *    `MAX_EARLY_ENDS_PER_RUN` is the same shape for the context ceiling's
  *    refund and is the precedent.
  * 3. **Every way of having no verdict closes the task.** A refusal, a crash, a
@@ -576,9 +576,9 @@ export async function completeTaskWithValidation(
     // commonest cap it hits is `maxConcurrentAssists`, a bound on how many Node
     // processes this container carries: holding a task open for that would
     // convert a memory limit into work, exactly when the fleet is busiest. The
-    // install's daily ceiling closes it the same way — a check it refuses
+    // install's daily limit closes it the same way — a check it refuses
     // costs nothing, and a task held open would sit claimed behind a run that
-    // same ceiling stops at its next pre-cycle guard.
+    // same limit stops at its next pre-cycle guard.
     return closeNow(taskId, runId, `no check could be started (${refusal})`);
   }
 
@@ -834,7 +834,7 @@ export function verdictsToActOn<
  * `maxIterations` no longer ends.
  *
  * It extends exactly one guard. `maxDurationMinutes`, `maxRunCostUSD`, both
- * window fractions and the install's own daily ceiling are read by
+ * window fractions and the install's own daily limit are read by
  * `evaluateBudget` at the top of the next cycle exactly as they were, so a run
  * that is out of time or out of money still ends there — a granted cycle is
  * permission to *ask* for another cycle, never permission to have one.
@@ -923,7 +923,7 @@ const VERDICT_POLL_MS = 2_000;
  * *this cycle produced*. Without it a run that was granted a cycle and then did
  * not call `complete_task` again would meet the same standing `not-finished`
  * row at the next boundary and buy another cycle with it, and another, until the
- * grant ceiling — every one of them billed against a reading nobody re-took.
+ * grant limit — every one of them billed against a reading nobody re-took.
  */
 export async function validationAtBoundary(
   runId: string,
@@ -976,7 +976,7 @@ export async function validationAtBoundary(
 
   // One grant for the boundary however many tasks it names. `maxValidationCycles`
   // is a bound on the run's cycles, and a grant per task would let a run holding
-  // twenty tasks buy twenty cycles at one boundary with a ceiling of one.
+  // twenty tasks buy twenty cycles at one boundary with a limit of one.
   if (
     !grantsAnotherCycle({
       verdict: "not-finished",
@@ -988,8 +988,8 @@ export async function validationAtBoundary(
     // least able to reconstruct: the run finishes `completed` at its cycle cap
     // with a task still open and claimed, and the only other record is a log
     // line from cycles ago saying something was missing. Which of the two
-    // reasons it was matters — a ceiling of zero is the operator's own setting
-    // working, and a ceiling reached is the run having tried. Every task is
+    // reasons it was matters — a limit of zero is the operator's own setting
+    // working, and a limit reached is the run having tried. Every task is
     // named, because the line is the one record of which were left open.
     const one = findings.length === 1;
     const named = namedTasks(findings.map(({ task }) => task.title));
@@ -1034,7 +1034,7 @@ function namedTasks(titles: string[]): string {
  *
  * Written straight to the row rather than held in the loop's frame, for
  * `iterations`' reason on the refund path: a run picked up after a restart has
- * to meet the same ceiling it was already under, or the bound resets every time
+ * to meet the same limit it was already under, or the bound resets every time
  * the container does — which is a run with no terminus, arriving by the back
  * door.
  */

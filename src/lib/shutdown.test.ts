@@ -383,7 +383,7 @@ describe("shutting down with a work cycle in flight", () => {
  * clearing `active_started_at` on cycles whose agents were still working. That
  * last column is why this is worth a case of its own rather than tidiness:
  * `installBudget` and a workflow instance's budget both bound their spend below
- * by it, so nulling it widens two ceilings at once, silently, in the direction
+ * by it, so nulling it widens two limits at once, silently, in the direction
  * a guard may never move by accident.
  *
  * Refused for real rather than through a stubbed `mayWriteDataDir`: a lock file
