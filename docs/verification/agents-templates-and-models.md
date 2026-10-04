@@ -239,6 +239,14 @@
   was a stand-in, and the decider was on the host, not reached from a
   container.
 
+- **The container reaches the decider on the host, 2026-10-05**: after
+  `docker compose up --build` at `9162763` with
+  `UF_MODEL_DECIDER_URL=http://host.docker.internal:8090`, `node` inside the
+  `usagefoundry` container got 200 from the decider's `/health` and a
+  `/v1/decide` for a typo fix answered `claude-haiku-4-5` (0.984, 659 ms), on
+  Docker Desktop for macOS. Caveat: a fetch from the container, not a chat
+  turn; OrbStack and Linux Docker Engine were not tried.
+
 ## Not yet verified by hand
 
 - **No real `/v1/models` listing has been read, with either credential.**
@@ -254,14 +262,10 @@
   is not consulted, so an install signed in only that way reads "No
   credential". `docker compose up --build` was not run.
 
-- **The decider's card text has not been seen, and no container has reached
-  the decider.** ", picked by the model decider" and "model decider: no pick"
-  are typechecked and carried by the DTO, but neither was looked at at 1280 or
-  390 px, and `docker compose up --build` reaching
-  `host.docker.internal:8090` was not run. Settling it: start LocalDecider, set
-  `UF_MODEL_DECIDER_URL=http://host.docker.internal:8090`,
-  `docker compose up --build`, ask the chat to propose a typo fix, and read the
-  card.
+- **The decider's card text has not been seen.** ", picked by the model
+  decider" and "model decider: no pick" are typechecked and carried by the
+  DTO, but neither was looked at at 1280 or 390 px. Settling it: with the
+  decider on, ask the chat to propose a typo fix and read the card.
 
 - **An empty agent name and a non-JSON `--agents` payload were not
   re-measured under `--agent`.**
