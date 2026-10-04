@@ -25,6 +25,7 @@ import {
   normalizeWorkflowInput,
   pickDuplicateName,
   planEmission,
+  planEmittedRun,
   groupPasses,
   planInstanceStep,
   planNode,
@@ -2686,6 +2687,50 @@ describe("planNode — a block that names a provider", () => {
     assert.equal(plan.ok, false);
     assert.match(plan.ok ? "" : plan.reason, /needs a work-cycle limit or a time limit/);
     assert.equal(planNode(RUN_BLOCK, endless, BLOCK_DEFAULTS, null).ok, true);
+  });
+});
+
+/**
+ * The model decider's pick on an emitted run, and the one rung above it.
+ *
+ * Silent in money both ways: a decider pick that outranked the block's
+ * template would replace the price the operator saved with one a classifier
+ * chose, and a pick that reached a Codex or local run would hand a Claude id to
+ * a CLI that does not serve it. The template is read when the run is created,
+ * so one given a model after the emission was decided on must still win.
+ */
+describe("planEmittedRun — the decider's pick against the block's template", () => {
+  const ORCHESTRATOR: WorkflowNode = { ...RUN_BLOCK, kind: "orchestrator", fanOut: 3 };
+  const SPEC = {
+    id: "s1",
+    title: "Fix the flake",
+    task: "Make the retry test deterministic.",
+    folder: "",
+    agent: null,
+    taskIds: [],
+    dependsOn: [],
+    decidedModel: "claude-haiku-4-5",
+  };
+
+  it("runs on the decider's pick where the template names no model", () => {
+    const input = planEmittedRun(ORCHESTRATOR, SPEC, { ...BLOCK_TEMPLATE, model: null }, BLOCK_DEFAULTS, null);
+    assert.equal(input.model, "claude-haiku-4-5");
+    assert.equal(planEmittedRun(ORCHESTRATOR, SPEC, null, BLOCK_DEFAULTS, null).model, "claude-haiku-4-5");
+  });
+
+  it("lets the template's model outrank the pick", () => {
+    assert.equal(planEmittedRun(ORCHESTRATOR, SPEC, BLOCK_TEMPLATE, BLOCK_DEFAULTS, null).model, "claude-sonnet-5");
+  });
+
+  it("drops the pick for a Codex or local block", () => {
+    for (const provider of ["codex", "local"] as const) {
+      assert.equal(planEmittedRun({ ...ORCHESTRATOR, provider }, SPEC, null, BLOCK_DEFAULTS, null).model, null, provider);
+    }
+  });
+
+  it("leaves the model to createRun when nothing decided one", () => {
+    const { decidedModel: _, ...undecided } = SPEC;
+    assert.equal(planEmittedRun(ORCHESTRATOR, undecided, null, BLOCK_DEFAULTS, null).model, null);
   });
 });
 

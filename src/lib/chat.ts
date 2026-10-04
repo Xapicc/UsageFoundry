@@ -286,8 +286,13 @@ export interface ChatProposalRow {
    * a run costs and never what it may do, so naming one widens nothing. Null
    * falls back to the template's model and then to `settings.defaultModel` —
    * one precedence, resolved in `planProposal`.
+   *
+   * Also written by the model decider where the chat named none, in which
+   * case `model_note` says so.
    */
   model: string | null;
+  /** The model decider's sentence about this proposal, or null where it was not asked. */
+  model_note: string | null;
   /**
    * Which agent CLI the run is spawned as, or null for the ordinary Claude run.
    *
@@ -1096,6 +1101,11 @@ export interface ProposalInput {
    * about what the run may do. See the column note in `db.ts`.
    */
   model?: string | null;
+  /**
+   * The model decider's sentence about this proposal, written by the server
+   * and never off a tool argument. Null where the decider was not asked.
+   */
+  modelNote?: string | null;
   /** Which agent CLI the run is spawned as. Null is the ordinary Claude run. */
   provider?: RunProviderDTO | null;
   /**
@@ -1150,10 +1160,10 @@ function insertProposal(
   db()
     .prepare(
       `INSERT INTO chat_proposals
-         (id, chat_id, created_at, kind, template_id, agent_id, model, provider,
-          task_ids, title, task, prompt_override, mount_id, folder, spec_id,
-          depends_on, graph, schedule, guards_json, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+         (id, chat_id, created_at, kind, template_id, agent_id, model, model_note,
+          provider, task_ids, title, task, prompt_override, mount_id, folder,
+          spec_id, depends_on, graph, schedule, guards_json, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
     )
     .run(
       id,
@@ -1167,6 +1177,7 @@ function insertProposal(
       // model decides what this run costs and a guard set decides what it may
       // do, so only one of them is a thing a model may name.
       input.model ?? null,
+      input.modelNote ?? null,
       input.provider ?? null,
       // The board rows this run came off, recorded here and read live at the
       // click. It is not a third thing beside the two above: a model and a guard

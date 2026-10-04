@@ -138,7 +138,7 @@ Nineteen are renderings rather than functions — every `*.test.tsx` in the tree
 | `loopBoardCount.test.ts` |  |
 | `loopMergeOwnership.test.ts` |  |
 | `loopSection.test.ts` |  |
-| `workflows.test.ts` | [argv], [pricing], [workflows] |
+| `workflows.test.ts` | [argv], [pricing], [workflows], [decider] |
 
 Units that are about no test file in the tree:
 
@@ -255,6 +255,12 @@ Units that are about no test file in the tree:
 Units that are about no test file in the tree:
 
 - `rateLimitEvent.test.ts` is gone, with the module it covered: the provider's own utilisation off the `stream-json` stream fed one dashboard card and nothing else, and card and parser were removed …
+
+## [The model decider](testing/model-decider.md)
+
+| Test file | Also in |
+|---|---|
+| `modelDecider.test.ts` |  |
 
 ## [The local provider](testing/local-provider.md)
 
@@ -415,3 +421,4 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [cards]: testing/components-usage-and-run-cards.md
 [stacks]: testing/stacks-and-tool-inventory.md
 [harnesses]: testing/test-harnesses.md
+[decider]: testing/model-decider.md

@@ -12,6 +12,14 @@ Each paragraph is in one topic file under `docs/agent/agents-and-templates/`; th
 - A template is form input, and the two settings that decide what an agent may do are applied but announced.
 - Model discovery adds to the catalogue and never edits it, and what it adds moves the install's default rather than its setting.
 
+## [The model decider](agents-and-templates/model-decider.md)
+
+- A model may now choose what a run costs with nobody in the loop, and the decider is the only one that may.
+- Two doors ask, and each asks outside the event-loop turn it must not break.
+- The decider fills one gap and outranks nothing a person set.
+- Off, down, slow, unsure and wrong all end the same way: the run takes the rung below, and a sentence says which.
+- The target is environment-only, and the task text is why.
+
 ## [Saved agents: a role, refused at the door](agents-and-templates/saved-agents.md)
 
 - A saved agent is the fourth thing here that is form input, and it carries a role rather than a capability.

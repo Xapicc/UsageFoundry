@@ -550,6 +550,18 @@ export function githubTokenFor(folder: string | null): {
 export const WEBHOOK_URL = optionalEnv("UF_WEBHOOK_URL");
 
 /**
+ * The model decider: a local service that picks a Claude model for a run the
+ * orchestrator chat proposes or an orchestrator block emits, when nothing a
+ * person configured names one. Empty is off, and off is the shipped state.
+ *
+ * Environment-only for `WEBHOOK_URL`'s reason, and with more at stake: every
+ * request carries the run's task text, so a target held in `settings.json`
+ * would let the master token aim task text anywhere the container can reach.
+ * See `modelDecider.ts`.
+ */
+export const MODEL_DECIDER_URL = optionalEnv("UF_MODEL_DECIDER_URL");
+
+/**
  * The HMAC key for `X-UF-Signature`. Required alongside the URL, not optional
  * beside it: `notify.ts` delivers nothing while this is blank, because the
  * receiver of an unauthenticated webhook URL has no other way to tell this
@@ -692,6 +704,9 @@ export const BLANK_MEANINGFUL_ENV_VARS = [
   // Blank is "only the endings that need a person", which is the shipped
   // filter; "1" widens it to every run that finished cleanly.
   "UF_NOTIFY_ON_SUCCESS",
+  // Blank is "off": no model decider, so a proposal or an emitted run that
+  // names no model takes the template's, then the operator's default.
+  "UF_MODEL_DECIDER_URL",
   // Blank is the *success* case, and it is not an operator value at all:
   // compose computes it from the workspace slots it could not mount, so any
   // non-blank value here refuses the boot. There is no `.env` edit that clears

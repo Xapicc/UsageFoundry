@@ -1318,6 +1318,12 @@ function migrate(db: Database.Database) {
   // below states — `relaxProposalTemplate` runs before every `addColumn` here.
   addColumn(db, "chat_proposals", "model", "TEXT");
 
+  // The model decider's sentence about this proposal — its pick, its
+  // abstention, or why it could not be asked — and null where it was not
+  // asked. Written by this app, never by a tool argument, so the card can say
+  // a model the decider chose was not one the chat named.
+  addColumn(db, "chat_proposals", "model_note", "TEXT");
+
   // The untemplated guard set as it stood when the proposal was written, as
   // JSON, and null on a templated one — whose guards are a *handle* the
   // operator can go and read, so that one is read live at the click and stays

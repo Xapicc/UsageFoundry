@@ -49,6 +49,7 @@ import { resolveKnowledgeRoot } from "../../../lib/knowledge";
 import {
   currentKnowledge,
   emitBlockRuns,
+  emittedModelWork,
   folderRefusal,
   getWorkflow,
   instanceOwnsRun,
@@ -57,7 +58,9 @@ import {
   liveBlocksOf,
   liveRunsOf,
   normalizeWorkflowInput,
+  recordEmittedModels,
 } from "../../../lib/workflows";
+import { decideRunModel, deciderApplies, type ModelDecision } from "../../../lib/modelDecider";
 import {
   createTask,
   currentTaskKnowledge,
@@ -103,6 +106,7 @@ import {
 import {
   agentRefusal,
   currentAgentKnowledge,
+  getAgent,
   listAgents,
   listAmbientAgents,
 } from "../../../lib/agents";
@@ -2508,7 +2512,10 @@ async function callTool(
       return saveTemplate(args, chatId!);
 
     case "propose_run":
-      return proposeRun(args, chatId!);
+      // Asked before `proposeRun` rather than inside it: that function's checks
+      // against the chat's other proposals and its write must stay in one
+      // event-loop turn, and the decider is a network call.
+      return proposeRun(args, chatId!, await proposalModelDecision(args));
 
     case "propose_workflow":
       return proposeWorkflow(args, chatId!);
@@ -2528,6 +2535,21 @@ async function callTool(
         args.runs,
       );
       if (!outcome.ok) return text(outcome.reason, true);
+      // After the emission is stored and before the tool answers, so the turn
+      // cannot end in between unless it is killed — `recordEmittedModels`
+      // latches on `thinking` for that case. Asked in parallel: the decider
+      // queues them across its own slots.
+      const picks = await Promise.all(
+        emittedModelWork(subject.instanceId, subject.nodeId).map(async ({ specId, work }) => ({
+          specId,
+          decision: await decideRunModel(work),
+        })),
+      );
+      const decided = picks.flatMap(({ specId, decision }) => (decision ? [{ specId, decision }] : []));
+      recordEmittedModels(subject.instanceId, subject.nodeId, decided);
+      const picked = decided.filter(({ decision }) => decision.model).length;
+      const onModels =
+        picked > 0 ? ` The model decider picked the model for ${picked} of them.` : "";
       return text(
         outcome.accepted === 0
           ? "Recorded that there is nothing to start. No runs will be created, " +
@@ -2535,7 +2557,7 @@ async function callTool(
             "than run with nothing to work on."
           : `Accepted ${outcome.accepted} run(s). They are created and queued ` +
             "when this turn ends — there is no approval step. You cannot emit " +
-            "again; say anything else you would have started in your reply.",
+            `again; say anything else you would have started in your reply.${onModels}`,
       );
     }
 
@@ -4669,7 +4691,35 @@ function saveTemplate(args: Record<string, unknown>, chatId: string) {
  * Approve on a list of twenty, which is the wrong moment and the wrong person.
  * The same reasoning `normalizeTemplateInput` gives for validating at the form.
  */
-function proposeRun(args: Record<string, unknown>, chatId: string) {
+/**
+ * The model decider's verdict for a proposal, or null where it is off or the
+ * proposal is not its to answer. Reads the arguments `proposeRun` will
+ * validate, without validating them: a proposal that is then refused costs one
+ * wasted local call, which is cheaper than threading an await through the
+ * checks.
+ */
+async function proposalModelDecision(args: Record<string, unknown>): Promise<ModelDecision | null> {
+  const templateId = String(args.templateId ?? "").trim();
+  const template = templateId ? getTemplate(templateId) : null;
+  const agentId = String(args.agentId ?? "").trim();
+  const agent = agentId ? getAgent(agentId) : null;
+  const applies = deciderApplies({
+    provider: String(args.provider ?? "").trim() || null,
+    named: modelArgument(args.model),
+    templateModel: template?.model,
+    agentModel: agent?.model,
+  });
+  const title = String(args.title ?? "").trim();
+  const task = String(args.task ?? "").trim();
+  if (!applies || !task) return null;
+  return decideRunModel({
+    task: title ? `${title}\n\n${task}` : task,
+    agent: agent?.name ?? null,
+    template: template?.name ?? null,
+  });
+}
+
+function proposeRun(args: Record<string, unknown>, chatId: string, decision: ModelDecision | null) {
   const templateId = String(args.templateId ?? "").trim();
   const template = templateId ? getTemplate(templateId) : null;
   if (templateId && !template) {
@@ -5096,10 +5146,16 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
   if (!links.ok) return text(`${links.reason} Nothing was proposed.`, true);
   const taskIds = links.taskIds;
 
+  // The decider only ever answers where the chat named none, so this fills
+  // the proposal's own rung rather than outranking anything on it; the note
+  // goes on the card either way.
+  const proposedModel = model ?? decision?.model ?? null;
+
   const input: ProposalInput = {
     templateId: template ? template.id : null,
     agentId,
-    model,
+    model: proposedModel,
+    modelNote: decision?.note ?? null,
     provider,
     taskIds,
     title,
@@ -5140,7 +5196,11 @@ function proposeRun(args: Record<string, unknown>, chatId: string) {
   // because what a named model displaces is the operator's own default — so it
   // is a fact the reply should carry rather than one the operator meets on a
   // bill. Silent where none was named: the card draws no row there either.
-  const onModel = model ? ` It runs on ${model}.` : "";
+  const onModel = model
+    ? ` It runs on ${model}.`
+    : proposedModel
+      ? ` It runs on ${proposedModel}, which the model decider picked; the card says so.`
+      : "";
   const onProvider =
     provider && provider !== "claude"
       ? ` It is spawned as ${RUN_PROVIDER_LABEL[provider]}, and the card says so.`

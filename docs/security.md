@@ -350,3 +350,13 @@ on may do nothing whatever. `docs/verification.md` carries what would settle it.
   than a setting: `/api/settings` is reachable with the master token, and moving
   a webhook takes a restart instead. If you run controlled egress, this is the
   one host list you have to update.
+- **With `UF_MODEL_DECIDER_URL` set, the container sends each proposed or
+  emitted run's title and task to a host you name**, and starts the run on the
+  model id that comes back. This is the one outbound connection that carries
+  task text, so point it only at a service on your own machine — the
+  LocalDecider project binds to the host's loopback, which a container on
+  Docker Desktop reaches as `host.docker.internal`. The answer is checked
+  against Settings → Models before it is used, so a compromised decider can
+  move a run to a dearer enabled model and no further: every budget and window
+  guard still applies, and it never touches a permission mode, an isolation
+  choice or whether a run starts. Environment-only for the webhook's reason.

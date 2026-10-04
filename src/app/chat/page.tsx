@@ -2389,6 +2389,22 @@ function Proposal({
             {proposal.model && (
               <span className="min-w-0 max-w-full truncate">
                 on <span className="mono">{proposal.model}</span>
+                {/* Said beside the model rather than left for the operator to
+                    assume the chat chose it: the decider is a second author
+                    of this one value, and its reason is in the tooltip. */}
+                {proposal.modelNote && (
+                  <span title={proposal.modelNote}>, picked by the model decider</span>
+                )}
+              </span>
+            )}
+            {/* The decider was asked and did not pick — abstained, unreachable
+                or refused — so the run takes the template's model or the
+                operator's default. Muted, because nothing about the run changed;
+                drawn at all because "the decider is down" otherwise looks
+                exactly like "the decider is off". */}
+            {!proposal.model && proposal.modelNote && (
+              <span className="min-w-0 max-w-full truncate" title={proposal.modelNote}>
+                model decider: no pick
               </span>
             )}
             {/* The model rewrote the operator's own words, and this said so in

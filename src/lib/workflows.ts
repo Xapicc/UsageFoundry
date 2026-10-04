@@ -70,6 +70,7 @@ import {
   providerTerminusRefusal,
 } from "./budget";
 import { getLocalSignIn } from "./localProvider";
+import { deciderApplies, type DeciderWork, type ModelDecision } from "./modelDecider";
 import {
   agentDefinition,
   agentKnowledgeOf,
@@ -619,14 +620,16 @@ export function planEmittedRun(
     isolate: guards.isolate,
     budget: guards.budget,
     agent,
-    // `planNode`'s inheritance, for its reason. A spec has no model on it and
-    // never will — which is what makes `RunSpec`'s "the block's own template
-    // already answered all of those" true of the model rather than an absence
-    // with nowhere to come from. Dropped for Codex and local, `planNode`'s rule.
+    // `planNode`'s inheritance, for its reason, then the model decider's pick
+    // where the template named none. The template is read again at this
+    // moment, so one given a model after the emission was decided on still
+    // wins: a person's answer outranks the decider's. The turn itself still
+    // has no way to name a model — `decidedModel` is written by this app, see
+    // `RunSpec`. Dropped for Codex and local, `planNode`'s rule.
     model:
       node.provider === "codex" || node.provider === "local"
         ? null
-        : (template?.model ?? null),
+        : (template?.model ?? spec.decidedModel ?? null),
     // The block's, never the spec's: a person saved it, and `emit_runs` has no
     // field that could carry one.
     provider: node.provider || null,
@@ -647,10 +650,12 @@ export function planEmittedRun(
  * those and a spec that could answer them again would be a fifth route to
  * `--permission-mode` reached by a model with nobody reading the result. The
  * model is the one of those the template answers rather than merely bounds, and
- * it stays off this list for a narrower reason than the rest: it is not a route
- * to anything — it moves cost and never capability — but a spec is written by a
- * model, and a model choosing what it costs to run is a choice with nobody in
- * the loop.
+ * the turn still cannot name one. It used to stay off for the reason that a
+ * model choosing what a run costs is a choice with nobody in the loop; the
+ * operator overruled that on 2026-10-05 for the model decider, which may pick
+ * one unattended — see `modelDecider.ts`. So a spec can carry a model, in
+ * `decidedModel`, but only one this app wrote after the emission was accepted,
+ * never one read off `emit_runs`.
  *
  * The agent is not one of those and cannot become one. An agent is a description
  * and a prompt — the registry refuses a tool list at the door and has no column
@@ -693,6 +698,13 @@ export interface RunSpec {
   taskIds: string[];
   /** Siblings in this same emission that must settle first. */
   dependsOn: Array<{ id: string; edge: DependencyEdge }>;
+  /**
+   * The model decider's pick, written by `recordEmittedModels` after the
+   * emission is stored and never by `normalizeSpec`, which builds a spec field
+   * by field so nothing on the wire can reach this. Absent or null takes the
+   * template's model, then the operator's default.
+   */
+  decidedModel?: string | null;
 }
 
 export type EmissionPlan =
@@ -7586,6 +7598,87 @@ export function emitBlockRuns(
     return { ok: false, reason: "This block's turn ended while it was emitting." };
   }
   return { ok: true, accepted: plan.specs.length };
+}
+
+/**
+ * The emitted runs the model decider should be asked about, read back from the
+ * stored emission.
+ *
+ * Sync, and the asking happens in the `emit_runs` handler between this and
+ * `recordEmittedModels` — never inside `emitBlockRuns`, whose check that the
+ * block has not emitted and its write of the emission must stay in one
+ * event-loop turn, or two concurrent calls could both be accepted.
+ */
+export function emittedModelWork(
+  instanceId: string,
+  nodeId: string,
+): Array<{ specId: string; work: DeciderWork }> {
+  const instance = getInstance(instanceId);
+  const block = getBlock(instanceId, nodeId);
+  const node = instance ? blockNode(instance, nodeId) : null;
+  if (!node || block?.status !== "thinking") return [];
+
+  const template = node.templateId ? getTemplate(node.templateId) : null;
+  return parseSpecs(block.emitted_specs).flatMap((spec) => {
+    const agent = spec.agent ? getAgentByName(spec.agent) : null;
+    const applies = deciderApplies({
+      provider: node.provider,
+      named: null,
+      templateModel: template?.model,
+      agentModel: agent?.model,
+    });
+    if (!applies) return [];
+    return [
+      {
+        specId: spec.id,
+        work: { task: `${spec.title}\n\n${spec.task}`, agent: spec.agent, template: template?.name ?? null },
+      },
+    ];
+  });
+}
+
+/**
+ * Write the decider's picks onto the stored emission, and say each one on the
+ * block — a pick, an abstention and an unreachable decider alike, because a
+ * run that took the default reads the same in all three otherwise.
+ *
+ * Latched on `thinking`, `emitBlockRuns`' own write's latch: a turn killed
+ * while the decider was answering has already been settled and its runs
+ * created on the template's model or the default, so a pick arriving after
+ * that changes nothing, and the note says it came too late rather than
+ * implying it was used.
+ */
+export function recordEmittedModels(
+  instanceId: string,
+  nodeId: string,
+  picks: ReadonlyArray<{ specId: string; decision: ModelDecision }>,
+): void {
+  if (picks.length === 0) return;
+  const block = getBlock(instanceId, nodeId);
+  if (!block) return;
+  const bySpec = new Map(picks.map((pick) => [pick.specId, pick.decision]));
+  const specs = parseSpecs(block.emitted_specs);
+  const decided = specs.map((spec) => {
+    const model = bySpec.get(spec.id)?.model;
+    return model ? { ...spec, decidedModel: model } : spec;
+  });
+
+  const stored =
+    db()
+      .prepare(
+        "UPDATE workflow_instance_blocks SET emitted_specs=? WHERE instance_id=? AND node_id=? AND status='thinking'",
+      )
+      .run(JSON.stringify(decided), instanceId, nodeId).changes > 0;
+
+  for (const spec of specs) {
+    const decision = bySpec.get(spec.id);
+    if (!decision) continue;
+    const late =
+      !stored && decision.model
+        ? " It arrived after the turn had ended, so the run did not use it."
+        : "";
+    noteBlock(instanceId, nodeId, `“${spec.title}”: ${decision.note}${late}`);
+  }
 }
 
 /**

@@ -16,6 +16,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 ## [Orchestrator blocks and merge blocks](workflows-and-schedules/orchestrator-and-merge-blocks.md)
 
 - A block can decide what runs next, and those runs start with no approval — because the approval moved to the graph rather than disappearing.
+- The model is the one thing on an emitted run nobody saved and nobody reads, and that is now allowed.
 - And what the turn said is kept, in three fields that are three voices.
 - `taskIds` on an emitted spec is not a sixth field on the list `emit_runs` refuses to grow, and it is not on the node at all.
 - Acyclicity stops being a property of who wrote the graph, so it is checked as a property of the data.

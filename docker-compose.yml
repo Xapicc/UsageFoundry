@@ -378,6 +378,13 @@ services:
       # exists for. Worth turning on if you run a handful of runs a day and want
       # the "it is done" signal; it widens `completed` and nothing else.
       UF_NOTIFY_ON_SUCCESS: "${UF_NOTIFY_ON_SUCCESS:-}"
+      # Optional: the model decider (a local Tev1-4B service, see the
+      # LocalDecider project) that picks the model for a run the orchestrator
+      # chat proposes or an orchestrator block emits, when neither the run, its
+      # template nor its agent names one. Blank is off and is the shipped state.
+      # Every request carries the run's task text, so point it only at a
+      # service on your own machine, e.g. http://host.docker.internal:8090
+      UF_MODEL_DECIDER_URL: "${UF_MODEL_DECIDER_URL:-}"
       # Optional: the Discord channel webhook that scripts/discord-relay.mjs
       # forwards to. Setting it is what starts the relay at boot; blank is off
       # and starts nothing. UF_WEBHOOK_URL above must then name the relay

@@ -217,6 +217,28 @@
   in the catalogue, so a discovered model on an unedited install reads as
   unedited. Caveat: the no-credential path only; nothing was listed.
 
+- **The model decider client against the live LocalDecider service,
+  2026-10-05**, compiled `decideRunModel` from `.test-build` with a scratch
+  `DATA_DIR` (the seeded catalogue) against Tev1-4B Q8_0 on `llama-server`
+  9370: a typo fix came back `claude-haiku-4-5` (0.99), an endpoint with a test
+  `claude-sonnet-5` (0.995), a worktree race `claude-opus-5-5` (0.927); a dead
+  port came back `model: null`, "could not be reached"; a blank
+  `UF_MODEL_DECIDER_URL` returned null without asking. Caveat: the client
+  alone — no chat turn or block turn reached it.
+
+- **Both MCP doors through `next dev`, 2026-10-05**, scratch `DATA_DIR`,
+  `CLAUDE_HOME` and a git-initialised `WORKSPACE_ROOT`, with `CLAUDE_BIN` a
+  script that reads the turn's `--mcp-config` and calls the tools itself, so
+  nothing was billed. `propose_run` for a typo fix and for a worktree race
+  stored `claude-haiku-4-5` and `claude-opus-5-5` with their notes, read back
+  through `GET /api/chat/:id` as `model`/`modelNote`; one naming
+  `claude-sonnet-5` kept it with `modelNote: null`. An orchestrator block's
+  `emit_runs` with the same two tasks stored `decidedModel` on each spec,
+  noted both picks on the block, and the two runs it created spawned with
+  `--model claude-haiku-4-5` and `--model claude-opus-5-5`. Caveat: the CLI
+  was a stand-in, and the decider was on the host, not reached from a
+  container.
+
 ## Not yet verified by hand
 
 - **No real `/v1/models` listing has been read, with either credential.**
@@ -231,6 +253,15 @@
   `ANTHROPIC_API_KEY` and read the line beside it. `CLAUDE_CODE_OAUTH_TOKEN`
   is not consulted, so an install signed in only that way reads "No
   credential". `docker compose up --build` was not run.
+
+- **The decider's card text has not been seen, and no container has reached
+  the decider.** ", picked by the model decider" and "model decider: no pick"
+  are typechecked and carried by the DTO, but neither was looked at at 1280 or
+  390 px, and `docker compose up --build` reaching
+  `host.docker.internal:8090` was not run. Settling it: start LocalDecider, set
+  `UF_MODEL_DECIDER_URL=http://host.docker.internal:8090`,
+  `docker compose up --build`, ask the chat to propose a typo fix, and read the
+  card.
 
 - **An empty agent name and a non-JSON `--agents` payload were not
   re-measured under `--agent`.**

@@ -3797,8 +3797,16 @@ export interface ChatProposalDTO {
    *
    * Beside the agent rather than inside the guard mark, and for its reason: a
    * model bounds nothing, so a figure under the shield would claim it did.
+   *
+   * The model decider may have written it rather than the chat, and then
+   * `modelNote` says so.
    */
   model: string | null;
+  /**
+   * The model decider's sentence — its pick, its abstention, or why it could
+   * not be asked — or null where it was not asked.
+   */
+  modelNote: string | null;
   /**
    * The agent CLI the run is spawned as, or null for the ordinary Claude run.
    * The card states anything else with the new-run form's warning, because the
