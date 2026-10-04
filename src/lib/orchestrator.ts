@@ -130,6 +130,7 @@ import {
   type PruneTrigger,
 } from "./contextPruning";
 import { BYTES_PER_TOKEN, fileCostNotice } from "./fileCostNotice";
+import { tmpdirNotice } from "./tmpdirNotice";
 import { prepareReadGuard } from "./readGuard";
 // The `pkill`/`killall` denial for the provider that cannot carry one on an
 // argv. Beside the read guard because it is the same kind of thing — something
@@ -441,6 +442,14 @@ export interface RunRow {
    * mean the same thing: this run's prompt is exactly what it was before.
    */
   file_cost_notice: string | null;
+  /**
+   * What `$TMPDIR` holds in this run's sandboxed Bash commands, frozen at
+   * creation and put on every cycle's `--append-system-prompt` unchanged, after
+   * the price list. Null on every run created before the column, a Codex run, and
+   * any run for which the value could not be derived — see `tmpdirNotice.ts`,
+   * which carries why none of them is given a guess.
+   */
+  tmpdir_notice: string | null;
   /**
    * 1 when this run ended because the server went down under it, rather than
    * for any reason of its own. Cleared when it is picked up again.
@@ -4138,6 +4147,12 @@ export function createRun(input: CreateRunInput): RunRow {
   // creation, and `folder` is also the key the read history is stored under.
   const costNotice = fileCostNotice(folder);
 
+  // Frozen on the same terms and for the same reason as the price list above:
+  // it joins the cached prefix. Read off the environment the child will actually
+  // inherit rather than a constant, because the directory follows the uid the CLI
+  // runs as — see `tmpdirNotice.ts`.
+  const tmpNotice = tmpdirNotice(input.provider, childEnv());
+
   const isolate = input.isolate !== false;
   const { links, waiting, continuesRun } = admitDependencies(
     id,
@@ -4172,8 +4187,8 @@ export function createRun(input: CreateRunInput): RunRow {
         `INSERT INTO runs
            (id, folder, prompt, model, provider, status, budget, max_iterations, iterations, created_at, spent_usd, spent_tokens,
             work_dir, isolation, repo_root, worktree_path, worktree_branch, worktree_base, worktree_base_branch,
-            continues_run, agent, file_cost_notice, origin, origin_ref, task_signature)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            continues_run, agent, file_cost_notice, tmpdir_notice, origin, origin_ref, task_signature)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -4206,6 +4221,7 @@ export function createRun(input: CreateRunInput): RunRow {
         // that the two ways a run has no notice — this one and a row written
         // before the column — read the same at the spawn.
         costNotice || null,
+        tmpNotice || null,
         input.origin,
         input.originRef ?? null,
         taskSignature(folder, prompt),
@@ -9948,6 +9964,11 @@ export async function startRun(id: string): Promise<void> {
         // prefix mid-run, which costs more than the notice saves. Never
         // `fileCostNotice(...)` at this line.
         fileCostNotice: run.file_cost_notice,
+        // The row's own copy, for the price list's reason and never recomputed
+        // here: the CLI restores no `--append-system-prompt` on `--resume`, and a
+        // reading taken now rather than at creation could differ from the one
+        // cycle one was spawned with.
+        tmpdirNotice: run.tmpdir_notice,
         // Off the same `settings` read every prompt on this run comes from, so
         // it is fixed for the segment rather than per cycle. It changes only
         // what reaches the log — it is not a capability, nothing acts on it,

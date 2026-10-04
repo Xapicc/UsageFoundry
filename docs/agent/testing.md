@@ -232,6 +232,7 @@ Units that are about no test file in the tree:
 | `schedules.test.ts` | [proposals] |
 | `serverLock.test.ts` | [data-dir] |
 | `src/app/api/agents/route.test.ts` |  |
+| `tmpdirNotice.test.ts` |  |
 
 ## [The sandbox, Codex's rules file and the read guard](testing/sandbox-and-read-guard.md)
 

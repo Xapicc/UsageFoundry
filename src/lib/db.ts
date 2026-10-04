@@ -1142,6 +1142,16 @@ function migrate(db: Database.Database) {
   // is and why it is worth its tokens.
   addColumn(db, "runs", "file_cost_notice", "TEXT");
 
+  // What `$TMPDIR` holds in this run's sandboxed Bash commands, frozen for the
+  // column above's reason: it joins the appended system prompt, which is part of
+  // the cached prefix, and the policy, uid and environment it is derived from can
+  // change between two cycles of one run. Null is the whole of the backward-
+  // compatible case, with no backfill — a run created before this column, a Codex
+  // run, and any run for which the value was not known all read null, and
+  // `buildArgs` drops an absent notice, so each keeps the prompt it had. See
+  // `tmpdirNotice.ts` for what the text is and when it is withheld.
+  addColumn(db, "runs", "tmpdir_notice", "TEXT");
+
   // The agent a template names, by id — and this one *is* a reference, which is
   // the opposite of the column above for a reason. A template is form input
   // applied again and again, so an operator who fixes their reviewer's prompt

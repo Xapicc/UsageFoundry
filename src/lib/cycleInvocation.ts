@@ -1151,6 +1151,21 @@ export function buildArgs(opts: {
    */
   fileCostNotice?: string | null;
   /**
+   * What `$TMPDIR` holds in this run's sandboxed Bash commands, or nothing.
+   *
+   * Read from `runs.tmpdir_notice` and **never** rebuilt here, for
+   * `fileCostNotice`'s reason: it joins the cached prefix, and the readings it is
+   * derived from (managed sandbox policy, agent uid, inherited environment) are
+   * stable for a server's life but not for a run's. `tmpdirNotice.ts` carries the
+   * derivation and when it declines to answer.
+   *
+   * Last in the join, so a run without it keeps every byte of the prompt it had,
+   * and Claude Code only: the rule it states is the CLI's, so `codexPromptPreamble`
+   * does not take it. Optional, and absent is an argv byte-identical to the one
+   * emitted before the notice existed — every run created before the column.
+   */
+  tmpdirNotice?: string | null;
+  /**
    * Directories this cycle may write to beyond its own working one, or null.
    *
    * Null is "nothing confines this cycle" — an install with no managed sandbox,
@@ -1275,11 +1290,13 @@ export function buildArgs(opts: {
   args.push("--disallowedTools", ...PROCESS_KILLERS, ...(opts.stackGrants?.deny ?? []));
   // One flag carrying every notice, for the reason `--allowedTools` carries both
   // its lists: a second `--append-system-prompt` is a replacement, not an
-  // addition, and losing one of them would be silent. The last two are per-run
-  // and may be absent, so they are filtered rather than interpolated — an argv
-  // with neither must be exactly the string it was before either feature
-  // existed, trailing blank lines included, or every run without them pays a
-  // cold prefix on its next cycle for a notice it did not get.
+  // addition, and losing one of them would be silent. The last three are
+  // optional or per-run and may be absent, so they are filtered rather than
+  // interpolated — an argv with none of them must be exactly the string it was
+  // before any of those features existed, trailing blank lines included, or
+  // every run without them pays a cold prefix on its next cycle for a notice it
+  // did not get. The two per-run texts come last and in the order they were
+  // added, so a stored one never moves behind a later one.
   args.push(
     "--append-system-prompt",
     [
@@ -1289,6 +1306,7 @@ export function buildArgs(opts: {
       COMMIT_IDENTITY_NOTICE,
       opts.taskboard ? TASKBOARD_NOTICE : null,
       opts.fileCostNotice?.trim(),
+      opts.tmpdirNotice?.trim(),
     ]
       .filter((notice): notice is string => Boolean(notice))
       .join("\n\n"),

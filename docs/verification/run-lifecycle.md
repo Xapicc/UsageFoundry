@@ -127,6 +127,17 @@
   `CLAUDE_BIN` does not exist. Caveat: the runs were inserted rather than parked
   by a cycle — that half is `stackWait.test.ts`, against a stubbed child.
 
+- **The `$TMPDIR` a sandboxed Bash command gets is the CLI's per-uid temp root,
+  and `tmpdirNotice` derives that value** (2026-10-04, `claude` 2.1.280). Read out
+  of the shipped binary rather than executed: `join(CLAUDE_CODE_TMPDIR ||
+  os.tmpdir(), "claude-" + process.getuid())`, handed to a *sandboxed* command as
+  `$TMPDIR`, and replaced by a shorter directory once it passes 44 bytes. Run in
+  this container (managed sandbox `on`, uid 1000, no `TMPDIR` in the environment)
+  the real reader returned `/tmp/claude-1000`, which is what `echo "$TMPDIR"`
+  printed in this session's own Bash. Caveat: one uid and one sandbox state; the
+  rule for any other uid, for `CLAUDE_CODE_TMPDIR`, and for a command the CLI
+  runs unsandboxed rests on the binary's source and `tmpdirNotice.test.ts`.
+
 ## Not yet verified by hand
 
 - **No real `reopenRestartClosed` refusal has reached the restart notice.**
@@ -262,3 +273,12 @@
   told to run `zig version` on a container without it, wait for
   `waiting-for-stack`, add `stacks/zig/stack.json`, `docker compose restart`, and
   read the resumed cycle's argv and first tool call on the run page.
+
+- **No run has been spawned with `runs.tmpdir_notice` set, so the sentence has
+  not been seen on a real argv, and no uid other than 1000 has been checked
+  against a real CLI.** Settle: with the managed sandbox on and `UF_AGENT_UID`
+  set to another uid, start a run, read `tmpdir_notice` off its row, then as that
+  uid run `claude -p 'Run echo "$TMPDIR" in Bash and print only its output'` and
+  compare. Whether the sentence removes the misspelled-prefix `Read` misses is
+  the vault note's open question (*Reads of Paths That Do Not Exist*), settled by
+  a recount of the transcripts weeks after it ships, not by anything here.

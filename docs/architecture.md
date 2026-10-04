@@ -56,6 +56,8 @@ src/lib/
   fileCostNotice.ts  what a `Read` of this repository's largest files costs,
                    generated once at `createRun` and frozen on the row, because
                    the appended prompt is part of the cached prefix
+  tmpdirNotice.ts  the literal `$TMPDIR` a sandboxed Bash command gets, derived
+                   from the child's uid and frozen on the row for the same reason
   readGuard.ts     an optional generated hook plugin (off by default) that
                    refuses a whole re-read and caps one read, delivered on the
                    same `--plugin-dir` list; root-owned code, agent-writable

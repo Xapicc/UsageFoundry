@@ -153,6 +153,11 @@ fileCostNotice.ts
                 every token behind it. Every failure degrades to "", because a
                 run that could not be created for want of a cost hint would cost
                 infinitely more than the hint saves
+tmpdirNotice.ts
+                the literal $TMPDIR a sandboxed Bash command gets, derived from
+                the child's uid and inherited environment (never a constant) and
+                withheld wherever it cannot be known; taken once at createRun and
+                frozen on runs.tmpdir_notice, for fileCostNotice.ts's reason
 toolComposition.ts
                 what is *in* the contexts this machine paid for — a second reader
                 over the same transcripts, in parseCompactionBoundary's shape,
