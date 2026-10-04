@@ -163,6 +163,19 @@
   orphaned every module an operator had already downloaded to no purpose, and
   `BUILD_CACHE_DIRS` still reads `$GOPATH`. The stack's own `state/` is empty.
 
+- **Root's tools by path, and where the image puts them, 2026-10-04.** Board
+  task `1bc44141`. `command -v` inside a running container of this image (the
+  one with `/usr/local/bin/uf-entrypoint` and `/app/server.js`) gave
+  `/usr/bin/` for `git`, `chmod`, `chown`, `cp`, `curl`, `dpkg`, `python3`,
+  `setpriv`, `sha256sum` and `tar`, and `/usr/local/bin/` for `node`, `npm` and
+  `uv`. Those are the paths `TOOLS` in `scripts/apply-stacks.mjs`, `GIT_BIN`'s
+  default and the `HEALTHCHECK` now name. The applier and `gitSync` were each
+  run under a `PATH` with planted copies first. Before the change the applier
+  ran the planted `dpkg` and `curl`, and `gitSync` ran the planted `git`. After
+  it, nothing planted ran. Caveat: the applier test fails at `curl` against a
+  closed port, as non-root, so it never reaches `sha256sum`, `tar`, `chown`,
+  `chmod` or `setpriv` (see below).
+
 ## Not yet verified by hand
 
 - **No real work cycle has invoked a stack's binary.** Three things around it
@@ -180,3 +193,14 @@
   holding a shell script, asked to `shellcheck` it and then to `shfmt -w` it,
   read for whether the first `Bash` call succeeded and the second was refused.
   Phase 4 has shipped, so this is now runnable.
+
+- **No boot of an image carrying `TOOLS` has been watched.** The paths were
+  measured, and the applier's spawn of them was measured up to `curl` (see
+  *Verified*), but no build of this change has installed a stack. That leaves
+  the `setpriv` hand-off of an absolute program path under `UF_AGENT_UID`,
+  `sha256sum`, `tar` and the root `chown`, as well as a `HEALTHCHECK` reading
+  `/usr/bin/curl`, unmeasured. Settle: `docker compose up --build` with the
+  operator's `./stacks`, then `ls /var/lib/uf-stacks/receipts` and read each
+  receipt's `status` (expect every one `ok`, as before), and
+  `docker inspect --format '{{.State.Health.Status}}'` after the start period
+  (expect `healthy`).
