@@ -166,6 +166,26 @@ test("a body is trimmed, non-empty and within the cap", () => {
   );
 });
 
+test("the over-cap refusal tells a run that holds the task what to do, and never to file one", () => {
+  const body = "x".repeat(MAX_TASK_COMMENT + 1);
+  const holder = normalizeTaskCommentInput({ body }, ACTORS.run, true);
+  const other = normalizeTaskCommentInput({ body }, ACTORS.run, false);
+  assert.ok(!holder.ok && !other.ok);
+
+  for (const refused of [holder, other]) {
+    assert.ok(refused.error.includes(String(MAX_TASK_COMMENT)));
+    assert.ok(refused.error.includes(String(body.length)));
+    assert.match(refused.error, /UTF-16/, "the unit is named, since an emoji counts as two");
+  }
+  // Findings about the task a run holds are not new work, and advice to file a
+  // task for them was never taken: every refused run halved the text instead.
+  assert.match(holder.error, /shorten/);
+  assert.match(holder.error, /split/);
+  assert.match(holder.error, /repository/);
+  assert.doesNotMatch(holder.error, /file it as a task|task of its own/);
+  assert.match(other.error, /file it as a task of its own/);
+});
+
 /* ------------------------------------------------------------------ */
 /* The three the pure functions cannot reach                           */
 /* ------------------------------------------------------------------ */

@@ -1,4 +1,5 @@
 import { strict as assert } from "node:assert";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -6,7 +7,7 @@ import { test } from "node:test";
 // Type-only, so it is erased rather than hoisted above the environment setup
 // below — `orchestrator.test.ts`'s reason, and the same reason the values come
 // through `require`.
-import type { Task, TaskActor, TaskStatus } from "./tasks";
+import type { Task, TaskActor, TaskFacts, TaskStatus } from "./tasks";
 
 /**
  * The taskboard's authority model, its door, and the three writes no pure
@@ -77,6 +78,7 @@ const {
   recordRunTasks,
   runLinksForTasks,
   taskDTO,
+  taskIdShapeRefusal,
   taskRefusal,
   tasksLinkedToRun,
   tasksMentionedIn,
@@ -761,6 +763,62 @@ test("an id that is not on the board is refused, and a closed task is not", () =
   // An empty board refuses everything rather than admitting everything, which
   // is the direction a `.size === 0` shortcut would have got wrong.
   assert.ok(taskRefusal("t-open", new Map()));
+});
+
+test("a task id is judged by its shape alone, and the refusal says what was wrong with the string", () => {
+  // The rule is a regex in front of every board tool, so the way it fails
+  // silently is a refusal of ids that are real: a pattern one character too
+  // strict turns away every call. `randomUUID` is what writes them.
+  for (let i = 0; i < 200; i++) {
+    assert.equal(taskIdShapeRefusal(randomUUID()), null);
+  }
+
+  const real = randomUUID();
+  const prefix = taskIdShapeRefusal(real.slice(0, 8));
+  assert.ok(prefix);
+  assert.match(prefix, /8 characters/);
+  assert.match(prefix, /36/);
+  // Said once, so a model told it cannot read "resolved" off a sentence about a
+  // prefix: nothing here ever looks a shortened id up.
+  assert.match(prefix, /never matched/);
+
+  // The same words for every string of that length: the sentence knows nothing
+  // about the board, which is why a work cycle may be given it.
+  assert.equal(
+    taskIdShapeRefusal("12345678")?.replace("12345678", "<id>"),
+    prefix.replace(real.slice(0, 8), "<id>"),
+  );
+
+  for (const bad of [real.toUpperCase(), real.replaceAll("-", "_"), `${real}0`, real.slice(1)]) {
+    assert.ok(taskIdShapeRefusal(bad), `${bad} is not a task id`);
+  }
+  assert.match(taskIdShapeRefusal("z".repeat(36)) ?? "", /36 characters but is not shaped/);
+  assert.match(taskIdShapeRefusal("") ?? "", /empty/);
+
+  // A caller's string is echoed so it can see which one, and never whole.
+  const long = taskIdShapeRefusal("x".repeat(5000)) ?? "";
+  assert.ok(long.includes("5000 characters"));
+  assert.ok(long.length < 400, "an enormous id is not echoed back in full");
+});
+
+test("taskRefusal offers to leave an id out only where leaving it out is a thing the caller can do", () => {
+  const empty = new Map<string, TaskFacts>();
+  const optional = taskRefusal("t-gone", empty);
+  assert.match(optional ?? "", /leave it out/);
+  assert.match(optional ?? "", /list_tasks/);
+
+  const required = taskRefusal("t-gone", empty, { mayOmit: false });
+  assert.match(required ?? "", /t-gone/);
+  assert.match(required ?? "", /list_tasks/);
+  assert.doesNotMatch(required ?? "", /leave it out/);
+  const here: TaskFacts = {
+    title: "Present",
+    status: "open",
+    operatorOnly: false,
+    needsFrontier: false,
+    claimedByOperator: false,
+  };
+  assert.equal(taskRefusal("t-here", new Map([["t-here", here]]), { mayOmit: false }), null);
 });
 
 test("the runs started for a task are counted whole and listed capped", () => {

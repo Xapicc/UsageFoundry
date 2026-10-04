@@ -109,6 +109,37 @@ that has been removed leaves nothing at all saying it was ever there. The
 asymmetry is deliberate and is the same shape as the one on statuses: what an
 agent may *record* is wide, what it may *undo* is the operator's.
 
+**A run draws an edge only between two tasks it may read, and the argument that
+an edge is safe on any id was right about the wrong thing.** Decided 2026-10-04,
+after the two options on the board were weighed. The argument — an edge gates
+nothing and carries no words, so a misdirected one is a wrong ordering that is
+visible as one — holds for what an edge *does*. It does not hold for who it
+*reaches*: an edge on a task a run holds is shown to that run on `list_my_tasks`
+as `waitingFor`, with the other end's id, title and status, and the loop refusal
+names the tasks in the loop it found. A run that could name any two ids could
+therefore put a title in front of any run, and read titles from outside its
+folder by asking for an edge that would close a loop through them. Task ids are no
+barrier — every run reads its siblings' transcripts under the mounted
+`~/.claude/projects` — so `addTaskDependencyForRun` asks `taskVisibleToRun` of
+**both** ids, the predicate `commentOnTaskForRun` and `get_my_task` read through,
+so that "can read", "can write on" and "can draw an edge between" cannot drift
+apart. The alternative on the board, keeping the scope and only giving a run its
+own missing-id sentence, was rejected because it fixes the wording and leaves the
+write wide. The refusal is **one sentence** that names `list_my_tasks`, neither
+id and no reason: a missing id, another folder's task and a task another run
+holds read identically, and which of the two failed is never said. The old
+refusal told them apart (`taskRefusal(getTask(taskId) ? dependsOn : taskId)`) and
+so was a probe of which ids exist, the thing `get_my_task` refuses "not yours" and
+"not there" in one sentence to prevent. A loop refusal for a run names only the
+tasks it may read through `addTaskDep`'s `describe`, and calls the rest "a task
+this run may not read". **A chat is not narrowed.** It reads the whole board
+through `get_task` with an operator at the keyboard, so it draws between any two
+tasks that exist and its refusals still say which end is missing — in
+`taskRefusal`'s wording without "or leave it out", since both ids are the point of
+the call. The two share `recordTaskDependency` (the write, the loop test, the
+reply) and differ only in the door in front of it. `taskRefusal` is never reached
+from a run: it tells its reader to "Call list_tasks", which a run does not have.
+
 **The edge records no author, and that absence is not an oversight.** Three
 doors write one, all three write the same fact, and an edge is not a claim about
 who noticed the ordering — where a *comment* is a sentence somebody later acts
@@ -145,10 +176,10 @@ than treat the list as the edge set.
 **Every tool that mentions an edge says twice that it holds nothing back.** The
 failure this feature can produce on the agent surface is not a bad write — a
 misdirected edge is a wrong ordering on the board and is visible as one, which
-is why `add_task_dependency` takes two task ids without being held to
-`list_my_tasks`' id rule. `comment_on_task` once made the same argument and no
-longer does for a run: a note is free text the run holding the task reads whole,
-where an edge carries no words of its own. The failure here is a
+is why a *chat's* `add_task_dependency` takes any two task ids. The same argument
+no longer holds a run's door open: `comment_on_task` stopped making it first, and
+the edge followed for the reason in the paragraph above — what an edge does is
+harmless, but where it lands is not. The failure here is a
 model *reading* an edge as a gate: stopping work on a task it holds because
 something upstream is open, or telling the operator that a run cannot start.
 Nothing in this app reads `task_deps` when a run starts, when a task is claimed

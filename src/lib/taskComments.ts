@@ -112,10 +112,32 @@ export type TaskCommentWriteResult =
  *
  * Half `MAX_TASK_BODY`, and the difference is what each field is for: a brief is
  * the whole of what a future agent is handed, where a note is what somebody adds
- * to one that is already written. A ceiling this far above any real note is a
- * bound on a pathological write rather than a limit anybody meets.
+ * to one that is already written. It was written as a bound on a pathological
+ * write, and it is met: runs whose one output is a comment have been refused at
+ * it (`OVER_CAP_ADVICE_FOR_HOLDER`). Whether it should be higher for them is the
+ * operator's call and nothing here has changed it.
  */
 export const MAX_TASK_COMMENT = 10_000;
+
+/**
+ * What an over-long note is told to do instead, for a writer with no claim on
+ * the task: a long text about work somebody else holds is most likely work of
+ * its own.
+ */
+const OVER_CAP_ADVICE = "Anything longer than that is a brief — file it as a task of its own.";
+
+/**
+ * The same refusal for the run that holds the task, which must not be told to
+ * file one. Measured on 2026-09-26 and 2026-09-27: five refusals in four worker
+ * runs whose brief asked for their findings as one comment, every one of them
+ * text about the task the run held rather than new work, and none took the
+ * "file it as a task" advice. Each got through by halving the text or splitting
+ * it, which is what this names.
+ */
+const OVER_CAP_ADVICE_FOR_HOLDER =
+  "This is a note on a task you hold, so shorten it, split it across several " +
+  "comments, or commit the long form to the repository and link to it from a " +
+  "short comment.";
 
 /**
  * How many notes one tool result carries.
@@ -169,6 +191,8 @@ export function commentAuthor(actor: TaskActor): {
 export function normalizeTaskCommentInput(
   raw: unknown,
   actor: TaskActor,
+  /** True when the writer is the run that holds the task being written on. */
+  holdsTask = false,
 ): TaskCommentNormalization {
   const o = (raw ?? {}) as Record<string, unknown>;
 
@@ -190,9 +214,9 @@ export function normalizeTaskCommentInput(
     return {
       ok: false,
       error:
-        `A comment is at most ${MAX_TASK_COMMENT} characters and this one is ` +
-        `${body.length}. Anything longer than that is a brief — file it as a ` +
-        `task of its own.`,
+        `A comment is at most ${MAX_TASK_COMMENT} characters (UTF-16 code units, ` +
+        `which is what String.length counts) and this one is ${body.length}. ` +
+        (holdsTask ? OVER_CAP_ADVICE_FOR_HOLDER : OVER_CAP_ADVICE),
     };
   }
 
@@ -264,10 +288,14 @@ export function addTaskComment(
   raw: unknown,
   actor: TaskActor,
 ): TaskCommentWriteResult {
-  const parsed = normalizeTaskCommentInput(raw, actor);
+  const task = getTask(taskId);
+  // Read before the body is judged only so the refusal can say what to do; a
+  // note on a task that is not there is still refused for its body first.
+  const holdsTask = actor.kind === "run" && task?.claimedByRunId === actor.runId;
+  const parsed = normalizeTaskCommentInput(raw, actor, holdsTask);
   if (!parsed.ok) return { ok: false, kind: "refused", error: parsed.error };
 
-  if (!getTask(taskId)) {
+  if (!task) {
     return { ok: false, kind: "missing", error: "No such task." };
   }
 

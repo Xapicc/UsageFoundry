@@ -329,10 +329,11 @@ test("a run with no folder reads what it holds and nothing else", async () => {
   // "No folder" read as "no filter" is the widening this pins.
   const refused = await callTool(token, "get_my_task", { taskId: openHere.id });
   assert.equal(refused.isError, true);
-  const missing = await callTool(token, "get_my_task", { taskId: "no-such-task" });
+  const absent = randomUUID();
+  const missing = await callTool(token, "get_my_task", { taskId: absent });
   assert.equal(
     refused.text.replaceAll(openHere.id, "<id>"),
-    missing.text.replaceAll("no-such-task", "<id>"),
+    missing.text.replaceAll(absent, "<id>"),
   );
 });
 
@@ -418,6 +419,329 @@ test("a run writes notes only on what it may read, and is refused in one sentenc
   });
   assert.equal(fromChat.isError, false, fromChat.text);
   assert.equal(thread(claimedHere.id), 1);
+});
+
+/**
+ * `add_task_dependency` from a run once checked only that both ids existed, so a
+ * run token could draw an edge between any two tasks on the board — and the edge
+ * reaches the run that holds one end, as `waitingFor` on its own `list_my_tasks`.
+ * Its refusal for a missing id also named *which* of the two was missing, which
+ * is a probe for the ids on the board. The scope is now `get_my_task`'s on both
+ * ids, in one sentence that does not say which failed.
+ */
+test("a run draws an edge only between tasks it may read, and is refused in one sentence otherwise", async () => {
+  const writer = seedRun(HERE);
+  const other = seedRun(HERE);
+
+  const held = file(HERE, { title: "Held by the writer" });
+  move(held, "claimed", writer.runId);
+  const openHere = file(HERE, { title: "Open where the writer works" });
+  const elsewhere = file(ELSEWHERE, { title: "Another project's open task" });
+  const claimedHere = file(HERE, { title: "Claimed by another run here" });
+  move(claimedHere, "claimed", other.runId);
+  const missing = randomUUID();
+
+  const edges = () => taskDeps.allTaskDeps().length;
+  const waitsFor = (taskId: string) => taskDeps.depsForTask(taskId).dependsOnCount;
+
+  const drawn = await callTool(writer.token, "add_task_dependency", {
+    taskId: held.id,
+    dependsOnTaskId: openHere.id,
+  });
+  assert.equal(drawn.isError, false, drawn.text);
+  assert.equal(waitsFor(held.id), 1);
+
+  const before = edges();
+  const cases: [string, string, string][] = [
+    ["a waiter in another folder", elsewhere.id, held.id],
+    ["a blocker in another folder", held.id, elsewhere.id],
+    ["a blocker another run holds", held.id, claimedHere.id],
+    ["a waiter another run holds", claimedHere.id, held.id],
+    ["a blocker on no row", held.id, missing],
+    ["a waiter on no row", missing, held.id],
+    ["two ids it may not read", elsewhere.id, claimedHere.id],
+  ];
+  const sentences = new Set<string>();
+  for (const [what, taskId, dependsOnTaskId] of cases) {
+    const refused = await callTool(writer.token, "add_task_dependency", {
+      taskId,
+      dependsOnTaskId,
+    });
+    assert.equal(refused.isError, true, `${what} is refused`);
+    assert.match(refused.text, /list_my_tasks/, "and says where the usable ids are");
+    assert.doesNotMatch(refused.text, /list_tasks|leave it out/, `${what}: a tool a run lacks`);
+    for (const task of [elsewhere, claimedHere]) {
+      assert.ok(!refused.text.includes(task.title), `${what} leaks no title`);
+    }
+    sentences.add(
+      refused.text.replaceAll(taskId, "<id>").replaceAll(dependsOnTaskId, "<id>"),
+    );
+  }
+  assert.equal(
+    sentences.size,
+    1,
+    `a missing id and one it may not use must read the same, or the refusal is a probe: ${[...sentences].join(" | ")}`,
+  );
+  assert.equal(edges(), before, "a refused edge writes nothing");
+
+  // The run id is the token's: naming the holder in the call widens nothing.
+  const smuggled = await callTool(writer.token, "add_task_dependency", {
+    taskId: held.id,
+    dependsOnTaskId: claimedHere.id,
+    runId: other.runId,
+  });
+  assert.equal(smuggled.isError, true);
+  assert.equal(edges(), before);
+
+  // The chat's door is not the run's and did not narrow with it: any two tasks
+  // that exist, wherever they are and whoever holds them.
+  const chatToken = chat.mintCapability({ kind: "chat", chatId: chat.createChat().id });
+  const fromChat = await callTool(chatToken, "add_task_dependency", {
+    taskId: elsewhere.id,
+    dependsOnTaskId: claimedHere.id,
+  });
+  assert.equal(fromChat.isError, false, fromChat.text);
+  assert.equal(waitsFor(elsewhere.id), 1);
+});
+
+test("a run's loop refusal names no task it may not read", async () => {
+  const writer = seedRun(HERE);
+  const held = file(HERE, { title: "Held by the writer" });
+  move(held, "claimed", writer.runId);
+  const openHere = file(HERE, { title: "Open where the writer works" });
+  const hidden = file(ELSEWHERE, { title: "A title the writer must not learn" });
+  // held -> openHere would close a loop through the hidden task.
+  assert.ok(taskDeps.addTaskDep(openHere.id, hidden.id).ok);
+  assert.ok(taskDeps.addTaskDep(hidden.id, held.id).ok);
+
+  const refused = await callTool(writer.token, "add_task_dependency", {
+    taskId: held.id,
+    dependsOnTaskId: openHere.id,
+  });
+  assert.equal(refused.isError, true);
+  assert.match(refused.text, /loop/);
+  assert.ok(!refused.text.includes(hidden.title), refused.text);
+  assert.ok(refused.text.includes(held.title), "the tasks it may read are still named");
+
+  // A chat reads the whole board, so the same refusal names it.
+  const chatToken = chat.mintCapability({ kind: "chat", chatId: chat.createChat().id });
+  const fromChat = await callTool(chatToken, "add_task_dependency", {
+    taskId: held.id,
+    dependsOnTaskId: openHere.id,
+  });
+  assert.equal(fromChat.isError, true);
+  assert.ok(fromChat.text.includes(hidden.title), fromChat.text);
+});
+
+/**
+ * Task ids are 36 characters and runs were handed 8: 31 refusals in the
+ * transcripts between 2026-09-09 and 2026-09-25 named a real task's first eight
+ * hex digits, and the sentence a lookup gives for that is about scope or about
+ * the board, never about the id.
+ */
+test("a task id that is not shaped like one is refused for its shape, before any lookup", async () => {
+  const run = seedRun(HERE);
+  const held = file(HERE, { title: "Held by the shape tester" });
+  move(held, "claimed", run.runId);
+  const short = held.id.slice(0, 8);
+  const unknown = randomUUID().slice(0, 8);
+  const thread = (taskId: string) => comments.listTaskComments(taskId, 50).total;
+
+  const runCalls: [string, (id: string) => Record<string, unknown>][] = [
+    ["get_my_task", (taskId) => ({ taskId })],
+    ["complete_task", (taskId) => ({ taskId })],
+    ["release_task", (taskId) => ({ taskId, reason: "Could not finish." })],
+    ["comment_on_task", (taskId) => ({ taskId, body: "A note." })],
+    [
+      "add_task_dependency",
+      (taskId) => ({ taskId, dependsOnTaskId: randomUUID() }),
+    ],
+  ];
+  for (const [name, args] of runCalls) {
+    const refused = await callTool(run.token, name, args(short));
+    assert.equal(refused.isError, true, `${name} refuses a prefix`);
+    assert.match(refused.text, /8 characters/, name);
+    assert.match(refused.text, /36/, name);
+    assert.match(refused.text, /list_my_tasks/, `${name} points at the run's own list`);
+    assert.doesNotMatch(refused.text, /list_tasks|get_task\b/, name);
+
+    // The refusal is about the string and nothing else: a prefix of a task the
+    // run holds and a prefix of nothing at all read the same, so it cannot be
+    // used to find which ids exist.
+    const other = await callTool(run.token, name, args(unknown));
+    assert.equal(
+      other.text.replaceAll(unknown, "<id>"),
+      refused.text.replaceAll(short, "<id>"),
+      `${name}: a prefix of a real task and of none must read the same`,
+    );
+  }
+  assert.equal(thread(held.id), 0, "nothing was written on the task");
+  assert.equal((await callTool(run.token, "get_my_task", { taskId: held.id })).isError, false);
+  assert.equal(
+    JSON.parse((await callTool(run.token, "get_my_task", { taskId: held.id })).text).status,
+    "claimed",
+    "a refused complete_task and release_task left the task as it was",
+  );
+
+  // 36 characters of the wrong kind, and an upper-cased real id: both fail the
+  // case-sensitive lookup, and neither may be told it is out of scope.
+  for (const bad of ["z".repeat(36), held.id.toUpperCase()]) {
+    const refused = await callTool(run.token, "get_my_task", { taskId: bad });
+    assert.equal(refused.isError, true);
+    assert.match(refused.text, /36 characters but is not shaped like a task id/);
+  }
+
+  // The chat's tools: the same refusal, pointing at the tools a chat has.
+  const chatToken = chat.mintCapability({ kind: "chat", chatId: chat.createChat().id });
+  const chatCalls: [string, Record<string, unknown>][] = [
+    ["get_task", { taskId: short }],
+    ["comment_on_task", { taskId: short, body: "A note." }],
+    ["add_task_dependency", { taskId: held.id, dependsOnTaskId: short }],
+    ["add_task_dependency", { taskId: short, dependsOnTaskId: held.id }],
+  ];
+  for (const [name, args] of chatCalls) {
+    const refused = await callTool(chatToken, name, args);
+    assert.equal(refused.isError, true, `${name} refuses a prefix`);
+    assert.match(refused.text, /8 characters/, name);
+    assert.match(refused.text, /list_tasks/, `${name} points at the chat's own list`);
+    assert.doesNotMatch(refused.text, /No task with id|leave it out/, `${name}: a lookup was not made`);
+  }
+  assert.equal(taskDeps.depsForTask(held.id).dependsOnCount, 0);
+  assert.equal(thread(held.id), 0);
+});
+
+test("no refusal a run can receive names a tool the run does not have", async () => {
+  const run = seedRun(HERE);
+  const held = file(HERE, { title: "Held by the tester" });
+  move(held, "claimed", run.runId);
+  const elsewhere = file(ELSEWHERE, { title: "Another project's open task" });
+  const missing = randomUUID();
+
+  const chatToken = chat.mintCapability({ kind: "chat", chatId: chat.createChat().id });
+  const runNames = await toolNames(run.token);
+  const lacking = (await toolNames(chatToken)).filter((n) => !runNames.includes(n));
+  assert.ok(lacking.includes("list_tasks") && lacking.includes("get_task"));
+
+  const calls: [string, Record<string, unknown>][] = [
+    ["get_my_task", { taskId: missing }],
+    ["get_my_task", { taskId: elsewhere.id }],
+    ["get_my_task", { taskId: "" }],
+    ["complete_task", { taskId: missing }],
+    ["complete_task", { taskId: elsewhere.id }],
+    ["release_task", { taskId: missing, reason: "Could not." }],
+    ["release_task", { taskId: elsewhere.id, reason: "Could not." }],
+    ["comment_on_task", { taskId: missing, body: "A note." }],
+    ["comment_on_task", { taskId: elsewhere.id, body: "A note." }],
+    ["comment_on_task", { taskId: held.id, body: "" }],
+    ["add_task_dependency", { taskId: held.id, dependsOnTaskId: missing }],
+    ["add_task_dependency", { taskId: missing, dependsOnTaskId: held.id }],
+    ["add_task_dependency", { taskId: held.id, dependsOnTaskId: held.id }],
+    ["create_task", { title: "", body: "" }],
+  ];
+  for (const [name, args] of calls) {
+    const result = await callTool(run.token, name, args);
+    assert.equal(result.isError, true, `${name} ${JSON.stringify(args)} was refused`);
+    for (const tool of lacking) {
+      assert.ok(
+        !new RegExp(`\\b${tool}\\b`).test(result.text),
+        `${name} told a run to use ${tool}, which it does not have: ${result.text}`,
+      );
+    }
+  }
+});
+
+test("where the id is the point of the call, a missing id is not told it may be left out", async () => {
+  const chatToken = chat.mintCapability({ kind: "chat", chatId: chat.createChat().id });
+  const held = file(HERE, { title: "Present on the board" });
+  const missing = randomUUID();
+
+  const calls: [string, Record<string, unknown>][] = [
+    ["get_task", { taskId: missing }],
+    ["comment_on_task", { taskId: missing, body: "A note." }],
+    ["add_task_dependency", { taskId: held.id, dependsOnTaskId: missing }],
+    ["add_task_dependency", { taskId: missing, dependsOnTaskId: held.id }],
+  ];
+  for (const [name, args] of calls) {
+    const refused = await callTool(chatToken, name, args);
+    assert.equal(refused.isError, true, name);
+    assert.ok(refused.text.includes(missing), `${name} names the id that is missing`);
+    assert.match(refused.text, /list_tasks/, name);
+    assert.doesNotMatch(refused.text, /leave it out/, `${name}: leaving it out is not a thing the tool can do`);
+  }
+});
+
+/**
+ * Both `comment_on_task` definitions say the cap in their `body` description,
+ * and the refusal for a run that holds the task says what to do instead of
+ * telling it to file a task — five refusals in four worker runs on 2026-09-26
+ * and 2026-09-27, none of which took that advice, each of which was findings
+ * about the task the run held.
+ */
+test("the comment cap is stated in both comment_on_task bodies, and a holder is not told to file a task", async () => {
+  const cap = `${comments.MAX_TASK_COMMENT.toLocaleString("en-US")} characters`;
+  const run = seedRun(HERE);
+  const chatToken = chat.mintCapability({ kind: "chat", chatId: chat.createChat().id });
+  for (const [who, token] of [
+    ["run", run.token],
+    ["chat", chatToken],
+  ] as const) {
+    const listed = (await rpc(token, "tools/list")) as {
+      tools: { name: string; inputSchema: { properties: { body?: { description: string } } } }[];
+    };
+    const tool = listed.tools.find((t) => t.name === "comment_on_task");
+    const description = tool?.inputSchema.properties.body?.description ?? "";
+    assert.ok(description.includes(cap), `${who}'s body description says ${cap}: ${description}`);
+    assert.match(description, /UTF-16/, who);
+  }
+
+  const held = file(HERE, { title: "Held, with findings" });
+  move(held, "claimed", run.runId);
+  const openHere = file(HERE, { title: "Open where the run works, not held" });
+  const thread = (taskId: string) => comments.listTaskComments(taskId, 50).total;
+  const tooLong = "x".repeat(comments.MAX_TASK_COMMENT + 1);
+
+  const holder = await callTool(run.token, "comment_on_task", {
+    taskId: held.id,
+    body: tooLong,
+  });
+  assert.equal(holder.isError, true);
+  assert.ok(holder.text.includes(String(comments.MAX_TASK_COMMENT)), holder.text);
+  assert.ok(holder.text.includes(String(tooLong.length)), "and what this one is");
+  for (const advice of [/shorten/, /split/, /repository/]) {
+    assert.match(holder.text, advice, "the holder is told what to do instead");
+  }
+  assert.doesNotMatch(holder.text, /file it as a task|task of its own/);
+  assert.equal(thread(held.id), 0);
+
+  // A note on a task the run does not hold keeps the old advice: text that long
+  // about somebody else's task is most likely work of its own.
+  const notHolder = await callTool(run.token, "comment_on_task", {
+    taskId: openHere.id,
+    body: tooLong,
+  });
+  assert.equal(notHolder.isError, true);
+  assert.match(notHolder.text, /file it as a task of its own/);
+  const fromChat = await callTool(chatToken, "comment_on_task", {
+    taskId: held.id,
+    body: tooLong,
+  });
+  assert.equal(fromChat.isError, true);
+  assert.match(fromChat.text, /file it as a task of its own/);
+
+  // The unit is UTF-16 code units: an emoji is two, so 5,001 of them is over.
+  const emoji = await callTool(run.token, "comment_on_task", {
+    taskId: held.id,
+    body: "😀".repeat(comments.MAX_TASK_COMMENT / 2 + 1),
+  });
+  assert.equal(emoji.isError, true);
+  assert.ok(emoji.text.includes(String(comments.MAX_TASK_COMMENT + 2)), emoji.text);
+  assert.equal(thread(held.id), 0);
+
+  const atCap = await callTool(run.token, "comment_on_task", {
+    taskId: held.id,
+    body: "x".repeat(comments.MAX_TASK_COMMENT),
+  });
+  assert.equal(atCap.isError, false, atCap.text);
 });
 
 test("a work cycle asking for get_task is pointed at get_my_task", async () => {
