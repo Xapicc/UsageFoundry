@@ -765,6 +765,9 @@ EXPOSE 3000
 # answers 503 when that fails; the route's own comment says what it does and
 # does not detect.
 #
+# `/usr/bin/curl` by path because Docker runs this as root, every thirty seconds,
+# under the `PATH` above that starts with the stacks' `bin/`.
+#
 # The numbers, and why:
 #
 #   --timeout=10s      the wedged-event-loop case. Nothing in the body can
@@ -812,7 +815,7 @@ EXPOSE 3000
 # `docker inspect --format '{{.State.Health.Status}}'`. Given how expensive a
 # restart is here, making that the operator's decision is the right default.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=600s --retries=5 \
-  CMD curl -fsS "http://127.0.0.1:${PORT}/api/health" > /dev/null || exit 1
+  CMD /usr/bin/curl -fsS "http://127.0.0.1:${PORT}/api/health" > /dev/null || exit 1
 
 COPY docker-entrypoint.sh /usr/local/bin/uf-entrypoint
 RUN chmod 0755 /usr/local/bin/uf-entrypoint

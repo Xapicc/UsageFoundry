@@ -78,6 +78,38 @@ export const DECLARATIONS_DIR = "/etc/uf-stacks";
 export const TOOLBOX_DIR = "/var/lib/uf-stacks";
 
 /**
+ * Every program this script runs, at the path the image installs it, and never
+ * looked up on `PATH`.
+ *
+ * The `PATH` this runs under starts with `bin/` here — the `Dockerfile`'s
+ * `ENV PATH` puts it first so a stack wins over the image — and this script runs
+ * as root. A name resolved through it on the boot after a stack linked a
+ * `chown` of its own would be that stack's code, run as root by the one process
+ * whose job is to hand every stack to root. `run()` maps a name through this
+ * table and throws on one it does not hold, so a spawn added later cannot fall
+ * back to `PATH` quietly.
+ *
+ * Measured in the runtime image on 2026-10-04: Debian's packages under
+ * `/usr/bin`, the `node` base image's `npm` under `/usr/local/bin`, and `uv`
+ * where the `Dockerfile`'s own `install -m 0755` puts it. `npm` is a
+ * `#!/usr/bin/env node` script and still finds `node` on `PATH`, which is one
+ * reason `node` is a reserved name below.
+ */
+export const TOOLS = Object.freeze({
+  chmod: "/usr/bin/chmod",
+  chown: "/usr/bin/chown",
+  cp: "/usr/bin/cp",
+  curl: "/usr/bin/curl",
+  dpkg: "/usr/bin/dpkg",
+  npm: "/usr/local/bin/npm",
+  python3: "/usr/bin/python3",
+  setpriv: "/usr/bin/setpriv",
+  sha256sum: "/usr/bin/sha256sum",
+  tar: "/usr/bin/tar",
+  uv: "/usr/local/bin/uv",
+});
+
+/**
  * What the whole run may spend, and why it is not only a per-step timeout.
  *
  * Ten stacks each timing out politely at a per-step ceiling is still a boot
@@ -209,6 +241,49 @@ const REFUSED_ENV_NAMES = new Set([
  */
 const CLAUDE_HOME = "/home/node/.claude";
 
+/**
+ * Command names no stack may link, because root runs them by name.
+ *
+ * `bin/` is first on root's `PATH` as well as every agent's, so a stack linking
+ * one of these would have its code run as root on the next boot whatever its
+ * verb — an `archive` stack included, which is otherwise worth exactly its URL.
+ * `TOOLS` takes this script off `PATH` and `GIT_BIN` takes the server off it,
+ * and neither reaches the other root processes that look these names up:
+ *
+ * - `git`, which is also the name the isolated-git rules are written against.
+ *   A stack linking it could `deny` `git commit` too, because the deny rule in
+ *   `parseStack` asks only that the first word be a name the stack links.
+ * - `node`, which `docker-entrypoint.sh` starts this script, the Discord relay
+ *   and the server by, and which `npm`'s `#!/usr/bin/env node` looks up.
+ * - `TOOLS`' names, and the rest of what `docker-entrypoint.sh` runs as root
+ *   while `UF_AGENT_UID` is set, read off it on 2026-10-04; `ps`, which winnow
+ *   runs as root on every prune; and `curl`, which the `HEALTHCHECK` ran by name.
+ *
+ * What the entrypoint runs as root only when `UF_AGENT_UID` is unset — `env`,
+ * `gh`, `python` — is not here: in that arrangement every agent is root
+ * already, and `python` is what the `python` stack exists to link. A list
+ * rather than everything the image ships, because shadowing the image is what
+ * `bin/` is first on `PATH` for; only what root runs is root's to keep. A
+ * command added to the entrypoint's root half belongs here too, and nothing
+ * fails if it is left out.
+ */
+export const RESERVED_BIN_NAMES = new Set([
+  "git",
+  "node",
+  ...Object.keys(TOOLS),
+  "awk",
+  "cat",
+  "id",
+  "mkdir",
+  "mv",
+  "ps",
+  "rm",
+  "sleep",
+  "stat",
+  "touch",
+  "tr",
+]);
+
 /* ------------------------------------------------------------------ */
 /* Parsing, which happens before anything is downloaded                */
 /* ------------------------------------------------------------------ */
@@ -280,6 +355,9 @@ export function parseStack(text, dirName) {
 
   const seenBin = new Set();
   for (const entry of bins) {
+    if (RESERVED_BIN_NAMES.has(entry.as)) {
+      return refuse(`"${entry.as}" is a reserved name: root runs it by name, so no stack may link it`);
+    }
     if (seenBin.has(entry.as)) {
       return refuse(`two install steps both link a binary called "${entry.as}"`);
     }
@@ -703,7 +781,7 @@ function pathsOwnedBy(receipt) {
  * find the interpreter it is about to write a shebang for.
  */
 function run(argv, { cwd, timeoutMs, env } = {}) {
-  const result = spawnSync(argv[0], argv.slice(1), {
+  const result = spawnSync(toolPath(argv[0]), argv.slice(1), {
     cwd,
     env: env ? { ...process.env, ...env } : undefined,
     timeout: Math.max(1, timeoutMs ?? STEP_TIMEOUT_MS),
@@ -726,18 +804,26 @@ function run(argv, { cwd, timeoutMs, env } = {}) {
   return { ok: true, stderr: "", bytes: 0 };
 }
 
+/** `TOOLS`' path for a name, or a throw: a bug here, never a stack's fault. */
+function toolPath(name) {
+  const program = Object.hasOwn(TOOLS, name) ? TOOLS[name] : undefined;
+  if (!program) throw new Error(`the applier has no image path for "${name}" and will not look it up on PATH`);
+  return program;
+}
+
 /**
  * The same argv, dropped to the uid that will never own what it writes.
  *
  * `setpriv --reuid --regid --clear-groups` is the form `docker-entrypoint.sh:147`
  * and `:218` already use. Skipped when `UF_AGENT_UID` is unset, which is the
- * arrangement whose children are root anyway.
+ * arrangement whose children are root anyway. The program is handed to
+ * `setpriv` as a path too, since `setpriv` would otherwise search `PATH` for it.
  */
 function runAsAgent(argv, options) {
   const uid = process.env.UF_AGENT_UID;
   if (!uid) return run(argv, options);
   const gid = process.env.UF_AGENT_GID || uid;
-  return run(["setpriv", `--reuid=${uid}`, `--regid=${gid}`, "--clear-groups", ...argv], options);
+  return run(["setpriv", `--reuid=${uid}`, `--regid=${gid}`, "--clear-groups", toolPath(argv[0]), ...argv.slice(1)], options);
 }
 
 function agentOwner() {
@@ -755,7 +841,7 @@ function agentOwner() {
  * names agree for the two architectures this image is built for.
  */
 function architecture() {
-  const result = spawnSync("dpkg", ["--print-architecture"], { encoding: "utf8", timeout: 5_000 });
+  const result = spawnSync(TOOLS.dpkg, ["--print-architecture"], { encoding: "utf8", timeout: 5_000 });
   const printed = (result.stdout ?? "").trim();
   if (printed) return printed;
   return process.arch === "arm64" ? "arm64" : "amd64";
