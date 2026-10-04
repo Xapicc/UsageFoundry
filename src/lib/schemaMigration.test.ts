@@ -663,3 +663,78 @@ describe("a plan_observations table left by an install that predates the drop", 
     assert.equal(exists(again, "settings"), true);
   });
 });
+
+/**
+ * `startWorkflow` stamped a scheduled instance's own row `schedule`, but until
+ * `INSTANCE_COLUMNS` selected those columns every run created *after* it
+ * returned — a plain node behind an orchestrator or merge block, a loop pass
+ * member — read `workflow` with the instance id as its reference. The code is
+ * fixed for new rows; these are the rows already written. The migration
+ * rewrites an audit column, so what matters is as much what it leaves alone as
+ * what it changes: a manual instance's member really was a press of Run, and an
+ * instance from before the column existed has no origin to correct from.
+ */
+describe("runs mis-stamped 'workflow' inside a scheduled instance", () => {
+  const SCHEDULE = "sched-nightly";
+
+  function seedRuns(db: Database.Database) {
+    db.exec("DELETE FROM runs");
+    db.exec("DELETE FROM workflow_instances");
+    db.exec("DELETE FROM workflows");
+    db.prepare(
+      "INSERT INTO workflows (id, name, graph, created_at, updated_at) VALUES ('w1', 'Nightly', '{}', 1, 1)",
+    ).run();
+    const instance = db.prepare(
+      `INSERT INTO workflow_instances
+         (id, workflow_id, workflow_name, graph, created_at, status, origin, origin_ref)
+       VALUES (?, 'w1', 'Nightly', '{}', 1, 'started', ?, ?)`,
+    );
+    instance.run("inst-sched", "schedule", SCHEDULE);
+    instance.run("inst-manual", "workflow", "inst-manual");
+    instance.run("inst-legacy", null, null);
+
+    const run = db.prepare(
+      `INSERT INTO runs
+         (id, folder, prompt, status, budget, created_at, origin, origin_ref)
+       VALUES (?, '/f', 'p', 'queued', '{}', 1, ?, ?)`,
+    );
+    run.run("r-sched-late", "workflow", "inst-sched");
+    run.run("r-sched-block", "orchestrator-block", "node-1");
+    run.run("r-sched-pass", "schedule", SCHEDULE);
+    run.run("r-manual", "workflow", "inst-manual");
+    run.run("r-legacy", "workflow", "inst-legacy");
+    run.run("r-form", "form", null);
+  }
+
+  function origins(db: Database.Database) {
+    return db
+      .prepare("SELECT id, origin, origin_ref FROM runs ORDER BY id")
+      .all() as { id: string; origin: string | null; origin_ref: string | null }[];
+  }
+
+  it("is rewritten to the schedule, and nothing else is", () => {
+    seedRuns(dbMod.db());
+
+    const db = reboot();
+
+    assert.deepEqual(origins(db), [
+      { id: "r-form", origin: "form", origin_ref: null },
+      { id: "r-legacy", origin: "workflow", origin_ref: "inst-legacy" },
+      { id: "r-manual", origin: "workflow", origin_ref: "inst-manual" },
+      { id: "r-sched-block", origin: "orchestrator-block", origin_ref: "node-1" },
+      { id: "r-sched-late", origin: "schedule", origin_ref: SCHEDULE },
+      { id: "r-sched-pass", origin: "schedule", origin_ref: SCHEDULE },
+    ]);
+  });
+
+  it("changes nothing the second time, so every later boot is a no-op", () => {
+    seedRuns(dbMod.db());
+    const once = origins(reboot());
+    const twice = origins(reboot());
+    assert.deepEqual(twice, once);
+    assert.equal(
+      once.find((r) => r.id === "r-sched-late")?.origin_ref,
+      SCHEDULE,
+    );
+  });
+});

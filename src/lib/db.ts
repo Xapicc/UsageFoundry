@@ -1682,7 +1682,8 @@ function migrate(db: Database.Database) {
   // Written once, by `createRun`, and never rewritten — `origin` answers "which
   // route created this", so a query grouped by it over a time range has to keep
   // meaning that. Picking a finished run up again is a different act and gets
-  // `reopened_at` below rather than overwriting this.
+  // `reopened_at` below rather than overwriting this. The single exception is
+  // the one-off correction after the instance columns below.
   //
   // Plain columns, `emitted_by`'s rule: a proposal id or an instance id here is
   // a record of where a run came from and must keep reading true after that row
@@ -1744,6 +1745,32 @@ function migrate(db: Database.Database) {
   // the schedule's.
   addColumn(db, "workflow_instances", "origin", "TEXT");
   addColumn(db, "workflow_instances", "origin_ref", "TEXT");
+
+  // The one correction ever made to `runs.origin` after the fact, and the only
+  // rewrite of it that should exist. Until `INSTANCE_COLUMNS` selected the
+  // instance's own `origin`, every run a *scheduled* instance created after
+  // `startWorkflow` returned — a node behind an orchestrator or merge block, a
+  // loop pass member — was written `workflow` with the instance id as its
+  // reference, so the run page told the operator a person had pressed Run for
+  // work nobody was there for. In such an instance no member can legitimately
+  // read `workflow` (the pass creator writes `schedule`, a block's emissions
+  // `orchestrator-block`), so this join selects exactly the wrong rows.
+  //
+  // It keys on the instance's *own* `origin = 'schedule'` and nothing looser:
+  // an instance whose origin is NULL predates the column and really was a press
+  // of Run, and a `workflow` one was too. Idempotent because the rows it writes
+  // no longer match its WHERE, so every later boot changes nothing — which is
+  // also why it needs no `SCHEMA_VERSION` bump and no transaction (one
+  // statement).
+  db.exec(`
+    UPDATE runs
+       SET origin = 'schedule',
+           origin_ref = (SELECT i.origin_ref FROM workflow_instances i
+                          WHERE i.id = runs.origin_ref)
+     WHERE origin = 'workflow'
+       AND origin_ref IN (SELECT id FROM workflow_instances
+                           WHERE origin = 'schedule')
+  `);
 
   // Mutating HTTP requests: what was asked, of what, by whom, from where.
   //
