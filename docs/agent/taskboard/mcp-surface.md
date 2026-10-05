@@ -122,6 +122,42 @@ carry is `get_task`'s, refs rather than briefs: a dependency in another folder i
 named by id, title and status, as `waitingFor` on `held` already names it, and
 `get_my_task` on that id is refused like any other.
 
+**An id that is not shaped like one is refused for its shape, before any lookup,
+in every board tool that takes one — and no refusal names a tool the caller does
+not have.** A task id is a lowercase UUID, 36 characters, and what callers sent
+was its first eight: all 31 `No task with id` refusals in the transcripts of
+2026-09-09 to 2026-09-25 named a real task's first eight hex digits, and of 226
+`get_my_task` calls from 2026-09-27 to 2026-10-01, the two refused were 8-character
+prefixes copied out of an opening brief — both for tasks the run could read, and
+both told the task was out of scope, which sent them to re-read a list whose ids
+were never the problem. `taskIdShapeRefusal` in `tasks.ts` is asked first by
+`malformedTaskId` in the route: the run's `get_my_task`, `complete_task`,
+`release_task`, `comment_on_task` and `add_task_dependency`, and the chat's
+`get_task`, `comment_on_task` and `add_task_dependency`. It says "94ec87a2 is 8
+characters; a task id is 36" and nothing about the board, and that is why it does
+not weaken the one-sentence rule above: it is the same for every id of that length
+on every install, so it tells a prober nothing. A shortened id is **never
+resolved** to a task, the way git resolves a short hash — which task a prefix
+meant is a guess, and this surface writes. The pointer at the end of the sentence
+is the tool the *subject has*: `list_my_tasks` for a run, `list_tasks` for a chat.
+**No refusal a run can receive may name a tool a run lacks** — `list_tasks`,
+`get_task`, `list_folders` — and `taskRefusal`, whose sentence says "Call
+list_tasks", is therefore reached only from a chat or an emission; the route's
+test sweeps a run's refusals against the tools its list lacks. Where the id is
+the point of the call (`get_task`, `comment_on_task`, `add_task_dependency`),
+`taskRefusal` is called with `mayOmit: false` and drops "or leave it out — a run
+that names no task is the ordinary run", which is true of a proposal's `taskIds`
+and meaningless anywhere else. **Not covered yet:** the
+`taskIds`/`relatedTaskIds` lists on `propose_run` and an emission, which only an
+orchestrator subject has and which still answer a prefix with `taskRefusal`'s
+"not on the board", and `create_task`'s `parentTaskId`, which a run's door drops
+quietly when it names nothing — a prefix there files the task with no parent. The briefs that carried the short ids are written
+by an orchestrator, so both orchestrator prompts (`systemPrompt` in `chat.ts`,
+`blockSystemPrompt` in `workflows.ts`) and the `task` and `taskIds` descriptions
+on `propose_run` and `emit_runs` tell the writer to name a board task by its full
+id. `readTaskLinks` still *detects* a brief naming a task by its first eight
+characters — that is the second line, and the instruction is the first.
+
 **The run id comes from the token and never from the call, and that sentence is
 the entire authorisation of this surface.** `CapabilitySubject` gained a third
 arm, `{ kind: "run"; runId }`, and it is the one whose id is load-bearing rather

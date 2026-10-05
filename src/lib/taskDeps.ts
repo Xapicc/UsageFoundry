@@ -233,7 +233,19 @@ export function allTaskDeps(): TaskDepPair[] {
  * is nothing to record and nothing to refuse on: what is gated is **removal**,
  * and it is gated by there being exactly one door for it.
  */
-export function addTaskDep(taskId: string, dependsOn: string): TaskDepWriteResult {
+export function addTaskDep(
+  taskId: string,
+  dependsOn: string,
+  /**
+   * What a loop refusal calls a task, for a caller that may not be shown every
+   * title on the board. A loop can run through tasks the caller has no right to
+   * read, and the default names them all.
+   */
+  describe: (id: string) => string = (id) => {
+    const task = getTask(id);
+    return task ? `“${task.title}”` : id;
+  },
+): TaskDepWriteResult {
   if (!getTask(taskId)) {
     return { ok: false, kind: "missing", error: "No such task." };
   }
@@ -241,10 +253,7 @@ export function addTaskDep(taskId: string, dependsOn: string): TaskDepWriteResul
     return { ok: false, kind: "missing", error: "No such task to depend on." };
   }
 
-  const refusal = taskDepRefusal(taskId, dependsOn, allTaskDeps(), (id) => {
-    const task = getTask(id);
-    return task ? `“${task.title}”` : id;
-  });
+  const refusal = taskDepRefusal(taskId, dependsOn, allTaskDeps(), describe);
   if (refusal) return { ok: false, kind: "refused", error: refusal };
 
   const written = db()

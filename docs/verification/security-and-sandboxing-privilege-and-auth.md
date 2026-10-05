@@ -121,6 +121,21 @@
   read from the debug line, not seen as a missing file. The probe set the
   variable by hand rather than through the app's builders.
 
+- **Work cycles spawned by the deployed app open no peer inbox and are not
+  offered `ListAgents`, on 2.1.280, 2026-10-04.** Read from a live cycle's own
+  Bash, where `printenv CLAUDE_CODE_HARBOR_KITE` said `0`. `find /tmp/cc-socks
+  -maxdepth 1 -type s | wc -l` said `0`, and `ls -la /tmp/cc-socks/` said "No
+  such file or directory". The sandbox sees the real `/tmp`, because this
+  session's own `/tmp/claude-1000/…` directory showed there. The task's step-2
+  `jq` loop read 13 `sdk-cli` records. It said `none` for all 6 started
+  2026-10-04T23:42:42Z on 2.1.280: pids 1151–1156, which carry no
+  `messagingSocketPath` key, though they keep `peerProtocol: 1`. This cycle is
+  pid 1154, matched by `CLAUDE_CODE_SESSION_ID`. The 7 records naming a socket
+  started 2026-09-07 to 09-11 on 2.1.260 in other pid namespaces, and those
+  sockets are gone. `ToolSearch select:ListAgents` found no such tool, while
+  `SendMessage` is still offered as a deferred tool. Caveat: all six cycles came
+  through `childEnv`, so `chatEnv`, `reviewEnv` and `authEnv` were not seen live.
+
 ## Not yet verified by hand
 
 - **What an authenticated work cycle replaces under `~/.claude` is unwatched,
@@ -267,18 +282,12 @@
   The refresh token was never spent under the old read-only layout, so an install
   that stopped authenticating recovers the login on the first boot with this mode.
 
-- **That a live work cycle opens no inbox and is not offered `ListAgents`,
-  after the change to every env that spawns `claude`.** The probe in *Verified*
-  ran inside the Bash sandbox, which refuses `AF_UNIX`, and did not go through
-  the app's own spawn. Settle in the deployed container while runs are live.
-  Reading both places works from a work cycle's Bash, because only creating a
-  socket is refused there. `ls -la /tmp/cc-socks/` must hold no socket for any
-  `sdk-cli` session.
+- **That a chat turn, a review and `claude auth login` open no inbox under the
+  variable.** *Verified* above saw only work cycles, which `childEnv` spawns.
+  No child of `chatEnv`, `reviewEnv` or `authEnv` was live at the time. Settle
+  while one of each runs: its pid must not appear in `ls /tmp/cc-socks/`, and
   `jq -r 'select(.entrypoint=="sdk-cli") | "\(.pid) \(.messagingSocketPath // "none")"' ~/.claude/sessions/*.json`
-  must name no socket. On the build before this change, read 2026-10-01 from a
-  work cycle's Bash, all 12 `sdk-cli` records named a socket and 5 of those
-  sockets existed. A run asked to call `ListAgents` must report that it has no
-  such tool.
+  must say `none` for it, if it writes a record at all.
 
 - **The receiving side of a peer message (U1), and `SendMessage` refusing a
   live peer under the variable.** Not runnable inside the Bash sandbox, for the
