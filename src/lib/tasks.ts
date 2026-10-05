@@ -883,6 +883,26 @@ export function readTaskLinks(
     };
   }
 
+  // The shape first, for `taskIdShapeRefusal`'s reason: an id cut to its first
+  // eight characters is on no row, and `taskRefusal` would say it is not on the
+  // board, which sends the writer to re-read a list whose ids were never the
+  // problem. Both callers are orchestrators with `list_tasks`, so the pointer
+  // names it.
+  const lists = [
+    ["taskIds", taskIds.ids],
+    ["relatedTaskIds", related.ids],
+  ] as const;
+  for (const [field, ids] of lists) {
+    for (const id of ids) {
+      const malformed = taskIdShapeRefusal(id);
+      if (malformed) {
+        return {
+          ok: false,
+          reason: `${field}: ${malformed} Copy the full id from list_tasks or get_task.`,
+        };
+      }
+    }
+  }
   for (const id of [...taskIds.ids, ...related.ids]) {
     const problem = taskRefusal(id, knowledge);
     if (problem) return { ok: false, reason: problem };
