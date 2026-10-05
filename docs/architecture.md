@@ -53,6 +53,11 @@ src/lib/
                    their only reader. Pure and client-safe, over the events the
                    run page already holds: no route, no poll, no new column.
                    Never a sub-agent delegation, which is its own event kind
+  backgroundWork.ts  what a work cycle does with the background sub-agents it
+                   starts: the ceiling on the CLI's wait for them, derived from
+                   what is left of the run's time limit, and the note the next
+                   cycle opens with when the CLI stopped any. Pure, over
+                   `runTasks.ts`'s reducer and `budget.ts`'s worked clock
   fileCostNotice.ts  what a `Read` of this repository's largest files costs,
                    generated once at `createRun` and frozen on the row, because
                    the appended prompt is part of the cached prefix

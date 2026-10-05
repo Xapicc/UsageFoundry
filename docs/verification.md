@@ -26,8 +26,9 @@ measurement under *Verified* and cut the item down to what is still open.
 | Area | File | Verified | Not yet verified |
 |---|---|--:|--:|
 | Metering and cost | [metering-and-cost.md](verification/metering-and-cost.md) | 23 | 12 |
-| Budgets and guards | [budgets-and-guards.md](verification/budgets-and-guards.md) | 7 | 4 |
+| Budgets and guards | [budgets-and-guards.md](verification/budgets-and-guards.md) | 9 | 4 |
 | Run lifecycle | [run-lifecycle.md](verification/run-lifecycle.md) | 24 | 31 |
+| Run lifecycle | [run-lifecycle-background-work.md](verification/run-lifecycle-background-work.md) — a work cycle's wait for background tasks, and what stopping one tells the next cycle | 4 | 3 |
 | Context control | [context-control-pruning.md](verification/context-control-pruning.md) — pruning, compaction and the context ceiling | 21 | 12 |
 | Context control | [context-control-intake-filter.md](verification/context-control-intake-filter.md) — the intake filter and its ledger | 8 | 4 |
 | Context control | [context-control-occupancy-and-composition.md](verification/context-control-occupancy-and-composition.md) — the occupancy and composition series | 8 | 5 |
@@ -58,4 +59,4 @@ measurement under *Verified* and cut the item down to what is still open.
 | Interface | [interface-narrow-viewports.md](verification/interface-narrow-viewports.md) — pages at 390px, layout sweeps and smoke-pages | 15 | 9 |
 | Interface | [interface-canvases.md](verification/interface-canvases.md) — the graph canvases, touched map and replay | 5 | 2 |
 | Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads | 20 | 12 |
-| **Total** | | **402** | **256** |
+| **Total** | | **408** | **259** |

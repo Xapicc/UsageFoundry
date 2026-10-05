@@ -37,6 +37,7 @@ Nineteen are renderings rather than functions — every `*.test.tsx` in the tree
 
 | Test file | Also in |
 |---|---|
+| `backgroundWork.test.ts` |  |
 | `cycleDeadline.test.ts` |  |
 | `resumeControl.test.ts` |  |
 

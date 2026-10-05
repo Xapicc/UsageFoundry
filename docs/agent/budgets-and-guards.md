@@ -18,6 +18,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - Every one of those three bounds is a bound on a count of cycles, so the run's own spending limit is enforced somewhere else as well — inside the CLI.
 - `run_cost`/`run_tokens` are live only because telemetry makes them live — this is the one place OTLP feeds a budget decision.
 - A guard whose input is optional is not a guard, so the input stops being optional.
+- A cycle that is only waiting on its background sub-agents is bound by three of these guards and not by the rest, and the duration limit is the one the CLI's wait ceiling has to carry (`run-lifecycle/background-work.md`).
 - A cycle cut short by a pause is refunded to the counter.
 
 ## [Concurrency caps and the install's rolling limit](budgets-and-guards/concurrency-and-install-ceiling.md)

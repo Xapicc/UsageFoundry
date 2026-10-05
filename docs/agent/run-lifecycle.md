@@ -79,6 +79,13 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - A run is told to delegate, and the instruction has a floor in it.
 - A run is told a browser is already here, because the command it reaches for from memory is the one thing that does not work.
 
+## [What a work cycle does with background tasks](run-lifecycle/background-work.md)
+
+- In `-p` mode the CLI keeps its process alive after the agent ends its turn for as long as a background sub-agent is running, and kills the lot when its own ceiling passes — so the ceiling is set per cycle, and it is a guard rather than a tuning knob.
+- Which guards bind while the CLI sits idle waiting, under `between-cycles`, and which do not — measured where the table says so, otherwise read from code.
+- When a cycle ends with background tasks the CLI stopped, the next cycle's prompt says so, names them, and gives their output files.
+- What this does not do.
+
 ## [Outbound notifications](run-lifecycle/notifications.md)
 
 - A run ending can leave the machine, and where that sink attaches is the whole of its data-minimisation argument.

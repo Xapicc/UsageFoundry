@@ -35,6 +35,34 @@
   the 5-hour window only under `live-resume` and never on the weekly, and
   blocks on reconciled spend that `spent_usd` alone would miss.
 
+- **`--max-budget-usd` binds while the CLI waits on background sub-agents,
+  2026-10-05.** Host `claude` 2.1.280 against a local stub Messages server with
+  a fake key, a background sub-agent whose first response the stub priced at
+  about $1.00, `--max-budget-usd 0.50` and the wait ceiling at `0`. 5.2 s in,
+  when that response landed, stderr printed `Budget limit reached ($1.00 of
+  $0.5); stopping background agents.`, the task was killed (`task_updated
+  killed`, `task_notification stopped`) and the cycle ended with a `result` whose
+  subtype was `success`, `total_cost_usd` 1.0009 and exit 0 — **not**
+  `error_max_budget_usd`, so `buildArgs`' branch for that subtype does not see
+  this ending and the pre-cycle `run_cost` check is what stops the run. When
+  the *main* thread's own turn crossed the cap the result was
+  `error_max_budget_usd`, `is_error` true, exit 1, and the background agent was
+  killed with the same stderr line. Caveat: stub-reported usage priced by the
+  CLI, so it shows the flag is honoured on `-p` and that sub-agent spend counts,
+  not what a real cycle overshoots by; the stub's second sub-agent request was
+  already in flight and was not billed.
+
+- **An idle wait for a background sub-agent writes nothing to stdout or stderr,
+  2026-10-05.** The same stub with the ceiling at `0` and a sub-agent that made
+  no tool calls: the largest gap between lines was 69.98 s in a 70 s run and
+  139.9 s in a 140 s one — no heartbeat and no `task_progress`. A sub-agent that
+  is making tool calls prints a `task_progress` and its own assistant and tool
+  lines at each one, which is what keeps `cycleSilenceMs`'s clock from running
+  down. So the silence deadline does bind during a quiet wait, and ends the
+  cycle `failed`, not through the CLI's own ceiling. Not measured: a sub-agent
+  inside one long real Bash call, because the CLI's Bash tool could not start in
+  the sandbox this ran in.
+
 ## Not yet verified by hand
 
 - **The process budget has never refused a real child in a browser, nor
@@ -43,9 +71,10 @@
   something slow and a chat turn; the block should wait, then start as the
   chat settles.
 
-- **A work cycle stopping at its `--max-budget-usd` ceiling.** The argv is
-  unit tested; no billed cycle has hit it, so whether the CLI honours it on
-  `-p` and how far a cycle overshoots are reasoned, not measured.
+- **A billed work cycle stopping at its `--max-budget-usd` ceiling.** The argv
+  is unit tested and the CLI honours the flag on `-p` against a stub (the entry
+  above), but no billed cycle has hit it, so how far a real cycle overshoots is
+  reasoned, not measured.
 
 - **A conflict resolution stopping at `resolutionBudgetUSD` (added
   2026-09-27).** `resolutionBudget.test.ts` asserts the argv against a stub
