@@ -520,6 +520,25 @@ export function cycleCapReason(maxIterations: number, granted: number): string {
   return `Used all ${maxIterations + granted} work cycles allowed for this run: the ${maxIterations} it was given and ${granted} more the check on its task granted.`;
 }
 
+/**
+ * The milliseconds a run has worked: the wall clock since it started, less every
+ * park. The one definition, because the duration guard below and the wait ceiling
+ * `backgroundWork.ts` derives from its remainder have to agree on what "used" is
+ * — a ceiling measured against a different clock lets a cycle outlive the very
+ * limit it was computed from, or ends one that the guard would have let finish.
+ *
+ * Floored at zero rather than trusting `pausedMs`: a park total larger than the
+ * span is a bug in the accumulator, and letting it run the clock backwards would
+ * turn the terminus off.
+ */
+export function workedMs(
+  startedAt: number | null,
+  pausedMs: number | undefined,
+  now: number,
+): number {
+  return startedAt ? Math.max(0, now - startedAt - (pausedMs ?? 0)) : 0;
+}
+
 export function evaluateBudget(
   policy: BudgetPolicy,
   snapshot: UsageSnapshot,
@@ -539,9 +558,7 @@ export function evaluateBudget(
   // on how long a run may exist: a run that parks repeatedly can outlive its cap
   // in wall clock by however long the windows kept it waiting. `maxIterations`
   // is the terminus that did not move.
-  const elapsedMinutes = progress.startedAt
-    ? Math.max(0, now - progress.startedAt - (progress.pausedMs ?? 0)) / 60_000
-    : 0;
+  const elapsedMinutes = workedMs(progress.startedAt, progress.pausedMs, now) / 60_000;
 
   // Both read the guard figure rather than the reported one, for the same
   // reason the window meters below do: what the run page shows should be what
