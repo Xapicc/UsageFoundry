@@ -100,6 +100,19 @@ const TERMINAL_STATUS: Record<string, RunTaskState> = {
 
 const SYSTEM_PREFIX = "system:";
 
+/**
+ * The stored `message` of every event `runTasks` reads, so a caller selecting
+ * rows out of the database asks for these and not for the cycle's thousands of
+ * others. Kept beside the `switch` below: a subtype added there and not here
+ * is a reader that quietly never sees it.
+ */
+export const TASK_LIFECYCLE_MESSAGES = [
+  "task_started",
+  "background_tasks_changed",
+  "task_updated",
+  "task_notification",
+].map((subtype) => `${SYSTEM_PREFIX}${subtype}`);
+
 interface Draft extends RunTask {
   /** The first event mentioning this task, which is the list's order. */
   firstSeenAt: number;

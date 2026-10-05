@@ -172,10 +172,18 @@ import {
   type QueueBlockerDTO,
   type RunDependencyDTO,
   type RunProviderDTO,
+  type RunEventDTO,
   type RunTaskDTO,
   type RunToolActivityDTO,
   type SandboxStateDTO,
 } from "./apiTypes";
+import {
+  BACKGROUND_WAIT_ENV,
+  backgroundWaitCeiling,
+  operatorBackgroundWait,
+  stoppedTasksNotice,
+} from "./backgroundWork";
+import { TASK_LIFECYCLE_MESSAGES } from "./runTasks";
 import {
   STDERR_TAIL_LIMIT,
   clipReason,
@@ -1401,6 +1409,67 @@ export function runEvents(
     })),
     dropped: limit ? Math.max(0, total - rows.length) : 0,
   };
+}
+
+/**
+ * What the run's previous work cycle ended with that its next one has to be
+ * told: background tasks the CLI stopped, from `stoppedTasksNotice`.
+ *
+ * Read off the log rather than carried in the loop's frame, which is how
+ * `pendingPushback` travels and is the wrong shape here. A verdict is produced
+ * at a boundary and consumed at the very next spawn, so dropping it with the
+ * frame costs nothing; this is a fact about work that is gone, and the frame is
+ * exactly what a park, a refusal's wait or a restart between two cycles
+ * discards while the agent's conversation, which still believes the tasks are
+ * running, survives.
+ *
+ * The previous cycle is everything after the run's latest `iteration` event,
+ * which is written when a cycle's prompt is built and before it spawns, so at
+ * the call that builds the next prompt it is still the cycle that just ended.
+ * The same boundary is what delivers a note once: the next `iteration` event
+ * moves it. `ORDER BY id DESC LIMIT 1` rather than `MAX(id)`, because with a
+ * `kind` filter beside the index's `run_id` SQLite reads every event the run
+ * has ever written for the answer, and the reverse walk stops at the last
+ * cycle's.
+ *
+ * Only the four subtypes `runTasks` reads, so a cycle's thousands of other rows
+ * are never parsed. A reader that throws here would end a run over a note, so
+ * a row that does not parse is skipped and the run is told nothing — the state
+ * it was in before this existed.
+ */
+export function previousCycleStoppedTasksNotice(runId: string): string | null {
+  const last = db()
+    .prepare(
+      "SELECT id FROM run_events WHERE run_id = ? AND kind = 'iteration' ORDER BY id DESC LIMIT 1",
+    )
+    .get(runId) as { id: number } | undefined;
+  const rows = db()
+    .prepare(
+      "SELECT id, ts, payload FROM run_events WHERE run_id = ? AND id > ? AND kind = 'log'" +
+        " AND json_extract(payload, '$.message') IN (" +
+        TASK_LIFECYCLE_MESSAGES.map(() => "?").join(", ") +
+        ") ORDER BY id",
+    )
+    .all(runId, last?.id ?? 0, ...TASK_LIFECYCLE_MESSAGES) as {
+    id: number;
+    ts: number;
+    payload: string;
+  }[];
+  const events: RunEventDTO[] = [];
+  for (const row of rows) {
+    try {
+      events.push({
+        id: row.id,
+        runId,
+        ts: row.ts,
+        kind: "log",
+        payload: JSON.parse(row.payload) as Record<string, unknown>,
+      });
+    } catch {
+      continue;
+    }
+  }
+  return stoppedTasksNotice(events);
 }
 
 export function subscribe(
@@ -6185,6 +6254,21 @@ export function sandboxArgsFor(scope: SandboxScope): string[] {
  * finding, and `docs/verification/` has the measurement against the pin. It
  * is the CLI's internal name, so a pin bump re-checks it there.
  *
+ * A second variable is set, by one caller and for one kind of child: a Claude
+ * Code work cycle's `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`, handed to `childEnv`
+ * as an extra by `runIteration`. In `-p` mode the CLI keeps its process alive
+ * after the agent ends its turn while a background sub-agent runs, and kills it
+ * at ten minutes — which took four sub-agents, 210k–250k tokens each, and a
+ * whole cycle of findings with it in run `350ef202`. The value is what is left
+ * of the run's `maxDurationMinutes` and `0` (wait without limit) when none is
+ * set, so the one guard that does not bind while the CLI sits idle is the one the
+ * ceiling carries. It is an extra and not a constant here because it differs per
+ * cycle, and it is not on the chat, reviewer or land-gate copies of this list:
+ * none of them starts a background sub-agent, and a chat turn's pipe lifetime is
+ * a separate problem. `backgroundWork.ts` has the reasoning and which guards
+ * bind during the wait; the server's own value for it, if any, is left alone and
+ * reported on the run's log.
+ *
  * Everything else passes through. The CLI needs PATH, HOME, CLAUDE_CONFIG_DIR,
  * proxy and CA settings, and locale to function at all, so an allowlist would
  * fail in ways that are tedious to diagnose from inside a container.
@@ -6788,6 +6872,11 @@ export function runIteration(
   // it is defaulted: omitting it measures from zero, which is right for a
   // child that resumed nothing and overstates only the feed for one that did.
   resumedLedger: IterationResult["resumedLedger"] = null,
+  // `backgroundWaitCeiling`'s answer for this cycle: the value for the CLI's wait
+  // on its background sub-agents. Null leaves the CLI's own 600 seconds, which
+  // is what a Codex cycle gets (the variable is Claude Code's) and what a call
+  // site that says nothing gets — the old behaviour rather than a guess.
+  backgroundWaitMs: string | null = null,
 ): Promise<IterationResult> {
   return new Promise((resolve) => {
     // Before the spawn and not before the run, because what has to be true is
@@ -6839,6 +6928,7 @@ export function runIteration(
     const env = childEnv({
       ...telemetryEnv(runId, telemetryRequired),
       ...agentGitEnv(githubToken, excludes.path),
+      ...(backgroundWaitMs === null ? {} : { [BACKGROUND_WAIT_ENV]: backgroundWaitMs }),
     });
     const cli = spawnCommand(adapter.bin, args);
     const child: AgentProcess = spawn(cli.command, cli.args, {
@@ -9434,6 +9524,20 @@ export async function startRun(id: string): Promise<void> {
       );
     }
 
+    // Same cadence and same reason as the line above: the server's own value
+    // wins over the app's rule, and nothing else would say a run's agent waits
+    // for its sub-agents for a length of time nobody set on the run.
+    const operatorWait = operatorBackgroundWait(process.env);
+    if (operatorWait !== null && run.provider !== "codex") {
+      log(
+        id,
+        `${BACKGROUND_WAIT_ENV}=${operatorWait} is set on this container, so each ` +
+          "work cycle waits that long for its background sub-agents and this app does " +
+          "not shorten it to the run's time limit.",
+        { backgroundWaitEnv: operatorWait },
+      );
+    }
+
     for (;;) {
       const preScan = interrupts.get(id);
       if (preScan) {
@@ -9714,6 +9818,10 @@ export async function startRun(id: string): Promise<void> {
         // buys one cycle and says its piece into that cycle, and a run that
         // parks or crashes after this point has already had it delivered.
         validation: pendingPushback,
+        // Read for a Claude Code cycle only: a Codex cycle's stream has no such
+        // events, so the answer would be null at the price of a query.
+        backgroundNotice:
+          run.provider === "codex" ? null : previousCycleStoppedTasksNotice(id),
         // Read off the same policy the loop's own exits read, so the promise
         // the opening prompt makes and the rule that ends the run cannot drift:
         // `continueAfterDone` is the flag at 6862 that sends a DONE agent back
@@ -10092,6 +10200,18 @@ export async function startRun(id: string): Promise<void> {
           resumeTarget !== null && sessionCostUSD !== null
             ? { sessionId: resumeTarget, costUSD: sessionCostUSD }
             : null,
+          // Worked out at the spawn, where the remainder of a time limit is
+          // known, and never for Codex, whose CLI has no such wait. `startedAt`
+          // and `pausedMs` are the very figures the duration guard reads.
+          run.provider === "codex"
+            ? null
+            : backgroundWaitCeiling({
+                operatorValue: operatorBackgroundWait(process.env),
+                maxDurationMinutes: policy.maxDurationMinutes,
+                startedAt,
+                pausedMs,
+                now: Date.now(),
+              }).value,
         );
       } finally {
         liveGuards.delete(id);

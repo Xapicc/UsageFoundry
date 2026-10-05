@@ -205,3 +205,56 @@ describe("a work cycle that stops producing output", () => {
     );
   });
 });
+
+/**
+ * That `runIteration` hands the CLI the ceiling it was given, and nothing when it
+ * was given none.
+ *
+ * Here and not beside `childEnv`'s cases because the fault this pins is one hop
+ * further on: `childEnv` taking an extra is a fact about a function, and the
+ * ceiling reaching a *spawned process* is the claim — a parameter dropped between
+ * `runIteration`'s signature and its `spawn` leaves every case beside `childEnv`
+ * green and every cycle on the CLI's own ten minutes, which kills four
+ * sub-agents' worth of work with nothing on any page to say why. The child is
+ * the same real Node on an inline script this file already uses, printing what
+ * its environment holds.
+ */
+describe("a work cycle's wait for its background tasks", () => {
+  const KEY = "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS";
+  const REPORTS = [
+    "-e",
+    `console.error("ceiling=" + (process.env.${KEY} ?? "unset"))`,
+  ];
+  const previous = process.env[KEY];
+  before(() => {
+    delete process.env[KEY];
+  });
+  after(() => {
+    if (previous === undefined) delete process.env[KEY];
+    else process.env[KEY] = previous;
+  });
+
+  const spawnWith = (backgroundWaitMs: string | null) =>
+    orchestrator.runIteration(
+      insertRun(),
+      workspace,
+      REPORTS,
+      orchestrator.selectCycleAdapter(null),
+      false,
+      60_000,
+      () => {},
+      "",
+      null,
+      null,
+      backgroundWaitMs,
+    );
+
+  it("puts the ceiling in the child's environment", async () => {
+    assert.match((await spawnWith("1234")).stderrTail, /ceiling=1234\b/);
+    assert.match((await spawnWith("0")).stderrTail, /ceiling=0\b/);
+  });
+
+  it("leaves the CLI's own default alone when none is given", async () => {
+    assert.match((await spawnWith(null)).stderrTail, /ceiling=unset\b/);
+  });
+});

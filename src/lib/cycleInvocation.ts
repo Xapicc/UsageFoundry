@@ -263,6 +263,24 @@ export function nextPrompt(o: {
    */
   validation: string | null;
   /**
+   * Background tasks the previous cycle ended with stopped, from
+   * `stoppedTasksNotice`, or null.
+   *
+   * **A statement of fact placed ahead of the instruction, never in place of
+   * it.** `continuation` is the operator's own editable text and a template may
+   * carry its own, so this is joined to whichever of the three reply prompts
+   * applies rather than substituted for one — an agent told only that its
+   * sub-agents are dead has no instruction, and one told only to continue waits
+   * on them. Ahead of it so the instruction is the last thing read before the
+   * agent answers.
+   *
+   * Not on the operator's own note: `followUp` is sent verbatim, and appending
+   * a machine's text to words a person typed is the one edit that promise
+   * forbids. The operator who typed it picked the run up from its log, which
+   * names the tasks.
+   */
+  backgroundNotice: string | null;
+  /**
    * Whether replying DONE can actually end this run.
    *
    * False for `maxIterations === 1`, where the cycle cap ends it either way and
@@ -291,6 +309,10 @@ export function nextPrompt(o: {
       // without a session has to read what it was asked for before it reads
       // what a reader could not find in what it did.
       o.validation,
+      // The same slot for the same reason: this conversation is new, so what the
+      // agent has been told about the last one is all it will ever know of it,
+      // and its partial output is on disk whether or not anything says so.
+      o.backgroundNotice,
       // Last, so it is the most recent thing in the opening context and so it
       // reads as a statement about the task above rather than a preamble to it.
       o.endsOnDone ? COMPLETION_NOTICE : null,
@@ -315,12 +337,15 @@ export function nextPrompt(o: {
   // Above the pushback and the continuation, because it is the most specific
   // thing this app knows about the cycle it is opening: "carry on" and "you said
   // DONE, carry on anyway" are both true and neither says what is missing.
-  if (o.validation) return `${o.validation}\n\n${NEEDS_REVIEW_NOTICE}`;
+  const background = o.backgroundNotice ? `${o.backgroundNotice}\n\n` : "";
+  if (o.validation) {
+    return `${background}${o.validation}\n\n${NEEDS_REVIEW_NOTICE}`;
+  }
   // On both, not on cycle 1 alone. `COMPLETION_NOTICE`'s own docblock names the
   // failure this avoids: an agent on cycle 5 that has been re-told about DONE
   // four times and about this once, on a turn that has scrolled out of reach,
   // has been told there is one ending.
-  return `${o.justRetriggered ? o.donePushback : o.continuation}\n\n${NEEDS_REVIEW_NOTICE}`;
+  return `${background}${o.justRetriggered ? o.donePushback : o.continuation}\n\n${NEEDS_REVIEW_NOTICE}`;
 }
 
 /**

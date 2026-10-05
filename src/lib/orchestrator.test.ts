@@ -101,6 +101,7 @@ const {
   liveTickPlan,
   overlaps,
   planPausedRun,
+  previousCycleStoppedTasksNotice,
   releasableRuns,
   resolveIsolation,
   revivableDependents,
@@ -1064,6 +1065,7 @@ describe("prompt for the next work cycle", () => {
     continuation: "CONTINUE",
     donePushback: "PUSHBACK",
     validation: null as string | null,
+    backgroundNotice: null as string | null,
     // Off in the base so every case below reads as it did before the completion
     // notice existed; the cases that are *about* it turn it on by name.
     endsOnDone: false,
@@ -1376,6 +1378,52 @@ describe("prompt for the next work cycle", () => {
     );
     // And never on the operator's own words, which are promised verbatim.
     assert.equal(nextPrompt({ ...base, followUp: "NOTE" }), "NOTE");
+  });
+
+  /**
+   * What a cycle is told when the one before it ended with background tasks
+   * stopped. The failure on either side is silent: drop the note and the agent
+   * resumes into a conversation that says its sub-agents are working and waits
+   * on them (run 350ef202, $24.45); replace the continuation with it and the
+   * operator's own editable text, which may be the only instruction a template
+   * gave, is gone.
+   */
+  describe("when the previous cycle's background tasks were stopped", () => {
+    const BG = "BACKGROUND";
+
+    it("goes ahead of whichever reply the agent would have been sent", () => {
+      assert.equal(
+        nextPrompt({ ...base, backgroundNotice: BG }),
+        wall(`${BG}\n\nCONTINUE`),
+      );
+      assert.equal(
+        nextPrompt({ ...base, backgroundNotice: BG, justRetriggered: true }),
+        wall(`${BG}\n\nPUSHBACK`),
+      );
+      assert.equal(
+        nextPrompt({ ...base, backgroundNotice: BG, validation: "MISSING" }),
+        wall(`${BG}\n\nMISSING`),
+      );
+    });
+
+    it("adds nothing when there is nothing to say", () => {
+      assert.equal(nextPrompt({ ...base, backgroundNotice: null }), wall("CONTINUE"));
+      assert.equal(nextPrompt({ ...base, backgroundNotice: "" }), wall("CONTINUE"));
+    });
+
+    it("rides a fresh conversation after the task, where the agent has no memory of them", () => {
+      assert.equal(
+        nextPrompt({ ...base, sessionId: null, backgroundNotice: BG }),
+        wall(`TASK\n\n${BG}`),
+      );
+    });
+
+    it("leaves the operator's own note verbatim", () => {
+      assert.equal(
+        nextPrompt({ ...base, followUp: "NOTE", backgroundNotice: BG }),
+        "NOTE",
+      );
+    });
   });
 });
 
@@ -4154,6 +4202,154 @@ describe("handleStreamLine on an unrecognised event type", () => {
 });
 
 /**
+ * What the next cycle is told about the last one's background tasks, end to end:
+ * the CLI's own stream lines through `handleStreamLine` into the log, and the
+ * log back out through `previousCycleStoppedTasksNotice`.
+ *
+ * The unit cases for the note's wording are in `backgroundWork.test.ts` over
+ * hand-built events. What only a database can get wrong is the boundary — which
+ * rows count as "the previous cycle" — and both ways of getting it wrong are
+ * silent. Too wide and every later cycle is told again about tasks from three
+ * cycles ago, which reads as work that keeps dying; too narrow and the one cycle
+ * that needed the note never gets it. The lines are the stub-server measurement's
+ * (`docs/verification/run-lifecycle-background-work.md`), the CLI's own shapes.
+ */
+describe("the previous cycle's stopped background tasks, read back from the log", () => {
+  const { parseLine } = selectCycleAdapter(null);
+  const fresh = () =>
+    ({
+      costUSD: 0,
+      resumedLedger: null,
+      tokens: 0,
+      contextTokens: 0,
+      sessionId: null,
+      finalText: "",
+      isError: false,
+      subagentNames: new Map(),
+      toolCalls: new Map(),
+      unknownEventTypes: new Set(),
+      sawResult: false,
+      subtype: null,
+      apiError: null,
+      stderrTail: "",
+    }) as Parameters<typeof parseLine>[2];
+
+  let seq = 0;
+  const insertRun = (): string => {
+    const id = `bg-notice-${++seq}`;
+    db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations,
+                           iterations, created_at)
+         VALUES (?, ?, 'do the thing', 'running', '{}', 1, 0, ?)`,
+      )
+      .run(id, `${ws}/Other`, Date.now() + seq);
+    return id;
+  };
+
+  /** What `startRun` writes when it builds a cycle's prompt, before the spawn. */
+  const startCycle = (runId: string) =>
+    db()
+      .prepare(
+        "INSERT INTO run_events (run_id, ts, kind, payload) VALUES (?, ?, 'iteration', '{}')",
+      )
+      .run(runId, Date.now());
+
+  const feed = (runId: string, lines: unknown[]) => {
+    const acc = fresh();
+    for (const line of lines) parseLine(runId, JSON.stringify(line), acc, () => {});
+  };
+
+  const sub = (id: string, description: string) => [
+    {
+      type: "system",
+      subtype: "task_started",
+      task_id: id,
+      tool_use_id: `toolu_${id}`,
+      description,
+      subagent_type: "general-purpose",
+      is_backgrounded: true,
+      task_type: "local_agent",
+    },
+  ];
+  const killedAtCeiling = (id: string, description: string) => [
+    { type: "system", subtype: "task_updated", task_id: id, patch: { status: "killed", end_time: 1 } },
+    {
+      type: "system",
+      subtype: "task_notification",
+      task_id: id,
+      tool_use_id: `toolu_${id}`,
+      status: "stopped",
+      output_file: `/tmp/tasks/${id}.output`,
+      summary: description,
+    },
+  ];
+
+  it("names a sub-agent the CLI killed at its ceiling", () => {
+    const runId = insertRun();
+    startCycle(runId);
+    feed(runId, [...sub("a1", "bg sleeper"), ...killedAtCeiling("a1", "bg sleeper")]);
+    const note = previousCycleStoppedTasksNotice(runId);
+    assert.ok(note, "a sub-agent killed at the ceiling produced no note");
+    assert.match(note, /bg sleeper/);
+    assert.match(note, /\/tmp\/tasks\/a1\.output/);
+  });
+
+  it("says nothing about a run with no iteration yet, or no background task", () => {
+    assert.equal(previousCycleStoppedTasksNotice(insertRun()), null);
+    const runId = insertRun();
+    startCycle(runId);
+    feed(runId, [{ type: "system", subtype: "init", session_id: "s" }]);
+    assert.equal(previousCycleStoppedTasksNotice(runId), null);
+  });
+
+  it("says nothing about a task that completed", () => {
+    const runId = insertRun();
+    startCycle(runId);
+    feed(runId, [
+      ...sub("b1", "finished fine"),
+      { type: "system", subtype: "task_updated", task_id: "b1", patch: { status: "completed", end_time: 1 } },
+      {
+        type: "system",
+        subtype: "task_notification",
+        task_id: "b1",
+        status: "completed",
+        output_file: "/tmp/tasks/b1.output",
+        summary: "done",
+      },
+    ]);
+    assert.equal(previousCycleStoppedTasksNotice(runId), null);
+  });
+
+  it("reads the cycle that just ended, and not the one before it", () => {
+    const runId = insertRun();
+    startCycle(runId);
+    feed(runId, [...sub("c1", "first cycle's task"), ...killedAtCeiling("c1", "first cycle's task")]);
+    // The next cycle's prompt is built here, and is told about c1 …
+    assert.match(previousCycleStoppedTasksNotice(runId) ?? "", /first cycle's task/);
+    // … and its own `iteration` event moves the boundary, so the cycle after
+    // that one is not told again about work that was never its predecessor's.
+    startCycle(runId);
+    feed(runId, [{ type: "system", subtype: "init", session_id: "s" }]);
+    assert.equal(previousCycleStoppedTasksNotice(runId), null);
+    // And a task that dies in the second cycle is reported for the second alone.
+    feed(runId, [...sub("c2", "second cycle's task"), ...killedAtCeiling("c2", "second cycle's task")]);
+    const note = previousCycleStoppedTasksNotice(runId) ?? "";
+    assert.match(note, /second cycle's task/);
+    assert.doesNotMatch(note, /first cycle's task/);
+  });
+
+  it("never reads another run's tasks", () => {
+    const other = insertRun();
+    startCycle(other);
+    feed(other, [...sub("d1", "somebody else's"), ...killedAtCeiling("d1", "somebody else's")]);
+    const runId = insertRun();
+    startCycle(runId);
+    assert.equal(previousCycleStoppedTasksNotice(runId), null);
+  });
+});
+
+/**
  * Which context-shaping variables reached the agent.
  *
  * `18-implementation-sketch.md` costed this phase as "a `log()` call beside an
@@ -4712,6 +4908,50 @@ describe("every env that spawns claude — no session may reach another", () => 
     for (const [name, build] of Object.entries(builders)) {
       assert.equal(build()[KEY], "0", `${name} lets a session list and message its peers`);
     }
+  });
+});
+
+describe("childEnv — how long a work cycle waits for its background tasks", () => {
+  // Claude Code's own ten-minute wait killed four sub-agents' worth of work in
+  // run 350ef202, and the variable that moves it is set per cycle by
+  // `runIteration`, as an extra. Three things here fail silently: the extra
+  // being stripped (every cycle back on ten minutes), a local cycle's env
+  // dropping it (the same, for the one provider whose runs are slowest), and
+  // it leaking into the three children that start no sub-agents and have a
+  // pipe-lifetime problem of their own, where a ceiling of 0 would make a chat
+  // turn wait for ever.
+  const KEY = "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS";
+  const previous = process.env[KEY];
+  after(() => {
+    if (previous === undefined) delete process.env[KEY];
+    else process.env[KEY] = previous;
+  });
+
+  it("reaches a Claude cycle and a local cycle alike", () => {
+    delete process.env[KEY];
+    assert.equal(childEnv({ [KEY]: "90000" })[KEY], "90000");
+    assert.equal(
+      localCycleEnv(
+        childEnv({ [KEY]: "0" }),
+        { baseUrl: "http://127.0.0.1:1234", token: null, contextTokens: null },
+        "m",
+        "/c",
+      )[KEY],
+      "0",
+    );
+  });
+
+  it("is not set by childEnv itself, which every child shares", () => {
+    delete process.env[KEY];
+    assert.equal(childEnv()[KEY], undefined);
+    for (const [name, build] of Object.entries({ chatEnv, reviewEnv, authEnv })) {
+      assert.equal(build()[KEY], undefined, `${name} sets the ceiling`);
+    }
+  });
+
+  it("lets the server's own value through when the cycle names none", () => {
+    process.env[KEY] = "120000";
+    assert.equal(childEnv()[KEY], "120000");
   });
 });
 
