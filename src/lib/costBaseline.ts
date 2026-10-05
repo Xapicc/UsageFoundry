@@ -101,6 +101,6 @@ export function outlierVerdict(o: {
       `${(o.spentUSD / o.baseline.medianUSD).toFixed(1)}x what this task has ` +
       `cost before - a median of $${o.baseline.medianUSD.toFixed(2)} over ` +
       `${o.baseline.samples} runs, against a limit of ${o.factor}x. It was ` +
-      `stopped for being unlike itself rather than for reaching a ceiling.`,
+      `stopped for being unlike itself rather than for reaching a limit.`,
   };
 }
