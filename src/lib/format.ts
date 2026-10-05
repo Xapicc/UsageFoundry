@@ -2,9 +2,11 @@
 
 import type {
   AgentOriginDTO,
+  LiveRunModelDTO,
   LoopBoardThresholdDTO,
   RunDependencyDTO,
   RunDTO,
+  RunProviderDTO,
   RunTaskNotesDTO,
   TaskCommentAuthorDTO,
   TaskCommentDTO,
@@ -137,6 +139,39 @@ export function folderLabel(
 ): string {
   if (!run.mountLabel) return shortPath(run.folder, 2);
   return `${run.mountLabel} / ${run.relPath || "."}`;
+}
+
+/**
+ * The model a run spawns on, in the order `orchestrator.ts` resolves it: the
+ * run's own (`runs.model`, fixed at creation), then a local run's sign-in model,
+ * then its frozen agent's, then the provider's own default in words.
+ *
+ * A local run never reaches the agent's model: its `--model` is always the
+ * run's or the sign-in's, and a signed-out one is refused at the spawn, so
+ * naming the agent's would name a model that cannot run. Words, not an id, for
+ * every case that has none to name — `null` provider is "not recorded", never
+ * drawn as Claude Code, for the run page's Provider row's reason.
+ */
+export function resolveLiveModel(run: {
+  model: string | null;
+  provider: RunProviderDTO | null;
+  agentModel: string | null;
+  localModel: string | null;
+}): LiveRunModelDTO {
+  if (run.model) return { label: run.model, source: "run" };
+  if (run.provider === "local") {
+    return run.localModel
+      ? { label: run.localModel, source: "local" }
+      : { label: "local model, signed out", source: "default" };
+  }
+  if (run.agentModel) return { label: run.agentModel, source: "agent" };
+  if (run.provider === "codex") {
+    return { label: "Codex's own default", source: "default" };
+  }
+  if (run.provider === "claude") {
+    return { label: "Claude Code's own default", source: "default" };
+  }
+  return { label: "model not recorded", source: "default" };
 }
 
 /**

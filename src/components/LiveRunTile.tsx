@@ -95,6 +95,21 @@ export function LiveRunTile({
             >
               {folderLabel(run)}
             </div>
+            {/* The id truncates and the marker does not, so a 42-character
+                Bedrock id on a phone cannot push "from agent" out of the tile. */}
+            <div
+              className="mt-0.5 flex min-w-0 text-xs text-ink-muted"
+              title={
+                run.model.source === "agent"
+                  ? `${run.model.label} (from agent)`
+                  : run.model.label
+              }
+            >
+              <span className="truncate">{run.model.label}</span>
+              {run.model.source === "agent" && (
+                <span className="ml-1 shrink-0">· from agent</span>
+              )}
+            </div>
             <div className="mt-0.5 text-xs tabular-nums text-ink-muted">
               {fmtLiveCycle(run)}
               {run.started_at !== null && (

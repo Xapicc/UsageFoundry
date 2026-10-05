@@ -1566,6 +1566,18 @@ export interface RunListDTO {
 }
 
 /**
+ * The model a running run is on, as `resolveLiveModel` reads it off the row.
+ *
+ * `label` is a model id when `source` is `run`, `local` or `agent`, and words
+ * when it is `default` — never a model id this app made up for a run that named
+ * none.
+ */
+export interface LiveRunModelDTO {
+  label: string;
+  source: "run" | "local" | "agent" | "default";
+}
+
+/**
  * One running run's tile on `/runs/live`, as `GET /api/runs/live` answers it.
  *
  * The figures half of the tile; the log half arrives over the page's one
@@ -1582,6 +1594,11 @@ export interface LiveRunDTO {
   mountLabel: string | null;
   relPath: string;
   provider: RunProviderDTO | null;
+  /**
+   * Here and not on a stream frame: a run's model is fixed when it is created,
+   * so there is nothing for a stream to push.
+   */
+  model: LiveRunModelDTO;
   started_at: number | null;
   iterations: number;
   active_iteration: number | null;
