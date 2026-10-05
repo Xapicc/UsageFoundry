@@ -197,6 +197,27 @@
   model, and 390px and the ascii skin rest on `npm run smoke-pages` (96/96),
   which asserts load and nothing about interaction.
 
+- **The unsaved-edit rail on the six other Settings folds' summaries, in a
+  browser against the production bundle, 2026-10-05**, at `d147cf1`: a scratch
+  Playwright script over `.next/standalone/server.js` with a throwaway
+  `DATA_DIR`, default skin, at 1280px and again at 390px. For each of the four
+  prompt folds, "When a window turns over" and "Isolated runs", one edit made
+  with the fold open (a textarea, the weekly-reset select, the copy-globs
+  field) and the fold then shut left the rail lit on the summary — 2px wide, at
+  the summary's own top and height, 12px into the gutter, 17px tall at 1280 and
+  45px at 390 — with the `sr-only` suffix present, the save bar reading "1
+  unsaved change, marked in the margin", and no rail or suffix before the edit.
+  Discard cleared rail and suffix, restored the value and the bar's "Everything
+  here is saved"; a second edit then Save cleared both, and `GET
+  /api/settings` held the stored value. An open prompt fold drew its summary
+  rail and its field rail in one gutter column, with the 8px between label and
+  box showing as a gap; the two multi-setting summaries hold no
+  `[data-setting-name]`. 138 of 138 assertions held and the console stayed
+  clean. **Caveat:** Save was driven at 1280px only (390px stopped at Discard),
+  one setting per fold, and the ascii skin and the field search over the new
+  summaries rest on `npm run smoke-pages` (96/96) and on the mark count above,
+  not on a search typed in the page.
+
 - **Granted cycles on the runs list, the instance page and the in-flight line,
   2026-10-01**, the standalone bundle built from `46c424e` plus this change,
   headless Chromium at 390 and 1280. `/api/runs`, `/api/runs/[id]` and the
