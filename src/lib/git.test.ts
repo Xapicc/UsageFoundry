@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
-import { git, gitArgs, gitEnv } from "./git";
+import { git, gitArgs, gitEnv, gitSync } from "./git";
 
 /**
  * Covers what every git call this app makes carries, and only that.
@@ -130,4 +130,36 @@ describe("git", () => {
     assert.equal(res.code, null);
     assert.match(res.stderr, /ENOTDIR/);
   });
+});
+
+/**
+ * `GIT_BIN`'s default is a path, because this server is root and its `PATH`
+ * starts with the stacks' `bin/` and an agent-writable `/home/node/pytools/bin`.
+ * A `git` planted first on it would be what every diff, worktree and landing
+ * ran — as root wherever the uid split is off. Skipped when `GIT_BIN` is set,
+ * since the default is then not what runs.
+ */
+describe("GIT_BIN", () => {
+  it(
+    "runs the image's git rather than the first git on PATH",
+    { skip: process.env.GIT_BIN ? "GIT_BIN is set, so the default is not what runs" : false },
+    () => {
+      const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "uf-git-path-"));
+      const ran = path.join(scratch, "ran");
+      fs.writeFileSync(path.join(scratch, "git"), `#!/bin/sh\n: > "${ran}"\necho "git version 0.planted"\n`, {
+        mode: 0o755,
+      });
+      const saved = process.env.PATH;
+      process.env.PATH = `${scratch}${path.delimiter}${saved ?? ""}`;
+      try {
+        const res = gitSync(scratch, ["--version"]);
+        assert.equal(fs.existsSync(ran), false, "the git planted first on PATH ran");
+        assert.equal(res.ok, true, res.stderr);
+        assert.match(res.stdout, /^git version \d/);
+      } finally {
+        process.env.PATH = saved;
+        fs.rmSync(scratch, { recursive: true, force: true });
+      }
+    },
+  );
 });

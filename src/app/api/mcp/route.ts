@@ -70,6 +70,7 @@ import {
   readTaskLinks,
   resolveTaskFolder,
   runLinksForTasks,
+  taskIdShapeRefusal,
   taskListItemDTO,
   tasksLinkedToRun,
   taskRefusal,
@@ -86,6 +87,7 @@ import {
 import {
   addTaskComment,
   listTaskComments,
+  MAX_TASK_COMMENT,
   MAX_TOOL_TASK_COMMENTS,
   type TaskComment,
 } from "../../../lib/taskComments";
@@ -457,7 +459,10 @@ const SHARED_TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        taskId: { type: "string", description: "An id from list_tasks." },
+        taskId: {
+          type: "string",
+          description: "The full 36-character id from list_tasks.",
+        },
       },
       required: ["taskId"],
       additionalProperties: false,
@@ -503,6 +508,20 @@ const SHARED_TOOLS = [
 ];
 
 /**
+ * What both `comment_on_task` definitions say about length, in the unit the
+ * check counts.
+ *
+ * Said in the description rather than left to the refusal, `complete_task`'s
+ * reason: a caller that learns a limit only by going over it has already
+ * written the text. Characters are UTF-16 code units because the check is
+ * `String.length`, so a body of emoji reaches the cap at half the visible count.
+ */
+const COMMENT_CAP_SENTENCE =
+  `At most ${MAX_TASK_COMMENT.toLocaleString("en-US")} characters (UTF-16 code ` +
+  "units, which is what String.length counts); a longer body is refused and " +
+  "nothing is written.";
+
+/**
  * Everything a work cycle gets, and the whole of it.
  *
  * **Eight tools, and what is absent is the design.** A run does not get
@@ -539,14 +558,15 @@ const SHARED_TOOLS = [
  * `complete_task` is where an id out of a list closes work nobody did, and that
  * one is still checked against `claimed_by_run_id`.
  *
- * `add_task_dependency` is the fifth and takes **two** task ids on the same
- * ground, which holds here for a reason of its own: the edge it writes gates
- * nothing. A task whose dependencies are open can still be claimed, worked and
- * closed by exactly the actors that could before, so a misdirected edge is a
- * wrong ordering on the board and is visible as one — where `complete_task`
- * against a guessed id is a state nothing can tell apart from the truth. There
- * is no tool that removes one, and that absence is the design rather than work
- * left over: only the operator takes an edge away.
+ * `add_task_dependency` is the fifth and takes **two** task ids, each held to the
+ * same scope: the edge it writes gates nothing, which is why a misdirected one
+ * is a wrong ordering on the board and visible as one, but it still reaches the
+ * run that holds the task it waits on (`list_my_tasks`' `waitingFor`), and an id
+ * is no barrier. So both ids must be ones this run may read, and the refusal is
+ * one sentence that does not say which failed — `docs/agent/taskboard/
+ * task-dependencies.md` records the decision. There is no tool that removes one,
+ * and that absence is the design rather than work left over: only the operator
+ * takes an edge away.
  *
  * `release_task` is the sixth and is `complete_task`'s other half: the same
  * holder rule, asked through the same `updateTask`, moving the task the other
@@ -620,7 +640,8 @@ const RUN_TOOLS = [
       properties: {
         taskId: {
           type: "string",
-          description: "An id from list_my_tasks, from the tasks you hold.",
+          description:
+            "The full 36-character id from list_my_tasks, from the tasks you hold.",
         },
       },
       required: ["taskId"],
@@ -656,7 +677,8 @@ const RUN_TOOLS = [
       properties: {
         taskId: {
           type: "string",
-          description: "An id from list_my_tasks, from the tasks you hold.",
+          description:
+            "The full 36-character id from list_my_tasks, from the tasks you hold.",
         },
         reason: {
           type: "string",
@@ -756,7 +778,7 @@ const RUN_TOOLS = [
         taskId: {
           type: "string",
           description:
-            "An id from list_my_tasks — one you hold, or one open in this " +
+            "The full 36-character id from list_my_tasks — one you hold, or one open in this " +
             "folder that your work has something to do with.",
         },
         body: {
@@ -765,7 +787,8 @@ const RUN_TOOLS = [
             "What you have to say, written for somebody who cannot see your " +
             "work: name files and symbols rather than 'the change above'. If " +
             "it is a new piece of work rather than a note about this one, call " +
-            "create_task instead.",
+            "create_task instead. " +
+            COMMENT_CAP_SENTENCE,
         },
       },
       required: ["taskId", "body"],
@@ -799,14 +822,14 @@ const RUN_TOOLS = [
         taskId: {
           type: "string",
           description:
-            "The task that waits. An id from list_my_tasks — one you hold, or " +
+            "The task that waits. The full 36-character id from list_my_tasks — one you hold, or " +
             "one open in this folder.",
         },
         dependsOnTaskId: {
           type: "string",
           description:
             "The task it waits for, and the one that has to be done first. " +
-            "Another id from list_my_tasks.",
+            "Another full 36-character id from list_my_tasks.",
         },
       },
       required: ["taskId", "dependsOnTaskId"],
@@ -830,7 +853,8 @@ const RUN_TOOLS = [
       properties: {
         taskId: {
           type: "string",
-          description: "An id from list_my_tasks — under held or under openInFolder.",
+          description:
+            "The full 36-character id from list_my_tasks — under held or under openInFolder.",
         },
       },
       required: ["taskId"],
@@ -994,14 +1018,15 @@ const CHAT_TOOLS = [
       properties: {
         taskId: {
           type: "string",
-          description: "An id from list_tasks or get_task.",
+          description: "The full 36-character id from list_tasks or get_task.",
         },
         body: {
           type: "string",
           description:
             "What you have to say, written for somebody with none of this " +
             "conversation: name files, ids and decisions rather than 'the " +
-            "thing above'.",
+            "thing above'. " +
+            COMMENT_CAP_SENTENCE,
         },
       },
       required: ["taskId", "body"],
@@ -1034,13 +1059,14 @@ const CHAT_TOOLS = [
       properties: {
         taskId: {
           type: "string",
-          description: "The task that waits. An id from list_tasks or get_task.",
+          description:
+            "The task that waits. The full 36-character id from list_tasks or get_task.",
         },
         dependsOnTaskId: {
           type: "string",
           description:
             "The task it waits for, and the one that has to be done first. " +
-            "Another id from list_tasks or get_task.",
+            "Another full 36-character id from list_tasks or get_task.",
         },
       },
       required: ["taskId", "dependsOnTaskId"],
@@ -1239,7 +1265,8 @@ const CHAT_TOOLS = [
           type: "array",
           items: { type: "string" },
           description:
-            "ids from list_tasks: EVERY task on the board this run is to work. " +
+            "Full 36-character ids from list_tasks: EVERY task on the board " +
+            "this run is to work. " +
             "When the run starts it claims each of these, and it can close " +
             "only these — a task written into the brief but left out of this " +
             "list stays open on the board after the run has done it. So one " +
@@ -1255,7 +1282,7 @@ const CHAT_TOOLS = [
           type: "array",
           items: { type: "string" },
           description:
-            "ids from list_tasks of tasks the brief names only as context — " +
+            "Full 36-character ids from list_tasks of tasks the brief names only as context — " +
             "work this run must NOT do, such as a task another run holds. " +
             "Nothing is recorded for them; listing one here is how you say " +
             "the brief mentions it on purpose.",
@@ -1321,7 +1348,9 @@ const CHAT_TOOLS = [
           type: "string",
           description:
             "The full brief for the agent: what to do, the issue number and " +
-            "URL if there is one, and what done looks like.",
+            "URL if there is one, and what done looks like. Name a board task " +
+            "in it by its full 36-character id, never the first eight " +
+            "characters: the agent reading it cannot look up a shortened one.",
         },
         mountId: {
           type: "string",
@@ -1693,14 +1722,18 @@ const BLOCK_TOOLS = [
                 type: "string",
                 description:
                   "The full brief for the agent: what to do, where, and what " +
-                  "done looks like. It cannot ask you a follow-up question.",
+                  "done looks like. It cannot ask you a follow-up question. " +
+                  "Name a board task in it by its full 36-character id, never " +
+                  "the first eight characters: the agent reading it cannot " +
+                  "look up a shortened one.",
               },
               taskIds: {
                 type: "array",
                 items: { type: "string" },
                 description:
-                  "ids from list_tasks: EVERY task on the board this run is " +
-                  "to work. The run claims each when it starts and can close " +
+                  "Full 36-character ids from list_tasks: EVERY task on the " +
+                  "board this run is to work. The run claims each when it " +
+                  "starts and can close " +
                   "only these, so a task written into the brief but left out " +
                   "of this list stays open after the run has done it. A brief " +
                   "naming an open task (by id or title) that is in neither " +
@@ -1714,8 +1747,8 @@ const BLOCK_TOOLS = [
                 type: "array",
                 items: { type: "string" },
                 description:
-                  "ids from list_tasks of tasks the brief names only as " +
-                  "context — work this run must NOT do. Nothing is recorded " +
+                  "Full 36-character ids from list_tasks of tasks the brief " +
+                  "names only as context — work this run must NOT do. Nothing is recorded " +
                   "for them; listing one says the mention is on purpose.",
               },
               folder: {
@@ -2471,17 +2504,19 @@ async function callTool(
     case "comment_on_task":
       return subject.kind === "run"
         ? commentOnTaskForRun(args, subject.runId)
-        : commentOnTask(args, { kind: "chat" }, chatId!);
+        : commentOnTaskForChat(args, chatId!);
 
     // Shared by name between a chat and a work cycle and, unlike the two above,
-    // shared by *implementation* too: an edge records no author, so there is
-    // nothing here that differs by subject. One function rather than two for
-    // `commentOnTask`'s reason turned around — two handlers writing the same row
-    // would be two places to keep the loop refusal in, and the loop refusal is
-    // the whole of what this door is for. `block` never reaches this line: the
-    // gate above refuses a tool that is not on its list.
+    // shared by *write* too: an edge records no author, so `recordTaskDependency`
+    // is one function — two writers of the same row would be two places to keep
+    // the loop refusal in, and the loop refusal is the whole of what this door
+    // is for. What differs by subject is the door in front of it: a run is held
+    // to `get_my_task`'s scope and a chat is not. `block` never reaches this
+    // line: the gate above refuses a tool that is not on its list.
     case "add_task_dependency":
-      return addTaskDependency(args, chatId);
+      return subject.kind === "run"
+        ? addTaskDependencyForRun(args, subject.runId)
+        : addTaskDependencyForChat(args, chatId);
 
     // Narrowed rather than asserted, for `emit_runs`' reason: the gate above
     // proves the tool is on this subject's list, and the union is what makes the
@@ -3560,12 +3595,18 @@ function taskListFolder(
  */
 function getTaskTool(args: Record<string, unknown>) {
   const taskId = String(args.taskId ?? "").trim();
-  const task = taskId ? getTask(taskId) : null;
+  const malformed = malformedTaskId("chat", { taskId });
+  if (malformed) return malformed;
+  const task = getTask(taskId);
   if (!task) {
     // `taskRefusal`'s wording rather than one of this route's, so an id that is
     // not there reads the same here as it does when a proposal or an emission
-    // names it. The board is read again on the miss path only.
-    return text(taskRefusal(taskId, currentTaskKnowledge()) ?? "", true);
+    // names it. The board is read again on the miss path only. The id is the
+    // point of this call, so "leave it out" is not offered.
+    return text(
+      taskRefusal(taskId, currentTaskKnowledge(), { mayOmit: false }) ?? "",
+      true,
+    );
   }
 
   const links = runLinksForTasks([task.id]).get(task.id);
@@ -3621,6 +3662,9 @@ function getMyTask(args: Record<string, unknown>, runId: string) {
       true,
     );
   }
+
+  const malformed = malformedTaskId("run", { taskId });
+  if (malformed) return malformed;
 
   const task = taskVisibleToRun(runId, runFolder(runId).folder, taskId);
   if (!task) {
@@ -3756,6 +3800,39 @@ function toolComment(comment: TaskComment) {
 }
 
 /**
+ * A task id that cannot be one, refused for its shape — or null when every id
+ * given is shaped like one.
+ *
+ * **Asked before any lookup, in every board tool that takes an id, and it says
+ * nothing about the board.** The commonest way a caller reaches a task refusal is
+ * an id cut to its first eight characters, copied out of a brief that
+ * abbreviated it; looked up as written that is on no row, and the sentence a
+ * lookup gives for that — "not yours", "not on the board" — names the wrong
+ * cause and sends the caller to re-read a list whose ids were never the
+ * problem. A sentence about an id's length is the same for every id of that
+ * length on every install, so a work cycle can be given it without the one-
+ * sentence rule for "not yours" and "not there" being weakened.
+ *
+ * The pointer at the end is the tool the *subject has*: a run has no
+ * `list_tasks`, and a refusal naming a tool the gate then refuses is a dead end
+ * of this app's own making.
+ */
+function malformedTaskId(subject: "run" | "chat", ids: Record<string, string>) {
+  for (const [field, value] of Object.entries(ids)) {
+    const problem = taskIdShapeRefusal(value);
+    if (!problem) continue;
+    return text(
+      `${field}: ${problem} ` +
+        (subject === "run"
+          ? "Copy the full id from list_my_tasks, under held or openInFolder."
+          : "Copy the full id from list_tasks or get_task."),
+      true,
+    );
+  }
+  return null;
+}
+
+/**
  * Write a note on a task, as whichever subject is asking.
  *
  * **The author is the subject's and never the call's**, which is this tool's
@@ -3771,10 +3848,11 @@ function toolComment(comment: TaskComment) {
  * `taskTransitionRefusal` stays the whole of the board's authority model and
  * this is not a second answer to it.
  *
- * A task that is not there is refused in `taskRefusal`'s wording rather than one
- * written here, so a mistyped id reads the same as it does at `get_task`, at a
- * proposal and at an emission. A work cycle never gets that far with one:
- * `commentOnTaskForRun` refuses it first, in its own sentence.
+ * A task that is not there is refused in `taskRefusal`'s wording for a chat, so
+ * a mistyped id reads the same as it does at `get_task`, at a proposal and at an
+ * emission. A work cycle never gets that far: `commentOnTaskForRun` refuses it
+ * first, and the sentence it falls back to here is that function's own rather
+ * than `taskRefusal`'s, which names a tool a run does not have.
  */
 function commentOnTask(
   args: Record<string, unknown>,
@@ -3786,7 +3864,12 @@ function commentOnTask(
 
   if (!written.ok) {
     if (written.kind === "missing") {
-      return text(taskRefusal(taskId, currentTaskKnowledge()) ?? "", true);
+      return actor.kind === "run"
+        ? runCommentRefusal(taskId)
+        : text(
+            taskRefusal(taskId, currentTaskKnowledge(), { mayOmit: false }) ?? "",
+            true,
+          );
     }
     return text(written.error, true);
   }
@@ -3812,6 +3895,38 @@ function commentOnTask(
 }
 
 /**
+ * Write a note on a task, as a chat: the id's shape, then `commentOnTask`.
+ *
+ * Not narrowed to a scope — a chat reads the whole board through `get_task`
+ * with an operator at the keyboard, and writes on what it reads.
+ */
+function commentOnTaskForChat(args: Record<string, unknown>, chatId: string) {
+  const taskId = String(args.taskId ?? "").trim();
+  const malformed = malformedTaskId("chat", { taskId });
+  if (malformed) return malformed;
+  return commentOnTask(args, { kind: "chat" }, chatId);
+}
+
+/**
+ * The one sentence a work cycle gets for a note it may not write.
+ *
+ * "Not yours" and "not there" read the same, `get_my_task`'s rule for its
+ * reason, so this cannot be used to probe the board for which ids exist; and
+ * it names `list_my_tasks`, the tool a run has, as where the writable ids are.
+ */
+function runCommentRefusal(taskId: string) {
+  return text(
+    `comment_on_task cannot write on "${taskId}": a run writes notes on a ` +
+      "task it holds, or one open in the folder it is working in, and nothing " +
+      "else on the board, because a note is permanent and signed by this run " +
+      "and another run's task or another project's is not this run's work. " +
+      "list_my_tasks shows the ids you can write on, under held and " +
+      "openInFolder.",
+    true,
+  );
+}
+
+/**
  * Write a note on a task, as a work cycle: `commentOnTask` behind
  * `get_my_task`'s scope.
  *
@@ -3828,26 +3943,85 @@ function commentOnTask(
  *
  * "Not yours" and "not there" are one sentence, `get_my_task`'s rule, so this
  * cannot be used to probe the board for which ids exist — which is also why a
- * missing id never reaches `taskRefusal`, whose wording tells the two apart.
+ * missing id never reaches `taskRefusal`, whose wording tells the two apart. An
+ * id that is not shaped like one is refused first, for its shape: that says
+ * nothing about the board.
  */
 function commentOnTaskForRun(args: Record<string, unknown>, runId: string) {
   const taskId = String(args.taskId ?? "").trim();
+  const malformed = malformedTaskId("run", { taskId });
+  if (malformed) return malformed;
   if (!taskVisibleToRun(runId, runFolder(runId).folder, taskId)) {
-    return text(
-      `comment_on_task cannot write on "${taskId}": a run writes notes on a ` +
-        "task it holds, or one open in the folder it is working in, and nothing " +
-        "else on the board, because a note is permanent and signed by this run " +
-        "and another run's task or another project's is not this run's work. " +
-        "list_my_tasks shows the ids you can write on, under held and " +
-        "openInFolder.",
-      true,
-    );
+    return runCommentRefusal(taskId);
   }
   return commentOnTask(args, { kind: "run", runId });
 }
 
 /**
- * Record that one task waits for another, from either surface.
+ * The one sentence a work cycle gets for an edge it may not draw.
+ *
+ * Names neither id and says nothing of whether either exists, because the run
+ * sent two and an answer that singled one out is the probe: "this one is not
+ * there" and "this one is not yours" would be told apart by anyone who tried
+ * each in turn. `list_my_tasks`, the tool a run has, is where usable ids are.
+ */
+const RUN_DEPENDENCY_REFUSAL =
+  "add_task_dependency cannot record that: a run draws an edge only between " +
+  "two tasks it may read — each one it holds, or open in the folder it is " +
+  "working in — and nothing else on the board. list_my_tasks shows the ids " +
+  "you can use, under held and openInFolder. Nothing was recorded.";
+
+/**
+ * Record that one task waits for another, as a work cycle: `recordTaskDependency`
+ * behind `get_my_task`'s scope on **both** ids.
+ *
+ * The edge gates nothing, which is why this door was once only "both ids
+ * exist" — and that left a run token able to draw an edge between any two tasks
+ * on the board, in any folder, tasks other runs hold included, with ids that are
+ * no secret (every run can read its siblings' transcripts). An edge reaches the
+ * run that holds the task it waits on: `list_my_tasks` shows `waitingFor` with
+ * the other end's id, title and status on `held`. So a run is held to what it
+ * may read, `commentOnTaskForRun`'s rule and `taskVisibleToRun`'s predicate, and
+ * is refused in one sentence that does not say which id failed or whether either
+ * exists. A chat is not narrowed: `addTaskDependencyForChat`.
+ *
+ * The loop refusal names the tasks in the loop it found, and a loop can run
+ * through tasks this run may not read, so `describe` names only the ones it can
+ * and calls the rest what they are — a title in that sentence would be a read
+ * of exactly what the scope above refuses.
+ */
+function addTaskDependencyForRun(args: Record<string, unknown>, runId: string) {
+  const taskId = String(args.taskId ?? "").trim();
+  const dependsOn = String(args.dependsOnTaskId ?? "").trim();
+  const malformed = malformedTaskId("run", { taskId, dependsOnTaskId: dependsOn });
+  if (malformed) return malformed;
+
+  const folder = runFolder(runId).folder;
+  if (!taskVisibleToRun(runId, folder, taskId) || !taskVisibleToRun(runId, folder, dependsOn)) {
+    return text(RUN_DEPENDENCY_REFUSAL, true);
+  }
+
+  return recordTaskDependency(taskId, dependsOn, {
+    kind: "run",
+    describe: (id) => {
+      const task = taskVisibleToRun(runId, folder, id);
+      return task ? `“${task.title}”` : "a task this run may not read";
+    },
+  });
+}
+
+/** Record that one task waits for another, as a chat: the ids' shape, then the write. */
+function addTaskDependencyForChat(args: Record<string, unknown>, chatId?: string | null) {
+  const taskId = String(args.taskId ?? "").trim();
+  const dependsOn = String(args.dependsOnTaskId ?? "").trim();
+  const malformed = malformedTaskId("chat", { taskId, dependsOnTaskId: dependsOn });
+  if (malformed) return malformed;
+  return recordTaskDependency(taskId, dependsOn, { kind: "chat", chatId });
+}
+
+/**
+ * Record that one task waits for another, once the door in front of it has
+ * decided the caller may.
  *
  * **It gates nothing, and the reply says so every time.** That sentence is not
  * politeness: the failure this tool can produce is a model drawing an edge and
@@ -3859,24 +4033,34 @@ function commentOnTaskForRun(args: Record<string, unknown>, runId: string) {
  *
  * One function for both subjects, where `commentOnTask` needs the actor: an edge
  * records no author, so there is nothing here that differs by who is asking and
- * a second handler would be a second place the loop refusal has to live.
+ * a second writer would be a second place the loop refusal has to live.
  *
- * A missing id is refused in `taskRefusal`'s wording rather than one written
- * here, so a mistyped id reads the same as it does at `get_task`, at a proposal
- * and at an emission. Which of the two is missing is answered first, because
- * "no such task" about the wrong end of the pair sends a model re-reading the
- * list it took the right one from.
+ * A chat's missing id is refused in `taskRefusal`'s wording, without its "leave
+ * it out" — both ids are the point of the call — so a mistyped id reads the same
+ * as it does at `get_task`. Which of the two is missing is answered first,
+ * because "no such task" about the wrong end of the pair sends a model
+ * re-reading the list it took the right one from. A run is never told which: it
+ * does not reach this branch, and if it ever did the sentence is its own.
  */
-function addTaskDependency(args: Record<string, unknown>, chatId?: string | null) {
-  const taskId = String(args.taskId ?? "").trim();
-  const dependsOn = String(args.dependsOnTaskId ?? "").trim();
-
-  const written = addTaskDep(taskId, dependsOn);
+function recordTaskDependency(
+  taskId: string,
+  dependsOn: string,
+  who:
+    | { kind: "chat"; chatId?: string | null }
+    | { kind: "run"; describe: (id: string) => string },
+) {
+  const written = addTaskDep(
+    taskId,
+    dependsOn,
+    who.kind === "run" ? who.describe : undefined,
+  );
   if (!written.ok) {
     if (written.kind === "missing") {
-      const knowledge = currentTaskKnowledge();
+      if (who.kind === "run") return text(RUN_DEPENDENCY_REFUSAL, true);
       return text(
-        taskRefusal(getTask(taskId) ? dependsOn : taskId, knowledge) ?? written.error,
+        taskRefusal(getTask(taskId) ? dependsOn : taskId, currentTaskKnowledge(), {
+          mayOmit: false,
+        }) ?? written.error,
         true,
       );
     }
@@ -3887,12 +4071,12 @@ function addTaskDependency(args: Record<string, unknown>, chatId?: string | null
   const blocker = getTask(dependsOn);
   const pair = `“${waiter?.title ?? taskId}” waits for “${blocker?.title ?? dependsOn}”`;
 
-  if (chatId) {
+  if (who.kind === "chat" && who.chatId) {
     // On the thread, `commentOnTask`'s rule: the operator's transcript is where
     // anything the chat did outside the conversation has to appear, or a board
     // that grew an edge has no trace on the page that grew it.
     appendMessage(
-      chatId,
+      who.chatId,
       "system",
       `The chat recorded that ${pair}. Nothing about either task changed, and ` +
         "nothing is held back by it.",
@@ -4173,6 +4357,9 @@ async function completeTaskForRun(args: Record<string, unknown>, runId: string) 
     );
   }
 
+  const malformed = malformedTaskId("run", { taskId });
+  if (malformed) return malformed;
+
   const outcome = await completeTaskWithValidation(taskId, runId);
 
   if (outcome.kind === "refused") {
@@ -4223,6 +4410,9 @@ function releaseTaskForRun(args: Record<string, unknown>, runId: string) {
       true,
     );
   }
+  const malformed = malformedTaskId("run", { taskId });
+  if (malformed) return malformed;
+
   // Refused rather than coerced, `listTasksTool`'s reason: "false" is truthy,
   // and a coercion would hand the task to the operator when the model said not
   // to.

@@ -20,12 +20,12 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - A guard whose input is optional is not a guard, so the input stops being optional.
 - A cycle cut short by a pause is refunded to the counter.
 
-## [Concurrency caps and the install's rolling ceiling](budgets-and-guards/concurrency-and-install-ceiling.md)
+## [Concurrency caps and the install's rolling limit](budgets-and-guards/concurrency-and-install-ceiling.md)
 
 - Concurrency multiplies overshoot — `maxRunCostUSD` is per run, so N runs at $5 is a $25 worst case — and `maxConcurrentRuns` bounds N.
 - The concurrency cap is a bound on the host, so it ships as a number and it covers every kind of `claude` child.
 - A local run needs a slot under two caps, and the second is about another machine.
-- And a cap on N still bounds nothing about the total, so there is one ceiling that is about the install rather than about a spender.
+- And a cap on N still bounds nothing about the total, so there is one limit that is about the install rather than about a spender.
 - `installSpend` reads a fifth place, and the reason it did not before stopped being true.
 - Counting a spender and refusing it are two halves, and the install limit had only the first for assists.
 - The door is read once, so what an admitted child spends has to be bounded on the child, and **every conflict resolution now carries `resolutionBudgetUSD` as `--max-budget-usd`**: $20 by default …

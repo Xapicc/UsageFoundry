@@ -152,7 +152,7 @@ export interface IterationResult {
    * makes about *why* a cycle ended.
    *
    * Kept because one member of it has to be told apart from a crash:
-   * `error_max_budget_usd` is the cycle reaching the ceiling `buildArgs` gave
+   * `error_max_budget_usd` is the cycle reaching the limit `buildArgs` gave
    * it, which is this run's own spending limit arriving a cycle earlier than
    * the pre-cycle guard would have said it. Everything else about that cycle
    * looks like a failure — a non-zero exit, `isError` set, and the CLI's own
@@ -1027,7 +1027,7 @@ export function buildArgs(opts: {
    * getting it wrong are silent. `spentGuardUSD` is the *guard* figure — the
    * same `spentUSD + spentGuardEstUSD` the pre-cycle check compares, never
    * `runs.spent_usd` alone, which is a floor of what the CLI itself measured
-   * and excludes a killed cycle's reconciled estimate. Handing over a ceiling
+   * and excludes a killed cycle's reconciled estimate. Handing over a limit
    * derived from the floor would give the child more room than the guard
    * believes the run has left, which is the display-versus-guard split
    * inverted at the one door where it costs money.
@@ -1035,7 +1035,7 @@ export function buildArgs(opts: {
    * `Math.max(0, …)` cannot be reached today — the pre-cycle guard blocks at
    * `>=`, so the remainder is strictly positive by the time anything is
    * spawned — and it stays because a negative would be a *widening*: the CLI
-   * would take it as no ceiling at all, or reject the argv, and both fail
+   * would take it as no limit at all, or reject the argv, and both fail
    * towards spending.
    */
   maxRunCostUSD: number | null;

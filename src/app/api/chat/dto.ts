@@ -406,7 +406,7 @@ function spellInstanceBudget(budget: InstanceBudgetPolicy): string | null {
  * numbers, which is what `guardsDetail` carries behind the card's fold. Written
  * by *this* function rather than by a second one beside it, since two spellings
  * of one guard set are two things to keep in step and the day they diverge the
- * card asserts a ceiling the run does not have — which is the same reason a card
+ * card asserts a limit the run does not have — which is the same reason a card
  * drawn from a frozen set and one drawn from the live set are spelled by this
  * one function: differing in *wording* would read as the guards having changed
  * when they had not.

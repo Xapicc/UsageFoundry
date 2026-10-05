@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
@@ -40,7 +42,8 @@ import { describe, it } from "node:test";
  * runs. The applier is imported rather than spawned — `backupRestore.test.ts`
  * spawns `backup-db.mjs` because its subject is a database copied under load,
  * and this file's subject is four pure functions. The applier guards its own
- * entry point on `import.meta.url`, so importing it applies nothing.
+ * entry point on `import.meta.url`, so importing it applies nothing. The one
+ * exception spawns it, because its subject is which binary a spawn finds.
  */
 
 function repoRoot(): string {
@@ -366,6 +369,224 @@ describe("parseStack — what is refused before anything is downloaded", () => {
 
   it("refuses a deny entry that could close the Bash(...) it is interpolated into", () => {
     assert.match(refusal(parse({ deny: ["terraform apply)"] })), /parenthesis/);
+  });
+});
+
+/**
+ * The stacks under the operator's `./stacks` on 2026-10-04, as written there.
+ * `stacks/*` is git-ignored, so they are copied here rather than read: a test
+ * reading the directory would pass on an empty checkout having parsed nothing.
+ */
+const SHIPPED_STACKS = [
+  {
+    schema: 1,
+    name: "go",
+    summary: "Go 1.26.6 — the toolchain that used to be in the image, with the module cache left where it was.",
+    install: [
+      {
+        kind: "archive",
+        url: "https://dl.google.com/go/go1.26.6.linux-{arch}.tar.gz",
+        sha256: {
+          amd64: "708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89",
+          arm64: "d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e",
+        },
+        unpack: "tar.gz",
+        bin: [
+          { from: "go/bin/go", as: "go" },
+          { from: "go/bin/gofmt", as: "gofmt" },
+        ],
+      },
+    ],
+  },
+  {
+    schema: 1,
+    name: "python",
+    summary:
+      "CPython 3.13.15 (python-build-standalone) as python, pip and pip3, with the ensurepip the image's python3 lacks — so python -m venv works. python3 stays the image's 3.11.",
+    install: [
+      {
+        kind: "archive",
+        url: "https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.13.15+20260924-{arch_uname}-unknown-linux-gnu-install_only.tar.gz",
+        checksums: "https://github.com/astral-sh/python-build-standalone/releases/download/20260924/SHA256SUMS",
+        unpack: "tar.gz",
+        bin: [
+          { from: "python/bin/python3.13", as: "python" },
+          { from: "python/bin/pip", as: "pip" },
+          { from: "python/bin/pip3", as: "pip3" },
+        ],
+      },
+    ],
+    env: { PIP_REQUIRE_VIRTUALENV: "true" },
+  },
+  {
+    schema: 1,
+    name: "shell-lint",
+    summary: "shellcheck 0.11.0 and shfmt 3.14.1, for agents editing shell scripts",
+    install: [
+      {
+        kind: "archive",
+        url: "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.{arch_uname}.tar.gz",
+        sha256: {
+          amd64: "b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6",
+          arm64: "68a8133197a50beb8803f8d42f9908d1af1c5540d4bb05fdfca8c1fa47decefc",
+        },
+        unpack: "tar.gz",
+        bin: [{ from: "shellcheck-v0.11.0/shellcheck", as: "shellcheck" }],
+      },
+      {
+        kind: "archive",
+        url: "https://github.com/mvdan/sh/releases/download/v3.14.1/shfmt_v3.14.1_linux_{arch}",
+        sha256: {
+          amd64: "76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf",
+          arm64: "5f2db09dae91fca848f7adbdd014632e921a383863a2ad7e0450ad3aba0c6489",
+        },
+        unpack: "none",
+        bin: [{ from: "shfmt_v3.14.1_linux_{arch}", as: "shfmt" }],
+      },
+    ],
+    deny: ["shfmt -w"],
+  },
+  {
+    schema: 1,
+    name: "swift",
+    summary: "Swift 6.3.3 for Debian 12 — swiftc and swift build, with the package cache off $HOME.",
+    install: [
+      {
+        kind: "archive",
+        url: {
+          amd64: "https://download.swift.org/swift-6.3.3-release/debian12/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE-debian12.tar.gz",
+          arm64: "https://download.swift.org/swift-6.3.3-release/debian12-aarch64/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE-debian12-aarch64.tar.gz",
+        },
+        sha256: {
+          amd64: "19e0c78cad5418ad48bfa87aa20c53ac9ac9996d1695d04dd94f7c7ea4eb133f",
+          arm64: "ecba8ef87b54a5048d466af500f3169c939a6b8a2cb7c600f76b5184457f293a",
+        },
+        unpack: "tar.gz",
+        bin: [
+          {
+            from: {
+              amd64: "swift-6.3.3-RELEASE-debian12/usr/bin/swift",
+              arm64: "swift-6.3.3-RELEASE-debian12-aarch64/usr/bin/swift",
+            },
+            as: "swift",
+          },
+          {
+            from: {
+              amd64: "swift-6.3.3-RELEASE-debian12/usr/bin/swiftc",
+              arm64: "swift-6.3.3-RELEASE-debian12-aarch64/usr/bin/swiftc",
+            },
+            as: "swiftc",
+          },
+        ],
+      },
+    ],
+    env: { SWIFTPM_CACHE_DIR: "{state}/swiftpm" },
+    state: ["swiftpm"],
+  },
+];
+
+/**
+ * `bin/` is first on root's `PATH`, so a stack that links a name root looks up
+ * gets its code run as root on the next boot, whatever its verb. The refusal
+ * has to name the word, because the author who meets it has done nothing wrong
+ * by their own lights, and the list has to stop short of the image: shadowing
+ * the image is what `bin/` is first on `PATH` for.
+ */
+describe("parseStack — the names root runs, which no stack may link", () => {
+  it("refuses an archive that links git, and says git is the reserved word", () => {
+    // Also what keeps `deny: ["git commit"]` refused: a stack that may not link
+    // `git` cannot own it, and deny beats ISOLATED_GIT_TOOLS.
+    const reason = refusal(
+      parse({ install: [{ ...TERRAFORM.install[0], bin: [{ from: "terraform", as: "git" }] }], deny: ["git commit"] }),
+    );
+    assert.match(reason, /"git" is a reserved name/);
+  });
+
+  it("refuses the applier's own tools and the server's interpreter, from either kind of step", () => {
+    for (const name of ["node", "chown", "curl", "setpriv", "sha256sum", "tar"]) {
+      assert.match(
+        refusal(parse({ install: [{ ...TERRAFORM.install[0], bin: [{ from: "terraform", as: name }] }], deny: [] })),
+        new RegExp(`"${name}" is a reserved name`),
+      );
+      assert.match(
+        refusal(
+          applier.parseStack(
+            JSON.stringify({ schema: 1, name: "tools", install: [{ kind: "npm-global", spec: "x@1.0.0", bin: [name] }] }),
+            "tools",
+          ),
+        ),
+        new RegExp(`"${name}" is a reserved name`),
+      );
+    }
+  });
+
+  it("still parses every stack the operator ships, python's python, pip and pip3 included", () => {
+    for (const stack of SHIPPED_STACKS) {
+      const result = applier.parseStack(JSON.stringify(stack), stack.name);
+      assert.equal(result.ok, true, result.ok ? "" : `${stack.name}: ${(result as { reason: string }).reason}`);
+    }
+  });
+});
+
+/**
+ * The applier is root and runs under a `PATH` that starts with the directory it
+ * links stacks into, so every program it spawns has to be the image's by path.
+ * Spawned rather than imported because what is under test is `spawnSync`'s
+ * lookup: a `PATH` with a planted copy of every tool goes first, and nothing
+ * planted may run. The download is aimed at a closed loopback port so the boot
+ * reaches `dpkg` and `curl` and fails before anything needs root or a network.
+ */
+describe("the applier's own tools — the image's, never the first on PATH", () => {
+  it("runs none of the copies planted ahead of them", () => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "uf-stacks-path-"));
+    const planted = path.join(scratch, "planted");
+    const ran = path.join(scratch, "ran.log");
+    fs.mkdirSync(planted);
+    const tools = ["chmod", "chown", "cp", "curl", "dpkg", "npm", "python3", "setpriv", "sha256sum", "tar", "uv"];
+    for (const name of tools) {
+      fs.writeFileSync(path.join(planted, name), `#!/bin/sh\necho ${name} >> "${ran}"\nexit 1\n`, { mode: 0o755 });
+    }
+    const declarations = path.join(scratch, "declarations");
+    fs.mkdirSync(path.join(declarations, "tool"), { recursive: true });
+    fs.writeFileSync(
+      path.join(declarations, "tool", "stack.json"),
+      JSON.stringify({
+        schema: 1,
+        name: "tool",
+        install: [
+          {
+            kind: "archive",
+            url: "https://127.0.0.1:9/tool.tar.gz",
+            sha256: "0".repeat(64),
+            unpack: "tar.gz",
+            bin: [{ from: "tool", as: "tool" }],
+          },
+        ],
+      }),
+    );
+    const toolbox = path.join(scratch, "toolbox");
+    const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${planted}${path.delimiter}${process.env.PATH ?? ""}` };
+    // No uid drop, which would need root, and no proxy between curl and the
+    // closed port.
+    for (const key of ["UF_AGENT_UID", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]) {
+      delete env[key];
+    }
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [path.join(repoRoot(), "scripts/apply-stacks.mjs"), declarations, toolbox],
+        { env, encoding: "utf8", timeout: 60_000 },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      const plantedThatRan = fs.existsSync(ran) ? fs.readFileSync(ran, "utf8").trim().split("\n") : [];
+      assert.deepEqual(plantedThatRan, [], `the applier ran ${plantedThatRan.join(", ")} off PATH`);
+      const receipt = JSON.parse(fs.readFileSync(path.join(toolbox, "receipts", "tool.json"), "utf8"));
+      assert.equal(receipt.status, "failed");
+      assert.match(receipt.error.text, /could not download/);
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true });
+    }
   });
 });
 

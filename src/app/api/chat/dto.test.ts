@@ -10,7 +10,7 @@ import { spellGuards } from "./dto";
  * `spellGuards` is the whole of what a reader is told about what a press of
  * Approve authorises, and it has two callers whose figures come from different
  * places — the operator's default guard set, and a template they wrote. Its
- * failure is the kind this suite is reserved for: a card asserting a ceiling
+ * failure is the kind this suite is reserved for: a card asserting a limit
  * the run does not have throws nothing, fails no typecheck, renders as an
  * ordinary card, and the money is spent under the number nobody was shown.
  *
@@ -85,7 +85,7 @@ test("a template's own guards are spelled out by the same function", () => {
 });
 
 test("a limit that is off is left out rather than invented", () => {
-  // No cycle cap, no deadline, no ceiling — which is a legal guard set the
+  // No cycle cap, no deadline, no spend limit — which is a legal guard set the
   // install's own limits still bound. A zero, a dash or an omitted separator
   // here would each read as a figure somebody set.
   assert.equal(

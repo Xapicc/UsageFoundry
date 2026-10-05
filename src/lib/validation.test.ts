@@ -212,7 +212,7 @@ describe("grantsAnotherCycle", () => {
     }
   });
 
-  it("stops at the ceiling, which is what keeps the run terminating", () => {
+  it("stops at the limit, which is what keeps the run terminating", () => {
     assert.equal(
       grantsAnotherCycle({ verdict: "not-finished", granted: 1, maxGrants: 2 }),
       true,
@@ -222,7 +222,7 @@ describe("grantsAnotherCycle", () => {
       false,
     );
     // Past it as well as at it: a counter that overshot — two grants recorded
-    // against a ceiling the operator has since lowered — must not read as room.
+    // against a limit the operator has since lowered — must not read as room.
     assert.equal(
       grantsAnotherCycle({ verdict: "not-finished", granted: 9, maxGrants: 2 }),
       false,
@@ -230,7 +230,7 @@ describe("grantsAnotherCycle", () => {
   });
 
   it("treats zero as off rather than as unlimited", () => {
-    // Zero is the operator saying "tell me, do not act". Read as "no ceiling"
+    // Zero is the operator saying "tell me, do not act". Read as "no limit"
     // it would be the opposite, and it is the value somebody types first when
     // they want the check without the spending.
     assert.equal(

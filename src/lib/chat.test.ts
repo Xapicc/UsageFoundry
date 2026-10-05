@@ -2369,8 +2369,8 @@ describe("findChats", () => {
  * was a string in one process's memory, the `chat_turn_spend` row was written
  * after the latch, and the thread's total was moved in the same statement. A
  * restart in the middle lost all three together and the money stayed spent —
- * so the install's rolling ceiling went on believing it had not been, which is
- * the one direction a ceiling must never move by accident.
+ * so the install's rolling limit went on believing it had not been, which is
+ * the one direction a limit must never move by accident.
  *
  * Every assertion here is about a *kind* of number as much as a value. The
  * tokens are what the CLI itself reported and go into the thread's count; the

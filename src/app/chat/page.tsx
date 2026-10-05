@@ -958,7 +958,7 @@ export default function ChatPage() {
     turnStartInstant(chat?.turnStartedAt, lastMessage?.ts ?? chat?.updatedAt) ??
     Date.now();
   // `thinking` implies a chat, but nothing here narrows the optional, and a
-  // ceiling nobody sent is one the page must not state.
+  // limit nobody sent is one the page must not state.
   const turnIdleLimitMs = chat?.turnIdleTimeoutMs ?? null;
 
   // What the click does, counted, above the button that does it. "Approve"
@@ -1892,7 +1892,7 @@ function Speaker({ name, ts }: { name: string; ts: number }) {
  * turn is, because nothing does; the elapsed time is the only real progress
  * there is, and a bar would be an invention.
  *
- * **The ceiling is not that bar by another name, and it is no longer a ceiling
+ * **The limit is not that bar by another name, and it is no longer a limit
  * on the clock beside it.** The server bounds *silence* rather than duration:
  * a turn may run for as long as it keeps producing something, and what gets
  * stopped is a turn nothing is left of. So the clause reports the quiet, which
@@ -1906,7 +1906,7 @@ function Speaker({ name, ts }: { name: string; ts: number }) {
  * stated from the first second rather than past a threshold, because it is the
  * operator's whole basis for deciding whether to wait and it is worth least at
  * the moment they have already waited. Past the bound the clause stops being a
- * ceiling and becomes what is being done about the turn: the sweeper runs every
+ * limit and becomes what is being done about the turn: the sweeper runs every
  * 30s against a 60s margin, so an overrun is a state this page reaches rather
  * than a limit case.
  *

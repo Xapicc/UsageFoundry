@@ -185,7 +185,7 @@ export function shouldGzip(
  * `gzipSync` would be one line shorter and is refused. This process runs the
  * fleet: twenty-five agents' worth of guards, the SSE bus, and the run loop's
  * own budget checks all live on this event loop, and a guard that evaluates
- * late is a run that spends past its ceiling. Measured here, `gzipSync` on an
+ * late is a run that spends past its limit. Measured here, `gzipSync` on an
  * 8.8 MB body blocks for 30.6 ms and fires **zero** timer callbacks while it
  * does, against 43 in an idle 50 ms; a 698 KB body blocks for 10 ms. The
  * promisified form costs the same wall clock (28.7 ms and 10.3 ms) and spends it

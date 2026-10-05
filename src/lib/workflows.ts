@@ -6174,7 +6174,7 @@ function passState(
  * — taken at `advanceInstance`'s claim rather than here, so a shortage defers
  * this turn instead of failing it — `windowRefusal()`, the operator's own
  * configured ceiling already spent, `installBudgetRefusal()`, the
- * install-wide rolling-day ceiling this is the fifth door of, and
+ * install-wide rolling-day limit this is the fifth door of, and
  * `isShuttingDown()`, asked at the claim and again before the spawn. There is
  * deliberately no `evaluateBudget` here — this is not a work cycle and
  * inventing a per-block
@@ -6540,7 +6540,7 @@ export function settleBlock(
  * not landed while the queue was still landing them — a graph that carried on
  * past a merge it said had failed.
  *
- * What the ceiling was actually protecting against is a block stuck `thinking`
+ * What the limit was actually protecting against is a block stuck `thinking`
  * for ever, and that has an answer that is somebody's decision rather than a
  * clock's: `stopInstance` writes the block off, which this loop tests on every
  * pass, and the queue's own Cancel takes the batch. A clock could not tell the
@@ -7810,6 +7810,11 @@ function blockSystemPrompt(
     "  A task marked operatorOnly needs the operator and no run may claim it:",
     "  it goes in relatedTaskIds if the brief mentions it, never in taskIds.",
     "  So does a task with claimedByOperator set: the operator is doing it.",
+    "- Name every board task by its full id, all 36 characters exactly as",
+    "  list_tasks gives it — in taskIds and in the brief's own text. The run",
+    "  that reads the brief looks a task up whole and cannot expand the first",
+    "  eight characters; a shortened id is refused, and a worker run has no",
+    "  list_tasks to find the rest from.",
     "- Runs with no dependsOn link between them start in parallel.",
     "- Emitting nothing is a real answer when there is nothing worth doing — say",
     "  so plainly, and know that any block set to start after this one will be",

@@ -115,7 +115,7 @@ export function mergeMessages(
  * line of the page an operator uses to decide whether to keep waiting or press
  * Stop and lose what the child has done. `turnStartedAt` is what `claimTurn`
  * wrote and what `staleTurn` measures the ten-minute deadline against, so
- * reading anything else here puts the elapsed time and the ceiling beside it on
+ * reading anything else here puts the elapsed time and the limit beside it on
  * two different turns. The thread was that anything else: a turn writes into it
  * — `save_template` appends a note mid-turn — and each write restarted the
  * clock at zero.

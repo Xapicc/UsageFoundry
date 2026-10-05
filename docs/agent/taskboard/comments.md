@@ -98,13 +98,34 @@ barrier, since every run can read its siblings' transcripts under the mounted
 whole through its own `list_my_tasks` — one run putting instructions in front of
 another, from work nobody pointed it at. The refusal is one sentence for "not
 yours" and "not there", `get_my_task`'s rule for its reason, and names
-`list_my_tasks` as where the writable ids are. A **chat** is not narrowed: it
+`list_my_tasks` as where the writable ids are. An id that is not shaped like one
+is refused before that, for its shape (`mcp-surface.md`). A **chat** is not narrowed: it
 reads the whole board through `get_task` with an operator at the keyboard, and
 writes on what it reads. A **block** is refused the tool outright, on
 `create_task`'s ground rather than by omission: a note is permanent and cannot be
 edited, its turn is unattended, and a thread it wrote to is one the operator meets
 already answered by something nobody was reading. Its refusal names what a block
 can still do with the board, on `subjectRefusal`'s rule.
+
+**The cap is stated where it is met, and a run that holds the task is not told
+to file a new one.** `MAX_TASK_COMMENT` is 10,000 characters, which is
+`String.length` — UTF-16 code units, so a body of emoji meets it at half the
+visible count — and both `comment_on_task` definitions say so in their `body`
+description: a limit a caller learns only by going over it is one it has already
+written the text for. The refusal used to say "anything longer is a brief — file
+it as a task of its own", which is right for a long note on somebody else's task
+and wrong for the case that was met: between 2026-09-26 and 2026-09-27 four worker
+runs, whose briefs asked for their findings as one comment, were refused five
+times at 10,152 to 19,874 characters, none took the advice (the text was about the
+task the run held, not new work) and each got through by roughly halving it or
+splitting it across two comments. So when the writer is a run and holds the task —
+`claimed_by_run_id` is its own, read in `addTaskComment` and passed to the pure
+`normalizeTaskCommentInput` — the refusal says to shorten, split across comments,
+or commit the long form to the repository and link to it, and does not mention a
+task. Anyone else keeps the old sentence. **The number itself is unchanged**:
+whether 10,000 is right for runs whose only output is a comment is the operator's
+call, since a higher cap is paid for by the token on every `list_my_tasks` that
+carries a thread whole, and nothing in this change decides it.
 
 **The comment count is on `TaskDTO` and is passed rather than read.**
 `commentCountsForTasks` is one `GROUP BY` for a whole page, `runLinksForTasks`'

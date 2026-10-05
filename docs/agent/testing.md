@@ -376,7 +376,7 @@ Units that are about no test file in the tree:
 
 Units that are about no test file in the tree:
 
-- Four more files and 91 cases across thirteen of them landed with the audit pass that added the two spawn-side token levers, the install-ceiling bounding and the gzip helper — counted as `git diff …
+- Four more files and 91 cases across thirteen of them landed with the audit pass that added the two spawn-side token levers, the install-limit bounding and the gzip helper — counted as `git diff …
 
 ## Checking this page is complete
 

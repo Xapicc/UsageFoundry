@@ -1060,7 +1060,7 @@ function migrate(db: Database.Database) {
   // intact: `maxIterations` and `maxDurationMinutes` are the only two monotone
   // termini, so a verdict that could extend the first without bound would be a
   // run nothing ends. This only ever increases, it is compared against a
-  // ceiling the operator sets, and every other guard stays exactly as terminal
+  // limit the operator sets, and every other guard stays exactly as terminal
   // as it was. `MAX_EARLY_ENDS_PER_RUN` bounds the context ceiling's refund for
   // the same reason and is the precedent.
   addColumn(db, "runs", "validation_cycles", "INTEGER NOT NULL DEFAULT 0");
@@ -1517,7 +1517,7 @@ function migrate(db: Database.Database) {
   // `cost-state` record — so a turn's own cost is the increase over this, and
   // banking the figure whole charged turn N for turns 1..N: a thread total
   // that grew quadratically and a `chat_turn_spend` that closed the install's
-  // ceiling on money nobody spent. Nullable rather than defaulted to zero,
+  // limit on money nobody spent. Nullable rather than defaulted to zero,
   // because zero is a figure: a thread that predates this column resumes a
   // session whose ledger is already non-zero, and null is what makes that one
   // turn bank the whole figure — the old over-count, once — rather than
@@ -1692,7 +1692,8 @@ function migrate(db: Database.Database) {
   // Written once, by `createRun`, and never rewritten — `origin` answers "which
   // route created this", so a query grouped by it over a time range has to keep
   // meaning that. Picking a finished run up again is a different act and gets
-  // `reopened_at` below rather than overwriting this.
+  // `reopened_at` below rather than overwriting this. The single exception is
+  // the one-off correction after the instance columns below.
   //
   // Plain columns, `emitted_by`'s rule: a proposal id or an instance id here is
   // a record of where a run came from and must keep reading true after that row
@@ -1755,6 +1756,32 @@ function migrate(db: Database.Database) {
   addColumn(db, "workflow_instances", "origin", "TEXT");
   addColumn(db, "workflow_instances", "origin_ref", "TEXT");
 
+  // The one correction ever made to `runs.origin` after the fact, and the only
+  // rewrite of it that should exist. Until `INSTANCE_COLUMNS` selected the
+  // instance's own `origin`, every run a *scheduled* instance created after
+  // `startWorkflow` returned — a node behind an orchestrator or merge block, a
+  // loop pass member — was written `workflow` with the instance id as its
+  // reference, so the run page told the operator a person had pressed Run for
+  // work nobody was there for. In such an instance no member can legitimately
+  // read `workflow` (the pass creator writes `schedule`, a block's emissions
+  // `orchestrator-block`), so this join selects exactly the wrong rows.
+  //
+  // It keys on the instance's *own* `origin = 'schedule'` and nothing looser:
+  // an instance whose origin is NULL predates the column and really was a press
+  // of Run, and a `workflow` one was too. Idempotent because the rows it writes
+  // no longer match its WHERE, so every later boot changes nothing — which is
+  // also why it needs no `SCHEMA_VERSION` bump and no transaction (one
+  // statement).
+  db.exec(`
+    UPDATE runs
+       SET origin = 'schedule',
+           origin_ref = (SELECT i.origin_ref FROM workflow_instances i
+                          WHERE i.id = runs.origin_ref)
+     WHERE origin = 'workflow'
+       AND origin_ref IN (SELECT id FROM workflow_instances
+                           WHERE origin = 'schedule')
+  `);
+
   // Mutating HTTP requests: what was asked, of what, by whom, from where.
   //
   // Nothing recorded an authenticated request anywhere, so a burst of runs
@@ -1803,8 +1830,8 @@ function migrate(db: Database.Database) {
   // late settle that moves no total writes no row here either.
   //
   // A thread that predates this table has no rows in it, and reading that as
-  // "$0 spent" would *widen* the ceiling on the boot that upgrades — the one
-  // direction a ceiling must never move by accident. So every thread with a
+  // "$0 spent" would *widen* the limit on the boot that upgrades — the one
+  // direction a limit must never move by accident. So every thread with a
   // total is backfilled as a single turn at its `updated_at`, which is
   // bit-for-bit what the old query counted, and ages out of the window within a
   // day on its own. The probe and the CREATE are one transaction because they
@@ -1828,8 +1855,8 @@ function migrate(db: Database.Database) {
     // A row the CLI never reported a cost for, priced by this app instead.
     //
     // Before the chat child streamed, a turn lost to a restart wrote no row
-    // here at all, so the install's rolling ceiling never learned that the
-    // money had been spent — the one direction a ceiling must never move by
+    // here at all, so the install's rolling limit never learned that the
+    // money had been spent — the one direction a limit must never move by
     // accident. `reconcileChatsOnBoot` writes the estimate it was left with
     // instead, and marks it, so `installSpend` can put it in the guard figure
     // and keep it out of the shown one. Both readings stay honest and neither

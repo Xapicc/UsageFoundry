@@ -153,7 +153,7 @@ async function postHandler(req: Request, ctx: Ctx) {
 
   // The click refused whole, before anything was decided, by a condition that
   // will have cleared by the time the operator looks again — the install
-  // ceiling's rolling window, or another process holding the data directory.
+  // limit's rolling window, or another process holding the data directory.
   // The same 400 an empty batch gets above and for a stronger version of its
   // reason: nothing here is a verdict on a proposal, so every one of them is
   // still pending and the page must not clear the selection. Answered before

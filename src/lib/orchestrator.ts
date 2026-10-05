@@ -372,9 +372,9 @@ export interface RunRow {
    * Only ever increases, and is compared against `maxValidationCycles` rather
    * than against anything the model can move — `validation.ts` carries why the
    * bound has to exist at all: `maxIterations` and `maxDurationMinutes` are the
-   * only two monotone termini, so an extension with no ceiling is a run nothing
+   * only two monotone termini, so an extension with no limit is a run nothing
    * ends. Read off the row and never off a local, so a run picked up after a
-   * restart meets the ceiling it was already under.
+   * restart meets the limit it was already under.
    */
   validation_cycles: number;
   /**
@@ -6769,7 +6769,7 @@ export function runIteration(
   // repository and hands it over.
   //
   // Defaulted to *none* rather than to the install-wide `GITHUB_TOKEN`, which
-  // is `buildArgs`' rule for the run-cost ceiling read the one way round that
+  // is `buildArgs`' rule for the run-cost limit read the one way round that
   // survives a default: a call site that says nothing must get the narrowest
   // credential, never the widest. The run loop always passes one.
   githubToken: string = "",
@@ -8577,7 +8577,7 @@ function handleStreamLine(
 
     // Recorded before it is judged. `isError` collapses every non-success
     // subtype into one boolean, which is the right shape for the exit-code
-    // test and the wrong one for the loop's spend-ceiling branch — that has to
+    // test and the wrong one for the loop's spend-limit branch — that has to
     // know *which* non-success this was.
     if (typeof ev.subtype === "string" && ev.subtype) acc.subtype = ev.subtype;
     if (ev.subtype && ev.subtype !== "success") acc.isError = true;
@@ -9546,7 +9546,7 @@ export async function startRun(id: string): Promise<void> {
       // here for `enforceInstanceBudget`'s reason one scope wider — this is the
       // moment the run is about to commit to spending and nothing has been
       // spawned yet — and ahead of the workflow check because it is the widest
-      // ceiling: a run refused by it would be refused whatever workflow it
+      // limit: a run refused by it would be refused whatever workflow it
       // belongs to, and halting a whole instance over a limit that is not about
       // that instance would take down blocks that are not the problem.
       const installVerdict = installBudgetVerdict();
@@ -9741,10 +9741,10 @@ export async function startRun(id: string): Promise<void> {
       // already folded into `spent_usd`.
       const cycleStartedAt = Date.now();
 
-      // Frozen here for the same reason: the ceiling this cycle is spawned
+      // Frozen here for the same reason: the limit this cycle is spawned
       // with is derived from it, and the two `+=` lines after the cycle
       // returns move it. Held so the branch that reports a cycle stopped at
-      // its ceiling can say what that ceiling was rather than recomputing it
+      // its limit can say what that limit was rather than recomputing it
       // from a total that now includes the cycle itself.
       const spentGuardBeforeCycle = spentUSD + spentGuardEstUSD;
 
@@ -10428,7 +10428,7 @@ export async function startRun(id: string): Promise<void> {
       // `apiError`, so this cycle arrives at that test carrying a sentence
       // about a budget — and `isUsageLimit` matches "reached your … limit"
       // loosely on purpose, because the provider's own wall labels its windows
-      // per model and per window. A ceiling this app handed over would then be
+      // per model and per window. A limit this app handed over would then be
       // read as the subscription allowance running out, and under `live-resume`
       // the run would park and wait hours for an allowance to refill that has
       // nothing to do with why it stopped. `isUsageLimit` excludes `spend` and
@@ -10444,7 +10444,7 @@ export async function startRun(id: string): Promise<void> {
       if (res.subtype === "error_max_budget_usd") {
         stopReason =
           policy.maxRunCostUSD === null
-            ? "Claude Code stopped this work cycle at a spending ceiling of its own."
+            ? "Claude Code stopped this work cycle at a spending limit of its own."
             : `This work cycle was given what was left of this run's $${policy.maxRunCostUSD.toFixed(
                 2,
               )} spending limit after the $${spentGuardBeforeCycle.toFixed(
@@ -10718,7 +10718,7 @@ export async function startRun(id: string): Promise<void> {
 
       // Below every test above it, and that placement is the whole decision.
       // Everything above is a statement about the *machine* — a person stopping
-      // the run, a ceiling the CLI enforced, the provider refusing, the child
+      // the run, a limit the CLI enforced, the provider refusing, the child
       // dying — and this is the only rung that is a statement about the task.
       // Filing a provider wall or a dropped socket as the agent's judgement
       // would be a lie about who decided, and it would send an operator who came
@@ -10805,10 +10805,10 @@ export async function startRun(id: string): Promise<void> {
 
       // The one guard a verdict may extend, and it extends only this one.
       // `evaluateBudget` at the top of the next pass still reads duration, run
-      // spend, both window fractions and the install's own ceiling exactly as it
+      // spend, both window fractions and the install's own limit exactly as it
       // did, so a granted cycle is permission to *ask* for another cycle rather
       // than permission to have one. `validation.ts` carries why the grant has
-      // to be counted on the row and ceilinged: `maxIterations` and
+      // to be counted on the row and capped: `maxIterations` and
       // `maxDurationMinutes` are the only two monotone termini, and one that can
       // be extended without bound is a run nothing ends.
       if (
@@ -10824,7 +10824,7 @@ export async function startRun(id: string): Promise<void> {
       if (heldBack) {
         // Written to the row before the cycle it pays for opens, `iterations`'
         // rule on the refund path: a run picked up after a restart has to meet
-        // the ceiling it was already under, or the bound resets every time the
+        // the limit it was already under, or the bound resets every time the
         // container does.
         recordValidationCycle(id);
         pendingPushback = heldBack.pushback;
@@ -13200,7 +13200,7 @@ export async function shutdownRuns(
   // `active_started_at` cleared on cycles whose agents are still working and
   // still billing. That last one is the serious half and it fails open —
   // `installBudget` and a workflow instance's budget both bound their spend
-  // below by that column, so nulling it widens two ceilings at once, silently,
+  // below by that column, so nulling it widens two limits at once, silently,
   // in the direction a guard may never move by accident. The second process is
   // not hypothetical: it is the dev server an agent starts against an inherited
   // `DATA_DIR`, and it is this server itself from the beat at which `heartbeat`

@@ -114,7 +114,7 @@ const assistTimeoutMs = (kind: AssistKind): number =>
  * cycle one: the clock is the time since the child last printed, so a large
  * merge that is still reporting is never ended however long it takes, and
  * that is all the landing path's no-clock rule protects. What it ends is the
- * case the spending ceiling cannot: a child wedged with nothing to spend,
+ * case the spending limit cannot: a child wedged with nothing to spend,
  * holding one of `maxConcurrentAssists` and its repository's merge worker, for
  * which the only other way out was a restart that interrupts every run in
  * flight.
@@ -425,7 +425,7 @@ export interface AssistRequest {
    */
   after?: (r: AssistResult) => Promise<Partial<AssistResult> | void>;
   /**
-   * `--max-budget-usd`, or null for no ceiling inside the CLI.
+   * `--max-budget-usd`, or null for no limit inside the CLI.
    *
    * **Null for a review, and a number for the two kinds nothing can stop.** A
    * review is one press, read-only and killed at ten minutes. A validation
@@ -593,7 +593,7 @@ export function liveAssistChildren(): number {
  * exists to end. A null cap is the explicit opt-out and is not a shortage.
  *
  * The wording deliberately avoids "already at the ceiling" and the install
- * ceiling's phrasing, which are what `mergeQueue`'s
+ * limit's phrasing, which are what `mergeQueue`'s
  * `refusesEveryLaterResolution` matches on to skip the rest of a repository's
  * queue in one go. A spent window or install will refuse every later item
  * identically; a full budget is a slot somebody else is holding for a few

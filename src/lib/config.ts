@@ -640,8 +640,15 @@ export const CODEX_BIN = env("CODEX_BIN", "codex");
  */
 export const CODEX_HOME = env("CODEX_HOME", path.join(os.homedir(), ".codex"));
 
-/** Path to git, used to give concurrent runs their own checkout. */
-export const GIT_BIN = env("GIT_BIN", "git");
+/**
+ * Path to git, used to give concurrent runs their own checkout.
+ *
+ * A path and not the name, because this server is root and its `PATH` starts
+ * with directories a stack links into and an agent can write — a `git` first
+ * on it would be run for every diff and every landing. `/usr/bin/git` is the
+ * image's apt `git`; a host whose git lives elsewhere sets `GIT_BIN`.
+ */
+export const GIT_BIN = env("GIT_BIN", "/usr/bin/git");
 
 export const ANTHROPIC_API_BASE = env("ANTHROPIC_API_BASE", "https://api.anthropic.com");
 

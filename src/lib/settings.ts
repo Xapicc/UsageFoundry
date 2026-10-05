@@ -443,7 +443,7 @@ export interface Settings {
    */
   resolveAllowedTools: string[];
   /**
-   * Hard ceiling on what one conflict resolution may spend. Null removes it.
+   * Hard limit on what one conflict resolution may spend. Null removes it.
    *
    * `validationBudgetUSD`'s shape and its reason, arrived at from the other
    * end: a resolution has **no clock** — the landing path's rule, because a
@@ -568,7 +568,7 @@ export interface Settings {
    */
   validateTaskCompletion: boolean;
   /**
-   * Hard ceiling on what one validation may spend. Null removes it.
+   * Hard limit on what one validation may spend. Null removes it.
    *
    * `chatTurnBudgetUSD`'s shape and its reason: not a guess at a limit Anthropic
    * knows and we do not, but a cap on this app's own behaviour, enforced
@@ -587,7 +587,7 @@ export interface Settings {
    * `budgets-and-guards.md`: `maxIterations` and `maxDurationMinutes` are the
    * only two monotone termini and a run must have one, so a verdict able to
    * extend the first without bound would be a run nothing ends — the absence of
-   * a ceiling is the defect, so there must be no way to type one. Zero is the
+   * a limit is the defect, so there must be no way to type one. Zero is the
    * off switch and means a verdict never buys a cycle: the task is still held
    * open and the operator still sees why, which is the pitch's own notify-only
    * design arrived at through a number.
@@ -676,7 +676,7 @@ export interface Settings {
    */
   killProcessGroup: boolean;
   /**
-   * Hard ceiling on what one orchestrator-chat turn may spend. Null removes it.
+   * Hard limit on what one orchestrator-chat turn may spend. Null removes it.
    *
    * Not a window ceiling, so the no-default-numbers rule above does not apply:
    * it is not a guess at a limit Anthropic knows and we do not, it is a cap on
@@ -752,7 +752,7 @@ export interface Settings {
    */
   transcriptRetentionDays: number | null;
   /**
-   * Hard ceiling on what this whole installation may spend in 24 hours. Null
+   * Hard limit on what this whole installation may spend in 24 hours. Null
    * removes it, which is the shipped default.
    *
    * The one limit here that is not about a single spender. `maxRunCostUSD`
@@ -877,7 +877,7 @@ export interface Settings {
    */
   dreamingMinDays: number;
   /**
-   * Ceiling in USD on the run one night may create. Never null.
+   * Limit in USD on the run one night may create. Never null.
    *
    * `schedules.ts:529` refuses to schedule a workflow whose instance budget
    * sets nothing, with a reason that applies here word for word: "every other

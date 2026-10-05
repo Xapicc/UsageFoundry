@@ -48,6 +48,7 @@ The paragraphs themselves live in `docs/agent/taskboard/`, one topic file per he
 - A clipped thread loses its oldest end, which is the one place this inverts `listTasks`' shape.
 - Comments reach a run through a tool call and never through the appended system prompt.
 - `comment_on_task` takes a task id and is deliberately not held to `complete_task`'s rule, but a run is held to `get_my_task`'s scope.
+- The cap is stated where it is met, and a run that holds the task is not told to file a new one.
 - The comment count is on `TaskDTO` and is passed rather than read.
 
 ## [Dependencies between tasks](taskboard/task-dependencies.md)
@@ -59,6 +60,7 @@ The paragraphs themselves live in `docs/agent/taskboard/`, one topic file per he
 - A duplicate edge is not an error, and the answer says it was already there.
 - Edges across projects are allowed, and the wire carries which project each end is in.
 - Adding an edge is available to chat and to a run; removing one is the operator's alone.
+- A run draws an edge only between two tasks it may read, and the argument that an edge is safe on any id was right about the wrong thing.
 - The edge records no author, and that absence is not an oversight.
 - The neighbourhood is on `TaskDTO`, is passed rather than read, and its lists are capped while its counts are not.
 - Every tool that mentions an edge says twice that it holds nothing back.
@@ -73,6 +75,7 @@ The paragraphs themselves live in `docs/agent/taskboard/`, one topic file per he
 - A work cycle's tools, and what their absence is.
 - The count alone was measured not to prevent that duplicate, and `list_my_tasks` takes a `query` because of it.
 - `get_my_task` is the whole-brief door onto exactly those rows, and its scope is the list's and never wider.
+- An id that is not shaped like one is refused for its shape, before any lookup, in every board tool that takes one — and no refusal names a tool the caller does not have.
 - The run id comes from the token and never from the call, and that sentence is the entire authorisation of this surface.
 - The token is minted per run, lives as long as the run's loop and is revoked outright, with no grace.
 - A run's MCP config is deliberately not strict, and the claim is not the config.

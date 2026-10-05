@@ -64,7 +64,7 @@ interface Cycle {
 
 /** What each child the loop spawns will do, in spawn order. */
 let script: Cycle[] = [];
-/** What each child was asked to `--resume`, and the ceiling it was handed. */
+/** What each child was asked to `--resume`, and the limit it was handed. */
 let spawns: Array<{ resumed: string | null; ceiling: string | null }> = [];
 /** Each session's saved ledger, as the transcript's `cost-state` would hold it. */
 const ledgers = new Map<string, number>();
@@ -209,7 +209,7 @@ describe("a run whose work cycles resume one session", () => {
     // as $4 + $8, the run was stopped at $12 before it.
     assert.equal(row.iterations, 3, `stopped early: ${row.stop_reason}`);
     assert.equal(row.spent_usd, 12);
-    // And what reaches the CLI as its own ceiling is the same remainder.
+    // And what reaches the CLI as its own limit is the same remainder.
     assert.deepEqual(
       spawns.map((s) => s.ceiling),
       ["10", "6", "2"],
