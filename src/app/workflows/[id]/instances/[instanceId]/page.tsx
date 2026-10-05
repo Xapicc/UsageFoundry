@@ -1210,7 +1210,7 @@ export default function WorkflowInstancePage() {
                 instance.spentUnmeasured > 0
                 ? `${fmtUSD(instance.spentUSD)} reported so far`
                 : `${fmtUSD(instance.spentUSD)} measured so far`
-              : // The ceiling and nothing else. `value`/`upperValue` put both
+              : // The limit and nothing else. `value`/`upperValue` put both
                 // dollar figures in the head, so a "the guard reads …" clause
                 // here printed one of them twice a hand's width apart; and where
                 // the two agree `Meter` draws no band at all, so the head's

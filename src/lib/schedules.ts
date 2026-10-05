@@ -505,7 +505,7 @@ export function decideSchedule(ctx: ScheduleContext): ScheduleDecision {
  * The precedent is an orchestrator block's fan-out cap, which
  * `normalizeWorkflowInput` refuses to leave null for a reason stated in exactly
  * these terms: it is the one block whose runs start with nobody looking, so a
- * missing ceiling is an unbounded number of billed agents from one press of Run.
+ * missing limit is an unbounded number of billed agents from one press of Run.
  * A schedule is that argument one level up. Every other press of Run is bounded
  * by a person being there to see what it cost and decide whether to press it
  * again; a schedule removes the person and keeps the press.

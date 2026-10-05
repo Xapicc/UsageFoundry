@@ -982,9 +982,10 @@ async function processOne(
         status: "failed",
         message: resolved.reason,
         resolveCost,
-        // A window or an install already at its ceiling refuses every later
-        // resolution identically, and each attempt costs a fresh `landState`
-        // (and, for the window, a full transcript scan) to find that out again.
+        // A window already at its ceiling or an install already at its limit
+        // refuses every later resolution identically, and each attempt costs a
+        // fresh `landState` (and, for the window, a full transcript scan) to
+        // find that out again.
         ...(resolved.refusesEveryResolution
           ? { refusedResolutions: resolved.reason }
           : {}),
@@ -1009,7 +1010,7 @@ async function processOne(
  *
  * The two refusals that are about the operator's limits rather than about this
  * branch: the window ceiling (`windowRefusal`) and the install's rolling-day
- * ceiling (`installBudgetRefusal`), both worded elsewhere and matched on the
+ * limit (`installBudgetRefusal`), both worded elsewhere and matched on the
  * part that is not a figure or a branch name. Neither changes between one item
  * and the next. The process budget deliberately does not match — a full budget
  * is a slot somebody frees in minutes, so the item behind it asks again.

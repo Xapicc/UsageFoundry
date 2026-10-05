@@ -20,7 +20,7 @@ import { createHash } from "node:crypto";
  *
  * ## So this guards the tail, and nothing else
  *
- * `maxRunCostUSD` is an absolute ceiling and has to be set high enough for the
+ * `maxRunCostUSD` is an absolute limit and has to be set high enough for the
  * worst legitimate run, which makes it useless against a run that is merely
  * three times its own task's normal. This is the relative one: it knows what
  * THIS task has cost before and stops the run that has left that distribution.

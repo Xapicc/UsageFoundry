@@ -11,7 +11,7 @@ import { totalTokens } from "./pricing";
  * the child exited, so every way of reading the stream wrongly is silent in the
  * same direction: a turn that produced *less* than it did. Text folded from the
  * wrong field is an empty half-answer; usage read from the wrong key is a
- * ceiling that never sees the money; an event type with no branch is a CLI
+ * limit that never sees the money; an event type with no branch is a CLI
  * rename that makes every turn look thinner rather than making one fail.
  *
  * The last is the one with a precedent in this repository and it is why the
@@ -109,7 +109,7 @@ describe("readChatEvent", () => {
     // The CLI emits one event per content block, and each repeats the
     // response's id and whole usage; every block before the last carries a
     // placeholder in the output field. Summed per event, a thinking block and
-    // a tool call doubled what the live ceiling check reads.
+    // a tool call doubled what the live limit check reads.
     const usage = { cache_read_input_tokens: 29_238, input_tokens: 6 };
     const acc = newChatTurnAccumulator();
     readChatEvent(acc, assistant({ id: "msg_1", usage: { ...usage, output_tokens: 4 } }));

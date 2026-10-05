@@ -6174,7 +6174,7 @@ function passState(
  * — taken at `advanceInstance`'s claim rather than here, so a shortage defers
  * this turn instead of failing it — `windowRefusal()`, the operator's own
  * configured ceiling already spent, `installBudgetRefusal()`, the
- * install-wide rolling-day ceiling this is the fifth door of, and
+ * install-wide rolling-day limit this is the fifth door of, and
  * `isShuttingDown()`, asked at the claim and again before the spawn. There is
  * deliberately no `evaluateBudget` here — this is not a work cycle and
  * inventing a per-block
@@ -6540,7 +6540,7 @@ export function settleBlock(
  * not landed while the queue was still landing them — a graph that carried on
  * past a merge it said had failed.
  *
- * What the ceiling was actually protecting against is a block stuck `thinking`
+ * What the limit was actually protecting against is a block stuck `thinking`
  * for ever, and that has an answer that is somebody's decision rather than a
  * clock's: `stopInstance` writes the block off, which this loop tests on every
  * pass, and the queue's own Cancel takes the batch. A clock could not tell the

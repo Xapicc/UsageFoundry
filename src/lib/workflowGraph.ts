@@ -158,7 +158,7 @@ export interface WorkflowNode {
    * Never null on an orchestrator block, and that is enforced at *save* rather
    * than at Run — the reasoning `normalizeTemplateInput` applies to the
    * `no_terminus` pair, with more at stake: this is the one block whose runs
-   * start with nothing between the decision and the spawn, so a missing ceiling
+   * start with nothing between the decision and the spawn, so a missing limit
    * is an unbounded number of billed agents from one press of Run.
    */
   fanOut: number | null;
@@ -200,7 +200,7 @@ export interface WorkflowNode {
    *
    * The one number on a node that reads like a budget, and it is not one. A
    * guard decides what an agent *may do* — `--permission-mode`, an isolation
-   * choice, a per-run ceiling — and every one of those still comes from the
+   * choice, a per-run limit — and every one of those still comes from the
    * block's template or from `settings.chatDefaultGuards`, exactly as they do
    * for every other kind of block. This is a **terminus**, the same kind of
    * number `fanOut` is: it bounds how many times a block repeats and can only

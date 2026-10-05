@@ -405,7 +405,7 @@ describe("normalizeWorkflowInput — name and blocks", () => {
   it("refuses an orchestrator block with no fan-out cap", () => {
     // The `no_terminus` rule, applied where it bites hardest: this is the one
     // block whose runs start with nothing between the decision and the spawn,
-    // so a missing ceiling is an unbounded number of billed agents from one
+    // so a missing limit is an unbounded number of billed agents from one
     // press of Run. Refused at *save*, so it fails in the form that caused it.
     for (const bad of [undefined, null, "", 0, -1, 2.5]) {
       assert.match(
@@ -416,7 +416,7 @@ describe("normalizeWorkflowInput — name and blocks", () => {
     }
   });
 
-  it("refuses a fan-out cap past the ceiling, and keeps one below it", () => {
+  it("refuses a fan-out cap past the limit, and keeps one below it", () => {
     assert.match(error(graph([decider("a", { fanOut: 99 })])), /at most 10 runs/);
     assert.equal(value(graph([decider("a", { fanOut: 4 })])).graph.nodes[0].fanOut, 4);
   });
@@ -1209,7 +1209,7 @@ describe("normalizeWorkflowInput — loop blocks", () => {
     );
   });
 
-  it("refuses a pass cap past the ceiling", () => {
+  it("refuses a pass cap past the limit", () => {
     assert.match(error(looped({ maxPasses: 99 })), /at most 20/);
   });
 
@@ -1337,7 +1337,7 @@ describe("normalizeWorkflowInput — loop blocks", () => {
  * into a folder with no branch under it. An edge across the boundary gives
  * "when is this released" two answers. A section that ends anywhere but at a
  * merge block leaves the next pass working from a branch that cannot see what
- * the last one did — silent, and paid for a pass at a time. And the ceiling is
+ * the last one did — silent, and paid for a pass at a time. And the limit is
  * the arithmetic nobody does: an orchestrator member spends its fan-out cap
  * again on every pass, so 20 passes over a section holding one is not 20 runs.
  */
@@ -1740,7 +1740,7 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
     assert.match(refusal, /which is 100 runs/);
   });
 
-  it("allows a section whose worst case is exactly the ceiling", () => {
+  it("allows a section whose worst case is exactly the limit", () => {
     // The boundary the arithmetic is decided on. Three run blocks and a merge
     // is 3 runs a pass, and 20 × 3 is 60, which is allowed — the merge block
     // is not a run and is not counted.

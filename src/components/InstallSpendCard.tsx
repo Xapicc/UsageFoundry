@@ -11,13 +11,13 @@ import { Card, CardTitle } from "./ui/Card";
 import { Hint } from "./ui/Hint";
 
 /**
- * The one ceiling on the dashboard that is about the *install* rather than
+ * The one limit on the dashboard that is about the *install* rather than
  * about a window Anthropic enforces, so it sits outside the meters: its span is
  * a rolling 24 hours, its figures are money this app recorded spending rather
  * than our price table over every transcript on the machine, and the two must
  * never be added.
  *
- * Always shown — with no ceiling configured the meter is the hatched
+ * Always shown — with no limit configured the meter is the hatched
  * indeterminate one, which is this app's standing answer to a reading with no
  * denominator, and the hint is where the operator finds out the limit exists at
  * all.
@@ -48,7 +48,7 @@ import { Hint } from "./ui/Hint";
  *
  * Both figures count a run that was alive inside the window in full — an
  * over-count by construction, which `installBudget.ts` calls the safe direction
- * for a ceiling and the wrong one for a report. It used to be explained only
+ * for a limit and the wrong one for a report. It used to be explained only
  * where a limit was configured, which is the branch an install does *not* ship
  * in, so the shipped default printed the over-count with the caveat stripped.
  * It is one sentence for both branches now, and what differs between them is

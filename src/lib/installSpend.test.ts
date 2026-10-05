@@ -16,7 +16,7 @@ import type Database from "better-sqlite3";
  * tables, each bounded on a different column, with a fourth contribution
  * arriving through `telemetrySpendSince` for cycles that have reported nothing.
  * A window bound applied to the wrong column, or a table left out, produces a
- * ceiling that is quietly larger than the one the operator typed.
+ * limit that is quietly larger than the one the operator typed.
  *
  * Its own file, and `DATA_DIR`/`CLAUDE_HOME` set before the first import, for
  * `haltedMembers.test.ts`' reason: `config.ts` reads both at module load. It is
@@ -96,7 +96,7 @@ function addRun(o: {
     );
 }
 
-/** A chat and one settled turn of it, which is what the ceiling reads. */
+/** A chat and one settled turn of it, which is what the limit reads. */
 function addChatTurn(id: string, at: number, cost: number): void {
   dbMod
     .db()
@@ -131,8 +131,8 @@ describe("what the install's spend limit is measured from", () => {
     // Inside: finished an hour ago, and still going.
     addRun({ id: "recent", status: "completed", spent: 10, finishedAt: NOW - HOUR });
     addRun({ id: "live", status: "running", spent: 4, finishedAt: null });
-    // Outside: finished 30 hours ago. A ceiling that counted this would be a
-    // ceiling on all of history wearing a 24-hour label.
+    // Outside: finished 30 hours ago. A limit that counted this would be a
+    // limit on all of history wearing a 24-hour label.
     addRun({ id: "old", status: "completed", spent: 500, finishedAt: NOW - 30 * HOUR });
 
     // A deciding block's turn, and a chat turn — both money this app spent that
@@ -210,7 +210,7 @@ describe("what the install's spend limit is measured from", () => {
     // has held in the queue ever since still carries an instant a day old, and
     // starts the moment a slot frees. Bounding an unfinished run on that column
     // alone would drop that spender out of the reading, which is the one
-    // direction a ceiling must never move by accident.
+    // direction a limit must never move by accident.
     addRun({
       id: "requeued",
       status: "queued",
@@ -250,10 +250,10 @@ describe("what the install's spend limit is measured from", () => {
     clearAll();
 
     // A turn the CLI never reported a cost for — a cancel, a timeout, a
-    // restart, this ceiling itself closing on it. Before the child streamed
+    // restart, this limit itself closing on it. Before the child streamed
     // there was no row at all, so money the app had watched being spent was
     // invisible to the window that is supposed to bound it: the one direction
-    // a ceiling must never move by accident.
+    // a limit must never move by accident.
     dbMod
       .db()
       .prepare(
@@ -278,7 +278,7 @@ describe("what the install's spend limit is measured from", () => {
   it("sees the turn that is spending right now", () => {
     clearAll();
 
-    // The whole of what the ceiling could not see before: it was read once, at
+    // The whole of what the limit could not see before: it was read once, at
     // admission, so a turn admitted at 99% ran for ten minutes past it and a
     // turn admitted before three runs finished ran against a figure that had
     // moved. `chatTurnBudgetUSD` bounds *this* turn inside the CLI; nothing
@@ -311,7 +311,7 @@ describe("what the install's spend limit is measured from", () => {
     // A killed cycle's estimate never reaches `spent_usd`, and a cycle in
     // flight has reported nothing at all. An install guarding on the measured
     // figure alone would read far under its own total for exactly as long as
-    // agents are working, which is when the ceiling matters.
+    // agents are working, which is when the limit matters.
     addRun({
       id: "killed",
       status: "stopped",
@@ -365,7 +365,7 @@ describe("what the install's spend limit is measured from", () => {
     assert.equal(installBudget.installSpend(NOW).spentGuardUSD, 1);
   });
 
-  it("refuses only once the ceiling is configured and reached", () => {
+  it("refuses only once the limit is configured and reached", () => {
     clearAll();
     addRun({ id: "big", status: "completed", spent: 60, finishedAt: NOW - HOUR });
 

@@ -754,7 +754,7 @@ function orchestratorMs(what: string, pattern: RegExp): number {
  * the failure `shutdownRuns` was written to end — every in-flight cycle's spend
  * lost, and `active_started_at` left set on cycles whose agents are gone, which
  * `installBudget` and a workflow instance's budget both bound
- * `telemetrySpendSince` below by. That half fails *open*: it widens two ceilings
+ * `telemetrySpendSince` below by. That half fails *open*: it widens two limits
  * at once, silently, in the direction a guard may never move by accident, and
  * the only symptom is spend that does not add up.
  *

@@ -233,28 +233,28 @@ function spentAssist(usd: number): void {
   ).run(id("resolve"), runId, "resolve", now, now, "completed", usd);
 }
 
-describe("assistRefusal — the install's daily ceiling refuses every assist", () => {
-  it("refuses once the install has spent its rolling day, with the ceiling's own sentence", async () => {
+describe("assistRefusal — the install's daily limit refuses every assist", () => {
+  it("refuses once the install has spent its rolling day, with the limit's own sentence", async () => {
     settings.saveSettings({ maxConcurrentAssists: 2, installDailyCostLimitUSD: 5 });
     try {
       spentAssist(6);
 
       // The finding: `installSpend` counted this money and no assist ever asked
       // it, so a review, a resolution or a validation still started past the
-      // ceiling. Before the door asked, the answer here was `null`.
+      // limit. Before the door asked, the answer here was `null`.
       const refusal = await review.assistRefusal();
       assert.match(refusal ?? "", /This install has spent \$6\.00 in the last 24 hours/);
       assert.equal(
         review.assistBudgetFull(),
         false,
-        "a slot is free, so the refusal is the ceiling and not the process budget",
+        "a slot is free, so the refusal is the limit and not the process budget",
       );
     } finally {
       settings.saveSettings({ installDailyCostLimitUSD: null });
     }
   });
 
-  it("lets one through under the ceiling, and with the ceiling off", async () => {
+  it("lets one through under the limit, and with the limit off", async () => {
     settings.saveSettings({ maxConcurrentAssists: 2, installDailyCostLimitUSD: 5 });
     try {
       spentAssist(4);
@@ -262,7 +262,7 @@ describe("assistRefusal — the install's daily ceiling refuses every assist", (
 
       spentAssist(4);
       settings.saveSettings({ installDailyCostLimitUSD: null });
-      assert.equal(await review.assistRefusal(), null, "a null ceiling is off, not zero");
+      assert.equal(await review.assistRefusal(), null, "a null limit is off, not zero");
     } finally {
       settings.saveSettings({ installDailyCostLimitUSD: null });
     }
@@ -270,7 +270,7 @@ describe("assistRefusal — the install's daily ceiling refuses every assist", (
 
   it("names the process budget first when both refuse, so a queue asks again", async () => {
     // `refusesEveryLaterResolution` skips the rest of a merge queue on the
-    // ceiling's sentence; a full budget clears in minutes and must not.
+    // limit's sentence; a full budget clears in minutes and must not.
     settings.saveSettings({ maxConcurrentAssists: 1, installDailyCostLimitUSD: 5 });
     try {
       spentAssist(6);
