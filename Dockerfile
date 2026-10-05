@@ -284,18 +284,16 @@ RUN set -eux; \
 # the image's.
 #
 # All three under one root so a single named volume covers them, which is the
-# argument GOPATH/GOCACHE above are stated for. `bin` is on PATH because that is
-# what a plugin's hook resolves the command through — `childEnv` copies the
-# server's environment and strips only UF_*, OTEL_* and four named keys, so a
-# PATH set here is the PATH the CLI and its hooks run with.
+# argument GOPATH/GOCACHE above are stated for. `bin` is on the agents' PATH,
+# `UF_AGENT_PATH` below, because that is what a plugin's hook resolves the
+# command through — and on theirs only, since the volume is the agents' own.
 #
 # `python` is on the volume for the case UV_PYTHON_PREFERENCE does not cover: a
 # tool needing a newer interpreter than this image's 3.11 makes uv fetch one,
 # and unpersisted that is a ~30 MB download repeated after every `up --build`.
 # The preference is `system` rather than the default `managed` so that the
 # ordinary case uses the interpreter already here and downloads nothing at all.
-ENV PATH="/home/node/pytools/bin:${PATH}" \
-    UV_TOOL_DIR=/home/node/pytools/tools \
+ENV UV_TOOL_DIR=/home/node/pytools/tools \
     UV_TOOL_BIN_DIR=/home/node/pytools/bin \
     UV_PYTHON_INSTALL_DIR=/home/node/pytools/python \
     UV_PYTHON_PREFERENCE=system
@@ -310,16 +308,26 @@ ENV PATH="/home/node/pytools/bin:${PATH}" \
 # is the one invariant here whose breach is invisible to the person who breaks
 # it, and `deployment.test.ts` asserts this file names no path under it.
 #
-# First on PATH rather than last, so a stack wins over a copy in /usr/local/bin
-# and an operator who declared a version gets the version they declared. The
-# read-back reports the path it resolved to and draws a resolution outside the
-# toolbox as `shadowed`, so the losing case is visible rather than silent.
+# First on the agents' PATH rather than last, so a stack wins over a copy in
+# /usr/local/bin and an operator who declared a version gets the version they
+# declared. The read-back reports the path it resolved to and draws a resolution
+# outside the toolbox as `shadowed`, so the losing case is visible rather than
+# silent.
 #
-# Set here rather than by the entrypoint because PATH has to be final before the
-# server starts: `childEnv` copies the server's environment into every agent
-# child, so a run-time change would leave two sets of children differing in what
-# they can resolve, with nothing saying so.
-ENV PATH="/var/lib/uf-stacks/bin:${PATH}"
+# **The agents' PATH and not the image's.** Both directories ahead of the
+# image's are written by something other than root — this one by whatever a
+# stack's author shipped, the pytools one above by any agent, on a volume that
+# outlives `up --build` — and everything that runs as root here looks its tools
+# up by name: the entrypoint, `exec "$@"`'s `node`, winnow's `ps` and `lsof`, and
+# the `docker compose exec usagefoundry node scripts/backup-db.mjs` an operator
+# puts in cron. So the image's PATH stays the base image's, which is root's, and
+# the server hands this one to every child it drops to UF_AGENT_UID (`agentPath`
+# in `src/lib/config.ts`). `docker-entrypoint.sh` restates root's literally.
+#
+# Set here rather than by the entrypoint because it has to be final before the
+# server starts: a run-time change would leave two sets of children differing in
+# what they can resolve, with nothing saying so.
+ENV UF_AGENT_PATH="/var/lib/uf-stacks/bin:/home/node/pytools/bin:${PATH}"
 
 # winnow, bundled rather than installed at boot.
 #
@@ -766,7 +774,8 @@ EXPOSE 3000
 # does not detect.
 #
 # `/usr/bin/curl` by path because Docker runs this as root, every thirty seconds,
-# under the `PATH` above that starts with the stacks' `bin/`.
+# and a probe that names its binary does not depend on which `PATH` the image
+# ends up with.
 #
 # The numbers, and why:
 #

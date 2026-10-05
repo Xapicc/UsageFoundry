@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { agentPath } from "./config";
 
 /**
  * What the stack applier did, read back.
@@ -50,7 +51,7 @@ export const STACKS_DECLARATIONS_DIR = "/etc/uf-stacks";
 /** The named volume. Nothing in the image is ever written under here. */
 export const STACKS_ROOT = "/var/lib/uf-stacks";
 
-/** Every linked binary, one flat directory, root-owned and on the image's `PATH`. */
+/** Every linked binary, one flat directory, root-owned and on the agents' `PATH`. */
 export const STACKS_BIN_DIR = `${STACKS_ROOT}/bin`;
 
 /** One receipt per stack, rewritten on every boot. */
@@ -60,11 +61,12 @@ export const STACKS_RECEIPTS_DIR = `${STACKS_ROOT}/receipts`;
 export const STACKS_STATE_DIR = `${STACKS_ROOT}/state`;
 
 /**
- * The environment every `ok` stack exports, merged into `process.env` at boot.
+ * The environment every `ok` stack exports, for the agents and never for root.
  *
  * A file because the applier is a child of the entrypoint and cannot write into
- * its parent's environment. `src/instrumentation.ts` reads it before the first
- * request; `childEnv` carries it onward to every agent child from there.
+ * its parent's environment. `agentEnvironment` below reads it and every
+ * environment built for a dropped child starts from that; this process's own
+ * `process.env` never carries it.
  */
 export const STACKS_ENV_FILE = `${STACKS_ROOT}/env.json`;
 
@@ -250,14 +252,14 @@ export function readReceipts(dir = STACKS_RECEIPTS_DIR): {
 }
 
 /**
- * What the stacks export, for `src/instrumentation.ts` to merge at boot.
+ * What the stacks export, read off the applier's file.
  *
  * Returns an empty object for an install with no stacks and for one whose file
  * cannot be read, because there is nothing the server could do differently
  * either way: the applier has already written a receipt saying what happened,
  * and that is the surface an operator reads. What this must never do is throw,
- * since it runs inside `register()` and a rejected `register()` leaves Next
- * listening anyway.
+ * since it is first read inside `register()` and a rejected `register()` leaves
+ * Next listening anyway — and after that inside every child spawn.
  */
 export function stackEnvironment(file = STACKS_ENV_FILE): Record<string, string> {
   try {
@@ -265,6 +267,43 @@ export function stackEnvironment(file = STACKS_ENV_FILE): Record<string, string>
   } catch {
     return {};
   }
+}
+
+/**
+ * Cached for the life of the process, on `stackGrants`' grounds: the applier
+ * wrote the file before this server started and only a restart rewrites it.
+ */
+const exported = globalThis as unknown as { __ufStackEnv?: { value: Record<string, string> | null } };
+exported.__ufStackEnv ??= { value: null };
+
+/**
+ * The environment a child dropped to the agent uid starts from: the stacks'
+ * exports under `base`, and the agents' `PATH` over both.
+ *
+ * **Never this process's own.** The server is root, and so is every child it
+ * spawns without dropping the uid — winnow's `pruneEnv` among them — so a
+ * stack's `PYTHONPATH` or `HTTPS_PROXY` merged into `process.env` was a stack
+ * reaching root's interpreters and root's outbound calls, and `PATH` there would
+ * be root looking names up where an agent writes. Only the builders for dropped
+ * children call this, which keeps both out of root by construction rather than
+ * by `refuseEnv` naming every variable that could matter.
+ *
+ * Under `base` because a variable the operator set in `.env` or compose is
+ * their answer and a stack's is a default — the merge never overwrote one, and
+ * this keeps that, blank included.
+ */
+export function agentEnvironment(
+  base: NodeJS.ProcessEnv = process.env,
+  stackEnv: Record<string, string> = cachedStackEnvironment(),
+  path: string = agentPath(),
+): NodeJS.ProcessEnv {
+  return { ...stackEnv, ...base, PATH: path };
+}
+
+function cachedStackEnvironment(): Record<string, string> {
+  const cache = exported.__ufStackEnv!;
+  cache.value ??= stackEnvironment();
+  return cache.value;
 }
 
 /**

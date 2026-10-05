@@ -5,6 +5,7 @@ import {
 } from "node:child_process";
 import { CLAUDE_BIN } from "./config";
 import { childCredentials } from "./privsep";
+import { agentEnvironment } from "./stacks";
 
 /**
  * The fifth kind of child process, and the only one that starts no agent.
@@ -265,7 +266,7 @@ export function normalizeCode(input: unknown): ClaudeAuthResult<string> {
  * the test that pins that, and nothing else.
  */
 export function authEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, FORCE_COLOR: "0" };
+  const env: NodeJS.ProcessEnv = { ...agentEnvironment(), FORCE_COLOR: "0" };
   for (const key of Object.keys(env)) {
     if (
       key.startsWith("UF_") ||

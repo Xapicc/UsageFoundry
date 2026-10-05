@@ -30,10 +30,12 @@ import {
   PAYBACK_HORIZON_TURNS,
   CEILING_PAYBACK_HORIZON_TURNS,
   PRUNE_TIERS,
+  pruneEnv,
   sumPruneSavings,
   type PruneReceiptRow,
 } from "./contextPruning";
 import { BYTES_PER_TOKEN } from "./fileCostNotice";
+import { agentEnvironment } from "./stacks";
 
 /**
  * The two decisions behind context pruning that are arithmetic rather than
@@ -2442,5 +2444,53 @@ describe("forkCutFromRow", () => {
     assert.equal(net.removalKnown, false);
     assert.equal(net.cacheSavedUSD, 0);
     assert.ok(net.netUSD < 0);
+  });
+});
+
+/**
+ * winnow is the one child this server spawns without dropping the uid, so it is
+ * root, and it looks `ps` up by name. What it must not get is what the agents
+ * get: a `PATH` with the stacks' `bin/` and the agent-owned pytools launchers
+ * first, and the stacks' exports, where a `PYTHONPATH` is a stack's module
+ * inside root's interpreter (board tasks `aff25da4` and `76b451aa`). Both are
+ * planted where `agentEnvironment` reads them, and asserted to reach the
+ * agents' environment as well — without that half, a plant that never took
+ * would pass here having measured nothing.
+ */
+describe("pruneEnv — root's environment, not the agents'", () => {
+  const stacks = globalThis as unknown as { __ufStackEnv?: { value: Record<string, string> | null } };
+  const saved = {
+    stackEnv: stacks.__ufStackEnv?.value ?? null,
+    path: process.env.PATH,
+    agentPath: process.env.UF_AGENT_PATH,
+    pythonPath: process.env.PYTHONPATH,
+  };
+  after(() => {
+    stacks.__ufStackEnv = { value: saved.stackEnv };
+    for (const [key, value] of [
+      ["PATH", saved.path],
+      ["UF_AGENT_PATH", saved.agentPath],
+      ["PYTHONPATH", saved.pythonPath],
+    ] as const) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it("carries the server's own PATH and none of the stacks' exports", () => {
+    // Both set here rather than read off this process: a test run inside an
+    // older image inherits a PATH that already starts with the toolbox.
+    process.env.PATH = "/usr/local/bin:/usr/bin:/bin";
+    process.env.UF_AGENT_PATH = `/var/lib/uf-stacks/bin:/home/node/pytools/bin:${process.env.PATH}`;
+    delete process.env.PYTHONPATH;
+    stacks.__ufStackEnv = { value: { PYTHONPATH: "/var/lib/uf-stacks/pkg/evil" } };
+
+    const agents = agentEnvironment();
+    assert.equal(agents.PYTHONPATH, "/var/lib/uf-stacks/pkg/evil", "the planted stack env never reached the agents");
+    assert.equal(agents.PATH, process.env.UF_AGENT_PATH);
+
+    const root = pruneEnv();
+    assert.equal(root.PYTHONPATH, undefined, "a stack's PYTHONPATH reached winnow, which runs as root");
+    assert.equal(root.PATH, process.env.PATH, "winnow, which is root, got the agents' PATH");
   });
 });

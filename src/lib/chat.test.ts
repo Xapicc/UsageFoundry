@@ -2517,18 +2517,19 @@ describe("mintRunCapability", () => {
  *
  * `chatEnv` is one of six hand-copies of the same strip list
  * (`docs/agent/security.md`), and until this only `childEnv` was pinned by a
- * test. The list is a denylist and `PATH` is deliberately not on it:
- * `proposals/CustomStacks/01c-reach-and-permission.md` §2 argues that a toolbox
- * the `Dockerfile` puts on this server's `PATH` therefore reaches every agent
- * child for free, and the chat child is one of the children that claim rests
- * on. An edit that added `PATH` here would have to be made in six places and
+ * test. The list is a denylist and `PATH` is deliberately not on it, and the
+ * `PATH` the builder starts from is the agents' (`UF_AGENT_PATH`, through
+ * `agentEnvironment`) rather than this server's, which is root's and carries
+ * no toolbox: `proposals/CustomStacks/01c-reach-and-permission.md` §2 argues
+ * that a toolbox the `Dockerfile` puts there reaches every agent child, and the
+ * chat child is one of the children that claim rests on. An edit that added `PATH` here would have to be made in six places and
  * nothing fails if it is made in one: the chat would simply stop finding a
  * tool, inside a tool call nobody reads, with no page and no log in this app
  * mentioning it.
  *
  * The assertion is over a *planted* directory rather than over equality alone,
- * for the reason `childEnv`'s is: what §2 claims is that a directory added to
- * this server's `PATH` arrives, in the position it was added at.
+ * for the reason `childEnv`'s is: what §2 claims is that a directory on the
+ * agents' `PATH` arrives, in the position it was put at.
  *
  * And it is over `chatEnv()` rather than over a bare strip, because that is
  * what the spawn site passes — `chatEnv` returns `{ ...env, ...githubEnv() }`
@@ -2538,22 +2539,26 @@ describe("mintRunCapability", () => {
  * measuring anything.
  */
 describe("chatEnv — the PATH the chat's tools are resolved on", () => {
-  const previous = process.env.PATH;
+  const previous = { PATH: process.env.PATH, UF_AGENT_PATH: process.env.UF_AGENT_PATH };
   after(() => {
-    if (previous === undefined) delete process.env.PATH;
-    else process.env.PATH = previous;
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   });
 
   const TOOLBOX = "/var/lib/uf-stacks/bin";
+  const ROOT_PATH = "/usr/local/bin:/usr/bin:/bin";
 
   it("carries a planted toolbox directory through to the chat child", () => {
-    process.env.PATH = `${TOOLBOX}:${previous ?? "/usr/bin"}`;
+    process.env.PATH = ROOT_PATH;
+    process.env.UF_AGENT_PATH = `${TOOLBOX}:${ROOT_PATH}`;
     const env = chatEnv();
-    assert.equal(env.PATH, process.env.PATH);
+    assert.equal(env.PATH, process.env.UF_AGENT_PATH, "the chat child got the server's PATH rather than the agents'");
     assert.equal(
       env.PATH?.split(path.delimiter)[0],
       TOOLBOX,
-      "a directory prepended to the server's PATH did not reach the chat child first",
+      "a directory first on the agents' PATH did not reach the chat child first",
     );
   });
 
@@ -2561,12 +2566,13 @@ describe("chatEnv — the PATH the chat's tools are resolved on", () => {
     // The half that makes the line above a statement about the composition
     // rather than about the strip. If this is empty the test above is vacuous,
     // so it is asserted rather than assumed.
-    process.env.PATH = `${TOOLBOX}:${previous ?? "/usr/bin"}`;
+    process.env.PATH = ROOT_PATH;
+    process.env.UF_AGENT_PATH = `${TOOLBOX}:${ROOT_PATH}`;
     const env = chatEnv();
     assert.ok(
       Object.keys(env).some((k) => k.startsWith("GIT_CONFIG_")),
       "githubEnv() contributed nothing, so the composition above is untested",
     );
-    assert.equal(env.PATH, process.env.PATH);
+    assert.equal(env.PATH, process.env.UF_AGENT_PATH);
   });
 });

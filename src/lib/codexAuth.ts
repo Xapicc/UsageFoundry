@@ -6,6 +6,7 @@ import {
 import fs from "node:fs";
 import { CODEX_BIN, CODEX_HOME } from "./config";
 import { childCredentials, chownForChild } from "./privsep";
+import { agentEnvironment } from "./stacks";
 
 /**
  * `claudeAuth.ts` for the other provider, and it is a copy of that module's
@@ -334,7 +335,7 @@ export function normalizeApiKey(input: unknown): CodexAuthResult<string> {
  */
 function codexAuthEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...agentEnvironment(),
     FORCE_COLOR: "0",
     CODEX_HOME,
   };

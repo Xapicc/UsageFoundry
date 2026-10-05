@@ -71,27 +71,22 @@ export async function register() {
     // this function is why the server sets it.
     delete process.env.NEXT_MANUAL_SIG_HANDLE;
 
-    // What the stacks export, into this process's environment, before anything
-    // spawns a child.
+    // What the stacks export, said once — and only said, never merged into
+    // this process's environment.
     //
-    // `scripts/apply-stacks.mjs` ran before this server did and wrote the merged
-    // block to a file, because a child of the entrypoint cannot put anything
-    // into its parent's environment. From here `childEnv` copies it onward to
-    // every agent for free: it strips `UF_*`, `OTEL_*`, `__NEXT_*` and six names
-    // and passes everything else through, which is also why `01b-` §2.2 refuses
-    // a stack any key under those prefixes — one would be set here and silently
-    // absent in every child.
+    // `scripts/apply-stacks.mjs` ran before this server did and wrote the block
+    // to a file, because a child of the entrypoint cannot put anything into its
+    // parent's environment. `agentEnvironment` (`lib/stacks.ts`) is what hands
+    // it to the agents, at every spawn that drops the uid. It used to be merged
+    // in here, and this process is root, as is every child it spawns without
+    // dropping the uid — so a stack's `PYTHONPATH` reached winnow's interpreter
+    // and its `HTTPS_PROXY` this server's own outbound calls (board task
+    // `76b451aa`).
     //
-    // It never overwrites. A variable the operator set in `.env` or compose is
-    // their answer and a stack's is a default, and the alternative is a stack
-    // quietly redirecting something the operator configured by hand.
+    // A key the operator set in `.env` or compose still wins, and is left off
+    // this line: their answer is the one the agents get.
     const { stackEnvironment } = await import("./lib/stacks");
-    const exported: string[] = [];
-    for (const [key, value] of Object.entries(stackEnvironment())) {
-      if (process.env[key] !== undefined) continue;
-      process.env[key] = value;
-      exported.push(key);
-    }
+    const exported = Object.keys(stackEnvironment()).filter((key) => process.env[key] === undefined);
     if (exported.length > 0) {
       console.log(`[usagefoundry] stacks export ${exported.sort().join(", ")} to every agent.`);
     }

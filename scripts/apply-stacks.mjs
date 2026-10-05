@@ -5,21 +5,21 @@
  * A stack is a directory under the host's `./stacks`, bind-mounted read-only at
  * `/etc/uf-stacks`, holding one `stack.json`. This script reads them, installs
  * what they declare into the `usagefoundry-stacks` named volume at
- * `/var/lib/uf-stacks`, links the binaries into a directory the image already
- * has on `PATH`, and writes one receipt per stack saying what happened.
+ * `/var/lib/uf-stacks`, links the binaries into a directory the image puts on
+ * the agents' `PATH`, and writes one receipt per stack saying what happened.
  *
  * `proposals/CustomStacks/01a-mechanism.md` is the design and
  * `01b-stack-format.md` is the format. What matters here:
  *
  * ## Why boot, and why before `exec "$@"`
  *
- * `PATH` has to be final before the server starts. `childEnv` copies the
- * server's environment into every agent child (`src/lib/orchestrator.ts:5698`),
- * so a run-time installer would have to mutate `process.env.PATH` after some
- * children had already been spawned, and the two sets of children would then
- * differ in what they could resolve with nothing saying so. This is also the
- * only window in the container's life with no agent process alive, which is
- * what makes the uid split below safe.
+ * The agents' `PATH` and environment have to be final before the server
+ * starts. The server builds every agent child's from them at spawn time
+ * (`agentEnvironment` in `src/lib/stacks.ts`), so a run-time installer would
+ * leave the children spawned before it and after it differing in what they
+ * could resolve, with nothing saying so. This is also the only window in the
+ * container's life with no agent process alive, which is what makes the uid
+ * split below safe.
  *
  * ## Never a shell
  *
@@ -38,11 +38,11 @@
  * root and the `install` into `bin/` are root's. That is the opposite of what
  * the two existing install loops do (`docker-entrypoint.sh:147`, `:218`), which
  * install as the uid that will run them so an agent can upgrade its own tools.
- * The reason it inverts here is `01a-` §2.2: `bin/` is on the *server's* `PATH`,
- * the server is root, and a directory on that `PATH` which a sibling agent can
- * rewrite is a way for one run to put its own code on every other run's
- * transcript. `/home/node/pytools/bin` is already one of those and this design
- * will not add a second. The cost is that an agent cannot upgrade a stack tool,
+ * The reason it inverts here is `01a-` §2.2: `bin/` is on every agent's
+ * `PATH`, and a directory there which a sibling agent can rewrite is a way for
+ * one run to put its own code on every other run's transcript.
+ * `/home/node/pytools/bin` is already one of those and this design will not add
+ * a second. The cost is that an agent cannot upgrade a stack tool,
  * which is correct: upgrading is an operator act.
  *
  * ## Nothing here refuses the boot
@@ -69,8 +69,8 @@ export const DECLARATIONS_DIR = "/etc/uf-stacks";
  * The named volume. The image ships **nothing** under this path, ever.
  *
  * A named volume takes its contents from the image exactly once, at creation
- * (the `Dockerfile`'s comment on the `ENV PATH` line that puts this volume's
- * `bin` first), so anything the image puts at a volume's mount point is visible
+ * (the `Dockerfile`'s comment on the `ENV UF_AGENT_PATH` line that puts this
+ * volume's `bin` first), so anything the image puts at a volume's mount point is visible
  * on a reviewer's fresh install and masked on every install that already
  * exists. `deployment.test.ts` asserts the `Dockerfile` names no path
  * under here, because that is the one breach nothing else would catch.
@@ -81,13 +81,13 @@ export const TOOLBOX_DIR = "/var/lib/uf-stacks";
  * Every program this script runs, at the path the image installs it, and never
  * looked up on `PATH`.
  *
- * The `PATH` this runs under starts with `bin/` here — the `Dockerfile`'s
- * `ENV PATH` puts it first so a stack wins over the image — and this script runs
- * as root. A name resolved through it on the boot after a stack linked a
- * `chown` of its own would be that stack's code, run as root by the one process
- * whose job is to hand every stack to root. `run()` maps a name through this
- * table and throws on one it does not hold, so a spawn added later cannot fall
- * back to `PATH` quietly.
+ * This script runs as root. Its `PATH` used to start with `bin/` here, and a
+ * name resolved through it on the boot after a stack linked a `chown` of its
+ * own was that stack's code, run as root by the one process whose job is to
+ * hand every stack to root. Root's `PATH` no longer carries `bin/` (board task
+ * `aff25da4`), and this table is why that does not have to stay true for this
+ * script: `run()` maps a name through it and throws on one it does not hold, so
+ * a spawn added later cannot fall back to `PATH` quietly.
  *
  * Measured in the runtime image on 2026-10-04: Debian's packages under
  * `/usr/bin`, the `node` base image's `npm` under `/usr/local/bin`, and `uv`
@@ -199,8 +199,8 @@ export const VERBS = new Set(["archive", "uv-tool", "npm-global"]);
  * the `Dockerfile`'s `uv` `ENV` block also sets
  * `UV_TOOL_DIR=/home/node/pytools/tools`, which this process inherits, so
  * redirecting only the bin directory leaves the tool's *environment* in the
- * volume the agents own and write. A binary on the
- * server's `PATH` whose interpreter lives somewhere a sibling run can rewrite
+ * volume the agents own and write. A binary on every
+ * agent's `PATH` whose interpreter lives somewhere a sibling run can rewrite
  * is exactly the arrangement the uid split above exists to prevent, and it
  * would also mean a stack removal left the venv behind — `reconcile` may remove
  * only paths its own receipts record, and that one would be in nobody's.
@@ -220,16 +220,49 @@ const PACKAGE_ENV = {
  * `UF_` because `childEnv` deletes the whole prefix, so the variable would be
  * set here and absent in every child with nothing saying so. The rest because a
  * stack that can set them is a stack that can redirect the app rather than add
- * a tool to it.
+ * a tool to it — `OTEL_` among them, which is where a run's telemetry goes and
+ * which `telemetryEnv` sets.
  */
-const REFUSED_ENV_PREFIXES = ["UF_", "GIT_", "CLAUDE_", "ANTHROPIC_", "OPENAI_", "CODEX_"];
-const REFUSED_ENV_NAMES = new Set([
-  "PATH",
-  "HOME",
-  "NODE_OPTIONS",
-  "LD_PRELOAD",
-  "LD_LIBRARY_PATH",
-  "DATA_DIR",
+const REFUSED_ENV_PREFIXES = ["UF_", "GIT_", "CLAUDE_", "ANTHROPIC_", "OPENAI_", "CODEX_", "OTEL_"];
+const REFUSED_ENV_NAMES = new Set(["PATH", "HOME", "DATA_DIR"]);
+
+/**
+ * Keys that change what some *other* program does rather than configure the
+ * stack's own tool: the code the loader or an interpreter pulls in, the file a
+ * shell sources before its first line, the program another one hands off to,
+ * and where traffic goes and which certificates it trusts.
+ *
+ * Since stack env stopped reaching root (`childEnv` and its siblings carry it;
+ * the server's own `process.env` never does) these reach the agents and nothing
+ * else, as the stack's own binaries already do — so this is a backstop and not
+ * the boundary, and it is a denylist, which fails open. It is still worth having
+ * because the agents' environment is also the Claude CLI's: a stack's
+ * `HTTPS_PROXY` beside a `NODE_EXTRA_CA_CERTS` would read every agent's API
+ * traffic, credential included, and a stack's `PYTHONPATH` would run its own
+ * module inside every Python an agent starts. Prefixes where an interpreter
+ * owns the whole namespace, so a variable it adds next year is refused too; the
+ * proxies in either case, because curl and Python read them in lower case.
+ *
+ * Package-manager configuration (`PIP_*`, `UV_*`, `npm_config_*`) stays
+ * allowed: configuring the tool it installs is what `env` is for, and the
+ * operator's `python` stack sets `PIP_REQUIRE_VIRTUALENV`.
+ */
+const REFUSED_REACH_PREFIXES = ["LD_", "PYTHON", "NODE_", "PERL", "RUBY"];
+const REFUSED_REACH_NAMES = new Set([
+  "BASH_ENV",
+  "ENV",
+  "SHELLOPTS",
+  "BASHOPTS",
+  "GCONV_PATH",
+  "EDITOR",
+  "VISUAL",
+  "PAGER",
+  "SSH_ASKPASS",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "SSLKEYLOGFILE",
+  "REQUESTS_CA_BUNDLE",
+  "CURL_CA_BUNDLE",
 ]);
 
 /**
@@ -244,11 +277,15 @@ const CLAUDE_HOME = "/home/node/.claude";
 /**
  * Command names no stack may link, because root runs them by name.
  *
- * `bin/` is first on root's `PATH` as well as every agent's, so a stack linking
- * one of these would have its code run as root on the next boot whatever its
- * verb — an `archive` stack included, which is otherwise worth exactly its URL.
- * `TOOLS` takes this script off `PATH` and `GIT_BIN` takes the server off it,
- * and neither reaches the other root processes that look these names up:
+ * `bin/` was first on root's `PATH` as well as every agent's, so a stack linking
+ * one of these had its code run as root on the next boot whatever its verb — an
+ * `archive` stack included, which is otherwise worth exactly its URL. Root's
+ * `PATH` no longer carries `bin/` (board task `aff25da4`: `docker-entrypoint.sh`
+ * states it literally, and only the agents get `UF_AGENT_PATH`), which closes
+ * that for every name at once. This list is kept as the second line behind it:
+ * it costs no stack anything it should want, `git` has the deny reason below
+ * besides, and it still holds on the day root's `PATH` regains the directory.
+ * The names it covers:
  *
  * - `git`, which is also the name the isolated-git rules are written against.
  *   A stack linking it could `deny` `git commit` too, because the deny rule in
@@ -586,6 +623,13 @@ export function refuseEnv(key, value) {
         ? `env may not set ${key}: childEnv deletes every UF_ key, so it would be set here and absent in every agent`
         : `env may not set ${key}: the ${prefix}* keys belong to the app rather than to a stack`;
     }
+  }
+  if (
+    REFUSED_REACH_NAMES.has(key) ||
+    REFUSED_REACH_PREFIXES.some((prefix) => key.startsWith(prefix)) ||
+    /_PROXY$/i.test(key)
+  ) {
+    return `env may not set ${key}: it changes what other programs load, run or trust, which is more than adding a tool`;
   }
   // The four expansion tokens are the only braces the format has, so they are
   // removed before the metacharacter test rather than being carved out of it.
@@ -1177,9 +1221,10 @@ function makeState(stack, context) {
  * The environment every `ok` stack exports, as one file the server reads.
  *
  * A file rather than an exported variable because the applier is a child of the
- * entrypoint and cannot put anything into its parent's environment;
- * `src/instrumentation.ts` merges it into `process.env` before the first
- * request, and `childEnv` copies it onward from there.
+ * entrypoint and cannot put anything into its parent's environment. The server
+ * merges it into the environment of every child it drops to the agent uid
+ * (`agentEnvironment` in `src/lib/stacks.ts`) and never into its own, which is
+ * root's.
  *
  * Two stacks setting one key is the same fault as two claiming one binary and
  * is answered the same way, minus the severity: the lexically first stack wins,

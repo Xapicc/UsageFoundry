@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 
-import { parseReceipt, readReceipts, stackEnvironment } from "./stacks";
+import { agentEnvironment, parseReceipt, readReceipts, stackEnvironment } from "./stacks";
 
 /**
  * Reading a receipt a shell-invoked script wrote.
@@ -167,7 +167,7 @@ describe("readReceipts — an empty volume and an unreadable one are not the sam
   });
 });
 
-describe("stackEnvironment — what the boot merges into process.env", () => {
+describe("stackEnvironment — what the stacks export to the agents", () => {
   it("is empty rather than throwing when there is no file", () => {
     // It runs inside register(), and a rejected register() leaves Next
     // listening anyway — so a throw here is a server that starts without the
@@ -183,5 +183,40 @@ describe("stackEnvironment — what the boot merges into process.env", () => {
     assert.deepEqual(stackEnvironment(file), {});
     fs.writeFileSync(file, '{"A": "1"');
     assert.deepEqual(stackEnvironment(file), {});
+  });
+});
+
+/**
+ * The environment every child dropped to the agent uid starts from, and the one
+ * place the stacks' exports and the agents' `PATH` enter it. The server's own
+ * environment is root's and carries neither (board tasks `76b451aa` and
+ * `aff25da4`), so what is pinned is the merge's two precedences: a key the
+ * operator set beats the stack's — blank included, which is how the boot merge
+ * it replaces treated one — and the agents' `PATH` beats the server's.
+ */
+describe("agentEnvironment — the stacks' exports and the agents' PATH, for dropped children only", () => {
+  const server: NodeJS.ProcessEnv = {
+    NODE_ENV: "test",
+    PATH: "/usr/local/bin:/usr/bin:/bin",
+    HOME: "/home/node",
+    TF_CLI_ARGS: "",
+    KEEP: "operator",
+  };
+  const stack = { TF_CLI_ARGS: "-no-color", KEEP: "stack", TF_PLUGIN_CACHE_DIR: "/var/lib/uf-stacks/state/terraform/plugin-cache" };
+  const agents = "/var/lib/uf-stacks/bin:/home/node/pytools/bin:/usr/local/bin:/usr/bin:/bin";
+
+  it("puts the stack's exports under the server's, so an operator's value wins even when blank", () => {
+    const env = agentEnvironment(server, stack, agents);
+    assert.equal(env.TF_PLUGIN_CACHE_DIR, stack.TF_PLUGIN_CACHE_DIR);
+    assert.equal(env.KEEP, "operator");
+    assert.equal(env.TF_CLI_ARGS, "");
+    assert.equal(env.HOME, "/home/node");
+  });
+
+  it("hands the agents their PATH rather than the server's, and leaves the server's untouched", () => {
+    const env = agentEnvironment(server, stack, agents);
+    assert.equal(env.PATH, agents);
+    assert.equal(server.PATH, "/usr/local/bin:/usr/bin:/bin", "the merge wrote into the environment it was given");
+    assert.equal("TF_PLUGIN_CACHE_DIR" in server, false);
   });
 });

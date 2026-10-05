@@ -25,7 +25,7 @@ import { checkoutWriter } from "./checkoutClaim";
 import { dataDirRefusal, mayWriteDataDir, requireDataDir } from "./serverLock";
 import { childCredentials, chownForChild, deprioritiseChildForOom } from "./privsep";
 import { currentSandbox, sandboxRefusal } from "./sandbox";
-import { STACKS_STATE_DIR, readReceipts, stackGrants, type StackReceipt } from "./stacks";
+import { STACKS_STATE_DIR, agentEnvironment, readReceipts, stackGrants, type StackReceipt } from "./stacks";
 import {
   MAX_STACK_WAITS_PER_RUN,
   decideStackWait,
@@ -6187,6 +6187,12 @@ export function sandboxArgsFor(scope: SandboxScope): string[] {
  * Everything else passes through. The CLI needs PATH, HOME, CLAUDE_CONFIG_DIR,
  * proxy and CA settings, and locale to function at all, so an allowlist would
  * fail in ways that are tedious to diagnose from inside a container.
+ *
+ * What passes through is `agentEnvironment`'s, not `process.env` itself: the
+ * server's environment with the stacks' exports under it and the agents'
+ * `PATH` over it. The server's own `PATH` is root's and carries neither the
+ * stacks' `bin/` nor the pytools launchers, and the stacks' env is kept out of
+ * this process because everything it spawns without dropping the uid is root.
  */
 /**
  * Environment variables that change what a run's conversation carries.
@@ -6255,7 +6261,7 @@ export function contextShapingEnv(
  * if any of them came back.
  */
 export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, FORCE_COLOR: "0" };
+  const env: NodeJS.ProcessEnv = { ...agentEnvironment(), FORCE_COLOR: "0" };
   for (const key of Object.keys(env)) {
     if (
       key.startsWith("UF_") ||

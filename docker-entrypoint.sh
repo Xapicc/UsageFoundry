@@ -1,4 +1,19 @@
 #!/bin/sh
+# Root's PATH, before the first command, and nothing an agent or a stack can
+# write is on it.
+#
+# Everything below runs as root and looks its tools up by name — `chown` on the
+# next line, `node` for the applier, the relay and `exec "$@"`, which is the
+# server — and the server's own PATH is the one it was exec'd with. The image's
+# PATH is already this; the agents' is UF_AGENT_PATH, which puts the stacks'
+# `bin/` and the agent-owned /home/node/pytools/bin ahead of it, and the server
+# hands that to every child it drops to UF_AGENT_UID. Restated rather than
+# inherited because a compose `environment:` or a later `ENV PATH` that put
+# either directory back in front would hand a file an agent planted there to
+# root on the next boot, and nothing would fail.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
 # Reclaim the data volume, then hand off to the server.
 #
 # `/data` is a *named volume*: Docker copies the image directory's ownership and
@@ -228,11 +243,16 @@ fi
 # Installed as the uid that will run them, for the reason `gh_as_agent` is: a
 # tool here is an executable a hook invokes, and root-owned files in a volume
 # the agents own leave them unable to upgrade or remove what they run.
+#
+# The agents' PATH as well, which is the one their launchers are on: under
+# root's, uv warns on every install that the directory it just wrote to is not
+# on PATH. Only once the uid is dropped, because `env` looks `uv` up on the PATH
+# it was just given.
 uv_as_agent() {
   if [ -n "${UF_AGENT_UID:-}" ]; then
     setpriv --reuid="$UF_AGENT_UID" --regid="${UF_AGENT_GID:-$UF_AGENT_UID}" \
             --clear-groups \
-      env HOME=/home/node uv "$@"
+      env HOME=/home/node PATH="${UF_AGENT_PATH:-$PATH}" uv "$@"
   else
     env HOME=/home/node uv "$@"
   fi

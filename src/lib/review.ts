@@ -16,7 +16,7 @@ import {
   parseCertificationVerdict,
 } from "./localCertification";
 import { localRunsOnBranch } from "./localProvider";
-import { stackGrants } from "./stacks";
+import { agentEnvironment, stackGrants } from "./stacks";
 import {
   currentSnapshot,
   emitRunEvent,
@@ -1243,15 +1243,15 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
  *
  * Exported for a test and nothing else, on `childEnv`'s grounds rather than as
  * an exception to them: `PATH` is not on the strip list, and
- * `proposals/CustomStacks/01c-reach-and-permission.md` §2 rests on that — a
- * toolbox the `Dockerfile` puts on this server's `PATH` reaches every agent
- * child for free, and this child is one. A copy that grew a `PATH` line would
+ * `proposals/CustomStacks/01c-reach-and-permission.md` §2 rests on that — the
+ * toolbox the `Dockerfile` puts on the agents' `PATH`, which `agentEnvironment`
+ * sets, reaches every agent child, and this child is one. A copy that grew a `PATH` line would
  * take the toolbox away from the reviewer and from nothing else, which no page
  * and no log in this app reports. The list moves by hand in six places
  * (`docs/agent/security.md`); the export is what stops it moving here unseen.
  */
 export function reviewEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, FORCE_COLOR: "0" };
+  const env: NodeJS.ProcessEnv = { ...agentEnvironment(), FORCE_COLOR: "0" };
   for (const key of Object.keys(env)) {
     if (
       key.startsWith("UF_") ||

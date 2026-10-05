@@ -697,9 +697,36 @@ describe("refuseEnv — the keys a stack may set, and the values", () => {
     for (const key of ["PATH", "HOME", "NODE_OPTIONS", "LD_PRELOAD", "LD_LIBRARY_PATH", "DATA_DIR"]) {
       assert.notEqual(applier.refuseEnv(key, "/tmp"), null, `${key} was accepted`);
     }
-    for (const key of ["GIT_DIR", "CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY", "OPENAI_BASE_URL", "CODEX_HOME"]) {
+    for (const key of ["GIT_DIR", "CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY", "OPENAI_BASE_URL", "CODEX_HOME", "OTEL_EXPORTER_OTLP_ENDPOINT"]) {
       assert.notEqual(applier.refuseEnv(key, "x"), null, `${key} was accepted`);
     }
+  });
+
+  it("refuses what another program loads, sources or trusts, the proxies in either case", () => {
+    // Every one of these passed before board task 76b451aa, and the agents'
+    // environment is also the Claude CLI's.
+    for (const key of [
+      "PYTHONPATH",
+      "PYTHONHOME",
+      "PYTHONSTARTUP",
+      "NODE_PATH",
+      "NODE_EXTRA_CA_CERTS",
+      "BASH_ENV",
+      "ENV",
+      "LD_AUDIT",
+      "PERL5OPT",
+      "RUBYOPT",
+      "HTTPS_PROXY",
+      "https_proxy",
+      "HTTP_PROXY",
+      "ALL_PROXY",
+      "SSL_CERT_FILE",
+    ]) {
+      assert.match(String(applier.refuseEnv(key, "/tmp/x")), /what other programs load, run or trust/, `${key} was accepted`);
+    }
+    // A package manager's own configuration is what `env` is for.
+    assert.equal(applier.refuseEnv("PIP_REQUIRE_VIRTUALENV", "true"), null);
+    assert.equal(applier.refuseEnv("npm_config_cache", "{state}/npm"), null);
   });
 
   it("refuses a value that assumes a shell, because there is not one", () => {

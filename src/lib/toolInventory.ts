@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { agentPath } from "./config";
 import { db } from "./db";
 import { retentionCutoff } from "./retention";
 import { getSettings } from "./settings";
@@ -242,13 +243,14 @@ function ghEntry(spec: string): DeclaredTool {
 /* ------------------------------------------------------------------ */
 
 /**
- * Resolve a bare command the way a child would, against the server's own
- * `PATH`.
+ * Resolve a bare command the way a child would, against the agents' `PATH`.
  *
- * The server's is the right one to split and that is the fact the whole layer
- * rests on: `childEnv` copies `process.env` and deletes four prefixes and six
- * names (`orchestrator.ts:5698-5715`), none of which is `PATH`, so the server's
- * `PATH` *is* the child's.
+ * The agents' and not the server's, and that is the fact the whole layer rests
+ * on: every child dropped to the agent uid gets `agentPath()` from
+ * `agentEnvironment`, while the server's own `PATH` is root's and carries
+ * neither the stacks' `bin/` nor the `UF_PY_TOOLS` launchers. Resolved against
+ * the server's, every stack and Python tool on the page would read as missing
+ * or shadowed while the agents ran it.
  *
  * The predicate is injected so the function stays pure. Its failure mode is the
  * classic one — an empty `PATH` element means the current directory and a
@@ -824,7 +826,7 @@ export function toolInventory(
 ): ToolInventory {
   const problems: string[] = [];
   const windowDays = getSettings().eventRetentionDays;
-  const pathValue = process.env.PATH ?? "";
+  const pathValue = agentPath();
 
   const declared = [
     ...parseToolList(process.env.UF_PY_TOOLS ?? "", "python"),

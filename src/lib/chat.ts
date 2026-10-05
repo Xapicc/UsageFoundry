@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import { CLAUDE_BIN, MCP_SELF_URL, WORKSPACE_MOUNTS } from "./config";
+import { agentEnvironment } from "./stacks";
 import { db } from "./db";
 import {
   chatGuards,
@@ -4292,15 +4293,15 @@ function chatCwd(): string {
  *
  * Exported for a test and nothing else, on `childEnv`'s grounds rather than as
  * an exception to them: `PATH` is not on the strip list, and
- * `proposals/CustomStacks/01c-reach-and-permission.md` §2 rests on that — a
- * toolbox the `Dockerfile` puts on this server's `PATH` reaches every agent
- * child for free, and this child is one. A copy that grew a `PATH` line would
+ * `proposals/CustomStacks/01c-reach-and-permission.md` §2 rests on that — the
+ * toolbox the `Dockerfile` puts on the agents' `PATH`, which `agentEnvironment`
+ * sets, reaches every agent child, and this child is one. A copy that grew a `PATH` line would
  * take the toolbox away from the chat and from nothing else, which no page and
  * no log in this app reports. The list moves by hand in six places
  * (`docs/agent/security.md`); the export is what stops it moving here unseen.
  */
 export function chatEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, FORCE_COLOR: "0" };
+  const env: NodeJS.ProcessEnv = { ...agentEnvironment(), FORCE_COLOR: "0" };
   for (const key of Object.keys(env)) {
     if (
       key.startsWith("UF_") ||

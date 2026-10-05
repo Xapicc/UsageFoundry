@@ -4751,21 +4751,40 @@ describe("childEnv — the agent's home, which is not its checkout", () => {
 });
 
 describe("childEnv — the PATH a tool is resolved on", () => {
-  it("passes PATH through to the agent unchanged", () => {
-    // The strip list is four prefixes and six names and PATH is in none of
-    // them, which is the whole reason a tool installed into a directory on this
-    // server's PATH is a tool an agent can run. Until this line the only
-    // assertion in the tree was `gitEnv`'s (`git.test.ts:97`) — a different
-    // function for a different child — and `toolInventory.ts` now resolves
-    // every row of the Tools section against `process.env.PATH` on the strength
-    // of this being true. Wrong, and the page reports what the server can run
-    // while every agent gets something else, with nothing raised anywhere.
-    process.env.PATH ??= "/usr/bin";
-    assert.equal(childEnv().PATH, process.env.PATH);
+  // The agents' PATH and not this server's. The image puts the stacks' `bin/`
+  // and the agent-owned pytools launchers on `UF_AGENT_PATH` and keeps them off
+  // root's own `PATH` (board task `aff25da4`), so a builder that copied
+  // `process.env.PATH` the way every one of them used to would hand an agent
+  // root's PATH: every stack tool present, correct, and `command not found`.
+  // And `toolInventory.ts` resolves every row of the Tools section against
+  // `agentPath()` on the strength of this being true, so the page would go on
+  // reporting what the agents could no longer run, with nothing raised anywhere.
+  const previous = { PATH: process.env.PATH, UF_AGENT_PATH: process.env.UF_AGENT_PATH };
+  after(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   });
 
-  // The line above is over `childEnv()` with no arguments, and no spawn site in
-  // this app calls it that way. The run loop's is
+  const TOOLBOX = "/var/lib/uf-stacks/bin";
+  const ROOT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+  const AGENT_PATH = `${TOOLBOX}:/home/node/pytools/bin:${ROOT_PATH}`;
+
+  it("hands the agent the agents' PATH, not the server's", () => {
+    process.env.PATH = ROOT_PATH;
+    process.env.UF_AGENT_PATH = AGENT_PATH;
+    assert.equal(childEnv().PATH, AGENT_PATH);
+  });
+
+  it("falls back to the server's PATH where nothing sets the agents', as outside the image", () => {
+    process.env.PATH = ROOT_PATH;
+    delete process.env.UF_AGENT_PATH;
+    assert.equal(childEnv().PATH, ROOT_PATH);
+  });
+
+  // The lines above are over `childEnv()` with no arguments, and no spawn site
+  // in this app calls it that way. The run loop's is
   // `childEnv({ ...telemetryEnv(…), ...agentGitEnv(…) })`, and `childEnv`
   // returns `{ ...env, ...extra }` — the extras land **after** the strip and win
   // every key they name. That is deliberate and load-bearing (`telemetryEnv`
@@ -4775,21 +4794,11 @@ describe("childEnv — the PATH a tool is resolved on", () => {
   // take it with nothing in the app saying so.
   //
   // `proposals/CustomStacks/01c-reach-and-permission.md` §2 is what needs this
-  // to hold: it argues a toolbox put on the server's `PATH` by the `Dockerfile`
-  // reaches every agent child for free, and rests that on the strip list not
-  // naming `PATH`. So the assertion is over a planted directory rather than over
-  // equality alone — what §2 claims is that a directory *added* to this server's
-  // `PATH` arrives, in the position it was added at, not merely that some `PATH`
-  // arrives.
+  // to hold: a toolbox the `Dockerfile` puts on the agents' `PATH` reaches
+  // every agent child. So the assertion is over a planted directory rather than
+  // over equality alone — what §2 claims is that a directory on that `PATH`
+  // arrives in the position it was put at, not merely that some `PATH` arrives.
   describe("with the extras every run-loop spawn actually composes", () => {
-    const previous = process.env.PATH;
-    after(() => {
-      if (previous === undefined) delete process.env.PATH;
-      else process.env.PATH = previous;
-    });
-
-    const TOOLBOX = "/var/lib/uf-stacks/bin";
-
     // Both a run with no GitHub token and one with: `agentGitEnv` returns `{}`
     // for the first and eight `GIT_CONFIG_*` keys for the second, so they are
     // different compositions and only the larger one has anything to collide
@@ -4799,7 +4808,8 @@ describe("childEnv — the PATH a tool is resolved on", () => {
       ["a GitHub token", "ghp_" + "x".repeat(36)],
     ] as const) {
       it(`carries a planted toolbox directory through, with ${label}`, () => {
-        process.env.PATH = `${TOOLBOX}:${previous ?? "/usr/bin"}`;
+        process.env.PATH = ROOT_PATH;
+        process.env.UF_AGENT_PATH = AGENT_PATH;
         const env = childEnv({
           // `required`, so this does not depend on the telemetry setting: what
           // is being pinned is the composition, and the larger of the two
@@ -4807,11 +4817,11 @@ describe("childEnv — the PATH a tool is resolved on", () => {
           ...telemetryEnv("run-path-reach", true),
           ...agentGitEnv(token, "/run/uf-sandbox/excludes"),
         });
-        assert.equal(env.PATH, process.env.PATH);
+        assert.equal(env.PATH, AGENT_PATH);
         assert.equal(
           env.PATH?.split(path.delimiter)[0],
           TOOLBOX,
-          "a directory prepended to the server's PATH did not reach the cycle first",
+          "a directory first on the agents' PATH did not reach the cycle first",
         );
       });
     }

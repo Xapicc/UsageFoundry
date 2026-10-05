@@ -164,28 +164,34 @@ describe("verifyEnv — what a command an agent's tree defines may read", () => 
   });
 
   it("passes PATH through, because the command is resolved on it", () => {
-    // The strip is three prefixes and six names and PATH is in none of them.
-    // A copy that took it would not fail visibly — it would refuse every land
-    // with "could not start", which reads as the operator's command being
-    // wrong. The assertion is over a *planted* directory rather than equality
-    // alone, for the reason `childEnv`'s is: what
-    // `proposals/CustomStacks/01c-reach-and-permission.md` §2 claims is that a
-    // directory added to this server's PATH arrives, in the position it was
-    // added at.
-    const before = process.env.PATH;
+    // The strip is three prefixes and six names and PATH is in none of them,
+    // and the PATH it starts from is the agents' (`UF_AGENT_PATH`), not this
+    // server's, which is root's and carries no toolbox. A copy that took
+    // either would not fail visibly — it would refuse every land with "could
+    // not start", or fail one whose toolchain a stack installed, which reads as
+    // the operator's command being wrong. The assertion is over a *planted*
+    // directory rather than equality alone, for the reason `childEnv`'s is:
+    // what `proposals/CustomStacks/01c-reach-and-permission.md` §2 claims is
+    // that a directory on the agents' PATH arrives, in the position it was put
+    // at.
+    const before = { PATH: process.env.PATH, UF_AGENT_PATH: process.env.UF_AGENT_PATH };
     const TOOLBOX = "/var/lib/uf-stacks/bin";
+    const ROOT_PATH = "/usr/local/bin:/usr/bin:/bin";
     try {
-      process.env.PATH = `${TOOLBOX}:${before ?? "/usr/bin"}`;
+      process.env.PATH = ROOT_PATH;
+      process.env.UF_AGENT_PATH = `${TOOLBOX}:${ROOT_PATH}`;
       const env = verifyEnv();
-      assert.equal(env.PATH, process.env.PATH);
+      assert.equal(env.PATH, process.env.UF_AGENT_PATH, "the verify child got the server's PATH rather than the agents'");
       assert.equal(
         env.PATH?.split(path.delimiter)[0],
         TOOLBOX,
-        "a directory prepended to the server's PATH did not reach the verify child first",
+        "a directory first on the agents' PATH did not reach the verify child first",
       );
     } finally {
-      if (before === undefined) delete process.env.PATH;
-      else process.env.PATH = before;
+      for (const [key, value] of Object.entries(before)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
     }
   });
 });

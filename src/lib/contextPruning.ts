@@ -1447,8 +1447,20 @@ export function pruningEnabled(s: Settings = getSettings()): boolean {
  * in winnow that do run `claude` are `guard`, `reload` and
  * `python -m winnow.validate`, and `safe run` refuses the first two. A new
  * subcommand here that reaches one of them needs the variable.
+ *
+ * **This process's own environment, and nothing of the agents'.** None of the
+ * five spawn sites drops the uid, so winnow is root, and it looks `ps` up by
+ * name — `lsof`, `pgrep` and `bash` too on paths `safe run` was not traced
+ * through. So its `PATH` has to be root's, which `process.env.PATH` is: the
+ * entrypoint states it with no directory on it that an agent or a stack can
+ * write. That is also why this does not start from `agentEnvironment` the way
+ * the dropped children's builders do — the agents' `PATH` puts the stacks'
+ * `bin/` and the agent-owned pytools launchers first, and a stack's
+ * `PYTHONPATH` would be a stack's module inside root's interpreter (board tasks
+ * `aff25da4` and `76b451aa`). Exported for the test that pins it, on
+ * `childEnv`'s footing.
  */
-function pruneEnv(): NodeJS.ProcessEnv {
+export function pruneEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
     // The gate and the `metadata-strip` exclusion both key off this. Without it

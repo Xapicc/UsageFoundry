@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { GIT_BIN } from "./config";
 import { childCredentials } from "./privsep";
+import { agentEnvironment } from "./stacks";
 
 /**
  * The one way this app runs git.
@@ -49,7 +50,7 @@ export interface GitResult {
  * and one of them may well be a Node program.
  */
 export function gitEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
+  const env: NodeJS.ProcessEnv = { ...agentEnvironment(), GIT_TERMINAL_PROMPT: "0" };
   for (const k of Object.keys(env)) {
     if (
       k.startsWith("ANTHROPIC_") ||

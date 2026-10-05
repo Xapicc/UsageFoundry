@@ -100,6 +100,18 @@ function appRoot(): string {
 }
 
 /**
+ * The directories the image puts ahead of its own on the agents' `PATH`, in
+ * order — `UF_AGENT_PATH` up to the `${PATH}` it extends, which is root's.
+ */
+function agentPathPrefix(): string[] {
+  const match = /^ENV UF_AGENT_PATH="([^"]+)"$/m.exec(dockerfile);
+  assert.ok(match, "the Dockerfile no longer sets UF_AGENT_PATH, so no agent gets a stack's tools");
+  const entries = match[1].split(":");
+  assert.equal(entries.at(-1), "${PATH}", "UF_AGENT_PATH no longer extends the image's own PATH");
+  return entries.slice(0, -1);
+}
+
+/**
  * Every `chown [-R] <owner> <paths…>` in the runner stage, as (owner, path)
  * pairs, with the comments dropped first — this file's own reasoning says the
  * word "chown" repeatedly, and a sentence about one is not one.
@@ -1190,13 +1202,13 @@ describe("Python tools survive the rebuild that installs them by hand does not",
     // The one requirement gh does not have. `uv tool install` writes launchers
     // into UV_TOOL_BIN_DIR and stops there; nothing resolves them for a hook.
     // Off PATH, every tool this variable installs is present, correct, owned by
-    // the right uid, and never found.
+    // the right uid, and never found. The agents' PATH and not the image's:
+    // the directory is agent-owned, and root's PATH must not search it.
     const binDir = /UV_TOOL_BIN_DIR=(\S+)/.exec(dockerfile);
     assert.ok(binDir, "the image no longer names a UV_TOOL_BIN_DIR");
-    assert.match(
-      dockerfile,
-      new RegExp(`ENV PATH="${binDir[1]}:\\$\\{PATH\\}"`),
-      `${binDir[1]} is not prepended to PATH in the Dockerfile, so a plugin ` +
+    assert.ok(
+      agentPathPrefix().includes(binDir[1]),
+      `${binDir[1]} is not on UF_AGENT_PATH in the Dockerfile, so a plugin ` +
         `hook running the command it installed gets "not found" — and, ending ` +
         `in \`|| true\`, reports nothing at all`,
     );
@@ -1305,18 +1317,18 @@ describe("stacks reach an agent, and the image ships none of them", () => {
     );
   });
 
-  it("puts the toolbox first on the PATH the image sets", () => {
+  it("puts the toolbox first on the agents' PATH", () => {
     // First rather than last, so a stack wins over a copy in /usr/local/bin and
     // an operator who declared a version gets the version they declared. In the
-    // image rather than the entrypoint because PATH has to be final before the
-    // server starts: childEnv copies the server's environment into every agent
-    // child, so a run-time change leaves two sets of children differing in what
-    // they can resolve.
+    // image rather than the entrypoint because it has to be final before the
+    // server starts, which builds every agent child's PATH from it; and on the
+    // agents' PATH alone, because root's must not search a directory whose
+    // contents a stack's author chose.
     const target = stacksPath("STACKS_VOLUME");
-    assert.match(
-      dockerfile,
-      new RegExp(`ENV PATH="${target}/bin:\\$\\{PATH\\}"`),
-      `${target}/bin is not prepended to PATH in the Dockerfile, so every ` +
+    assert.equal(
+      agentPathPrefix()[0],
+      `${target}/bin`,
+      `${target}/bin is not first on UF_AGENT_PATH in the Dockerfile, so every ` +
         `binary a stack links is present, correct, and never found`,
     );
   });
@@ -1337,14 +1349,14 @@ describe("stacks reach an agent, and the image ships none of them", () => {
       .map((line, index) => ({ line, number: index + 1 }))
       .filter(({ line }) => !line.trimStart().startsWith("#"))
       .filter(({ line }) => line.includes(target))
-      // The one legitimate mention: PATH names the directory and creates
-      // nothing. Everything else — a mkdir, a COPY, a RUN, a WORKDIR, a VOLUME
-      // — puts something at a mount point a volume will copy exactly once.
-      .filter(({ line }) => !new RegExp(`^ENV PATH="${target}/bin:\\$\\{PATH\\}"$`).test(line.trim()));
+      // The one legitimate mention: the agents' PATH names the directory and
+      // creates nothing. Everything else — a mkdir, a COPY, a RUN, a WORKDIR, a
+      // VOLUME — puts something at a mount point a volume will copy exactly once.
+      .filter(({ line }) => !new RegExp(`^ENV UF_AGENT_PATH="${target}/bin:[^"]*\\$\\{PATH\\}"$`).test(line.trim()));
     assert.deepEqual(
       offending.map(({ number, line }) => `${number}: ${line.trim()}`),
       [],
-      `the Dockerfile names a path under ${target} outside its ENV PATH line. A ` +
+      `the Dockerfile names a path under ${target} outside its ENV UF_AGENT_PATH line. A ` +
         `named volume takes its contents from the image exactly once, at ` +
         `creation, so whatever this puts there is visible on a fresh install ` +
         `and masked on every install that already exists — which means it works ` +
@@ -1362,6 +1374,97 @@ describe("stacks reach an agent, and the image ships none of them", () => {
     assert.ok(
       applier < handoff,
       "the stack applier runs after the server is exec'd, which is to say never",
+    );
+  });
+});
+
+/**
+ * Root's `PATH`, which is not the agents'.
+ *
+ * Everything that runs as root here looks its tools up by name: the entrypoint
+ * (`chown` and `stat` first, then `node` for the applier, the relay and
+ * `exec "$@"`, which is the server), winnow's `ps` under the server, and the
+ * `docker compose exec usagefoundry node scripts/backup-db.mjs` the backup guide
+ * puts in cron. The image used to put the stacks' `bin/` and the agent-owned
+ * `/home/node/pytools/bin` first on the one `PATH` all of them shared, so a
+ * `node` an agent wrote there ran as root on the next boot (board task
+ * `aff25da4`). Those two now live on `UF_AGENT_PATH`, which the server hands
+ * only to the children it drops to the agent uid, and these pin the other half:
+ * the `PATH` root inherits names no directory anything but root can write.
+ * Nothing else would notice — a planted `node` that forwards to the real one
+ * boots, serves, and passes every other test here.
+ */
+describe("root's PATH names no directory an agent or a stack can write", () => {
+  const entrypoint = fs.readFileSync(path.join(root, "docker-entrypoint.sh"), "utf8");
+
+  /**
+   * Written by something other than root: the agents' home and its volumes,
+   * the stacks' toolbox, the workspace mounts and scratch — and an empty or
+   * relative entry, which is whatever directory root happens to be in.
+   */
+  function writableByOthers(entry: string): boolean {
+    if (!entry.startsWith("/")) return true;
+    return ["/home", "/var/lib/uf-stacks", "/workspace", "/tmp"].some(
+      (dir) => entry === dir || entry.startsWith(`${dir}/`),
+    );
+  }
+
+  it("calls the agents' own directories what they are, so the checks below measure something", () => {
+    for (const dir of agentPathPrefix()) {
+      assert.ok(
+        writableByOthers(dir),
+        `UF_AGENT_PATH puts ${dir} ahead of root's PATH and this test does not count it as ` +
+          `writable by others — either it is root's and has no reason to be agents-only, or ` +
+          `the predicate above is missing a directory`,
+      );
+    }
+  });
+
+  it("states root's PATH before the entrypoint runs its first command", () => {
+    const commands = entrypoint
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "" && !line.startsWith("#"));
+    const assignment = /^PATH=(\S+)$/.exec(commands[0]);
+    assert.ok(
+      assignment,
+      `docker-entrypoint.sh starts with \`${commands[0]}\` rather than setting PATH, so ` +
+        `everything it runs as root resolves through whatever PATH it inherited`,
+    );
+    assert.equal(commands[1], "export PATH", "the entrypoint sets PATH without exporting it, so `exec \"$@\"` hands the server the inherited one");
+    const unsafe = assignment[1].split(":").filter(writableByOthers);
+    assert.deepEqual(unsafe, [], `root's PATH in docker-entrypoint.sh searches ${unsafe.join(", ")}`);
+  });
+
+  it("never gives root another PATH further down", () => {
+    // A `NAME=value \` line is one command's environment prefix — the winnow
+    // filter's launch, which runs as the agent — not a new PATH for the script.
+    const reassigned = entrypoint
+      .split("\n")
+      .map((line, index) => ({ line, number: index + 1 }))
+      .filter(({ line }) => /^\s*(?:export\s+)?PATH=/.test(line) && !line.trimEnd().endsWith("\\"))
+      .slice(1);
+    assert.deepEqual(
+      reassigned.map(({ number, line }) => `${number}: ${line.trim()}`),
+      [],
+      "docker-entrypoint.sh reassigns PATH after stating root's, so what it runs as root from there on " +
+        "resolves through a PATH this test has not read",
+    );
+  });
+
+  it("keeps both off the image's own PATH, which every `docker compose exec` inherits as root", () => {
+    const values = [...dockerfile.replace(/\\\n/g, " ").matchAll(/^\s*ENV\s+(.*)$/gm)].flatMap((m) =>
+      [...m[1].matchAll(/(?:^|\s)PATH=(?:"([^"]*)"|(\S+))/g)].map((e) => e[1] ?? e[2]),
+    );
+    const unsafe = values
+      .flatMap((value) => value.split(":"))
+      .filter((entry) => entry !== "${PATH}")
+      .filter(writableByOthers);
+    assert.deepEqual(
+      unsafe,
+      [],
+      `the Dockerfile puts ${unsafe.join(", ")} on the image's PATH. Root inherits that ` +
+        `in every \`docker compose exec\` and every HEALTHCHECK; the agents' directories belong on UF_AGENT_PATH`,
     );
   });
 });

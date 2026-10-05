@@ -643,12 +643,35 @@ export const CODEX_HOME = env("CODEX_HOME", path.join(os.homedir(), ".codex"));
 /**
  * Path to git, used to give concurrent runs their own checkout.
  *
- * A path and not the name, because this server is root and its `PATH` starts
- * with directories a stack links into and an agent can write — a `git` first
- * on it would be run for every diff and every landing. `/usr/bin/git` is the
- * image's apt `git`; a host whose git lives elsewhere sets `GIT_BIN`.
+ * A path and not the name, because this server is root and its `PATH` used to
+ * start with directories a stack links into and an agent can write — a `git`
+ * first on it was run for every diff and every landing. `agentPath` below took
+ * those off root's `PATH`; the path keeps git from depending on that staying
+ * true. `/usr/bin/git` is the image's apt `git`; a host whose git lives
+ * elsewhere sets `GIT_BIN`.
  */
 export const GIT_BIN = env("GIT_BIN", "/usr/bin/git");
+
+/**
+ * The `PATH` every child dropped to the agent uid runs with, which is not this
+ * process's own.
+ *
+ * The image puts the stacks' `bin/` and the agent-owned `UF_PY_TOOLS` launchers
+ * ahead of its own directories in `UF_AGENT_PATH` and nowhere else, so that
+ * root — this server, the entrypoint before it, winnow's children after it —
+ * never looks a name up in a directory something other than root can write. The
+ * agents need both, so every environment built for a dropped child sets `PATH`
+ * to this. Outside the image nothing sets it, and the agents' `PATH` is this
+ * process's, as it always was.
+ *
+ * Not through `env()`: the image sets it and an operator never does, so compose
+ * does not forward it and `configCheck` has nothing to say about it. Read per
+ * call rather than fixed at boot, like the rest of the environment the child
+ * builders copy, so it is whatever `process.env` holds when a child is built.
+ */
+export function agentPath(): string {
+  return process.env.UF_AGENT_PATH || process.env.PATH || "";
+}
 
 export const ANTHROPIC_API_BASE = env("ANTHROPIC_API_BASE", "https://api.anthropic.com");
 

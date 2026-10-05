@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 
 import { childCredentials } from "./privsep";
+import { agentEnvironment } from "./stacks";
 import { parseVerifyCommand, type VerifyCommand } from "./verifyCommand";
 
 /**
@@ -146,6 +147,8 @@ function spokenDuration(ms: number): string {
  *
  * `PATH` is deliberately not on the list, here as everywhere: the command is
  * resolved on it, and a gate that could not find `npm` would refuse every land.
+ * It is the agents' `PATH`, from `agentEnvironment`, so a toolchain a stack
+ * installed is one the check can run.
  *
  * `FORCE_COLOR: "0"` for a reason the other copies do not have: a failing
  * check's last output is carried into `landVerdict`'s refusal and rendered as
@@ -153,7 +156,7 @@ function spokenDuration(ms: number): string {
  * that sentence with escape sequences in it.
  */
 export function verifyEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, FORCE_COLOR: "0" };
+  const env: NodeJS.ProcessEnv = { ...agentEnvironment(), FORCE_COLOR: "0" };
   for (const key of Object.keys(env)) {
     if (
       key.startsWith("UF_") ||

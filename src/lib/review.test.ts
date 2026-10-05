@@ -250,18 +250,20 @@ describe("settleOnExit", () => {
  *
  * `reviewEnv` is one of six hand-copies of the same strip list
  * (`docs/agent/security.md`), and until this only `childEnv` was pinned by a
- * test. The list is a denylist and `PATH` is deliberately not on it:
- * `proposals/CustomStacks/01c-reach-and-permission.md` §2 argues that a toolbox
- * the `Dockerfile` puts on this server's `PATH` therefore reaches every agent
- * child for free, and the reviewer is one of the children that claim rests on.
+ * test. The list is a denylist and `PATH` is deliberately not on it, and the
+ * `PATH` the builder starts from is the agents' (`UF_AGENT_PATH`, through
+ * `agentEnvironment`) rather than this server's, which is root's and carries
+ * no toolbox: `proposals/CustomStacks/01c-reach-and-permission.md` §2 argues
+ * that a toolbox the `Dockerfile` puts there reaches every agent child, and the
+ * reviewer is one of the children that claim rests on.
  * An edit that added `PATH` here would have to be made in six places and
  * nothing fails if it is made in five: the reviewer would simply stop finding a
  * tool, inside a tool call nobody reads, and the review would come back thinner
  * with nothing anywhere saying why.
  *
  * The assertion is over a *planted* directory rather than over equality alone,
- * for the reason `childEnv`'s is: what §2 claims is that a directory added to
- * this server's `PATH` arrives, in the position it was added at.
+ * for the reason `childEnv`'s is: what §2 claims is that a directory on the
+ * agents' `PATH` arrives, in the position it was put at.
  *
  * `reviewEnv()` is the whole of what the spawn site passes — `env: reviewEnv()`
  * at `review.ts:818`, with no extras merged over it — so unlike the chat's and
@@ -269,25 +271,29 @@ describe("settleOnExit", () => {
  * property being relied on, so it is asserted rather than left implied.
  */
 describe("reviewEnv — the PATH the reviewer's tools are resolved on", () => {
-  const previous = process.env.PATH;
+  const previous = { PATH: process.env.PATH, UF_AGENT_PATH: process.env.UF_AGENT_PATH };
   after(() => {
-    if (previous === undefined) delete process.env.PATH;
-    else process.env.PATH = previous;
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   });
 
   const TOOLBOX = "/var/lib/uf-stacks/bin";
+  const ROOT_PATH = "/usr/local/bin:/usr/bin:/bin";
 
   it("carries a planted toolbox directory through to the reviewer", () => {
     // Set on this process rather than passed in: reading `process.env` is the
     // whole of what the function does, so a version handed a copy to scrub
     // would pass a test that supplied one.
-    process.env.PATH = `${TOOLBOX}:${previous ?? "/usr/bin"}`;
+    process.env.PATH = ROOT_PATH;
+    process.env.UF_AGENT_PATH = `${TOOLBOX}:${ROOT_PATH}`;
     const env = reviewEnv();
-    assert.equal(env.PATH, process.env.PATH);
+    assert.equal(env.PATH, process.env.UF_AGENT_PATH, "the reviewer got the server's PATH rather than the agents'");
     assert.equal(
       env.PATH?.split(path.delimiter)[0],
       TOOLBOX,
-      "a directory prepended to the server's PATH did not reach the reviewer first",
+      "a directory first on the agents' PATH did not reach the reviewer first",
     );
   });
 });
