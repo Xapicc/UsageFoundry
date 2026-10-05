@@ -381,7 +381,7 @@ already started — a run copies every value it needs the moment it is created.
 ## Watching every running run at once
 
 **Live**, beside **New run** at the top of **Runs**, opens `/runs/live`: one tile
-per running run, each with its task and folder, the work cycle it is on against
+per running run, each with its task and folder, the model it is on, the work cycle it is on against
 its limit, how long it has been running, what its finished cycles cost, what
 Claude Code's own telemetry has counted of the cycle in flight, how full its
 context is, and the last fifty lines of its log. Tiles come and go as runs start

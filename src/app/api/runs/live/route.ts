@@ -3,6 +3,9 @@ import { telemetrySpendSince } from "@/lib/otlp";
 import { contextOccupancy } from "@/lib/contextPruning";
 import { contextForTile } from "@/lib/liveStream";
 import { jsonMaybeGzipped } from "@/lib/http";
+import { parseRunAgent } from "@/lib/agents";
+import { getLocalSignIn } from "@/lib/localProvider";
+import { resolveLiveModel } from "@/lib/format";
 import { clipListPrompt, type LiveRunDTO, type LiveRunsDTO } from "@/lib/apiTypes";
 
 export const runtime = "nodejs";
@@ -49,6 +52,12 @@ function liveRun(r: RunRow): LiveRunDTO {
     mountLabel,
     relPath,
     provider: r.provider,
+    model: resolveLiveModel({
+      model: r.model,
+      provider: r.provider,
+      agentModel: parseRunAgent(r.agent)?.model ?? null,
+      localModel: r.provider === "local" ? (getLocalSignIn()?.model ?? null) : null,
+    }),
     started_at: r.started_at,
     iterations: r.iterations,
     active_iteration: r.active_iteration,

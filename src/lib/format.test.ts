@@ -12,6 +12,7 @@ import {
   passRuns,
   passesOf,
   pollFailureMessage,
+  resolveLiveModel,
   runPageNotes,
   storedFolderState,
 } from "./format";
@@ -691,6 +692,69 @@ test("a grant cannot widen a run with no cap", () => {
     fmtLiveCycle(liveRun({ max_iterations: 0, validation_cycles: 2 })),
     "work cycle 4",
   );
+});
+
+/**
+ * Which model a `/runs/live` tile names. Every branch typechecks and renders,
+ * so a precedence that drifted from `orchestrator.ts`'s spawn would put a model
+ * on the tile that the run is not on — and the one visible case, a local run
+ * drawn as "Claude Code's own default", names a provider the run never reached.
+ */
+const modelOf = (
+  over: Partial<Parameters<typeof resolveLiveModel>[0]> = {},
+) =>
+  resolveLiveModel({
+    model: null,
+    provider: "claude",
+    agentModel: null,
+    localModel: null,
+    ...over,
+  });
+
+test("a run's own model outranks the local sign-in and the agent's", () => {
+  assert.deepEqual(
+    modelOf({ model: "claude-opus-5-5", provider: "local", agentModel: "claude-haiku-4-5", localModel: "qwen3" }),
+    { label: "claude-opus-5-5", source: "run" },
+  );
+  assert.deepEqual(
+    modelOf({ model: "claude-opus-5-5", agentModel: "claude-haiku-4-5" }),
+    { label: "claude-opus-5-5", source: "run" },
+  );
+});
+
+test("a local run with no model of its own is on the sign-in's, never the agent's", () => {
+  assert.deepEqual(modelOf({ provider: "local", localModel: "qwen3", agentModel: "claude-haiku-4-5" }), {
+    label: "qwen3",
+    source: "local",
+  });
+  assert.deepEqual(modelOf({ provider: "local", localModel: null, agentModel: "claude-haiku-4-5" }), {
+    label: "local model, signed out",
+    source: "default",
+  });
+});
+
+test("a run that named no model falls back to its agent's and says so", () => {
+  assert.deepEqual(modelOf({ agentModel: "claude-sonnet-5" }), {
+    label: "claude-sonnet-5",
+    source: "agent",
+  });
+  assert.deepEqual(modelOf({ provider: "codex", agentModel: "gpt-5" }), {
+    label: "gpt-5",
+    source: "agent",
+  });
+});
+
+test("with nothing named, the provider's own default is said in words", () => {
+  assert.deepEqual(modelOf(), { label: "Claude Code's own default", source: "default" });
+  assert.deepEqual(modelOf({ provider: "codex" }), { label: "Codex's own default", source: "default" });
+});
+
+test("a run with no recorded provider is never drawn as Claude Code", () => {
+  assert.deepEqual(modelOf({ provider: null }), { label: "model not recorded", source: "default" });
+  assert.deepEqual(modelOf({ provider: null, model: "claude-opus-5-5" }), {
+    label: "claude-opus-5-5",
+    source: "run",
+  });
 });
 
 test("between cycles a tile counts what finished rather than claiming one open", () => {
