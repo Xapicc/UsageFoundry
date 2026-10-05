@@ -4,7 +4,7 @@ import {
   type SpawnOptions,
 } from "node:child_process";
 import fs from "node:fs";
-import { CODEX_BIN, CODEX_HOME } from "./config";
+import { CODEX_BIN, CODEX_HOME, spawnCommand } from "./config";
 import { childCredentials, chownForChild } from "./privsep";
 import { agentEnvironment } from "./stacks";
 
@@ -409,7 +409,8 @@ function runCodex(
   return new Promise((resolve) => {
     let child: ChildProcess;
     try {
-      child = spawn(CODEX_BIN, args, spawnOptions());
+      const cli = spawnCommand(CODEX_BIN, args);
+      child = spawn(cli.command, cli.args, spawnOptions());
     } catch (err) {
       resolve({
         code: null,
@@ -561,7 +562,8 @@ export async function beginLogin(): Promise<
 
   let child: ChildProcess;
   try {
-    child = spawn(CODEX_BIN, ["login", "--device-auth"], spawnOptions());
+    const cli = spawnCommand(CODEX_BIN, ["login", "--device-auth"]);
+    child = spawn(cli.command, cli.args, spawnOptions());
   } catch (err) {
     return {
       ok: false,

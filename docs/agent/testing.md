@@ -225,6 +225,7 @@ Units that are about no test file in the tree:
 |---|---|
 | `agentRegistry.test.ts` |  |
 | `agents.test.ts` |  |
+| `cliPath.test.ts` |  |
 | `fileCostNotice.test.ts` |  |
 | `plugins.test.ts` |  |
 | `privsep.test.ts` | [knowledge] |

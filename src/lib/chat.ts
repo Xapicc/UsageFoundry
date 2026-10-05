@@ -8,7 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Readable } from "node:stream";
-import { CLAUDE_BIN, MCP_SELF_URL, WORKSPACE_MOUNTS } from "./config";
+import { CLAUDE_BIN, MCP_SELF_URL, WORKSPACE_MOUNTS, spawnCommand } from "./config";
 import { agentEnvironment } from "./stacks";
 import { db } from "./db";
 import {
@@ -3206,7 +3206,8 @@ function launchOrchestratorChild(
 
   // No shell, as everywhere else: the prompt is operator text and whatever a
   // GitHub issue body happens to contain.
-  const child = spawn(CLAUDE_BIN, args, {
+  const cli = spawnCommand(CLAUDE_BIN, args);
+  const child = spawn(cli.command, cli.args, {
     cwd,
     env: chatEnv(),
     // Dropped like every other child, and this is the one that most needs it:
