@@ -176,6 +176,28 @@
   closed port, as non-root, so it never reaches `sha256sum`, `tar`, `chown`,
   `chmod` or `setpriv` (see below).
 
+- **The tests for root's `PATH` and a stack's `env` fail on the tree before the
+  change, 2026-10-05.** Board tasks `aff25da4` and `76b451aa`. The six test
+  files the change touched or extended (`applyStacks`, `deployment`,
+  `orchestrator`, `chat`, `review`, `landGate`) were compiled against the
+  parent of `fdb28ff` in a scratch worktree and run there: 13 cases failed —
+  the widened `refuseEnv` refusals, the `UF_AGENT_PATH` and root-`PATH` cases
+  in `deployment.test.ts`, and the planted-toolbox cases that now plant into
+  `UF_AGENT_PATH` and expect the child to get it rather than the server's
+  `PATH`. With the change, `npm test` passed 3,731 of 3,731. Caveat: these
+  read the `Dockerfile` and entrypoint as text and call the builders in one
+  process; nothing booted an image (see below).
+
+- **The entrypoint's literal `PATH` beats a planted one, 2026-10-05.** The
+  lines from the top of `docker-entrypoint.sh` through `export PATH`, run under
+  `dash` in a container of the previous image with planted `chown`, `node` and
+  `stat` first on the inherited `PATH`, resolved the three to `/usr/bin/chown`,
+  `/usr/local/bin/node` and `/usr/bin/stat`; the same probe without those
+  lines resolved all three to the planted copies. Measured beside it: Node's
+  `spawnSync` given `env: { PATH }` ran a bare name found only on that `PATH`,
+  which is why the builders' `PATH`, not the server's, decides what a dropped
+  child runs. Caveat: a shell probe of the first lines, not a boot as root.
+
 ## Not yet verified by hand
 
 - **No real work cycle has invoked a stack's binary.** Three things around it
@@ -204,3 +226,18 @@
   receipt's `status` (expect every one `ok`, as before), and
   `docker inspect --format '{{.State.Health.Status}}'` after the start period
   (expect `healthy`).
+
+- **No image carrying `UF_AGENT_PATH` has been built or booted.** There is no
+  Docker where board tasks `aff25da4` and `76b451aa` were done. Unmeasured:
+  that the server, the Discord relay and the applier start with root's `PATH`
+  and no stack variable; that a work cycle gets `UF_AGENT_PATH`'s value and a
+  stack's `env`; that Settings → Tools reads no installed stack or
+  `UF_PY_TOOLS` entry newly `missing` or `shadowed`; and that `uv_as_agent`'s
+  installs no longer warn that their bin directory is off `PATH`. Settle:
+  `docker compose up --build` with the operator's `./stacks`, then
+  `docker compose exec usagefoundry sh -c 'srv=$(cut -d" " -f1 /proc/1/task/1/children); tr "\0" "\n" < /proc/$srv/environ | grep -E "^(PATH|UF_AGENT_PATH|PIP_REQUIRE_VIRTUALENV)="'`
+  (expect root's `PATH`, `UF_AGENT_PATH` set, no `PIP_REQUIRE_VIRTUALENV`);
+  a run asked to execute `echo "$PATH"; env | grep PIP_REQUIRE_VIRTUALENV; go version`
+  (expect `/var/lib/uf-stacks/bin` first, the variable present, Go answering);
+  Settings → Tools (expect every row as before); and
+  `docker compose logs usagefoundry | grep 'not on your PATH'` (expect nothing).

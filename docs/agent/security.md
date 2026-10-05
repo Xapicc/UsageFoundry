@@ -47,3 +47,4 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 
 - A stack is software the operator chose to install, and what this mechanism buys is that the choice is reviewable and revocable rather than safe. (was lines 25 and 36)
 - A run may ask for a stack, and asking is all it can do: `request_stack` records text a person reads and never anything the app applies.
+- Root's `PATH` and environment are root's own: the agents' `PATH` and a stack's `env` reach only the children dropped to the agent uid.

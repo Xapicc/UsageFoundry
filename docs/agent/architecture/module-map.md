@@ -54,9 +54,11 @@ stacks.ts       the read-back over what apply-stacks.mjs installed, and the
                 (`Bash(<bin>:*)` onto --allowedTools) and denies it
                 (`Bash(<entry>:*)` onto --disallowedTools), cached for the life
                 of the process because that is the exact life of the receipts.
-                `stackEnvironment` is the block `src/instrumentation.ts` merges
-                into `process.env` at boot, never overwriting what the operator
-                set, from where `childEnv` carries it to every child.
+                `agentEnvironment` is what every builder for a child dropped to
+                the agent uid starts from: the server's environment with
+                `stackEnvironment`'s block under it, so the operator's value
+                wins, and `agentPath()` over it. Never `process.env` itself —
+                the server is root, and so is winnow under it.
                 There is **no `stacks` table** and must not be: the receipts
                 are the state and they are per boot, so the one question a
                 monitor asks — what did *this* boot find wrong — is answered by

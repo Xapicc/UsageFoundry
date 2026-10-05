@@ -645,9 +645,9 @@ export const CODEX_HOME = env("CODEX_HOME", path.join(os.homedir(), ".codex"));
  *
  * A path and not the name, because this server is root and its `PATH` used to
  * start with directories a stack links into and an agent can write — a `git`
- * first on it was run for every diff and every landing. `agentPath` below took
- * those off root's `PATH`; the path keeps git from depending on that staying
- * true. `/usr/bin/git` is the image's apt `git`; a host whose git lives
+ * first on it was run for every diff and every landing. The image now keeps
+ * those on `UF_AGENT_PATH` (`agentPath` below) and off root's `PATH`; the path
+ * keeps git from depending on that staying true. `/usr/bin/git` is the image's apt `git`; a host whose git lives
  * elsewhere sets `GIT_BIN`.
  */
 export const GIT_BIN = env("GIT_BIN", "/usr/bin/git");

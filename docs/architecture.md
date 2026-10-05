@@ -150,9 +150,9 @@ src/lib/
                    schedules, settings)
   toolInventory.ts what the agents can run beyond what the image ships:
                    UF_PY_TOOLS, UF_GH_EXTENSIONS and the stacks' receipts
-                   parsed, resolved on the server's own PATH (which is the
-                   child's), and counted against run_events — four readings
-                   composed into one word
+                   parsed, resolved on the agents' PATH (UF_AGENT_PATH, which
+                   is the child's and not the server's), and counted against
+                   run_events — four readings composed into one word
   stacks.ts        the receipts the boot-time stack applier wrote, typed and
                    validated. A reader: what a stack installs is decided by a
                    file on the host and applied before the server starts

@@ -101,7 +101,7 @@ Nineteen are renderings rather than functions — every `*.test.tsx` in the tree
 
 | Test file | Also in |
 |---|---|
-| `contextPruning.test.ts` | [ceiling] |
+| `contextPruning.test.ts` | [ceiling], [stacks] |
 | `contextPruningReporting.test.ts` |  |
 | `forkAttempts.test.ts` |  |
 | `intakeFilter.test.ts` |  |

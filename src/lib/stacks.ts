@@ -295,9 +295,9 @@ exported.__ufStackEnv ??= { value: null };
 export function agentEnvironment(
   base: NodeJS.ProcessEnv = process.env,
   stackEnv: Record<string, string> = cachedStackEnvironment(),
-  path: string = agentPath(),
+  pathValue: string = agentPath(),
 ): NodeJS.ProcessEnv {
-  return { ...stackEnv, ...base, PATH: path };
+  return { ...stackEnv, ...base, PATH: pathValue };
 }
 
 function cachedStackEnvironment(): Record<string, string> {
