@@ -16,6 +16,7 @@ import {
   githubTokenFor,
   matchFolderKey,
   mountById,
+  spawnCommand,
   type WorkspaceMount,
 } from "./config";
 import { git, gitSync } from "./git";
@@ -6839,7 +6840,8 @@ export function runIteration(
       ...telemetryEnv(runId, telemetryRequired),
       ...agentGitEnv(githubToken, excludes.path),
     });
-    const child: AgentProcess = spawn(adapter.bin, args, {
+    const cli = spawnCommand(adapter.bin, args);
+    const child: AgentProcess = spawn(cli.command, cli.args, {
       cwd,
       env: local ? localCycleEnv(env, local.signIn, local.model) : env,
       // The uid `childEnv`'s strip only means something against: same process,

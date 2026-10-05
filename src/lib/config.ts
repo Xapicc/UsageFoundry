@@ -599,14 +599,163 @@ export const INSTALL_LABEL = optionalEnv("UF_INSTALL_LABEL");
  */
 export const NOTIFY_ON_SUCCESS = optionalEnv("UF_NOTIFY_ON_SUCCESS");
 
-/** Path to the Claude Code executable inside the container. */
-export const CLAUDE_BIN = env("CLAUDE_BIN", "claude");
+/**
+ * The `PATH` this server started with, and the only one `CLAUDE_BIN` and
+ * `CODEX_BIN` are ever looked up on.
+ *
+ * Not the one their children get. Node looks a bare command up on the `PATH` of
+ * the `env` it is handed, and every child that spawns either one is handed
+ * `agentPath()`, which puts the stacks' `bin/` and the agent-owned
+ * `/home/node/pytools/bin` first. A `claude` a work cycle left in the second
+ * was what every later spawn ran, the chat child with `UF_CHAT_GID` included
+ * (board task `af2a031b`). In the image this one is root's, which
+ * `docker-entrypoint.sh` states literally and which names nothing an agent or a
+ * stack can write.
+ */
+const SERVER_PATH = process.env.PATH ?? "";
 
 /**
- * Path to the Codex executable — the sign-in panel beside Claude's, and a run
- * whose `provider` is `codex`.
+ * Where `execvp` would find `name` on `searchPath`, or null.
+ *
+ * An empty or relative entry is skipped rather than honoured. `execvp` reads
+ * one as the directory the lookup runs in, and resolving it here would let this
+ * server's cwd at boot stand in for a child's, which is a worktree an agent
+ * writes.
  */
-export const CODEX_BIN = env("CODEX_BIN", "codex");
+export function findOnPath(name: string, searchPath: string): string | null {
+  for (const dir of searchPath.split(path.delimiter)) {
+    if (!path.isAbsolute(dir)) continue;
+    const candidate = path.join(dir, name);
+    try {
+      if (!fs.statSync(candidate).isFile()) continue;
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      // Absent or not executable here, so the next entry, as `execvp` does.
+    }
+  }
+  return null;
+}
+
+/**
+ * The absolute path a configured `CLAUDE_BIN` or `CODEX_BIN` is spawned as, or
+ * null when it is a bare name found on none of `searchPath`.
+ *
+ * An absolute value is the operator's and is kept as written, whether or not
+ * anything is there yet, as `GIT_BIN` is. A relative one with a separator is
+ * resolved against `cwd`, this server's at boot, because spawned as written it
+ * would be resolved against each child's.
+ */
+export function resolveExecutable(configured: string, searchPath: string, cwd: string): string | null {
+  if (path.isAbsolute(configured)) return configured;
+  if (configured.includes("/")) return path.resolve(cwd, configured);
+  return findOnPath(configured, searchPath);
+}
+
+/**
+ * A name that resolved to nothing is kept as the bare name rather than refusing
+ * the boot. Codex is optional, and the tests and `scripts/smoke-pages.mjs` point
+ * `CLAUDE_BIN` at stubs. `spawnCommand` refuses to spawn that name, and
+ * `unresolvedExecutableWarnings` puts it in the boot log.
+ */
+function serverExecutable(configured: string): string {
+  return resolveExecutable(configured, SERVER_PATH, process.cwd()) ?? configured;
+}
+
+/**
+ * The Claude Code executable: always an absolute path once it resolves. A bare
+ * name is resolved once, at boot, against `SERVER_PATH`.
+ */
+export const CLAUDE_BIN = serverExecutable(env("CLAUDE_BIN", "claude"));
+
+/**
+ * The Codex executable, used for the sign-in panel beside Claude's and for runs
+ * whose `provider` is `codex`. It is resolved as `CLAUDE_BIN` is.
+ */
+export const CODEX_BIN = serverExecutable(env("CODEX_BIN", "codex"));
+
+function notOnServerPath(variable: string, bin: string): string {
+  return (
+    `${variable} is \`${bin}\`, which is on none of this server's PATH ` +
+    `(${SERVER_PATH || "empty"}), and a name is never handed to a child to look up ` +
+    `on the agents' PATH, which an agent can write. Install it on this server's ` +
+    `PATH or set ${variable} to its absolute path, then restart.`
+  );
+}
+
+/** One boot-log line per executable that did not resolve. */
+export function unresolvedExecutableWarnings(): string[] {
+  return (
+    [
+      ["CLAUDE_BIN", CLAUDE_BIN],
+      ["CODEX_BIN", CODEX_BIN],
+    ] as const
+  )
+    .filter(([, bin]) => !path.isAbsolute(bin))
+    .map(([variable, bin]) => notOnServerPath(variable, bin));
+}
+
+/**
+ * The words after `env` on `file`'s `#!` line, or null when there are none:
+ * the file is a binary, names its interpreter by an absolute path, or cannot
+ * be read. If it cannot be read, it is spawned as written and the spawn's own
+ * error explains why.
+ */
+function envInterpreter(file: string): string[] | null {
+  let head: string;
+  try {
+    const fd = fs.openSync(file, "r");
+    try {
+      const buffer = Buffer.alloc(256);
+      head = buffer.toString("utf8", 0, fs.readSync(fd, buffer, 0, buffer.length, 0));
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+  const shebang = /^#!\s*(\S+)(.*)/.exec(head.split("\n")[0]);
+  if (!shebang || path.basename(shebang[1]) !== "env") return null;
+  const words = shebang[2].trim().split(/\s+/).filter(Boolean);
+  const command = words[0] === "-S" ? words.slice(1) : words;
+  return command.length > 0 ? command : null;
+}
+
+/**
+ * The command and argv that start `bin`, which is `CLAUDE_BIN` or `CODEX_BIN`,
+ * without looking anything up on the child's `PATH`. Every spawn of either
+ * one goes through this.
+ *
+ * It throws for a name that did not resolve at boot, and each caller already
+ * handles a synchronous spawn failure. A script whose first line is
+ * `#!/usr/bin/env <name>` repeats the same lookup one step later, inside
+ * `env`, against the same `PATH`. The image's `codex` is such a script, so a
+ * `node` planted in the pytools directory would run every Codex cycle. Its
+ * interpreter is therefore resolved here and spawned with the script as its
+ * first argument.
+ */
+export function spawnCommand(
+  bin: string,
+  args: readonly string[],
+  searchPath: string = SERVER_PATH,
+): { command: string; args: string[] } {
+  if (!path.isAbsolute(bin)) {
+    const variable = bin === CODEX_BIN ? "CODEX_BIN" : "CLAUDE_BIN";
+    throw new Error(notOnServerPath(variable, bin));
+  }
+  const interpreter = envInterpreter(bin);
+  if (interpreter === null) return { command: bin, args: [...args] };
+  const [name, ...interpreterArgs] = interpreter;
+  const command = findOnPath(name, searchPath);
+  if (command === null) {
+    throw new Error(
+      `${bin} starts \`#!/usr/bin/env ${name}\`, and \`${name}\` is on none of this ` +
+        `server's PATH (${searchPath || "empty"}). It is not left for \`env\` to find ` +
+        `on the agents' PATH, which an agent can write.`,
+    );
+  }
+  return { command, args: [...interpreterArgs, bin, ...args] };
+}
 
 /**
  * Codex's own state directory — its config, its credential and its `.rules` —

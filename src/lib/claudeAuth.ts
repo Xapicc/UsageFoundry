@@ -3,7 +3,7 @@ import {
   type ChildProcess,
   type SpawnOptions,
 } from "node:child_process";
-import { CLAUDE_BIN } from "./config";
+import { CLAUDE_BIN, spawnCommand } from "./config";
 import { childCredentials } from "./privsep";
 import { agentEnvironment } from "./stacks";
 
@@ -312,7 +312,8 @@ function runAuth(
   return new Promise((resolve) => {
     let child: ChildProcess;
     try {
-      child = spawn(CLAUDE_BIN, args, spawnOptions());
+      const cli = spawnCommand(CLAUDE_BIN, args);
+      child = spawn(cli.command, cli.args, spawnOptions());
     } catch (err) {
       resolve({
         code: null,
@@ -424,7 +425,8 @@ export async function beginLogin(): Promise<ClaudeAuthResult<{ url: string }>> {
 
   let child: ChildProcess;
   try {
-    child = spawn(CLAUDE_BIN, ["auth", "login"], spawnOptions());
+    const cli = spawnCommand(CLAUDE_BIN, ["auth", "login"]);
+    child = spawn(cli.command, cli.args, spawnOptions());
   } catch (err) {
     return {
       ok: false,

@@ -123,6 +123,14 @@ export async function register() {
     console.warn(`[usagefoundry] ${describeSeparation()}`);
     console.warn(`[usagefoundry] ${describeSandbox()}`);
 
+    // A warning and not a refusal: Codex is optional, so an install without it
+    // still boots. Every spawn of a name listed here fails with this same
+    // sentence instead of being handed to a child to find on the agents' PATH.
+    const { unresolvedExecutableWarnings } = await import("./lib/config");
+    for (const warning of unresolvedExecutableWarnings()) {
+      console.warn(`[usagefoundry] ${warning}`);
+    }
+
     // Every reconciler below reads "this row says running, therefore the
     // process that owned it died with my predecessor". That inference is only
     // available to the server that owns this data directory, and it stopped

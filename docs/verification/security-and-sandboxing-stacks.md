@@ -198,6 +198,23 @@
   which is why the builders' `PATH`, not the server's, decides what a dropped
   child runs. Caveat: a shell probe of the first lines, not a boot as root.
 
+- **`CLAUDE_BIN` and `CODEX_BIN` resolve on root's `PATH`, and nothing planted
+  on the agents' runs, 2026-10-05.** Board task `af2a031b`. The resolver as
+  built was run against `docker-entrypoint.sh`'s literal root `PATH`, in a
+  container carrying this image's pins (Claude Code 2.1.280, Codex 0.153.4).
+  It gave `/usr/local/bin/claude`, a native ELF spawned as it is. It spawned
+  Codex as `/usr/local/bin/node /usr/local/bin/codex`, because that file is
+  `codex.js` behind `#!/usr/bin/env node`, and that command answered
+  `codex-cli 0.153.4`. Both are where `npm install -g` puts them as root under
+  the base image's `/usr/local` prefix (`Dockerfile:454` and `:614`, with no
+  `USER` line before either). `cliPath.test.ts` plants `claude`, `node` and an
+  unresolvable `CODEX_BIN` name first on `UF_AGENT_PATH`. Compiled against the
+  tree before the change, all 11 of its cases failed; the two planted-binary
+  cases failed because the planted copy ran. With the change, all 11 passed,
+  as did `npm test`, 3,744 of 3,744, both as it stands and with `CLAUDE_BIN`
+  and `CODEX_BIN` set to names on no `PATH`. Caveat: the auth commands ran as
+  a non-root user in one process; nothing booted an image as root (see below).
+
 ## Not yet verified by hand
 
 - **No real work cycle has invoked a stack's binary.** Three things around it
@@ -241,3 +258,14 @@
   (expect `/var/lib/uf-stacks/bin` first, the variable present, Go answering);
   Settings → Tools (expect every row as before); and
   `docker compose logs usagefoundry | grep 'not on your PATH'` (expect nothing).
+
+- **No root boot has spawned through the resolved paths.** Unmeasured: that a
+  booted image logs no `CLAUDE_BIN` or `CODEX_BIN` warning, and that a work
+  cycle, a chat turn and a Codex sign-in each start under the uid drop with the
+  absolute command. Settle: `docker compose up --build`, then
+  `docker compose logs usagefoundry | grep -E 'CLAUDE_BIN|CODEX_BIN'` (expect
+  nothing); start a run, a chat turn and a Codex sign-in, and while they are
+  alive read `docker compose exec usagefoundry ps -eo user,args | grep -E '/usr/local/bin/(claude|codex)'`
+  (expect the agents' user on every line, each `claude` child starting
+  `/usr/local/bin/claude`, the sign-in starting
+  `/usr/local/bin/node /usr/local/bin/codex`).

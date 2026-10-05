@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import { CLAUDE_BIN } from "./config";
+import { CLAUDE_BIN, spawnCommand } from "./config";
 import { db } from "./db";
 import { git } from "./git";
 import { childCredentials, deprioritiseChildForOom } from "./privsep";
@@ -1096,7 +1096,8 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
 
     // No shell, as everywhere else here: the prompt carries a diff, which is
     // arbitrary repository content full of quotes and backticks.
-    const child = spawn(CLAUDE_BIN, args, {
+    const cli = spawnCommand(CLAUDE_BIN, args);
+    const child = spawn(cli.command, cli.args, {
       cwd,
       env: reviewEnv(),
       // Dropped like every other child. A reviewer cannot write, but it reads a

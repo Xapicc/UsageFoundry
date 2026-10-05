@@ -30,6 +30,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 
 - The server is root and every child it spawns is not, and that one difference is what makes three separate defences mean anything. (was line 10)
 - The child environment is a denylist, and a denylist fails open — so a credential shape gets closed before this app has a use for it, not after. (was line 18)
+- What a dropped child is spawned as is decided on root's `PATH`, never on its own.
 - No Claude Code child this app spawns may list or message another session, and one variable is what enforces it.
 - `UF_GITHUB_TOKEN` is scoped by host and by child, and there are three kinds of child rather than one. (was line 16)
 - A work cycle can now write to this app's database, and what bounds that is the tool list rather than a file mode. (was line 33)

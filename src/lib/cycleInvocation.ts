@@ -1620,7 +1620,10 @@ export function buildCodexArgs(opts: Parameters<typeof buildArgs>[0]): string[] 
  * a policy whose only limits this app cannot enforce — and none of it is here.
  */
 export interface CycleAdapter {
-  /** The executable a work cycle spawns. */
+  /**
+   * The executable a work cycle spawns. It is passed through `spawnCommand`,
+   * never handed to `spawn` directly, so the child's `PATH` resolves nothing.
+   */
   readonly bin: string;
   /** This cycle's argv, rebuilt per cycle because `--resume` restores little. */
   readonly buildArgs: typeof buildArgs;
