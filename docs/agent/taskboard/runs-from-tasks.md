@@ -140,7 +140,9 @@ afterwards.
 **An unknown task id is refused by name, and a *closed* one is not.**
 `taskRefusal` in `tasks.ts` is the one wording, reached through `readTaskLinks`
 for both lists, so an id that is not there reads the same in a chat, in an
-emission and in `get_task` — `agentRefusal`'s ground.
+emission and in `get_task` — `agentRefusal`'s ground — less its "or leave it out"
+where the id is the point of the call (`mcp-surface.md`), and never reached from a
+work cycle.
 The failure it closes is the quiet one: a proposal that said "for the flaky-auth
 task" and silently carried no task is bit-for-bit a proposal that named none, and
 the operator approves a card whose provenance line is simply absent. The

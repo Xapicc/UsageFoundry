@@ -706,11 +706,63 @@ export interface TaskFacts {
 export function taskRefusal(
   taskId: string,
   knowledge: ReadonlyMap<string, TaskFacts>,
+  /**
+   * Whether the caller could have left the id out. True for the one door that
+   * reads it off an optional list — a proposal's or an emission's `taskIds` —
+   * where "a run that names no task is the ordinary run" is true. False where
+   * the id is the point of the call (`get_task`, `comment_on_task`,
+   * `add_task_dependency`): "or leave it out" there is advice the tool cannot
+   * take.
+   */
+  options: { mayOmit?: boolean } = {},
 ): string | null {
-  return knowledge.has(taskId)
-    ? null
-    : `No task with id "${taskId}" is on the board. Call list_tasks for the ` +
-        `ids, or leave it out — a run that names no task is the ordinary run.`;
+  if (knowledge.has(taskId)) return null;
+  const refusal = `No task with id "${taskId}" is on the board. Call list_tasks for the ids`;
+  return options.mayOmit === false
+    ? `${refusal}.`
+    : `${refusal}, or leave it out — a run that names no task is the ordinary run.`;
+}
+
+/** Characters in a task id: `randomUUID()`, hyphens included. */
+export const TASK_ID_LENGTH = 36;
+
+const TASK_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** Longest stretch of a refused id a sentence echoes back. */
+const MAX_ECHOED_TASK_ID = 40;
+
+/**
+ * Why this string cannot be a task id, or null when it is shaped like one.
+ *
+ * Pure, and it decides **nothing about the board**: it is asked before any
+ * lookup, and its answer is the same on every install and for every id of the
+ * same shape. That is the whole of why a work cycle may be told it — a run's
+ * refusals for "not yours" and "not there" are one sentence so that they cannot
+ * be used to probe which ids exist (`taskVisibleToRun`), and a sentence about an
+ * id's *length* gives a prober nothing. It is also the only refusal that points
+ * at the real cause of the commonest mistake: an id cut to its first eight
+ * characters, copied out of a brief that abbreviated it. Looked up as written,
+ * that id is on no row, and every other refusal here would tell the caller it
+ * is out of scope or not on the board, which sends it to re-read the wrong
+ * list. A shortened id is never matched to a task — resolving a prefix is a
+ * guess about which task was meant, made on a surface that writes.
+ *
+ * Lowercase only, because `randomUUID` writes lowercase and the lookup is a
+ * case-sensitive `WHERE id = ?`: admitting an upper-case id here would let it
+ * through to a miss whose sentence names the wrong cause.
+ */
+export function taskIdShapeRefusal(taskId: string): string | null {
+  if (TASK_ID_SHAPE.test(taskId)) return null;
+  if (taskId.length === 0) {
+    return `A task id is ${TASK_ID_LENGTH} characters and this one is empty.`;
+  }
+  const seen =
+    taskId.length > MAX_ECHOED_TASK_ID ? `${taskId.slice(0, MAX_ECHOED_TASK_ID)}…` : taskId;
+  const form = "lowercase hex digits in groups of 8-4-4-4-12, joined by hyphens";
+  return taskId.length === TASK_ID_LENGTH
+    ? `"${seen}" is ${TASK_ID_LENGTH} characters but is not shaped like a task id: ${form}.`
+    : `"${seen}" is ${taskId.length} characters; a task id is ${TASK_ID_LENGTH}: ${form}. ` +
+        "A shortened id is never matched to a task.";
 }
 
 /**
