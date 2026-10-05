@@ -1622,6 +1622,20 @@ export interface LiveRunDTO {
    * `/api/runs/[id]`. Null when the run has no context record yet.
    */
   context: ContextOccupancyDTO | null;
+  /**
+   * What context pruning has netted this run so far — the figure the run's own
+   * page and the runs list print for it, from the same `pruneSavingsByRun`.
+   *
+   * **Null when the run has not pruned**, never a zeroed DTO: that function
+   * leaves a run with no cut out of its map, and "pruning saved nothing here"
+   * is a different fact from "pruning did not run".
+   *
+   * **Not spend, and never summed with `spent_usd` or `cycleTelemetry`** — see
+   * `PruneSavingsDTO`. It grows as the run's later turns happen, so a figure on
+   * a live tile is never final, and `unsettledPrunes` / `pricedPrunes` say how
+   * far it is from complete.
+   */
+  pruning: PruneSavingsDTO | null;
 }
 
 /**

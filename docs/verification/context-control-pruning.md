@@ -144,6 +144,41 @@
   threshold on the reset buys nothing. Caveat: per file not per run, ticks
   rebuilt from timestamps, cuts inferred from the drop.
 
+- **One `pruneSavingsByRun` call costs one transcript scan, and the fork half
+  used to cost one per forked run, 2026-10-05.** Against this install's 2,444
+  transcripts (116,865 turns, 2.6 GB, a slow mount) with a scratch `DATA_DIR`
+  and eight running runs, tree base `88674f1`. With no receipts: 0.1 ms. After
+  the one-pass change: 58-76 ms with no transcript grown and 129-139 ms with
+  one grown, whether the eight had pruned in place, forked, or half each. Before
+  it, eight forked runs took 3.2-4.5 s (memo hit) and 1.8-3.6 s (memo missed).
+  `scanUsage` alone read 67 ms and 189 ms in the same two cases, so what
+  pricing adds on top of a scan is about 20 ms or less. Caveats: eight in-place
+  runs, one scan on both sides of the change, read 0.24-0.75 s in the first
+  batch and 58-76 ms in the last, so the machine's load or cache moved the
+  baseline by a factor of five and only the fork case's factor, which tracks
+  the number of runs, is the change's; the first call in a process, which reads
+  every transcript, took 14-18 s in the first batch and 5.7-6.5 s in the last,
+  which is the filesystem cache's temperature and is paid by whichever caller
+  scans first; the receipts were written by hand, and a transcript growing was
+  simulated by clearing the scan memo rather than by a run writing.
+
+- **`/runs/live` tiles show Saved, Lost and Net for each running run,
+  2026-10-05**, the standalone bundle built from `88674f1` plus this change,
+  headless Chromium at 375x2600 and 1280x1500, a scratch `DATA_DIR` and
+  `CLAUDE_HOME`. Six running runs written after boot, each in one state: no
+  receipt (`null`, drawn as a dash over "no prune yet"), settled, a boundary
+  prune after a cold first resume with no clean probe (`unsettledPrunes` 1),
+  two prunes of which one ran on a model with no price, a prune on a model with
+  no price alone, and a prune with no later turns (net −$1.00). The polled
+  figure for each equalled `pruneSavingsByRun`'s for it; the unsettled tile read
+  "Net, at most" over a dash and "not settled yet"; the partly unpriced read
+  "money over 1 of 2" and the unpriced one dashes and "money over 0 of 1". At
+  375px the three columns were 95px each with no cell, tile or document
+  overflow and no console error, and "re-reads avoided" and "restarts paid
+  for" stayed on one line; at 1280px 147px each. `npm run smoke-pages` 96/96.
+  Caveat: the tile is 40px taller once a run has pruned than before, so a run's
+  first prune moves what is below it on that tile.
+
 ## Not yet verified by hand
 
 - **The mark clears in `pruneAtBoundary` and the fresh-start branch have not
@@ -212,3 +247,10 @@
   browser**; its graph and workflow-list "after" bytes are computed. Unseen:
   the file-cost notice on a real argv, or byte-identical on cycles 1 and 2; any
   page from that build.
+
+- **The pruning block on a `/runs/live` tile has not met a real running run,
+  2026-10-05.** Every receipt behind it was a row written by hand. Settles it:
+  `docker compose up --build`, run a task long enough to cross the context
+  ceiling with `contextPruningEngine` set to `winnow` and again to `legacy`,
+  open `/runs/live`, and compare each tile's Saved, Lost and Net with that
+  run's own page.
