@@ -4795,11 +4795,26 @@ export function forkCutFromRow(row: {
 
 /** One written fork, in the terms the netting uses. */
 function readForkCuts(
-  filter: { from: number; to: number } | { runId: string },
+  filter:
+    | { from: number; to: number }
+    | { runId: string }
+    | { runIds: readonly string[] },
 ): { cut: NettableCut; sessionId: string | null }[] {
-  const where = "runId" in filter ? "run_id = ?" : "ts >= ? AND ts <= ?";
+  // `IN ()` is a syntax error in SQLite rather than an empty result, as in
+  // `readReceipts`.
+  if ("runIds" in filter && filter.runIds.length === 0) return [];
+  const where =
+    "runId" in filter
+      ? "run_id = ?"
+      : "runIds" in filter
+        ? `run_id IN (${filter.runIds.map(() => "?").join(",")})`
+        : "ts >= ? AND ts <= ?";
   const args: (string | number)[] =
-    "runId" in filter ? [filter.runId] : [filter.from, filter.to];
+    "runId" in filter
+      ? [filter.runId]
+      : "runIds" in filter
+        ? [...filter.runIds]
+        : [filter.from, filter.to];
   try {
     const rows = db()
       .prepare(
@@ -4966,26 +4981,35 @@ export function groupPruneSavingsByRun(
 /**
  * What pruning has been worth to each of a page of runs.
  *
- * One read and **one** pricing pass for the whole page rather than
+ * One read and **one** pricing pass per engine for the whole page rather than
  * `pruneSavings({ runId })` per row: pricing counts the turns after each receipt
  * out of a transcript scan, and a hundred separate calls would scan the same
- * transcripts a hundred times on a four-second poll. `priceReceipts` returns
- * before the scan when nothing came back, so a page whose runs never pruned
- * costs one indexed query.
+ * transcripts a hundred times on a four-second poll. `priceReceipts` and
+ * `priceForks` both return before the scan when nothing came back, so a page
+ * whose runs never pruned costs two indexed queries.
+ *
+ * The fork engine's half used to be `forkSavings({ runId })` in a loop, which
+ * is the per-row call this function exists to avoid by another name: each
+ * awaited call that found a fork started its own scan, and scans only coalesce
+ * when they overlap. Measured over this install's 2,444 transcripts, eight
+ * running runs that had all forked took 3.2–4.5 s per call against 0.1–0.4 s
+ * for eight that had all pruned in place, and the live tiles ask every five
+ * seconds.
  */
 export async function pruneSavingsByRun(
   runIds: readonly string[],
 ): Promise<Map<string, PruneSavings>> {
-  const byRun = groupPruneSavingsByRun(
-    await priceReceipts(readReceipts({ runIds })),
-  );
+  // Concurrent, so the two engines' pricing joins one scan, as `pricedCuts` does.
+  const [pruned, forked] = await Promise.all([
+    priceReceipts(readReceipts({ runIds })),
+    priceForks(readForkCuts({ runIds })),
+  ]);
+  const byRun = groupPruneSavingsByRun(pruned);
   // The runs list reads this per row, so a forked run showing nothing in the
   // Pruning column while its own page showed a figure would be the two views
   // disagreeing about the same run.
-  for (const runId of runIds) {
-    const forked = await forkSavings({ runId });
-    if (forked.prunes === 0) continue;
-    byRun.set(runId, addSavings(byRun.get(runId) ?? NO_PRUNE_SAVINGS, forked));
+  for (const [runId, saved] of groupPruneSavingsByRun(forked)) {
+    byRun.set(runId, addSavings(byRun.get(runId) ?? NO_PRUNE_SAVINGS, saved));
   }
   return byRun;
 }

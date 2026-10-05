@@ -384,15 +384,27 @@ already started — a run copies every value it needs the moment it is created.
 per running run, each with its task and folder, the model it is on, the work cycle it is on against
 its limit, how long it has been running, what its finished cycles cost, what
 Claude Code's own telemetry has counted of the cycle in flight, how full its
-context is, and the last fifty lines of its log. Tiles come and go as runs start
-and stop, without a reload. The badge on the button counts the runs going now.
+context is, what context pruning has done for it so far, and the last fifty
+lines of its log. Tiles come and go as runs start and stop, without a reload.
+The badge on the button counts the runs going now.
 
 The two money figures are never added together. **Spent** is what finished
 cycles reported; **Telemetry — first-party** is the cycle in flight, and says
 **none reported this cycle** for a run whose CLI exports none — any run, unless
 **Let agents report per-request cost over OpenTelemetry** is on in **Settings**
-or the run has a spending limit enforced mid-cycle. Open a tile's task for the
-run page, which has the whole log and the controls.
+or the run has a spending limit enforced mid-cycle.
+
+**Context pruning — not spend** sits under the context meter as a block of its
+own, and is never added to either money figure. **Saved** is the re-reads later
+turns did not have to make, **Lost** is what the restarts the edits caused
+cost, and **Net** is the difference — the same figures the run's own page and the
+**Pruning** column print for that run. It grows as the run's later turns happen,
+so it is not final while the run is. A run that has not pruned shows a dash and
+**no prune yet**, not a zero. While some prune's restart cost is not charged
+yet, **Lost** says **not settled yet** and **Net** reads **Net, at most**; and
+when prunes ran on a model with no price here, **money over 2 of 4** says how
+many the money covers. Open a tile's task for the run page, which has the whole
+log and the controls.
 
 ---
 

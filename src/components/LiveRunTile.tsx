@@ -14,6 +14,7 @@ import {
 } from "@/lib/format";
 import { ContextOccupancy } from "@/components/ContextOccupancy";
 import { LiveRunFigures } from "@/components/LiveRunFigures";
+import { LiveRunPruning } from "@/components/LiveRunPruning";
 import { Meter } from "@/components/Meter";
 import { RunActivity } from "@/components/RunActivity";
 import { Card, Empty, SkeletonText } from "@/components/ui/Card";
@@ -23,8 +24,8 @@ import { Log, LogLine } from "@/components/ui/Log";
 const PINNED_PX = 40;
 
 /**
- * One running run on `/runs/live`: who it is, its money, its context and the
- * tail of its log.
+ * One running run on `/runs/live`: who it is, its money, its context, what
+ * pruning has done for it and the tail of its log.
  *
  * The log half comes from the page's one stream and is here from the first
  * frame; the figures half is `run`, from the page's poll, and is null until
@@ -140,6 +141,7 @@ export function LiveRunTile({
               />
             )}
           </div>
+          <LiveRunPruning pruning={run.pruning} />
         </>
       )}
 
