@@ -5,10 +5,12 @@ import path from "node:path";
 import { BACKUP_DIR, DB_PATH, PROJECTS_DIR } from "./config";
 import { db, getJSON, setJSON } from "./db";
 import { git } from "./git";
+import { chainRuns, isLandedTip } from "./land";
 import {
   activeRuns,
   describeFolder,
   emitRunEvent,
+  getRun,
   resolveWorkspaceFolder,
   TERMINAL_STATUSES,
   worktreeStores,
@@ -398,8 +400,6 @@ interface SlotRow {
   worktree_base: string | null;
   worktree_base_branch: string | null;
   repo_root: string;
-  landed_at: number | null;
-  landed_tip: string | null;
 }
 
 /**
@@ -428,7 +428,7 @@ function newestRunPerSlot(): Map<string, SlotRow> {
   const rows = db()
     .prepare(
       `SELECT id, status, finished_at, worktree_path, worktree_branch,
-              worktree_base, worktree_base_branch, repo_root, landed_at, landed_tip
+              worktree_base, worktree_base_branch, repo_root
          FROM runs
         WHERE isolation = 'worktree' AND worktree_path IS NOT NULL
           AND repo_root IS NOT NULL
@@ -578,23 +578,31 @@ export async function sweepCheckouts(now = Date.now()): Promise<{
  * recorded at land time is what stands in for it, and it stops being true the
  * moment the branch gains a commit, which is exactly when reclaiming its
  * checkout would start throwing away something.
+ *
+ * The recorded tip is asked of the whole chain rather than of `row`, because
+ * `landRun` writes it on the run that landed and a link that continues that run
+ * afterwards inherits its slot and its branch while carrying no tip of its own.
+ * That link is the newest run recorded in the slot, so it is the row asked
+ * about here, and read alone a squashed branch looked never landed for as long
+ * as the checkout existed. The question is the one `land.ts` asks of the same
+ * chain, and it is the same function.
  */
 async function branchIsSettled(
   repoRoot: string,
   row: {
+    id: string;
     worktree_branch: string | null;
     worktree_base: string | null;
     worktree_base_branch: string | null;
-    landed_at: number | null;
-    landed_tip: string | null;
   },
 ): Promise<boolean> {
   const branch = row.worktree_branch;
   if (!branch) return true; // no branch of its own: nothing to lose
 
-  if (row.landed_at !== null && row.landed_tip) {
+  const run = getRun(row.id);
+  if (run) {
     const tip = await git(repoRoot, ["rev-parse", `refs/heads/${branch}`]);
-    if (tip.ok && tip.stdout === row.landed_tip) return true;
+    if (tip.ok && isLandedTip(chainRuns(run), tip.stdout)) return true;
   }
 
   const target = row.worktree_base_branch ?? row.worktree_base;
