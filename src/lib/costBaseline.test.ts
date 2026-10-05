@@ -92,7 +92,7 @@ describe("outlierVerdict fires only on a run that has left its distribution", ()
     assert.equal(v.over, true);
     assert.match(v.reason ?? "", /3\.2x what this task has cost before/);
     assert.match(v.reason ?? "", /median of \$0\.30 over 6 runs/);
-    assert.match(v.reason ?? "", /unlike itself rather than for reaching a ceiling/);
+    assert.match(v.reason ?? "", /unlike itself rather than for reaching a limit/);
   });
 
   it("fires exactly at the boundary, not one cent after it", () => {
