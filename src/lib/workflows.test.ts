@@ -2549,9 +2549,15 @@ function limits(over: Partial<EmissionLimits> = {}): EmissionLimits {
   };
 }
 
+// Shaped like real ids because `readTaskLinks` refuses a malformed one for its
+// shape before it looks the board up.
+const TASK_KNOWN = "5d2c7a10-3b84-4e9f-a1c6-0f8e2b7d4a31";
+const TASK_OTHER = "b83e90c4-17d5-4a62-9c0b-6e4f1a2d8c57";
+const TASK_GONE = "e1f40a97-62cb-4d38-8b15-3c9a7d0e5f26";
+
 const EMISSION_BOARD = new Map([
-  ["task-known", { title: "The known task on the board", status: "open" as const, operatorOnly: false, needsFrontier: false, claimedByOperator: false }],
-  ["task-other", { title: "Another open task the brief quotes", status: "open" as const, operatorOnly: false, needsFrontier: false, claimedByOperator: false }],
+  [TASK_KNOWN, { title: "The known task on the board", status: "open" as const, operatorOnly: false, needsFrontier: false, claimedByOperator: false }],
+  [TASK_OTHER, { title: "Another open task the brief quotes", status: "open" as const, operatorOnly: false, needsFrontier: false, claimedByOperator: false }],
 ]);
 
 /** One emitted spec with everything filled in. */
@@ -3026,14 +3032,32 @@ describe("planEmission — which specs become runs", () => {
     // task" that silently carried no task is afterwards indistinguishable from
     // one that named none, and the operator reads a board row nothing was ever
     // started for.
-    const named = emitted([spec("a", { taskIds: ["task-known", "task-other"] })]);
-    assert.deepEqual(named[0].taskIds, ["task-known", "task-other"]);
+    const named = emitted([spec("a", { taskIds: [TASK_KNOWN, TASK_OTHER] })]);
+    assert.deepEqual(named[0].taskIds, [TASK_KNOWN, TASK_OTHER]);
 
-    const refused = planEmission([spec("a", { taskIds: ["task-gone"] })], limits());
+    const refused = planEmission([spec("a", { taskIds: [TASK_GONE] })], limits());
     assert.equal(refused.ok, false);
     // The whole emission, not the one spec — `planEmission`'s all-or-nothing
     // rule: a partial list is a workflow that did some of what it decided.
-    assert.match(refused.ok ? "" : refused.reason, /task-gone/);
+    assert.match(refused.ok ? "" : refused.reason, new RegExp(TASK_GONE));
+    assert.match(refused.ok ? "" : refused.reason, /No task with id/);
+  });
+
+  it("refuses an id cut to its first eight characters for its shape, not as missing", () => {
+    // The mistake the briefs make: a task copied out of a brief that abbreviated
+    // it. Looked up as written it is on no row, and "not on the board" would
+    // send the block's model to re-read a list whose ids were never the problem.
+    for (const field of ["taskIds", "relatedTaskIds"]) {
+      const refused = planEmission(
+        [spec("a", { [field]: [TASK_KNOWN.slice(0, 8)] })],
+        limits(),
+      );
+      assert.equal(refused.ok, false, field);
+      const reason = refused.ok ? "" : refused.reason;
+      assert.match(reason, new RegExp(`${field}: "${TASK_KNOWN.slice(0, 8)}" is 8 characters`));
+      assert.match(reason, /list_tasks/, "a block has list_tasks");
+      assert.doesNotMatch(reason, /No task with id/, `${field}: no lookup was made`);
+    }
   });
 
   it("refuses a spec whose text names a task it does not link, saying which spec", () => {
@@ -3042,17 +3066,17 @@ describe("planEmission — which specs become runs", () => {
     const bundled = spec("b", {
       title: "Two fixes",
       task: "Fix “The known task on the board” and “Another open task the brief quotes”.",
-      taskIds: ["task-known"],
+      taskIds: [TASK_KNOWN],
     });
     const refused = planEmission([spec("a"), bundled], limits());
     assert.equal(refused.ok, false);
     const reason = refused.ok ? "" : refused.reason;
     assert.match(reason, /^“Two fixes”:/);
-    assert.match(reason, /task-other/);
+    assert.match(reason, new RegExp(TASK_OTHER));
 
     assert.deepEqual(
-      emitted([{ ...bundled, taskIds: ["task-known", "task-other"] }])[0].taskIds,
-      ["task-known", "task-other"],
+      emitted([{ ...bundled, taskIds: [TASK_KNOWN, TASK_OTHER] }])[0].taskIds,
+      [TASK_KNOWN, TASK_OTHER],
     );
   });
 

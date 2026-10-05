@@ -905,6 +905,8 @@ const OPEN_ID = "a9648b09-41bf-42a4-86e8-892d3df9603e";
 const CLAIMED_ID = "4b697254-4341-40eb-a78f-c27a3c386c65";
 const DONE_ID = "dfa89779-71cd-41d5-bae3-7c417807a96d";
 const SHORT_ID = "0f146cc6-1c9a-4a8e-9d0e-5b2f1f2c0e11";
+/** Shaped like an id and on no board. */
+const GONE_ID = "7c0e3b52-9a14-4f6d-8e21-b5d93a7f0c48";
 
 const BRIEFED = new Map([
   [OPEN_ID, { title: "The merge tool opens with no conflicts in it", status: "open" as const, operatorOnly: false, needsFrontier: false, claimedByOperator: false }],
@@ -964,8 +966,11 @@ test("the task link fields are refused by name when they cannot mean what was se
   // The field this replaced: silently ignored, a caller believes it linked.
   assert.match(reason({ taskId: OPEN_ID }) ?? "", /taskIds/);
   assert.match(reason({ taskIds: OPEN_ID }) ?? "", /list/);
-  assert.match(reason({ taskIds: ["t-gone"] }) ?? "", /t-gone/);
-  assert.match(reason({ relatedTaskIds: ["t-gone"] }) ?? "", /t-gone/);
+  assert.match(reason({ taskIds: [GONE_ID] }) ?? "", new RegExp(`No task with id "${GONE_ID}" is on the board`));
+  assert.match(
+    reason({ relatedTaskIds: [GONE_ID] }) ?? "",
+    new RegExp(`No task with id "${GONE_ID}" is on the board`),
+  );
   assert.match(
     reason({ taskIds: [OPEN_ID], relatedTaskIds: [OPEN_ID] }) ?? "",
     /both/,
@@ -983,6 +988,29 @@ test("the task link fields are refused by name when they cannot mean what was se
     readTaskLinks({ taskIds: [CLAIMED_ID, OPEN_ID, CLAIMED_ID] }, "", BRIEFED),
     { ok: true, taskIds: [CLAIMED_ID, OPEN_ID] },
   );
+});
+
+test("an id in a task link list that is not shaped like one is refused for its shape, not as missing", () => {
+  // The same mistake `taskIdShapeRefusal` exists for, reached through the lists
+  // `propose_run` and `emit_runs` read: a prefix copied out of an abbreviating
+  // brief. "Not on the board" would name the wrong cause for it.
+  const prefix = OPEN_ID.slice(0, 8);
+  for (const field of ["taskIds", "relatedTaskIds"]) {
+    const read = readTaskLinks({ [field]: [prefix] }, "no tasks named here", BRIEFED);
+    assert.equal(read.ok, false, field);
+    const reason = read.ok ? "" : read.reason;
+    assert.match(reason, new RegExp(`^${field}: "${prefix}" is 8 characters; a task id is 36`));
+    assert.match(reason, /list_tasks/);
+    assert.doesNotMatch(reason, /No task with id|leave it out/, `${field}: no lookup was made`);
+  }
+
+  // One malformed id among well-formed ones refuses the whole read: a list
+  // that linked the others would be a run for some of what was asked.
+  assert.equal(readTaskLinks({ taskIds: [OPEN_ID, prefix] }, "", BRIEFED).ok, false);
+  // An upper-cased real id fails the case-sensitive lookup, so it is named for
+  // its shape too rather than as an id the board does not have.
+  const upper = readTaskLinks({ taskIds: [OPEN_ID.toUpperCase()] }, "", BRIEFED);
+  assert.match(upper.ok ? "" : upper.reason, /36 characters but is not shaped like a task id/);
 });
 
 /* ------------------------------------------------------------------ */

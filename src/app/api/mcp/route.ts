@@ -4114,6 +4114,12 @@ function recordTaskDependency(
  * whole design is that a person decides whether anything happens.
  */
 function createTaskTool(args: Record<string, unknown>, chatId: string) {
+  // Ahead of `createTask`'s "No such task to file this under", which would name
+  // the wrong cause for an id cut to its first eight characters.
+  const named = String(args.parentTaskId ?? "").trim();
+  const malformed = named ? malformedTaskId("chat", { parentTaskId: named }) : null;
+  if (malformed) return malformed;
+
   const parsed = normalizeTaskInput(args, {
     // Stated here rather than read off the body, `OPERATOR`'s rule on the
     // task routes: a field that could name a different origin would be a model
@@ -4465,7 +4471,9 @@ function releaseTaskForRun(args: Record<string, unknown>, runId: string) {
  * run whose brief the operator deleted mid-flight would otherwise have every
  * `create_task` refused by `createTask`'s dangling-parent check, which is the
  * one path where the thing worth keeping — the new brief — is lost to the state
- * of a row it is only annotated with.
+ * of a row it is only annotated with. That is for an id shaped like one: a
+ * malformed parent is refused first, because it names nothing on any install
+ * and the run is the one who can fix it.
  */
 /**
  * `request_stack`: answer from the receipts, or record the request and the wait.
@@ -4569,6 +4577,12 @@ async function requestStackForRun(args: Record<string, unknown>, runId: string) 
 function createTaskForRun(args: Record<string, unknown>, runId: string) {
   const { filing } = runFolder(runId);
   const named = String(args.parentTaskId ?? "").trim();
+  // Before the drop below, which is for a parent that was well-formed and has
+  // since been deleted. A malformed one is a mistake the run can fix, and
+  // dropping it files the task parentless with no message — the trail back that
+  // the column exists for lost without anyone being told.
+  const malformed = named ? malformedTaskId("run", { parentTaskId: named }) : null;
+  if (malformed) return malformed;
   const inherited = tasksLinkedToRun(runId)[0];
   const parent = named || inherited?.id || null;
 

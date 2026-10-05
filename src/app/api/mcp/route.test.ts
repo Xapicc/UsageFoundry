@@ -608,6 +608,47 @@ test("a task id that is not shaped like one is refused for its shape, before any
   }
   assert.equal(taskDeps.depsForTask(held.id).dependsOnCount, 0);
   assert.equal(thread(held.id), 0);
+
+  // `create_task`'s parent is an id too, and a prefix there used to file the
+  // task parentless without a word (a run) or answer "No such task to file this
+  // under" (a chat). Refused for its shape, filing nothing.
+  const boardSize = () =>
+    (db().prepare("SELECT COUNT(*) AS n FROM tasks").get() as { n: number }).n;
+  const parentOf = (reply: string) => {
+    const id = /\(id ([0-9a-f-]{36})\)/.exec(reply)?.[1];
+    assert.ok(id, `the reply names the filed task: ${reply}`);
+    return tasks.getTask(id)?.parentTaskId;
+  };
+  const filing = { title: "Found while working", body: "What is wrong, where." };
+  const before = boardSize();
+
+  const runRefused = await callTool(run.token, "create_task", { ...filing, parentTaskId: short });
+  assert.equal(runRefused.isError, true);
+  assert.match(runRefused.text, /^parentTaskId: .*8 characters/);
+  assert.match(runRefused.text, /list_my_tasks/);
+  assert.doesNotMatch(runRefused.text, /list_tasks|get_task\b/, "a run has neither");
+  const chatRefused = await callTool(chatToken, "create_task", { ...filing, parentTaskId: short });
+  assert.equal(chatRefused.isError, true);
+  assert.match(chatRefused.text, /^parentTaskId: .*8 characters/);
+  assert.match(chatRefused.text, /list_tasks/);
+  assert.doesNotMatch(chatRefused.text, /No such task to file this under/, "no lookup was made");
+  assert.equal(boardSize(), before, "a refused parent files nothing");
+
+  // What the shape check leaves alone: a well-formed parent that is on no row.
+  // A run's door still drops it, for a brief the operator deleted mid-flight; a
+  // chat is still told, since only the write knows whether the row exists.
+  const gone = randomUUID();
+  const dropped = await callTool(run.token, "create_task", { ...filing, parentTaskId: gone });
+  assert.equal(dropped.isError, false, dropped.text);
+  assert.equal(parentOf(dropped.text), null, "the parent that names nothing is dropped");
+  const told = await callTool(chatToken, "create_task", { ...filing, parentTaskId: gone });
+  assert.equal(told.isError, true);
+  assert.match(told.text, /No such task to file this under/);
+
+  // And a real parent is still filed under.
+  const real = await callTool(run.token, "create_task", { ...filing, parentTaskId: held.id });
+  assert.equal(real.isError, false, real.text);
+  assert.equal(parentOf(real.text), held.id);
 });
 
 test("no refusal a run can receive names a tool the run does not have", async () => {
@@ -637,6 +678,7 @@ test("no refusal a run can receive names a tool the run does not have", async ()
     ["add_task_dependency", { taskId: missing, dependsOnTaskId: held.id }],
     ["add_task_dependency", { taskId: held.id, dependsOnTaskId: held.id }],
     ["create_task", { title: "", body: "" }],
+    ["create_task", { title: "Found", body: "Where.", parentTaskId: missing.slice(0, 8) }],
   ];
   for (const [name, args] of calls) {
     const result = await callTool(run.token, name, args);

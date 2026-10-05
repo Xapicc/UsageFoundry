@@ -133,7 +133,9 @@ both told the task was out of scope, which sent them to re-read a list whose ids
 were never the problem. `taskIdShapeRefusal` in `tasks.ts` is asked first by
 `malformedTaskId` in the route: the run's `get_my_task`, `complete_task`,
 `release_task`, `comment_on_task` and `add_task_dependency`, and the chat's
-`get_task`, `comment_on_task` and `add_task_dependency`. It says "94ec87a2 is 8
+`get_task`, `comment_on_task` and `add_task_dependency` — and by both doors of
+`create_task` for a `parentTaskId` that is named, and by `readTaskLinks` for
+every entry of `taskIds` and `relatedTaskIds`. It says "94ec87a2 is 8
 characters; a task id is 36" and nothing about the board, and that is why it does
 not weaken the one-sentence rule above: it is the same for every id of that length
 on every install, so it tells a prober nothing. A shortened id is **never
@@ -147,11 +149,14 @@ test sweeps a run's refusals against the tools its list lacks. Where the id is
 the point of the call (`get_task`, `comment_on_task`, `add_task_dependency`),
 `taskRefusal` is called with `mayOmit: false` and drops "or leave it out — a run
 that names no task is the ordinary run", which is true of a proposal's `taskIds`
-and meaningless anywhere else. **Not covered yet:** the
-`taskIds`/`relatedTaskIds` lists on `propose_run` and an emission, which only an
-orchestrator subject has and which still answer a prefix with `taskRefusal`'s
-"not on the board", and `create_task`'s `parentTaskId`, which a run's door drops
-quietly when it names nothing — a prefix there files the task with no parent. The briefs that carried the short ids are written
+and meaningless anywhere else. The two lists are only ever read for an
+orchestrator subject — a chat's `propose_run`, a block's `emit_runs` — so
+`readTaskLinks` points at `list_tasks`, and it asks the shape before
+`taskRefusal`, which would otherwise answer a prefix with "No task with id …
+is on the board". A run's `create_task` refuses a malformed `parentTaskId` for
+its shape too, where it would once have filed the task parentless with no word:
+the run can fix a mistyped id, so it is told, and the drop below is kept only
+for an id that is well-formed and names no row. The briefs that carried the short ids are written
 by an orchestrator, so both orchestrator prompts (`systemPrompt` in `chat.ts`,
 `blockSystemPrompt` in `workflows.ts`) and the `task` and `taskIds` descriptions
 on `propose_run` and `emit_runs` tell the writer to name a board task by its full
