@@ -828,10 +828,12 @@ function FormField({
  * The summary carries the label, so the field inside renders none — a
  * `<summary>` is the disclosure's own control and cannot also be the `<label>`
  * for the box under it, so the textarea takes the same words as its accessible
- * name. The unsaved-edit suffix goes on the summary rather than on the field,
- * which is what lets a screen reader tell from a **closed** fold that something
- * inside it is unsaved; the rail in the gutter says the same thing to everyone
- * else, once the fold is open.
+ * name. The unsaved-edit suffix and a rail both go on the summary, which is the
+ * one line still on screen when the fold is shut: a rail drawn only on the field
+ * disappears with the body, and the save bar would then count a change that is
+ * marked nowhere. The field keeps its own rail for when the fold is open. Both
+ * sit in the same gutter column, so an open fold reads as one stroke down its
+ * label and its text box rather than as two marks for two settings.
  *
  * Factored for the reason `SettingRow` is: four call sites repeat it verbatim,
  * and the label is stated once here rather than twice at each of them.
@@ -863,8 +865,15 @@ function PromptFold({
   return (
     <Disclosure
       className="mb-3.5 last:mb-0"
-      summaryClassName={FOLD_SUMMARY}
-      summary={<SettingName label={label} edited={edited} />}
+      // `relative` so the rail is drawn against this line rather than
+      // against whichever positioned ancestor sits further up the page.
+      summaryClassName={`relative ${FOLD_SUMMARY}`}
+      summary={
+        <>
+          <EditedRail on={edited} />
+          <SettingName label={label} edited={edited} />
+        </>
+      }
       count={count}
       defaultOpen={defaultOpen}
     >
@@ -890,6 +899,27 @@ function EditedRail({ on }: { on: boolean }) {
         on ? "bg-accent" : "bg-transparent"
       }`}
     />
+  );
+}
+
+/**
+ * The summary of a fold that holds several settings, marked when any of them is
+ * unsaved. Pair it with `summaryClassName` carrying `relative`, so the rail is
+ * drawn against the summary line.
+ *
+ * Not `SettingName`: that plants a `data-setting-name` mark, and a fold is not a
+ * setting. The field search takes the block two levels above a mark as the
+ * field's help text, which here would be the whole fold body — every query that
+ * matches a row inside would also list the fold, spending hits of the
+ * `MAX_FIELD_HITS` cap on a result that is not a field.
+ */
+function FoldSummary({ label, edited }: { label: string; edited: boolean }) {
+  return (
+    <>
+      <EditedRail on={edited} />
+      {label}
+      {edited && <span className="sr-only"> — edited, not saved</span>}
+    </>
   );
 }
 
@@ -3045,6 +3075,7 @@ export default function SettingsPage() {
   };
   const openAtLoad = (paths: readonly string[]) =>
     paths.some((p) => movedAtLoad?.includes(p) ?? false);
+  const anyEdited = (paths: readonly string[]) => paths.some(isEdited);
   const guards = effective.chatDefaultGuards;
   const patchGuards = (p: Partial<RunGuardsDTO>) =>
     patch({ chatDefaultGuards: { ...guards, ...p } });
@@ -3519,8 +3550,13 @@ export default function SettingsPage() {
             summary is where that label now is. */}
         <Disclosure
           className="mt-4"
-          summaryClassName={FOLD_SUMMARY}
-          summary="When a window turns over"
+          summaryClassName={`relative ${FOLD_SUMMARY}`}
+          summary={
+            <FoldSummary
+              label="When a window turns over"
+              edited={anyEdited(WINDOW_TURNOVER_KEYS)}
+            />
+          }
           count={movedCount(WINDOW_TURNOVER_KEYS)}
           defaultOpen={openAtLoad(WINDOW_TURNOVER_KEYS)}
         >
@@ -4163,8 +4199,13 @@ export default function SettingsPage() {
             words. */}
         <Disclosure
           className="mt-4"
-          summaryClassName={FOLD_SUMMARY}
-          summary="Isolated runs"
+          summaryClassName={`relative ${FOLD_SUMMARY}`}
+          summary={
+            <FoldSummary
+              label="Isolated runs"
+              edited={anyEdited(ISOLATED_RUN_KEYS)}
+            />
+          }
           count={movedCount(ISOLATED_RUN_KEYS)}
           defaultOpen={openAtLoad(ISOLATED_RUN_KEYS)}
         >
