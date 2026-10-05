@@ -428,3 +428,60 @@ describe("pricing a cut beside other cuts", () => {
     assert.equal(runPage.netUSD, dashboard.netUSD);
   });
 });
+
+describe("pricing a page of runs", () => {
+  it("prices both engines in one pass and gives each run its own page's figure", async (t) => {
+    // `/api/runs/live` asks this every five seconds for every running run. The
+    // fork engine's half used to be `forkSavings` once per run, and each awaited
+    // call that found a fork started a scan of its own — scans only coalesce
+    // when they overlap — so the cost of a poll grew with the number of runs
+    // that had forked, and nothing else about the answer changed.
+    const transcripts = await import("./transcripts.js");
+    const { pruneSavingsByRun, pruneSavings, recordForkAttempt } = await import(
+      "./contextPruning.js"
+    );
+    const { db } = await import("./db.js");
+
+    const ids = ["pg-legacy", "pg-fork-a", "pg-fork-b", "pg-fork-c", "pg-both", "pg-none"];
+    const now = Date.now();
+    for (const id of ids) {
+      db()
+        .prepare(
+          "INSERT OR REPLACE INTO runs (id, folder, prompt, status, budget, created_at, model) VALUES (?,?,?,?,?,?,?)",
+        )
+        .run(id, "/x", "t", "running", 10, now - 1000, "claude-opus-5");
+    }
+    for (const id of ["pg-legacy", "pg-both"]) {
+      db()
+        .prepare(
+          `INSERT INTO prune_receipts (ts, run_id, trigger, tier, tokens_before, tokens_after, tokens_removed, model)
+           VALUES (?,?,?,?,?,?,?,?)`,
+        )
+        .run(now - 500, id, "early-end", "standard", 120_000, 70_000, 50_000, "claude-opus-5");
+    }
+    for (const id of ["pg-fork-a", "pg-fork-b", "pg-fork-c", "pg-both"]) {
+      recordForkAttempt(id, "s", WRITTEN, 0, "early-end", 60_000, 120_000);
+      db()
+        .prepare("UPDATE fork_attempts SET api_context_after = 70000 WHERE run_id = ?")
+        .run(id);
+    }
+
+    const scans = t.mock.method(transcripts, "scanUsage");
+    const byRun = await pruneSavingsByRun(ids);
+    assert.ok(
+      scans.mock.callCount() <= 2,
+      `one scan per engine however many runs forked, saw ${scans.mock.callCount()}`,
+    );
+
+    assert.equal(byRun.has("pg-none"), false, "a run that never pruned is absent, not zero");
+    for (const id of ids.filter((x) => x !== "pg-none")) {
+      assert.deepEqual(byRun.get(id), await pruneSavings({ runId: id }), id);
+    }
+    // Both engines on one run are added, as `pruneSavings` adds them.
+    assert.equal(byRun.get("pg-both")?.prunes, 2);
+    assert.ok(
+      (byRun.get("pg-fork-a")?.invalidationUSD ?? 0) > 0,
+      "the fixture's early end is charged, so the equality above is not zero against zero",
+    );
+  });
+});
