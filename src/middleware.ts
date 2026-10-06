@@ -3,6 +3,9 @@ import { NextResponse, type NextRequest } from "next/server";
 // and no lib/config. That is what lets the gate below decide about a cookie
 // without a database it cannot reach — see the note in that file.
 import { SESSION_COOKIE, readSessionCookie } from "./lib/sessionToken";
+// Edge-safe for the same reason: the limiter's decision is pure, and the state
+// it decides from lives in this runtime's own memory.
+import { checkBearerAllowed, recordBearerFailure } from "./lib/bearerLimiter";
 
 /**
  * Shared-secret gate.
@@ -124,9 +127,32 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // A bearer is a guess at the master token and is charged like one: check,
+  // compare and charge with nothing awaited between them, and once the budget is
+  // spent the right token gets the wrong token's answer, so the gate cannot be
+  // used as the oracle the sign-in limiter refuses to be. See bearerLimiter.ts
+  // for why this budget is not the sign-in one.
   const header = req.headers.get("authorization") ?? "";
   const bearer = header.startsWith("Bearer ") ? header.slice(7) : "";
-  if (bearer && timingSafeEqual(bearer, token)) return NextResponse.next();
+  if (bearer) {
+    const now = Date.now();
+    const verdict = checkBearerAllowed(now);
+    if (!verdict.allow) {
+      if (pathname.startsWith("/api/")) {
+        return NextResponse.json(
+          { error: "Unauthorized" },
+          {
+            status: 429,
+            headers: { "retry-after": String(Math.ceil(verdict.retryAfterMs / 1000)) },
+          },
+        );
+      }
+    } else if (timingSafeEqual(bearer, token)) {
+      return NextResponse.next();
+    } else {
+      recordBearerFailure(now);
+    }
+  }
 
   if (pathname.startsWith("/api/")) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

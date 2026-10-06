@@ -1,6 +1,7 @@
 // Relative, not "@/…", for `src/app/api/health/route.ts`'s reason: a route a
 // test loads has to import the way src/lib does.
 import { jsonNoStore } from "../../../lib/http";
+import { bearerGuessMatches } from "../../../lib/loginAttempts";
 import { SESSION_COOKIE, readSessionCookie } from "../../../lib/sessionToken";
 import { statusReport } from "../../../lib/status";
 
@@ -45,9 +46,14 @@ async function authorised(req: Request): Promise<boolean> {
   if (bearer && timingSafeEqual(bearer, statusToken)) return true;
 
   // The master token still works, so an operator with a browser session does
-  // not have to find the monitor's credential to read this page's data.
+  // not have to find the monitor's credential to read this page's data. It is a
+  // guess the gate never saw, so it is charged to the sign-in budget; the
+  // read-only token above is not, so that a lock any caller can trip does not
+  // blind the monitor, and what it would guard is counts.
   const appToken = process.env.UF_AUTH_TOKEN ?? "";
-  if (appToken && bearer && timingSafeEqual(bearer, appToken)) return true;
+  if (appToken && bearer && bearerGuessMatches(() => timingSafeEqual(bearer, appToken))) {
+    return true;
+  }
 
   // The cookie is verified, not compared. It used to be tested for equality
   // with `UF_AUTH_TOKEN`, which is what `uf_session` *was* before it became a

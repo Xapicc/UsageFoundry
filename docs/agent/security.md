@@ -46,7 +46,8 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A monitor must not be handed the credential that starts agents. (was line 27)
 - `src/middleware.ts` runs in the **edge runtime**: it reads `process.env.UF_AUTH_TOKEN` directly and must not import `lib/config` (which pulls in `node:os`/`node:path`). (was line 28)
 - The audit trail is two tables, and which one a line belongs in is decided by what evicts it. (was line 29)
-- `/api/login` is the one unauthenticated write surface here, so it is the one route with a rate limit. (was line 30)
+- `/api/login` is the one unauthenticated write surface here, so it is where the limit on guessing the master token lives. (was line 30)
+- A bearer is a guess at the same secret, and is charged like one.
 - The session cookie is a handle, and the master token is what it is deliberately not. (was line 31)
 
 ## [Stacks](security/stacks.md)

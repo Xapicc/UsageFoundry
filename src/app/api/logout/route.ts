@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 // Relative, not "@/…" — see the note in the login route.
 import { AUTH_TOKEN, COOKIE_SECURE, authEnabled } from "../../../lib/config";
 import { isJsonObject } from "../../../lib/http";
+import { bearerGuessMatches } from "../../../lib/loginAttempts";
 import { recordDurableMutation } from "../../../lib/requestLog";
 import { revokeAllSessions, revokeSession } from "../../../lib/sessions";
 import {
@@ -122,7 +123,8 @@ export async function POST(req: Request) {
  *
  * Constant-time against a single configured value, for `middleware.ts`'s
  * reason. Compared over bytes rather than code units because that is what
- * `node:crypto` takes and this route runs in Node.
+ * `node:crypto` takes and this route runs in Node. Charged to the sign-in
+ * budget, because the gate exempts this path and so never counted the guess.
  */
 function bearerMatches(req: Request): boolean {
   if (!AUTH_TOKEN) return false;
@@ -131,7 +133,9 @@ function bearerMatches(req: Request): boolean {
   const offered = Buffer.from(header.slice(7));
   const known = Buffer.from(AUTH_TOKEN);
   // Length is not secret, and `timingSafeEqual` throws on a mismatch.
-  return offered.length === known.length && timingSafeEqual(offered, known);
+  return bearerGuessMatches(
+    () => offered.length === known.length && timingSafeEqual(offered, known),
+  );
 }
 
 /** A plain `Request` has no cookie jar, only the header. */

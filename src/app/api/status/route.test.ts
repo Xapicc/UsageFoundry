@@ -296,6 +296,39 @@ test("refuses a caller with no credential once a read-only token exists", async 
   }
 });
 
+// The master token is accepted here as well as at the gate, on a path the gate
+// exempts, so it was a third place to guess it with no budget at all.
+test("the master bearer here is charged to the sign-in budget, and not compared once it is spent", async () => {
+  process.env.UF_STATUS_TOKEN = "monitor-token-value";
+  process.env.UF_AUTH_TOKEN = "master-token-value";
+  const attempts = await import("../../../lib/loginAttempts");
+  const { DEFAULT_LIMITER } = await import("../../../lib/loginLimiter");
+  const { db } = await import("../../../lib/db");
+  db().prepare("DELETE FROM login_attempts").run();
+  try {
+    assert.equal((await get({ authorization: "Bearer wrong-0" })).status, 401);
+    assert.equal(attempts.loginFailureSummary().failures, 1);
+    // A right one is not a failure, and is not charged as one.
+    assert.equal((await get({ authorization: "Bearer master-token-value" })).status, 200);
+    assert.equal(attempts.loginFailureSummary().failures, 1);
+
+    for (let i = 1; i < DEFAULT_LIMITER.maxGlobalFailures; i++) {
+      await get({ authorization: `Bearer wrong-${i}` });
+    }
+    assert.equal(attempts.loginFailureSummary().lockedGlobally, true);
+
+    // Inside the lock the master token gets the wrong token's answer…
+    assert.equal((await get({ authorization: "Bearer master-token-value" })).status, 401);
+    // …and the monitor's own credential, which guesses at nothing, still reads
+    // the page: a lock any caller can trip must not blind the monitor.
+    assert.equal((await get({ authorization: "Bearer monitor-token-value" })).status, 200);
+  } finally {
+    db().prepare("DELETE FROM login_attempts").run();
+    delete process.env.UF_AUTH_TOKEN;
+    delete process.env.UF_STATUS_TOKEN;
+  }
+});
+
 test("counts the restart-closed runs still waiting, and clears as they go", async () => {
   const { db } = await import("../../../lib/db");
   const insert = db().prepare(

@@ -100,6 +100,26 @@ export function reserveLoginAttempt(
 }
 
 /**
+ * Compare the master token presented as a bearer on a path the edge gate
+ * exempts, charged to the install-wide sign-in budget.
+ *
+ * `/api/status` and `/api/logout`'s `all` branch each accept `UF_AUTH_TOKEN`
+ * themselves, because the gate lets those paths by, so a guess there is one the
+ * gate's own bearer budget never sees. They used to compare with no budget at
+ * all — two more oracles beside the one sign-in refuses to be. Here the check,
+ * the comparison and the charge run with nothing awaited between them, and while
+ * the budget is spent the comparison is not made, so the right token gets the
+ * wrong token's answer. A match refunds nothing, for the gate's reason: a script
+ * polling with the real token would otherwise clear the count between guesses.
+ */
+export function bearerGuessMatches(matches: () => boolean, now = Date.now()): boolean {
+  if (!checkLoginAllowed(null, now).allow) return false;
+  if (matches()) return true;
+  recordLoginFailure(null, now);
+  return false;
+}
+
+/**
  * Count one failure against the source and against the install.
  *
  * A lockout that has just been reached is logged, because the table is where it

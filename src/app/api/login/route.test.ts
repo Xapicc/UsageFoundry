@@ -630,3 +630,36 @@ test("a sign-in that succeeds is still audited", async () => {
     [{ method: "POST", path: "/api/login", status: 200, actor: "open" }],
   );
 });
+
+// `/api/logout`'s all branch takes the master bearer on a path the gate exempts,
+// so it answered a wrong guess 401 and the right one 200 with no budget at all.
+test("signing out everywhere with the master bearer is charged like a sign-in", async () => {
+  const attempts = await import("../../../lib/loginAttempts");
+  const { DEFAULT_LIMITER } = await import("../../../lib/loginLimiter");
+  clearAllAttempts();
+  const value = cookieValue(setCookie(await post(TOKEN)));
+  const claim = await sessionToken.readSessionCookie(value, TOKEN, Date.now());
+  assert.ok(claim);
+
+  const everywhere = (bearerValue: string) =>
+    logout.POST(
+      new Request("http://localhost/api/logout", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${bearerValue}` },
+        body: JSON.stringify({ all: true }),
+      }),
+    );
+  try {
+    for (let i = 0; i < DEFAULT_LIMITER.maxGlobalFailures; i++) {
+      assert.equal((await everywhere(`wrong-${i}`)).status, 401);
+    }
+    assert.equal(attempts.loginFailureSummary().lockedGlobally, true);
+
+    // Inside the lock the right token gets the wrong token's answer, and
+    // revokes nothing.
+    assert.equal((await everywhere(TOKEN)).status, 401);
+    assert.equal(sessions.getSession(claim.id)?.revokedAt ?? null, null);
+  } finally {
+    clearAllAttempts();
+  }
+});
