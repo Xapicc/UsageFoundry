@@ -204,7 +204,11 @@ task is filed **open** — there is no filing work that is already done, and a
 create that could set a terminal status would be a route around
 `taskTransitionRefusal` that no test of that function would ever see. All three
 are refused *by name* rather than dropped, on `normalizeAgentInput`'s grounds: a
-caller whose field was silently ignored believes it took effect.
+caller whose field was silently ignored believes it took effect. A create's
+title, brief or `parentTaskId` that is not a string is refused by name for the
+same reason (`notTextRefusal`), and so is a note's body in `taskComments.ts`:
+`String()` filed an object title as `[object Object]` and an array as its items
+joined by commas, and wrote the same into a note, which cannot be removed.
 
 **Nothing on the board expires**, and the reasoning is in `retention.md` beside
 the sweeps that do not touch it. A task's **comments** expire with it and never on

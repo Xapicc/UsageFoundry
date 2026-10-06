@@ -67,6 +67,7 @@ import {
   getTask,
   listTasks,
   normalizeTaskInput,
+  notTextRefusal,
   readTaskLinks,
   resolveTaskFolder,
   runLinksForTasks,
@@ -3594,6 +3595,8 @@ function taskListFolder(
  * being handed an empty object it reads as an empty task.
  */
 function getTaskTool(args: Record<string, unknown>) {
+  const notString = nonStringArg(args, "taskId");
+  if (notString) return notString;
   const taskId = String(args.taskId ?? "").trim();
   const malformed = malformedTaskId("chat", { taskId });
   if (malformed) return malformed;
@@ -3654,6 +3657,8 @@ function getTaskTool(args: Record<string, unknown>) {
  * it are other runs' ids, and the placement is the folder this run is in.
  */
 function getMyTask(args: Record<string, unknown>, runId: string) {
+  const notString = nonStringArg(args, "taskId");
+  if (notString) return notString;
   const taskId = String(args.taskId ?? "").trim();
   if (!taskId) {
     return text(
@@ -3800,6 +3805,25 @@ function toolComment(comment: TaskComment) {
 }
 
 /**
+ * The first of `fields` that was sent and is not a string, refused by name — or
+ * null when each is a string or absent.
+ *
+ * Asked before the `String(…)` that reads each one, which would otherwise turn
+ * `["<id>"]` into the id inside it and `{…}` into the text "[object Object]":
+ * a run acting on a task it named by mistake, or searching for words it never
+ * sent, with nothing saying its argument was rewritten. `notTextRefusal` is the
+ * one wording, shared with the board's own door for a title, a brief and a
+ * note.
+ */
+function nonStringArg(args: Record<string, unknown>, ...fields: string[]) {
+  for (const field of fields) {
+    const problem = notTextRefusal(field, args[field]);
+    if (problem) return text(problem, true);
+  }
+  return null;
+}
+
+/**
  * A task id that cannot be one, refused for its shape — or null when every id
  * given is shaped like one.
  *
@@ -3901,6 +3925,8 @@ function commentOnTask(
  * with an operator at the keyboard, and writes on what it reads.
  */
 function commentOnTaskForChat(args: Record<string, unknown>, chatId: string) {
+  const notString = nonStringArg(args, "taskId");
+  if (notString) return notString;
   const taskId = String(args.taskId ?? "").trim();
   const malformed = malformedTaskId("chat", { taskId });
   if (malformed) return malformed;
@@ -3948,6 +3974,8 @@ function runCommentRefusal(taskId: string) {
  * nothing about the board.
  */
 function commentOnTaskForRun(args: Record<string, unknown>, runId: string) {
+  const notString = nonStringArg(args, "taskId");
+  if (notString) return notString;
   const taskId = String(args.taskId ?? "").trim();
   const malformed = malformedTaskId("run", { taskId });
   if (malformed) return malformed;
@@ -3991,6 +4019,8 @@ const RUN_DEPENDENCY_REFUSAL =
  * of exactly what the scope above refuses.
  */
 function addTaskDependencyForRun(args: Record<string, unknown>, runId: string) {
+  const notString = nonStringArg(args, "taskId", "dependsOnTaskId");
+  if (notString) return notString;
   const taskId = String(args.taskId ?? "").trim();
   const dependsOn = String(args.dependsOnTaskId ?? "").trim();
   const malformed = malformedTaskId("run", { taskId, dependsOnTaskId: dependsOn });
@@ -4012,6 +4042,8 @@ function addTaskDependencyForRun(args: Record<string, unknown>, runId: string) {
 
 /** Record that one task waits for another, as a chat: the ids' shape, then the write. */
 function addTaskDependencyForChat(args: Record<string, unknown>, chatId?: string | null) {
+  const notString = nonStringArg(args, "taskId", "dependsOnTaskId");
+  if (notString) return notString;
   const taskId = String(args.taskId ?? "").trim();
   const dependsOn = String(args.dependsOnTaskId ?? "").trim();
   const malformed = malformedTaskId("chat", { taskId, dependsOnTaskId: dependsOn });
@@ -4114,6 +4146,8 @@ function recordTaskDependency(
  * whole design is that a person decides whether anything happens.
  */
 function createTaskTool(args: Record<string, unknown>, chatId: string) {
+  const notString = nonStringArg(args, "parentTaskId");
+  if (notString) return notString;
   // Ahead of `createTask`'s "No such task to file this under", which would name
   // the wrong cause for an id cut to its first eight characters.
   const named = String(args.parentTaskId ?? "").trim();
@@ -4222,6 +4256,8 @@ function runFolder(runId: string): {
  * backlog for nearly empty.
  */
 function listMyTasks(args: Record<string, unknown>, runId: string) {
+  const notString = nonStringArg(args, "query");
+  if (notString) return notString;
   const { folder } = runFolder(runId);
   const query = String(args.query ?? "").trim().slice(0, MAX_RUN_TASK_QUERY) || null;
   const mine = tasksForRun(runId, folder, query);
@@ -4381,6 +4417,8 @@ function notHeldByRun(tool: "complete_task" | "release_task", taskId: string, ru
  * shortly" would have the model call `list_my_tasks` in a loop to find out.
  */
 async function completeTaskForRun(args: Record<string, unknown>, runId: string) {
+  const notString = nonStringArg(args, "taskId");
+  if (notString) return notString;
   const taskId = String(args.taskId ?? "").trim();
   if (!taskId) {
     return text(
@@ -4438,6 +4476,8 @@ async function completeTaskForRun(args: Record<string, unknown>, runId: string) 
  * either. The move and the note are one transaction in `taskRelease.ts`.
  */
 function releaseTaskForRun(args: Record<string, unknown>, runId: string) {
+  const notString = nonStringArg(args, "taskId");
+  if (notString) return notString;
   const taskId = String(args.taskId ?? "").trim();
   if (!taskId) {
     return text(
@@ -4607,6 +4647,10 @@ async function requestStackForRun(args: Record<string, unknown>, runId: string) 
 }
 
 function createTaskForRun(args: Record<string, unknown>, runId: string) {
+  // Here rather than left to `normalizeTaskInput`, which never sees the call's
+  // parent: this door replaces it below with the one it resolved.
+  const notString = nonStringArg(args, "parentTaskId");
+  if (notString) return notString;
   const { filing } = runFolder(runId);
   const named = String(args.parentTaskId ?? "").trim();
   // Before the drop below, which is for a parent that was well-formed and has

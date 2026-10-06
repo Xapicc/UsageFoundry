@@ -130,7 +130,10 @@ was its first eight: all 31 `No task with id` refusals in the transcripts of
 `get_my_task` calls from 2026-09-27 to 2026-10-01, the two refused were 8-character
 prefixes copied out of an opening brief — both for tasks the run could read, and
 both told the task was out of scope, which sent them to re-read a list whose ids
-were never the problem. `taskIdShapeRefusal` in `tasks.ts` is asked first by
+were never the problem. An id that is not a string at all is refused by name
+before that (`nonStringArg`, `notTextRefusal`'s wording), as is
+`list_my_tasks`' `query`: `String()` read `["<id>"]` as the id inside it and
+searched for `[object Object]`. `taskIdShapeRefusal` in `tasks.ts` is asked first by
 `malformedTaskId` in the route: the run's `get_my_task`, `complete_task`,
 `release_task`, `comment_on_task` and `add_task_dependency`, and the chat's
 `get_task`, `comment_on_task` and `add_task_dependency` — and by both doors of

@@ -385,6 +385,25 @@ test("a task needs a title and a brief", () => {
   assert.equal(ok.ok && ok.value.origin, "operator");
 });
 
+// `POST /api/tasks` hands its body to this function and answers its refusal as
+// a 400, so this is that door's case as well as both `create_task`s'.
+test("a title, body or parent that is not a string is refused by name, never coerced", () => {
+  for (const [field, value] of [
+    ["title", {}],
+    ["title", ["Fix", "it"]],
+    ["title", 42],
+    ["body", { why: 1 }],
+    ["body", true],
+    ["parentTaskId", [randomUUID()]],
+  ] as const) {
+    const parsed = normalizeTaskInput({ title: "t", body: "b", [field]: value }, CREATION);
+    assert.equal(parsed.ok, false, `${field}: ${JSON.stringify(value)} was read as text`);
+    const error = !parsed.ok ? parsed.error : "";
+    assert.match(error, new RegExp(`\\b${field}\\b.*must be a string`));
+    assert.doesNotMatch(error, /\[object Object\]/);
+  }
+});
+
 test("origin, createdByRunId and status are refused by name at a create", () => {
   // Silently dropping any of these leaves the caller believing it took effect —
   // and an origin off the wire is a chat turn filing work as the operator.
