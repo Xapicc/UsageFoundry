@@ -40,6 +40,9 @@ import {
   isShuttingDown,
   matchesCopyGlobs,
   overlaps,
+  ranWorkCycle,
+  refundedCyclesOf,
+  refundedCyclesSql,
   repoSlug,
   resolveWorkspaceFolder,
   runsOnBranch,
@@ -190,15 +193,22 @@ export interface PendingWork {
 /**
  * One run that holds, or is declared to hold, a branch several runs share.
  *
- * `iterations` is here for the same reason `edgeSatisfied` reads it: a run that
- * finished without a work cycle put nothing on the branch and never will, so it
- * is not a link in the chain however it is recorded. Without that, one blocked
- * dependent would make its predecessor's branch unlandable for ever.
+ * `iterations` and `refundedCycles` are here for the reason `edgeSatisfied`
+ * reads them: a run that finished without a work cycle put nothing on the
+ * branch and never will, so it is not a link in the chain however it is
+ * recorded. Without that, one blocked dependent would make its predecessor's
+ * branch unlandable for ever.
  */
 export interface ChainMember {
   runId: string;
   status: RunRow["status"];
   iterations: number;
+  /**
+   * `refundedCyclesOf` the row. Required for `DependencyState.refundedCycles`'
+   * reason: a member built without it reads a link that committed and had its
+   * cycle refunded as empty, and hands the branch to the link before it.
+   */
+  refundedCycles: number;
 }
 
 export interface LandState {
@@ -883,7 +893,12 @@ function branchChain(run: RunRow): ChainMember[] {
 }
 
 function chainMember(run: RunRow): ChainMember {
-  return { runId: run.id, status: run.status, iterations: run.iterations };
+  return {
+    runId: run.id,
+    status: run.status,
+    iterations: run.iterations,
+    refundedCycles: refundedCyclesOf(run),
+  };
 }
 
 /**
@@ -1046,10 +1061,11 @@ export function chainRuns(run: RunRow): RunRow[] {
   // Nothing here breaks when it is wrong — this is an ordering rather than a
   // filter, and the docblock above argues that which of two successors is
   // followed decides nothing — but a stale copy quietly stops meaning what it
-  // says, and the next member added will not be so lucky.
+  // says, and the next member added will not be so lucky. "Worked" is
+  // `ranWorkCycle`'s, refunded cycles counted, for `branchOwner`'s reason.
   const next = db().prepare(
     `SELECT * FROM runs WHERE continues_run = ?
-      ORDER BY CASE WHEN iterations > 0
+      ORDER BY CASE WHEN iterations > 0 OR ${refundedCyclesSql()} > 0
                       OR status NOT IN (${TERMINAL_STATUSES.map(() => "?").join(",")})
                     THEN 0 ELSE 1 END,
                created_at
@@ -1243,7 +1259,10 @@ const UNSETTLED: readonly RunRow["status"][] = [
  * that ended without a work cycle are skipped rather than counted: a dependent
  * that was blocked because its dependency failed is recorded on this branch and
  * put nothing on it, and letting it own the branch would make the run that
- * *did* the work unlandable for ever.
+ * *did* the work unlandable for ever. "Without a work cycle" is `ranWorkCycle`'s
+ * reading and not `iterations === 0`: the cycle refunds put the counter back
+ * to zero on a link that committed and was then parked or cut, and reading that
+ * as empty named the link before it as the owner.
  *
  * Falls back to the first link when every member is empty. The branch then has
  * no commits at all, which `ahead === 0` refuses two checks later — but naming
@@ -1251,7 +1270,7 @@ const UNSETTLED: readonly RunRow["status"][] = [
  */
 function branchOwner(chain: readonly ChainMember[]): string | null {
   const worked = chain.filter(
-    (m) => UNSETTLED.includes(m.status) || m.iterations > 0,
+    (m) => UNSETTLED.includes(m.status) || ranWorkCycle(m),
   );
   return worked.at(-1)?.runId ?? chain[0]?.runId ?? null;
 }
@@ -4832,6 +4851,7 @@ function oneRunPerBranch<T extends BranchCandidate>(runs: readonly T[]): T[] {
       runId: r.id,
       status: r.status,
       iterations: r.iterations,
+      refundedCycles: r.refundedCycles,
     }));
     const owner = branchOwner(chain);
     kept.push(held.find((r) => r.id === owner) ?? held[0]);
@@ -4844,6 +4864,8 @@ export interface BranchCandidate {
   id: string;
   status: RunRow["status"];
   iterations: number;
+  /** `refundedCyclesSql` — what `branchOwner` reads beside `iterations`. */
+  refundedCycles: number;
   repoRoot: string;
   branch: string;
   /** `runs.continues_run` — the link `chainOrder` reads. Null for a first link. */
@@ -4943,7 +4965,8 @@ export function selectBranchCandidates<T extends BranchCandidate>(
 function branchBearingRuns(): Array<BranchCandidate & { createdAt: number }> {
   return db()
     .prepare(
-      `SELECT id, status, iterations, repo_root AS repoRoot,
+      `SELECT id, status, iterations, ${refundedCyclesSql()} AS refundedCycles,
+              repo_root AS repoRoot,
               worktree_branch AS branch, continues_run AS continuesRun,
               created_at AS createdAt
          FROM runs

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
@@ -445,6 +446,97 @@ describe("a dependent behind a run a stack wait refunded", () => {
     const child = getRun(childId)!;
     assert.equal(child.status, "blocked", child.stop_reason ?? "");
     assert.match(child.stop_reason ?? "", /ended stopped without running a work cycle/);
+  });
+});
+
+/**
+ * A second run set to continue a branch whose first continuer worked, had the
+ * cycle it worked in refunded, and was stopped.
+ *
+ * Admission refuses a second continuer, because two runs committing to one
+ * branch leave the chain with no last link, and lets one through beside a
+ * continuer that ended having run nothing. It told those apart by `iterations
+ * > 0` alone, which the refund puts back to zero, so the second run was admitted
+ * on top of the first one's commits.
+ *
+ * The endings are written rather than driven: the refund that leaves them is
+ * what the cases above drive through a real park, and the question here is only
+ * what admission reads off the rows. The folder is a real repository because a
+ * released continuer is planned onto its predecessor's branch at creation.
+ */
+describe("a second run continuing a branch whose continuer was refunded", () => {
+  const { setNewWorkPaused } = settings;
+  let seq = 0;
+  const made: string[] = [];
+
+  function create(folder: string, dependsOn: Array<{ runId: string; continueBranch: boolean }>): string {
+    const run = createRun({
+      folder,
+      mountId: null,
+      prompt: "carry on",
+      budget: { maxIterations: 1 },
+      origin: "form",
+      dependsOn: dependsOn.map((d) => ({ ...d, edge: "on-finish" as const })),
+    });
+    made.push(run.id);
+    return run.id;
+  }
+
+  function makeRepo(folder: string): void {
+    const repo = path.join(tmp, "workspace", folder);
+    fs.mkdirSync(repo, { recursive: true });
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-c", "user.email=test@example.invalid", "-c", "user.name=Test", ...args], {
+        cwd: repo,
+      });
+    git("init", "-q", "-b", "main");
+    fs.writeFileSync(path.join(repo, "seed.txt"), "seed\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "seed");
+  }
+
+  /** A finished predecessor and a first continuer of it, stopped at zero cycles. */
+  function stoppedContinuer(counter: string) {
+    seq += 1;
+    // The whole case under the hold, so no run is promoted into a spawn.
+    setNewWorkPaused(true);
+    const folder = `rival-${seq}`;
+    makeRepo(folder);
+    const predecessor = create(folder, []);
+    assert.equal(getRun(predecessor)!.isolation, "worktree", "the premise: the predecessor has a branch");
+    db().prepare("UPDATE runs SET status = 'completed', iterations = 1 WHERE id = ?").run(predecessor);
+    const first = create(folder, [{ runId: predecessor, continueBranch: true }]);
+    db()
+      .prepare(`UPDATE runs SET status = 'stopped', iterations = 0, ${counter} = 1 WHERE id = ?`)
+      .run(first);
+    return { folder, predecessor, first };
+  }
+
+  afterEach(() => {
+    for (const id of made.splice(0)) stopRun(id);
+    setNewWorkPaused(false);
+  });
+
+  it("refuses the second, naming the first, whichever refund left it at zero", () => {
+    for (const counter of ["stack_waits", "guard_refunds", "early_ends"]) {
+      const { folder, predecessor, first } = stoppedContinuer(counter);
+      assert.throws(
+        () => create(folder, [{ runId: predecessor, continueBranch: true }]),
+        new RegExp(
+          `Run ${first.slice(0, 8)} is already set to continue run ${predecessor.slice(0, 8)}'s branch \\(it is stopped\\)`,
+        ),
+        `a continuer with a refunded cycle (${counter}) was read as one that never ran`,
+      );
+    }
+  });
+
+  // `pause_count` is not the answer for the reason it is not in `edgeSatisfied`:
+  // a provider refusal refunds a cycle that was turned away before any work, so
+  // a continuer refused at the wall and stopped put nothing on the branch.
+  it("control: admits the second beside a continuer the provider refused at the wall", () => {
+    const { folder, predecessor, first } = stoppedContinuer("refusal_pauses");
+    db().prepare("UPDATE runs SET pause_count = 1 WHERE id = ?").run(first);
+    assert.doesNotThrow(() => create(folder, [{ runId: predecessor, continueBranch: true }]));
   });
 });
 

@@ -4298,7 +4298,10 @@ function admitDependencies(
       // commit on it, and refusing on the strength of that would make a chain
       // unextendable for ever over a run that never opened a file. Same test as
       // `edgeSatisfied` and `branchOwner` — a terminal run with no work cycle
-      // is not a link.
+      // is not a link — and the same `ranWorkCycle` reading of "no work cycle":
+      // the refunds put `iterations` back to zero on a continuer that committed
+      // and was then parked or cut, and reading that as empty admitted a second
+      // run onto the branch beside its commits.
       //
       // Built from `TERMINAL_STATUSES` rather than spelled out again: a second
       // copy of "which statuses have settled" is a second thing to forget when
@@ -4310,7 +4313,8 @@ function admitDependencies(
         .prepare(
           `SELECT id, status FROM runs
             WHERE continues_run = ?
-              AND (iterations > 0 OR status NOT IN (${TERMINAL_STATUSES.map(() => "?").join(",")}))
+              AND (iterations > 0 OR ${refundedCyclesSql()} > 0
+                   OR status NOT IN (${TERMINAL_STATUSES.map(() => "?").join(",")}))
             LIMIT 1`,
         )
         .get(runId, ...TERMINAL_STATUSES) as
@@ -5036,7 +5040,9 @@ export function refundedCyclesOf(
  * three refund counters instead, because `pause_count` also counts a provider
  * refusal, which refunded a cycle that never started.
  */
-export function ranWorkCycle(dep: DependencyState): boolean {
+export function ranWorkCycle(
+  dep: Pick<DependencyState, "iterations" | "refundedCycles">,
+): boolean {
   return dep.iterations > 0 || dep.refundedCycles > 0;
 }
 

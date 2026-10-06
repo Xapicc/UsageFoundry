@@ -173,7 +173,7 @@ describe("landRefusal", () => {
     preview: { outcome: "clean" as const },
     checkout: clean,
     // One entry is the ordinary run, whose branch is its own.
-    chain: [{ runId: "run-a", status: "completed" as const, iterations: 1 }],
+    chain: [{ runId: "run-a", status: "completed" as const, iterations: 1, refundedCycles: 0 }],
   };
 
   it("allows the case everything is in order", () => {
@@ -386,7 +386,8 @@ describe("landRefusal for a branch a chain shares", () => {
     runId: string,
     status: import("./land").ChainMember["status"],
     iterations = 1,
-  ) => ({ runId, status, iterations });
+    refundedCycles = 0,
+  ) => ({ runId, status, iterations, refundedCycles });
 
   const clean: CheckoutState = {
     path: "/workspace/repo",
@@ -467,6 +468,18 @@ describe("landRefusal for a branch a chain shares", () => {
     }
   });
 
+  it("keeps a link whose worked cycle was refunded as the owner", () => {
+    // A stack park, a live-guard cut and a context-ceiling end each hand the
+    // cycle they ended back to the counter, so a link that committed and was
+    // then stopped while parked reads `iterations === 0`. Read as empty, the
+    // branch went back to the link before it: that run offered Land, and this
+    // one, whose commits are the branch's tip, was refused with a sentence
+    // saying the earlier run carries the branch on from here.
+    const chain = [member("aaaaaaaa", "completed"), member("bbbbbbbb", "stopped", 0, 1)];
+    assert.match(landRefusal({ ...base, runId: "aaaaaaaa", chain }) ?? "", /bbbbbbbb/);
+    assert.equal(landRefusal({ ...base, runId: "bbbbbbbb", chain }), null);
+  });
+
   it("keeps a failed link that did commit as the owner", () => {
     // The other half of the same rule: this one crashed, but it crashed with
     // commits on the branch, so it is where the branch ends and picking it up
@@ -512,7 +525,8 @@ describe("unsettledBranchRefusal holds both exits while the branch can still mov
     runId: string,
     status: import("./land").ChainMember["status"],
     iterations = 1,
-  ) => ({ runId, status, iterations });
+    refundedCycles = 0,
+  ) => ({ runId, status, iterations, refundedCycles });
   const alone = [member("aaaaaaaa", "completed")];
 
   it("refuses to deliver while the run can still commit", () => {
@@ -630,7 +644,7 @@ describe("landRecheck", () => {
     pendingCount: 0,
     preview: { outcome: "clean" as const },
     checkout: clean,
-    chain: [{ runId: "run-a", status: "completed" as const, iterations: 1 }],
+    chain: [{ runId: "run-a", status: "completed" as const, iterations: 1, refundedCycles: 0 }],
   };
 
   it("lets the merge go ahead on a checkout still clean and on the target", () => {
@@ -862,7 +876,7 @@ describe("purgeRefusal", () => {
     branch: "uf/repo-1234abcd",
     branchExists: true,
     confirmBranch: "uf/repo-1234abcd",
-    chain: [{ runId: "aaaaaaaa", status: "failed" as const, iterations: 1 }],
+    chain: [{ runId: "aaaaaaaa", status: "failed" as const, iterations: 1, refundedCycles: 0 }],
     resolutionRunning: false,
   };
 
@@ -920,8 +934,8 @@ describe("purgeRefusal", () => {
         purgeRefusal({
           ...purgeable,
           chain: [
-            { runId: "aaaaaaaa", status: "failed", iterations: 1 },
-            { runId: "bbbbbbbb", status, iterations: 0 },
+            { runId: "aaaaaaaa", status: "failed", iterations: 1, refundedCycles: 0 },
+            { runId: "bbbbbbbb", status, iterations: 0, refundedCycles: 0 },
           ],
         }) ?? "";
       assert.match(refusal, /bbbbbbbb/, `${status} should hold the branch`);
@@ -933,8 +947,8 @@ describe("purgeRefusal", () => {
       purgeRefusal({
         ...purgeable,
         chain: [
-          { runId: "aaaaaaaa", status: "failed", iterations: 1 },
-          { runId: "bbbbbbbb", status: "blocked", iterations: 0 },
+          { runId: "aaaaaaaa", status: "failed", iterations: 1, refundedCycles: 0 },
+          { runId: "bbbbbbbb", status: "blocked", iterations: 0, refundedCycles: 0 },
         ],
       }),
       null,
@@ -1052,7 +1066,7 @@ describe("selectBranchCandidates", () => {
     status: import("./land").BranchCandidate["status"] = "completed",
     iterations = 1,
     continuesRun: string | null = null,
-  ) => ({ id, status, iterations, repoRoot, branch, continuesRun });
+  ) => ({ id, status, iterations, refundedCycles: 0, repoRoot, branch, continuesRun });
 
   /** N branches in one repository, newest first. */
   const many = (repoRoot: string, n: number, from = 0) =>
@@ -1175,6 +1189,18 @@ describe("selectBranchCandidates", () => {
         `arrival order ${order.join(",")}`,
       );
     }
+  });
+
+  it("keeps the row of a link whose worked cycle was refunded", () => {
+    // `branchOwner`'s refund case from the page's side. These rows are built
+    // here rather than by `chainMember`, so a count `landRun` reads and this
+    // collapse drops would keep c1's row while Land names c2, a run with no row
+    // on the page to press.
+    const runs = [
+      { ...run("c2", "/w/a", "uf/chain", "stopped", 0, "c1"), refundedCycles: 1 },
+      run("c1", "/w/a", "uf/chain"),
+    ];
+    assert.equal(selectBranchCandidates(runs).examined[0].id, "c2");
   });
 
   it("does not let a link with no findable predecessor own the branch", () => {

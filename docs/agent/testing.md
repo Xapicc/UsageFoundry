@@ -407,7 +407,7 @@ Units that are about no test file in the tree:
 | `logLine.test.ts` |  |
 | `repoSpend.test.ts` |  |
 | `stackRequests.test.ts` |  |
-| `stackWait.test.ts` | [budgets] |
+| `stackWait.test.ts` | [budgets], [cycle] |
 | `stacks.test.ts` |  |
 | `toolInventory.test.ts` |  |
 | `unsavedWork.test.ts` |  |
