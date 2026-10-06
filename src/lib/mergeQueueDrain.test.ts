@@ -505,6 +505,43 @@ describe("the merge worker", () => {
       "a billed resolution was spawned",
     );
   });
+
+  // A branch a local model wrote on lands only once a frontier review approves
+  // its tip, and a resolution is a commit that moves the tip past any review.
+  // So the land after it is refused whatever the resolution does, and the
+  // queue paid for one anyway and failed the row with its cost beside it.
+  it("pays for no resolution on a local model's branch, and says it needs a review", async () => {
+    const id = "local8a0";
+    makeRun(id, "local8.txt");
+    dbMod.db().prepare("UPDATE runs SET provider = 'local' WHERE id = ?").run(id);
+    fs.writeFileSync(path.join(repo, "local8.txt"), "main's own\n");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "main adds local8.txt");
+
+    const state = await land.landState(id);
+    assert.equal(state?.preview.outcome, "conflict", "the fixture branch does not conflict");
+    assert.equal(state?.certification.required, true);
+
+    const queued = mergeQueue.enqueue([id], { strategy: "merge", autoResolve: true });
+    assert.ok(queued.ok, JSON.stringify(queued));
+    const rows = await settle(queued.batchId);
+
+    assert.equal(rows[0].status, "failed", rows[0].message ?? "");
+    assert.match(rows[0].message ?? "", /conflicts in 1 file/);
+    assert.match(rows[0].message ?? "", /local model wrote \(run local8a0\)/);
+    assert.match(rows[0].message ?? "", /frontier review/);
+    assert.equal(rows[0].resolve_cost, 0, "the row was charged for a resolution");
+    assert.deepEqual(
+      dbMod.db().prepare("SELECT run_id FROM run_reviews WHERE kind = 'resolve' AND run_id = ?").all(id),
+      [],
+      "a resolution was started for a row whose land is refused regardless",
+    );
+    assert.equal(
+      fs.existsSync(spawned) ? fs.readFileSync(spawned, "utf8") : "",
+      "",
+      "a billed resolution was spawned",
+    );
+  });
 });
 
 /**

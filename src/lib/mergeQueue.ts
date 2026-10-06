@@ -13,6 +13,7 @@ import {
   type LandState,
   type LandStrategy,
 } from "./land";
+import { resolutionCertificationRefusal } from "./localCertification";
 import { getAssist } from "./review";
 import { dataDirRefusal, mayWriteDataDir } from "./serverLock";
 import { getRun, isShuttingDown, trackLand, type RunRow } from "./orchestrator";
@@ -208,6 +209,12 @@ export function planItem(
     if (!opts.autoResolve || unsettledBranchRefusal(state, "land")) {
       return { action: "fail", reason: state.blocked };
     }
+    // Nor on a branch a local model wrote on, which `landState` holds behind a
+    // frontier review of its tip after the conflict. A resolution is a commit,
+    // so `landRun` would stop at that gate whatever the resolution did — even
+    // on a branch whose tip was approved before it.
+    const uncertified = resolutionCertificationRefusal(state.certification);
+    if (uncertified) return { action: "fail", reason: `${state.blocked} ${uncertified}` };
     if (opts.resolutionsRefused) {
       return {
         action: "fail",

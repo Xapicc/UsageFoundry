@@ -110,6 +110,27 @@ describe("planItem", () => {
     assert.deepEqual(plan, { action: "fail", reason: ownerRefusal });
   });
 
+  it("fails a conflicting local-model branch rather than paying to resolve it, even one approved", () => {
+    // The approval is of the tip as it stands, and the resolution would be a
+    // new tip, so the certification gate refuses the land that follows it.
+    const plan = planItem(
+      {
+        ...conflict,
+        certification: {
+          required: true,
+          localRuns: ["local123-run"],
+          tip: "abc",
+          review: { id: "v1", status: "completed", verdict: "approve", headSha: "abc", model: null },
+        },
+      },
+      open,
+    );
+    assert.equal(plan.action, "fail");
+    const reason = plan.action === "fail" ? plan.reason : "";
+    assert.match(reason, /conflicts in 1 file/);
+    assert.match(reason, /local model wrote \(run local123\).*none was attempted/);
+  });
+
   it("stops trying to resolve once one refusal applies to all of them", () => {
     // A window at its ceiling refuses every later resolution identically, and
     // each attempt costs a full transcript scan to find that out again.
