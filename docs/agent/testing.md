@@ -196,6 +196,12 @@ Units that are about no test file in the tree:
 | `validation.test.ts` |  |
 | `validationSettle.test.ts` |  |
 
+## [The git this app runs](testing/git-children.md)
+
+| Test file | Also in |
+|---|---|
+| `git.test.ts` | [landing] |
+
 ## [Landing, delivery and the land gate](testing/landing-and-delivery.md)
 
 | Test file | Also in |
@@ -204,7 +210,6 @@ Units that are about no test file in the tree:
 | `deliverRun.test.ts` |  |
 | `delivery.test.ts` |  |
 | `diffSlotReuse.test.ts` |  |
-| `git.test.ts` |  |
 | `landGate.test.ts` |  |
 | `landAfterSquash.test.ts` |  |
 | `landAfterVerify.test.ts` |  |
