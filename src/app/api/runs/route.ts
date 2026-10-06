@@ -18,6 +18,7 @@ import {
   type RunDependencyInput,
 } from "../../../lib/orchestrator";
 import { pruneSavingsByRun } from "../../../lib/contextPruning";
+import { prunedNetFields } from "../../../lib/pruneStatement";
 import { recentOpsEvents } from "../../../lib/ops";
 import {
   jsonMaybeGzipped,
@@ -163,7 +164,7 @@ export async function GET(req: Request) {
       queueBlocker: r.status === "queued" ? blockers.get(r.id) : undefined,
       // Absent for a run that never pruned rather than 0 — a receipt is what
       // puts a run in the map, so the lookup carries that distinction already.
-      prunedNetUSD: pruned.get(r.id)?.netUSD,
+      ...prunedNetFields(pruned.get(r.id)),
     };
   });
   // Beside the runs rather than on a route of its own: it is the explanation

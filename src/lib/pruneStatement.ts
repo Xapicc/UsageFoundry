@@ -1,4 +1,11 @@
-import type { ContextPrunerDTO, PruneActivityDTO } from "./apiTypes";
+import type {
+  ContextPrunerDTO,
+  NetBound,
+  PruneActivityDTO,
+  PruneSavingsDTO,
+  RunListItemDTO,
+} from "./apiTypes";
+import { signedUSD } from "./format";
 
 /**
  * How the two engines are named on screen.
@@ -13,6 +20,26 @@ export const PRUNE_ENGINE_LABEL: Record<ContextPrunerDTO["engine"], string> = {
   legacy: "Edit in place",
   winnow: "Fork",
 };
+
+/**
+ * Which way a pruning net can still move, which is how it is labelled.
+ *
+ * Two counts, two opposite errors. An unsettled prune's cost has not been
+ * charged, so the net can only come down: `at most`. An unmeasured removal has
+ * credited no saving, so the net can only go up: `at least`. With both
+ * outstanding the figure is bounded on neither side, and it is called not
+ * final rather than given a direction it does not have. Every surface that
+ * prints a pruning net reads this, so that one run's figure is not a ceiling
+ * on one screen and a floor on the next.
+ */
+export function netBound(
+  savings: Pick<PruneSavingsDTO, "unsettledPrunes" | "unmeasuredPrunes">,
+): NetBound {
+  if (savings.unsettledPrunes > 0) {
+    return savings.unmeasuredPrunes > 0 ? "not final" : "at most";
+  }
+  return savings.unmeasuredPrunes > 0 ? "at least" : "exact";
+}
 
 export interface PruneStatement {
   kind: "activity";
@@ -101,4 +128,57 @@ export function pruneStatement(
       `${activity.boundaries === 1 ? "boundary" : "boundaries"} in this span: ` +
       `${clauses.join(", ")}.${detail}`,
   };
+}
+
+/**
+ * `RunListItemDTO`'s pruning fields, from one run's summed savings.
+ *
+ * Nothing at all for a run that never pruned, and no bound beside a final
+ * net, so the common row costs the poll what it did before.
+ */
+export function prunedNetFields(
+  savings: PruneSavingsDTO | undefined,
+): Pick<RunListItemDTO, "prunedNetUSD" | "prunedNetBound"> {
+  if (!savings) return {};
+  if (savings.pricedPrunes === 0) {
+    return { prunedNetUSD: savings.netUSD, prunedNetBound: "unpriced" };
+  }
+  const bound = netBound(savings);
+  return bound === "exact"
+    ? { prunedNetUSD: savings.netUSD }
+    : { prunedNetUSD: savings.netUSD, prunedNetBound: bound };
+}
+
+const PRUNED_NET_MARK: Record<
+  Exclude<NetBound, "exact">,
+  { mark: string; meaning: string }
+> = {
+  "at most": { mark: "≤", meaning: "at most: a prune's cost is not settled yet" },
+  "at least": { mark: "≥", meaning: "at least: a fork's removal is not measured yet" },
+  "not final": {
+    mark: "~",
+    meaning: "not final: a prune's cost is unsettled and a fork's removal unmeasured",
+  },
+};
+
+/**
+ * The runs list's Pruning cell: what it prints, and what its mark means.
+ *
+ * Three readings that must not share a glyph: a dash is a run that never
+ * pruned, `?` is pruning whose money is unknown, and a signed figure is money.
+ */
+export function prunedNetCell(
+  row: Pick<RunListItemDTO, "prunedNetUSD" | "prunedNetBound">,
+): { text: string; meaning: string | null } {
+  if (row.prunedNetUSD === undefined) return { text: "—", meaning: null };
+  if (row.prunedNetBound === "unpriced") {
+    return {
+      text: "?",
+      meaning: "pruned on a model with no price here, so what it netted is unknown",
+    };
+  }
+  const figure = signedUSD(row.prunedNetUSD);
+  if (!row.prunedNetBound) return { text: figure, meaning: null };
+  const { mark, meaning } = PRUNED_NET_MARK[row.prunedNetBound];
+  return { text: `${mark} ${figure}`, meaning };
 }

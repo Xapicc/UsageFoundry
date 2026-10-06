@@ -64,6 +64,7 @@ function savings(over: Partial<PruneSavingsDTO> = {}): PruneSavingsDTO {
     prunes: 4,
     pricedPrunes: 4,
     unsettledPrunes: 0,
+    unmeasuredPrunes: 0,
     tokensRemoved: 40_000,
     turnsAfter: 9,
     cacheSavedUSD: 1.2,
@@ -142,12 +143,19 @@ test("an unpriced prune is a coverage gap and not a ceiling", () => {
   assert.doesNotMatch(html, /at most/);
 });
 
+test("an unmeasured removal makes every span's net a floor", () => {
+  const html = render(savings({ unmeasuredPrunes: 1 }));
+  assert.match(html, /This week, at least/);
+  assert.doesNotMatch(html, /at most/);
+});
+
 test("a span with no prunes carries no qualification", () => {
   const html = render(
     savings({
       prunes: 0,
       pricedPrunes: 0,
       unsettledPrunes: 0,
+      unmeasuredPrunes: 0,
       tokensRemoved: 0,
       turnsAfter: 0,
       cacheSavedUSD: 0,

@@ -20,10 +20,10 @@ import {
   folderLabel,
   grantedCycles,
   pollFailureMessage,
-  signedUSD,
   STATUS_LABEL,
 } from "@/lib/format";
 import { jsonRequest, type JsonResult } from "@/lib/jsonRequest";
+import { prunedNetCell } from "@/lib/pruneStatement";
 import { startPoll } from "@/lib/poll";
 import { FleetControls } from "@/components/FleetControls";
 import { RestartClosed } from "@/components/RestartClosed";
@@ -787,15 +787,14 @@ function RunList({
                       saved, and this column has to cross zero without shifting
                       by a pixel. A dash is "this run never pruned", which is
                       not the same reading as `+$0.00` and is why the field is
-                      absent rather than zero on the wire. */}
+                      absent rather than zero on the wire; `?` is pruning whose
+                      money is unknown, and a marked figure is a bound. */}
                   <Td
                     num
                     label="Pruning"
                     className="whitespace-nowrap align-top text-ink-muted"
                   >
-                    {r.prunedNetUSD === undefined
-                      ? "—"
-                      : signedUSD(r.prunedNetUSD)}
+                    <PrunedNet row={r} />
                   </Td>
                   {kind === "history" && (
                     <Td
@@ -1416,6 +1415,21 @@ function RunsView() {
           )}
         </Disclosure>
       )}
+    </>
+  );
+}
+
+/**
+ * The Pruning cell. Its mark is a symbol because the column is 92px wide and
+ * "at most" beside a signed figure is not, so the words go on the hover and
+ * to a screen reader instead.
+ */
+function PrunedNet({ row }: { row: RunListItemDTO }) {
+  const { text, meaning } = prunedNetCell(row);
+  return (
+    <>
+      <span title={meaning ?? undefined}>{text}</span>
+      {meaning && <span className="sr-only"> ({meaning})</span>}
     </>
   );
 }
