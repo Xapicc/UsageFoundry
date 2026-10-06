@@ -330,6 +330,7 @@ describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
         slotPath: "/workspace/.uf-worktrees/acme-1",
         checkedOutBranch: "uf/task-a",
         runBranch: "uf/task-a",
+        operation: null,
         uncommitted: [],
       }),
       { ok: true, path: "/workspace/.uf-worktrees/acme-1" },
@@ -344,6 +345,7 @@ describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
       slotPath: "/workspace/.uf-worktrees/acme-1",
       checkedOutBranch: "uf/task-b",
       runBranch: "uf/task-a",
+      operation: null,
       uncommitted: [],
     });
     assert.equal(v.ok, false);
@@ -351,11 +353,29 @@ describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
     assert.match(v.ok ? "" : v.reason, /Nothing was landed/);
   });
 
+  it("names a rebase the slot is stopped in rather than calling it taken over", () => {
+    // A rebase detaches HEAD, so the slot holds no branch, and nobody took it
+    // over: the way out is in that checkout, not in Settings.
+    const v = verifyTreeVerdict({
+      slotPath: "/workspace/.uf-worktrees/acme-1",
+      checkedOutBranch: null,
+      runBranch: "uf/task-a",
+      operation: "rebase",
+      uncommitted: [],
+    });
+    assert.equal(v.ok, false);
+    const reason = v.ok ? "" : v.reason;
+    assert.match(reason, /rebase of uf\/task-a/);
+    assert.match(reason, /git rebase --abort/);
+    assert.doesNotMatch(reason, /taken that checkout over|Settings/);
+  });
+
   it("refuses when the run never had a checkout", () => {
     const v = verifyTreeVerdict({
       slotPath: null,
       checkedOutBranch: null,
       runBranch: "uf/task-a",
+      operation: null,
       uncommitted: [],
     });
     assert.equal(v.ok, false);
@@ -370,6 +390,7 @@ describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
       slotPath: "/workspace/.uf-worktrees/acme-1",
       checkedOutBranch: null,
       runBranch: null,
+      operation: null,
       uncommitted: [],
     });
     assert.equal(v.ok, false);
@@ -384,6 +405,7 @@ describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
       slotPath: "/workspace/.uf-worktrees/acme-1",
       checkedOutBranch: "uf/task-a",
       runBranch: "uf/task-a",
+      operation: null,
       uncommitted: ["src/fix.ts", "test/fix.test.ts"],
     });
     assert.equal(v.ok, false);
@@ -400,6 +422,7 @@ describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
       slotPath: "/workspace/.uf-worktrees/acme-1",
       checkedOutBranch: "uf/task-a",
       runBranch: "uf/task-a",
+      operation: null,
       uncommitted,
     });
     const reason = v.ok ? "" : v.reason;
@@ -412,6 +435,7 @@ describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
       slotPath: "/workspace/.uf-worktrees/acme-1",
       checkedOutBranch: "uf/task-a",
       runBranch: "uf/task-a",
+      operation: null,
       uncommitted: null,
     });
     assert.equal(v.ok, false);
