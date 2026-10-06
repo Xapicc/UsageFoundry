@@ -209,7 +209,7 @@ Units that are about no test file in the tree:
 | `deleteBranch.test.ts` |  |
 | `diffSlotReuse.test.ts` |  |
 | `landGate.test.ts` |  |
-| `landAfterSquash.test.ts` |  |
+| `landAfterSquash.test.ts` | [merge-queue] |
 | `landAfterVerify.test.ts` |  |
 | `landUnwind.test.ts` |  |
 | `landView.test.ts` | [cards] |

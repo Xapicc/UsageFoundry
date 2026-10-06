@@ -4482,6 +4482,7 @@ function instances(
     id,
     status,
     memberStatuses,
+    restartClosedMember: false,
   }));
 }
 
@@ -4489,7 +4490,7 @@ describe("bootBlockPlan — which waiting blocks a restart closes out", () => {
   it("spares an instance a member survived the boot in", () => {
     // The exception this exists for: `reconcileOnBoot` kept that run, so its
     // successors are waiting on something that is genuinely still coming.
-    const plan = bootBlockPlan(instances(["i", "started", "completed", "paused"]));
+    const plan = bootBlockPlan(instances(["i", "started", "completed", "paused"]), false);
     assert.deepEqual(plan.spared, ["i"]);
     assert.deepEqual(plan.abandoned, []);
     assert.deepEqual(plan.settled, []);
@@ -4500,7 +4501,7 @@ describe("bootBlockPlan — which waiting blocks a restart closes out", () => {
     // by way of a rule in `reconcileOnBoot` — restating it here as a test for
     // one status would make this the second place that decides what survives.
     for (const status of ["waiting", "queued", "running", "paused"] as const) {
-      const plan = bootBlockPlan(instances(["i", "started", status]));
+      const plan = bootBlockPlan(instances(["i", "started", status]), false);
       assert.deepEqual(plan.spared, ["i"], status);
     }
   });
@@ -4508,6 +4509,7 @@ describe("bootBlockPlan — which waiting blocks a restart closes out", () => {
   it("closes out an instance whose members all ended", () => {
     const plan = bootBlockPlan(
       instances(["i", "started", "completed", "failed", "stopped", "blocked"]),
+      false,
     );
     assert.deepEqual(plan.abandoned, ["i"]);
     assert.deepEqual(plan.spared, []);
@@ -4516,7 +4518,7 @@ describe("bootBlockPlan — which waiting blocks a restart closes out", () => {
   it("closes out an instance with no members at all", () => {
     // A graph deferred behind an orchestrator block the same boot has just
     // failed: nothing was ever created, so there is nothing to wait for.
-    const plan = bootBlockPlan(instances(["i", "started"]));
+    const plan = bootBlockPlan(instances(["i", "started"]), false);
     assert.deepEqual(plan.abandoned, ["i"]);
   });
 
@@ -4526,7 +4528,7 @@ describe("bootBlockPlan — which waiting blocks a restart closes out", () => {
     // wrote every other block off in the same pass. Reviving half of either is
     // the failure the positive test for `started` exists to have none of.
     for (const status of ["stopping", "stopped", "failed"] as const) {
-      const plan = bootBlockPlan(instances(["i", status, "running", "paused"]));
+      const plan = bootBlockPlan(instances(["i", status, "running", "paused"]), false);
       assert.deepEqual(plan.settled, ["i"], status);
       assert.deepEqual(plan.spared, [], status);
     }
@@ -4541,11 +4543,37 @@ describe("bootBlockPlan — which waiting blocks a restart closes out", () => {
       ["dead", "started", "failed"],
       ["halted", "stopping", "running"],
       ["empty", "started"],
+      ["held", "started", "completed"],
     );
-    const plan = bootBlockPlan(given);
-    const decided = [...plan.abandoned, ...plan.settled, ...plan.spared];
+    given[1].restartClosedMember = true;
+    const plan = bootBlockPlan(given, true);
+    const decided = [...plan.abandoned, ...plan.settled, ...plan.spared, ...plan.held];
     assert.equal(decided.length, given.length);
     assert.deepEqual([...decided].sort(), given.map((i) => i.id).sort());
+  });
+
+  it("leaves an instance the restart closed nothing of to the lift, while new work is held", () => {
+    // Lifting the hold calls `releaseDependents`, so these blocks have
+    // something that wakes them, and it is a person. Closing them out wrote
+    // off the work the operator held the fleet across the restart to keep.
+    const plan = bootBlockPlan(
+      instances(["empty", "started"], ["finished", "started", "completed", "failed"]),
+      true,
+    );
+    assert.deepEqual(plan.held, ["empty", "finished"]);
+    assert.deepEqual(plan.abandoned, []);
+  });
+
+  it("still closes out an instance whose member a restart closed out, held or not", () => {
+    // `on-finish` is satisfied by a cycle that died with the container, so a
+    // block behind it would be released by the lift onto work nobody finished.
+    const [closed] = instances(["closed", "started", "stopped"]);
+    closed.restartClosedMember = true;
+    for (const held of [true, false]) {
+      const plan = bootBlockPlan([closed], held);
+      assert.deepEqual(plan.abandoned, ["closed"], `held: ${held}`);
+      assert.deepEqual(plan.held, [], `held: ${held}`);
+    }
   });
 });
 

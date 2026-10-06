@@ -11,6 +11,16 @@
   2026-09-04:** $10 input, $12.50 5m write, $20 1h write, $0.25 cache hit, $50
   output per MTok; cache hits bill at 0.025x base input, other models 0.1x.
 
+- **Claude Sonnet 5.5's rates, read off the pricing page, not measured,
+  2026-10-06** (`platform.claude.com/docs/en/about-claude/pricing.md`, fetched
+  with `curl`): $2 input, $2.50 5m write, $4 1h write, $0.20 cache hit, $10
+  output per MTok. Sonnet 5.5 has no cache footnote, so it is under "All other
+  models use the standard 0.1x multiplier". The fast-mode table lists Opus 5.5,
+  Opus 5 and Opus 4.8 only. The long-context note gives "Claude 4.6 and later
+  models" the full 1M window at standard pricing, and the models overview gives
+  Sonnet 5.5 a 1M window. Caveat: this is the published list price. It has not
+  been compared with any billed or CLI-reported figure for a Sonnet 5.5 turn.
+
 - **Dedup verified:** 99 → 31 records.
 
 - **Dedup keeps each turn's highest-output line, 40,885 turns / 1,011 files,

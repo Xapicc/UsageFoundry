@@ -4223,7 +4223,7 @@ function admitDependencies(
   isolate: boolean,
 ): { links: DependencyLink[]; waiting: boolean; continuesRun: string | null } {
   const links: DependencyLink[] = [];
-  const targets: DependencyState[] = [];
+  const targets: ReleaseState[] = [];
   const seen = new Set<string>();
   let continuesRun: string | null = null;
 
@@ -4247,6 +4247,16 @@ function admitDependencies(
     const target = getRun(runId);
     if (!target) throw new Error(`No such run to depend on: ${runId}`);
     seen.add(runId);
+    // Refused with its own sentence rather than the release pass's, whose
+    // "puts this one back" describes a row that would not exist. Not released
+    // either, though `on-finish` would be satisfied: the restart notice still
+    // offers that run, and its press would start it beside this one.
+    if (restartClosedOf(target)) {
+      throw new Error(
+        `Run ${shortId(runId)} was closed out by a server restart and nobody has picked it up. ` +
+          "Pick it up first, or start this run without waiting for it.",
+      );
+    }
 
     const continues = raw?.continueBranch === true;
     if (continues) {
@@ -4313,6 +4323,7 @@ function admitDependencies(
       status: target.status,
       iterations: target.iterations,
       refundedCycles: refundedCyclesOf(target),
+      restartClosed: restartClosedOf(target),
     });
   }
 
@@ -4328,7 +4339,7 @@ function admitDependencies(
   }
 
   const { release, block } = releasableRuns(
-    [{ id, status: "waiting", iterations: 0, refundedCycles: 0 }, ...targets],
+    [{ id, status: "waiting", iterations: 0, refundedCycles: 0, restartClosed: false }, ...targets],
     links,
   );
   if (block.length > 0) throw new Error(block[0].reason);
@@ -5022,6 +5033,36 @@ export function ranWorkCycle(dep: DependencyState): boolean {
 }
 
 /**
+ * A dependency as the release decision reads it: `DependencyState`, and
+ * whether a restart closed it out and nobody has picked it up since.
+ *
+ * Its own type rather than a field on `DependencyState`, which a workflow's
+ * scheduler also builds for its edge verdicts and which this does not change.
+ * Required for `refundedCycles`' reason: a state built without it would read a
+ * closed-out run as finished, and release what waits on it.
+ */
+export interface ReleaseState extends DependencyState {
+  restartClosed: boolean;
+}
+
+/**
+ * The SQL for `ReleaseState.restartClosed`: the flag beside one of the two
+ * endings a restart writes. `reopenRun` clears the flag, so a run picked up and
+ * ended again is not one. A run set aside still is — setting it aside holds it
+ * back from the restart notice's press, and it has not finished any more for
+ * that. `alias` is `refundedCyclesSql`'s.
+ */
+export function restartClosedSql(alias?: string): string {
+  const col = (name: string) => (alias ? `${alias}.${name}` : name);
+  return `(${col("restart_closed")} = 1 AND ${col("status")} IN ('failed', 'stopped'))`;
+}
+
+/** `restartClosedSql` for a row already in hand. */
+export function restartClosedOf(run: Pick<RunRow, "restart_closed" | "status">): boolean {
+  return run.restart_closed === 1 && (run.status === "failed" || run.status === "stopped");
+}
+
+/**
  * Statuses a run never leaves on its own.
  *
  * Exported because a workflow instance's scheduler asks the same question about
@@ -5092,6 +5133,19 @@ function unsatisfiableReason(dep: DependencyState, edge: DependencyEdge): string
     return `Set to start after ${name}, which ended ${dep.status} without running a work cycle.`;
   }
   return `Set to start only after ${name} succeeded (${edge}); it ended ${dep.status}.`;
+}
+
+/**
+ * Why a run waiting on `id` is blocked while a restart has that run closed out.
+ * One sentence for the boot, the loop and the release pass, so a row reads the
+ * same whichever of them reached it first.
+ */
+function restartClosedReason(id: string): string {
+  return (
+    `Set to start after run ${shortId(id)}, which the server ` +
+    "restart closed out. Picking that run up puts this one back to " +
+    "waiting for it."
+  );
 }
 
 /**
@@ -5247,7 +5301,7 @@ export function topologicalOrder(graph: {
  * least one waiting run, and a decided run is never revisited.
  */
 export function releasableRuns(
-  runs: readonly DependencyState[],
+  runs: readonly ReleaseState[],
   links: readonly DependencyLink[],
   /**
    * The install-wide hold, which suppresses the release half and only that half.
@@ -5284,6 +5338,15 @@ export function releasableRuns(
           stopper = `Set to start after run ${shortId(link.dependsOn)}, which is no longer there.`;
           break;
         }
+        // Ahead of the edge, on either: a closed-out run that did a cycle
+        // satisfies `on-finish`, and it is outstanding — the restart notice
+        // offers it, and picking it up would run it beside this one. Blocked
+        // rather than left pending, because nothing obliges anybody to pick it
+        // up, and blocked is what picking it up revives.
+        if (dep.restartClosed) {
+          stopper = restartClosedReason(dep.id);
+          break;
+        }
         if (edgeSatisfied(dep, link.edge)) continue;
         // Every dependency is checked before the verdict: one that is still
         // running does not make this run "waiting" if another has already made
@@ -5305,6 +5368,7 @@ export function releasableRuns(
           status: "blocked",
           iterations: 0,
           refundedCycles: 0,
+          restartClosed: false,
         });
       } else if (pending) {
         continue;
@@ -5351,7 +5415,8 @@ export function dependenciesOf(
       `SELECT d.run_id AS runId, d.depends_on AS dependsOn, d.edge AS edge,
               d.continue_branch AS continueBranch,
               r.status AS status, r.iterations AS iterations,
-              ${refundedCyclesSql("r")} AS refundedCycles
+              ${refundedCyclesSql("r")} AS refundedCycles,
+              ${restartClosedSql("r")} AS restartClosed
          FROM run_deps d
          JOIN runs r ON r.id = d.depends_on
         WHERE d.run_id IN (${ids.map(() => "?").join(",")})
@@ -5366,6 +5431,7 @@ export function dependenciesOf(
       iterations: number;
       refundedCycles: number;
       continueBranch: number;
+      restartClosed: number;
     }
   >;
 
@@ -5376,7 +5442,8 @@ export function dependenciesOf(
       edge: row.edge,
       status: row.status,
       continueBranch: !!row.continueBranch,
-      satisfied: edgeSatisfied(
+      // `releasableRuns`' order: a closed-out run lets nothing start.
+      satisfied: !row.restartClosed && edgeSatisfied(
         {
           id: row.dependsOn,
           status: row.status,
@@ -5510,14 +5577,17 @@ function releasePass(holdReleases: boolean = newWorkPaused()): boolean {
     )
     .all() as DependencyLink[];
 
-  const states = db()
-    .prepare(
-      `SELECT id, status, iterations, ${refundedCyclesSql()} AS refundedCycles FROM runs
-        WHERE status = 'waiting'
-           OR id IN (SELECT depends_on FROM run_deps
-                      WHERE run_id IN (SELECT id FROM runs WHERE status = 'waiting'))`,
-    )
-    .all() as DependencyState[];
+  const states = (
+    db()
+      .prepare(
+        `SELECT id, status, iterations, ${refundedCyclesSql()} AS refundedCycles,
+                ${restartClosedSql()} AS restartClosed FROM runs
+          WHERE status = 'waiting'
+             OR id IN (SELECT depends_on FROM run_deps
+                        WHERE run_id IN (SELECT id FROM runs WHERE status = 'waiting'))`,
+      )
+      .all() as Array<DependencyState & { restartClosed: number }>
+  ).map((state) => ({ ...state, restartClosed: state.restartClosed === 1 }));
 
   const { release, block } = releasableRuns(states, links, holdReleases);
   let acted = false;
@@ -5584,12 +5654,7 @@ export function blockWaitingRun(id: string, reason: string): boolean {
 function blockBehindRestartClosed(closedOut: ReadonlySet<string>): void {
   for (const link of allDependencyLinks()) {
     if (!closedOut.has(link.dependsOn)) continue;
-    blockWaitingRun(
-      link.runId,
-      `Set to start after run ${shortId(link.dependsOn)}, which the server ` +
-        "restart closed out. Picking that run up puts this one back to " +
-        "waiting for it.",
-    );
+    blockWaitingRun(link.runId, restartClosedReason(link.dependsOn));
   }
 }
 
@@ -14072,8 +14137,7 @@ export async function shutdownRuns(
  * The condition `restartClosedRuns` and `restartClosedCount` share, so the
  * notice's count and the list its press acts on cannot disagree.
  */
-const RESTART_CLOSED_OUTSTANDING =
-  "restart_closed = 1 AND status IN ('failed', 'stopped') AND set_aside_at IS NULL";
+const RESTART_CLOSED_OUTSTANDING = `${restartClosedSql()} AND set_aside_at IS NULL`;
 
 /**
  * Runs a restart closed out and nobody has picked up yet.

@@ -98,8 +98,9 @@ turns on this install were priced at Sonnet 5's $2/$10 with no unpriced banner,
 no *Unpriced* badge on a discovered model, and the predecessor's rate in every
 guard where `UNKNOWN_MODEL_PRICE` belongs — and both point releases this table
 does know departed from their predecessor on the cache read, the column nobody
-checks. The first case pins `claude-sonnet-5-5`, `claude-opus-5-6`,
-`claude-fable-5-2` and `claude-mythos-5-2` at null, plus the same successors
+checks. The first case pins `claude-sonnet-5-6`, `claude-opus-5-6`,
+`claude-fable-5-2` and `claude-mythos-5-2` at null — `claude-sonnet-5-6` replaced
+`claude-sonnet-5-5` there, deliberately, when Sonnet 5.5 got a row — plus the same successors
 through `[1m]`, a snapshot and Bedrock, because decoration must not make a
 successor known. The second pins the consequence a guard sees, a million output
 tokens at the $50 fallback rather than Sonnet 5's $10. The third is the half a
@@ -109,6 +110,17 @@ to its row whole — `[1m]`, a dated Haiku, Bedrock's prefix and `-v1:0`, Vertex
 that do have rows. The first two failed against the `startsWith` they replaced;
 the third passed on it and is there so the next tightening cannot cost a known
 model its price.
+
+**Claude Sonnet 5.5 added two, and its trap is the sibling rather than the
+predecessor.** It publishes at Sonnet 5's $2/$10 with the default 0.10× cache
+read, which is $0.20/MTok — the same dollar figure as Opus 5.5's, reached by
+0.05× of $4. Copying the other 5.5's multiplier is the plausible mistake and
+halves the read term on the column nobody checks, so the first case pins the row
+whole and a million reads at $0.20 in dollars, and that a fast request falls to
+the base row because the page offers fast mode on the three Opus rows only. The
+second runs `[1m]`, a snapshot and both provider decorations onto it; the pinned
+CLI names no `claude-sonnet-5-5[1m]`, but a newer CLI's or a transcript's would
+price there.
 
 **Claude Opus 4 and Sonnet 4 under their dated ids earned a block, because the
 table keyed them only as the alias spellings.** `claude-opus-4-0` and

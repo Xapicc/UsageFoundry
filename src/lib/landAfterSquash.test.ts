@@ -28,6 +28,7 @@ import { after, before, beforeEach, describe, it } from "node:test";
 let land: typeof import("./land");
 let dbMod: typeof import("./db");
 let orchestrator: typeof import("./orchestrator");
+let review: typeof import("./review");
 let root: string;
 
 const MOUNT_DIR = "land-after-squash-mount";
@@ -65,6 +66,7 @@ before(async () => {
   dbMod = await import("./db");
   land = await import("./land");
   orchestrator = await import("./orchestrator");
+  review = await import("./review");
 });
 
 after(() => {
@@ -276,5 +278,102 @@ describe("a squash-landed branch with nothing new on it", () => {
       .prepare("SELECT COUNT(*) AS n FROM run_reviews WHERE run_id = ?")
       .get(a) as { n: number };
     assert.equal(rows.n, 0);
+  });
+});
+
+describe("resolving a conflict past a squash", () => {
+  // The resolution merges the target into the branch, the other direction from
+  // a land, and a plain `git merge` there took git's merge-base — the chain's
+  // base — so it conflicted in the squashed lines the card never listed. A
+  // resolver keeping the branch's side of those made the target an ancestor of
+  // a branch that undid the target's edit, and Land fast-forwarded it.
+  //
+  // `startAssist` is stood in for, which is the stop before the spawn: it is
+  // handed the checkout with the merge open, as the child would have been.
+
+  type AssistRequest = Parameters<typeof review.startAssist>[0];
+
+  /**
+   * Link A squash-landed, then `main` edits the lines A brought in (`f1.txt`)
+   * and the line link B changes (`f2.txt`). B's card, previewed past the
+   * squash, lists `f2.txt` alone and offers Resolve.
+   */
+  async function conflictingPastSquash(name: string) {
+    const c = await squashedLinkA(name);
+    fs.writeFileSync(path.join(c.repo, "f1.txt"), "main's later f1\n");
+    fs.writeFileSync(path.join(c.repo, "f2.txt"), "main's later f2\n");
+    git(c.repo, "commit", "-qam", "main edits f1 and f2");
+    const b = linkB(name, c);
+
+    const state = await land.landState(b);
+    assert.equal(state?.preview.outcome, "conflict");
+    assert.deepEqual(
+      state?.preview.outcome === "conflict" ? state.preview.files.map((f) => f.path) : [],
+      ["f2.txt"],
+    );
+    return { c, b, tip: git(c.repo, "rev-parse", c.branch).trim() };
+  }
+
+  const unmergedIn = (cwd: string) =>
+    git(cwd, "diff", "--name-only", "--diff-filter=U").trim().split("\n").filter(Boolean);
+
+  it("opens the merge with only the conflicts the card listed, and rolls it back", async (t) => {
+    const { c, b, tip } = await conflictingPastSquash("resolve-opened");
+
+    let opened = null as { cwd: string; unmerged: string[]; paths: string[]; f1: string } | null;
+    let settled: Promise<unknown> = Promise.resolve();
+    t.mock.method(review, "startAssist", (req: AssistRequest) => {
+      opened = {
+        cwd: req.cwd,
+        unmerged: unmergedIn(req.cwd),
+        paths: req.paths ?? [],
+        f1: read(path.join(req.cwd, "f1.txt")),
+      };
+      // What a child that never started comes to.
+      settled = req.after!({ status: "failed", error: "stood in for" });
+      return { ok: true as const, id: "stand-in" };
+    });
+
+    const started = await land.resolveConflicts(b);
+    await settled;
+
+    assert.equal(started.ok, true, started.ok ? "" : started.reason);
+    assert.ok(opened, "no resolution was handed a checkout");
+    assert.equal(opened.cwd, c.slot);
+    // Before the fix: ["f1.txt", "f2.txt"].
+    assert.deepEqual(opened.unmerged, ["f2.txt"], "the merge conflicted where the card said it would not");
+    assert.deepEqual(opened.paths, ["f2.txt"], "the resolution was told to settle other files");
+    assert.equal(opened.f1, "main's later f1\n", "main's edit to the squashed lines was not merged in");
+
+    // Rolled back like any merge: the branch where it was, nothing open.
+    assert.equal(git(c.repo, "rev-parse", c.branch).trim(), tip);
+    assert.throws(() => git(c.slot, "rev-parse", "-q", "--verify", "MERGE_HEAD"));
+    assert.equal(git(c.slot, "status", "--porcelain").trim(), "");
+  });
+
+  it("does not undo the target's edit to the squashed lines when the branch's side is kept", async (t) => {
+    const { c, b } = await conflictingPastSquash("resolve-kept");
+
+    let settled: Promise<unknown> = Promise.resolve();
+    t.mock.method(review, "startAssist", (req: AssistRequest) => {
+      // A resolver that keeps the branch's side of every file it is handed.
+      for (const file of req.paths ?? []) {
+        fs.writeFileSync(path.join(req.cwd, file), git(req.cwd, "show", `:2:${file}`));
+      }
+      settled = req.after!({ status: "completed", text: "kept the branch's side" });
+      return { ok: true as const, id: "stand-in" };
+    });
+
+    const started = await land.resolveConflicts(b);
+    const result = await settled;
+    assert.equal(started.ok, true, started.ok ? "" : started.reason);
+    assert.equal((result as { status?: string } | undefined)?.status, "completed");
+    assert.equal(git(c.repo, "merge-base", "--is-ancestor", "main", c.branch), "");
+
+    const landed = await land.landRun(b, "squash");
+    assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
+    // Before the fix: "link A's f1", under a success message.
+    assert.equal(read(path.join(c.repo, "f1.txt")), "main's later f1\n", "main's edit was undone");
+    assert.equal(read(path.join(c.repo, "f2.txt")), "link B's f2\n");
   });
 });

@@ -59,7 +59,7 @@ export function cacheReadMultiplierOf(price: ModelPrice): number {
  * Keys are matched longest-first against the canonical model id, and a key
  * matches only when what follows it is decoration (`DECORATION_ONLY`), so
  * `claude-opus-4-5-20251101` resolves via `claude-opus-4-5` and
- * `claude-sonnet-5-5` resolves via nothing.
+ * `claude-sonnet-5-6` resolves via nothing.
  */
 const PRICES: Record<string, ModelPrice> = {
   // Fable / Mythos tier. The 5.1 pair differs from the 5 pair *only* on the
@@ -99,6 +99,13 @@ const PRICES: Record<string, ModelPrice> = {
   // the introductory number the list price. The dated ramp that used to live
   // here is deleted rather than expired — restoring it from memory would
   // overstate every Sonnet 5 run by 50% on a figure the budget guard acts on.
+  //
+  // `claude-sonnet-5-5` is the first point release that departs from its
+  // predecessor on no column, the cache read included ($0.20/MTok, the default
+  // 0.10x of $2). It still takes a row of its own rather than a looser
+  // `DECORATION_ONLY`, because "the same as Sonnet 5" was read off the pricing
+  // page and is not something the table could have inferred.
+  "claude-sonnet-5-5": { input: 2, output: 10 },
   "claude-sonnet-5": { input: 2, output: 10 },
   "claude-sonnet-4-6": { input: 3, output: 15 },
   "claude-sonnet-4-5": { input: 3, output: 15 },
@@ -169,10 +176,11 @@ const PREFIXES = Object.keys(PRICES).sort((a, b) => b.length - a.length);
  * bare `startsWith` made every undated key a catch-all for the point releases
  * after it — `claude-sonnet-5` priced `claude-sonnet-5-5`, `claude-opus-5` would
  * price `claude-opus-5-6` — which is the short catch-all key `canonicalModelId`
- * rules out, arriving one release late. Both point releases this table does know
- * departed from their predecessor on the cache read rate, the one column nobody
- * checks by eye, so a successor with no row of its own resolves to null: $0
- * shown, named as unpriced, and `UNKNOWN_MODEL_PRICE` in every guard.
+ * rules out, arriving one release late. Two of the three point releases this
+ * table knows departed from their predecessor on the cache read rate, the one
+ * column nobody checks by eye, and the third matched it only by reading the page,
+ * so a successor with no row of its own resolves to null: $0 shown, named as
+ * unpriced, and `UNKNOWN_MODEL_PRICE` in every guard.
  */
 const DECORATION_ONLY = /^(?:-\d{8}|-v\d+(?::\d+)?|\[[^\]]*\])*$/;
 

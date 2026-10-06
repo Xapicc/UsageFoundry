@@ -39,6 +39,12 @@
   (`uname -m` → `aarch64`); the amd64 build of the same version was not read,
   and the pin in `Dockerfile` is the version rather than the arch.
 
+- **The pinned 2.1.280 binary does not name Claude Sonnet 5.5, 2026-10-06.**
+  `grep -a -c` over the installed `claude.exe` (233 MB, `package.json` 2.1.280)
+  finds 0 `sonnet-5-5` and 0 `Sonnet 5.5`. The `claude-…[1m]` list is the same
+  nine as above. That is why `claude-sonnet-5-5` is priced and labelled but
+  seeded off, with no `[1m]` variant. Caveat: the same arm64 package as above.
+
 - **The sandbox's config-directory binds re-read on the pinned 2.1.280,
   2026-09-27, and the bound set is not identical: one name was added.**
   `sandboxMountPoints.test.ts` threw at "the config-directory bind loop" against

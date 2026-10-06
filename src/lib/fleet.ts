@@ -30,7 +30,7 @@ import { haltSteps, stopInstance, type HaltReport } from "./workflows";
  *     `stopWaitingRun`, choosing between the two with the very same
  *     `haltSteps` a workflow halt uses. There is no new status, no new signal
  *     path and no second answer to "which rows does this take down".
- *   - The hold on new work is `settings.newWorkPaused`, read by the six places
+ *   - The hold on new work is `settings.newWorkPaused`, read by the seven places
  *     that start work and by nothing else. It is documented beside the flag.
  *   - `reopenFleet` is `reopenRun` in a loop over an explicit list of ids, with
  *     one budget laid over each run's own rather than in place of it.
@@ -180,6 +180,10 @@ export function stopFleet(): FleetStopReport {
  * timer is a minute. It promotes what it re-queues itself, and a run parked on
  * a window needs a usage snapshot first, so it rejoins a moment after this
  * returns rather than inside it.
+ *
+ * An orchestrator block the hold left `waiting` needs no call of its own here:
+ * `releaseDependents` ends by advancing every workflow instance, which claims
+ * it, so it is decided a turn after this returns.
  *
  * `tickSchedules` needs nothing here: its timer keeps running throughout and
  * decides again on its own cadence. Deliberately so — a schedule's missed

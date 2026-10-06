@@ -1098,12 +1098,15 @@ async function previewMerge(
   return { outcome: "conflict", files: await withRegions(repoRoot, tree, preview.files) };
 }
 
-/** `merge-tree --write-tree` of two commits: the verdict, and the tree it wrote. */
+/**
+ * `merge-tree --write-tree` of two commits: the verdict, the tree it wrote, and
+ * the `-z` output itself, whose stage records a resolution writes into its index.
+ */
 async function writeMergeTree(
   repoRoot: string,
   ours: string,
   theirs: string,
-): Promise<{ preview: MergePreview; tree: string }> {
+): Promise<{ preview: MergePreview; tree: string; output: string }> {
   // No `--name-only`: it lands the conflict list in a simpler shape but arrived
   // two releases after `--write-tree` itself, and this has to work on whatever
   // git the host mounted.
@@ -1112,6 +1115,7 @@ async function writeMergeTree(
     preview: parseMergeTree(res.stdout, res.stderr, res.code),
     // Field 0 of that same output, per the format `parseMergeTree` documents.
     tree: res.stdout.split("\0", 1)[0] ?? "",
+    output: res.stdout,
   };
 }
 
@@ -2690,7 +2694,12 @@ async function startResolution(
     };
   }
 
-  const merge = await git(checkout.path, ["merge", "--no-edit", target], NO_CLOCK);
+  // From where the chain was last squashed into the target, when it was: the
+  // base the card's preview took, and so the conflicts it listed and no others.
+  const squashedAt = await squashBase(repoRoot, target, chainRuns(run), tipBefore.stdout);
+  const merge = squashedAt
+    ? await openMergePastSquash(repoRoot, checkout.path, squashedAt, target)
+    : await git(checkout.path, ["merge", "--no-edit", target], NO_CLOCK);
   if (merge.ok) {
     // The preview was stale — the branches agree after all. The merge commit is
     // real and useful: landing is now a fast-forward.
@@ -2745,7 +2754,7 @@ async function startResolution(
     // made below, after the result has been checked.
     permissionMode: "acceptEdits",
     allowedTools: verifyTools,
-    prompt: resolvePrompt(branch, target, conflicted, verifyTools),
+    prompt: resolvePrompt(branch, target, conflicted, verifyTools, squashedAt),
     counts: { files: conflicted.length, shown: conflicted.length, truncated: false },
     // Recorded now rather than derived later: the throwaway checkout is gone
     // minutes from here, and these paths are what makes the resolution's own
@@ -2830,6 +2839,99 @@ async function startResolution(
         assistId: outcome.id,
       }
     : { ok: false, reason: outcome.reason };
+}
+
+/**
+ * Open the merge of `target` into the branch checked out at `checkoutPath` as a
+ * conflicted `git merge` leaves it, but measured from `squashedAt` — the base
+ * the card's preview and `landRun` take — rather than from git's merge-base.
+ *
+ * A squash leaves no ancestry, so the plain `git merge` this replaces merged
+ * from the chain's base: a target that had since edited the squashed lines
+ * conflicted in files the card never listed, and a resolver keeping the
+ * branch's side of one made the target an ancestor of a branch undoing the
+ * target's edit, which Land then fast-forwarded under a success message.
+ *
+ * `merge -s ours --no-commit` records the merge and takes nothing, so the
+ * commit `after` makes has the target as its second parent and landing is a
+ * fast-forward, as after any resolution. The content is `merge-tree`'s over
+ * `overBase`, worked out from the two commits that record names rather than
+ * from the refs, so a target moving meanwhile cannot make the parents and the
+ * content disagree. `read-tree` writes it, and `update-index --index-info`
+ * puts the conflicted paths' stages back, from records `merge-tree` writes in
+ * the format that reads; from there `conflictedFiles`, `markerlessRefusal`,
+ * `after` and `merge --abort` each meet the state a `git merge` would leave.
+ *
+ * `ok` is `git merge`'s: true only once a clean merge has been committed.
+ */
+async function openMergePastSquash(
+  repoRoot: string,
+  checkoutPath: string,
+  squashedAt: string,
+  target: string,
+): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  // `--no-ff`, or a branch the target already contains would be moved onto it.
+  const record = await git(
+    checkoutPath,
+    ["merge", "-s", "ours", "--no-ff", "--no-commit", target],
+    NO_CLOCK,
+  );
+  if (!record.ok) return record;
+  const failed = (stderr: string) => ({ ok: false, stdout: "", stderr });
+
+  const heads = await git(checkoutPath, ["rev-parse", "HEAD", "MERGE_HEAD"], NO_CLOCK);
+  const [ours, theirs] = heads.ok ? heads.stdout.split("\n") : [];
+  if (!ours || !theirs) {
+    return failed(`the merge just opened could not be read: ${gitFailureLine(heads.stderr) || "unknown error"}`);
+  }
+  const pair = await overBase(repoRoot, squashedAt, ours, theirs);
+  const merged = pair ? await writeMergeTree(repoRoot, pair.ours, pair.theirs) : null;
+  if (!merged || !merged.tree || merged.preview.outcome === "unknown") {
+    return failed(
+      merged?.preview.outcome === "unknown"
+        ? merged.preview.reason
+        : `the merge from where it was last squashed into ${target} could not be set up.`,
+    );
+  }
+
+  // `read-tree -u` trusts the index's stat data, `applyMergedTree`'s reason.
+  await git(checkoutPath, ["update-index", "-q", "--refresh"], NO_CLOCK);
+  const written = await git(checkoutPath, ["read-tree", "-m", "-u", ours, merged.tree], NO_CLOCK);
+  if (!written.ok) return written;
+  if (merged.preview.outcome !== "conflict") {
+    return git(checkoutPath, ["commit", "--no-edit"], NO_CLOCK);
+  }
+
+  const staged = await git(checkoutPath, ["update-index", "-z", "--index-info"], {
+    ...NO_CLOCK,
+    input: conflictStages(merged.output),
+  });
+  if (!staged.ok) return staged;
+  // Git's own sentences about each path, one to a line, for `markerlessRefusal`.
+  return { ok: false, stdout: merged.output.split("\0").join("\n"), stderr: "" };
+}
+
+/**
+ * `update-index -z --index-info` input marking each path `merge-tree` reported
+ * conflicted as unmerged: its stage-0 entry removed first, as `update-index`
+ * requires, then its stage records as `merge-tree` wrote them — the same
+ * `<mode> <oid> <stage>\t<path>` shape. A path left out here would be staged
+ * with its markers in it and committed by `after` unread.
+ */
+function conflictStages(mergeTreeOutput: string): string {
+  const fields = mergeTreeOutput.split("\0");
+  const removals = new Map<string, string>();
+  const stages: string[] = [];
+  // Field 0 is the tree; the stage records run to the first empty field.
+  for (let i = 1; i < fields.length && fields[i] !== ""; i++) {
+    const tab = fields[i].indexOf("\t");
+    if (tab === -1) continue;
+    const oid = fields[i].slice(0, tab).split(" ")[1] ?? "";
+    removals.set(fields[i].slice(tab + 1), `0 ${"0".repeat(oid.length)}`);
+    stages.push(fields[i]);
+  }
+  const removed = [...removals].map(([file, entry]) => `${entry}\t${file}`);
+  return [...removed, ...stages].map((record) => `${record}\0`).join("");
 }
 
 /**
@@ -3090,6 +3192,8 @@ function resolvePrompt(
   target: string,
   files: string[],
   verify: readonly string[] = [],
+  /** Where the merge was measured from, when that was a squash (`openMergePastSquash`). */
+  squashedAt: string | null = null,
 ): string {
   return [
     `You are resolving a git merge conflict in an isolated checkout. \`${target}\` has just been`,
@@ -3097,6 +3201,17 @@ function resolvePrompt(
     "",
     ...files.map((f) => `  ${f}`),
     "",
+    // The markers carry `merge-tree`'s labels, which are the ids of the commits
+    // `overBase` made, so they say nothing about which side is which.
+    ...(squashedAt
+      ? [
+          `The merge was measured from ${squashedAt.slice(0, 8)}, where \`${branch}\` was last squashed`,
+          `into \`${target}\`, so the markers are labelled with commit ids rather than branch names.`,
+          `The side opened by <<<<<<< is \`${branch}\`'s, and the side closed by >>>>>>> is`,
+          `\`${target}\`'s.`,
+          "",
+        ]
+      : []),
     "Each one contains conflict markers (<<<<<<<, =======, >>>>>>>). Edit every one of them so",
     "that the result keeps the intent of *both* sides — the branch's change and the change that",
     "arrived from the other branch — and remove every marker. Read the surrounding code first;",

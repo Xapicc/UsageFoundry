@@ -200,6 +200,37 @@ describe("the cache read rate is a property of the model", () => {
     assert.equal(resolvePrice("claude-opus-4-8", { speed: "fast" })?.output, 50);
   });
 
+  it("resolves claude-sonnet-5-5 to its own row, at the default cache read rate", () => {
+    // The page's figures, read rather than carried over from either neighbour:
+    // Sonnet 5's $2/$10, and a cache hit at $0.20/MTok — the same dollar figure
+    // as Opus 5.5's, which is the trap. Copy the sibling point release's 0.05×
+    // and a million reads cost $0.10; it is 0.10× of a $2 input, so they cost
+    // $0.20, asserted in dollars so that either mistake shows.
+    const sonnet55 = resolvePrice("claude-sonnet-5-5");
+    assert.ok(sonnet55);
+    assert.deepEqual(sonnet55, { input: 2, output: 10 });
+    assert.equal(cacheReadMultiplierOf(sonnet55), CACHE_READ_MULTIPLIER);
+    assert.equal(costOf(MTOK, sonnet55), 0.2);
+
+    // Fast mode is offered on Opus 5.5, Opus 5 and Opus 4.8 only, so there is
+    // no fast row to replace the base one, and a fast request prices at it.
+    assert.deepEqual(resolvePrice("claude-sonnet-5-5", { speed: "fast" }), sonnet55);
+  });
+
+  it("keeps Sonnet 5.5's row through [1m], a snapshot and a provider prefix", () => {
+    // The pinned CLI names no `claude-sonnet-5-5[1m]`, but a newer one or a
+    // transcript may, and it is the 1M window the model already has at the
+    // standard rate — so it prices at the base row like every other `[1m]`.
+    for (const id of [
+      "claude-sonnet-5-5[1m]",
+      "claude-sonnet-5-5-20260928",
+      "us.anthropic.claude-sonnet-5-5",
+      "claude-sonnet-5-5@20260928",
+    ]) {
+      assert.deepEqual(resolvePrice(id), { input: 2, output: 10 }, id);
+    }
+  });
+
   it("does not let the unknown-model rate inherit the discount", () => {
     // `UNKNOWN_MODEL_PRICE` shares the 5.1 pair's $10/$50 and must not share
     // its cache read rate: the whole point of that entry is to be the dearest
@@ -266,7 +297,10 @@ describe("claude-sonnet-5 costs the same whatever day it is priced on", () => {
  * charges the predecessor's rate instead of `UNKNOWN_MODEL_PRICE` — and both
  * point releases this table does know differ from their prefix on the cache
  * read, the one column nobody checks by eye. Measured on this install before the
- * fix: ~1,540 `claude-sonnet-5-5` turns priced at Sonnet 5's $2/$10.
+ * fix: ~1,540 `claude-sonnet-5-5` turns priced at Sonnet 5's $2/$10. Sonnet 5.5
+ * then published at exactly that, so the fall-through was right by luck — which
+ * the table could not have known — and it has its own row now; the unreleased
+ * `claude-sonnet-5-6` stands in for it below.
  *
  * The other half is what must still resolve, because every one of these is the
  * key followed by decoration rather than by a minor version: a CLI `[1m]`, a
@@ -276,13 +310,13 @@ describe("claude-sonnet-5 costs the same whatever day it is priced on", () => {
 describe("a point release the table has no row for", () => {
   it("resolves to null rather than to the undated key it extends", () => {
     for (const id of [
-      "claude-sonnet-5-5",
+      "claude-sonnet-5-6",
       "claude-opus-5-6",
       "claude-fable-5-2",
       "claude-mythos-5-2",
       // Decoration does not make a successor known: these are the same three
       // models arriving through the CLI, a snapshot and Bedrock.
-      "claude-sonnet-5-5[1m]",
+      "claude-sonnet-5-6[1m]",
       "claude-opus-5-6-20261201",
       "us.anthropic.claude-opus-5-6-v1:0",
     ]) {
@@ -295,9 +329,9 @@ describe("a point release the table has no row for", () => {
     // dearer figure is the point — a guard under-charging a model whose price
     // nobody knows is the direction that lets a run through.
     const output = { ...ZERO_TOKENS, output: 1_000_000 };
-    assert.equal(guardCostOf(output, resolvePrice("claude-sonnet-5-5")), 50);
+    assert.equal(guardCostOf(output, resolvePrice("claude-sonnet-5-6")), 50);
     assert.equal(
-      guardCostOf(output, resolvePrice("claude-sonnet-5-5")),
+      guardCostOf(output, resolvePrice("claude-sonnet-5-6")),
       guardCostOf(output, UNKNOWN_MODEL_PRICE),
     );
   });
