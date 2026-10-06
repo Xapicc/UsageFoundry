@@ -2438,7 +2438,7 @@ export interface WorkflowInstanceNodeDTO {
   /**
    * Which loop, which pass and which block of the section this run is, or null.
    *
-   * Read off the member id by `passMemberOf`, the one reader of the format
+   * Read off the member id by `passMemberIn`, the one reader of the format
    * `passMemberId` writes — never re-derived from a count, because a member
    * whose run row has been deleted is then an empty place in its pass rather
    * than a pass that shortens every one after it. A second parser of it on the

@@ -118,6 +118,7 @@ import { WORKSPACE_MOUNTS, mountById } from "./config";
 import { dataDirRefusal } from "./serverLock";
 import {
   passMemberId,
+  passMemberIn,
   passMemberName,
   passMemberOf,
   passNumberOf,
@@ -4583,7 +4584,7 @@ export function reviveBlockedBlocks(roots: readonly string[]): number {
     // of its pass and, when that pass stopped the loop, the loop itself. A
     // refusal here is not the reopen's business: the run is picked up either
     // way, and the instance page offers the same question with its answer.
-    for (const pass of passRootsOf(members.map((m) => m.memberId))) {
+    for (const pass of passRootsOf(instance, members.map((m) => m.memberId))) {
       if (loopPassRefusal(instance, pass.loopNodeId, pass.pass) !== null) continue;
       revived += db().transaction(() =>
         reopenLoopPass(instance, pass.loopNodeId, pass.pass),
@@ -4628,11 +4629,12 @@ function reviveGraphDependents(
 
 /** The distinct passes a set of member ids belongs to. */
 function passRootsOf(
+  instance: WorkflowInstance,
   memberIds: readonly string[],
 ): Array<{ loopNodeId: string; pass: number }> {
   const seen = new Map<string, { loopNodeId: string; pass: number }>();
   for (const id of memberIds) {
-    const member = passMemberOf(id);
+    const member = passMemberIn(instance.graph, id);
     if (member) seen.set(`${member.loopNodeId}#${member.pass}`, member);
   }
   return [...seen.values()];
@@ -4822,12 +4824,12 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
     if (last !== undefined) stoppedPasses.set(loop.nodeId, last);
   }
   const holdsUp = (memberId: string, graphNodeId: string): boolean => {
-    const pass = passMemberOf(memberId);
+    const pass = passMemberIn(instance.graph, memberId);
     if (pass) return stoppedPasses.get(pass.loopNodeId) === pass.pass;
     return revivableDependents([graphNodeId], blockedNodes, links).length > 0;
   };
   const passRefusal = (memberId: string): string | null => {
-    const pass = passMemberOf(memberId);
+    const pass = passMemberIn(instance.graph, memberId);
     return pass ? loopPassRefusal(instance, pass.loopNodeId, pass.pass) : null;
   };
 
@@ -4856,7 +4858,7 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
   }
   for (const block of instance.blocks) {
     if (block.kind !== "merge" || block.status !== "failed") continue;
-    const pass = passMemberOf(block.nodeId);
+    const pass = passMemberIn(instance.graph, block.nodeId);
     if (pass && stoppedPasses.get(pass.loopNodeId) !== pass.pass) continue;
     const started = pass ? null : startedBehind(instance, block.nodeId);
     out.push({
@@ -4881,7 +4883,7 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
       const id = p.kind === "run"
         ? instance.nodes.find((n) => n.runId === p.runId)?.nodeId
         : p.kind === "merge" ? p.nodeId : undefined;
-      const member = id ? passMemberOf(id) : null;
+      const member = id ? passMemberIn(instance.graph, id) : null;
       return member?.loopNodeId === loop.nodeId && member.pass === pass;
     });
     if (named || !passWouldProceed(instance, loop.nodeId, pass)) continue;
@@ -5052,7 +5054,7 @@ export function leaveRunBehind(instanceId: string, runId: string): PickUpOutcome
     };
   }
 
-  const pass = passMemberOf(member.memberId);
+  const pass = passMemberIn(instance.graph, member.memberId);
   if (pass) {
     const refusal = loopPassRefusal(instance, pass.loopNodeId, pass.pass);
     if (refusal) return { ok: false, status: 409, error: refusal };
@@ -5111,7 +5113,7 @@ export function retryMergeBlock(instanceId: string, nodeId: string): PickUpOutco
     };
   }
 
-  const pass = passMemberOf(nodeId);
+  const pass = passMemberIn(instance.graph, nodeId);
   const refusal = pass
     ? loopPassRefusal(instance, pass.loopNodeId, pass.pass)
     : startedBehind(instance, nodeId) === null
@@ -6239,7 +6241,7 @@ function blockNode(
 ): WorkflowNode | undefined {
   const own = instance.graph.nodes.find((n) => n.id === nodeId);
   if (own) return own;
-  const member = passMemberOf(nodeId);
+  const member = passMemberIn(instance.graph, nodeId);
   if (!member?.bodyNodeId) return undefined;
   return passNode(
     instance.graph.nodes.find((n) => n.id === member.bodyNodeId),

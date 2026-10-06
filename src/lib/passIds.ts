@@ -86,6 +86,32 @@ export function passMemberOf(memberId: string): PassMemberId | null {
 }
 
 /**
+ * `passMemberOf`, for a reader that holds the graph the id was written under —
+ * and every reader that holds an instance must ask this one.
+ *
+ * The string alone cannot always tell. Outside every loop, `createEmitted`
+ * names a run an orchestrator block decided on `<block>#<spec>`, and `pass-2`
+ * is a legal spec id, so a top-level block `o` writes `o#pass-2` — exactly the
+ * body-less spelling of pass 2 of a loop `o`. Read as that, the run belonged to
+ * a stopped pass of a loop that is not there: the pick-up list never offered
+ * it, and leaving it behind was refused as "that loop is not part of this
+ * workflow run". Only the graph knows which `o` it is. The legacy body-less
+ * rows still read as passes, because an instance carries the graph it was
+ * started from and that graph still has its loop.
+ */
+export function passMemberIn(
+  graph: { nodes: ReadonlyArray<{ id: string; kind: string }> },
+  memberId: string,
+): PassMemberId | null {
+  const member = passMemberOf(memberId);
+  if (!member) return null;
+  const isLoop = graph.nodes.some(
+    (n) => n.id === member.loopNodeId && n.kind === "loop",
+  );
+  return isLoop ? member : null;
+}
+
+/**
  * What a pass's member is called on the page.
  *
  * The member's own name and the pass, rather than the loop's: a pass of a
