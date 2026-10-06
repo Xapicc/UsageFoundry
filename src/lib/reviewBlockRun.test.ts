@@ -34,8 +34,8 @@ const SLOW_REVIEW_MS = 3_000;
  * What the next snapshot read does once it returns, or null.
  *
  * Answers true when it acted, and stays armed until it does. A snapshot is the
- * `await` `startReview`'s own refusal check makes, so this is where an
- * operator's Stop lands on a slow read.
+ * one `await` both the review block's door and `startReview`'s own refusal
+ * check make, so this is where an operator's Stop lands on a slow read.
  */
 let duringSnapshot: (() => boolean) | null = null;
 
@@ -434,8 +434,9 @@ describe("a review block whose workflow is halted", () => {
   });
 
   it("spawns no reviewer when the halt lands while the review is being prepared", async () => {
-    // Pressed inside `startReview`'s own snapshot read, once the branches are
-    // seeded and before the child would be spawned.
+    // Pressed inside `startReview`'s own snapshot read — after the block's
+    // door, which reads one before the branches are seeded, and before the
+    // child would be spawned.
     reviewScene("inst-gap", {
       runs: [{ id: "gap-origin", prompt: "Do it. APPROVE-ME", branch: "uf/repo-good" }],
     });
@@ -509,5 +510,43 @@ describe("a review block whose workflow is halted", () => {
     assert.ok(billed >= 0.02);
     assert.equal(spend.spentUSD.toFixed(4), billed.toFixed(4), "the halted block's reviews are missing from the total");
     assert.equal(spend.unmeasured, silent, "a reviewer killed before it reported reads as a measured $0.00");
+  });
+});
+
+describe("a review block and its workflow's limit", () => {
+  it("counts a finished review in the guard figure while the block is still working", async () => {
+    reviewScene("inst-mid", {
+      runs: [
+        { id: "mid-good", prompt: "Do it. APPROVE-ME", branch: "uf/repo-good" },
+        { id: "mid-slow", prompt: "Do it. SLOW-ONE", branch: "uf/repo-bad" },
+      ],
+    });
+    const driving = workflows.startReviewBlock("inst-mid", "r", ["mid-good", "mid-slow"]);
+    await until("the fast review to be approved", () =>
+      workflows.reviewItemsOf("inst-mid", "r").some((i) => i.origin_run_id === "mid-good" && i.status === "approved"));
+    const midBlock = workflows.instanceSpend("inst-mid");
+    workflows.stopInstance("inst-mid", { kind: "operator" });
+    await settledWithin(driving, 30_000, "startReviewBlock");
+
+    assert.ok(midBlock.spentGuardUSD >= 0.02, `the guard figure mid-block omits a finished review: ${midBlock.spentGuardUSD}`);
+    assert.equal(midBlock.subjects, 1, "the review block is not counted among what pays");
+  });
+
+  it("is held at its boundary rather than starting billed reviews past the limit", async () => {
+    reviewScene("inst-over", {
+      budget: { maxInstanceCostUSD: 0.01 },
+      runs: [
+        { id: "over-good", prompt: "Do it. APPROVE-ME", branch: "uf/repo-good" },
+        { id: "over-spender", prompt: "spent", branch: "uf/repo-good", spent: 1, member: true },
+      ],
+    });
+    await settledWithin(workflows.startReviewBlock("inst-over", "r", ["over-good"]), 30_000, "startReviewBlock");
+
+    assert.deepEqual(reviewsOf("over-good"), [], "a review was started with the workflow $0.99 past its limit");
+    const stored = dbMod
+      .db()
+      .prepare("SELECT status, stop_cause AS cause FROM workflow_instances WHERE id='inst-over'")
+      .get() as { status: string; cause: string };
+    assert.deepEqual(stored, { status: "stopping", cause: "guard" });
   });
 });

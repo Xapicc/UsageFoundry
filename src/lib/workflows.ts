@@ -2626,12 +2626,12 @@ export function instanceSpend(instanceId: string): InstanceSpend {
               COALESCE(SUM(cost_usd_est), 0) AS est,
               COALESCE(SUM(CASE WHEN cost_unreported > 0 THEN 1 ELSE 0 END), 0)
                 AS unreported,
-              -- The two kinds that pay a model for a turn of their own, which
-              -- is the same list the Spent column draws a figure for. A loop
-              -- block spends nothing — every pass is a run, counted above — so
-              -- including it would size the coverage against blocks that were
-              -- never going to report anything.
-              COALESCE(SUM(CASE WHEN kind IN ('orchestrator', 'merge')
+              -- The kinds that pay a model of their own — a deciding turn, a
+              -- resolution, a review — which is the same list the Spent column
+              -- draws a figure for. A loop block spends nothing — every pass is
+              -- a run, counted above — so including it would size the coverage
+              -- against blocks that were never going to report anything.
+              COALESCE(SUM(CASE WHEN kind IN ('orchestrator', 'merge', 'review')
                                 THEN 1 ELSE 0 END), 0) AS paying
          FROM workflow_instance_blocks WHERE instance_id = ?`,
     )
@@ -7205,6 +7205,21 @@ export async function startReviewBlock(
   }
   const fixRounds = node.fixRounds ?? 0;
 
+  // The workflow-wide guard, at this kind of block boundary — and always,
+  // where the merge block's is conditional: every branch handed to this block
+  // is a billed review, so there is no free case to let through.
+  let guardNote: string | null = null;
+  const guard = enforceInstanceBudgetForBlock(instanceId, await currentSnapshot());
+  if (guard?.kind === "halted") return;
+  if (guard?.kind === "unenforceable") {
+    // Logged rather than acted on, the same answer `startBlockTurn` gives.
+    guardNote = `Its workflow has a limit that could not be read here: ${guard.verdict.reason}`;
+  }
+  // Re-read after the snapshot: a halt that closed the door meanwhile has
+  // already written this block off, and seeding its branches would draw a
+  // review on the page that never happened.
+  if (!reviewStillOpen(instanceId, nodeId)) return;
+
   // Seeded once. `INSERT OR IGNORE` because a retried block finds its rows.
   const now = Date.now();
   runIds.forEach((runId, position) => {
@@ -7233,16 +7248,23 @@ export async function startReviewBlock(
   if (!reviewStillOpen(instanceId, nodeId)) return;
   const items = reviewItemsOf(instanceId, nodeId);
   // No cost here: `bankReviewSpend` put each review's on the row as it ended.
-  finishMergeBlock(instanceId, nodeId, {
-    ok: true,
-    note: reviewBlockSummary(
-      items.map((item) => ({
-        branch: branchLabel(item.origin_run_id),
-        status: item.status,
-        note: item.note,
-      })),
+  finishMergeBlock(
+    instanceId,
+    nodeId,
+    withNote(
+      {
+        ok: true,
+        note: reviewBlockSummary(
+          items.map((item) => ({
+            branch: branchLabel(item.origin_run_id),
+            status: item.status,
+            note: item.note,
+          })),
+        ),
+      },
+      guardNote,
     ),
-  });
+  );
 }
 
 /**
