@@ -12,6 +12,7 @@ import type {
 } from "@/lib/apiTypes";
 import { fmtDateTime, fmtUSD, pollFailureMessage } from "@/lib/format";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
+import { startPoll } from "@/lib/poll";
 import { landCardLine, purgeLabel, purgeSheetText } from "@/lib/landView";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonRow } from "@/components/ui/Button";
@@ -276,8 +277,7 @@ export function RunLand({ run }: { run: RunDTO }) {
   const resolving = resolution?.status === "running" || branchResolving;
   useEffect(() => {
     if (!resolving) return;
-    const t = setInterval(() => void load(), 3000);
-    return () => clearInterval(t);
+    return startPoll(load, 3000);
   }, [resolving, load]);
 
   async function act(action: "land" | "delete" | "resolve" | "commit" | "purge") {

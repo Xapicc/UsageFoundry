@@ -10,6 +10,7 @@ import {
   pollFailureMessage,
 } from "@/lib/format";
 import { jsonRequest } from "@/lib/jsonRequest";
+import { startPoll } from "@/lib/poll";
 import { Meter } from "@/components/Meter";
 import { Badge } from "@/components/ui/Badge";
 import { Empty } from "@/components/ui/Card";
@@ -94,12 +95,14 @@ export function RunAgentCost({
       setError(null);
       setRead(true);
     };
-    void load();
-    if (!active) return () => void (alive = false);
-    const t = setInterval(() => void load(), POLL_MS);
+    if (!active) {
+      void load();
+      return () => void (alive = false);
+    }
+    const stop = startPoll(load, POLL_MS);
     return () => {
       alive = false;
-      clearInterval(t);
+      stop();
     };
   }, [runId, active]);
 

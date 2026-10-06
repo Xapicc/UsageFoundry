@@ -22,6 +22,7 @@ import {
 } from "@/lib/format";
 import { worstCaseRuns } from "@/lib/canvasGraph";
 import { jsonRequest } from "@/lib/jsonRequest";
+import { startPoll } from "@/lib/poll";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonLink, ButtonRow } from "@/components/ui/Button";
 import { Card, CardTitle, Empty, SkeletonText } from "@/components/ui/Card";
@@ -184,11 +185,7 @@ export default function WorkflowPage() {
   // Stepping the history re-arms the poll on the page being read, which is the
   // point of it: the newest page is what changes on its own, and an older one is
   // still worth keeping current while somebody has it open.
-  useEffect(() => {
-    load();
-    const poll = setInterval(load, POLL_MS);
-    return () => clearInterval(poll);
-  }, [load]);
+  useEffect(() => startPoll(load, POLL_MS), [load]);
 
   useEffect(() => {
     // Through `jsonRequest` because a 401 or a 500 with a body resolves

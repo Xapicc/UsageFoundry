@@ -32,6 +32,7 @@ import {
   type JsonFailure,
   type JsonResult,
 } from "@/lib/jsonRequest";
+import { startPoll } from "@/lib/poll";
 import {
   ClosedTasksChart,
   OpenTasksChart,
@@ -399,11 +400,7 @@ export default function TasksPage() {
     setLoaded(true);
   }, []);
 
-  useEffect(() => {
-    void load();
-    const poll = setInterval(() => void load(), POLL_MS);
-    return () => clearInterval(poll);
-  }, [load]);
+  useEffect(() => startPoll(load, POLL_MS), [load]);
 
   /** Every project the board actually names, newest label wins. */
   const places = useMemo(() => {

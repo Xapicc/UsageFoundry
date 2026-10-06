@@ -17,6 +17,7 @@ import type {
 import { RUN_PROVIDER_LABEL } from "@/lib/apiTypes";
 import { chatRequest } from "@/lib/chatRequest";
 import { mergeMessages, threadItems, turnStartInstant } from "@/lib/chatThread";
+import { startPoll } from "@/lib/poll";
 import {
   describeAmbientAgents,
   fmtDateTime,
@@ -513,7 +514,7 @@ export default function ChatPage() {
       if (data.chats) setChats(data.chats);
       setPollError(null);
     } catch (err) {
-      // `void load(id)` from an interval: without this the rejection is an
+      // `void load(id)` from a click: without this the rejection is an
       // unhandled one and, again, nothing on screen changes.
       const cause = err instanceof Error ? err.message : String(err);
       setPollError(pollFailureMessage(null, cause));
@@ -579,10 +580,6 @@ export default function ChatPage() {
     cursor.current = { chatId, seq: chat?.messages.at(-1)?.seq ?? 0 };
   }, [chatId, chat]);
 
-  useEffect(() => {
-    void load(null);
-  }, [load]);
-
   // Once, and deliberately not on the poll: the registry changes when somebody
   // edits it on another page, which is not something this composer has to track
   // between keystrokes. A failure is swallowed for the reason stated where the
@@ -608,7 +605,9 @@ export default function ChatPage() {
   // No `if (!chatId) return`: a first load that fails leaves no thread to poll
   // for, so the guard that used to stand here meant the page never tried again
   // and the failure notice stood for ever. The cadence is unchanged — with no
-  // thread there is no `thinking` status, so this is the idle timer.
+  // thread there is no `thinking` status, so this is the idle timer. It is the
+  // page's first read as well: `startPoll` loads at once, and a mount effect of
+  // its own beside it would put two requests for the same list out together.
   //
   // **A chat waiting on an answer stays on the idle period, and that is a
   // decision rather than an omission.** The fast cadence exists to catch a turn
@@ -620,8 +619,7 @@ export default function ChatPage() {
   // nothing to do with this conversation — so ten seconds, not never.
   useEffect(() => {
     const period = chat?.status === "thinking" ? POLL_ACTIVE_MS : POLL_IDLE_MS;
-    const t = setInterval(() => void load(chatId), period);
-    return () => clearInterval(t);
+    return startPoll(() => load(chatId), period);
   }, [chatId, chat?.status, load]);
 
   const scrollToLatest = useCallback((smooth: boolean) => {

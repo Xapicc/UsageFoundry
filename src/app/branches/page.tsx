@@ -25,6 +25,7 @@ import {
   type BadgeTone,
 } from "@/lib/format";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
+import { startPoll } from "@/lib/poll";
 import { nextStrategyChoice, purgeLabel, strategyToSend } from "@/lib/landView";
 import { CommitAction, UncommittedNote } from "@/components/BranchWork";
 import { Badge } from "@/components/ui/Badge";
@@ -846,16 +847,13 @@ export default function Branches() {
     }
   }, []);
 
-  // Two effects rather than one: `load` changes identity whenever the filter or
-  // the page does, and re-reading the queue for a page change would poll a route
-  // this page is deliberately careful about.
+  // The queue's first read is its poll's, below, rather than one here: `load`
+  // changes identity whenever the filter or the page does, and re-reading the
+  // queue for a page change would poll a route this page is deliberately
+  // careful about.
   useEffect(() => {
     void load();
   }, [load]);
-
-  useEffect(() => {
-    void loadQueue();
-  }, [loadQueue]);
 
   // Keyed on the count as well as the switch, so a batch that finishes while the
   // disclosure is open moves into the list it now belongs to instead of being
@@ -874,13 +872,10 @@ export default function Branches() {
     !!queue &&
     (queue.working || queueItems.some((i) => ITEM_ACTIVE.includes(i.status)));
 
-  useEffect(() => {
-    const t = setInterval(
-      () => void loadQueue(),
-      queueActive ? QUEUE_POLL_MS : QUEUE_IDLE_POLL_MS,
-    );
-    return () => clearInterval(t);
-  }, [queueActive, loadQueue]);
+  useEffect(
+    () => startPoll(loadQueue, queueActive ? QUEUE_POLL_MS : QUEUE_IDLE_POLL_MS),
+    [queueActive, loadQueue],
+  );
 
   // Every state in the inventory can have moved by the time the queue stops, and
   // it is far too expensive to poll alongside it. Re-read it once, on the edge.

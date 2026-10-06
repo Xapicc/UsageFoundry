@@ -21,6 +21,7 @@ import { ListView, STICKY_HEAD } from "@/components/ui/ListView";
 import { Notice } from "@/components/ui/Notice";
 import { prunerLine } from "@/lib/pruneStatement";
 import { windowCardNotes } from "@/lib/windowCardNotes";
+import { startPoll } from "@/lib/poll";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { TBody, THead, Table, Td, Th, Tr } from "@/components/ui/Table";
 import { PERIOD_OPTIONS, UsagePeriods } from "@/components/UsagePeriods";
@@ -370,11 +371,10 @@ export default function Dashboard() {
         }
       }
     };
-    load();
-    const t = setInterval(load, working ? POLL_WORKING_MS : POLL_IDLE_MS);
+    const stop = startPoll(load, working ? POLL_WORKING_MS : POLL_IDLE_MS);
     return () => {
       alive = false;
-      clearInterval(t);
+      stop();
     };
   }, [working]);
 
