@@ -25,6 +25,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - A shutdown accounts for the cycles it kills, and it is the only reason the process lingers. (was line 16)
   - Nothing new starts
   - Every `running` row is interrupted rather than merely signalled
+  - Interrupting a row does not decide its ending, so the flag is the loop's to write
   - The children that are not work cycles get the same ladder
   - The loops are given a bounded grace
   - A land in flight at the signal is waited for in that same grace, and nothing signals it

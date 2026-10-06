@@ -9361,6 +9361,11 @@ export async function startRun(id: string): Promise<void> {
   /** Set when the run is stepping aside rather than ending. */
   let pausedUntil: number | null = null;
   /**
+   * Whether the ending this loop writes is the shutdown's, which is the only
+   * thing that may set `restart_closed` on it. See `shutdownRuns`.
+   */
+  let closedByRestart = false;
+  /**
    * Whether that park is waiting out a refusal, which is what `refusal_pauses`
    * counts.
    */
@@ -9410,6 +9415,7 @@ export async function startRun(id: string): Promise<void> {
     stopReason = outcome.reason;
     finalStatus = outcome.status;
     pausedUntil = outcome.resumeAt;
+    closedByRestart = it.kind === "shutdown";
   };
 
   // Registered on the line before the `try`, so its `finally` is what takes it
@@ -11116,6 +11122,7 @@ export async function startRun(id: string): Promise<void> {
           finished_at: Date.now(),
           exit_code: lastExit,
           resume_at: null,
+          ...(closedByRestart ? { restart_closed: 1 } : {}),
         });
         // Any ending that is not a park ends the wait too: an attachment left
         // standing would park this run at the first cycle boundary after a
@@ -13342,7 +13349,7 @@ export async function shutdownRuns(
   // Ownership, read at the write. The `SELECT` below is install-wide by
   // design — see its own comment — so in a process that does not own this
   // directory the whole of what follows lands on somebody else's live runs:
-  // a `shutdown` event and its outbound webhook, `restart_closed = 1`, and
+  // a `shutdown` event and its outbound webhook, `restart_cut_cycle`, and
   // `active_started_at` cleared on cycles whose agents are still working and
   // still billing. That last one is the serious half and it fails open —
   // `installBudget` and a workflow instance's budget both bound their spend
@@ -13381,8 +13388,17 @@ export async function shutdownRuns(
   // nothing after it can tell: both end `stopped` with the same reason, and the
   // child is gone from `procs` the moment it closes. `cycleCutByRestart` reads
   // it to decide whether a pick-up is told its last cycle was cut off.
-  const markRestartClosed = db().prepare(
-    "UPDATE runs SET restart_closed = 1, restart_cut_cycle = ? WHERE id = ?",
+  //
+  // `restart_closed` is deliberately not written here. Interrupting a row does
+  // not decide its ending: a loop suspended at a cycle boundary — waiting for a
+  // completion verdict, or in its pre-cycle scan with a guard about to refuse —
+  // goes on to the ending it had already earned, DONE, the cycle cap or the
+  // guard's, and flagging it here put a finished run in the restart notice,
+  // whose press re-queued it to work on a task it had completed. The loop sets
+  // the flag when the ending it writes is this interrupt's, and a row whose
+  // loop never gets that far is still `running` for the boot, which flags it.
+  const markCutCycle = db().prepare(
+    "UPDATE runs SET restart_cut_cycle = ? WHERE id = ?",
   );
   for (const { id } of pending) {
     const cutCycle = procs.has(id);
@@ -13392,7 +13408,7 @@ export async function shutdownRuns(
       pause: false,
       at: Date.now(),
     });
-    markRestartClosed.run(cutCycle ? 1 : 0, id);
+    markCutCycle.run(cutCycle ? 1 : 0, id);
   }
 
   // The children that are not work cycles: a review, a resolution, a
@@ -13458,6 +13474,13 @@ export async function shutdownRuns(
 }
 
 /**
+ * The condition `restartClosedRuns` and `restartClosedCount` share, so the
+ * notice's count and the list its press acts on cannot disagree.
+ */
+const RESTART_CLOSED_OUTSTANDING =
+  "restart_closed = 1 AND status IN ('failed', 'stopped') AND set_aside_at IS NULL";
+
+/**
  * Runs a restart closed out and nobody has picked up yet.
  *
  * Two endings produce them and the operator's question covers both: a run the
@@ -13473,15 +13496,22 @@ export async function shutdownRuns(
  * very list, so the filter is also what keeps the press from starting it.
  * Filtered rather than cleared at the door, so putting the run back restores
  * both.
+ *
+ * Only `failed` and `stopped`, the two endings a restart writes, and not
+ * because anything now flags another: until the loop took over setting the
+ * flag, `shutdownRuns` set it on every row it interrupted, and a row whose loop
+ * reached its own ending inside the grace kept it beside `completed`,
+ * `needs-review`, `paused` or `blocked`. Those rows are still on every install
+ * that ran it, and the press would re-queue a finished task.
  */
 export function restartClosedRuns(): RunRow[] {
   return db()
     .prepare(
-      "SELECT * FROM runs WHERE restart_closed = 1 AND set_aside_at IS NULL" +
-        " ORDER BY created_at",
+      `SELECT * FROM runs WHERE ${RESTART_CLOSED_OUTSTANDING} ORDER BY created_at`,
     )
     .all() as RunRow[];
 }
+
 
 /**
  * How many of those are still waiting, without materialising any of them.
@@ -13496,8 +13526,7 @@ export function restartClosedCount(): number {
   return (
     db()
       .prepare(
-        "SELECT COUNT(*) AS n FROM runs WHERE restart_closed = 1" +
-          " AND set_aside_at IS NULL",
+        `SELECT COUNT(*) AS n FROM runs WHERE ${RESTART_CLOSED_OUTSTANDING}`,
       )
       .get() as { n: number }
   ).n;

@@ -57,6 +57,7 @@ const {
   killAllAgents,
   reconcileInterruptedCycles,
   reconcileOnBoot,
+  restartClosedRuns,
   runEvents,
   shutdownRuns,
   startRun,
@@ -124,6 +125,12 @@ function appendTranscript(
 const childProcess = require("node:child_process") as Record<string, unknown>;
 const realSpawn = childProcess.spawn as typeof import("node:child_process").spawn;
 let spawned = 0;
+/**
+ * Whether the next child finishes its cycle on its own, replying DONE, rather
+ * than staying alive until it is signalled. Only the case about a run that
+ * reached its own ending during the grace sets it.
+ */
+let nextChildSaysDone = false;
 
 childProcess.spawn = () => {
   spawned += 1;
@@ -144,6 +151,23 @@ childProcess.spawn = () => {
     },
   });
   stdout.write(`${JSON.stringify({ type: "system", session_id: SESSION })}\n`);
+  if (nextChildSaysDone) {
+    setImmediate(() => {
+      stdout.write(
+        `${JSON.stringify({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          result: "DONE",
+          total_cost_usd: 0.5,
+          session_id: SESSION,
+        })}\n`,
+      );
+      stdout.end();
+      child.emit("exit", 0, null);
+      child.emit("close", 0, null);
+    });
+  }
   return child;
 };
 
@@ -219,6 +243,10 @@ describe("shutting down with a work cycle in flight", () => {
     // finish, and it read as an ordinary stop.
     assert.equal(settled.restart_cut_cycle, 1);
     assert.equal(cycleCutByRestart(settled), true);
+    assert.ok(
+      restartClosedRuns().some((row) => row.id === run.id),
+      "a run whose cycle the shutdown cut off must be offered by the restart notice",
+    );
 
     // One child, not two: the second work cycle its budget allowed must not
     // have been spawned on the way out of the door.
@@ -706,3 +734,68 @@ describe("shutting down with a child that is not a work cycle", () => {
   });
 });
 
+/**
+ * A run that reaches its own ending while the shutdown waits on it.
+ *
+ * The shutdown used to flag every `running` row `restart_closed` the moment it
+ * interrupted it, before that row's loop had ended, and a loop suspended at a
+ * cycle boundary does not end on the interrupt: the verdict wait returns early
+ * and the loop goes on to the ending the cycle earned. So a run whose agent had
+ * replied DONE ended `completed` *and* flagged, the restart notice counted it,
+ * and its one press re-queued a finished task under the pushback prompt — a
+ * billed agent told to keep working on what it had finished.
+ */
+describe("shutting down while a run waits for its completion verdict", () => {
+  it("leaves a run that finished on its own out of the restart notice", async () => {
+    const validating = getSettings().validateTaskCompletion;
+    saveSettings({ validateTaskCompletion: true });
+    nextChildSaysDone = true;
+    try {
+      const run = createRun({
+        folder: "project",
+        mountId: null,
+        prompt: "finish the task",
+        budget: { maxIterations: 5 },
+        origin: "form",
+      });
+      // A validation of a `complete_task` the cycle made, still running: the
+      // verdict the loop waits for at the boundary before it takes the DONE.
+      db()
+        .prepare(
+          "INSERT INTO run_reviews (id, run_id, created_at, status, kind)" +
+            " VALUES (?, ?, ?, 'running', 'validate')",
+        )
+        .run(`validate-${run.id}`, run.id, Date.now());
+      // An earlier case has shut down, so `promoteQueued` refuses.
+      void startRun(run.id);
+      await waitFor(() => {
+        const row = getRun(run.id)!;
+        return row.iterations === 1 && row.active_started_at === null;
+      }, "the cycle to reply DONE");
+      // Past the post-cycle interrupt check and into the verdict wait, whose
+      // first poll is two seconds away.
+      await new Promise((r) => setTimeout(r, 500));
+      assert.equal(getRun(run.id)!.status, "running");
+
+      await shutdownRuns("SIGTERM");
+
+      const settled = getRun(run.id)!;
+      assert.equal(settled.status, "completed");
+      assert.equal(settled.reported_done, 1);
+      assert.equal(
+        settled.restart_closed,
+        0,
+        "a run that reached its own ending was flagged as closed out by the restart",
+      );
+
+      await reconcileOnBoot();
+      assert.ok(
+        !restartClosedRuns().some((row) => row.id === run.id),
+        "the restart notice offers, and its press re-queues, a run that had finished",
+      );
+    } finally {
+      nextChildSaysDone = false;
+      saveSettings({ validateTaskCompletion: validating });
+    }
+  });
+});

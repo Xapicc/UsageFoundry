@@ -170,6 +170,15 @@
   naming the dollars. The task's own reproduction, given an `await`, passed
   too. Caveat: no process was killed; see the open item below.
 
+- **A run that finishes during a shutdown is no longer offered by the
+  restart notice, 2026-10-06**, `shutdown.test.ts`'s eleventh case, a stub
+  child replying DONE and a `running` validation row: at `50d60d8` the run
+  ended `completed` with `restart_closed` 1; with the flag written by the
+  loop's own ending, `completed` and 0, and the task's own reproduction read
+  a count of 0 and `{"reopened":0}`. Caveat: no built server was signalled,
+  and a guard's refusal reached in the pre-cycle scan during a shutdown was
+  reasoned about, not reproduced.
+
 ## Not yet verified by hand
 
 - **The `chat_proposals` rebuild on a real upgraded volume**, in a running
