@@ -7,7 +7,8 @@ import { after, beforeEach, describe, it } from "node:test";
 
 /**
  * Covers a run's own checkout left part-way through a rebase or a bisect of its
- * branch, and only that.
+ * branch, and only that — what each door does with it, and what the Land card
+ * and the branches row say about it before any door is pressed.
  *
  * An agent that runs `git rebase main` in its slot and stops on a conflict ends
  * the run there, and both operations detach HEAD — so `worktree list` lists the
@@ -231,5 +232,116 @@ describe("a run's checkout stopped part-way through a rebase of its branch", () 
     assert.equal(branchExists(s.repo, s.branch), true);
     assert.equal(fs.existsSync(mine), true, "somebody else's checkout was removed");
     assert.equal(headOf(mine), "HEAD", "somebody else's rebase was ended");
+  });
+});
+
+describe("what a checkout stopped mid-operation says before any button is pressed", () => {
+  /**
+   * The doors above each refuse by name, and an operator only meets that by
+   * pressing one. The state was invisible beforehand because both reads asked
+   * "which branch does this checkout hold" and a detached HEAD holds none:
+   * `pendingWork` returned null for it, so the Land card drew nothing, and the
+   * inventory's holder map came from `worktree list`'s `branch` lines, so the
+   * row never probed it.
+   */
+  const rowOf = async (runId: string) => {
+    const inventory = await land.branchInventory();
+    const row = inventory.branches.find((b) => b.runId === runId);
+    assert.ok(row, "the run has no row on the branches page");
+    return row;
+  };
+
+  it("is on the Land card as a rebase, and is not a merge", async () => {
+    const s = scene("card-rebase");
+    rebaseStops(s.slot);
+
+    const state = await land.landState(s.runId);
+
+    assert.ok(state?.pending, "the card draws nothing for a checkout stopped mid-rebase");
+    assert.equal(state.pending.operation, "rebase");
+    assert.equal(state.pending.path, s.slot);
+    assert.equal(state.pending.readable, true);
+    // The conflicted path is the rebase's, and `git merge --abort` is not what
+    // ends it: the card must not offer the mid-merge sentence for it.
+    assert.equal(state.pending.merging, false, "a rebase's unmerged path was read as a merge");
+    assert.deepEqual(
+      state.pending.files.map((f) => f.path),
+      ["shared.txt"],
+    );
+  });
+
+  it("is on the Land card as a bisect, with nothing uncommitted listed", async () => {
+    const s = scene("card-bisect");
+    for (const n of [1, 2, 3]) {
+      fs.writeFileSync(path.join(s.slot, "shared.txt"), `step ${n}\n`);
+      fixtureGit(s.slot, ["commit", "-qam", `step ${n}`]);
+    }
+    fixtureGit(s.slot, ["bisect", "start", s.branch, `${s.branch}~4`]);
+
+    const state = await land.landState(s.runId);
+
+    // A clean tree under a bisect is still news: the state itself is what the
+    // card exists to say, so an empty list must not make it silent.
+    assert.ok(state?.pending, "a bisect over a clean tree drew nothing");
+    assert.equal(state.pending.operation, "bisect");
+    assert.equal(state.pending.count, 0);
+  });
+
+  it("is on the branches row, and the row is not mid-merge", async () => {
+    const s = scene("row-rebase");
+    rebaseStops(s.slot);
+
+    const row = await rowOf(s.runId);
+
+    assert.equal(row.operation, "rebase");
+    assert.equal(row.heldByCheckout, true, "git's own refusal counts this checkout as holding it");
+    assert.equal(row.uncommitted, 1);
+    assert.equal(row.merging, false, "a rebase's unmerged path was read as a merge");
+  });
+
+  it("is on the branches row as a bisect", async () => {
+    const s = scene("row-bisect");
+    for (const n of [1, 2, 3]) {
+      fs.writeFileSync(path.join(s.slot, "shared.txt"), `step ${n}\n`);
+      fixtureGit(s.slot, ["commit", "-qam", `step ${n}`]);
+    }
+    fixtureGit(s.slot, ["bisect", "start", s.branch, `${s.branch}~4`]);
+
+    const row = await rowOf(s.runId);
+
+    assert.equal(row.operation, "bisect");
+    assert.equal(row.uncommitted, 0);
+  });
+
+  it("says nothing of an operation for a checkout that is on its branch", async () => {
+    // The control: an ordinary slot with work uncommitted in it is still
+    // pending work and still has a row count, and neither carries an operation.
+    const s = scene("plain");
+    fs.writeFileSync(path.join(s.slot, "new.txt"), "unsaved\n");
+
+    const state = await land.landState(s.runId);
+    assert.equal(state?.pending?.operation, null);
+    assert.equal(state?.pending?.count, 1);
+
+    const row = await rowOf(s.runId);
+    assert.equal(row.operation, null);
+    assert.equal(row.heldByCheckout, true);
+    assert.equal(row.uncommitted, 1);
+  });
+
+  it("does not call a plain detached HEAD an operation", async () => {
+    // `git checkout <sha>` detaches the slot with nothing in progress, so there
+    // is no rebase or bisect to name and the row must not claim one — nor a
+    // holder, since git does not count a detached checkout as one.
+    const s = scene("detached");
+    fixtureGit(s.slot, ["checkout", "-q", "--detach"]);
+    assert.equal(headOf(s.slot), "HEAD");
+
+    const row = await rowOf(s.runId);
+    assert.equal(row.operation, null);
+    assert.equal(row.heldByCheckout, false);
+    assert.equal(row.uncommitted, null);
+
+    assert.equal((await land.landState(s.runId))?.pending, null);
   });
 });

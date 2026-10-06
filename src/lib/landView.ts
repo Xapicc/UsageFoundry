@@ -1,4 +1,4 @@
-import type { LandStateDTO, MergeStrategyDTO } from "./apiTypes";
+import type { LandStateDTO, MergeStrategyDTO, SlotOperationDTO } from "./apiTypes";
 
 /**
  * What the Land card and the branches page draw about landing, decided where a
@@ -10,6 +10,16 @@ import type { LandStateDTO, MergeStrategyDTO } from "./apiTypes";
  * commit count nobody measured. Nothing throws and nothing fails to typecheck,
  * so the decision lives outside the components that render it.
  */
+
+/**
+ * What ends each operation and gives the checkout its branch back. Here rather
+ * than in `land.ts` because the Land card names it too, and that file cannot
+ * reach a client bundle.
+ */
+export const OPERATION_ENDED_BY: Record<SlotOperationDTO, string> = {
+  rebase: "git rebase --abort",
+  bisect: "git bisect reset",
+};
 
 /** When and how this run was last landed, as `runs` recorded it. */
 export interface LandedRecord {

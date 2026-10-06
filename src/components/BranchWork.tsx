@@ -38,10 +38,18 @@ export function UncommittedNote({ branch }: { branch: BranchSummaryDTO }) {
           only way to find out. "Mid-merge" is `RunLand`'s word for the same
           checkout, not a new one; the fix is on the run's own card, which the
           branch name links to. Drawn whatever the count, because a merge whose
-          paths are all staged is still one. */}
+          paths are all staged is still one. A stopped rebase or bisect is the
+          other such state, and its own word: `git merge --abort` is not what
+          ends it, and the card names what does. Drawn whatever the count, as a
+          bisect over a clean tree has none. */}
       {branch.merging && (
         <div className="mt-1 text-balance text-2xs font-semibold uppercase tracking-wide text-warn">
           Mid-merge, so no Commit
+        </div>
+      )}
+      {branch.operation && (
+        <div className="mt-1 text-balance text-2xs font-semibold uppercase tracking-wide text-warn">
+          Mid-{branch.operation}, so no Commit
         </div>
       )}
     </>
@@ -80,8 +88,10 @@ function CountNote({ branch }: { branch: BranchSummaryDTO }) {
  *
  * Nor on a checkout seen mid-merge, which `commitRefusal` refuses and the Land
  * card does not draw a button for: a Commit there would put the half-done merge
- * on the branch. Withheld only on a positive reading — `merging` false is also
- * what an unprobed row says, and that row keeps its door.
+ * on the branch. The same for one stopped mid-rebase or mid-bisect, which
+ * detaches HEAD and so has no branch to commit to. Withheld only on a positive
+ * reading — `merging` false and `operation` null are also what an unprobed row
+ * says, and that row keeps its door.
  */
 export function offersCommit(branch: BranchSummaryDTO): boolean {
   return (
@@ -89,6 +99,7 @@ export function offersCommit(branch: BranchSummaryDTO): boolean {
     !branch.active &&
     branch.heldByCheckout &&
     !branch.merging &&
+    !branch.operation &&
     branch.uncommitted !== 0
   );
 }

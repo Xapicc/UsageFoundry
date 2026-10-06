@@ -13,7 +13,7 @@ import type {
 import { fmtDateTime, fmtUSD, pollFailureMessage } from "@/lib/format";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
 import { startPoll } from "@/lib/poll";
-import { landCardLine, purgeLabel, purgeSheetText } from "@/lib/landView";
+import { OPERATION_ENDED_BY, landCardLine, purgeLabel, purgeSheetText } from "@/lib/landView";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonRow } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
@@ -122,6 +122,7 @@ function ConflictFile({ file }: { file: ConflictFileDTO }) {
  */
 function PendingWork({
   pending,
+  branch,
   resolving,
   busy,
   message,
@@ -129,6 +130,7 @@ function PendingWork({
   onCommit,
 }: {
   pending: NonNullable<LandStateDTO["pending"]>;
+  branch: string;
   /** A conflict resolution is working, and what is listed is its open merge. */
   resolving: boolean;
   busy: boolean;
@@ -141,10 +143,29 @@ function PendingWork({
   return (
     <div className="mt-3 border-t border-line pt-3">
       {/* The same list the Changes tab heads, under the same words: this is an
-          isolated run, so it is always the checkout branch of that pair. */}
-      <div className="mb-1.5 text-xs font-semibold text-ink">
-        Uncommitted in the checkout
-      </div>
+          isolated run, so it is always the checkout branch of that pair. A
+          checkout stopped mid-rebase or mid-bisect is on no branch, so the
+          state is the heading instead, there may be nothing uncommitted at
+          all, and the Commit row below is withheld as it is for a merge. */}
+      {pending.operation ? (
+        <>
+          <div className="mb-1.5 text-xs font-semibold text-ink">
+            Its checkout is part-way through a {pending.operation} of{" "}
+            <span className="mono break-all">{branch}</span>
+          </div>
+          <Hint tone="warn">
+            Run{" "}
+            <span className="mono whitespace-nowrap">
+              {OPERATION_ENDED_BY[pending.operation]}
+            </span>{" "}
+            in this checkout, or finish it, and Commit is offered again
+          </Hint>
+        </>
+      ) : (
+        <div className="mb-1.5 text-xs font-semibold text-ink">
+          Uncommitted in the checkout
+        </div>
+      )}
 
       {!pending.readable ? (
         <Hint tone="warn">
@@ -173,7 +194,7 @@ function PendingWork({
               resolution's conflict markers reached the branch and then the
               target, so the button is not drawn rather than drawn to be
               refused; `commitRefusal` refuses both all the same. */}
-          {resolving ? (
+          {pending.operation ? null : resolving ? (
             <Hint>Claude is resolving conflicts in this checkout</Hint>
           ) : pending.merging ? (
             <Hint tone="warn">
@@ -540,6 +561,7 @@ export function RunLand({ run }: { run: RunDTO }) {
       {state.pending && (
         <PendingWork
           pending={state.pending}
+          branch={state.branch}
           resolving={resolving}
           busy={busy}
           message={message}

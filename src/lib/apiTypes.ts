@@ -3012,6 +3012,12 @@ export interface PendingChangeDTO {
   code: string;
 }
 
+/**
+ * What a run's checkout is part-way through on its own branch. Either one
+ * detaches HEAD, which is why the checkout reads as holding no branch at all.
+ */
+export type SlotOperationDTO = "rebase" | "bisect";
+
 export interface PendingWorkDTO {
   path: string;
   /** Every changed path, including the ones `files` leaves out. */
@@ -3021,6 +3027,13 @@ export interface PendingWorkDTO {
   readable: boolean;
   /** Mid-merge, so the listed paths are a resolution's half-done work and never committed. */
   merging: boolean;
+  /**
+   * Part-way through a rebase or bisect of the run's branch. Set even when
+   * nothing is uncommitted, and never together with `merging`: the unmerged
+   * paths of a stopped rebase are the rebase's, and `git merge --abort` is not
+   * what ends it.
+   */
+  operation: SlotOperationDTO | null;
   /** The run's task as a commit subject, offered as the default. */
   suggestedMessage: string;
 }
@@ -3181,6 +3194,12 @@ export interface BranchSummaryDTO {
    * could not say — and never a claim about what else is in the checkout.
    */
   merging: boolean;
+  /**
+   * The checkout is part-way through a rebase or bisect of this branch — the
+   * other state `commitRefusal` refuses. Seen only on a probed row, so null is
+   * "not seen" and never a claim that nothing is in progress.
+   */
+  operation: SlotOperationDTO | null;
   exists: boolean;
   /** The producing run can still commit to it. */
   active: boolean;

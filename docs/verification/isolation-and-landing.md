@@ -114,6 +114,21 @@
   at one delay. `finishCutOffCheckout` was run against the constructed state in
   `cutOffCheckout.test.ts`, not against this one.
 
+- **A run's slot stopped mid-rebase or mid-bisect is named on the Land card and
+  the branches row, 2026-10-06**, git 2.39.5, standalone build of the working
+  tree over a scratch `DATA_DIR`, three completed runs each with a real repository
+  and slot: `git rebase main` stopped on a conflict, `git bisect start` over a
+  clean tree, and an ordinary slot with one untracked file. `GET /api/branches`
+  answered `operation: "rebase"` (1 uncommitted, `merging: false`), `"bisect"`
+  (0) and `null`, all three `heldByCheckout: true`. `/runs/[id]` under Land, at
+  390px and 1280px, drew "Its checkout is part-way through a rebase of
+  uf/rebasing" with `git rebase --abort` beneath it, `UU shared.txt` listed and
+  no Commit; the bisect one drew `git bisect reset` over an empty list; the
+  ordinary one kept "Uncommitted in the checkout" and Commit. `/branches` drew
+  "Mid-rebase, so no Commit" and "Mid-bisect, so no Commit", and one Commit
+  button, on the ordinary row. No sideways scroll on the rebasing card at 390px. Caveat: the probe was
+  not driven past `MAX_PENDING_PROBES`, and only the light skin was seen.
+
 ## Not yet verified by hand
 
 - **The Land verify field was never saved**, so its check covers the form, not

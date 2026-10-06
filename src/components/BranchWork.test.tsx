@@ -29,6 +29,7 @@ function branch(over: Partial<BranchSummaryDTO> = {}): BranchSummaryDTO {
     uncommitted: 0,
     heldByCheckout: true,
     merging: false,
+    operation: null,
     exists: true,
     active: false,
     landedAt: null,
@@ -105,5 +106,34 @@ test("a checkout left mid-merge draws no Commit, and the row says why", () => {
     renderToStaticMarkup(<UncommittedNote branch={branch({ uncommitted: 0, merging: true })} />),
     /mid-merge/i,
     "a merge with nothing left to stage is still a merge",
+  );
+});
+
+test("a checkout left mid-rebase draws no Commit, and the row names the rebase", () => {
+  // `commitRefusal` refuses it too, naming the rebase and the command that ends
+  // it; the row drew Commit anyway, so the refusal was found by pressing. Not
+  // "mid-merge": `git merge --abort` is the wrong way out of a rebase, and the
+  // two states are told apart by what the row says.
+  const midRebase = branch({ uncommitted: 1, operation: "rebase" });
+  const commit = (b: BranchSummaryDTO) =>
+    renderToStaticMarkup(<CommitAction branch={b} working={false} onCommit={() => {}} />);
+
+  assert.equal(commit(midRebase), "", "a checkout mid-rebase was offered Commit");
+  assert.equal(
+    commit(branch({ uncommitted: null, operation: "bisect" })),
+    "",
+    "an unread count does not bring Commit back on a checkout seen mid-bisect",
+  );
+  assert.equal(offersCommit(midRebase), false);
+
+  const note = renderToStaticMarkup(<UncommittedNote branch={midRebase} />);
+  assert.match(note, /mid-rebase/i, "the row does not say why Commit is missing");
+  assert.doesNotMatch(note, /merge/i, "a rebase was described as a merge");
+  assert.match(
+    renderToStaticMarkup(
+      <UncommittedNote branch={branch({ uncommitted: 0, operation: "bisect" })} />,
+    ),
+    /mid-bisect/i,
+    "a bisect over a clean tree is still a bisect",
   );
 });

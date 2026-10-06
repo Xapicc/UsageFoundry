@@ -16,6 +16,7 @@ import {
   type CertificationState,
 } from "./localCertification";
 import { localRunsOnBranch } from "./localProvider";
+import { OPERATION_ENDED_BY } from "./landView";
 import {
   assistRefusal,
   assistRunning,
@@ -183,6 +184,14 @@ export interface PendingWork {
    * markers and all, and `commitRefusal` will not commit it.
    */
   merging: boolean;
+  /**
+   * The checkout is part-way through a rebase or bisect of the run's branch.
+   * Either detaches HEAD, so this is what keeps the card from drawing nothing
+   * for a slot that is still the run's own; `commitRefusal` refuses it, so the
+   * card offers no Commit. Set even with nothing uncommitted, and never with
+   * `merging` — the unmerged paths of a stopped rebase are the rebase's.
+   */
+  operation: BranchInOperation["operation"] | null;
   /** The run's task as a commit subject, offered as the default. */
   suggestedMessage: string;
 }
@@ -3361,11 +3370,18 @@ async function slotState(run: RunRow): Promise<SlotState> {
   // call it gone and the verify gate call it taken over.
   if (headReadable && !checkedOutBranch && run.worktree_branch) {
     const mid = await slotMidOperation(slot, run.worktree_branch);
+    // What is uncommitted there is read only once the slot is known to be
+    // mid-operation: it is what Purge would remove with the checkout, and the
+    // card says so. A plain detached HEAD still reports nothing, as before.
+    const status =
+      mid.ok && mid.operation
+        ? await git(slot, ["status", "--porcelain", "-z"], { ...NO_CLOCK, trim: false })
+        : null;
     return {
       path: slot,
       checkedOutBranch: null,
-      readable: mid.ok,
-      files: [],
+      readable: mid.ok && (status === null || status.ok),
+      files: status?.ok ? parseStatusZ(status.stdout) : [],
       mergeInProgress: false,
       operation: mid.ok ? mid.operation : null,
     };
@@ -3402,10 +3418,15 @@ async function slotState(run: RunRow): Promise<SlotState> {
 /** What the land card shows about uncommitted work, or nothing to show. */
 async function pendingWork(run: RunRow): Promise<PendingWork | null> {
   const slot = await slotState(run);
-  if (!slot.path || slot.checkedOutBranch !== run.worktree_branch) return null;
-  // An unreadable status still surfaces: "we could not tell" and "there is
-  // nothing there" are different sentences, and only the second one is silence.
-  if (slot.readable && slot.files.length === 0) return null;
+  if (!slot.path) return null;
+  // A slot mid-operation is detached, so the branch comparison below would drop
+  // it, and it is still this run's — the state is the news, whatever is in it.
+  if (!slot.operation) {
+    if (slot.checkedOutBranch !== run.worktree_branch) return null;
+    // An unreadable status still surfaces: "we could not tell" and "there is
+    // nothing there" are different sentences, and only the second one is silence.
+    if (slot.readable && slot.files.length === 0) return null;
+  }
 
   return {
     path: slot.path,
@@ -3413,8 +3434,11 @@ async function pendingWork(run: RunRow): Promise<PendingWork | null> {
     files: slot.files.slice(0, MAX_PENDING_FILES),
     readable: slot.readable,
     // Over every path rather than the listed ones: an unmerged file past
-    // `MAX_PENDING_FILES` is still in what a Commit would stage.
-    merging: slot.mergeInProgress || slot.files.some((f) => isUnmerged(f.code)),
+    // `MAX_PENDING_FILES` is still in what a Commit would stage. Not under a
+    // rebase, whose own stop leaves unmerged paths and is ended another way.
+    merging:
+      !slot.operation && (slot.mergeInProgress || slot.files.some((f) => isUnmerged(f.code))),
+    operation: slot.operation,
     suggestedMessage: taskSubject(run),
   };
 }
@@ -4089,18 +4113,32 @@ async function dropBranchConfig(repoRoot: string, branch: string): Promise<strin
  * lists, and `worktree list` already answers for all of them at once.
  */
 async function worktreeBranches(repoRoot: string): Promise<Map<string, string>> {
+  return (await worktreeListing(repoRoot)).held;
+}
+
+/**
+ * `worktreeBranches`, and the checkouts that name no branch at all.
+ *
+ * A rebase or bisect detaches the checkout it stops in, so it never appears in
+ * `held`. The inventory needs the detached ones as well, to know which slots
+ * are worth asking what they are part-way through.
+ */
+async function worktreeListing(
+  repoRoot: string,
+): Promise<{ held: Map<string, string>; detached: Set<string> }> {
   const held = new Map<string, string>();
+  const detached = new Set<string>();
   const list = await git(repoRoot, ["worktree", "list", "--porcelain"]);
-  if (!list.ok) return held;
+  if (!list.ok) return { held, detached };
 
   let current: string | null = null;
   for (const line of list.stdout.split("\n")) {
     if (line.startsWith("worktree ")) current = line.slice("worktree ".length);
     else if (line.startsWith("branch refs/heads/") && current) {
       held.set(line.slice("branch refs/heads/".length), current);
-    }
+    } else if (line === "detached" && current) detached.add(current);
   }
-  return held;
+  return { held, detached };
 }
 
 /** The worktree with this branch checked out, if any is still registered. */
@@ -4128,12 +4166,6 @@ const BRANCH_IN_OPERATION: ReadonlyArray<readonly [string, BranchInOperation["op
   ["rebase-apply/head-name", "rebase"],
   ["BISECT_START", "bisect"],
 ];
-
-/** What ends each operation and gives the checkout its branch back. */
-const OPERATION_ENDED_BY: Record<BranchInOperation["operation"], string> = {
-  rebase: "git rebase --abort",
-  bisect: "git bisect reset",
-};
 
 /**
  * The operation one checkout's git directory is part-way through on this
@@ -4517,6 +4549,13 @@ export interface BranchSummary {
    * could not answer for, which leaves the door to the server's own refusal.
    */
   merging: boolean;
+  /**
+   * The probe found that checkout part-way through a rebase or bisect of this
+   * branch, the other state `commitRefusal` refuses. It counts as holding the
+   * branch (`heldByCheckout`) although `worktree list` shows it detached, and
+   * is never also `merging`. Null is "not seen", as for `merging`.
+   */
+  operation: BranchInOperation["operation"] | null;
   exists: boolean;
   active: boolean;
   landedAt: number | null;
@@ -4913,7 +4952,11 @@ function branchBearingRuns(): Array<BranchCandidate & { createdAt: number }> {
 
 /** A collected branch row, as far as the probe decision needs to see it. */
 export interface ProbeCandidate {
-  /** The checkout still holding this branch, or null when none does. */
+  /**
+   * The checkout worth asking about this branch — the one still holding it, or
+   * the run's own slot when it is detached and may be stopped mid-operation — or
+   * null when there is none.
+   */
   slot: string | null;
 }
 
@@ -4928,9 +4971,10 @@ export interface ProbeCandidate {
  * a function of how the event loop interleaved them — two identical requests
  * answering with `uncommitted` on different branches, with nothing anywhere
  * saying so. Deciding here keeps the cap exact and keeps the answer the one the
- * serial loop gave: the first `limit` rows, in page order, whose branch some
- * checkout still holds. Rows without a checkout are skipped without spending
- * cap, since there is nothing to ask git about.
+ * serial loop gave: the first `limit` rows, in page order, with a checkout to
+ * ask — one still holding the branch, or the run's own slot where it is
+ * detached, which is what a stopped rebase looks like. Rows without one are
+ * skipped without spending cap, since there is nothing to ask git about.
  */
 export function selectProbeTargets(
   rows: readonly ProbeCandidate[],
@@ -4994,8 +5038,14 @@ async function mapWithLimit<T, R>(
 interface PendingBranch extends ProbeCandidate {
   summary: Omit<
     BranchSummary,
-    "ahead" | "uncommitted" | "heldByCheckout" | "merging" | "landedUnchanged"
+    "ahead" | "uncommitted" | "heldByCheckout" | "merging" | "operation" | "landedUnchanged"
   >;
+  /**
+   * Whether `worktree list` shows `slot` holding the branch. False is a detached
+   * slot that is only asked: it counts as holding the branch if the probe finds
+   * it mid-operation on it.
+   */
+  held: boolean;
   repoRoot: string;
   /** See `aheadRangeFor`; null when there is nothing to count. */
   aheadRange: string | null;
@@ -5050,8 +5100,9 @@ export async function branchInventory(
     roots.push(repoRoot);
 
     // One call for the whole repository. Only a branch some checkout still
-    // holds can have uncommitted work of its own to report.
-    const heldBy = await worktreeBranches(repoRoot);
+    // holds can have uncommitted work of its own to report — or a run's own
+    // slot that is detached, which a rebase or bisect leaves it as.
+    const { held: heldBy, detached } = await worktreeListing(repoRoot);
 
     // Name and tip together: the tip is what identifies a squash-landed branch,
     // and asking for it here costs nothing over asking for the name alone.
@@ -5091,12 +5142,21 @@ export async function branchInventory(
       const exists = tips.has(branch);
       const merged = exists && !!target && (mergedByTarget.get(target)?.has(branch) ?? false);
 
+      const holder = (exists ? heldBy.get(branch) : undefined) ?? null;
+      // Compared as `purgeClaimedBranch` compares it: git's own record of the
+      // checkout against the path this run was given, both from `worktree add`.
+      const stopped =
+        exists && !holder && run.worktree_path && detached.has(run.worktree_path)
+          ? run.worktree_path
+          : null;
+
       pending.push({
         repoRoot,
         aheadRange: exists
           ? aheadRangeFor({ target, base: run.worktree_base, branch })
           : null,
-        slot: (exists ? heldBy.get(branch) : undefined) ?? null,
+        slot: holder ?? stopped,
+        held: holder !== null,
         landed: exists ? { tip: tips.get(branch), chain: chainRuns(run) } : null,
         summary: {
           runId: run.id,
@@ -5147,8 +5207,19 @@ export async function branchInventory(
         : false,
     ),
     mapWithLimit(probeTargets, BRANCH_GIT_CONCURRENCY, async (i) => {
-      // Non-null: `selectProbeTargets` picks only rows a checkout holds.
+      // Non-null: `selectProbeTargets` picks only rows with a slot to ask.
       const slot = pending[i].slot!;
+      const { held, summary } = pending[i];
+      // A detached slot is this row's only if it is part-way through a rebase or
+      // bisect of the branch. A plain detached HEAD, or a git directory that
+      // could not be read, holds nothing and answers nothing, as before; the
+      // cap was spent on it, which is what keeps this bounded.
+      let operation: BranchInOperation["operation"] | null = null;
+      if (!held) {
+        const mid = await slotMidOperation(slot, summary.branch);
+        if (!mid.ok || !mid.operation) return null;
+        operation = mid.operation;
+      }
       const [status, mergeHead] = await Promise.all([
         git(slot, ["status", "--porcelain", "-z"], { trim: false }),
         mergeHeadIn(slot),
@@ -5157,14 +5228,24 @@ export async function branchInventory(
       return {
         uncommitted: files ? files.length : null,
         // Either sign alone, as `commitRefusal` reads them: a merge whose paths
-        // were all staged has `MERGE_HEAD` and no unmerged path.
-        merging: mergeHead === true || (files ?? []).some((f) => isUnmerged(f.code)),
+        // were all staged has `MERGE_HEAD` and no unmerged path. Not under a
+        // rebase, whose stop leaves unmerged paths that are not a merge.
+        merging:
+          operation === null &&
+          (mergeHead === true || (files ?? []).some((f) => isUnmerged(f.code))),
+        operation,
       };
     }),
   ]);
 
-  const probedByRow = new Map<number, { uncommitted: number | null; merging: boolean }>();
-  probeTargets.forEach((row, i) => probedByRow.set(row, probed[i]));
+  const probedByRow = new Map<
+    number,
+    { uncommitted: number | null; merging: boolean; operation: BranchInOperation["operation"] | null }
+  >();
+  probeTargets.forEach((row, i) => {
+    const answer = probed[i];
+    if (answer) probedByRow.set(row, answer);
+  });
 
   const branches: BranchSummary[] = pending.map((p, i) => ({
     ...p.summary,
@@ -5173,8 +5254,11 @@ export async function branchInventory(
     // A row nothing probed stays null, which the page reads as "not asked" —
     // the same answer a failed probe gives, and never a claim of clean.
     uncommitted: probedByRow.get(i)?.uncommitted ?? null,
-    heldByCheckout: p.slot !== null,
+    // A detached slot counts once the probe found it mid-operation on the
+    // branch, which is what git itself refuses to delete the branch under.
+    heldByCheckout: p.held || probedByRow.get(i)?.operation != null,
     merging: probedByRow.get(i)?.merging ?? false,
+    operation: probedByRow.get(i)?.operation ?? null,
   }));
 
   // Back into the order the selection listed them in, rather than re-sorted by
