@@ -252,3 +252,193 @@ describe("the chat child's own lookups", () => {
     assert.equal(stacks.chatPath(agents, server), [toolbox, serverDir, "/usr/bin"].join(path.delimiter));
   });
 });
+
+/**
+ * What the chat and block child loads from a file a work cycle can write, once
+ * started (board task `7dd5f973`).
+ *
+ * Each case plants a marker-writing command where a work cycle could put one —
+ * the agents' `HOME`, which the chat inherited as the server's, and a
+ * repository's `.git` — runs what the chat would with `chatEnv()`, and asserts
+ * the command did not run. Each also runs the same thing with the channel open,
+ * so a plant that never fires cannot pass as one that was closed. `chatHome()`
+ * is null in this process, which is not separated, so the chat's own home is
+ * handed in as a scratch directory. git is the real one, found on the `PATH`
+ * this file started with, because the server `PATH` above has a stub `git`.
+ */
+describe("the chat child's own configuration", () => {
+  let agentsHome: string;
+  let chatHome: string;
+  let repo: string;
+  let realGit: string;
+  let userSite: string | null;
+  const savedHome = process.env.HOME;
+
+  const run = (command: string, args: string[], env: NodeJS.ProcessEnv) =>
+    spawnSync(command, args, { cwd: repo, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 20_000 });
+  const ran = (name: string) => fs.existsSync(marker(name));
+  const forget = (...names: string[]) => names.forEach((name) => fs.rmSync(marker(name), { force: true }));
+  const command = (name: string) => writeExecutable(scratch, `${name}.sh`, `#!/bin/sh\n: > "${marker(name)}"\n`);
+
+  before(() => {
+    const startPath = SAVED.find(([key]) => key === "PATH")?.[1] ?? "";
+    const gitOnStartPath = startPath
+      .split(path.delimiter)
+      .filter((dir) => path.isAbsolute(dir))
+      .map((dir) => path.join(dir, "git"))
+      .find((file) => fs.existsSync(file));
+    assert.ok(gitOnStartPath, "no git on this process's PATH");
+    realGit = gitOnStartPath;
+
+    agentsHome = makeDir(scratch, "agents-home");
+    chatHome = makeDir(scratch, "chat-home");
+    fs.writeFileSync(path.join(agentsHome, ".gitconfig"), `[diff]\n\texternal = ${command("home-gitconfig")}\n`);
+    fs.writeFileSync(path.join(agentsHome, ".bashrc"), `: > "${marker("home-bashrc")}"\n`);
+    fs.writeFileSync(path.join(agentsHome, ".profile"), `: > "${marker("home-profile")}"\n`);
+    const site = spawnSync("python3", ["-m", "site", "--user-site"], {
+      env: { ...process.env, HOME: agentsHome },
+      encoding: "utf8",
+    });
+    userSite = site.status === 0 ? site.stdout.trim() : null;
+    if (userSite) {
+      makeDir(userSite);
+      fs.writeFileSync(
+        path.join(userSite, "usercustomize.py"),
+        `open(${JSON.stringify(marker("home-usercustomize"))}, "w").close()\n`,
+      );
+    }
+
+    // Built with an empty HOME and no hooks, then planted: what a work cycle
+    // with a checkout of this repository could leave in its `.git`.
+    repo = makeDir(scratch, "repo");
+    const setup = { ...process.env, HOME: chatHome };
+    fs.writeFileSync(path.join(repo, "f.txt"), "one\n");
+    for (const args of [
+      ["init", "-q"],
+      ["add", "f.txt"],
+      ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "one"],
+      ["config", "core.fsmonitor", command("repo-fsmonitor")],
+    ]) {
+      assert.equal(run(realGit, args, setup).status, 0, `git ${args.join(" ")} failed`);
+    }
+    const hooks = makeDir(repo, ".git", "hooks");
+    fs.copyFileSync(command("repo-post-checkout"), path.join(hooks, "post-checkout"));
+    fs.copyFileSync(command("repo-reference-transaction"), path.join(hooks, "reference-transaction"));
+    fs.writeFileSync(path.join(repo, "f.txt"), "two\n");
+
+    process.env.HOME = agentsHome;
+  });
+
+  after(() => {
+    if (savedHome === undefined) delete process.env.HOME;
+    else process.env.HOME = savedHome;
+  });
+
+  it("does not read the agents' ~/.gitconfig", () => {
+    forget("home-gitconfig");
+    run(realGit, ["diff"], chat.chatEnv(null));
+    assert.equal(ran("home-gitconfig"), true, "the planted diff.external never ran, so this measures nothing");
+
+    forget("home-gitconfig");
+    const result = run(realGit, ["diff"], chat.chatEnv(chatHome));
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(ran("home-gitconfig"), false, "git in the chat child ran a command from the agents' ~/.gitconfig");
+  });
+
+  it("does not run the agents' ~/.bashrc or ~/.profile when its Bash tool snapshots the shell", () => {
+    // The pinned CLI's snapshot, as read out of 2.1.280: `bash -c -l` over a
+    // script that sources the rc file it resolved from `HOME`.
+    const snapshot = ["-c", "-l", '[ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"; true'];
+    forget("home-bashrc", "home-profile");
+    run("bash", snapshot, chat.chatEnv(null));
+    assert.equal(ran("home-bashrc") && ran("home-profile"), true, "the planted rc files never ran");
+
+    forget("home-bashrc", "home-profile");
+    run("bash", snapshot, chat.chatEnv(chatHome));
+    assert.equal(ran("home-bashrc"), false, "the chat child's shell ran the agents' ~/.bashrc");
+    assert.equal(ran("home-profile"), false, "the chat child's login shell ran the agents' ~/.profile");
+  });
+
+  it("does not run a usercustomize from the agents' Python user site", (t) => {
+    if (!userSite) return t.skip("no python3 here");
+    forget("home-usercustomize");
+    run("python3", ["-c", "pass"], chat.chatEnv(null));
+    assert.equal(ran("home-usercustomize"), true, "the planted usercustomize never ran");
+
+    forget("home-usercustomize");
+    run("python3", ["-c", "pass"], chat.chatEnv(chatHome));
+    assert.equal(ran("home-usercustomize"), false, "python3 in the chat child ran the agents' usercustomize.py");
+  });
+
+  it("clears a repository's core.fsmonitor and hooks for every git it runs", () => {
+    const repoMarkers = ["repo-fsmonitor", "repo-post-checkout", "repo-reference-transaction"];
+    // The same environment with its git block switched off is the channel open.
+    forget(...repoMarkers);
+    run(realGit, ["status"], { ...chat.chatEnv(chatHome), GIT_CONFIG_COUNT: "0" });
+    run(realGit, ["checkout", "-q", "-b", "open"], { ...chat.chatEnv(chatHome), GIT_CONFIG_COUNT: "0" });
+    assert.deepEqual(repoMarkers.filter(ran), repoMarkers, "a planted repository command never ran");
+
+    forget(...repoMarkers);
+    const status = run(realGit, ["status"], chat.chatEnv(chatHome));
+    const checkout = run(realGit, ["checkout", "-q", "-b", "closed"], chat.chatEnv(chatHome));
+    assert.equal(status.status, 0, status.stderr);
+    assert.equal(checkout.status, 0, checkout.stderr);
+    assert.deepEqual(repoMarkers.filter(ran), [], "git in the chat child ran a command from the repository's .git");
+  });
+
+  it("drops every variable naming a path in the agents' HOME, and keeps the Claude config directory", () => {
+    const env = chat.chatHomeEnv(
+      {
+        NODE_ENV: "test",
+        HOME: "/home/agent/",
+        GOCACHE: "/home/agent/go/build-cache",
+        UV_TOOL_DIR: "/home/agent/pytools/tools",
+        PYTHONPATH: "/opt/lib:/home/agent/lib",
+        XDG_CONFIG_HOME: "/home/agent",
+        SIBLING: "/home/agent2/x",
+        PLAIN: "1",
+        PATH: "/home/agent/bin:/usr/bin",
+        CLAUDE_CONFIG_DIR: "/home/agent/.claude",
+        CLAUDE_HOME: "/home/agent/.claude",
+      },
+      "/run/chat-home",
+    );
+    assert.deepEqual(env, {
+      NODE_ENV: "test",
+      HOME: "/run/chat-home",
+      SIBLING: "/home/agent2/x",
+      PLAIN: "1",
+      // `chatPath()`'s to decide, and a list rule would take the whole of it.
+      PATH: "/home/agent/bin:/usr/bin",
+      CLAUDE_CONFIG_DIR: "/home/agent/.claude",
+      CLAUDE_HOME: "/home/agent/.claude",
+    });
+  });
+
+  it("points the CLI at the old Claude home when nothing names it, and treats a HOME of / as naming nothing", () => {
+    // Unset, the CLI would look under the new HOME and find no credential.
+    const filled = chat.chatHomeEnv({ NODE_ENV: "test", HOME: "/home/agent" }, "/run/chat-home");
+    assert.equal(filled.CLAUDE_CONFIG_DIR, "/home/agent/.claude");
+    assert.deepEqual(chat.chatHomeEnv({ NODE_ENV: "test", HOME: "/", LIB: "/usr/lib" }, "/run/chat-home"), {
+      NODE_ENV: "test",
+      HOME: "/run/chat-home",
+      LIB: "/usr/lib",
+      CLAUDE_CONFIG_DIR: "/.claude",
+    });
+  });
+
+  it("loads no settings from its cwd and no hooks, in the one --settings the CLI keeps", () => {
+    // The CLI keeps only the last `--settings`, so a second flag for the hook
+    // switch would silently drop the sandbox write set, or the reverse.
+    const allowWrite = ["/workspace"];
+    for (const overlay of [null, { sandbox: { filesystem: { allowWrite } } }]) {
+      const args = chat.chatSettingsArgs(overlay);
+      assert.equal(args[args.indexOf("--setting-sources") + 1], "user");
+      assert.equal(args.filter((arg) => arg === "--settings").length, 1);
+      assert.deepEqual(JSON.parse(args[args.indexOf("--settings") + 1]), {
+        ...overlay,
+        disableAllHooks: true,
+      });
+    }
+  });
+});

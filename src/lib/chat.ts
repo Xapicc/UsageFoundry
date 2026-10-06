@@ -8,7 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Readable } from "node:stream";
-import { CLAUDE_BIN, MCP_SELF_URL, WORKSPACE_MOUNTS, spawnCommand } from "./config";
+import { CLAUDE_BIN, GITHUB_TOKEN, MCP_SELF_URL, WORKSPACE_MOUNTS, spawnCommand } from "./config";
 import { agentEnvironment, chatPath } from "./stacks";
 import { db } from "./db";
 import {
@@ -37,11 +37,11 @@ import {
   type McpConfigOwnership,
 } from "./privsep";
 import {
+  agentGitEnv,
   createRun,
   dependencyCycle,
-  githubEnv,
   promptArgs,
-  sandboxArgsFor,
+  sandboxOverlayFor,
   SEARCH_TOOLS,
   signalTree,
   topologicalOrder,
@@ -49,6 +49,7 @@ import {
   type CreateRunInput,
   type DependencyEdge,
   type RunDependencyInput,
+  type SandboxOverlay,
 } from "./orchestrator";
 import {
   ensureSandboxMountPoints,
@@ -3182,7 +3183,9 @@ function launchOrchestratorChild(
   // later — an orchestrator refused inside a tool call, on a directory it was
   // handed on purpose. What bounds it is its MCP tool surface, a capability
   // that dies with the turn and `chatTurnBudgetUSD`, not its filesystem.
-  args.push(...sandboxArgsFor({ kind: "chat", dirs: addDirs }));
+  // It travels in the one `--settings` `chatSettingsArgs` writes, beside the
+  // switch that keeps hooks out of this child.
+  args.push(...chatSettingsArgs(sandboxOverlayFor({ kind: "chat", dirs: addDirs })));
 
   // One encoder for every spawn site, so there is one place that knows the
   // shape — silent when a member is only offered, a failed spawn when it is
@@ -4280,9 +4283,16 @@ export const CHAT_CWD_BASE = "/run/uf-chat";
  * the reason `/workspace` was not: the directory is writable by the child, so a
  * turn that finds a placeholder missing — swept by a sibling turn that ended
  * between the fill and the spawn — has bwrap create it, which is the ordinary
- * path and the one that was being refused. It does **not** separate this child
- * from a work cycle: every child in this app is one uid, which `docs/security.md`
- * already records as the boundary that does not exist.
+ * path and the one that was being refused.
+ *
+ * **Root's and the chat group's, not the agents'**, wherever there is a chat
+ * group (board task `7dd5f973`). Handed to the agents' uid, a work cycle could
+ * plant `.claude/settings.local.json` here, and the CLI runs the hooks in a
+ * cwd's local and project settings — measured on 2.1.280 — under this child's
+ * gid. `--setting-sources user` now keeps those files out of the turn anyway;
+ * the ownership is what keeps everything else a turn finds here its own.
+ * Without a chat group it stays `chownForChild` at 0700, because then this
+ * child holds nothing a work cycle does not.
  *
  * Falls back to `os.tmpdir()` whenever the base cannot be made — including with
  * no privilege separation at all, where `/run` is not this process's to write
@@ -4293,6 +4303,8 @@ export const CHAT_CWD_BASE = "/run/uf-chat";
 function chatCwd(): string {
   try {
     if (!privilegeSeparated()) return os.tmpdir();
+    const ownership = mcpConfigOwnership();
+    if (ownership) return chatGroupDir(CHAT_CWD_BASE, ownership);
     fs.mkdirSync(CHAT_CWD_BASE, { recursive: true, mode: 0o700 });
     // `mkdir` masks the mode through the umask and does nothing at all when the
     // directory already exists, so both are set rather than requested — the
@@ -4310,6 +4322,139 @@ function chatCwd(): string {
     });
     return os.tmpdir();
   }
+}
+
+/** Make `dir` root's and the chat group's, at `scratchDirMode`, and return it. */
+function chatGroupDir(dir: string, ownership: McpConfigOwnership): string {
+  fs.mkdirSync(dir, { recursive: true, mode: ownership.scratchDirMode });
+  fs.chmodSync(dir, ownership.scratchDirMode);
+  chownToGroup(dir, ownership.gid);
+  return dir;
+}
+
+/**
+ * The chat's own `HOME`, beside its scratch cwd and owned the same way.
+ *
+ * The image's `HOME` is `/home/node`, the agents' own and every work cycle's to
+ * write, and the chat child loaded code from it under `UF_CHAT_GID` (board task
+ * `7dd5f973`; each measured 2026-10-06 against scratch files): the pinned CLI's
+ * `Bash` tool snapshots the shell with `bash -c -l` over `~/.bashrc`, which runs
+ * `~/.profile` as well; git reads `~/.gitconfig`, whose `core.fsmonitor` runs on
+ * `git status`; and `python3` runs a `usercustomize.py` from the user site under
+ * `~/.local`, which the operator's own hooks call. Moving `HOME` closes those
+ * and every other tool that keeps its configuration there (`gh`, `npm`, `ssh`)
+ * in one step, where clearing them one variable at a time is a denylist. What
+ * it costs is that the chat sees none of it, the `gh` extensions
+ * `UF_GH_EXTENSIONS` installs included.
+ *
+ * Null — `HOME` left as it was — wherever there is no chat group, for the reason
+ * `chatCwd` keeps its old ownership there. Throws rather than falling back when
+ * the directory cannot be made, because the fallback is the agents' `HOME`:
+ * the channel reopened with nothing reporting it.
+ */
+export const CHAT_HOME_BASE = "/run/uf-chat-home";
+
+function chatHome(): string | null {
+  const ownership = mcpConfigOwnership();
+  return ownership ? chatGroupDir(CHAT_HOME_BASE, ownership) : null;
+}
+
+/** Kept by `chatHomeEnv` whatever they name. */
+const CHAT_HOME_KEEPS = new Set(["HOME", "PATH", "CLAUDE_CONFIG_DIR", "CLAUDE_HOME"]);
+
+/**
+ * `env` with `HOME` moved to `home`, less every variable naming a path in the
+ * old one.
+ *
+ * The image states several such paths outright — `GOPATH` and `GOCACHE` under
+ * `/home/node/go`, `UV_TOOL_DIR` and its siblings under `/home/node/pytools` —
+ * and each is somewhere a work cycle writes and a tool loads from, so moving
+ * `HOME` alone would leave them pointing back. Removed rather than rewritten,
+ * because each tool's default is under `HOME`, which is now the chat's. A list
+ * goes whole if any entry is inside.
+ *
+ * `PATH` is kept because it is `chatPath()`'s to decide, and a list rule here
+ * would take the whole of it. `CLAUDE_CONFIG_DIR` is kept — and `CLAUDE_HOME`,
+ * this app's name for the same directory — because it is the operator's Claude
+ * home, which this child bills against and is metered from; it is filled in
+ * from the old `HOME` when unset, or the CLI would look under the new one and
+ * find no credential. What that directory still lets a work cycle reach is
+ * `chatSettingsArgs`'s and `UF_LOCK_CLAUDE_HOME`'s business.
+ */
+export function chatHomeEnv(env: NodeJS.ProcessEnv, home: string): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env, HOME: home };
+  if (!env.HOME || !path.isAbsolute(env.HOME)) return out;
+  const agentsHome = path.resolve(env.HOME);
+  out.CLAUDE_CONFIG_DIR = env.CLAUDE_CONFIG_DIR || path.join(agentsHome, ".claude");
+  // A `HOME` of `/` would make every absolute path "inside" it.
+  if (agentsHome === path.parse(agentsHome).root) return out;
+  const inside = (entry: string) =>
+    entry === agentsHome || entry.startsWith(agentsHome + path.sep);
+  for (const [key, value] of Object.entries(out)) {
+    if (CHAT_HOME_KEEPS.has(key) || !value) continue;
+    if (value.split(path.delimiter).some(inside)) delete out[key];
+  }
+  return out;
+}
+
+/**
+ * The git settings a repository's own `.git/config` can point at a command,
+ * cleared for every git this child runs.
+ *
+ * The chat runs `git status`, `log` and `diff` in the operator's checkouts,
+ * whose `.git` every work cycle there writes — a run commits into it — and
+ * which no review ever shows. Measured on git 2.39 against a scratch
+ * repository: a `core.fsmonitor` there ran on `status`, `diff` and `blame`, and
+ * `.git/hooks` ran on `checkout` (`post-checkout`, `reference-transaction`);
+ * with these pairs in the environment neither did, and `core.hooksPath` here
+ * outranked one the repository set itself. `GIT_CONFIG_*` is the
+ * highest-precedence configuration git has and, unlike `-c`, reaches every git
+ * the child starts. They are the two `gitArgs` clears for this app's own git.
+ *
+ * Measured as **still running** with them: a `diff.external`, and a
+ * `filter.<name>.clean` or `diff.<name>.textconv` named from
+ * `.git/info/attributes`. The first cannot be cleared by value —
+ * `diff.external=` makes `git diff` die with "cannot run" — and the others are
+ * keyed by a name the repository chooses. `docs/agent/security/` lists them as
+ * open.
+ */
+const CHAT_GIT_CONFIG: ReadonlyArray<readonly [string, string]> = [
+  ["core.fsmonitor", ""],
+  ["core.hooksPath", "/dev/null"],
+];
+
+/**
+ * The chat's settings flags: the user's settings and none from its cwd, and no
+ * hooks at all.
+ *
+ * Measured on 2.1.280 against a stub API, 2026-10-06. A planted `SessionStart`
+ * and `PreToolUse` hook ran in a `-p` child carrying this one's flags from each
+ * of `$CLAUDE_CONFIG_DIR/settings.json` and the **cwd's**
+ * `.claude/settings.json` and `.claude/settings.local.json` — files a work
+ * cycle writes in any checkout it works in, the second never shown in a diff —
+ * and from a plugin's `hooks/hooks.json`. An enabled plugin lives under
+ * `$CLAUDE_CONFIG_DIR/plugins/`, which `UF_LOCK_CLAUDE_HOME` leaves the
+ * agents', so its hooks are a work cycle's to rewrite even under the lock.
+ *
+ * `--setting-sources user` drops both cwd scopes whole — their `env` and
+ * `apiKeyHelper` as well as their hooks — and keeps the operator's own, and
+ * `--agent` still selects a saved agent under it. `disableAllHooks` stops the
+ * user's and every plugin's hooks too. That is the cost: no hook the operator
+ * wrote runs in a chat turn, which is the trade `chatPath` made for the same
+ * child, because a hook here runs holding the capability every other child is
+ * kept from. What the user scope can do besides hooks — `env`, `apiKeyHelper`
+ * — is closed by the lock and by nothing here.
+ *
+ * One `--settings` carrying the sandbox overlay too, because the CLI keeps only
+ * the last (`sandboxOverlay`).
+ */
+export function chatSettingsArgs(sandbox: SandboxOverlay | null): string[] {
+  return [
+    "--setting-sources",
+    "user",
+    "--settings",
+    JSON.stringify({ ...sandbox, disableAllHooks: true }),
+  ];
 }
 
 /**
@@ -4348,6 +4493,12 @@ function chatCwd(): string {
  * runs by name may resolve in the pytools volume every work cycle writes (board
  * task `6f85c72a`); the stacks' toolbox, which root owns, stays.
  *
+ * `HOME` is the chat's own (`chatHome`, `chatHomeEnv`) wherever there is a
+ * chat group, and the git block carries `CHAT_GIT_CONFIG` after the GitHub
+ * pairs, for the same reason as `PATH`: this child loaded code from the agents'
+ * `HOME` and from a repository's `.git` (board task `7dd5f973`). `home` is a
+ * parameter so a test can hand it a directory; the spawn takes the default.
+ *
  * Exported for a test and nothing else, on `childEnv`'s grounds rather than as
  * an exception to them: `PATH` is not on the strip list, and
  * `proposals/CustomStacks/01c-reach-and-permission.md` §2 rests on that — the
@@ -4357,8 +4508,9 @@ function chatCwd(): string {
  * in this app reports. The list moves by hand in six places
  * (`docs/agent/security.md`); the export is what stops it moving here unseen.
  */
-export function chatEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...agentEnvironment(), PATH: chatPath(), FORCE_COLOR: "0" };
+export function chatEnv(home: string | null = chatHome()): NodeJS.ProcessEnv {
+  const base: NodeJS.ProcessEnv = { ...agentEnvironment(), PATH: chatPath(), FORCE_COLOR: "0" };
+  const env = home === null ? base : chatHomeEnv(base, home);
   for (const key of Object.keys(env)) {
     if (
       key.startsWith("UF_") ||
@@ -4377,7 +4529,11 @@ export function chatEnv(): NodeJS.ProcessEnv {
   }
   // Peer messaging off, for the reason over `childEnv`. Last, so nothing above
   // it can turn it back on.
-  return { ...env, ...githubEnv(), CLAUDE_CODE_HARBOR_KITE: "0" };
+  return {
+    ...env,
+    ...agentGitEnv(GITHUB_TOKEN, null, CHAT_GIT_CONFIG),
+    CLAUDE_CODE_HARBOR_KITE: "0",
+  };
 }
 
 /**

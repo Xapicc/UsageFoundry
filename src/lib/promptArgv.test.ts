@@ -66,6 +66,7 @@ const OPTIONS = {
   "-r": "optional", "--resume": "optional",
   "--max-budget-usd": "required",
   "--settings": "required",
+  "--setting-sources": "required",
 };
 const maybeOption = (arg) => arg.length > 1 && arg[0] === "-";
 function parseOptions(argv) {

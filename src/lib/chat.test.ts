@@ -2356,6 +2356,7 @@ describe("writeMcpConfig — the capability never lands in a shared directory", 
       gid,
       dirMode: 0o710,
       fileMode: 0o040,
+      scratchDirMode: 0o770,
     });
     const dir = path.dirname(file);
     try {

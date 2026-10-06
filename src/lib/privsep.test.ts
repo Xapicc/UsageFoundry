@@ -260,6 +260,24 @@ describe("resolveMcpConfigOwnership", () => {
     assert.equal(bitsFor(own.dirMode, owner, chatChild) & TRAVERSE, TRAVERSE);
   });
 
+  it("keeps a work-cycle agent out of the chat's HOME and scratch cwd entirely", () => {
+    // What the chat child loads from either runs holding the capability (board
+    // task `7dd5f973`), so a work cycle needs no bit at all — not even
+    // traverse, which would let it open a file whose name it can guess, and
+    // `~/.bashrc` is guessable.
+    const own = ownership();
+    assert.equal(bitsFor(own.scratchDirMode, ownerOf(own), agents), 0);
+  });
+
+  it("lets the chat child read, write and traverse its own HOME and scratch cwd", () => {
+    // The pinned CLI creates `~/.config/anthropic` before its first request, and
+    // bwrap creates its placeholders in the cwd: a directory the child cannot
+    // write is a turn whose every tool call fails.
+    const own = ownership();
+    const chatChild: ChildCredentials = { uid: agents.uid, gid: own.gid };
+    assert.equal(bitsFor(own.scratchDirMode, ownerOf(own), chatChild), 0o7);
+  });
+
   it("asks for nothing when there is no group to hand it to", () => {
     // Both fall back whole rather than half-applying a boundary: `chat.ts` then
     // chowns to the agents' uid at 0700/0600, which is what every install had

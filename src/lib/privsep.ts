@@ -369,6 +369,16 @@ export interface McpConfigOwnership {
    * decides is the group, and it is the only thing set.
    */
   fileMode: number;
+  /**
+   * 0770: the chat's own `HOME` and scratch cwd, handed to the same group.
+   *
+   * The chat child has to write in both — the pinned CLI creates
+   * `~/.config/anthropic` before its first request — and a work cycle must not
+   * be able to reach either, because what the chat loads from them runs under
+   * this gid. Owned by the agents' uid, as both used to be, they were the
+   * agents' to plant in. The group decides here for the reason it does above.
+   */
+  scratchDirMode: number;
 }
 
 /**
@@ -395,7 +405,7 @@ export function resolveMcpConfigOwnership(o: {
   chatGid: number | null;
 }): McpConfigOwnership | null {
   if (!o.separated || o.chatGid === null) return null;
-  return { gid: o.chatGid, dirMode: 0o710, fileMode: 0o040 };
+  return { gid: o.chatGid, dirMode: 0o710, fileMode: 0o040, scratchDirMode: 0o770 };
 }
 
 /** The same, against this process's own environment. */

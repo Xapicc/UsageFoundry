@@ -6508,12 +6508,28 @@ function writeSet(paths: readonly (string | null)[], empty: string): SandboxPoli
  * that carries no secret, and nothing here goes through a shell.
  */
 export function sandboxArgs(policy: SandboxPolicy, arrangement: SandboxStateDTO): string[] {
+  const overlay = sandboxOverlay(policy, arrangement);
+  if (!overlay) return [];
+  return ["--settings", JSON.stringify(overlay)];
+}
+
+/** The settings overlay `sandboxArgs` writes onto the argv, or null for no flag. */
+export interface SandboxOverlay {
+  sandbox: { filesystem: { allowWrite: readonly string[] } };
+}
+
+/**
+ * The same overlay as an object, for a caller with settings of its own to put
+ * beside it. The pinned CLI keeps only the **last** `--settings` it is given
+ * (measured 2026-10-06 on 2.1.280: a `disableAllHooks` followed by a sandbox
+ * overlay ran every hook), so a second flag would silently drop the first.
+ */
+export function sandboxOverlay(
+  policy: SandboxPolicy,
+  arrangement: SandboxStateDTO,
+): SandboxOverlay | null {
   const allowWrite = sandboxWritableRoots(policy, arrangement);
-  if (!allowWrite) return [];
-  return [
-    "--settings",
-    JSON.stringify({ sandbox: { filesystem: { allowWrite } } }),
-  ];
+  return allowWrite ? { sandbox: { filesystem: { allowWrite } } } : null;
 }
 
 /**
@@ -6546,6 +6562,11 @@ export function sandboxWritableRoots(
 /** The overlay for a child spawned right now, against this install's policy. */
 export function sandboxArgsFor(scope: SandboxScope): string[] {
   return sandboxArgs(sandboxSettings(scope), currentSandbox().state);
+}
+
+/** The overlay as an object, for a child spawned right now. */
+export function sandboxOverlayFor(scope: SandboxScope): SandboxOverlay | null {
+  return sandboxOverlay(sandboxSettings(scope), currentSandbox().state);
 }
 
 /**
@@ -6973,14 +6994,20 @@ function gitConfigEnv(
  * `excludesFile` is null where there is nothing to hand over — `githubEnv`'s
  * callers, and the excludes file's own failure to be written. No token and no
  * file is an empty environment, exactly as before.
+ *
+ * `extra` is a third contributor's pairs, appended last: the chat's, which
+ * clears the git settings a repository's `.git/config` can point at a command
+ * (`CHAT_GIT_CONFIG` in `chat.ts`).
  */
 export function agentGitEnv(
   token: string,
   excludesFile: string | null,
+  extra: ReadonlyArray<readonly [string, string]> = [],
 ): Record<string, string> {
   const pairs: Array<readonly [string, string]> = [];
   if (token) pairs.push(...GITHUB_GIT_CONFIG);
   if (excludesFile) pairs.push(["core.excludesFile", excludesFile]);
+  pairs.push(...extra);
   if (pairs.length === 0) return {};
 
   return {
