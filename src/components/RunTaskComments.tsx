@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { RunTaskDTO, RunTaskNotesDTO } from "@/lib/apiTypes";
 import { TASK_STATUS_TONE, pollFailureMessage, runPageNotes } from "@/lib/format";
 import { jsonRequest } from "@/lib/jsonRequest";
+import { startPoll } from "@/lib/poll";
 import { TaskCommentRows } from "@/components/TaskThread";
 import { Badge } from "@/components/ui/Badge";
 import { Notice } from "@/components/ui/Notice";
@@ -103,12 +104,14 @@ export function RunTaskComments({
       setFetchedAt(Date.now());
       setError(null);
     };
-    void load();
-    if (!active) return () => void (alive = false);
-    const t = setInterval(() => void load(), POLL_MS);
+    if (!active) {
+      void load();
+      return () => void (alive = false);
+    }
+    const stop = startPoll(load, POLL_MS);
     return () => {
       alive = false;
-      clearInterval(t);
+      stop();
     };
   }, [runId, active]);
 

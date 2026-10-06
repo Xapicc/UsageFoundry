@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import type { WorkflowListItemDTO } from "@/lib/apiTypes";
 import { fmtDateTime, pollFailureMessage } from "@/lib/format";
+import { startPoll } from "@/lib/poll";
 import { Badge } from "@/components/ui/Badge";
 import { ButtonLink } from "@/components/ui/Button";
 import { Card, CardTitle, Empty, SkeletonText } from "@/components/ui/Card";
@@ -49,11 +50,7 @@ export default function WorkflowsPage() {
     }
   }, []);
 
-  useEffect(() => {
-    load();
-    const poll = setInterval(load, POLL_MS);
-    return () => clearInterval(poll);
-  }, [load]);
+  useEffect(() => startPoll(load, POLL_MS), [load]);
 
   return (
     <>

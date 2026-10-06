@@ -20,6 +20,7 @@ import {
   pollFailureMessage,
   STATUS_LABEL,
 } from "@/lib/format";
+import { startPoll } from "@/lib/poll";
 import { Markdown } from "@/components/Markdown";
 import { Meter } from "@/components/Meter";
 import { Badge } from "@/components/ui/Badge";
@@ -887,11 +888,7 @@ export default function WorkflowInstancePage() {
     }
   }, [id, instanceId]);
 
-  useEffect(() => {
-    load();
-    const poll = setInterval(load, POLL_MS);
-    return () => clearInterval(poll);
-  }, [load]);
+  useEffect(() => startPoll(load, POLL_MS), [load]);
 
   /**
    * Halt every block at once.

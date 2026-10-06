@@ -38,6 +38,7 @@ import { PRUNE_ENGINE_LABEL } from "@/lib/pruneStatement";
 import { parseVerifyCommand } from "@/lib/verifyCommand";
 import { toolCount } from "@/lib/mcpStatus";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
+import { startPoll } from "@/lib/poll";
 import {
   describeAmbientAgents,
   fmtBytes,
@@ -1948,13 +1949,12 @@ function CodexAccount() {
   const pending = state?.pending ?? null;
   // The instant the flow began, which is stable across reloads in a way the
   // object around it is not: keying the effect on `pending` itself would tear
-  // the interval down and build a new one on every tick.
+  // the poll down and start a new one on every tick.
   const pendingSince = pending?.startedAt ?? null;
 
   useEffect(() => {
     if (pendingSince === null) return;
-    const timer = setInterval(() => void load(), 4000);
-    return () => clearInterval(timer);
+    return startPoll(load, 4000);
   }, [pendingSince, load]);
 
   async function begin() {

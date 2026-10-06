@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Notice } from "@/components/ui/Notice";
 import { jsonRequest } from "@/lib/jsonRequest";
+import { startPoll } from "@/lib/poll";
 import { readOnlyBanner } from "@/lib/readOnlyBanner";
 
 /**
@@ -46,11 +47,10 @@ export function ReadOnlyNotice() {
       setRefusal(readOnlyBanner(res));
     }
 
-    void read();
-    const t = setInterval(() => void read(), POLL_MS);
+    const stop = startPoll(read, POLL_MS);
     return () => {
       live = false;
-      clearInterval(t);
+      stop();
     };
   }, []);
 

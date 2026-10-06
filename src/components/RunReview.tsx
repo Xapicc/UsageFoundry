@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { RunDTO, RunReviewDTO } from "@/lib/apiTypes";
 import { fmtDateTime, fmtUSD, pollFailureMessage } from "@/lib/format";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
+import { startPoll } from "@/lib/poll";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardTitle, Empty } from "@/components/ui/Card";
@@ -99,8 +100,7 @@ export function RunReview({ run }: { run: RunDTO }) {
   const running = reviews?.some((r) => r.status === "running") ?? false;
   useEffect(() => {
     if (!running) return;
-    const t = setInterval(() => void load(), 3000);
-    return () => clearInterval(t);
+    return startPoll(load, 3000);
   }, [running, load]);
 
   async function start() {
