@@ -37,12 +37,80 @@ function timingSafeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
+function changesState(req: NextRequest): boolean {
+  return req.method !== "GET" && req.method !== "HEAD";
+}
+
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Where the browser says a request came from: this app's own pages, a page
+ * somewhere else, or nothing said at all.
+ *
+ * The cookie cannot answer this. `SameSite=Lax` is decided by *site*, and a
+ * site ignores the port, so a page on `localhost:5173` — an agent's dev server
+ * the operator opened — gets the cookie attached to its `no-cors` POST, and a
+ * `text/plain` body needs no preflight to be sent.
+ *
+ * `Sec-Fetch-Site` comes first because the browser computes it from the URLs
+ * it actually holds, so no proxy in between can make it wrong. It is only sent
+ * to a trustworthy origin, though, so a LAN install over plain http never sees
+ * it and falls through to `Origin`. That is compared against the host the
+ * browser addressed — `Host`, or a proxy's `x-forwarded-host`, as Next's own
+ * server-action check does — and not against `nextUrl`, which in production is
+ * the server's bind address rather than anything a browser typed. Trusting
+ * those headers costs nothing here: a page cannot set either one without a
+ * preflight this app never answers, and a client that can is not borrowing
+ * anybody's cookie. `UF_PUBLIC_URL` covers a proxy that rewrites `Host` and
+ * forwards nothing.
+ */
+function requestSource(req: NextRequest): "own" | "elsewhere" | "unstated" {
+  const site = req.headers.get("sec-fetch-site");
+  if (site !== null) return site === "same-origin" || site === "none" ? "own" : "elsewhere";
+
+  const origin = req.headers.get("origin");
+  if (origin === null) return "unstated";
+  const ownHosts = [
+    req.nextUrl.host,
+    req.headers.get("host"),
+    req.headers.get("x-forwarded-host")?.split(",")[0].trim(),
+    hostOf(process.env.UF_PUBLIC_URL ?? ""),
+  ].filter((host): host is string => !!host).map((host) => host.toLowerCase());
+  const host = hostOf(origin);
+  return host !== null && ownHosts.includes(host) ? "own" : "elsewhere";
+}
+
+function crossOriginRefusal(req: NextRequest) {
+  const site = req.headers.get("sec-fetch-site");
+  const origin = req.headers.get("origin");
+  const seen =
+    site !== null ? `Sec-Fetch-Site: ${site}` : origin !== null ? `Origin: ${origin}` : "no Origin header";
+  return NextResponse.json(
+    { error: `Cross-origin request refused: a change has to come from this app's own pages, and this one came with ${seen}.` },
+    { status: 403 },
+  );
+}
+
 export async function middleware(req: NextRequest) {
   const token = process.env.UF_AUTH_TOKEN ?? "";
   if (!token) return NextResponse.next();
 
   const { pathname } = req.nextUrl;
+  // The two credential-free doors refuse only a page the browser says is
+  // somewhere else. A sign-in guess posted through the operator's own browser
+  // reaches a port its author may not, and spends the install-wide sign-in
+  // bucket that locks the operator out as well; a sign-out from there ends the
+  // operator's sessions. A client that names no origin at all is not a page in
+  // anybody's browser, holds nothing ambient to borrow, and can already reach
+  // these routes directly — so it is let by, unlike on the cookie branch below.
   if (pathname === "/login" || pathname === "/api/login") {
+    if (changesState(req) && requestSource(req) === "elsewhere") return crossOriginRefusal(req);
     return NextResponse.next();
   }
 
@@ -50,6 +118,7 @@ export async function middleware(req: NextRequest) {
   // is exactly the cookie somebody is trying to clear, and the route revokes
   // only the id it is handed.
   if (pathname === "/api/logout") {
+    if (changesState(req) && requestSource(req) === "elsewhere") return crossOriginRefusal(req);
     return NextResponse.next();
   }
 
@@ -119,9 +188,16 @@ export async function middleware(req: NextRequest) {
   // is still inside its window — neither of which a comparison against the
   // token could say, because the token has no window and every copy of it is
   // identical.
+  //
+  // What neither proves is who sent it, because the browser attaches the cookie
+  // to a request from any page on the same site. So it authorises a change only
+  // from this app's own pages, and a request that says nothing about where it
+  // came from is refused too: every browser names an origin on a POST, so that
+  // is a script holding a cookie, and a script can hold the token instead.
   const cookie = req.cookies.get(SESSION_COOKIE)?.value ?? "";
   if (cookie && (await readSessionCookie(cookie, token, Date.now()))) {
-    return NextResponse.next();
+    if (!changesState(req) || requestSource(req) === "own") return NextResponse.next();
+    return crossOriginRefusal(req);
   }
 
   const header = req.headers.get("authorization") ?? "";

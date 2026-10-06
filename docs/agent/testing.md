@@ -23,6 +23,7 @@ Twenty are renderings rather than functions — every `*.test.tsx` in the tree, 
 | Test file | Also in |
 |---|---|
 | `budget.test.ts` | [harnesses] |
+| `cutOffCheckout.test.ts` |  |
 | `diff.test.ts` |  |
 | `land.test.ts` | [landing], [merge-queue], [harnesses] |
 | `orchestrator.test.ts` | [cycle], [argv], [ceiling], [pruning], [parsers], [budgets], [pricing], [landing], [merge-queue], [sandbox], [harnesses] |
@@ -282,7 +283,7 @@ Units that are about no test file in the tree:
 | `localLandGate.test.ts` | [harnesses] |
 | `localProvider.test.ts` |  |
 | `reviewBlock.test.ts` |  |
-| `reviewBlockRun.test.ts` | [harnesses] |
+| `reviewBlockRun.test.ts` | [workflows], [harnesses] |
 
 ## [Auth, credentials, config and the status routes](testing/auth-config-and-status-routes.md)
 
@@ -309,6 +310,7 @@ Units that are about no test file in the tree:
 | `src/app/api/runs/live/stream/route.test.ts` | [harnesses] |
 | `src/app/api/settings/route.test.ts` | [harnesses] |
 | `src/app/api/status/route.test.ts` |  |
+| `src/middleware.test.ts` |  |
 
 ## [Container, compose and backups](testing/container-and-deployment.md)
 

@@ -3087,13 +3087,12 @@ async function ensureWorktree(run: RunRow): Promise<string> {
   // reason. See `repoLock.ts` for what this claims and what it does not.
   const registered = await withRepoAdmin(repoRoot, async () => {
     await git(repoRoot, ["worktree", "prune"]);
-    return (await git(repoRoot, ["worktree", "list", "--porcelain"]))
-      .stdout.split("\n")
-      .filter((l) => l.startsWith("worktree "))
-      .map((l) => l.slice("worktree ".length));
+    return registeredCheckouts(
+      (await git(repoRoot, ["worktree", "list", "--porcelain"])).stdout,
+    );
   });
 
-  if (registered.includes(slotPath)) {
+  if (registered.has(slotPath)) {
     const head = await git(slotPath, ["rev-parse", "--abbrev-ref", "HEAD"]);
     // The checkout already holds this branch. Adopt it exactly as it stands:
     // `checkout -b` would fail on an existing branch, the dirty check below
@@ -3107,7 +3106,16 @@ async function ensureWorktree(run: RunRow): Promise<string> {
     if (head.ok && head.stdout === branch) {
       const handover =
         continuing && run.iterations === 0 && (run.pause_count ?? 0) === 0;
-      if (handover) {
+      // A `worktree add` cut off before it wrote the files leaves exactly this
+      // too, so that is ruled out first.
+      const finishedHere = await finishCutOffCheckout(
+        run,
+        slotPath,
+        branch,
+        registered.get(slotPath) ?? null,
+        handover,
+      );
+      if (!finishedHere && handover) {
         // Whatever the predecessor left uncommitted is in this tree, on this
         // chain's branch. `commitRefusal` already settled whose work that is:
         // it belongs to the run whose branch the slot has checked out, and here
@@ -3133,27 +3141,32 @@ async function ensureWorktree(run: RunRow): Promise<string> {
         );
         return slotPath;
       }
-      log(run.id, `Resuming in the existing checkout on branch ${branch}.`, {
-        worktree: slotPath,
-        branch,
-      });
-      return slotPath;
-    }
-    const status = await git(slotPath, ["status", "--porcelain"]);
-    if (!status.ok || status.stdout !== "") {
-      throw new Error(
-        `Checkout ${path.basename(slotPath)} still has uncommitted work. Commit or remove it first.`,
-      );
-    }
-    if (continuing) {
-      await requireBranch(repoRoot, run, branch);
-      const co = await git(slotPath, ["checkout", branch]);
-      if (!co.ok) {
-        throw new Error(`Could not check out branch ${branch}: ${co.stderr}`);
+      if (!finishedHere) {
+        log(run.id, `Resuming in the existing checkout on branch ${branch}.`, {
+          worktree: slotPath,
+          branch,
+        });
+        return slotPath;
       }
+      // Finished just now, so it is a new checkout and is seeded and announced
+      // as one below.
     } else {
-      const co = await git(slotPath, ["checkout", "-b", branch, base]);
-      if (!co.ok) throw new Error(`Could not start branch ${branch}: ${co.stderr}`);
+      const status = await git(slotPath, ["status", "--porcelain"]);
+      if (!status.ok || status.stdout !== "") {
+        throw new Error(
+          `Checkout ${path.basename(slotPath)} still has uncommitted work. Commit or remove it first.`,
+        );
+      }
+      if (continuing) {
+        await requireBranch(repoRoot, run, branch);
+        const co = await git(slotPath, ["checkout", branch]);
+        if (!co.ok) {
+          throw new Error(`Could not check out branch ${branch}: ${co.stderr}`);
+        }
+      } else {
+        const co = await git(slotPath, ["checkout", "-b", branch, base]);
+        if (!co.ok) throw new Error(`Could not start branch ${branch}: ${co.stderr}`);
+      }
     }
   } else if (continuing) {
     // Straight past the orphaned-branch guard below, and it loses nothing by
@@ -3227,6 +3240,111 @@ async function ensureWorktree(run: RunRow): Promise<string> {
   );
 
   return slotPath;
+}
+
+/**
+ * Every checkout `git worktree list --porcelain` names, with the reason it is
+ * locked: null when it is not, "" when it is locked without one.
+ */
+function registeredCheckouts(porcelain: string): Map<string, string | null> {
+  const checkouts = new Map<string, string | null>();
+  let current: string | null = null;
+  for (const line of porcelain.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      current = line.slice("worktree ".length);
+      checkouts.set(current, null);
+    } else if (current !== null && (line === "locked" || line.startsWith("locked "))) {
+      checkouts.set(current, line.slice("locked".length).trim());
+    }
+  }
+  return checkouts;
+}
+
+/**
+ * Rule out a registered checkout on this run's branch being one git never
+ * finished writing, before `ensureWorktree` adopts it as it stands. True when it
+ * was finished here; throws, naming the slot, when it cannot safely be.
+ *
+ * `git worktree add` points the new checkout's HEAD at the branch *before* its
+ * `reset --hard` writes the files and the index, and cleans up only from a
+ * signal handler. A SIGKILL in between — a container stopped past its grace, an
+ * OOM kill, a host restart — therefore leaves a registered checkout on exactly
+ * this branch with few or none of its files, where `git status` reports every
+ * tracked file deleted and an agent's ordinary `git add -A && git commit`
+ * commits the deletion of the repository onto a branch an unattended merge can
+ * land. Git's own record of the cut is the lock it writes before it starts and
+ * unlinks once it is done, whose reason is "initializing" — a translated
+ * string, read here as every git this image ships writes it.
+ *
+ * Finishing it means running git's own last two steps, and that overwrites the
+ * tree, so it is done only where nothing in the tree can be anybody's work: a
+ * run with no cycle counted and no park, whose child never named a session —
+ * the test the counters alone fail, because a transient retry refunds a cycle
+ * that may have worked — and that is not taking over a predecessor's checkout. Anyone else may have worked in it since, and is refused with the
+ * commands rather than having that work reset away.
+ */
+async function finishCutOffCheckout(
+  run: RunRow,
+  slotPath: string,
+  branch: string,
+  lockReason: string | null,
+  handover: boolean,
+): Promise<boolean> {
+  const name = path.basename(slotPath);
+  const untouched =
+    !handover && run.iterations === 0 && (run.pause_count ?? 0) === 0 && !run.session_id;
+
+  if (lockReason === "initializing") {
+    if (!untouched) {
+      const since = handover
+        ? `run ${shortId(run.continues_run!)}, whose branch this run carries on, may have worked in it since`
+        : "this run may have worked in it since";
+      throw new Error(
+        `Checkout ${name} was never finished: git's lock on it still reads "initializing", so a ` +
+          `\`git worktree add\` was cut off before it wrote the files, and ${since}. It is not ` +
+          `adopted, because committing in it would commit the deletion of every file git never wrote. ` +
+          `Branch ${branch} is intact. Save anything in ${slotPath} worth keeping, then run ` +
+          `\`git -C ${slotPath} reset --hard\` and \`git worktree unlock ${slotPath}\`, and pick this run up again.`,
+      );
+    }
+    // No timeout worth enforcing, for the reason the add itself has none.
+    const reset = await git(slotPath, ["reset", "--hard", "--quiet"], {
+      timeoutMs: 30 * 60_000,
+    });
+    if (!reset.ok) {
+      throw new Error(`Checkout ${name} was never finished, and finishing it failed: ${reset.stderr}`);
+    }
+    // After the reset and never before it, as git orders them: cut off in
+    // between, the lock is still there and the next pick-up finishes it again.
+    const unlock = await git(run.repo_root!, ["worktree", "unlock", slotPath]);
+    if (!unlock.ok) {
+      throw new Error(`Checkout ${name} was finished, but git would not unlock it: ${unlock.stderr}`);
+    }
+    log(
+      run.id,
+      `Checkout ${name} was left half-made by a \`git worktree add\` that was cut off before it wrote the files, so it was finished before any work cycle was given it.`,
+      { worktree: slotPath, branch },
+    );
+    return true;
+  }
+
+  if (!untouched) return false;
+  // Tracked paths only. An untracked one is what seeding copies in, and a run
+  // refused before its first child — a signed-out local provider, its own
+  // guard — comes back to exactly that.
+  const changed = await git(slotPath, ["status", "--porcelain", "--untracked-files=no"]);
+  if (!changed.ok) {
+    throw new Error(`Could not read the status of checkout ${name}: ${changed.stderr}`);
+  }
+  const paths = changed.stdout.split("\n").filter(Boolean).length;
+  if (paths === 0) return false;
+  throw new Error(
+    `Checkout ${name} is on this run's branch ${branch} with ${paths} tracked path(s) changed, ` +
+      "although this run has never had a work cycle, so none of it is this run's — most likely a " +
+      "checkout git never finished writing. It is not adopted, because committing in it would " +
+      `commit those changes as this run's work. Look at \`git -C ${slotPath} status\`; if nothing ` +
+      `there is worth keeping, \`git -C ${slotPath} reset --hard\` finishes it, and pick this run up again.`,
+  );
 }
 
 /**
@@ -3557,8 +3675,10 @@ async function emitHandoff(id: string, run: RunRow, workDir: string): Promise<vo
       uncommitted: leftover.split("\n").filter(Boolean),
       review: [`git log ${base}..${branch}`, `git diff ${base}...${branch}`],
       // Withheld rather than shown-and-caveated: a copyable command is going to
-      // be copied.
-      merge: mainDirty ? null : `git merge ${branch}`,
+      // be copied. `--no-overwrite-ignore` for `landRun`'s reason: the status
+      // read above never lists an ignored file, and a plain `git merge`
+      // replaces one wherever the branch tracks its path.
+      merge: mainDirty ? null : `git merge --no-overwrite-ignore ${branch}`,
       mergeBlocked: mainDirty
         ? mainStatus.ok
           ? "Your checkout has uncommitted changes — commit or stash them before merging."
