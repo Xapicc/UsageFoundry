@@ -2889,6 +2889,10 @@ function workflowReport() {
  * it can be run by hand and cannot be scheduled until the operator sets one.
  */
 function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
+  // Asked here and not left to `normalizeWorkflowInput`, which refuses the same
+  // thing: it is handed the name after this line has already made it text.
+  const notString = nonStringArg(args, "name");
+  if (notString) return notString;
   const name = String(args.name ?? "").trim();
   if (!name) return text("A workflow needs a name.", true);
 
@@ -4907,7 +4911,7 @@ function pendingLimitMessage(count: number): string {
  * template weeks later and wondering when it changed.
  */
 function saveTemplate(args: Record<string, unknown>, chatId: string) {
-  const notString = nonStringArg(args, "prompt");
+  const notString = nonStringArg(args, "prompt", "name", "templateId");
   if (notString) return notString;
   const prompt = String(args.prompt ?? "").trim();
   if (!prompt) return text("A template needs a prompt.", true);
@@ -5046,6 +5050,24 @@ async function proposalModelDecision(args: Record<string, unknown>): Promise<Mod
 }
 
 function proposeRun(args: Record<string, unknown>, chatId: string, decision: ModelDecision | null) {
+  // Every text argument, asked before the first `String()` below reads any of
+  // them: an object `task` was a card, and on approval a billed run, whose
+  // whole brief was "[object Object]", and a one-element list `supersedes` or
+  // `id` was quietly read as the label inside it.
+  const notString = nonStringArg(
+    args,
+    "title",
+    "task",
+    "templateId",
+    "agentId",
+    "provider",
+    "mountId",
+    "folder",
+    "supersedes",
+    "id",
+  );
+  if (notString) return notString;
+
   const templateId = String(args.templateId ?? "").trim();
   const template = templateId ? getTemplate(templateId) : null;
   if (templateId && !template) {

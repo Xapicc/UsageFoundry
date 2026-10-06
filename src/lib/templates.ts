@@ -184,7 +184,9 @@ export function normalizeTemplateInput(
 ): TemplateNormalization {
   const o = (raw ?? {}) as Record<string, unknown>;
 
-  const name = String(o.name ?? "").trim();
+  const nameField = optionalStringField(o, "name");
+  if (!nameField.ok) return { ok: false, error: nameField.error };
+  const name = (nameField.value ?? "").trim();
   if (!name) return { ok: false, error: "A template needs a name." };
   if (name.length > MAX_TEMPLATE_NAME) {
     return {

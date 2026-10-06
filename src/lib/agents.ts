@@ -280,6 +280,8 @@ export function normalizeAgentInput(raw: unknown): AgentNormalization {
     return { ok: false, error: TOOLS_REFUSAL };
   }
 
+  const notName = notStringRefusal("name", o.name);
+  if (notName) return { ok: false, error: notName };
   const name = String(o.name ?? "").trim();
   if (!name) return { ok: false, error: "An agent needs a name." };
   if (name.length > MAX_AGENT_NAME) {
@@ -298,6 +300,8 @@ export function normalizeAgentInput(raw: unknown): AgentNormalization {
     };
   }
 
+  const notDescription = notStringRefusal("description", o.description);
+  if (notDescription) return { ok: false, error: notDescription };
   const description = String(o.description ?? "").trim();
   if (!description) {
     return {
@@ -567,8 +571,10 @@ export function parseRunAgent(raw: string | null | undefined): AgentDefinition |
 
   const o = parsed as Record<string, unknown>;
   // No agent rather than one instructed by "[object Object]": this reader is
-  // total, so a prompt that is not text is read as a definition that is not one.
-  if (notStringRefusal("prompt", o.prompt)) return null;
+  // total, so a field that is not text is read as a definition that is not one.
+  for (const field of ["name", "description", "prompt"]) {
+    if (notStringRefusal(field, o[field])) return null;
+  }
   const name = String(o.name ?? "").trim();
   const description = String(o.description ?? "").trim();
   const prompt = String(o.prompt ?? "").trim();

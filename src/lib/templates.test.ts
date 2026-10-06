@@ -104,6 +104,11 @@ describe("normalizeTemplateInput — name and prompt", () => {
       /"prompt" has to be a string when it is given; got an array/,
     );
   });
+
+  it("refuses a name that is not a string rather than saving its String()", () => {
+    assert.match(error({ ...OK, name: { text: "Nightly" } }), /"name" has to be a string when it is given; got an object/);
+    assert.match(error({ ...OK, name: ["Nightly"] }), /"name" has to be a string when it is given; got an array/);
+  });
 });
 
 /* ------------------------------------------------------------------ */

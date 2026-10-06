@@ -1037,6 +1037,77 @@ test("save_template and propose_run refuse a prompt that is not a string and wri
   assert.equal(ok.isError, false, ok.text);
 });
 
+// `String()` read each of these through: an object `task` was a card, and on
+// approval a billed run, briefed with "[object Object]", and `["first"]` was
+// read as the label inside it — a supersede of a card the model never named.
+test("propose_run, save_template and propose_workflow refuse a text argument that is not a string and write nothing", async () => {
+  const { chatId, token, proposals } = proposingChat();
+  const templates = () =>
+    (db().prepare("SELECT COUNT(*) AS n FROM run_templates").get() as { n: number }).n;
+  const base = { mountId: MOUNT, folder: "RepoOne", title: "Typed", task: "Do a thing." };
+  const first = await callTool(token, "propose_run", { ...base, id: "first" });
+  assert.equal(first.isError, false, first.text);
+
+  const runRefusals: [Record<string, unknown>, string][] = [
+    [{ title: { text: "Typed" } }, "title"],
+    [{ task: { brief: "Do a thing." } }, "task"],
+    [{ task: ["Do", "a thing."] }, "task"],
+    [{ templateId: ["t-1"] }, "templateId"],
+    [{ agentId: ["a-1"] }, "agentId"],
+    [{ provider: { name: "codex" } }, "provider"],
+    [{ mountId: [MOUNT] }, "mountId"],
+    [{ folder: ["RepoOne"] }, "folder"],
+    [{ supersedes: ["first"] }, "supersedes"],
+    [{ id: ["second"] }, "id"],
+  ];
+  for (const [extra, field] of runRefusals) {
+    const proposed = await callTool(token, "propose_run", { ...base, ...extra });
+    assert.equal(proposed.isError, true, `propose_run took ${JSON.stringify(extra)}: ${proposed.text}`);
+    assert.match(proposed.text, new RegExp(`"${field}" has to be a string`), field);
+    assert.doesNotMatch(proposed.text, /\[object Object\]/, field);
+  }
+  assert.equal(proposals(), 1, "no card was written");
+  assert.deepEqual(
+    db().prepare("SELECT status FROM chat_proposals WHERE chat_id = ?").all(chatId),
+    [{ status: "pending" }],
+    "and the one a list-wrapped supersedes named is still waiting",
+  );
+
+  const before = templates();
+  for (const [args, field] of [
+    [{ name: { text: "Reviewer" }, prompt: "Review it." }, "name"],
+    [{ name: "Reviewer", prompt: "Review it.", templateId: ["t-1"] }, "templateId"],
+  ] as const) {
+    const saved = await callTool(token, "save_template", args);
+    assert.equal(saved.isError, true, `save_template took ${JSON.stringify(args)}: ${saved.text}`);
+    assert.match(saved.text, new RegExp(`"${field}" has to be a string`), field);
+  }
+  assert.equal(templates(), before, "no template was saved");
+
+  const block = { id: "a", name: "Step", mountId: MOUNT, folder: "RepoOne", task: "Do a thing." };
+  for (const [args, said] of [
+    [{ name: { text: "Nightly" }, blocks: [block] }, /"name" has to be a string/],
+    [{ name: "Nightly", blocks: [{ ...block, task: { brief: "x" } }] }, /“Step”: "task" has to be a string/],
+    [{ name: "Nightly", blocks: [{ ...block, name: ["Step"] }] }, /Block 1: "name" has to be a string/],
+  ] as const) {
+    const workflow = await callTool(token, "propose_workflow", args);
+    assert.equal(workflow.isError, true, `propose_workflow took ${JSON.stringify(args)}: ${workflow.text}`);
+    assert.match(workflow.text, said);
+  }
+  assert.equal(proposals(), 1, "no workflow card was written");
+
+  // Absent and null still mean "not given".
+  const plain = await callTool(token, "propose_run", {
+    ...base,
+    templateId: null,
+    agentId: null,
+    provider: null,
+    supersedes: null,
+    id: null,
+  });
+  assert.equal(plain.isError, false, plain.text);
+});
+
 /**
  * A chat to propose into, and a count of the rows it holds, because what the
  * proposal refusals below pin is that nothing reached the operator's panel:
