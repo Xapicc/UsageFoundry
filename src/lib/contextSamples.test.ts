@@ -562,7 +562,9 @@ describe("contextOccupancy", () => {
 
     const view = pruningMod.contextOccupancy("r1")!;
     assert.equal(view.prunes.length, 1, "the cut still happened, so it is still marked");
-    assert.equal(view.prunes[0].tokensRemoved, 0);
+    // Null and not 0: a 0 here is what a fork measured to remove nothing
+    // reads as, and the chart's table printed it as "0 tokens".
+    assert.equal(view.prunes[0].tokensRemoved, null);
   });
 
   it("counts both engines' cuts and puts them on one axis in order", async () => {

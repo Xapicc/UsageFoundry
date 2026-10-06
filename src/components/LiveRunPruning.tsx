@@ -3,6 +3,7 @@
 // way `LiveRunFigures` and `RunPruning` already do.
 import type { LiveRunDTO } from "../lib/apiTypes";
 import { fmtTokens, fmtUSD, signedUSD } from "../lib/format";
+import { netBound } from "../lib/pruneStatement";
 
 const SUB = "mt-0.5 text-xs tabular-nums text-ink-muted";
 const FIGURE = "text-sm font-semibold tabular-nums";
@@ -26,7 +27,11 @@ const FIGURE = "text-sm font-semibold tabular-nums";
  * never `$0.00`, and the net is a ceiling and says "at most". Unpriced prunes
  * are in neither half, so the count says how many the money covers; when that is
  * none of them the money is unknown rather than zero and prints as dashes (the
- * run page prints `+$0.00` there, beside the same count). A run that has not
+ * run page prints `+$0.00` there, beside the same count). Unmeasured prunes
+ * are a fork's removal still waiting on the turn that resumes it: their
+ * tokens and saving are unknown, so both are floors — or a dash with words
+ * where nothing measured stands beside them — and the net says "at least". A
+ * run that has not
  * pruned is `null` on the wire and a dash here, as `LiveRunFigures` draws a run
  * with no telemetry.
  *
@@ -56,19 +61,28 @@ function Figures({
 }: {
   pruning: NonNullable<LiveRunDTO["pruning"]>;
 }) {
-  const { prunes, pricedPrunes, unsettledPrunes, tokensRemoved } = pruning;
+  const { prunes, pricedPrunes, unsettledPrunes, unmeasuredPrunes, tokensRemoved } =
+    pruning;
   const priced = pricedPrunes > 0;
   const lostSettled = unsettledPrunes === 0 || pruning.invalidationUSD > 0;
+  // An unmeasured removal credits $0, so a saving of exactly that is unknown
+  // rather than a floor worth printing.
+  const savedKnown = unmeasuredPrunes === 0 || pruning.cacheSavedUSD > 0;
+  const bound = netBound(pruning);
 
   return (
     <>
       <div className="mt-1 grid grid-cols-3 gap-3">
         <div className="min-w-0">
-          <div className="text-xs text-ink-muted">Saved</div>
-          <div className={FIGURE}>
-            {priced ? `+${fmtUSD(pruning.cacheSavedUSD)}` : "—"}
+          <div className="text-xs text-ink-muted">
+            {unmeasuredPrunes > 0 && savedKnown ? "Saved, at least" : "Saved"}
           </div>
-          <div className={SUB}>re-reads avoided</div>
+          <div className={FIGURE}>
+            {priced && savedKnown ? `+${fmtUSD(pruning.cacheSavedUSD)}` : "—"}
+          </div>
+          <div className={SUB}>
+            {priced && !savedKnown ? "not measured yet" : "re-reads avoided"}
+          </div>
         </div>
         <div className="min-w-0">
           <div className="text-xs text-ink-muted">Lost</div>
@@ -90,14 +104,16 @@ function Figures({
           {/* Bound to the figure it qualifies, and ahead of it: the reader has
               to know the sign of the error before they read the number. */}
           <div className="text-xs text-ink-muted">
-            {unsettledPrunes > 0 ? "Net, at most" : "Net"}
+            {bound === "exact" ? "Net" : `Net, ${bound}`}
           </div>
           <div className={FIGURE}>{priced ? signedUSD(pruning.netUSD) : "—"}</div>
         </div>
       </div>
       <div className={SUB}>
-        {fmtTokens(tokensRemoved)} tokens removed over {prunes}{" "}
-        {prunes === 1 ? "prune" : "prunes"} so far
+        {unmeasuredPrunes >= prunes
+          ? "removal not measured yet"
+          : `${unmeasuredPrunes > 0 ? "at least " : ""}${fmtTokens(tokensRemoved)} tokens removed`}{" "}
+        over {prunes} {prunes === 1 ? "prune" : "prunes"} so far
         {/* The tokens cover every prune and the money does not, so the two
             denominators are printed apart, as `RunPruning` prints them. */}
         {pricedPrunes < prunes && (

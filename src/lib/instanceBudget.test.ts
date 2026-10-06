@@ -260,3 +260,129 @@ describe("the workflow-wide budget, once a member has spent", () => {
     assert.equal(row(instanceId).cause, null, "nothing was recorded over the halt");
   });
 });
+
+/**
+ * An instance whose one block is an orchestrator, its row in the state given.
+ *
+ * `agentId` reaches the graph only, which is what `startBlockTurn` reads.
+ */
+function decidingBlock(status: "thinking" | "waiting", agentId: string | null = null): string {
+  const n = seq++;
+  const instanceId = `inst-${n}`;
+  const graph = JSON.stringify({
+    nodes: [
+      {
+        id: "o",
+        name: "Plan",
+        kind: "orchestrator",
+        templateId: null,
+        mountId: "workspace",
+        folder: "",
+        task: "decide",
+        promptOverride: null,
+        agentId,
+        fanOut: 2,
+        mergeStrategy: null,
+        mergeAutoResolve: false,
+        maxPasses: null,
+        maxLoopCostUSD: null,
+        stopWhenTasks: null,
+        bodyNodeIds: [],
+        provider: null,
+        fixRounds: null,
+      },
+    ],
+    edges: [],
+  });
+  const db = dbMod.db();
+  db.prepare(
+    "INSERT INTO workflows (id, name, graph, created_at, updated_at) VALUES (?, ?, ?, 0, 0)",
+  ).run(`wf-${n}`, `Decider ${n}`, graph);
+  db.prepare(
+    `INSERT INTO workflow_instances (id, workflow_id, workflow_name, graph, created_at, status)
+     VALUES (?, ?, 'Decider', ?, 0, 'started')`,
+  ).run(instanceId, `wf-${n}`, graph);
+  db.prepare(
+    `INSERT INTO workflow_instance_blocks (instance_id, node_id, node_name, position, kind, status, started_at)
+     VALUES (?, 'o', 'Plan', 0, 'orchestrator', ?, ?)`,
+  ).run(instanceId, status, Date.now());
+  return instanceId;
+}
+
+describe("what a deciding turn spent, once its workflow is halted or restarted", () => {
+  it("still counts the cost the halted turn's CLI reported on its way out", () => {
+    const instanceId = decidingBlock("thinking");
+    const halt = workflows.stopInstance(instanceId, { kind: "guard", detail: "over $1" });
+    assert.ok(halt.ok && halt.report.acted && halt.report.blocksHalted === 1);
+    // The SIGINT'd child's `onSettle`, as `runOrchestratorChild` delivers it.
+    workflows.settleBlock(instanceId, "o", {
+      status: "failed",
+      error: "interrupted",
+      costUSD: 0.4,
+      tokens: 1000,
+    });
+
+    const spend = workflows.instanceSpend(instanceId);
+    assert.equal(spend.spentUSD, 0.4, "the halted turn's reported $0.40 is missing from the total");
+    assert.equal(spend.unmeasured, 0);
+    const block = workflows.blocksOf(instanceId)[0];
+    assert.equal(block.status, "failed", "the halt's status stands");
+    assert.match(block.error ?? "", /budget guard .* while it was deciding what to start/);
+    assert.equal(block.tokens, 1000);
+  });
+
+  it("counts a halted turn that died without reporting as unmeasured, and prices it for the guard", () => {
+    const instanceId = decidingBlock("thinking");
+    workflows.stopInstance(instanceId, { kind: "operator" });
+    workflows.settleBlock(instanceId, "o", { status: "failed", error: "killed", costGuardUSD: 0.3 });
+
+    const spend = workflows.instanceSpend(instanceId);
+    assert.equal(spend.unmeasured, 1, "the page would call $0.00 a measurement of a billed turn");
+    assert.equal(spend.spentGuardUSD, 0.3);
+    assert.equal(spend.spentUSD, 0);
+  });
+
+  it("counts a turn a restart killed as unmeasured", () => {
+    const instanceId = decidingBlock("thinking");
+    workflows.reconcileBlocksOnBoot();
+
+    const block = workflows.blocksOf(instanceId)[0];
+    assert.equal(block.status, "failed");
+    assert.equal(workflows.blockSpendReading(block), null, "a killed billed turn reads as a measured $0.00");
+    assert.equal(workflows.instanceSpend(instanceId).unmeasured, 1);
+  });
+
+  it("counts a review a restart killed as unmeasured on its review block", () => {
+    // `reconcileReviewsOnBoot` has already failed the row by now, as
+    // `src/instrumentation.ts` orders the two.
+    const { instanceId, runIds } = instance("Reviewed", {}, [{ status: "completed", spent: 0 }]);
+    const db = dbMod.db();
+    db.prepare(
+      `INSERT INTO workflow_instance_blocks (instance_id, node_id, node_name, position, kind, status)
+       VALUES (?, 'r', 'Review', 9, 'review', 'thinking')`,
+    ).run(instanceId);
+    db.prepare(
+      `INSERT INTO run_reviews (id, run_id, kind, created_at, status, finished_at, error)
+       VALUES ('rv-killed', ?, 'review', 0, 'failed', 1, 'The server restarted while this review was running.')`,
+    ).run(runIds[0]);
+    db.prepare(
+      `INSERT INTO workflow_review_items
+         (instance_id, block_id, origin_run_id, run_id, position, round, status, review_id, updated_at)
+       VALUES (?, 'r', ?, ?, 0, 0, 'reviewing', 'rv-killed', 0)`,
+    ).run(instanceId, runIds[0], runIds[0]);
+    workflows.reconcileBlocksOnBoot();
+
+    assert.equal(workflows.instanceSpend(instanceId).unmeasured, 1);
+  });
+
+  it("counts a turn refused before anything was spawned as a measured zero", () => {
+    const instanceId = decidingBlock("waiting", "no-such-agent-id");
+    workflows.advanceInstances();
+
+    const block = workflows.blocksOf(instanceId)[0];
+    assert.equal(block.status, "failed", "the turn was refused for its missing agent");
+    assert.equal(block.costUnknown, false, "nothing was spawned, so $0 is known rather than missing");
+    assert.equal(workflows.blockSpendReading(block), 0);
+    assert.equal(workflows.instanceSpend(instanceId).unmeasured, 0);
+  });
+});

@@ -225,6 +225,34 @@ describe("landing a branch again after a squash", () => {
   });
 });
 
+describe("landing past a squash over a file the operator's checkout ignores", () => {
+  // This path writes the checkout with `read-tree -u` rather than `git merge`,
+  // and `read-tree` overwrites an ignored file with no flag to say otherwise.
+  for (const strategy of ["merge", "squash"] as const) {
+    it(`refuses a ${strategy}, naming it, and keeps its content`, async () => {
+      const name = `ignored-${strategy}`;
+      const c = await squashedLinkA(name);
+      fs.writeFileSync(path.join(c.repo, ".gitignore"), ".env\n");
+      git(c.repo, "add", ".gitignore");
+      git(c.repo, "commit", "-qm", "ignore .env");
+      fs.writeFileSync(path.join(c.repo, ".env"), "API_KEY=the-operators-own-key\n");
+      const b = linkB(name, c);
+      fs.writeFileSync(path.join(c.slot, ".env"), "API_KEY=placeholder\n");
+      git(c.slot, "add", "-f", ".env");
+      git(c.slot, "commit", "-qm", "link B tracks .env");
+      const before = git(c.repo, "rev-parse", "main").trim();
+
+      const landed = await land.landRun(b, strategy);
+
+      assert.equal(landed.ok, false, "landed over the operator's .env");
+      assert.match(landed.ok ? "" : landed.reason, /tracks \.env/);
+      assert.equal(read(path.join(c.repo, ".env")), "API_KEY=the-operators-own-key\n");
+      assert.equal(git(c.repo, "rev-parse", "main").trim(), before);
+      assert.equal(git(c.repo, "status", "--porcelain").trim(), "", "the checkout was left part-way");
+    });
+  }
+});
+
 describe("a squash-landed branch with nothing new on it", () => {
   it("is not offered a billed resolution when the target has since edited the squashed lines", async () => {
     const c = await squashedLinkA("settled");

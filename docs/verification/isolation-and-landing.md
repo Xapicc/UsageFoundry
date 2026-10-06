@@ -104,6 +104,16 @@
   started by a child (one seeded before boot is rolled back by the boot's
   reconciler, as it should be), and only the standard light skin was seen.
 
+- **A SIGKILL inside `git worktree add` leaves the checkout `ensureWorktree`
+  now refuses to adopt, 2026-10-06**, git 2.39.5 in a scratch repository of
+  30,000 committed files, on main `3d325d3`: `setsid git worktree add -q -b x
+  ../slot main & sleep 0.15; kill -9 -- -$!` left `.git/worktrees/slot/locked`
+  reading `initializing`, HEAD on `x`, 6,600 of the 30,000 files on disk and
+  30,077 `git status --porcelain` lines. So a partly written tree is a real
+  outcome as well as an empty one, and it still has the lock. Caveat: one kill
+  at one delay. `finishCutOffCheckout` was run against the constructed state in
+  `cutOffCheckout.test.ts`, not against this one.
+
 ## Not yet verified by hand
 
 - **The Land verify field was never saved**, so its check covers the form, not

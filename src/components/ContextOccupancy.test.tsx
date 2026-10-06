@@ -369,6 +369,17 @@ test("the sr-only prune table repeats the currency warning at its own figures", 
   assert.match(html, /never how far the line should drop/);
 });
 
+test("a fork whose removal is not measured is not listed as removing nothing", () => {
+  // The fork engine's removal is the API window's fall across the resume, and
+  // until that turn has billed there is none to read. The cut is still marked;
+  // "0 tokens" beside it would say the fork took nothing out.
+  const html = render(
+    series({ prunes: [prune({ tokensRemoved: null })], pruneCount: 1 }),
+  );
+  assert.match(html, /not measured yet/);
+  assert.doesNotMatch(html, />0 tokens</);
+});
+
 test("an unknown trigger renders as itself rather than as a guess", () => {
   const html = render(
     series({ prunes: [prune({ trigger: "something-new" })], pruneCount: 1 }),

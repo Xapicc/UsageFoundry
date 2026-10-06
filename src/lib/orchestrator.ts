@@ -297,7 +297,15 @@ export interface RunRow {
   /** Where the agent actually runs — the worktree when isolated, else `folder`. */
   work_dir: string | null;
   isolation: "none" | "worktree" | null;
+  /** The repository a checkout was cut from; null unless the run was given one. */
   repo_root: string | null;
+  /**
+   * The repository `folder` is in, checkout or not. Read by repository spend
+   * alone, and never in `repo_root`'s place: a run with isolation off has one
+   * of these and no checkout. Null before the plan is made, and on rows older
+   * than the column.
+   */
+  folder_repo: string | null;
   worktree_path: string | null;
   worktree_branch: string | null;
   /**
@@ -2437,7 +2445,15 @@ export interface IsolationPlan {
   mode: "worktree" | "none";
   /** Why isolation was not used. Surfaced so a silent downgrade is impossible. */
   reason?: string;
+  /** The repository a checkout is cut from. Set only in `mode: "worktree"`. */
   repoRoot?: string;
+  /**
+   * The repository the folder is in, in either mode, whenever git could say.
+   * Separate from `repoRoot` because most refusals are made *about* a
+   * repository — a subfolder of one, one at the mount root — and the run is
+   * still in it, which is what repository spend files it under.
+   */
+  repository?: string;
   base?: string;
   /** Branch the base commit was taken from — where this work lands. */
   baseBranch?: string;
@@ -2688,28 +2704,9 @@ function usesSubmodules(repoRoot: string): boolean {
  * the one outcome that would surprise in the dangerous direction.
  */
 export function probeIsolation(folder: string): IsolationPlan {
-  const top = gitSync(folder, ["rev-parse", "--show-toplevel"]);
-  if (!top.ok || !top.stdout) {
-    // git's own words when it has any, because "not a git repository" is a
-    // conclusion this call cannot actually reach. A checkout made on the host
-    // records an absolute host gitdir that does not exist under the mount, and
-    // git reports exactly that — while the directory is plainly a repository
-    // to the operator looking at it.
-    const detail = top.stderr.split("\n")[0]?.replace(/^fatal:\s*/, "") ?? "";
-    return {
-      mode: "none",
-      reason: detail
-        ? `git cannot use this folder (${detail}) — runs here are serialised.`
-        : "Not a git repository — runs here are serialised.",
-    };
-  }
-
-  let repoRoot: string;
-  try {
-    repoRoot = fs.realpathSync(top.stdout);
-  } catch {
-    return { mode: "none", reason: "Repository root could not be resolved." };
-  }
+  const found = findRepository(folder);
+  if ("reason" in found) return { mode: "none", reason: found.reason };
+  const repoRoot = found.root;
 
   // Anything but an exact match means the operator picked a subdirectory (or a
   // path inside someone else's repo). Branching the whole enclosing repository
@@ -2718,28 +2715,45 @@ export function probeIsolation(folder: string): IsolationPlan {
   if (repoRoot !== folder) {
     return {
       mode: "none",
+      repository: repoRoot,
       reason: `Folder is inside the repository at ${repoRoot}, not its root.`,
     };
   }
 
   if (gitSync(folder, ["rev-parse", "--is-bare-repository"]).stdout === "true") {
-    return { mode: "none", reason: "Bare repository — nothing to check out." };
+    return {
+      mode: "none",
+      repository: repoRoot,
+      reason: "Bare repository — nothing to check out.",
+    };
   }
 
   // git's own documentation warns against multiple checkouts of a superproject.
   if (usesSubmodules(repoRoot)) {
-    return { mode: "none", reason: "Repository uses submodules." };
+    return {
+      mode: "none",
+      repository: repoRoot,
+      reason: "Repository uses submodules.",
+    };
   }
 
   const head = gitSync(folder, ["rev-parse", "HEAD"]);
   if (!head.ok || !head.stdout) {
-    return { mode: "none", reason: "Repository has no commits yet." };
+    return {
+      mode: "none",
+      repository: repoRoot,
+      reason: "Repository has no commits yet.",
+    };
   }
 
   const { mountId } = describeFolder(folder);
   const mount = mountId ? mountById(mountId) : null;
   if (!mount) {
-    return { mode: "none", reason: "Folder is not inside a configured workspace." };
+    return {
+      mode: "none",
+      repository: repoRoot,
+      reason: "Folder is not inside a configured workspace.",
+    };
   }
   const mountRoot = realMountPath(mount);
 
@@ -2748,6 +2762,7 @@ export function probeIsolation(folder: string): IsolationPlan {
   if (repoRoot === mountRoot) {
     return {
       mode: "none",
+      repository: repoRoot,
       reason: "Repository is the workspace root — no place to put a checkout inside it.",
     };
   }
@@ -2762,7 +2777,44 @@ export function probeIsolation(folder: string): IsolationPlan {
       ? headBranch.stdout
       : undefined;
 
-  return { mode: "worktree", repoRoot, base: head.stdout, baseBranch };
+  return {
+    mode: "worktree",
+    repoRoot,
+    repository: repoRoot,
+    base: head.stdout,
+    baseBranch,
+  };
+}
+
+/**
+ * The repository `folder` is in, as git sees it, or why that cannot be said.
+ *
+ * Its own function because a run with isolation off asks it too, and asks
+ * nothing else: the run is in its repository whether or not it gets a checkout,
+ * and one `rev-parse` is the whole of what that costs inside `createRun`'s
+ * no-`await` window.
+ */
+function findRepository(folder: string): { root: string } | { reason: string } {
+  const top = gitSync(folder, ["rev-parse", "--show-toplevel"]);
+  if (!top.ok || !top.stdout) {
+    // git's own words when it has any, because "not a git repository" is a
+    // conclusion this call cannot actually reach. A checkout made on the host
+    // records an absolute host gitdir that does not exist under the mount, and
+    // git reports exactly that — while the directory is plainly a repository
+    // to the operator looking at it.
+    const detail = top.stderr.split("\n")[0]?.replace(/^fatal:\s*/, "") ?? "";
+    return {
+      reason: detail
+        ? `git cannot use this folder (${detail}) — runs here are serialised.`
+        : "Not a git repository — runs here are serialised.",
+    };
+  }
+
+  try {
+    return { root: fs.realpathSync(top.stdout) };
+  } catch {
+    return { reason: "Repository root could not be resolved." };
+  }
 }
 
 /**
@@ -3087,13 +3139,12 @@ async function ensureWorktree(run: RunRow): Promise<string> {
   // reason. See `repoLock.ts` for what this claims and what it does not.
   const registered = await withRepoAdmin(repoRoot, async () => {
     await git(repoRoot, ["worktree", "prune"]);
-    return (await git(repoRoot, ["worktree", "list", "--porcelain"]))
-      .stdout.split("\n")
-      .filter((l) => l.startsWith("worktree "))
-      .map((l) => l.slice("worktree ".length));
+    return registeredCheckouts(
+      (await git(repoRoot, ["worktree", "list", "--porcelain"])).stdout,
+    );
   });
 
-  if (registered.includes(slotPath)) {
+  if (registered.has(slotPath)) {
     const head = await git(slotPath, ["rev-parse", "--abbrev-ref", "HEAD"]);
     // The checkout already holds this branch. Adopt it exactly as it stands:
     // `checkout -b` would fail on an existing branch, the dirty check below
@@ -3107,7 +3158,16 @@ async function ensureWorktree(run: RunRow): Promise<string> {
     if (head.ok && head.stdout === branch) {
       const handover =
         continuing && run.iterations === 0 && (run.pause_count ?? 0) === 0;
-      if (handover) {
+      // A `worktree add` cut off before it wrote the files leaves exactly this
+      // too, so that is ruled out first.
+      const finishedHere = await finishCutOffCheckout(
+        run,
+        slotPath,
+        branch,
+        registered.get(slotPath) ?? null,
+        handover,
+      );
+      if (!finishedHere && handover) {
         // Whatever the predecessor left uncommitted is in this tree, on this
         // chain's branch. `commitRefusal` already settled whose work that is:
         // it belongs to the run whose branch the slot has checked out, and here
@@ -3133,27 +3193,32 @@ async function ensureWorktree(run: RunRow): Promise<string> {
         );
         return slotPath;
       }
-      log(run.id, `Resuming in the existing checkout on branch ${branch}.`, {
-        worktree: slotPath,
-        branch,
-      });
-      return slotPath;
-    }
-    const status = await git(slotPath, ["status", "--porcelain"]);
-    if (!status.ok || status.stdout !== "") {
-      throw new Error(
-        `Checkout ${path.basename(slotPath)} still has uncommitted work. Commit or remove it first.`,
-      );
-    }
-    if (continuing) {
-      await requireBranch(repoRoot, run, branch);
-      const co = await git(slotPath, ["checkout", branch]);
-      if (!co.ok) {
-        throw new Error(`Could not check out branch ${branch}: ${co.stderr}`);
+      if (!finishedHere) {
+        log(run.id, `Resuming in the existing checkout on branch ${branch}.`, {
+          worktree: slotPath,
+          branch,
+        });
+        return slotPath;
       }
+      // Finished just now, so it is a new checkout and is seeded and announced
+      // as one below.
     } else {
-      const co = await git(slotPath, ["checkout", "-b", branch, base]);
-      if (!co.ok) throw new Error(`Could not start branch ${branch}: ${co.stderr}`);
+      const status = await git(slotPath, ["status", "--porcelain"]);
+      if (!status.ok || status.stdout !== "") {
+        throw new Error(
+          `Checkout ${path.basename(slotPath)} still has uncommitted work. Commit or remove it first.`,
+        );
+      }
+      if (continuing) {
+        await requireBranch(repoRoot, run, branch);
+        const co = await git(slotPath, ["checkout", branch]);
+        if (!co.ok) {
+          throw new Error(`Could not check out branch ${branch}: ${co.stderr}`);
+        }
+      } else {
+        const co = await git(slotPath, ["checkout", "-b", branch, base]);
+        if (!co.ok) throw new Error(`Could not start branch ${branch}: ${co.stderr}`);
+      }
     }
   } else if (continuing) {
     // Straight past the orphaned-branch guard below, and it loses nothing by
@@ -3227,6 +3292,111 @@ async function ensureWorktree(run: RunRow): Promise<string> {
   );
 
   return slotPath;
+}
+
+/**
+ * Every checkout `git worktree list --porcelain` names, with the reason it is
+ * locked: null when it is not, "" when it is locked without one.
+ */
+function registeredCheckouts(porcelain: string): Map<string, string | null> {
+  const checkouts = new Map<string, string | null>();
+  let current: string | null = null;
+  for (const line of porcelain.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      current = line.slice("worktree ".length);
+      checkouts.set(current, null);
+    } else if (current !== null && (line === "locked" || line.startsWith("locked "))) {
+      checkouts.set(current, line.slice("locked".length).trim());
+    }
+  }
+  return checkouts;
+}
+
+/**
+ * Rule out a registered checkout on this run's branch being one git never
+ * finished writing, before `ensureWorktree` adopts it as it stands. True when it
+ * was finished here; throws, naming the slot, when it cannot safely be.
+ *
+ * `git worktree add` points the new checkout's HEAD at the branch *before* its
+ * `reset --hard` writes the files and the index, and cleans up only from a
+ * signal handler. A SIGKILL in between — a container stopped past its grace, an
+ * OOM kill, a host restart — therefore leaves a registered checkout on exactly
+ * this branch with few or none of its files, where `git status` reports every
+ * tracked file deleted and an agent's ordinary `git add -A && git commit`
+ * commits the deletion of the repository onto a branch an unattended merge can
+ * land. Git's own record of the cut is the lock it writes before it starts and
+ * unlinks once it is done, whose reason is "initializing" — a translated
+ * string, read here as every git this image ships writes it.
+ *
+ * Finishing it means running git's own last two steps, and that overwrites the
+ * tree, so it is done only where nothing in the tree can be anybody's work: a
+ * run with no cycle counted and no park, whose child never named a session —
+ * the test the counters alone fail, because a transient retry refunds a cycle
+ * that may have worked — and that is not taking over a predecessor's checkout. Anyone else may have worked in it since, and is refused with the
+ * commands rather than having that work reset away.
+ */
+async function finishCutOffCheckout(
+  run: RunRow,
+  slotPath: string,
+  branch: string,
+  lockReason: string | null,
+  handover: boolean,
+): Promise<boolean> {
+  const name = path.basename(slotPath);
+  const untouched =
+    !handover && run.iterations === 0 && (run.pause_count ?? 0) === 0 && !run.session_id;
+
+  if (lockReason === "initializing") {
+    if (!untouched) {
+      const since = handover
+        ? `run ${shortId(run.continues_run!)}, whose branch this run carries on, may have worked in it since`
+        : "this run may have worked in it since";
+      throw new Error(
+        `Checkout ${name} was never finished: git's lock on it still reads "initializing", so a ` +
+          `\`git worktree add\` was cut off before it wrote the files, and ${since}. It is not ` +
+          `adopted, because committing in it would commit the deletion of every file git never wrote. ` +
+          `Branch ${branch} is intact. Save anything in ${slotPath} worth keeping, then run ` +
+          `\`git -C ${slotPath} reset --hard\` and \`git worktree unlock ${slotPath}\`, and pick this run up again.`,
+      );
+    }
+    // No timeout worth enforcing, for the reason the add itself has none.
+    const reset = await git(slotPath, ["reset", "--hard", "--quiet"], {
+      timeoutMs: 30 * 60_000,
+    });
+    if (!reset.ok) {
+      throw new Error(`Checkout ${name} was never finished, and finishing it failed: ${reset.stderr}`);
+    }
+    // After the reset and never before it, as git orders them: cut off in
+    // between, the lock is still there and the next pick-up finishes it again.
+    const unlock = await git(run.repo_root!, ["worktree", "unlock", slotPath]);
+    if (!unlock.ok) {
+      throw new Error(`Checkout ${name} was finished, but git would not unlock it: ${unlock.stderr}`);
+    }
+    log(
+      run.id,
+      `Checkout ${name} was left half-made by a \`git worktree add\` that was cut off before it wrote the files, so it was finished before any work cycle was given it.`,
+      { worktree: slotPath, branch },
+    );
+    return true;
+  }
+
+  if (!untouched) return false;
+  // Tracked paths only. An untracked one is what seeding copies in, and a run
+  // refused before its first child — a signed-out local provider, its own
+  // guard — comes back to exactly that.
+  const changed = await git(slotPath, ["status", "--porcelain", "--untracked-files=no"]);
+  if (!changed.ok) {
+    throw new Error(`Could not read the status of checkout ${name}: ${changed.stderr}`);
+  }
+  const paths = changed.stdout.split("\n").filter(Boolean).length;
+  if (paths === 0) return false;
+  throw new Error(
+    `Checkout ${name} is on this run's branch ${branch} with ${paths} tracked path(s) changed, ` +
+      "although this run has never had a work cycle, so none of it is this run's — most likely a " +
+      "checkout git never finished writing. It is not adopted, because committing in it would " +
+      `commit those changes as this run's work. Look at \`git -C ${slotPath} status\`; if nothing ` +
+      `there is worth keeping, \`git -C ${slotPath} reset --hard\` finishes it, and pick this run up again.`,
+  );
 }
 
 /**
@@ -3557,8 +3727,10 @@ async function emitHandoff(id: string, run: RunRow, workDir: string): Promise<vo
       uncommitted: leftover.split("\n").filter(Boolean),
       review: [`git log ${base}..${branch}`, `git diff ${base}...${branch}`],
       // Withheld rather than shown-and-caveated: a copyable command is going to
-      // be copied.
-      merge: mainDirty ? null : `git merge ${branch}`,
+      // be copied. `--no-overwrite-ignore` for `landRun`'s reason: the status
+      // read above never lists an ignored file, and a plain `git merge`
+      // replaces one wherever the branch tracks its path.
+      merge: mainDirty ? null : `git merge --no-overwrite-ignore ${branch}`,
       mergeBlocked: mainDirty
         ? mainStatus.ok
           ? "Your checkout has uncommitted changes — commit or stash them before merging."
@@ -3930,11 +4102,11 @@ function planWorkspace(
   folder: string,
   isolate: boolean,
   continueFrom: RunRow | null,
-): { plan: IsolationPlan; workDir: string } {
+): { plan: IsolationPlan; workDir: string; repository: string | null } {
   // An isolated run gets its own subtree, so it contends with nothing but a run
   // started on the workspace root — which does contain the checkout store, and
   // correctly blocks.
-  const probe = isolate ? probeIsolation(folder) : { mode: "none" as const };
+  const probe: IsolationPlan = isolate ? probeIsolation(folder) : repositoryOnly(folder);
   const repoRoot = probe.mode === "worktree" ? probe.repoRoot : null;
 
   // What a chain claims is the **branch**, not the slot, and that is what makes
@@ -3981,7 +4153,16 @@ function planWorkspace(
     plan,
     workDir:
       plan.mode === "worktree" && plan.worktreePath ? plan.worktreePath : folder,
+    // Off the probe rather than the plan, which `resolveIsolation` rebuilds for
+    // a continuation and does not consult at all with isolation off.
+    repository: probe.repository ?? null,
   };
+}
+
+/** The probe a run with isolation off gets: which repository, and nothing else. */
+function repositoryOnly(folder: string): IsolationPlan {
+  const found = findRepository(folder);
+  return "root" in found ? { mode: "none", repository: found.root } : { mode: "none" };
 }
 
 /**
@@ -4276,8 +4457,8 @@ export function createRun(input: CreateRunInput): RunRow {
   // `continues_run` is the exception and is written either way: it is an id and
   // a statement of intent rather than a claim on anything, and the landing
   // rules have to be able to see a chain coming before its branch exists.
-  const { plan, workDir } = waiting
-    ? { plan: null, workDir: null }
+  const { plan, workDir, repository } = waiting
+    ? { plan: null, workDir: null, repository: null }
     : planWorkspace(
         id,
         folder,
@@ -4293,9 +4474,9 @@ export function createRun(input: CreateRunInput): RunRow {
       .prepare(
         `INSERT INTO runs
            (id, folder, prompt, model, provider, status, budget, max_iterations, iterations, created_at, spent_usd, spent_tokens,
-            work_dir, isolation, repo_root, worktree_path, worktree_branch, worktree_base, worktree_base_branch,
+            work_dir, isolation, repo_root, folder_repo, worktree_path, worktree_branch, worktree_base, worktree_base_branch,
             continues_run, agent, file_cost_notice, tmpdir_notice, origin, origin_ref, task_signature)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -4318,6 +4499,7 @@ export function createRun(input: CreateRunInput): RunRow {
         workDir,
         isolation,
         plan?.repoRoot ?? null,
+        repository,
         plan?.worktreePath ?? null,
         plan?.branch ?? null,
         plan?.base ?? null,
@@ -5517,6 +5699,7 @@ export function reviveBlockedDependents(roots: readonly string[]): number {
 function admitWaiting(run: RunRow): boolean {
   let plan: IsolationPlan;
   let workDir: string;
+  let repository: string | null;
   try {
     // `isolation === 'none'` on a waiting row is the operator's own answer,
     // recorded at creation; anything else means the question was deferred.
@@ -5524,7 +5707,7 @@ function admitWaiting(run: RunRow): boolean {
     // The predecessor is read *now* rather than at admission because this is
     // the first moment its branch exists: it may itself have been waiting, and
     // its whole isolation plan was deferred for the same reason this one was.
-    ({ plan, workDir } = planWorkspace(
+    ({ plan, workDir, repository } = planWorkspace(
       run.id,
       run.folder,
       run.isolation !== "none",
@@ -5551,7 +5734,7 @@ function admitWaiting(run: RunRow): boolean {
 
   const flip = db()
     .prepare(
-      "UPDATE runs SET status='queued', work_dir=?, isolation=?, repo_root=?," +
+      "UPDATE runs SET status='queued', work_dir=?, isolation=?, repo_root=?, folder_repo=?," +
         " worktree_path=?, worktree_branch=?, worktree_base=?, worktree_base_branch=?" +
         " WHERE id=? AND status='waiting'",
     )
@@ -5559,6 +5742,7 @@ function admitWaiting(run: RunRow): boolean {
       workDir,
       plan.mode,
       plan.repoRoot ?? null,
+      repository,
       plan.worktreePath ?? null,
       plan.branch ?? null,
       plan.base ?? null,

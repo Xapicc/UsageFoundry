@@ -314,6 +314,17 @@ export interface PruneSavingsDTO {
    * accuses every other tool of.
    */
   unsettledPrunes: number;
+  /**
+   * Prunes whose removal has not been measured yet — a fork until the first
+   * billed turn of the cycle that resumes it, and for good after a rollback.
+   *
+   * These contribute 0 to `tokensRemoved` and to `cacheSavedUSD`, and there 0
+   * means **unknown**: the token count and the saving are floors, and the net
+   * is one too unless `unsettledPrunes` pulls it the other way. Rendered beside
+   * the figures for `unsettledPrunes`' reason, from the other direction — a
+   * fork nobody has measured must not read as one measured to remove nothing.
+   */
+  unmeasuredPrunes: number;
   tokensRemoved: number;
   /**
    * Total turns the savings are measured over, summed across prunes.
@@ -328,6 +339,12 @@ export interface PruneSavingsDTO {
   invalidationUSD: number;
   netUSD: number;
 }
+
+/**
+ * Which way a pruning net can still move — see `netBound` in
+ * `pruneStatement.ts`, which is the one place it is decided.
+ */
+export type NetBound = "exact" | "at most" | "at least" | "not final";
 
 /**
  * Which engine is configured, and whether the tool behind it is here.
@@ -556,8 +573,12 @@ export interface ContextPruneMarkDTO {
   ts: number;
   /** `boundary` or `early-end`; only the second manufactured its own moment. */
   trigger: string;
-  /** In `contextTokens`, which is **not** the samples' basis — see `tokens`. */
-  tokensRemoved: number;
+  /**
+   * In `contextTokens`, which is **not** the samples' basis — see `tokens`.
+   * `null` for a fork whose removal has not been measured: the cut happened
+   * and belongs on the axis, and how much it took out is unknown, not none.
+   */
+  tokensRemoved: number | null;
 }
 
 /**
@@ -1542,6 +1563,22 @@ export type RunListItemDTO = Omit<
    * for why adding it to a meter is adding a counterfactual to a measurement.
    */
   prunedNetUSD?: number;
+  /**
+   * What `prunedNetUSD` is when it is not simply the net; absent when it is.
+   *
+   * `unpriced` is no prune on the run having a price, where `prunedNetUSD` is
+   * not a figure at all — `sumPruneSavings` adds $0 for every unpriced
+   * receipt, and the column printed that as `+$0.00`, which reads as pruning
+   * that broke exactly even. The other three are `netBound`'s: a ceiling
+   * while a cost is unsettled, a floor while a removal is unmeasured, and
+   * neither with both. Prunes only partly priced are not marked, on
+   * `ContextControl`'s decision: no bound describes a coverage gap, and the
+   * run's own page prints the count.
+   *
+   * One optional string rather than the counts behind it, on the rule above:
+   * absent on every run whose net is final, which is most of a hundred rows.
+   */
+  prunedNetBound?: "unpriced" | Exclude<NetBound, "exact">;
 };
 
 /**

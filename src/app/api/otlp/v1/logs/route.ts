@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
+// Relative, not "@/…": tsconfig.test.json emits plain CommonJS and nothing
+// rewrites the path alias at runtime, so a route a test loads has to import
+// the way `health/route.ts` does.
 import {
   MAX_INGEST_BODY_BYTES,
   parseLogsPayload,
   readCappedBody,
   recordTelemetry,
   runForIngestToken,
-} from "@/lib/otlp";
+} from "../../../../../lib/otlp";
 
 /**
  * OTLP/HTTP-JSON logs receiver.
@@ -39,12 +42,20 @@ import {
  * `otlp_requests` row keyed on a request id, and the run page and the status
  * endpoint both report on that.
  *
- * Past authentication the response is 200 for anything this route *read*. A
- * batch exporter retries on failure, and a malformed or unrecognised record is
- * not something a retry will fix — it would just cost the same batch again on a
- * loop. An unauthenticated caller is the opposite case and gets a 401: retrying
- * is the right thing for it to do, and answering 200 while dropping the batch
- * would report success for telemetry that never arrived.
+ * Past authentication the response is 200 for anything this route *read and
+ * could not make sense of*. A batch exporter retries on failure, and a
+ * malformed or unrecognised record is not something a retry will fix — it would
+ * just cost the same batch again on a loop. An unauthenticated caller is the
+ * opposite case and gets a 401: retrying is the right thing for it to do, and
+ * answering 200 while dropping the batch would report success for telemetry
+ * that never arrived.
+ *
+ * A batch that parsed and then could not be **written** is that opposite case
+ * too, and gets a 503, which the OTLP/HTTP spec names retryable. `otlp_requests`
+ * is the only input of the live `run_cost`/`run_tokens` guard, so a 200 here
+ * made the exporter stop retrying spend the guard then never saw, with nothing
+ * logged. A retry is safe because `recordTelemetry`'s `INSERT OR IGNORE` on
+ * `request_id` makes a redelivered batch a no-op.
  *
  * The one other refusal is a body over `MAX_INGEST_BODY_BYTES`, which is a 413
  * because it is neither of those: the batch was never read, so 200 would be the
@@ -63,6 +74,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  let rows: ReturnType<typeof parseLogsPayload>;
   try {
     // Bounded at the read rather than after the parse: this path is exempt
     // from the edge gate, so nothing upstream of here has decided how much
@@ -87,10 +99,23 @@ export async function POST(req: Request) {
       );
     }
 
-    const rows = parseLogsPayload(JSON.parse(body.text));
-    const inserted = recordTelemetry(rows.map((r) => ({ ...r, runId })));
-    return NextResponse.json({ partialSuccess: {}, seen: rows.length, inserted });
+    rows = parseLogsPayload(JSON.parse(body.text));
   } catch {
     return NextResponse.json({ partialSuccess: {} });
+  }
+
+  // Its own `try`, so that only a body that never parsed gets the 200 above.
+  try {
+    const inserted = recordTelemetry(rows.map((r) => ({ ...r, runId })));
+    return NextResponse.json({ partialSuccess: {}, seen: rows.length, inserted });
+  } catch (err) {
+    console.error(
+      `[otlp/v1/logs] could not record ${rows.length} request(s) for run ${runId}; answering 503 so the exporter retries:`,
+      err,
+    );
+    return NextResponse.json(
+      { error: "Telemetry could not be recorded; retry" },
+      { status: 503 },
+    );
   }
 }
