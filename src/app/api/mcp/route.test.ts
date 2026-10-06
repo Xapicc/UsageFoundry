@@ -1098,6 +1098,45 @@ test("propose_workflow refuses a block whose folder is null, and takes \"\" as t
   assert.equal(proposals(), 1);
 });
 
+test("ask_operator refuses a question too long to be answered, and asks nothing", async () => {
+  const chatId = chat.createChat().id;
+  const token = chat.mintCapability({ kind: "chat", chatId });
+  const asked = () => chat.listQuestions(chatId).length;
+  const cap = `${chat.MAX_QUESTION_CHARS.toLocaleString("en-US")} characters`;
+
+  const listed = (await rpc(token, "tools/list")) as {
+    tools: {
+      name: string;
+      inputSchema: { properties: { questions: { items: { properties: { question: { description: string } } } } } };
+    }[];
+  };
+  const description =
+    listed.tools.find((t) => t.name === "ask_operator")?.inputSchema.properties.questions.items
+      .properties.question.description ?? "";
+  assert.ok(description.includes(cap), `the question description says ${cap}: ${description}`);
+
+  // Every open question is quoted in full in the message that answers them, so
+  // one pasted log took that message past `MAX_CHAT_MESSAGE_BYTES`: Answer was
+  // refused on every question in the thread, the short one beside it included,
+  // with a sentence telling the operator to shorten text they did not write.
+  const pasted = await callTool(token, "ask_operator", {
+    questions: [
+      { question: "Which of these should I look at first?", choices: ["the build", "the tests"] },
+      { question: "x".repeat(80_000) },
+    ],
+  });
+  assert.equal(pasted.isError, true, "the call is refused");
+  assert.ok(pasted.text.includes(cap), pasted.text.slice(0, 500));
+  assert.ok(pasted.text.length < 1_000, "and the refusal does not quote it back");
+  assert.equal(asked(), 0, "nor is the short question beside it recorded");
+
+  const atCap = await callTool(token, "ask_operator", {
+    questions: [{ question: "x".repeat(chat.MAX_QUESTION_CHARS) }],
+  });
+  assert.equal(atCap.isError, false, atCap.text);
+  assert.equal(asked(), 1);
+});
+
 /**
  * The chat can name the provider a proposed run is spawned as, which it could
  * not before: the tool had no field for it, so the orchestrator told the

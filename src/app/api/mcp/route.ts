@@ -12,6 +12,7 @@ import {
   listProposals,
   MAX_OPEN_QUESTIONS,
   MAX_PENDING_PROPOSALS,
+  MAX_QUESTION_CHARS,
   MAX_QUESTION_CHOICES,
   normalizeChoices,
   pendingProposals,
@@ -1214,7 +1215,12 @@ const CHAT_TOOLS = [
                 description:
                   "One question, in full. It is shown on its own, so it has " +
                   "to carry its own context: name the file, the run or the " +
-                  "folder it is about rather than saying \"the second one\".",
+                  "folder it is about rather than saying \"the second one\". " +
+                  `At most ${MAX_QUESTION_CHARS.toLocaleString("en-US")} ` +
+                  "characters (UTF-16 code units, which is what String.length " +
+                  "counts), because it is quoted back to you in full with the " +
+                  "answer: a log, a diff or a listing goes in your reply or is " +
+                  "named by its path, and is never pasted here.",
               },
               choices: {
                 type: "array",
@@ -4731,10 +4737,27 @@ function askOperator(args: Record<string, unknown>, chatId: string) {
   }
 
   const questions: QuestionInput[] = [];
-  for (const entry of raw) {
+  for (const [index, entry] of raw.entries()) {
     const q = (entry ?? {}) as Record<string, unknown>;
     const question = String(q.question ?? "").trim();
     if (!question) return text("Every question needs its text.", true);
+
+    // Refused here because past this the operator is the one refused: the
+    // answer message quotes every open question, and `sendChatMessage` turns
+    // it away and tells them to shorten words they did not write. Named by
+    // position rather than quoted, since quoting it is sending the log back.
+    if (question.length > MAX_QUESTION_CHARS) {
+      return text(
+        `Question ${index + 1} is ${question.length.toLocaleString("en-US")} ` +
+          "characters long, and a question can be at most " +
+          `${MAX_QUESTION_CHARS.toLocaleString("en-US")} characters: every open question is ` +
+          "quoted in full in the message that answers it, and past this that " +
+          "message is too long to send. Nothing was asked. Put the long part — " +
+          "a log, a diff, a listing — in your reply, or name the file it is in, " +
+          "and ask the question on its own.",
+        true,
+      );
+    }
 
     // Normalized first, so every refusal below counts what would actually be
     // rendered rather than what arrived: twenty distinct choices and twenty
