@@ -517,4 +517,31 @@ describe("landRun into a checkout another git process holds the index lock of", 
     assert.equal(git(s.repo, "rev-parse", "main").trim(), moved);
     assert.equal(landedAt(s.runId), null);
   });
+
+  it("takes back a fast-forward refused at the target's ref lock, then lands once the lock is gone", async () => {
+    // A fast-forward writes the branch's tree into the index and the working
+    // tree and moves `main` last, so the lock refuses it with the whole branch
+    // staged and no MERGE_HEAD. Before `unwind` asked the checkout, the card
+    // said it was as it was over that staged change.
+    const s = scene("ref-lock");
+    const lock = path.join(s.repo, ".git", "refs", "heads", "main.lock");
+    fs.writeFileSync(lock, "");
+
+    const landed = await land.landRun(s.runId, "merge");
+
+    assert.equal(landed.ok, false, "landed through a held ref lock");
+    const reason = landed.ok ? "" : landed.reason;
+    assert.match(reason, /^Another git process was using your checkout/);
+    assert.ok(reason.includes(`${lock} was left behind`), reason);
+    assert.equal(git(s.repo, "rev-parse", "main").trim(), s.base);
+    assert.equal(git(s.repo, "status", "--porcelain"), "", "the branch was left in the checkout");
+    assert.equal(fs.readFileSync(path.join(s.repo, "shared.txt"), "utf8"), "base\n");
+    assert.equal(fs.existsSync(path.join(s.repo, ".git", "MERGE_HEAD")), false);
+    assert.equal(landedAt(s.runId), null);
+
+    fs.rmSync(lock);
+    const again = await land.landRun(s.runId, "merge");
+    assert.equal(again.ok, true, again.ok ? "" : again.reason);
+    assert.equal(fs.readFileSync(path.join(s.repo, "shared.txt"), "utf8"), "branch\n");
+  });
 });

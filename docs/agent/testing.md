@@ -42,6 +42,7 @@ Twenty are renderings rather than functions — every `*.test.tsx` in the tree, 
 | `backgroundWork.test.ts` |  |
 | `cycleDeadline.test.ts` |  |
 | `resumeControl.test.ts` |  |
+| `resumeMissingTranscript.test.ts` |  |
 
 ## [Fleet stop, hold and shutdown](testing/fleet-and-shutdown.md)
 
@@ -406,7 +407,7 @@ Units that are about no test file in the tree:
 | `logLine.test.ts` |  |
 | `repoSpend.test.ts` |  |
 | `stackRequests.test.ts` |  |
-| `stackWait.test.ts` | [budgets] |
+| `stackWait.test.ts` | [budgets], [cycle] |
 | `stacks.test.ts` |  |
 | `toolInventory.test.ts` |  |
 | `unsavedWork.test.ts` |  |

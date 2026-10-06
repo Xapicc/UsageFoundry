@@ -122,6 +122,19 @@ describe("normalizeAgentInput", () => {
     });
   }
 
+  // The same `String()` saved an agent named, or described to Claude Code as,
+  // "[object Object]" — non-empty, so the blank-field refusals above passed it.
+  for (const field of ["name", "description"] as const) {
+    for (const wrong of [{ text: "Reviewer" }, ["Reviewer"], 42]) {
+      it(`refuses a ${field} of ${JSON.stringify(wrong)} by name instead of reading it as text`, () => {
+        const parsed = normalizeAgentInput({ ...valid, [field]: wrong });
+        assert(!parsed.ok);
+        assert.match(parsed.error, new RegExp(`"${field}" has to be a string when it is given`));
+        assert.doesNotMatch(parsed.error, /\[object Object\]/);
+      });
+    }
+  }
+
   it("reads a null or missing prompt as the empty one it always was", () => {
     for (const prompt of [null, undefined]) {
       const parsed = normalizeAgentInput({ ...valid, prompt });
@@ -454,6 +467,15 @@ describe("parseRunAgent / runAgentDefinitions", () => {
     for (const prompt of [{ text: "You review code." }, ["You review code."], 42]) {
       const damaged = { ...JSON.parse(frozen), prompt };
       assert.equal(parseRunAgent(JSON.stringify(damaged)), null, JSON.stringify(prompt));
+    }
+  });
+
+  it("reads a stored name or description that is not text as no agent", () => {
+    for (const field of ["name", "description"]) {
+      for (const wrong of [{ text: "reviewer" }, ["reviewer"], 42]) {
+        const damaged = { ...JSON.parse(frozen), [field]: wrong };
+        assert.equal(parseRunAgent(JSON.stringify(damaged)), null, `${field}: ${JSON.stringify(wrong)}`);
+      }
     }
   });
 

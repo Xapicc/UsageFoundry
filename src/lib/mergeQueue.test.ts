@@ -38,7 +38,7 @@ const base: LandState = {
   runId: "r1",
   runStatus: "completed",
   branch: "uf/repo-1234abcd",
-  chain: [{ runId: "r1", status: "completed", iterations: 1 }],
+  chain: [{ runId: "r1", status: "completed", iterations: 1, refundedCycles: 0 }],
   target: "main",
   targetInferred: false,
   branchExists: true,
@@ -101,8 +101,8 @@ describe("planItem", () => {
       {
         ...conflict,
         chain: [
-          { runId: "r1", status: "completed", iterations: 1 },
-          { runId: "r2", status: "completed", iterations: 1 },
+          { runId: "r1", status: "completed", iterations: 1, refundedCycles: 0 },
+          { runId: "r2", status: "completed", iterations: 1, refundedCycles: 0 },
         ],
         blocked: ownerRefusal,
       },
@@ -247,8 +247,8 @@ describe("planItem", () => {
       {
         ...base,
         chain: [
-          { runId: "r1", status: "completed", iterations: 1 },
-          { runId: "r2", status: "completed", iterations: 1 },
+          { runId: "r1", status: "completed", iterations: 1, refundedCycles: 0 },
+          { runId: "r2", status: "completed", iterations: 1, refundedCycles: 0 },
         ],
         merged: true,
         preview: { outcome: "already-merged" },

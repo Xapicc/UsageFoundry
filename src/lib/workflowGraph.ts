@@ -494,6 +494,8 @@ export function normalizeWorkflowInput(
 ): WorkflowNormalization {
   const o = (raw ?? {}) as Record<string, unknown>;
 
+  const notName = notStringRefusal("name", o.name);
+  if (notName) return { ok: false, error: notName };
   const name = String(o.name ?? "").trim();
   if (!name) return { ok: false, error: "A workflow needs a name." };
   if (name.length > MAX_WORKFLOW_NAME) {
@@ -960,6 +962,8 @@ function normalizeNode(
       };
     }
 
+    const notName = notStringRefusal("name", n.name);
+    if (notName) return { ok: false, error: `${position}: ${notName}` };
     const nodeName = String(n.name ?? "").trim();
     if (!nodeName) {
       return { ok: false, error: `${position} needs a name.` };
@@ -1021,6 +1025,10 @@ function normalizeNode(
     // here is what made the single block whose text is sent to no agent the
     // single block that could not be saved without writing some, and the only
     // way past that refusal was words nothing would read.
+    // Asked only where the task is read, `promptOverride`'s rule below: `{}`
+    // was a block whose every run was briefed with "[object Object]".
+    const notTask = startsNoRun ? null : notStringRefusal("task", n.task);
+    if (notTask) return { ok: false, error: `“${nodeName}”: ${notTask}` };
     const task = startsNoRun ? "" : String(n.task ?? "").trim();
     if (!startsNoRun && !task) {
       return {

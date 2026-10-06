@@ -1025,6 +1025,13 @@ function migrate(db: Database.Database) {
   // not deliver the same message twice.
   addColumn(db, "runs", "follow_up", "TEXT");
 
+  // Whether `follow_up` is the operator's own note rather than text this app
+  // resolved for the session it was about to resume. A run that finds that
+  // session's transcript gone keeps the first and drops the second, and the
+  // text alone cannot say which it holds. Rows written before this read as
+  // app text, so a queued note on one is lost only if its transcript went too.
+  addColumn(db, "runs", "follow_up_is_note", "INTEGER NOT NULL DEFAULT 0");
+
   // The work cycle that is open right now, stamped at the spawn and cleared the
   // moment it returns. `iterations` counts cycles that *finished*, so for the
   // whole of cycle 1 — routinely tens of minutes — a working run read `0/N`,

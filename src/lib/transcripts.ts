@@ -1346,6 +1346,42 @@ function resolveIn(files: readonly string[], sessionId: string): string | null {
   return mine.length === 1 ? mine[0] : null;
 }
 
+export type TranscriptPresence = "present" | "absent" | "unknown";
+
+/**
+ * Whether a session's transcript is still on disk, for deciding to resume it.
+ *
+ * Not `resolveSessionTranscript`, whose null means two things that must be kept
+ * apart here: no file, and two files. Two projects holding one id is refused
+ * as a file to rewrite, which is that function's question, and is still a
+ * conversation the CLI can resume, which is this one's — answering "gone" for
+ * it would throw that conversation away.
+ *
+ * `unknown` whenever the walk cannot vouch for an absence: a directory it could
+ * not read may be the one holding the file, and a tree with no transcripts at
+ * all is a fresh install or a `CLAUDE_HOME` that is not where the CLI writes,
+ * neither of which says anything about this session. Only `absent` should
+ * change what a caller does.
+ */
+export async function sessionTranscriptPresence(
+  sessionId: string,
+): Promise<TranscriptPresence> {
+  const { files, failures } = await listTranscriptFiles(PROJECTS_DIR);
+  return transcriptPresence(files, failures.length > 0, sessionId);
+}
+
+/** The rule above, against a walk already taken. Exported for its test. */
+export function transcriptPresence(
+  files: readonly string[],
+  walkFailed: boolean,
+  sessionId: string,
+): TranscriptPresence {
+  const name = `${sessionId}.jsonl`;
+  if (files.some((f) => path.basename(f) === name)) return "present";
+  if (walkFailed || files.length === 0) return "unknown";
+  return "absent";
+}
+
 /**
  * Resolve several sessions against **one** walk of the projects tree.
  *

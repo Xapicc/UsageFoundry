@@ -493,6 +493,26 @@ describe("normalizeWorkflowInput — name and blocks", () => {
     assert.equal(merged.graph.nodes[1].promptOverride, null);
   });
 
+  it("refuses a workflow name, block name or task that is not a string, naming the field", () => {
+    // `String()` saved a workflow, or a block, named "[object Object]", and a
+    // block whose every run was briefed with exactly that — non-empty, so the
+    // blank-field refusals passed it.
+    for (const wrong of [{ text: "x" }, ["x"], 42]) {
+      const label = JSON.stringify(wrong);
+      assert.match(error({ ...graph([node("a")]), name: wrong }), /"name" has to be a string when it is given/, label);
+      assert.match(error(graph([node("a", { name: wrong })])), /Block 1: "name" has to be a string/, label);
+      for (const make of [node, decider]) {
+        const refusal = error(graph([make("a", { task: wrong })]));
+        assert.match(refusal, /“A”: "task" has to be a string when it is given/, label);
+        assert.doesNotMatch(refusal, /\[object Object\]/);
+      }
+    }
+    // A merge block starts no run and drops its task unread, so it is not
+    // refused for a value it never reads.
+    const merged = value(graph([node("a"), merger("m", { task: { text: "x" } })], [edge("a", "m")]));
+    assert.equal(merged.graph.nodes[1].task, "");
+  });
+
   it("carries the workflow-wide limits, and reads a blank field as off", () => {
     // The one guard a workflow itself holds, and the only value on this form
     // that is not about *what work to do*. It earns its place here rather than
