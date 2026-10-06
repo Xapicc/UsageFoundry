@@ -8,6 +8,7 @@ import {
   landState,
   purgeBranch,
   resolutionChange,
+  resolutionHolds,
   resolveConflicts,
   type LandStrategy,
 } from "../../../../../lib/land";
@@ -32,7 +33,8 @@ type Ctx = { params: Promise<{ id: string }> };
  */
 export async function GET(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
-  if (!getRun(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const run = getRun(id);
+  if (!run) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   // The latest resolution travels with the state so the card polls one route.
   // Its diff is read only once it has one: the card polls this route every few
@@ -50,6 +52,10 @@ export async function GET(_req: Request, ctx: Ctx) {
     // give, so the card can say it instead of offering a button whose whole
     // answer is that sentence.
     delivery: await deliveryState(id, state),
+    // Apart from `resolution`, which is this run's own: a resolution started on
+    // another link of its chain has its merge open in the checkout this card's
+    // Purge would remove and its Commit would stage.
+    branchResolving: resolutionHolds(run),
     resolution: row
       ? {
           id: row.id,

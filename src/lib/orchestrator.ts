@@ -22,7 +22,7 @@ import {
 import { git, gitSync } from "./git";
 import { runningVerifyChildren } from "./landGate";
 import { withRepoAdmin } from "./repoLock";
-import { checkoutWriter } from "./checkoutClaim";
+import { checkoutWriter, type CheckoutOwner } from "./checkoutClaim";
 import { dataDirRefusal, mayWriteDataDir, requireDataDir } from "./serverLock";
 import { childCredentials, chownForChild, deprioritiseChildForOom } from "./privsep";
 import { currentSandbox, sandboxRefusal } from "./sandbox";
@@ -12665,6 +12665,25 @@ const RESTART_KILLED_NOTICE =
   "whole. Then continue the task from there.";
 
 /**
+ * Every run recorded on this run's branch, itself included: each id a holder
+ * of the checkout they share can be recorded under.
+ *
+ * Selected on the branch, which is the key `checkoutClaim.ts` takes, rather
+ * than walked over `continues_run` as `chainRuns` is. That walk exists for a
+ * dependent not yet released, which has no branch recorded — and such a run
+ * cannot hold a checkout, so for this question the two agree, and asking the
+ * claim's own key keeps the claim and the rows from disagreeing about what the
+ * same checkout is.
+ */
+export function runsOnBranch(run: CheckoutOwner): string[] {
+  if (!run.repo_root || !run.worktree_branch) return [run.id];
+  const rows = db()
+    .prepare("SELECT id FROM runs WHERE repo_root = ? AND worktree_branch = ?")
+    .all(run.repo_root, run.worktree_branch) as { id: string }[];
+  return rows.map((r) => r.id);
+}
+
+/**
  * Why a conflict resolution, a Commit, a Purge or the merge queue holds this
  * run's branch, or null.
  *
@@ -12674,21 +12693,27 @@ const RESTART_KILLED_NOTICE =
  * Purge for the whole of its write. It is read here in the same turn that
  * queues the run, so a resolution entering afterwards finds the run active and
  * refuses itself.
+ *
+ * Asked of every run on the branch, not of this one: a chain's links share the
+ * checkout, so a resolution, a Commit or a land on any of them is the merge
+ * this run's next cycle would be committing into.
  */
-function branchHolderRefusal(runId: string): string | null {
-  const writer = checkoutWriter(runId);
+function branchHolderRefusal(run: RunRow): string | null {
+  const writer = checkoutWriter(run);
+  const ids = runsOnBranch(run);
+  const among = ids.map(() => "?").join(",");
   const resolution =
     writer === "resolution" ||
     db()
       .prepare(
-        "SELECT 1 FROM run_reviews WHERE run_id = ? AND kind = 'resolve' AND status = 'running' LIMIT 1",
+        `SELECT 1 FROM run_reviews WHERE run_id IN (${among}) AND kind = 'resolve' AND status = 'running' LIMIT 1`,
       )
-      .get(runId);
+      .get(...ids);
   const queued = db()
     .prepare(
-      "SELECT status FROM merge_queue WHERE run_id = ? AND status IN ('landing','resolving') LIMIT 1",
+      `SELECT status FROM merge_queue WHERE run_id IN (${among}) AND status IN ('landing','resolving') LIMIT 1`,
     )
-    .get(runId) as { status: "landing" | "resolving" } | undefined;
+    .get(...ids) as { status: "landing" | "resolving" } | undefined;
   if (resolution || queued?.status === "resolving") {
     return (
       "Claude is resolving a conflict on its branch, with the merge open in the " +
@@ -12834,7 +12859,7 @@ export function reopenRun(
   // open in this run's own slot with the conflicted files still marked, and the
   // cycle this would start is granted `git add` and `git commit` there; a land
   // is part-way through merging the branch this run would go on committing to.
-  const branchHeld = branchHolderRefusal(id);
+  const branchHeld = branchHolderRefusal(run);
   if (branchHeld) return { ok: false, reason: branchHeld };
 
   const policy = normalizePolicy(budget);
