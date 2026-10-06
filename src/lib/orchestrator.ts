@@ -5304,6 +5304,35 @@ export function blockWaitingRun(id: string, reason: string): boolean {
 }
 
 /**
+ * Block every run waiting on one of `closedOut`, runs a restart has just
+ * closed out, with a sentence naming the one it waits on.
+ *
+ * On either edge, because an `on-finish` edge is satisfied by a run that did a
+ * cycle and was then ended by the restart, so the ordinary pass would queue
+ * the dependent on the strength of the restart. Not flagged `restart_closed`:
+ * its dependency is, and picking that one up is what brings this row back,
+ * through `reviveBlockedDependents`. Flagged too, it would share the restart
+ * notice's one press with that dependency, and if it were reached first an
+ * `on-finish` edge would release it to run beside the dependency rather than
+ * after it.
+ *
+ * Two callers write the same ending, so they share the sentence:
+ * `reconcileOnBoot` for the runs it fails or stops, and the run loop for an
+ * ending the shutdown gave it.
+ */
+function blockBehindRestartClosed(closedOut: ReadonlySet<string>): void {
+  for (const link of allDependencyLinks()) {
+    if (!closedOut.has(link.dependsOn)) continue;
+    blockWaitingRun(
+      link.runId,
+      `Set to start after run ${shortId(link.dependsOn)}, which the server ` +
+        "restart closed out. Picking that run up puts this one back to " +
+        "waiting for it.",
+    );
+  }
+}
+
+/**
  * End a run that has not started because an operator stopped it, the way Stop
  * on its own page does — and release nothing.
  *
@@ -11300,7 +11329,18 @@ export async function startRun(id: string): Promise<void> {
     // This run has just settled, so anything told to start after it now knows
     // whether it may. Before the promotion, so a run released here takes its
     // turn in the same pass rather than waiting for the next event.
-    if (finalStatus !== "paused" && finalStatus !== "waiting-for-stack") releaseDependents();
+    if (finalStatus !== "paused" && finalStatus !== "waiting-for-stack") {
+      // The shutdown's ending, flagged `restart_closed` above, is the same
+      // ending the boot gives a run a crash left `running`, so what waits on
+      // this run is decided the way the boot decides it: blocked behind it,
+      // and back to waiting when it is picked up. Released instead, an
+      // `on-finish` dependent was queued mid-shutdown, flagged by the boot as
+      // a queued row, and reopened by the restart notice's one press beside
+      // this run. Ahead of the pass, with no `await` since the status write,
+      // so no other pass can read the ending first.
+      if (closedByRestart) blockBehindRestartClosed(new Set([id]));
+      releaseDependents();
+    }
 
     // The folder is free as of the status write above, so whatever was waiting
     // on it can start. Must come after, or the promotion sees this run still
@@ -14034,28 +14074,9 @@ export async function reconcileOnBoot(): Promise<void> {
   }
 
   if (waiting.size > 0) {
-    // Every edge, not only the edge that would refuse: an `on-finish` edge is
-    // satisfied by a run that did a cycle and then died with the container, so
-    // the ordinary pass would queue this row because of the restart.
-    //
-    // `blocked`, the status the cascade writes, and deliberately *not* flagged
-    // `restart_closed`. The run it names is flagged, and picking that one up is
-    // what brings this one back: `reopenRun` hands it to
-    // `reviveBlockedDependents`, which puts this row back to `waiting` behind
-    // it. Flagging this row as well would put it in the same one-press pick-up
-    // as its dependency, where whichever is reached first decides it: if it is
-    // this one, it goes back to `waiting` while its dependency is still closed
-    // out, and an `on-finish` edge releases it to run beside that dependency
-    // rather than after it.
-    for (const link of allDependencyLinks()) {
-      if (!waiting.has(link.runId) || !closedHere.has(link.dependsOn)) continue;
-      blockWaitingRun(
-        link.runId,
-        `Set to start after run ${shortId(link.dependsOn)}, which the server ` +
-          "restart closed out. Picking that run up puts this one back to " +
-          "waiting for it.",
-      );
-    }
+    // Every edge, not only the edge that would refuse, and unflagged:
+    // `blockBehindRestartClosed` says why.
+    blockBehindRestartClosed(closedHere);
     // The ordinary pass for everything else, with its release half held: what
     // it ends is ended with a sentence naming the run in front, including every
     // run behind one blocked just above, and what it would release stays
