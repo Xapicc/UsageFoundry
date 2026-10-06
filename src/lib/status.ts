@@ -87,7 +87,11 @@ export interface StatusReport {
   queue: {
     /** `queued` plus `waiting` — work admitted and not yet started. */
     depth: number;
-    /** Seconds the oldest `queued` run has been waiting, or null if none is. */
+    /**
+     * Seconds the longest-waiting `queued` run has been there since it last
+     * entered `queued`, or null if none is. Not since it was created: a parked
+     * run that resumes into a full fleet has waited for nothing yet.
+     */
     oldestQueuedAgeSeconds: number | null;
   };
   windows: { session: StatusWindow; weekly: StatusWindow };
@@ -362,7 +366,7 @@ export async function statusReport(now = Date.now()): Promise<StatusReport> {
   ) as RunStatusCounts;
 
   const oldestQueued = db()
-    .prepare("SELECT MIN(created_at) AS at FROM runs WHERE status = 'queued'")
+    .prepare("SELECT MIN(queued_at) AS at FROM runs WHERE status = 'queued'")
     .get() as { at: number | null };
 
   // The same snapshot the guard reads, so a fraction here and a refusal in the

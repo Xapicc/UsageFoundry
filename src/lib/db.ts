@@ -1727,6 +1727,20 @@ function migrate(db: Database.Database) {
   // reopened at 02:00 is two authorisations, and overwriting the first with the
   // second would lose the one the column exists for.
   addColumn(db, "runs", "reopened_at", "INTEGER");
+  // When this run last entered `queued`, which `/api/status` ages its oldest
+  // queued run from. Not `created_at`: a parked run that resumes, a dependent
+  // released, a stack wait that ends and a pick-up all rejoin the queue with
+  // `created_at` deliberately untouched so `promoteQueued` keeps them in FIFO
+  // order, and aged from it a run that worked two cycles three days ago read as
+  // "queued and never started" the second it came back. A row created or picked
+  // up into `waiting` is stamped when it is released, not before. Backfilled
+  // from `created_at`, the only entry an older row can name, in one transaction
+  // with the ALTER for `refusal_pauses`' reason.
+  db.transaction(() => {
+    if (addColumn(db, "runs", "queued_at", "INTEGER")) {
+      db.exec("UPDATE runs SET queued_at = created_at");
+    }
+  })();
 
   // What the agent said when it reported it could not finish — the whole content
   // of the `needs-review` ending, and the reason an operator was asked to look.
