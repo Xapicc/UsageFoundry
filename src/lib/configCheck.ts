@@ -8,6 +8,7 @@ import {
   PROJECTS_DIR,
   STRICT_ENV_VARS,
   WORKSPACE_MOUNTS,
+  parseTrustedProxyHops,
 } from "./config";
 
 /**
@@ -97,6 +98,8 @@ export interface ConfigView {
   claudeHome: { path: string; at: PathProbe; projects: PathProbe };
   /** Variables explicitly set to "" where blank is not a meaningful value. */
   blankVars: string[];
+  /** `UF_TRUSTED_PROXY_HOPS` as written, "" where unset. */
+  trustedProxyHops: string;
 }
 
 /**
@@ -207,6 +210,21 @@ export function checkConfig(view: ConfigView): ConfigProblem[] {
     });
   }
 
+  if (parseTrustedProxyHops(view.trustedProxyHops) === null) {
+    problems.push({
+      severity: "warn",
+      variable: "UF_TRUSTED_PROXY_HOPS",
+      message:
+        `UF_TRUSTED_PROXY_HOPS is ${JSON.stringify(view.trustedProxyHops)}, ` +
+        `which is not a whole number, so it is read as 0: no forwarding ` +
+        `header is read, sign-in has no per-source lockout and only the ` +
+        `install-wide budget applies, and the request log records no address. ` +
+        `Expected the number of reverse proxies in front of this server that ` +
+        `append to x-forwarded-for — blank or 0 with nothing in front, 1 ` +
+        `behind a single nginx or Caddy.`,
+    });
+  }
+
   for (const name of view.blankVars) {
     // DATA_DIR already refused above; saying it twice would bury the refusal.
     if (name === "DATA_DIR") continue;
@@ -291,6 +309,7 @@ export function inspectConfig(): ConfigView {
       projects: probePath(PROJECTS_DIR),
     },
     blankVars: explicitlyBlank(process.env, STRICT_ENV_VARS),
+    trustedProxyHops: process.env.UF_TRUSTED_PROXY_HOPS ?? "",
   };
 }
 

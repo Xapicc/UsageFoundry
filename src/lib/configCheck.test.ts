@@ -55,6 +55,7 @@ function view(over: Partial<ConfigView> = {}): ConfigView {
     mounts: [{ id: "workspace", label: "Workspace", path: "/workspace", at: dir }],
     claudeHome: { path: "/home/node/.claude", at: dir, projects: dir },
     blankVars: [],
+    trustedProxyHops: "",
     ...over,
   };
 }
@@ -195,6 +196,23 @@ describe("checkConfig", () => {
     assert.equal(of(problems, "DATA_DIR")[0].severity, "refuse");
     assert.equal(of(problems, "CLAUDE_HOME").length, 1);
     assert.equal(of(problems, "CLAUDE_HOME")[0].severity, "warn");
+  });
+
+  it("warns about a UF_TRUSTED_PROXY_HOPS that is not a whole number, and never refuses", () => {
+    // Read as zero either way, which is the safe direction — but an operator
+    // behind nginx who wrote "one" loses per-source lockout and the request
+    // log's address with nothing saying why. Blank is what compose renders on
+    // every stock install, so it has to stay silent.
+    for (const raw of ["", "0", "2"]) {
+      assert.deepEqual(checkConfig(view({ trustedProxyHops: raw })), [], JSON.stringify(raw));
+    }
+    for (const raw of ["one", "-1", "1.5", " 1x"]) {
+      const problems = checkConfig(view({ trustedProxyHops: raw }));
+      assert.equal(problems.length, 1, JSON.stringify(raw));
+      assert.equal(problems[0].severity, "warn");
+      assert.equal(problems[0].variable, "UF_TRUSTED_PROXY_HOPS");
+      assert.ok(problems[0].message.includes(JSON.stringify(raw)), problems[0].message);
+    }
   });
 
   it("reports every problem rather than the first", () => {
