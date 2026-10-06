@@ -1081,6 +1081,12 @@ export interface LoopPassMember {
   > | null;
   /** The runs an orchestrator member started, as their rows stand now. */
   emitted: readonly LoopRunState[];
+  /**
+   * How many branches with work on them a review member set aside, and 0 for
+   * every other kind. `emitted` cannot answer it: it holds what the review
+   * approved and says nothing about what it was given.
+   */
+  workSetAside: number;
 }
 
 /** One pass of a loop's section: every member of it, in creation order. */
@@ -1196,6 +1202,18 @@ export type LoopDecision =
  *      orchestrator and a merge alone say nothing about whether the work is
  *      finished, and reading "all of none" as done would stop such a loop after
  *      its first pass, which is a loop that does not loop.
+ *      Nor does a pass whose **review** member set aside a branch with work on
+ *      it, whichever member's branch it was: that work was turned down and will
+ *      not land, so "complete" would be false, and `reviewVerdict`'s contract is
+ *      that the loop carries on and the next pass gets another go at it. It is
+ *      read per pass rather than traced to the member whose branch it was,
+ *      because a branch cannot always be traced — after a fix round its last
+ *      link is the fix run, and a review may be handed an orchestrator's runs
+ *      or another review's — and since DONE needs every run member, discounting
+ *      one is the same answer wherever a trace exists. A branch set aside
+ *      because its run committed nothing does not count: it lost no work, and
+ *      that run's DONE is the ordinary way such a loop ends, so counting it
+ *      would run every loop with a review in it to its pass cap.
  *      It outranks the two caps, so a loop that got there on its last pass says
  *      it finished rather than that it ran out.
  *   5. **The board condition**, below the agent's own word and above the caps.
@@ -1333,7 +1351,11 @@ export function planLoopPass(input: LoopPassInput): LoopDecision {
     const runMembers = last.members.filter(
       (m) => m.kind === "run" && m.run?.leftBehind !== true,
     );
+    // Work a review turned down is work that will not land, whatever the run
+    // that did it said about it — see the docblock.
+    const workTurnedDown = last.members.some((m) => m.workSetAside > 0);
     if (
+      !workTurnedDown &&
       runMembers.length > 0 &&
       runMembers.every((m) => m.run?.reportedDone === true)
     ) {
@@ -5582,6 +5604,7 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
         run: runOf(row),
         block: null,
         emitted: [],
+        workSetAside: 0,
       },
     });
   }
@@ -5603,6 +5626,8 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
           notes: splitNotes(row.notes),
         },
         emitted: [],
+        workSetAside:
+          row.kind === "review" ? workSetAsideOf(instanceId, row.memberId) : 0,
       },
     });
   }
@@ -6959,12 +6984,15 @@ interface ReviewItemRow {
   review_id: string | null;
   note: string | null;
   cost_usd: number;
+  /** 1 when it was set aside because its run committed nothing — see `workSetAsideOf`. */
+  committed_nothing: number;
 }
 
 export function reviewItemsOf(instanceId: string, blockId: string): ReviewItemRow[] {
   return db()
     .prepare(
-      `SELECT origin_run_id, run_id, position, round, status, review_id, note, cost_usd
+      `SELECT origin_run_id, run_id, position, round, status, review_id, note, cost_usd,
+              committed_nothing
          FROM workflow_review_items
         WHERE instance_id = ? AND block_id = ?
         ORDER BY position`,
@@ -7003,11 +7031,29 @@ function approvedRunsOf(instanceId: string, blockId: string): LoopRunState[] {
   }));
 }
 
+/**
+ * How many branches a review block set aside with work on them: every
+ * set-aside except one whose run committed nothing, which lost nothing.
+ */
+function workSetAsideOf(instanceId: string, blockId: string): number {
+  const row = db()
+    .prepare(
+      `SELECT COUNT(*) AS n
+         FROM workflow_review_items
+        WHERE instance_id = ? AND block_id = ? AND status = 'set-aside'
+          AND committed_nothing = 0`,
+    )
+    .get(instanceId, blockId) as { n: number };
+  return row.n;
+}
+
 function updateReviewItem(
   instanceId: string,
   blockId: string,
   originRunId: string,
-  patch: Partial<Pick<ReviewItemRow, "run_id" | "round" | "status" | "review_id" | "note">> & {
+  patch: Partial<
+    Pick<ReviewItemRow, "run_id" | "round" | "status" | "review_id" | "note" | "committed_nothing">
+  > & {
     addCost?: number;
   },
 ): void {
@@ -7020,7 +7066,7 @@ function updateReviewItem(
   db()
     .prepare(
       `UPDATE workflow_review_items
-          SET run_id=?, round=?, status=?, review_id=?, note=?,
+          SET run_id=?, round=?, status=?, review_id=?, note=?, committed_nothing=?,
               cost_usd = cost_usd + ?, updated_at=?
         WHERE instance_id=? AND block_id=? AND origin_run_id=?`,
     )
@@ -7030,6 +7076,7 @@ function updateReviewItem(
       patch.status ?? row.status,
       patch.review_id === undefined ? row.review_id : patch.review_id,
       patch.note === undefined ? row.note : patch.note,
+      patch.committed_nothing ?? row.committed_nothing,
       patch.addCost ?? 0,
       Date.now(),
       instanceId,
@@ -7154,6 +7201,7 @@ async function driveReviewItem(
         note: started.nothingToReview
           ? "it committed nothing to review"
           : `it could not be reviewed: ${started.reason}`,
+        committed_nothing: started.nothingToReview ? 1 : 0,
       });
       return;
     }

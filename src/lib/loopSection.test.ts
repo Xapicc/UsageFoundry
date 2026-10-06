@@ -131,6 +131,8 @@ beforeEach(() => emptyTables());
 
 function emptyTables(): void {
   for (const table of [
+    "workflow_review_items",
+    "run_reviews",
     "workflow_instance_blocks",
     "workflow_instance_runs",
     "workflow_instances",
@@ -543,6 +545,71 @@ describe("DONE, over a section that runs blocks side by side", () => {
     assert.equal(first, false, "the loop stopped without taking a second pass");
     const block = loopBlock(instanceId);
     assert.match(block.error ?? "", /limit of 2 pass\(es\)/);
+  });
+});
+
+/** A review block with no fix rounds: one verdict per branch. */
+const reviewNode = (id: string) =>
+  node(id, { kind: "review", folder: "", fixRounds: 0, provider: null });
+
+/** One run, the review of its branch, and the merge that lands what passed. */
+const REVIEWED = {
+  nodes: [node("a"), reviewNode("v"), mergeNode("m")],
+  edges: [
+    { from: "L", to: "a", edge: "repeats" },
+    { from: "a", to: "v", edge: "on-success" },
+    { from: "v", to: "m", edge: "on-success" },
+  ],
+  body: ["a", "v", "m"],
+};
+
+/** Where each branch a review member was given ended up. */
+function reviewItems(instanceId: string): Array<{ status: string; committedNothing: number }> {
+  return dbMod
+    .db()
+    .prepare(
+      "SELECT status, committed_nothing AS committedNothing FROM workflow_review_items" +
+        " WHERE instance_id = ? ORDER BY position",
+    )
+    .all(instanceId) as Array<{ status: string; committedNothing: number }>;
+}
+
+describe("DONE, over a pass whose review set the branch aside", () => {
+  it("is not the work complete when the branch had work on it", async () => {
+    // The pass from the report, through the tables rather than a literal: the
+    // run said DONE, its branch was set aside unlanded — here because a review
+    // of that run was already running, the quickest real refusal to stage —
+    // and the merge behind it had nothing to land. That pass ending the loop
+    // as done starts an `on-success` successor on a folder without the work.
+    const instanceId = scene({ ...REVIEWED, maxPasses: 1 });
+    await drive(instanceId, {
+      done: true,
+      branch: (runId) => {
+        dbMod
+          .db()
+          .prepare(
+            "INSERT INTO run_reviews (id, run_id, created_at, status, kind)" +
+              " VALUES (?, ?, ?, 'running', 'review')",
+          )
+          .run(`busy-${runId}`, runId, Date.now());
+        git(repoRoot(), "branch", "-f", `uf/${runId}`, "HEAD");
+        return `uf/${runId}`;
+      },
+    });
+    assert.deepEqual(reviewItems(instanceId), [{ status: "set-aside", committedNothing: 0 }]);
+    assert.match(loopBlock(instanceId).error ?? "", /limit of 1 pass\(es\) without reporting/);
+  });
+
+  it("is the work complete when the branch had nothing on it", async () => {
+    // The run found nothing left to do and said so, which is how a reviewed
+    // loop ends: its branch sits at its base, so the review had nothing to
+    // read. Counting that as work turned down would bill every pass the cap
+    // allows and then report the loop as having run out.
+    const instanceId = scene({ ...REVIEWED, maxPasses: 3 });
+    await drive(instanceId, { done: true });
+    assert.deepEqual(reviewItems(instanceId), [{ status: "set-aside", committedNothing: 1 }]);
+    assert.match(loopBlock(instanceId).error ?? "", /reported the work complete on pass 1/);
+    assert.equal(membersOf(instanceId).length, 1, "it stopped after the first pass");
   });
 });
 

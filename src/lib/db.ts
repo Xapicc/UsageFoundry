@@ -2765,6 +2765,12 @@ function migrate(db: Database.Database) {
       PRIMARY KEY (instance_id, block_id, origin_run_id)
     );
   `);
+  // Set on a branch set aside because its run committed nothing. A loop reads
+  // it: such a branch lost no work, so the DONE its run reported still ends the
+  // loop, where any other set-aside is work turned down and the loop carries on.
+  // A row from before the column reads as work turned down — one more pass,
+  // bounded by the loop's caps, rather than a loop claiming work it never landed.
+  addColumn(db, "workflow_review_items", "committed_nothing", "INTEGER NOT NULL DEFAULT 0");
 
   // What runs have asked the operator to install, and which runs are waiting.
   // `stackRequests.ts` carries the design; the part that belongs beside the
