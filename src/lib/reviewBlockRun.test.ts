@@ -444,12 +444,15 @@ describe("a review block handed more branches than there are assist slots", () =
   });
 
   it("still sets a branch aside over a spent install limit, which no wait would clear", async () => {
-    // The cases above have already spent more than this into `run_reviews`.
+    // A run the block is not handed has spent past the limit on its own.
     const settings = await import("./settings");
-    settings.saveSettings({ installDailyCostLimitUSD: 0.05 });
+    settings.saveSettings({ installDailyCostLimitUSD: 0.5 });
     try {
       reviewScene("inst-capped", {
-        runs: [{ id: "capped-good", prompt: "Do it. APPROVE-ME", branch: "uf/repo-good" }],
+        runs: [
+          { id: "capped-good", prompt: "Do it. APPROVE-ME", branch: "uf/repo-good" },
+          { id: "capped-spender", prompt: "spent", branch: "uf/repo-good", spent: 1 },
+        ],
       });
       await settledWithin(workflows.startReviewBlock("inst-capped", "r", ["capped-good"]), 30_000, "startReviewBlock");
       const refusal = installBudget.installBudgetRefusal();
