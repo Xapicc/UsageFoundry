@@ -277,10 +277,11 @@ export type ReviewOutcome =
       nothingToReview?: true;
       /**
        * Set when the refusal is the process budget alone — a slot somebody else
-       * holds for a few minutes. Reported by the door that refused rather than
-       * inferred after it, because asking `assistBudgetFull()` again after the
-       * answer races a slot freeing during the window scan, and a review block
-       * reads it as a wait where every other refusal is an answer.
+       * holds for a few minutes, which a review block waits out where every
+       * other refusal is an answer. Reported by the door that refused rather
+       * than inferred after it: asked again afterwards, `assistBudgetFull()`
+       * reads a later moment, and a slot taken during the window scan would turn
+       * a spent window into a wait.
        */
       busy?: true;
     };
