@@ -3933,6 +3933,7 @@ describe("handleCodexStreamLine", () => {
       unknownEventTypes: new Set(),
       sawResult: false,
       subtype: null,
+      resultTurns: null,
       apiError: null,
       stderrTail: "",
     }) as Parameters<typeof parseLine>[2];
@@ -4154,6 +4155,7 @@ describe("handleStreamLine on an unrecognised event type", () => {
       unknownEventTypes: new Set(),
       sawResult: false,
       subtype: null,
+      resultTurns: null,
       apiError: null,
       stderrTail: "",
     }) as Parameters<typeof parseLine>[2];
@@ -4317,6 +4319,7 @@ describe("the previous cycle's stopped background tasks, read back from the log"
       unknownEventTypes: new Set(),
       sawResult: false,
       subtype: null,
+      resultTurns: null,
       apiError: null,
       stderrTail: "",
     }) as Parameters<typeof parseLine>[2];

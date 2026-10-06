@@ -166,6 +166,16 @@ export interface IterationResult {
    */
   subtype: string | null;
   /**
+   * `result.num_turns` off the last `result` event, null when none arrived or
+   * it carried none.
+   *
+   * Kept for one reading: an error result with zero turns is the pinned CLI
+   * refusing before any turn began, which is how it answers a `--resume` it will
+   * not open. `sawResult` cannot tell that apart from a cycle that worked and
+   * then failed, and the resume-failure branch has to.
+   */
+  resultTurns: number | null;
+  /**
    * What the provider refused with, when it refused rather than the agent
    * failing. Claude Code reports API-level errors as an assistant message
    * whose `message.model` is the literal `<synthetic>` — the same marker
@@ -206,6 +216,24 @@ export function clipReason(text: string): string {
   return trimmed.length <= MAX_NEEDS_REVIEW_REASON
     ? trimmed
     : `${trimmed.slice(0, MAX_NEEDS_REVIEW_REASON - 1)}…`;
+}
+
+/**
+ * Whether a cycle did no work at all: the test behind a failed resume's one
+ * retry, and behind a fork whose resume is recorded as failing and rolled back.
+ *
+ * Two shapes. No result and nothing said is a child that died before the
+ * stream got anywhere. An error result with zero turns is the pinned CLI
+ * refusing before the first turn — measured as its answer to a `--resume` it
+ * will not open — and testing `sawResult` alone read that as a cycle that
+ * worked and then failed, so the retry and the stop reason naming the session
+ * were never reached. Both callers take this one answer: the fork settlement
+ * deciding otherwise records the fork as resumed and leaves nothing to roll back.
+ */
+export function cycleDidNoWork(
+  res: Pick<IterationResult, "sawResult" | "finalText" | "isError" | "resultTurns">,
+): boolean {
+  return (!res.sawResult && res.finalText === "") || (res.isError && res.resultTurns === 0);
 }
 
 /**

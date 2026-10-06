@@ -161,6 +161,22 @@
   restarts on a new session and carries on. Caveat: the replay fed the measured
   lines to a stub, not the real CLI under the loop.
 
+- **A `--resume` of a session truncated mid-turn is not refused: the pinned CLI
+  pairs the dangling `tool_use` with a synthetic result and calls the API**
+  (2026-10-06, `claude` 2.1.280). A transcript the CLI wrote in a scratch
+  `CLAUDE_CONFIG_DIR` against a stub API, cut by hand after its first assistant
+  line (a `Bash` `tool_use`), resumed with `-p --output-format stream-json
+  --verbose --resume <id>`: the CLI appended a `tool_result` *[Request
+  interrupted by user for tool use]* (`is_error`), a meta *Continue from where
+  you left off.* and a synthetic *No response requested.*, the one request the
+  stub got carried the `tool_use` followed by that result, and it exited 0 with
+  `success`, `num_turns: 1`. Against a dead `ANTHROPIC_BASE_URL` the same resume
+  retried 10 times over 178 s and ended `subtype: success`, `is_error: true`,
+  `num_turns: 1`, `terminal_reason: api_error`, exit 1 — not the zero-turn
+  refusal `cycleDidNoWork` now counts, which a missing transcript still produces
+  (re-measured: no `init`, no `result` text). Caveat: a stub accepts any message
+  list, and the cut was at a line boundary rather than by a kill.
+
 ## Not yet verified by hand
 
 - **No real `reopenRestartClosed` refusal has reached the restart notice.**
@@ -230,8 +246,10 @@
 - **What a dropped stream does to the cycle around it.** Which path that run
   took, and whether `--resume` accepts a drop-truncated session, is unwatched.
 
-- **Whether `claude --resume` accepts a session truncated by a mid-turn
-  kill.** The ladder retries once, then stops rather than start fresh.
+- **Whether the real API accepts what the CLI sends for a session truncated
+  by a mid-turn kill.** The CLI's repair is measured against a stub only, and a
+  transcript cut mid-line by the kill was not tried. Settle: kill a cheap real
+  run during a long `Bash` call, then pick it up and read the cycle's ending.
 
 - **Which session id `claude -p --resume <id>` reports back.** A differing id
   is adopted and logged; no real resume has been watched.

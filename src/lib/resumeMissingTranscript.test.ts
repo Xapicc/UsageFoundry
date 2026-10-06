@@ -19,6 +19,8 @@ import { after, describe, it } from "node:test";
  * through `startRun` and `reopenRun` against a stubbed child and reads what
  * the child was handed: an argv assertion on `buildArgs` cannot see which
  * session the loop chose, and `nextPrompt` cannot see which follow-up survived.
+ * And what one does when the check lets the resume through and the CLI refuses
+ * it, which arrives as a zero-turn error `result` rather than as silence.
  *
  * Its own file with the environment set before anything is required, for the
  * reason every database-backed test here needs it: `config.ts` fixes `DATA_DIR`
@@ -58,8 +60,16 @@ const projectDir = path.join(config.PROJECTS_DIR, "-workspace-project");
 fs.mkdirSync(projectDir, { recursive: true });
 fs.writeFileSync(path.join(projectDir, "unrelated-session.jsonl"), "");
 
+/**
+ * A `--resume` the CLI refuses before any turn, as the pinned 2.1.280 answers
+ * one whose transcript it cannot find: measured, stderr names the session and
+ * stdout carries this one line and nothing else — no `init`, no `result` text —
+ * then exit 1.
+ */
+const REFUSES = { refuses: true } as const;
+
 /** What each child the loop spawns says, in spawn order. */
-let replies: string[] = [];
+let replies: Array<string | typeof REFUSES> = [];
 /** What each child was asked to `--resume`, and the prompt it was handed. */
 let spawns: Array<{ resumed: string | null; prompt: string }> = [];
 /** Across tests, so no two runs ever share a fresh session's id. */
@@ -82,6 +92,44 @@ childProcess.spawn = (bin: string, args: readonly string[], options: unknown) =>
   const resumed = at >= 0 ? args[at + 1] : null;
   // `promptArgs` puts the prompt last, behind `--`.
   spawns.push({ resumed, prompt: args[args.length - 1] });
+
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const child = Object.assign(new EventEmitter(), {
+    stdout,
+    stderr,
+    // No pid, so `signalTree` skips `process.kill(-pid)`.
+    pid: undefined as number | undefined,
+    kill: () => true,
+  });
+
+  if (typeof reply !== "string") {
+    const refusal = `No conversation found with session ID: ${resumed}`;
+    stdout.on("end", () => {
+      child.emit("exit", 1, null);
+      child.emit("close", 1, null);
+    });
+    setImmediate(() => {
+      stderr.end(`${refusal}\n`);
+      stdout.end(
+        `${JSON.stringify({
+          type: "result",
+          subtype: "error_during_execution",
+          duration_ms: 0,
+          duration_api_ms: 0,
+          is_error: true,
+          num_turns: 0,
+          stop_reason: null,
+          session_id: resumed,
+          total_cost_usd: 0,
+          permission_denials: [],
+          errors: [refusal],
+          result_index: 0,
+        })}\n`,
+      );
+    });
+    return child;
+  }
 
   // The stub resumes whatever it is asked to: a transcript that is gone is the
   // loop's to notice before the spawn, and a child that failed here would only
@@ -109,14 +157,6 @@ childProcess.spawn = (bin: string, args: readonly string[], options: unknown) =>
       usage: { input_tokens: 10, output_tokens: 5 },
     },
   ];
-  const stdout = new PassThrough();
-  const child = Object.assign(new EventEmitter(), {
-    stdout,
-    stderr: new PassThrough(),
-    // No pid, so `signalTree` skips `process.kill(-pid)`.
-    pid: undefined as number | undefined,
-    kill: () => true,
-  });
   // Settled on `end`, so every line has been read before `close` says so.
   stdout.on("end", () => {
     child.emit("exit", 0, null);
@@ -259,6 +299,42 @@ describe("a pick-up whose session's transcript is there", () => {
 
     assert.equal(picked.resumed, session);
     assert.ok(picked.prompt.includes(DEFAULT_DONE_PUSHBACK_PROMPT), picked.prompt);
+  });
+});
+
+describe("a pick-up the CLI refuses to resume", () => {
+  it("retries once and then names the command that resumes it by hand", async () => {
+    // The transcript is kept, so the check before the spawn resumes and the
+    // refusal is the CLI's own — the shape every refusal that check cannot see
+    // arrives in.
+    replies = ["Still working.", REFUSES, REFUSES];
+    spawns = [];
+    const run = createRun({
+      folder: "project",
+      mountId: null,
+      prompt: TASK,
+      budget: { maxIterations: 1 },
+      origin: "form",
+    });
+    const first = await settled(run.id);
+    const session = first.session_id;
+    assert.ok(session, "the fixture's first cycle must leave a session to resume");
+    fs.writeFileSync(path.join(projectDir, `${session}.jsonl`), "");
+
+    const reopened = reopenRun(run.id, { maxIterations: 2 });
+    assert.ok(reopened.ok, JSON.stringify(reopened));
+    const row = await settled(run.id);
+
+    // A result arrived, so the loop read the refusal as a cycle that worked
+    // and failed: no retry, and a stop reason naming only the exit code.
+    assert.deepEqual(
+      spawns.map((s) => s.resumed),
+      [null, session, session],
+      "the refused resume is retried once, on the same session",
+    );
+    assert.equal(row.status, "failed");
+    assert.ok(row.stop_reason?.includes(`claude --resume ${session}`), row.stop_reason ?? "");
+    assert.equal(row.iterations, 2, "the attempt the retry replaced is not charged");
   });
 });
 

@@ -27,7 +27,7 @@ measurement under *Verified* and cut the item down to what is still open.
 |---|---|--:|--:|
 | Metering and cost | [metering-and-cost.md](verification/metering-and-cost.md) | 24 | 12 |
 | Budgets and guards | [budgets-and-guards.md](verification/budgets-and-guards.md) | 9 | 4 |
-| Run lifecycle | [run-lifecycle.md](verification/run-lifecycle.md) | 26 | 33 |
+| Run lifecycle | [run-lifecycle.md](verification/run-lifecycle.md) | 27 | 33 |
 | Run lifecycle | [run-lifecycle-background-work.md](verification/run-lifecycle-background-work.md) — a work cycle's wait for background tasks, and what stopping one tells the next cycle | 4 | 3 |
 | Context control | [context-control-pruning.md](verification/context-control-pruning.md) — pruning, compaction and the context ceiling | 24 | 13 |
 | Context control | [context-control-intake-filter.md](verification/context-control-intake-filter.md) — the intake filter and its ledger | 8 | 4 |
@@ -63,4 +63,4 @@ measurement under *Verified* and cut the item down to what is still open.
 | Interface | [interface-narrow-viewports.md](verification/interface-narrow-viewports.md) — pages at 390px, layout sweeps and smoke-pages | 15 | 9 |
 | Interface | [interface-canvases.md](verification/interface-canvases.md) — the graph canvases, touched map and replay | 5 | 2 |
 | Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads | 20 | 12 |
-| **Total** | | **433** | **271** |
+| **Total** | | **434** | **271** |

@@ -198,6 +198,7 @@ import {
   clipReason,
   buildArgs,
   buildCodexArgs,
+  cycleDidNoWork,
   cycleEnding,
   nextPrompt,
   startsFresh,
@@ -7498,6 +7499,7 @@ export function runIteration(
       isError: false,
       sawResult: false,
       subtype: null,
+      resultTurns: null,
       apiError: null,
       stderrTail: "",
       subagentNames: new Map(),
@@ -9203,6 +9205,7 @@ function handleStreamLine(
     // know *which* non-success this was.
     if (typeof ev.subtype === "string" && ev.subtype) acc.subtype = ev.subtype;
     if (ev.subtype && ev.subtype !== "success") acc.isError = true;
+    acc.resultTurns = typeof ev.num_turns === "number" ? ev.num_turns : null;
     if (typeof ev.result === "string" && ev.result) acc.finalText = ev.result;
 
     // Second-best source for a refusal, behind the `<synthetic>` message: the
@@ -10903,8 +10906,7 @@ export async function startRun(id: string): Promise<void> {
       // failed; this covers every other ending.
       const settling = pendingFork.get(id);
       if (settling && resumeTarget === settling.forkSessionId) {
-        const worked = res.sawResult || res.finalText !== "";
-        if (worked) {
+        if (!cycleDidNoWork(res)) {
           pendingFork.delete(id);
           if (settling.rowId !== null) {
             // The other half of the fork's removal measurement, and this is the
@@ -10923,8 +10925,8 @@ export async function startRun(id: string): Promise<void> {
             );
           }
         }
-        // Not `worked` falls through: that is the resume-failure shape, and the
-        // branch below owns it, including the rollback.
+        // A cycle that did no work falls through: that is the resume-failure
+        // shape, and the branch below owns it, including the rollback.
       } else if (settling) {
         // The cycle resumed something else — `startsFresh` dropped the
         // conversation, or an operator intervened. The fork was never tried, so
@@ -11399,13 +11401,14 @@ export async function startRun(id: string): Promise<void> {
       transientRetries = 0;
 
       if (res.exitCode !== 0 || res.isError) {
-        // A cycle resuming a session that a kill truncated mid-turn can be
-        // rejected before it does any work — an assistant turn holding a
-        // `tool_use` with no matching result is not a message list the API will
-        // accept. One retry covers a transient failure. A second identical one
-        // is the session itself, and the honest move is to stop and name the
-        // command rather than quietly start a fresh session and lose the
-        // conversation the resume existed to keep.
+        // A resumed cycle can be refused before it does any work. One retry
+        // covers a transient failure. A second identical one is the session
+        // itself, and the honest move is to stop and name the command rather
+        // than quietly start a fresh session and lose the conversation the
+        // resume existed to keep. A session a kill truncated mid-turn is not
+        // one of these on the pinned CLI, whatever this branch was written for:
+        // measured, it pairs the dangling `tool_use` with a synthetic
+        // interrupted result and resumes.
         //
         // `usedResume && cyclesThisSegment === 1` is exactly "this segment
         // opened by resuming a session an earlier one left behind": no cycle in
@@ -11418,7 +11421,7 @@ export async function startRun(id: string): Promise<void> {
         // excluded the one case an operator is watching.
         // "This cycle did no work at all", split out because two callers need
         // it and only one of them wants the segment-position term.
-        const didNoWork = !res.sawResult && res.finalText === "";
+        const didNoWork = cycleDidNoWork(res);
         const looksLikeResumeFailure =
           usedResume && cyclesThisSegment === 1 && didNoWork;
         // A fork's resume failure is not the same shape. `cyclesThisSegment === 1`
