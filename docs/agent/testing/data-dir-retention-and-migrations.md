@@ -20,7 +20,7 @@ So a `queued` row and a parked one are seeded and both loops are driven: nothing
 
 Its control carries the same weight for the same reason, and the failure without it is silent in the way this whole file is about: a loop that quietly decides nothing reads exactly like a quiet minute.
 
-`retention.ts`'s pure half decides what lands on disk and what is discarded from it, `releasableRuns`' grounds exactly.
+`retention.ts`'s pure half decides what lands on disk and what is discarded from it, `releasableRuns`' grounds exactly. `expiredTranscripts` also pins the weekly floor: a horizon under seven days — which the settings route accepts — deleted transcripts the weekly guard was still summing, and the guard stopped refusing a run with nothing anywhere saying so. Its control is that the same horizon still sweeps a file older than the week, and a third case walks every anchored and provider-reset week start `windows.ts` produces, since the floor is the trailing seven days rather than any one of them.
 
 `retentionSweep.test.ts` drives the sweep's SQL on `mergeQueueOrder.test.ts`'s grounds — the decision *is* the query — and both ways of getting it wrong are silent in opposite directions: delete too little and the store is still unbounded, delete too much and a run's own spend record goes with it.
 

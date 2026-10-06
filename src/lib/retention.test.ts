@@ -29,6 +29,7 @@ const {
   retentionCutoff,
   treeSize,
 } = require("./retention") as typeof import("./retention");
+const { effectiveWeeklyReset, WEEK_MS } = require("./windows") as typeof import("./windows");
 
 /**
  * Covers the pure half of the retention design — what a store is allowed to
@@ -262,7 +263,7 @@ describe("expiredTranscripts", () => {
   const paths = (files: Parameters<typeof expiredTranscripts>[0], keep: string[] = []) =>
     expiredTranscripts(files, {
       now: AT,
-      cutoff: retentionCutoff(30, AT),
+      horizonDays: 30,
       keepSessions: new Set(keep),
     }).map((f) => f.sessionId);
 
@@ -294,11 +295,63 @@ describe("expiredTranscripts", () => {
     );
   });
 
+  it("keeps a file still inside the weekly window, however short the horizon", () => {
+    // With no provider reading, the weekly meter and the `weekly_fraction`
+    // guard are summed from these files. A horizon under seven days — the
+    // settings route accepts 1 — took a file holding turns inside the week, the
+    // weekly figure fell by its spend, and a guard that was refusing the run
+    // stopped refusing it. The control is that the same horizon still sweeps a
+    // file the week has already left behind.
+    assert.deepEqual(
+      expiredTranscripts(
+        [
+          file({ sessionId: "inside-week", mtimeMs: AT - 3 * DAY }),
+          file({ sessionId: "older-than-week", mtimeMs: AT - 8 * DAY }),
+        ],
+        { now: AT, horizonDays: 2, keepSessions: new Set() },
+      ).map((f) => f.sessionId),
+      ["older-than-week"],
+    );
+  });
+
+  it("keeps all of a week that opened on an anchor or a provider's reset", () => {
+    // The fix floors the horizon at the trailing seven days rather than reading
+    // `weeklyAnchor` or the provider's reset, on the claim that every week
+    // `windows.ts` can open starts inside that span. This pins the claim: a
+    // file last written at the very first instant of each such week survives
+    // the shortest horizon the route accepts.
+    const anchors = [0, 1, 2, 3, 4, 5, 6].flatMap((weekday) =>
+      [0, 23].map((hourUTC) => ({ weekday, hourUTC })),
+    );
+    const resets = [AT + 1, AT + 3 * DAY, AT + WEEK_MS - 1, AT - 2 * DAY];
+    const weekStarts = [
+      ...anchors.map((anchor) => effectiveWeeklyReset(null, anchor, AT)),
+      ...resets.map((resetsAt) =>
+        effectiveWeeklyReset({ utilization: 0.5, resetsAt }, null, AT),
+      ),
+    ].map((reset) => {
+      assert.notEqual(reset, null);
+      return (reset as number) - WEEK_MS;
+    });
+
+    for (const start of weekStarts) {
+      assert.deepEqual(
+        expiredTranscripts([file({ sessionId: "first-turn", mtimeMs: start })], {
+          now: AT,
+          horizonDays: 1,
+          keepSessions: new Set(),
+        }),
+        [],
+        `a week opening at ${new Date(start).toISOString()} lost its first file`,
+      );
+    }
+  });
+
   it("takes nothing when the horizon is blank", () => {
     assert.deepEqual(
       expiredTranscripts([file({ sessionId: "ancient", mtimeMs: 0 })], {
         now: AT,
-        cutoff: null,
+        horizonDays: null,
         keepSessions: new Set(),
       }),
       [],

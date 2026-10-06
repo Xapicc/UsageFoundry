@@ -797,7 +797,9 @@ async function applySettingsPut(body: Record<string, unknown>): Promise<Response
     // far back the dashboard's calendar history is complete, which the period
     // card states from this very number. It is not clamped up to that history:
     // making the horizon a year would defeat the retention, so the card says
-    // what is incomplete instead.
+    // what is incomplete instead. Nor up to the weekly window, which the guard
+    // sums from these files: `transcriptCutoff` keeps the week whatever is
+    // stored, which also covers a value saved before that floor existed.
     const n = optionalNumber("transcriptRetentionDays", body.transcriptRetentionDays, false);
     patch.transcriptRetentionDays = n === null ? null : Math.max(1, Math.floor(n));
   }

@@ -12,7 +12,7 @@ import { getSettings, limitConfig, newWorkPaused } from "@/lib/settings";
 import { readAccountProfile } from "@/lib/account";
 import { planUsage } from "@/lib/planUsage";
 import { telemetryWindow } from "@/lib/otlp";
-import { retentionCutoff } from "@/lib/retention";
+import { transcriptCutoff } from "@/lib/retention";
 import { installSpendReport } from "@/lib/installBudget";
 import {
   pricedCuts,
@@ -108,8 +108,9 @@ export async function GET(req: Request) {
     // be a year — which would defeat it. `buildPeriods` already drops buckets
     // that closed before the first entry, so pruning makes the history
     // *shorter* rather than wrong; this is the sentence for the one bucket the
-    // cutoff falls inside. Read from the same setting `sweepTranscripts` reads.
-    const completeFrom = retentionCutoff(settings.transcriptRetentionDays, now);
+    // cutoff falls inside. Through the function `sweepTranscripts` decides by,
+    // since a horizon under a week still keeps the week.
+    const completeFrom = transcriptCutoff(settings.transcriptRetentionDays, now);
     // The same weekly reading `buildSnapshot` was given, so the newest week
     // bucket covers the identical seven hours-to-the-minute as the meter
     // directly above it on the page. Without it the buckets fell back to
