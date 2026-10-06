@@ -5315,10 +5315,13 @@ function proposeRun(args: Record<string, unknown>, chatId: string, decision: Mod
     // at the click is two run ids for two cards, and — since a proposal that
     // fails to start is terminal — one of the cards is gone. Asked here after
     // the guard check above, because with no branch at either end there is
-    // nothing for a rival to be claiming.
+    // nothing for a rival to be claiming. The card being replaced is no rival,
+    // for the reason it does not count against the pending limit: it is
+    // decided in the same transaction that writes this one, and counted it
+    // refuses the correction of any card that carries a branch on.
     const rival = rivalContinuation(
       continuing[0].specId,
-      proposals.map((p) => ({
+      proposals.filter((p) => p.id !== superseded?.id).map((p) => ({
         specId: p.spec_id,
         title: p.title,
         status: p.status,

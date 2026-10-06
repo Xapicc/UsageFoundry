@@ -1075,6 +1075,80 @@ test("propose_run refuses a mount with no folder, and a folder with no mount", a
   assert.equal(proposals(), 2);
 });
 
+/**
+ * A template whose runs work in a checkout of their own, because carrying a
+ * branch on is refused outright when either end works in the folder.
+ */
+function isolatingTemplate(): string {
+  const templateId = randomUUID();
+  db()
+    .prepare(
+      `INSERT INTO run_templates (id, name, prompt, mount_id, folder, permission_mode,
+         isolate, budget, created_at, updated_at)
+       VALUES (?, ?, 'p', ?, 'RepoOne', 'plan', 1, '{}', 0, 0)`,
+    )
+    .run(templateId, `Isolating ${templateId}`, MOUNT);
+  return templateId;
+}
+
+test("propose_run corrects a pending card that carries a branch on, in one call", async () => {
+  const { token } = proposingChat();
+  const templateId = isolatingTemplate();
+  const continuesA = [{ id: "a", edge: "on-success", continueBranch: true }];
+  for (const [id, dependsOn] of [["a", undefined], ["b", continuesA]] as const) {
+    const proposed = await callTool(token, "propose_run", {
+      templateId,
+      id,
+      title: id.toUpperCase(),
+      task: `Do ${id}.`,
+      dependsOn,
+    });
+    assert.equal(proposed.isError, false, proposed.text);
+  }
+
+  // The card being replaced still reads as pending until the replacement is
+  // written, and it was counted as its own rival for a's branch.
+  const corrected = await callTool(token, "propose_run", {
+    templateId,
+    supersedes: "b",
+    title: "B, corrected",
+    task: "Do b properly.",
+    dependsOn: continuesA,
+  });
+  assert.equal(corrected.isError, false, corrected.text);
+});
+
+test("propose_run still refuses a replacement for a branch another pending card carries on", async () => {
+  const { chatId, token } = proposingChat();
+  const templateId = isolatingTemplate();
+  const continuesA = [{ id: "a", edge: "on-success", continueBranch: true }];
+  for (const [id, dependsOn] of [["a", undefined], ["b", continuesA], ["c", undefined]] as const) {
+    const proposed = await callTool(token, "propose_run", {
+      templateId,
+      id,
+      title: id.toUpperCase(),
+      task: `Do ${id}.`,
+      dependsOn,
+    });
+    assert.equal(proposed.isError, false, proposed.text);
+  }
+
+  const replacing = await callTool(token, "propose_run", {
+    templateId,
+    supersedes: "c",
+    title: "C, on a's branch",
+    task: "Do c on a's branch.",
+    dependsOn: continuesA,
+  });
+  assert.equal(replacing.isError, true, replacing.text);
+  assert.match(replacing.text, /"b" is already waiting to carry on "a"'s branch/);
+  assert.equal(
+    chat.listProposals(chatId).find((p) => p.spec_id === "c")?.status,
+    "pending",
+    "the refused replacement decided nothing",
+  );
+});
+
 test("propose_workflow refuses a block whose folder is null, and takes \"\" as the mount root", async () => {
   const { token, proposals } = proposingChat();
   const propose = (folder: unknown) =>
