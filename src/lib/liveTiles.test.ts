@@ -126,7 +126,7 @@ describe("live frames", () => {
   });
 
   it("carry the counts through", () => {
-    const counts = { running: 2, queued: 1, paused: 0 };
+    const counts = { running: 2, queued: 1, paused: 0, "waiting-for-stack": 0 };
     assert.deepEqual(applyLiveFrame(opened, { kind: "counts", counts }).counts, counts);
   });
 });
