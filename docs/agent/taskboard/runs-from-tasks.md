@@ -49,6 +49,32 @@ a lock. The sentence shown is `taskTransitionRefusal`'s own, repeated onto the
 run's log, because the alternative is a board that silently disagrees with the
 run page about who holds what.
 
+**A run asks for each of its tasks once, when it first starts, and a pick-up
+asks for nothing.** `claimTasksForRun` is reached at the top of every segment,
+and it used to claim every link each time. An open task the run had given back
+with `release_task`, or one the operator had released from it — the board's
+lever for a stale claim — was claimed for it again when it came back from a park,
+a stack wait or a restart: the board showed the task held by a run that had said
+it could not do it, the run the operator then started for it was refused the
+claim, and the run's ending left that claim for the operator to release a second
+time. So `run_tasks.claim_asked` records that a link was asked for, whatever the
+board answered, and `unaskedTaskClaims` reads only the links still at 0. That was
+chosen over recording each *release* on the link because it removes the
+dependence on timing rather than one symptom of it: under a release marker, a
+task another run held at this run's start, or one operator-only then, would be
+claimed at whichever pick-up followed its coming free — the same reversal, the
+next run started for it refused, over a release that had nothing to do with this
+run. Here a run holds what it held when it started, less what it gave back,
+whether or not it ever parked. The operator's pick-up of a finished run
+(`reopenRun`, the restart notice's bulk pick-up included) is not a new start
+either: a claim never released is still held and needs nothing restated, and one
+released stays released, since that bulk pick-up is how a restarted run comes
+back and is no decision about any task. The cost is a run picked up to work a
+task the operator re-opened, which can no longer complete it; the operator closes
+it or starts a run for it. Existing links are backfilled to asked for every run
+with a `started_at`, because the claim runs synchronously beside the write that
+sets it.
+
 **Whether a work cycle reaches the board at all is `taskboardForRuns`, off by
 default, and the whole path is inert while it is off.** `telemetryForRuns`' shape
 one step further: that setting turns on a behaviour inside the child, and this
